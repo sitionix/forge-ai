@@ -1,0 +1,22 @@
+{
+  "status": "CREATED",
+  "scope": "GLOBAL",
+  "agent": "EVENT",
+  "sourceLaneId": "66666666-6666-6666-6666-666666666666",
+  "payload": {
+    "reason": "not required",
+    "scope": "automationservice-sox",
+    "summary": "event summary",
+    "eventName": "AgentActionCreated",
+    "payloadFields": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "string",
+        "description": "identifier"
+      }
+    ],
+    "consumers": ["consumer"],
+    "notes": ["note"]
+  }
+}

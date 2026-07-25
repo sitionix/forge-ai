@@ -1,0 +1,12 @@
+{
+  "payloadType": "ApiCompletionContractResult",
+  "description": "One API contract result for a scope.",
+  "fields": [
+    { "name": "scope", "type": "STRING", "required": true, "description": "Scope that received or consumed generated API artifacts." },
+    { "name": "method", "type": "STRING", "required": true, "description": "HTTP method changed or generated." },
+    { "name": "path", "type": "STRING", "required": true, "description": "API path changed or generated." },
+    { "name": "operationId", "type": "STRING", "required": true, "description": "API operation id." },
+    { "name": "notes", "type": "ARRAY", "required": true, "description": "Contract or generation notes.", "itemType": "STRING" },
+    { "name": "artifacts", "type": "ARRAY", "required": true, "description": "Generated artifact evidence for this contract result.", "itemType": "OBJECT", "itemObjectType": "ApiCompletionGeneratedArtifact" }
+  ]
+}

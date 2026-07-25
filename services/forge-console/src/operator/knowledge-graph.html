@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Infrastructure / Knowledge Graph</title>
+  <link rel="stylesheet" href="./operator-ui.css">
+</head>
+<body data-page="knowledge-graph">
+  <main class="shell knowledge-graph-shell">
+    <header class="hero knowledge-hero knowledge-graph-hero">
+      <div>
+        <p class="eyebrow">Infrastructure / Knowledge</p>
+        <h1>Knowledge Graph</h1>
+        <p id="knowledgeGraphSubtitle" class="muted">Graph-backed structural analysis projection.</p>
+      </div>
+      <div class="hero-actions">
+        <a class="button ghost" href="./knowledge.html">Sources</a>
+        <button id="analyzeKnowledgeGraph" class="button" type="button">Analyze</button>
+        <button id="refreshKnowledgeGraph" class="button" type="button">Refresh</button>
+        <button id="forceRefreshKnowledgeGraph" class="button ghost" type="button">Force Refresh</button>
+        <button id="fitKnowledgeGraphTop" class="button ghost" type="button">Fit</button>
+        <button id="focusKnowledgeGraph" class="button ghost" type="button">Focus</button>
+        <label class="knowledge-graph-toggle">
+          <input id="knowledgeGraphAutoRefresh" type="checkbox" checked>
+          <span>Auto</span>
+        </label>
+      </div>
+    </header>
+
+    <section class="panel knowledge-graph-summary-panel">
+      <div class="panel-head compact">
+        <div>
+          <h2 id="knowledgeGraphSourceTitle">Graph Context</h2>
+          <p id="knowledgeGraphStatusText">loading</p>
+        </div>
+        <span id="knowledgeGraphUpdated" class="muted">loading</span>
+      </div>
+      <div id="knowledgeGraphMetadataError" class="error-box hidden"></div>
+      <div id="knowledgeGraphProgress"></div>
+    </section>
+
+    <section class="panel knowledge-graph-panel">
+      <div class="knowledge-graph-toolbar">
+        <div class="knowledge-graph-control-group">
+          <span>Slice</span>
+          <label>
+            <span>Mode</span>
+            <select id="knowledgeGraphMode">
+              <option value="slice" selected>Compact slice</option>
+              <option value="full">Full overview</option>
+            </select>
+          </label>
+          <label>
+            <span>Flow</span>
+            <select id="knowledgeGraphFlowDomain">
+              <option value="CODE" selected>CODE</option>
+              <option value="">All domains</option>
+              <option value="TEST">TEST</option>
+              <option value="CONFIG">CONFIG</option>
+              <option value="WORKFLOW">WORKFLOW</option>
+              <option value="DATA">DATA</option>
+              <option value="DOC">DOC</option>
+              <option value="BUILD">BUILD</option>
+            </select>
+          </label>
+          <label>
+            <span>Direction</span>
+            <select id="knowledgeGraphDirection">
+              <option value="OUTBOUND" selected>Outbound</option>
+              <option value="INBOUND">Inbound</option>
+              <option value="BOTH">Both</option>
+            </select>
+          </label>
+          <label>
+            <span>Depth</span>
+            <select id="knowledgeGraphDepth">
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select>
+          </label>
+        </div>
+        <div class="knowledge-graph-control-group">
+          <span>Display</span>
+          <label>
+            <span>Density</span>
+            <select id="knowledgeGraphDensity">
+              <option value="compact" selected>Compact</option>
+              <option value="normal">Normal</option>
+              <option value="spacious">Spacious</option>
+            </select>
+          </label>
+          <label>
+            <span>Labels</span>
+            <select id="knowledgeGraphLabelsMode">
+              <option value="auto" selected>Auto</option>
+              <option value="all">All</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <label>
+            <span>External</span>
+            <select id="knowledgeGraphExternal">
+              <option value="collapsed" selected>Collapsed</option>
+              <option value="show">Show</option>
+              <option value="hide">Hide</option>
+            </select>
+          </label>
+          <label>
+            <span>Unresolved</span>
+            <select id="knowledgeGraphUnresolved">
+              <option value="summarize" selected>Summarize</option>
+              <option value="show">Show</option>
+              <option value="hide">Hide</option>
+            </select>
+          </label>
+          <label>
+            <span>Max</span>
+            <select id="knowledgeGraphMaxNodes">
+              <option value="20">20</option>
+              <option value="40">40</option>
+              <option value="80" selected>80</option>
+              <option value="120">120</option>
+              <option value="200">200</option>
+              <option value="0">All nodes</option>
+            </select>
+          </label>
+          <label>
+            <span>Isolated</span>
+            <select id="knowledgeGraphIsolated">
+              <option value="hide" selected>Hide</option>
+              <option value="show">Show</option>
+            </select>
+          </label>
+        </div>
+        <label class="knowledge-graph-search-field">
+          <span>Search</span>
+          <input id="knowledgeGraphSearch" type="search" placeholder="node, file, kind">
+        </label>
+        <div class="knowledge-graph-inline-actions">
+          <button id="fitKnowledgeGraph" class="button ghost dark small" type="button">Fit</button>
+          <button id="toggleKnowledgeGraphPanel" class="button ghost dark small" type="button">Panel</button>
+          <button id="showKnowledgeGraphEntrypoints" class="button ghost dark small" type="button">Entrypoints</button>
+          <button id="showKnowledgeGraphFull" class="button ghost dark small" type="button">Full</button>
+        </div>
+      </div>
+      <div id="knowledgeGraphError" class="error-box hidden"></div>
+      <div id="knowledgeGraphTruncated" class="knowledge-graph-warning hidden"></div>
+      <div id="knowledgeGraphLayout" class="knowledge-graph-layout preview-collapsed">
+        <div class="knowledge-graph-stage" id="knowledgeGraphStage">
+          <svg id="knowledgeGraphSvg" role="img" aria-label="Knowledge graph visualization"></svg>
+          <div id="knowledgeGraphLoading" class="knowledge-graph-loading">Loading graph...</div>
+          <div id="knowledgeGraphEmptyAction" class="knowledge-graph-empty-action hidden">
+            <strong>No graph facts yet.</strong>
+            <span>Use Analyze in the toolbar to build the graph.</span>
+          </div>
+        </div>
+        <aside id="knowledgeGraphPreview" class="knowledge-graph-preview">
+          <div class="knowledge-graph-preview-empty">
+            <h3>Selection</h3>
+            <p class="muted">Click a node or edge.</p>
+          </div>
+        </aside>
+      </div>
+      <div id="knowledgeGraphLegend" class="knowledge-graph-legend"></div>
+    </section>
+  </main>
+  <script src="./runtime-config.js"></script>
+  <script type="module" src="./operator-ui.js"></script>
+</body>
+</html>

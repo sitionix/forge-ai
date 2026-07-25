@@ -1,0 +1,4 @@
+{
+  "code": "INVALID_COMMAND",
+  "message": "Command text must not be empty"
+}

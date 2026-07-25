@@ -1,0 +1,73 @@
+forge:
+  ai:
+    home: ${FORGE_AI_HOME:.}
+    config-dir: ${FORGE_CONFIG_DIR:./config}
+    runtime-dir: ${FORGE_RUNTIME_DIR:./var}
+    workspace-root: ${FORGE_WORKSPACE_ROOT:..}
+    logging:
+      level: INFO
+      console-enabled: true
+      file-enabled: true
+      directory: ${FORGE_RUNTIME_DIR:./var}/logs
+    generative:
+      provider: ollama
+      base-url: http://localhost:11434
+      model: qwen2.5-coder:14b
+      context-tokens: 32768
+    query:
+      human-query:
+        request-timeout-seconds: ${FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS:180}
+    launcher:
+      default-base-url: ${FORGE_NEXUS_BASE_URL:http://127.0.0.1:9099/fgaisox}
+      services-config-resource: ${FORGE_SERVICES_CONFIG_RESOURCE:classpath:services.yaml}
+    infrastructure:
+      proxy:
+        knowledge-human-query-transport-grace: 5s
+        jarvis-query-transport-grace: 5s
+      jarvis:
+        enabled: true
+        base-url: ${FORGE_JARVIS_BASE_URL:http://127.0.0.1:7071}
+        connect-timeout: 2s
+        read-timeout: 120s
+      knowledge:
+        enabled: true
+        mode: http
+        base-url: ${FORGE_KNOWLEDGE_BASE_URL:http://127.0.0.1:7081}
+        connect-timeout: 2s
+        read-timeout: 120s
+    services:
+      knowledge:
+        host: 127.0.0.1
+        port: 7081
+        storage:
+          sqlite-path: ${FORGE_RUNTIME_DIR:./var}/knowledge/knowledge.sqlite
+        inventory:
+          source-catalog-path: ${FORGE_CONFIG_DIR:./config}/knowledge/knowledge-sources.yaml
+          service-catalog-path: ${FORGE_CONFIG_DIR:./config}/services.yaml
+          auto-refresh-enabled: true
+          auto-refresh-interval-seconds: 60
+        analysis:
+          enabled: true
+          request-timeout-seconds: 180
+          max-file-chars: 60000
+          max-chunk-chars: 20000
+          concurrency: 1
+          max-attempts-per-file: 3
+          repair-attempts-per-file: 1
+        semantic:
+          auto-build-interval-seconds: 60
+      jarvis:
+        host: 127.0.0.1
+        port: 7071
+        knowledge-base-url: http://127.0.0.1:7081
+        model-runtime:
+          request-timeout-seconds: 120
+        knowledge:
+          request-timeout-seconds: 120
+          human-query-transport-grace-seconds: 5
+        actions-file: ${FORGE_CONFIG_DIR:./config}/jarvis/allowed-actions.yaml
+        system-prompt-path: ${FORGE_CONFIG_DIR:./config}/jarvis/system-prompt.md
+      console:
+        api-mode: same-origin
+        status-poll-interval-ms: 15000
+        active-job-poll-interval-ms: 1500

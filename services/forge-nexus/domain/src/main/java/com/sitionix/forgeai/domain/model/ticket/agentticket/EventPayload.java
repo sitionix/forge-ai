@@ -1,0 +1,23 @@
+package com.sitionix.forgeai.domain.model.ticket.agentticket;
+
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.Set;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class EventPayload implements AgentTicketPayload {
+    private String reason;
+    private String scope;
+    private String summary;
+    private String eventName;
+    private Set<EventPayloadField> payloadFields;
+    private Set<String> consumers;
+    private Set<String> notes;
+}

@@ -25,14 +25,19 @@ log_step() {
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
-APP_CONFIG_FILE="${REPO_ROOT}/forge-ai/boot/src/main/resources/application.yml"
+APP_CONFIG_FILE="${REPO_ROOT}/forge-ai/services/forge-nexus/boot/src/main/resources/application.yml"
 SERVICES_FILE=""
 SKIP_FORGE_AI_REBUILD="${SKIP_FORGE_AI_REBUILD:-0}"
 FORGE_AI_DIR="${REPO_ROOT}/forge-ai"
 FORGE_AI_PID_FILE="${REPO_ROOT}/.forge-ai-local.pid"
 FORGE_AI_LOG_FILE="${REPO_ROOT}/.forge-ai-local.log"
-FORGE_AI_JAR_RELATIVE_PATH="boot/target/boot-0.0.1-SNAPSHOT.jar"
+FORGE_AI_JAR_RELATIVE_PATH="services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar"
 FORGE_AI_STARTED_LOCAL_THIS_RUN="0"
+FORGE_AI_MONGODB_URI="${MONGODB_URI:-mongodb://localhost:27019/forge_ai}"
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
 
 validate_repo_root() {
   [[ "$(pwd)" == "$REPO_ROOT" ]] || die "run this command from repository root: $REPO_ROOT"
@@ -48,7 +53,7 @@ resolve_services_file() {
 
   case "$services_resource" in
     classpath:*)
-      SERVICES_FILE="${REPO_ROOT}/forge-ai/boot/src/main/resources/${services_resource#classpath:}"
+      SERVICES_FILE="${REPO_ROOT}/forge-ai/services/forge-nexus/boot/src/main/resources/${services_resource#classpath:}"
       ;;
     *)
       die "unsupported services-config-resource format: $services_resource (expected classpath:...)"
@@ -214,7 +219,7 @@ start_local_forge_ai_process() {
     sleep 1
   fi
 
-  if docker compose ps --status running forge-ai-service | grep -q 'fgaisox-service'; then
+  if command_exists docker && docker compose ps --status running forge-ai-service 2>/dev/null | grep -q 'fgaisox-service'; then
     log_step "Stopping docker forge-ai-service to free port 9099 for local JVM..."
     docker compose stop forge-ai-service >/dev/null
   fi
@@ -224,7 +229,7 @@ start_local_forge_ai_process() {
     log_step "Building local Forge AI jar..."
     (
       cd "$FORGE_AI_DIR"
-      mvn -pl boot -am -DskipTests package
+      mvn -pl services/forge-nexus/boot -am -DskipTests package
     )
   else
     log_step "Starting without rebuild (using existing jar)..."
@@ -238,7 +243,7 @@ start_local_forge_ai_process() {
   : > "$FORGE_AI_LOG_FILE"
   (
     cd "$FORGE_AI_DIR"
-    WORKSPACE_ROOT="$REPO_ROOT" MONGODB_URI="mongodb://localhost:27018/forge_ai" java -jar "$FORGE_AI_JAR_RELATIVE_PATH"
+    WORKSPACE_ROOT="$REPO_ROOT" MONGODB_URI="$FORGE_AI_MONGODB_URI" java -jar "$FORGE_AI_JAR_RELATIVE_PATH"
   ) >>"$FORGE_AI_LOG_FILE" 2>&1 &
   echo "$!" > "$FORGE_AI_PID_FILE"
   FORGE_AI_STARTED_LOCAL_THIS_RUN="1"
@@ -256,8 +261,12 @@ ensure_forge_ai_up() {
     return 0
   fi
 
-  log_step "Starting MongoDB for Forge AI..."
-  just infra-up forge-ai-mongo
+  if [[ -n "${MONGODB_URI:-}" ]]; then
+    log_step "Using externally configured MongoDB for Forge AI: ${FORGE_AI_MONGODB_URI}"
+  else
+    require_command docker
+    log_step "MongoDB will be started by Spring Boot Docker Compose."
+  fi
 
   if [[ "$SKIP_FORGE_AI_REBUILD" != "1" ]]; then
     start_local_forge_ai_process "1"
@@ -327,6 +336,27 @@ start_task() {
     -H "X-Terminal-TTY: ${source_tty}" \
     -d "$payload")"
   printf '%s\n' "$response"
+
+  local created_ticket_id
+  local created_ticket_key
+  local watcher_id
+  created_ticket_id="$(jq -r '.id // .ticketId // empty' <<<"$response")"
+  created_ticket_key="$(jq -r '.ticket // .ticketKey // empty' <<<"$response")"
+  watcher_id="$(uuidgen)"
+  if [[ -n "$created_ticket_id" ]]; then
+    local existing_watcher_id
+    existing_watcher_id="$(curl -fsS "${url}/api/v1/forge-ai/operator/tickets/${created_ticket_id}" | jq -r '.run.watcherId // empty' 2>/dev/null || true)"
+    if [[ -n "$existing_watcher_id" ]]; then
+      echo "[forge-ai-start] ticket terminal already requested for ticketId=${created_ticket_id}, watcherId=${existing_watcher_id}"
+    else
+      echo "[forge-ai-start] opening ticket terminal for ticketId=${created_ticket_id}"
+      if ! bash "${SCRIPT_DIR}/forge-ai-open-ticket-terminal.sh" "$created_ticket_id" "$url" "$watcher_id" "minimal" "${created_ticket_key:-$created_ticket_id}"; then
+        echo "[forge-ai-start] Manual watcher command:"
+        echo "scripts/forge-ai-watch-ticket.sh ${created_ticket_id} ${url} ${watcher_id} minimal"
+      fi
+    fi
+  fi
+
   if [[ "$FORGE_AI_STARTED_LOCAL_THIS_RUN" == "1" ]]; then
     echo "[forge-ai-start] Forge AI app log tail:"
     tail -n 40 "$FORGE_AI_LOG_FILE" || true
@@ -340,7 +370,6 @@ main() {
   require_command fzf
   require_command curl
   require_command jq
-  require_command just
 
   validate_repo_root
 

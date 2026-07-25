@@ -2,8 +2,7 @@ name: Build
 
 on:
   push:
-    branches:
-      - develop
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
@@ -12,28 +11,82 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Maven verify
+  service:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: forge-knowledge
+            name: Forge Knowledge
+          - service: forge-jarvis
+            name: Forge Jarvis
+          - service: forge-console
+            name: Forge Console
+          - service: forge-nexus
+            name: Forge Nexus
+    env:
+      SERVICE: ${{ matrix.service }}
+      FORGE_AI_HOME: ${{ github.workspace }}
+      FORGE_CONFIG_DIR: ${{ github.workspace }}/config
+      FORGE_WORKSPACE_ROOT: ${{ github.workspace }}
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      MAVEN_REPOSITORY_USERNAME: ${{ vars.MAVEN_REPOSITORY_USERNAME }}
+      MAVEN_REPOSITORY_TOKEN: ${{ secrets.MAVEN_REPOSITORY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
-          distribution: 'zulu'
-          cache: 'maven'
+          java-version: "21"
+          distribution: "zulu"
+          cache: "maven"
 
-      - name: Create Maven settings for private GitHub Packages
+      - name: Run service checks
         shell: bash
-        env:
-          MAVEN_REPOSITORY_USERNAME: ${{ vars.MAVEN_REPOSITORY_USERNAME }}
-          MAVEN_REPOSITORY_TOKEN: ${{ secrets.MAVEN_REPOSITORY_TOKEN }}
         run: |
-          cat > .maven-settings.xml <<EOF
+          set -euo pipefail
+          export FORGE_RUNTIME_DIR="${RUNNER_TEMP}/forge-runtime"
+
+          case "${SERVICE}" in
+            forge-knowledge)
+              cd services/forge-knowledge
+              python -m pip install --upgrade pip
+              python -m pip install -e ".[test]"
+              python -m pytest
+              ;;
+
+            forge-jarvis)
+              cd services/forge-jarvis
+              python -m pip install --upgrade pip
+              python -m pip install -e ".[test]"
+              python -m pytest
+              ;;
+
+            forge-console)
+              cd services/forge-console
+              npm ci
+              npm run typecheck
+              npm test
+              npm run build
+              ;;
+
+            forge-nexus)
+              cat > .maven-settings.xml <<EOF
           <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                     xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
@@ -56,6 +109,11 @@ jobs:
             </servers>
           </settings>
           EOF
+              mvn -B -ntp -s .maven-settings.xml -pl services/forge-nexus/boot -am verify
+              ;;
 
-      - name: Build
-        run: mvn -B -ntp -s .maven-settings.xml verify
+            *)
+              echo "Unknown service: ${SERVICE}" >&2
+              exit 1
+              ;;
+          esac

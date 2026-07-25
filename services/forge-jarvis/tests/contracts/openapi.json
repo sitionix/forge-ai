@@ -1,0 +1,400 @@
+{
+  "components": {
+    "schemas": {
+      "CommandRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "CommandRequest",
+        "type": "object"
+      },
+      "CommandResponse": {
+        "properties": {
+          "execution": {
+            "$ref": "#/components/schemas/ExecutionResult"
+          },
+          "input": {
+            "title": "Input",
+            "type": "string"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/Intent"
+          }
+        },
+        "required": [
+          "input",
+          "intent",
+          "execution"
+        ],
+        "title": "CommandResponse",
+        "type": "object"
+      },
+      "ExecutionResult": {
+        "properties": {
+          "executed": {
+            "title": "Executed",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "output": {
+            "title": "Output",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executed",
+          "message"
+        ],
+        "title": "ExecutionResult",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Intent": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "minLength": 1,
+            "title": "Action",
+            "type": "string"
+          },
+          "arguments": {
+            "title": "Arguments",
+            "type": "object"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "Intent",
+        "type": "object"
+      },
+      "JarvisFlowAnswer": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "title": "Entrypoint",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "entrypoint",
+          "text"
+        ],
+        "title": "JarvisFlowAnswer",
+        "type": "object"
+      },
+      "JarvisHumanAnswerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "answerLanguage": {
+            "title": "Answerlanguage",
+            "type": "string"
+          },
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowAnswer"
+            },
+            "title": "Answers",
+            "type": "array"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "answerLanguage"
+        ],
+        "title": "JarvisHumanAnswerResponse",
+        "type": "object"
+      },
+      "JarvisQueryDiagnostic": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "metadata": {
+            "title": "Metadata",
+            "type": "object"
+          },
+          "severity": {
+            "default": "INFO",
+            "title": "Severity",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "JarvisQueryDiagnostic",
+        "type": "object"
+      },
+      "JarvisQueryIntent": {
+        "description": "An enumeration.",
+        "enum": [
+          "AUTO",
+          "FLOW_EXPLANATION"
+        ],
+        "title": "JarvisQueryIntent",
+        "type": "string"
+      },
+      "JarvisQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "answerLanguage": {
+            "title": "Answerlanguage",
+            "type": "string"
+          },
+          "includeTests": {
+            "default": false,
+            "title": "Includetests",
+            "type": "boolean"
+          },
+          "intent": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JarvisQueryIntent"
+              }
+            ],
+            "default": "AUTO"
+          },
+          "maxFlows": {
+            "default": 10,
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Maxflows",
+            "type": "integer"
+          },
+          "queryText": {
+            "minLength": 1,
+            "title": "Querytext",
+            "type": "string"
+          }
+        },
+        "required": [
+          "queryText"
+        ],
+        "title": "JarvisQueryRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/jarvis/actions": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Actions Api V1 Jarvis Actions Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/api/v1/jarvis/command": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/jarvis/query": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JarvisQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JarvisHumanAnswerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/jarvis/status": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Status Api V1 Jarvis Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    }
+  }
+}

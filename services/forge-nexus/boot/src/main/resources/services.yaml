@@ -1,0 +1,411 @@
+services:
+  athssox:
+    label: Authorisation Service SOX
+    path: authorisationservice-sox
+    tags: [java, spring-boot, backend, forge-it, http, postgresql, kafka]
+    contract_refs:
+      api:
+        source_repo: app-afesox
+        api_family: athssox
+        service_code: athssox
+        root: app-afesox/apis/athssox/rest/openapi.yml
+        schemas:
+          - app-afesox/apis/athssox/rest/schemas
+        operations:
+          - app-afesox/apis/athssox/rest/paths
+        generated_artifacts:
+          - app-afesox-athssox-api-first-stable
+        consumer_artifacts: []
+        frontend_packages: []
+      events:
+        source_repo: app-afesox
+        event_family: athssox
+        service_code: athssox
+        root: ""
+        topics:
+          - app-afesox/apis/athssox/event/topics
+        payloads:
+          - app-afesox/apis/athssox/event/payloads
+        generated_artifacts: []
+    group: backend
+    deploy:
+      type: service_and_db
+      repo: Sitionix/authorisationservice-sox
+      service:
+        name: authorisationservice-sox
+        healthcheck_url: http://127.0.0.1:9090/authsox/actuator/health
+        workflow_name: Service Deploy On Command
+        workflow_event: repository_dispatch
+      db:
+        name: auths_sox
+        workflow_name: DB Migrate On Command
+        workflow_event: repository_dispatch
+    db:
+      required: true
+      type: postgresql
+      mode: service_and_db
+      key: auths_sox
+    tests: [unit, it, e2e]
+  atmssox:
+    label: Automation Service SOX
+    path: automationservice-sox
+    tags: [java, spring-boot, backend, forge-it, http, postgresql]
+    domain_keywords: [automation, agent, agents, agent projects, project conversations, conversation participants, rules, definitions]
+    owns_business_areas: [Agents, Agent Projects, Project Conversations, Conversation persistence, Conversation participants]
+    architecture_refs: []
+    contract_refs:
+      api:
+        source_repo: app-afesox
+        api_family: atmssox
+        service_code: atmssox
+        root: app-afesox/apis/atmssox/rest/openapi.yml
+        schemas:
+          - app-afesox/apis/atmssox/rest/schemas
+        operations:
+          - app-afesox/apis/atmssox/rest/paths
+        generated_artifacts:
+          - app-afesox-atmssox-api-first-stable
+        consumer_artifacts:
+          - app-afesox-atmssox-client-stable
+        frontend_packages: []
+      events:
+        source_repo: app-afesox
+        event_family: atmssox
+        service_code: atmssox
+        root: ""
+        topics:
+          - app-afesox/apis/atmssox/event/topics
+        payloads:
+          - app-afesox/apis/atmssox/event/payloads
+        generated_artifacts: []
+    group: backend
+    deploy:
+      type: service_and_db
+      repo: Sitionix/automationservice-sox
+      service:
+        name: automationservice-sox
+        healthcheck_url: http://127.0.0.1:9083/atmssox/actuator/health
+        workflow_name: Service Deploy On Command
+        workflow_event: repository_dispatch
+      db:
+        name: atms_sox
+        workflow_name: DB Migrate On Command
+        workflow_event: repository_dispatch
+    db:
+      required: true
+      type: postgresql
+      mode: service_and_db
+      key: atms_sox
+    tests: [unit, it, e2e]
+  forge-ai:
+    label: Forge AI Service SOX
+    path: forge-ai
+    tags: [java, spring-boot, backend, forge-it, http, mongodb]
+    domain_keywords: [forge ai, ai, ping, mongodb]
+    owns_business_areas: [Forge AI API, Forge AI Mongo persistence]
+    architecture_refs: []
+    contract_refs:
+      api:
+        source_repo: app-afesox
+        api_family: fgaisox
+        service_code: fgaisox
+        root: app-afesox/apis/fgaisox/rest/openapi.yml
+        schemas:
+          - app-afesox/apis/fgaisox/rest/schemas
+        operations:
+          - app-afesox/apis/fgaisox/rest/paths
+        generated_artifacts:
+          - app-afesox-fgaisox-api-first-stable
+        consumer_artifacts: []
+        frontend_packages: []
+    group: backend
+    deploy:
+      type: service
+      repo: Sitionix/forge-ai
+      service:
+        name: forge-ai
+        healthcheck_url: http://127.0.0.1:9099/fgaisox/actuator/health
+        workflow_name: Service Deploy On Command
+        workflow_event: repository_dispatch
+    db:
+      required: true
+      type: mongodb
+      mode: service
+      key: forge_ai
+    tests: [unit, it, e2e]
+  bffssox:
+    label: Backend for Frontend Service SOX
+    path: backendforfrontendservice-sox
+    tags: [java, spring-boot, backend, http]
+    domain_keywords: [bff, proxy, session, csrf, frontend api, error mapping, user context propagation]
+    owns_business_areas: [BFF API boundary, SPA-facing endpoints, upstream proxying, session/auth propagation]
+    architecture_refs: []
+    contract_refs:
+      api:
+        source_repo: app-afesox
+        api_family: bffssox
+        service_code: bffssox
+        root: app-afesox/apis/bffssox/rest/openapi.yml
+        schemas:
+          - app-afesox/apis/bffssox/rest/schemas
+        operations:
+          - app-afesox/apis/bffssox/rest/paths
+        generated_artifacts:
+          - app-afesox-bffssox-api-first-stable
+        consumer_artifacts: []
+        frontend_packages:
+          - '@sitionix/app-afesox-bffssox-frontend-stable'
+      events:
+        source_repo: app-afesox
+        event_family: bffssox
+        service_code: bffssox
+        root: ""
+        topics: []
+        payloads: []
+        generated_artifacts: []
+    group: backend
+    deploy:
+      type: service
+      repo: Sitionix/backendforfrontendservice-sox
+      service:
+        name: backendforfrontendservice-sox
+        healthcheck_url: http://127.0.0.1:8080/bffssox/actuator/health
+        workflow_name: Service Deploy On Command
+        workflow_event: repository_dispatch
+    db:
+      required: false
+      type: none
+      mode: service
+    tests: [unit, it, e2e]
+  ntfssox:
+    label: Notification Service SOX
+    path: notificationservice-sox
+    tags: [java, spring-boot, backend, forge-it, kafka, consumer, wiremock]
+    domain_keywords: [notifications, delivery, consumer, templates, channels]
+    owns_business_areas: [Notification processing, Notification delivery flow, Notification transport it]
+    architecture_refs: []
+    contract_refs:
+      api:
+        source_repo: app-afesox
+        api_family: ntfssox
+        service_code: ntfssox
+        root: app-afesox/apis/ntfssox/rest/openapi.yml
+        schemas:
+          - app-afesox/apis/ntfssox/rest/schemas
+        operations:
+          - app-afesox/apis/ntfssox/rest/paths
+        generated_artifacts:
+          - app-afesox-ntfssox-api-first-stable
+        consumer_artifacts:
+          - app-afesox-bffssox-client-stable
+        frontend_packages: []
+      events:
+        source_repo: app-afesox
+        event_family: ntfssox
+        service_code: ntfssox
+        root: ""
+        topics:
+          - app-afesox/apis/ntfssox/event/topics
+        payloads:
+          - app-afesox/apis/ntfssox/event/payloads
+        generated_artifacts: []
+    group: backend
+    deploy:
+      type: service
+      repo: Sitionix/notificationservice-sox
+      service:
+        name: notificationservice-sox
+        healthcheck_url: http://127.0.0.1:7070/actuator/health
+        workflow_name: Service Deploy On Command
+        workflow_event: repository_dispatch
+    db:
+      required: false
+      type: none
+      mode: service
+    tests: [unit, it, e2e]
+  stsssox:
+    label: Site Service SOX
+    path: siteservice-sox
+    tags: [java, spring-boot, backend, forge-it, http, postgresql, outbox, kafka]
+    domain_keywords: [site, tenant, workspace, metadata]
+    owns_business_areas: [Site domain, Site persistence, Site lifecycle]
+    architecture_refs: []
+    contract_refs:
+      api:
+        source_repo: app-afesox
+        api_family: stsssox
+        service_code: stsssox
+        root: app-afesox/apis/stsssox/rest/openapi.yml
+        schemas:
+          - app-afesox/apis/stsssox/rest/schemas
+        operations:
+          - app-afesox/apis/stsssox/rest/paths
+        generated_artifacts:
+          - app-afesox-stsssox-api-first-stable
+        consumer_artifacts: []
+        frontend_packages: []
+      events:
+        source_repo: app-afesox
+        event_family: stsssox
+        service_code: stsssox
+        root: ""
+        topics:
+          - app-afesox/apis/stsssox/event/topics
+        payloads:
+          - app-afesox/apis/stsssox/event/payloads
+        generated_artifacts: []
+    group: backend
+    deploy:
+      type: service_and_db
+      repo: Sitionix/siteservice-sox
+      service:
+        name: siteservice-sox
+        healthcheck_url: http://127.0.0.1:9080/stsssox/actuator/health
+        workflow_name: Service Deploy On Command
+        workflow_event: repository_dispatch
+      db:
+        name: stss_sox
+        workflow_name: DB Migrate On Command
+        workflow_event: repository_dispatch
+    db:
+      required: true
+      type: postgresql
+      mode: service_and_db
+      key: stss_sox
+    tests: [unit, it, e2e]
+  wagssox:
+    label: Workspace Aggregation Service SOX
+    path: workspaceaggregationservice-sox
+    tags: [java, spring-boot, backend, forge-it, http, postgresql, kafka, projection]
+    domain_keywords: [workspace, aggregation, projection, read model]
+    owns_business_areas: [Workspace projections, Aggregated read models, Workspace query surface]
+    architecture_refs: []
+    contract_refs:
+      api:
+        source_repo: app-afesox
+        api_family: wagssox
+        service_code: wagssox
+        root: app-afesox/apis/wagssox/rest/openapi.yml
+        schemas:
+          - app-afesox/apis/wagssox/rest/schemas
+        operations:
+          - app-afesox/apis/wagssox/rest/paths
+        generated_artifacts:
+          - app-afesox-wagssox-api-first-stable
+        consumer_artifacts: []
+        frontend_packages: []
+      events:
+        source_repo: app-afesox
+        event_family: wagssox
+        service_code: wagssox
+        root: ""
+        topics:
+          - app-afesox/apis/wagssox/event/topics
+        payloads:
+          - app-afesox/apis/wagssox/event/payloads
+        generated_artifacts: []
+    group: backend
+    deploy:
+      type: service_and_db
+      repo: Sitionix/workspaceaggregationservice-sox
+      service:
+        name: workspaceaggregationservice-sox
+        healthcheck_url: http://127.0.0.1:9082/wagssox/actuator/health
+        workflow_name: Service Deploy On Command
+        workflow_event: repository_dispatch
+      db:
+        name: wags_sox
+        workflow_name: DB Migrate On Command
+        workflow_event: repository_dispatch
+    db:
+      required: true
+      type: postgresql
+      mode: service_and_db
+      key: wags_sox
+    tests: [unit, it, e2e]
+  sitionix-spa:
+    label: Sitionix SPA
+    path: sitionix-spa
+    tags: [frontend, pnpm, react, monorepo]
+    domain_keywords: [routes, pages, components, ui, interactions, workspace, project details, conversations section, modal, sheet, selected state]
+    owns_business_areas: [Workspace UI, Project Details UI, Project Conversation UI, Frontend routes/components]
+    architecture_refs: []
+    contract_refs:
+      api:
+        source_repo: app-afesox
+        api_family: bffssox
+        service_code: bffssox
+        root: app-afesox/apis/bffssox/rest/openapi.yml
+        schemas:
+          - app-afesox/apis/bffssox/rest/schemas
+        operations:
+          - app-afesox/apis/bffssox/rest/paths
+        generated_artifacts:
+          - app-afesox-bffssox-api-first-stable
+        consumer_artifacts: []
+        frontend_packages:
+          - '@sitionix/app-afesox-bffssox-frontend-stable'
+      events:
+        source_repo: app-afesox
+        event_family: ""
+        service_code: ""
+        root: ""
+        topics: []
+        payloads: []
+        generated_artifacts: []
+    group: frontend
+    deploy:
+      type: frontend
+      repo: Sitionix/sitionix-spa
+      service:
+        mode: all
+        healthcheck_url: http://127.0.0.1:3000
+        workflow_name: Frontend Deploy On Comment
+        workflow_event: issue_comment
+    db:
+      required: false
+      type: none
+      mode: frontend
+    tests: [unit]
+  app-afesox:
+    label: App AFESOX Contracts
+    path: app-afesox
+    repo: Sitionix/app-afesox
+    tags: [api-first, contracts, openapi, events, maven]
+    group: tool
+  forge-it:
+    label: Forge IT
+    path: forge-it
+    tags: [java, maven, test-toolkit, forge-it]
+    group: tool
+    deploy:
+      type: library
+    db:
+      required: false
+      type: none
+      mode: library
+    tests: [unit, it]
+  forge-common:
+    label: Forge Common
+    path: forge-common
+    tags: [java, maven, shared-library, inbox, outbox]
+    group: tool
+    deploy:
+      type: library
+    db:
+      required: false
+      type: none
+      mode: library
+    tests: [unit, it]
+  forge-security:
+    label: Forge Security
+    path: forge-security
+    tags: [java, maven, shared-library, security]
+    group: tool
+    deploy:
+      type: library
+    db:
+      required: false
+      type: none
+      mode: library
+    tests: [unit, it]

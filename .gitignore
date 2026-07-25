@@ -9,3 +9,23 @@
 # Build output
 target/
 **/target/
+.m2/
+services/forge-console/dist/
+services/forge-console/node_modules/
+
+# Python / Jarvis local module
+services/forge-jarvis/.venv/
+services/forge-jarvis/src/*.egg-info/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Python / Knowledge local module
+services/forge-knowledge/.venv/
+services/forge-knowledge/src/*.egg-info/
+
+# Local runtime state
+var/
+*.pid
+*.log
+config/local.yaml

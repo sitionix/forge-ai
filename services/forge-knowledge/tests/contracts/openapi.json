@@ -1,0 +1,1973 @@
+{
+  "components": {
+    "schemas": {
+      "AnalysisBuildRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "concurrency": {
+            "default": 1,
+            "title": "Concurrency",
+            "type": "integer"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "maxFiles": {
+            "title": "Maxfiles",
+            "type": "integer"
+          },
+          "selection": {
+            "default": "DEFAULT",
+            "title": "Selection",
+            "type": "string"
+          },
+          "sourceIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourceids",
+            "type": "array"
+          }
+        },
+        "title": "AnalysisBuildRequest",
+        "type": "object"
+      },
+      "ContextRequest": {
+        "properties": {
+          "groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "includeContent": {
+            "default": true,
+            "title": "Includecontent",
+            "type": "boolean"
+          },
+          "maxChars": {
+            "default": 12000,
+            "maximum": 50000.0,
+            "minimum": 1000.0,
+            "title": "Maxchars",
+            "type": "integer"
+          },
+          "maxItems": {
+            "default": 12,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Maxitems",
+            "type": "integer"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "sourceIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourceids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "ContextRequest",
+        "type": "object"
+      },
+      "FlowToolEvidence": {
+        "properties": {
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "lineEnd": {
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "title": "FlowToolEvidence",
+        "type": "object"
+      },
+      "FlowToolTree": {
+        "properties": {
+          "entrypoint": {
+            "$ref": "#/components/schemas/FlowToolTreeItem"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "entrypoint"
+        ],
+        "title": "FlowToolTree",
+        "type": "object"
+      },
+      "FlowToolTreeItem": {
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolTreeItem"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "cycle": {
+            "title": "Cycle",
+            "type": "boolean"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "lineEnd": {
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "shared": {
+            "title": "Shared",
+            "type": "boolean"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/FlowToolTrigger"
+          }
+        },
+        "required": [
+          "symbol",
+          "kind"
+        ],
+        "title": "FlowToolTreeItem",
+        "type": "object"
+      },
+      "FlowToolTrigger": {
+        "properties": {
+          "interfaceMethod": {
+            "title": "Interfacemethod",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "schedule": {
+            "title": "Schedule",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FlowToolTrigger",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "InventoryBuildRequest": {
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "sourceIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourceids",
+            "type": "array"
+          }
+        },
+        "title": "InventoryBuildRequest",
+        "type": "object"
+      },
+      "KnowledgeFlowAnswer": {
+        "properties": {
+          "entrypoint": {
+            "title": "Entrypoint",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "entrypoint",
+          "text"
+        ],
+        "title": "KnowledgeFlowAnswer",
+        "type": "object"
+      },
+      "KnowledgeHumanQueryResponse": {
+        "properties": {
+          "answerLanguage": {
+            "title": "Answerlanguage",
+            "type": "string"
+          },
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeFlowAnswer"
+            },
+            "title": "Answers",
+            "type": "array"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "answerLanguage"
+        ],
+        "title": "KnowledgeHumanQueryResponse",
+        "type": "object"
+      },
+      "KnowledgeQueryDiagnostic": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "metadata": {
+            "title": "Metadata",
+            "type": "object"
+          },
+          "severity": {
+            "default": "INFO",
+            "title": "Severity",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "KnowledgeQueryDiagnostic",
+        "type": "object"
+      },
+      "KnowledgeQueryIntent": {
+        "description": "An enumeration.",
+        "enum": [
+          "AUTO",
+          "FLOW_EXPLANATION"
+        ],
+        "title": "KnowledgeQueryIntent",
+        "type": "string"
+      },
+      "KnowledgeQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "answerLanguage": {
+            "title": "Answerlanguage",
+            "type": "string"
+          },
+          "includeTests": {
+            "default": false,
+            "title": "Includetests",
+            "type": "boolean"
+          },
+          "intent": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeQueryIntent"
+              }
+            ],
+            "default": "AUTO"
+          },
+          "maxFlows": {
+            "default": 10,
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Maxflows",
+            "type": "integer"
+          },
+          "queryText": {
+            "minLength": 1,
+            "title": "Querytext",
+            "type": "string"
+          }
+        },
+        "required": [
+          "queryText"
+        ],
+        "title": "KnowledgeQueryRequest",
+        "type": "object"
+      },
+      "KnowledgeQueryToolContextResponse": {
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "queryText": {
+            "title": "Querytext",
+            "type": "string"
+          },
+          "trees": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolTree"
+            },
+            "title": "Trees",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queryText"
+        ],
+        "title": "KnowledgeQueryToolContextResponse",
+        "type": "object"
+      },
+      "RetryFailedAnalysisRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "concurrency": {
+            "default": 1,
+            "title": "Concurrency",
+            "type": "integer"
+          },
+          "idempotencyKey": {
+            "title": "Idempotencykey",
+            "type": "string"
+          },
+          "sourceIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourceids",
+            "type": "array"
+          }
+        },
+        "title": "RetryFailedAnalysisRequest",
+        "type": "object"
+      },
+      "SemanticIndexBuildRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "async": {
+            "default": true,
+            "title": "Async",
+            "type": "boolean"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "sourceIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourceids",
+            "type": "array"
+          }
+        },
+        "title": "SemanticIndexBuildRequest",
+        "type": "object"
+      },
+      "SemanticIndexBuildResponse": {
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "jobId": {
+            "title": "Jobid",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "sourceIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourceids",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId",
+          "status"
+        ],
+        "title": "SemanticIndexBuildResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/knowledge/analysis/build": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisBuildRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Build Api V1 Knowledge Analysis Build Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/current-file-progress": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Current File Progress Api V1 Knowledge Analysis Current File Progress Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/diagnostics": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500.0,
+              "minimum": 1.0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0.0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Diagnostics Api V1 Knowledge Analysis Diagnostics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/files": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pathContains",
+            "required": false,
+            "schema": {
+              "title": "Pathcontains",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000.0,
+              "minimum": 1.0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0.0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Files Api V1 Knowledge Analysis Files Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/graph/edge/{edge_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "edge_id",
+            "required": true,
+            "schema": {
+              "title": "Edge Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "graphRevision",
+            "required": true,
+            "schema": {
+              "title": "Graphrevision",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeEvidence",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Includeevidence",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/graph/edges": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "graphRevision",
+            "required": true,
+            "schema": {
+              "title": "Graphrevision",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "title": "Cursor",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 5000.0,
+              "minimum": 1.0,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flowDomain",
+            "required": false,
+            "schema": {
+              "title": "Flowdomain",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "factOrigin",
+            "required": false,
+            "schema": {
+              "title": "Factorigin",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgeType",
+            "required": false,
+            "schema": {
+              "title": "Edgetype",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeExternal",
+            "required": false,
+            "schema": {
+              "default": "show",
+              "title": "Includeexternal",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeUnresolved",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includeunresolved",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "title": "Search",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/graph/manifest": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flowDomain",
+            "required": false,
+            "schema": {
+              "title": "Flowdomain",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "factOrigin",
+            "required": false,
+            "schema": {
+              "title": "Factorigin",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "nodeKind",
+            "required": false,
+            "schema": {
+              "title": "Nodekind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgeType",
+            "required": false,
+            "schema": {
+              "title": "Edgetype",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeExternal",
+            "required": false,
+            "schema": {
+              "default": "show",
+              "title": "Includeexternal",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeUnresolved",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includeunresolved",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeIsolated",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includeisolated",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "title": "Search",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/graph/metadata": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Graph Metadata Api V1 Knowledge Analysis Graph Metadata Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/graph/node/{node_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "graphRevision",
+            "required": true,
+            "schema": {
+              "title": "Graphrevision",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeEvidence",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Includeevidence",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/graph/nodes": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "graphRevision",
+            "required": true,
+            "schema": {
+              "title": "Graphrevision",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "title": "Cursor",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 5000.0,
+              "minimum": 1.0,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flowDomain",
+            "required": false,
+            "schema": {
+              "title": "Flowdomain",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "factOrigin",
+            "required": false,
+            "schema": {
+              "title": "Factorigin",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "nodeKind",
+            "required": false,
+            "schema": {
+              "title": "Nodekind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeExternal",
+            "required": false,
+            "schema": {
+              "default": "show",
+              "title": "Includeexternal",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeUnresolved",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includeunresolved",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeIsolated",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includeisolated",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "title": "Search",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/graph/view": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flowDomain",
+            "required": false,
+            "schema": {
+              "title": "Flowdomain",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "factOrigin",
+            "required": false,
+            "schema": {
+              "title": "Factorigin",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "nodeKind",
+            "required": false,
+            "schema": {
+              "title": "Nodekind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgeType",
+            "required": false,
+            "schema": {
+              "title": "Edgetype",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeExternal",
+            "required": false,
+            "schema": {
+              "default": "show",
+              "title": "Includeexternal",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeUnresolved",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includeunresolved",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeIsolated",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includeisolated",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "title": "Search",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "maxNodes",
+            "required": false,
+            "schema": {
+              "default": 80,
+              "maximum": 5000.0,
+              "minimum": 0.0,
+              "title": "Maxnodes",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/jobs/{job_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Job Api V1 Knowledge Analysis Jobs  Job Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/jobs/{job_id}/stop": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Job Stop Api V1 Knowledge Analysis Jobs  Job Id  Stop Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/retry-failed": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryFailedAnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Retry Failed Api V1 Knowledge Analysis Retry Failed Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/status": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "includeFreshness",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Includefreshness",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Status Api V1 Knowledge Analysis Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/context": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Context Api V1 Knowledge Context Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/inventory/build": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryBuildRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Inventory Build Api V1 Knowledge Inventory Build Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/inventory/files": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pathContains",
+            "required": false,
+            "schema": {
+              "title": "Pathcontains",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "extension",
+            "required": false,
+            "schema": {
+              "title": "Extension",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000.0,
+              "minimum": 1.0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0.0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Inventory Files Api V1 Knowledge Inventory Files Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/inventory/status": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Inventory Status Api V1 Knowledge Inventory Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/overview": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Overview Api V1 Knowledge Overview Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/query": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeHumanQueryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/query/tool-context": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeQueryToolContextResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/semantic/index/build": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SemanticIndexBuildRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SemanticIndexBuildResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/semantic/index/jobs/{job_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SemanticIndexBuildResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/sources": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Sources Api V1 Knowledge Sources Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/status": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "includeFreshness",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Includefreshness",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Status Api V1 Knowledge Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "queryText": "Public Entry",
+  "trees": [
+    {
+      "source": "source-a",
+      "entrypoint": {
+        "symbol": "PublicEntry.start",
+        "kind": "HTTP_ENDPOINT",
+        "path": "src/PublicEntry.java",
+        "lineStart": 10,
+        "lineEnd": 15,
+        "description": "Receives the public request.",
+        "evidence": [
+          {
+            "path": "src/PublicEntry.java",
+            "lineStart": 10,
+            "lineEnd": 15,
+            "excerpt": "@PostMapping public Response start()"
+          }
+        ],
+        "children": [
+          {
+            "symbol": "WorkerA.run",
+            "kind": "METHOD",
+            "path": "src/WorkerA.java",
+            "lineStart": 20,
+            "lineEnd": 24,
+            "description": "Handles branch A.",
+            "evidence": [],
+            "children": [
+              {
+                "symbol": "PaymentApi",
+                "kind": "EXTERNAL_CALL",
+                "path": null,
+                "lineStart": null,
+                "lineEnd": null,
+                "description": "Calls an external client boundary.",
+                "evidence": [],
+                "children": []
+              }
+            ]
+          },
+          {
+            "symbol": "dynamicMapper",
+            "kind": "UNRESOLVED_CALL",
+            "path": null,
+            "lineStart": null,
+            "lineEnd": null,
+            "description": null,
+            "evidence": [],
+            "children": []
+          }
+        ]
+      }
+    }
+  ],
+  "diagnostics": []
+}

@@ -1,0 +1,23 @@
+{
+  "apiMode": "same-origin",
+  "operatorUiApiBasePath": "/api/v1/forge-ai/operator/ui",
+  "operatorApiBasePath": "/api/v1/forge-ai/operator",
+  "infrastructureApiBasePath": "/api/v1/infrastructure",
+  "statusPollIntervalMs": 15000,
+  "activeJobPollIntervalMs": 1500,
+  "graphPollIntervalMs": 30000,
+  "jarvisQueryIncludeTests": false,
+  "graphCacheEnabled": true,
+  "graphCacheMaxRevisions": 3,
+  "graphCacheMaxAgeSeconds": 86400,
+  "graphFetchConcurrency": 2,
+  "graphNodePageSize": 500,
+  "graphEdgePageSize": 1000,
+  "graphFitPaddingPx": 40,
+  "graphFitZoomAllowance": 0.85,
+  "graphZoomSensitivity": 1,
+  "graphNodeLabelZoomThreshold": 0.7,
+  "graphEdgeLabelZoomThreshold": 1.4,
+  "graphLayoutWorkerEnabled": true,
+  "graphTablePageSize": 120
+}

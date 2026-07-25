@@ -1,0 +1,9 @@
+catalog:
+  type: service_catalog
+  path: "${FORGE_CONFIG_DIR}/services.yaml"
+  workspace_root: "${FORGE_WORKSPACE_ROOT}"
+
+selection:
+  include_groups: []
+  include_services: []
+  exclude_services: []

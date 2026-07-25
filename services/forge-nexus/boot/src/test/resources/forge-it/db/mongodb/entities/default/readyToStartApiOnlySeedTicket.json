@@ -1,0 +1,21 @@
+{
+  "id": "aaaaaaaa-1111-1111-1111-111111111111",
+  "ticketKey": "SITIONIX-API-1",
+  "taskDescription": "ready api lane only",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "READY_TO_START",
+  "lanes": [
+    {
+      "id": "bbbbbbbb-2222-2222-2222-222222222222",
+      "type": "API",
+      "scope": "GLOBAL",
+      "serviceId": "global",
+      "status": "READY_TO_START",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": []
+    }
+  ],
+  "createdAt": "2026-01-01T10:00:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}

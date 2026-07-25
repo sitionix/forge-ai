@@ -1,0 +1,26 @@
+catalog:
+  type: service_catalog
+  path: "${FORGE_CONFIG_DIR}/services.yaml"
+  workspace_root: "${FORGE_WORKSPACE_ROOT}"
+
+selection:
+  include_groups: []
+  include_services: []
+  exclude_services: []
+
+indexing:
+  include:
+    - "**/*.java"
+    - "**/*.kt"
+    - "**/*.ts"
+    - "**/*.tsx"
+    - "**/*.js"
+    - "**/*.md"
+    - "**/*.yaml"
+    - "**/*.yml"
+    - "**/*.json"
+    - "**/*.xml"
+    - "**/pom.xml"
+    - "**/README*"
+  exclude_exceptions:
+    - "target/generated-sources/src/main/java/**/*.java"

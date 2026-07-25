@@ -1,0 +1,12 @@
+actions:
+  system_status:
+    description: "Show basic local system status"
+    targets:
+      basic:
+        command: ["bash", "-lc", "uptime && free -h && df -h /"]
+
+  ollama_status:
+    description: "Check Ollama local API"
+    targets:
+      health:
+        command: ["bash", "-lc", "curl -s http://localhost:11434/api/tags >/dev/null && echo 'Ollama is reachable'"]

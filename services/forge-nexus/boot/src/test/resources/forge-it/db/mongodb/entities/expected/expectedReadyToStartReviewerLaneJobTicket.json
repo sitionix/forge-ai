@@ -1,0 +1,34 @@
+{
+  "ticketKey": "SITIONIX-11",
+  "taskDescription": "ready reviewer job",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "RESOLVED",
+  "lanes": [
+    {
+      "type": "TEST_UNIT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "COMPLETED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "REVIEWER",
+      "scope": "GLOBAL",
+      "serviceId": "global",
+      "status": "COMPLETED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "TEST_UNIT",
+          "scope": "automationservice-sox"
+        }
+      ]
+    }
+  ]
+}

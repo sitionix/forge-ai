@@ -1,0 +1,60 @@
+{
+  "summary": "API completion payload missing required dependency evidence",
+  "contracts": [
+    {
+      "scope": "backendforfrontendservice-sox",
+      "summary": "BFF flow contract",
+      "operationId": "getAgentProjectFlow",
+      "method": "GET",
+      "path": "/api/v1/agent-projects/{projectId}/flow",
+      "clientClass": "AgentProjectApi",
+      "requestDto": "",
+      "responseDto": "AgentProjectFlowResponseDTO",
+      "artifacts": [
+        {
+          "kind": "MAVEN",
+          "role": "API_FIRST",
+          "groupId": "com.afesox",
+          "artifactId": "app-afesox-bffssox-api-first-sitionix-142-unstable",
+          "packageName": "",
+          "version": "0.0.43",
+          "dependency": "<dependency>...bff...</dependency>",
+          "notes": [],
+          "runId": 1
+        }
+      ],
+      "notes": []
+    },
+    {
+      "scope": "automationservice-sox",
+      "summary": "Automation flow contract",
+      "operationId": "getAgentProjectFlow",
+      "method": "GET",
+      "path": "/api/v1/agent-projects/{projectId}/flow",
+      "clientClass": "AgentProjectApi",
+      "requestDto": "",
+      "responseDto": "AgentProjectFlowDTO",
+      "artifacts": [
+        {
+          "kind": "MAVEN",
+          "role": "API_FIRST",
+          "groupId": "com.afesox",
+          "artifactId": "app-afesox-atmssox-api-first-sitionix-142-unstable",
+          "packageName": "",
+          "version": "0.0.29",
+          "dependency": "<dependency>...atms...</dependency>",
+          "notes": [],
+          "runId": 1
+        }
+      ],
+      "notes": [
+        "Contract exists but evidence dependency misses required automation scope"
+      ]
+    }
+  ],
+  "notes": [
+    "Negative case"
+  ],
+  "prUrl": "https://github.com/sitionix/app-afesox/pull/164",
+  "repo": "sitionix/app-afesox"
+}

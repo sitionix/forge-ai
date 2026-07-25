@@ -1,0 +1,89 @@
+{
+  "ticketKey": "SITIONIX-2",
+  "taskDescription": "frontend task",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "READY_TO_START",
+  "lanes": [
+    {
+      "type": "ANALYZER",
+      "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
+      "status": "READY_TO_START",
+      "attempt": 0,
+      "dependsOn": []
+    },
+    {
+      "type": "ARCHITECT",
+      "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "sitionix-spa"
+        }
+      ]
+    },
+    {
+      "type": "API",
+      "scope": "GLOBAL",
+      "serviceId": "global",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "sitionix-spa"
+        }
+      ]
+    },
+    {
+      "type": "QA_LEAD",
+      "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "sitionix-spa"
+        }
+      ]
+    },
+    {
+      "type": "IMPLEMENT_FE",
+      "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "sitionix-spa"
+        },
+        {
+          "type": "API",
+          "scope": "GLOBAL"
+        }
+      ]
+    },
+    {
+      "type": "TEST_UI",
+      "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_FE",
+          "scope": "sitionix-spa"
+        },
+        {
+          "type": "QA_LEAD",
+          "scope": "sitionix-spa"
+        }
+      ]
+    }
+  ]
+}

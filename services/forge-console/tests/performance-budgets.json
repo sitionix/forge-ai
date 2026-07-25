@@ -1,0 +1,20 @@
+{
+  "knowledgeGraphInteraction": {
+    "nodes400Edges1200": {
+      "panP95FrameMs": 32,
+      "zoomP95FrameMs": 32,
+      "maxMainThreadTaskMs": 150
+    },
+    "nodes1000Edges3000": {
+      "panP95FrameMs": 50,
+      "zoomP95FrameMs": 50,
+      "maxMainThreadTaskMs": 250
+    },
+    "nodes2000Edges6000": {
+      "maxMainThreadTaskMs": 500,
+      "requiresNoLayoutDuringInteraction": true,
+      "requiresNoDataReloadDuringInteraction": true,
+      "requiresNoFullRebuildDuringInteraction": true
+    }
+  }
+}

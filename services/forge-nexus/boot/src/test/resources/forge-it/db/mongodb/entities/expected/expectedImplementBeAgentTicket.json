@@ -1,0 +1,18 @@
+{
+  "status": "CREATED",
+  "scope": "automationservice-sox",
+  "agent": "IMPLEMENT_BE",
+  "sourceLaneId": "66666666-6666-6666-6666-666666666666",
+  "payload": {
+    "task": "implement task",
+    "scope": "automationservice-sox",
+    "summary": "implement summary",
+    "requirements": ["r1"],
+    "constraints": ["c1"],
+    "nonGoals": ["n1"],
+    "architectureDecision": "decision",
+    "dependencies": ["d1"],
+    "acceptanceNotes": ["a1"],
+    "risks": ["risk1"]
+  }
+}

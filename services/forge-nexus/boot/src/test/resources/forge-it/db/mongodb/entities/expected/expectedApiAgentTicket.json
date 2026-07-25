@@ -1,0 +1,41 @@
+{
+  "status": "CREATED",
+  "scope": "GLOBAL",
+  "agent": "API",
+  "sourceLaneId": "66666666-6666-6666-6666-666666666666",
+  "payload": {
+    "reason": "required",
+    "scope": "automationservice-sox",
+    "summary": "api summary",
+    "operations": [
+      {
+        "intent": "create",
+        "method": "POST",
+        "path": "/api/v1/agent-actions",
+        "parameters": null,
+        "request": {
+          "fields": [
+            {
+              "name": "title",
+              "required": true,
+              "type": "string",
+              "description": "title"
+            }
+          ]
+        },
+        "response": {
+          "fields": [
+            {
+              "name": "id",
+              "required": true,
+              "type": "string",
+              "description": "id"
+            }
+          ]
+        }
+      }
+    ],
+    "consumers": ["backendforfrontendservice-sox"],
+    "notes": ["note1"]
+  }
+}

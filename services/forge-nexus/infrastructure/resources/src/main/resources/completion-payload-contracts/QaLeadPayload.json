@@ -1,0 +1,14 @@
+{
+  "payloadType": "QaLeadPayload",
+  "description": "Analyzer output used as QA lead input for test planning in one service scope.",
+  "fields": [
+    { "name": "scope", "type": "STRING", "required": true, "description": "Exact target service scope for QA planning." },
+    { "name": "requirements", "type": "ARRAY", "required": true, "description": "Functional requirements that must be verified by tests.", "itemType": "STRING" },
+    { "name": "constraints", "type": "ARRAY", "required": true, "description": "Testing constraints and boundaries that QA must respect.", "itemType": "STRING" },
+    { "name": "nonGoals", "type": "ARRAY", "required": true, "description": "Work that QA should not request or validate in this ticket.", "itemType": "STRING" },
+    { "name": "risks", "type": "ARRAY", "required": true, "description": "Risk areas that should influence QA focus.", "itemType": "STRING" },
+    { "name": "dependencies", "type": "ARRAY", "required": true, "description": "Dependent services, APIs, events, persistence, or UI surfaces relevant to QA.", "itemType": "STRING" },
+    { "name": "qualityFocus", "type": "ARRAY", "required": true, "description": "Specific quality attributes or behavior dimensions QA should prioritize.", "itemType": "STRING" },
+    { "name": "edgeConsiderations", "type": "ARRAY", "required": true, "description": "Boundary cases, error cases, and data variations to consider.", "itemType": "STRING" }
+  ]
+}

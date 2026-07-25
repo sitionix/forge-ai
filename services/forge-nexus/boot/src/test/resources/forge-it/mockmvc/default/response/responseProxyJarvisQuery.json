@@ -1,0 +1,11 @@
+{
+  "answerLanguage": "uk",
+  "answers": [
+    {
+      "source": "source-a",
+      "entrypoint": "JarvisGateway",
+      "text": "Сайт створюється через JarvisGateway, який делегує роботу внутрішнім компонентам."
+    }
+  ],
+  "diagnostics": []
+}

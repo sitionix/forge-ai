@@ -1,0 +1,16 @@
+{
+  "payloadType": "ImplementBePayload",
+  "description": "Architect/API/Event output used as backend implementation lane input.",
+  "fields": [
+    { "name": "task", "type": "STRING", "required": true, "description": "Concrete backend implementation task for this lane." },
+    { "name": "scope", "type": "STRING", "required": true, "description": "Exact backend service scope to modify." },
+    { "name": "summary", "type": "STRING", "required": true, "description": "Concise backend implementation summary." },
+    { "name": "requirements", "type": "ARRAY", "required": true, "description": "Backend requirements to implement.", "itemType": "STRING" },
+    { "name": "constraints", "type": "ARRAY", "required": true, "description": "Backend constraints and boundaries to preserve.", "itemType": "STRING" },
+    { "name": "nonGoals", "type": "ARRAY", "required": true, "description": "Backend work explicitly out of scope.", "itemType": "STRING" },
+    { "name": "architectureDecision", "type": "STRING", "required": true, "description": "Architectural direction or decision the backend implementation must follow." },
+    { "name": "dependencies", "type": "ARRAY", "required": true, "description": "Required contracts, services, data stores, or generated dependencies.", "itemType": "STRING" },
+    { "name": "acceptanceNotes", "type": "ARRAY", "required": true, "description": "Acceptance notes the implementation should satisfy.", "itemType": "STRING" },
+    { "name": "risks", "type": "ARRAY", "required": true, "description": "Backend implementation risks or areas needing care.", "itemType": "STRING" }
+  ]
+}

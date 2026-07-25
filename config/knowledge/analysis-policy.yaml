@@ -1,0 +1,413 @@
+analysis:
+  schemaVersion: 1
+  promptRoot: config/knowledge/prompts
+
+  defaults:
+    maxFileChars: 120000
+    maxTargetCallsPerFile: 200
+    canonicalSourceView: contentLines
+    defaultPolicy: text_graph_enrichment
+    defaultGraphProfiles: [base_file_graph]
+    evidencePolicy: grounded_material_support
+
+  prompts:
+    code_target_anchor_enrichment:
+      file: target-anchor-code-enrichment.md
+      responseShape: schemas/target-anchor-enrichment-v2-response-shape.json
+    structured_text_target_anchor_enrichment:
+      file: target-anchor-structured-text-enrichment.md
+      responseShape: schemas/target-anchor-enrichment-v2-response-shape.json
+    document_target_anchor_enrichment:
+      file: target-anchor-document-enrichment.md
+      responseShape: schemas/target-anchor-enrichment-v2-response-shape.json
+
+  graph:
+    nodes:
+      FILE:
+        description: Source file or document represented as the root static anchor for one inventory file.
+        identity: file
+        semanticEligible: true
+      TYPE:
+        description: Named code type such as a class, interface, enum, object, or similar declaration.
+        identity: file_scoped_qualified_name
+        semanticEligible: true
+      CALLABLE:
+        description: Invokable code unit such as a method, function, constructor, handler, or task step.
+        identity: file_scoped_signature
+        semanticEligible: true
+      FIELD:
+        description: File-scoped variable, property, constant, attribute, or member field.
+        identity: file_scoped_name
+        semanticEligible: false
+      MODULE:
+        description: Module, package, library, component, or build unit declared or configured by a file.
+        identity: file_scoped_name
+        semanticEligible: false
+      CONFIG:
+        description: Configuration key, section, setting, workflow step, or structured text region.
+        identity: file_scoped_key_or_region
+        semanticEligible: false
+      DATA:
+        description: Data schema, payload, endpoint, table, file path, or structured data region.
+        identity: file_scoped_path_or_region
+        semanticEligible: false
+      RESOURCE:
+        description: External resource, service, dependency, artifact, queue, topic, or named integration target.
+        identity: file_scoped_name_or_reference
+        semanticEligible: false
+
+    edges:
+      DECLARES:
+        description: Parent anchor declares or contains a child anchor within the same file.
+        from: [FILE, TYPE, MODULE]
+        to: [TYPE, CALLABLE, FIELD, CONFIG, DATA, RESOURCE]
+        semanticEligible: true
+      IMPORTS:
+        description: Source anchor imports or includes another module, package, type, or dependency reference.
+        from: [FILE, TYPE]
+        to: []
+        semanticEligible: true
+      REFERENCES:
+        description: Source anchor mentions, uses, links to, or otherwise references another anchor or unresolved target.
+        from: [FILE, TYPE, CALLABLE, FIELD, CONFIG, DATA, RESOURCE]
+        to: [FILE, TYPE, CALLABLE, CONFIG, DATA, RESOURCE]
+        semanticEligible: true
+      CALLS:
+        description: Callable source invokes, dispatches to, or schedules another callable target.
+        from: [CALLABLE]
+        to: [CALLABLE]
+        semanticEligible: true
+      OVERRIDES:
+        description: Callable source implements or overrides another callable declared by a parent type or interface.
+        from: [CALLABLE]
+        to: [CALLABLE]
+        semanticEligible: false
+      USES_FIELD:
+        description: Callable source reads from, invokes through, or otherwise uses a declared field in its body.
+        from: [CALLABLE]
+        to: [FIELD]
+        semanticEligible: true
+      IMPLEMENTS:
+        description: Type source implements an interface type.
+        from: [TYPE]
+        to: [TYPE]
+        semanticEligible: false
+      EXTENDS:
+        description: Type source extends a class or interface type.
+        from: [TYPE]
+        to: [TYPE]
+        semanticEligible: false
+      CONFIGURES:
+        description: Source anchor configures a module, data object, resource, or configuration target.
+        from: [FILE, CONFIG, MODULE]
+        to: [MODULE, DATA, RESOURCE, CONFIG]
+        semanticEligible: false
+      DEPENDS_ON:
+        description: Source anchor requires, consumes, builds on, or depends on another anchor or external target.
+        from: [FILE, MODULE, CONFIG, DATA, RESOURCE]
+        to: [FILE, MODULE, CONFIG, DATA, RESOURCE]
+        semanticEligible: false
+
+    claims:
+      RESPONSIBILITY:
+        description: Evidence-backed summary of what an anchor is responsible for or represents.
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: true
+      ENTRYPOINT_HINT:
+        description: Evidence-backed indication that an anchor can start execution or trigger a workflow.
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: true
+      CONFIG_REFERENCE:
+        description: Evidence-backed fact about configuration keys, values, defaults, or referenced settings.
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: false
+      SIDE_EFFECT:
+        description: Evidence-backed fact about writes, mutations, network calls, process execution, or other observable effects.
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: false
+      DATA_ACCESS_HINT:
+        description: Evidence-backed indication that an anchor reads, writes, transforms, exposes, or depends on data.
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: false
+      EXTERNAL_BOUNDARY_HINT:
+        description: Evidence-backed indication that an anchor crosses a boundary to an external service, process, user, or system.
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: false
+
+    statuses:
+      TRUSTED:
+        description: Fact is accepted as trusted because it satisfies the current graph contract and evidence rules.
+        persistGraphFact: true
+        requiresValidEvidence: true
+      CANDIDATE:
+        description: Fact may be persisted as a candidate when valid evidence exists but confidence or review state is lower.
+        persistGraphFact: true
+        requiresValidEvidence: true
+      REJECTED:
+        description: Fact is rejected and should be represented as a diagnostic rather than persisted graph data.
+        persistGraphFact: false
+        emitDiagnostic: true
+      DERIVED:
+        description: Fact is derived from other accepted facts and requires derivation trace metadata.
+        persistGraphFact: true
+        requiresDerivationTrace: true
+      STALE:
+        description: Fact remains persisted but is not eligible for normal query results until refreshed.
+        persistGraphFact: true
+        queryEligible: false
+
+    origins:
+      STATIC:
+        description: Fact was produced by deterministic static extraction.
+        canBeTrusted: true
+      LLM:
+        description: Fact was proposed by LLM enrichment and must be grounded in source evidence.
+        canBeTrusted: true
+        requiresValidEvidence: true
+      DERIVED:
+        description: Fact was computed from other graph facts and must carry derivation support.
+        canBeTrusted: true
+        requiresDerivationTrace: true
+      RESOLVER:
+        description: Fact was produced by a resolver that matched references to known anchors or target state.
+        canBeTrusted: true
+
+    evidenceKinds:
+      NODE:
+        description: Evidence supports a graph node or static anchor.
+      EDGE:
+        description: Evidence supports a graph edge or relationship.
+      CLAIM:
+        description: Evidence supports a grounded claim.
+      CALLSITE:
+        description: Evidence identifies a callsite or invocation location.
+
+    resolutionStatuses:
+      RESOLVED:
+        description: Target was matched to an exact static anchor and toRef must be set.
+        toRef: required
+        unresolvedTarget: forbidden
+      UNRESOLVED:
+        description: Target could not be matched to a known static anchor and toRef must be null.
+        toRef: forbidden
+        unresolvedTarget: optional
+      EXTERNAL_TARGET:
+        description: Target is outside the current static anchors and must be represented with unresolvedTarget and null toRef.
+        toRef: forbidden
+        unresolvedTarget: required
+      AMBIGUOUS:
+        description: Target has more than one plausible interpretation and should not be forced to a single anchor.
+        toRef: forbidden
+        unresolvedTarget: optional
+      MULTIPLE_CANDIDATES:
+        description: Resolver or evidence found several candidate targets and no single toRef should be chosen.
+        toRef: forbidden
+        unresolvedTarget: optional
+      INTERFACE_TARGET:
+        description: Target is represented through an interface, abstract declaration, protocol, or contract boundary.
+        toRef: optional
+        unresolvedTarget: optional
+      DYNAMIC_TARGET:
+        description: Target is computed dynamically at runtime and cannot be safely resolved to a static anchor.
+        toRef: forbidden
+        unresolvedTarget: required
+
+  semantic:
+    indexedNodeKinds: [FILE, TYPE, CALLABLE]
+    indexedClaimKinds: [RESPONSIBILITY, ENTRYPOINT_HINT]
+    indexedEdgeKinds: [DECLARES, IMPORTS, REFERENCES, CALLS]
+    unsupportedSemanticKind: allow_only_when_semanticEligible_false
+
+  formats:
+    java:
+      extensions: [".java"]
+      family: code
+      extractor: java_ast
+      policy: parser_assisted_graph_enrichment
+      prompt: code_target_anchor_enrichment
+      graphProfiles: [base_file_graph, java_code_graph]
+
+    kotlin:
+      extensions: [".kt", ".kts"]
+      family: code
+      extractor: file_anchor
+      policy: text_graph_enrichment
+      prompt: code_target_anchor_enrichment
+      graphProfiles: [base_file_graph, code_text_graph]
+
+    typescript:
+      extensions: [".ts", ".tsx"]
+      family: code
+      extractor: file_anchor
+      policy: text_graph_enrichment
+      prompt: code_target_anchor_enrichment
+      graphProfiles: [base_file_graph, code_text_graph]
+
+    javascript:
+      extensions: [".js", ".jsx", ".mjs", ".cjs"]
+      family: code
+      extractor: file_anchor
+      policy: text_graph_enrichment
+      prompt: code_target_anchor_enrichment
+      graphProfiles: [base_file_graph, code_text_graph]
+
+    python:
+      extensions: [".py"]
+      family: code
+      extractor: file_anchor
+      policy: text_graph_enrichment
+      prompt: code_target_anchor_enrichment
+      graphProfiles: [base_file_graph, code_text_graph]
+
+    yaml:
+      extensions: [".yml", ".yaml"]
+      family: structured_text
+      extractor: structured_text_light
+      policy: text_graph_enrichment
+      prompt: structured_text_target_anchor_enrichment
+      graphProfiles: [base_file_graph, structured_text_graph]
+      artifactClassifiers:
+        - id: automation_like
+          detection:
+            all:
+              - topLevelKeysAny: ["on", "jobs", "runs", "steps"]
+              - recurringKeysAny: ["run", "uses", "shell"]
+          addsGraphProfiles: [automation_text_graph]
+        - id: api_contract_like
+          detection:
+            topLevelKeysAny: ["openapi", "swagger", "paths", "components"]
+          addsGraphProfiles: [api_contract_text_graph]
+
+    xml:
+      extensions: [".xml"]
+      family: structured_text
+      extractor: structured_text_light
+      policy: text_graph_enrichment
+      prompt: structured_text_target_anchor_enrichment
+      graphProfiles: [base_file_graph, structured_text_graph]
+      artifactClassifiers:
+        - id: build_model_like
+          detection:
+            all:
+              - rootElement: "project"
+              - elementNamesAny: ["dependencies", "dependency", "plugins", "plugin", "artifactId"]
+          addsGraphProfiles: [build_text_graph]
+
+    markdown:
+      extensions: [".md", ".markdown", ".adoc", ".rst", ".txt"]
+      family: document
+      extractor: document_heading_light
+      policy: text_graph_enrichment
+      prompt: document_target_anchor_enrichment
+      graphProfiles: [base_file_graph, document_graph]
+
+  policies:
+    parser_assisted_graph_enrichment:
+      sourceView: contentLines
+      extractorMode: required_or_file_anchor_fallback
+      llmMode: enrich_existing_anchors
+      allowLlmCreatedAnchors: false
+      trustLlmCreatedAnchors: false
+      responseSchema: graph_enrichment_v2
+      evidenceRequired: true
+
+    text_graph_enrichment:
+      sourceView: contentLines
+      extractorMode: file_anchor_plus_optional_light_structure
+      llmMode: analyze_text_and_propose_grounded_facts
+      allowLlmCreatedAnchors: false
+      trustLlmCreatedAnchors: false
+      responseSchema: graph_enrichment_v2
+      evidenceRequired: true
+
+    index_only:
+      sourceView: contentLines
+      extractorMode: file_anchor_only
+      llmMode: none
+      responseSchema: none
+      evidenceRequired: false
+
+  graphProfiles:
+    base_file_graph:
+      nodes: [FILE]
+      edges: [REFERENCES, DEPENDS_ON, CONFIGURES]
+      claims: [RESPONSIBILITY]
+
+    java_code_graph:
+      nodes: [FILE, TYPE, CALLABLE, FIELD]
+      edges: [DECLARES, IMPORTS, REFERENCES, CALLS, OVERRIDES, USES_FIELD, IMPLEMENTS, EXTENDS, DEPENDS_ON]
+      claims: [RESPONSIBILITY, ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
+
+    code_text_graph:
+      nodes: [FILE]
+      edges: [REFERENCES, DEPENDS_ON]
+      claims: [RESPONSIBILITY, SIDE_EFFECT]
+
+    structured_text_graph:
+      nodes: [FILE, CONFIG, DATA]
+      edges: [CONFIGURES, REFERENCES, DEPENDS_ON]
+      claims: [RESPONSIBILITY, CONFIG_REFERENCE]
+
+    automation_text_graph:
+      nodes: [FILE, CONFIG]
+      edges: [CONFIGURES, REFERENCES, DEPENDS_ON]
+      claims: [RESPONSIBILITY, ENTRYPOINT_HINT, SIDE_EFFECT]
+
+    build_text_graph:
+      nodes: [FILE, MODULE, CONFIG]
+      edges: [DECLARES, CONFIGURES, DEPENDS_ON, REFERENCES]
+      claims: [RESPONSIBILITY, CONFIG_REFERENCE]
+
+    api_contract_text_graph:
+      nodes: [FILE, DATA]
+      edges: [REFERENCES, DEPENDS_ON]
+      claims: [RESPONSIBILITY]
+
+    document_graph:
+      nodes: [FILE]
+      edges: [REFERENCES]
+      claims: [RESPONSIBILITY]
+
+  extractors:
+    file_anchor:
+      implementation: file_anchor
+      trust: structural
+      produces:
+        nodes: [FILE]
+
+    java_ast:
+      implementation: java_static_parser
+      trust: structural
+      produces:
+        nodes: [FILE, TYPE, CALLABLE, FIELD]
+        edges: [DECLARES, IMPORTS, REFERENCES, CALLS, OVERRIDES, USES_FIELD, IMPLEMENTS, EXTENDS]
+        claims: [ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
+
+    structured_text_light:
+      implementation: structured_text_parser
+      trust: structural_light
+      produces:
+        nodes: [FILE, CONFIG, DATA]
+        edges: [DECLARES]
+
+    document_heading_light:
+      implementation: document_heading_parser
+      trust: structural_light
+      produces:
+        nodes: [FILE]
+
+  unsupported:
+    unknownNodeKind: fail_file
+    unknownEdgeKind: fail_file
+    unknownClaimKind: fail_file
+    unknownStatus: fail_file
+    unknownOrigin: fail_file
+    unknownEvidenceKind: fail_file
+    unsupportedFormat: fail_file
+    unsupportedExtractor: fail_file
