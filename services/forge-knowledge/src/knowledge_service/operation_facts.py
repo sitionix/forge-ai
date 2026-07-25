@@ -84,6 +84,7 @@ _SEMANTIC_IDENTITY_FIELDS = (
     "response_contract_identity",
     "target_service_identity",
 )
+_OPTIONAL_OPERATION_IDENTITY_FIELDS = ("topic", "schedule")
 
 
 def normalize_transport_kind(value: object) -> str | None:
@@ -147,11 +148,8 @@ def merge_semantic_operation_facts(facts: Sequence[AvailableOperationFact]) -> t
         if len(matches) == 1:
             groups[matches[0]] = merge_available_operation_facts(groups[matches[0]], fact)
             continue
-        if len(matches) > 1 and not _has_semantic_identity(fact):
-            groups.append(fact)
-            continue
         if matches:
-            groups[matches[0]] = merge_available_operation_facts(groups[matches[0]], fact)
+            groups.append(fact)
             continue
         groups.append(fact)
     return tuple(sorted(groups, key=semantic_operation_fact_sort_key))
@@ -160,7 +158,7 @@ def merge_semantic_operation_facts(facts: Sequence[AvailableOperationFact]) -> t
 def semantic_operation_facts_compatible(left: AvailableOperationFact, right: AvailableOperationFact) -> bool:
     if semantic_operation_base_key(left) != semantic_operation_base_key(right):
         return False
-    for field in _SEMANTIC_IDENTITY_FIELDS:
+    for field in (*_OPTIONAL_OPERATION_IDENTITY_FIELDS, *_SEMANTIC_IDENTITY_FIELDS):
         left_value = clean_identity(getattr(left, field))
         right_value = clean_identity(getattr(right, field))
         if left_value and right_value and left_value != right_value:
@@ -180,9 +178,11 @@ def semantic_operation_base_key(fact: AvailableOperationFact) -> tuple[str, str,
     )
 
 
-def semantic_operation_fact_sort_key(fact: AvailableOperationFact) -> tuple[str, str, str, str, str, str, str, str, str, str, str, str]:
+def semantic_operation_fact_sort_key(fact: AvailableOperationFact) -> tuple[str, ...]:
     return (
         *semantic_operation_base_key(fact),
+        clean_identity(fact.topic) or "",
+        clean_identity(fact.schedule) or "",
         clean_identity(fact.operation_identity) or "",
         clean_identity(fact.interface_identity) or "",
         clean_identity(fact.target_service_identity) or "",
@@ -222,10 +222,23 @@ def _has_semantic_identity(fact: AvailableOperationFact) -> bool:
     return any(clean_identity(getattr(fact, field)) for field in _SEMANTIC_IDENTITY_FIELDS)
 
 
-def _semantic_fact_processing_key(fact: AvailableOperationFact) -> tuple[int, tuple[str, str, str, str, str, str, str], tuple[str, str, str, str, str], str]:
+def _optional_operation_identity_values(fact: AvailableOperationFact) -> tuple[str, str]:
     return (
+        clean_identity(fact.topic) or "",
+        clean_identity(fact.schedule) or "",
+    )
+
+
+def _optional_operation_identity_count(fact: AvailableOperationFact) -> int:
+    return sum(1 for value in _optional_operation_identity_values(fact) if value)
+
+
+def _semantic_fact_processing_key(fact: AvailableOperationFact) -> tuple[object, ...]:
+    return (
+        -_optional_operation_identity_count(fact),
         0 if _has_semantic_identity(fact) else 1,
         semantic_operation_base_key(fact),
+        _optional_operation_identity_values(fact),
         tuple(clean_identity(getattr(fact, field)) or "" for field in _SEMANTIC_IDENTITY_FIELDS),
         fact.structural_owner,
     )
