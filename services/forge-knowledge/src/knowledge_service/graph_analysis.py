@@ -5,7 +5,7 @@ import json
 from typing import Any, Dict, List, Optional, Set
 
 from knowledge_service.graph_call_intelligence import classify_call_metadata
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphEdge, GraphEvidenceRef
+from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphEdge, GraphEvidenceRef
 
 
 TRUSTED_CONFIDENCE_THRESHOLD = 0.70
@@ -66,10 +66,16 @@ class GraphAnalysisEngine:
         nodes: List[Dict[str, Any]] = []
         edges: List[Dict[str, Any]] = []
         claims: List[Dict[str, Any]] = []
+        boundaries: list[dict[str, Any]] = []
+        boundary_descriptors: list[dict[str, Any]] = []
+        boundary_descriptor_index: list[dict[str, Any]] = []
+        boundary_evidence_links: list[dict[str, Any]] = []
+        boundary_descriptor_evidence_links: list[dict[str, Any]] = []
         evidence: List[Dict[str, Any]] = []
         diagnostics: List[Dict[str, Any]] = []
         used_evidence_ids: Set[str] = set()
         parent_by_local_id = self._parents_from_edges(result.edges)
+        boundary_row_by_id: dict[str, dict[str, Any]] = {}
 
         for node in result.nodes:
             node_id = self._stable_id("analysis-graph-node", row["source_id"], row["relative_path"], node.localId, node.name, str(node.lineStart or 0))
@@ -244,6 +250,93 @@ class GraphAnalysisEngine:
                 }
             )
 
+        for boundary_index, boundary in enumerate(result.boundaries or [], start=1):
+            node_id = local_to_node_id.get(boundary.nodeLocalId)
+            if not node_id or not boundary.descriptors:
+                continue
+            node = next((item for item in nodes if item["id"] == node_id), None)
+            if node is None:
+                continue
+            metadata = dict(boundary.metadata or {})
+            fact_origin = str(boundary.origin or metadata.get("factOrigin") or node["fact_origin"] or "LLM").upper()
+            flow_domain = str(boundary.flowDomain or metadata.get("flowDomain") or node["flow_domain"] or self._flow_domain(row, metadata)).upper()
+            status = str(boundary.status or metadata.get("status") or confidence_status(boundary.confidence)).upper()
+            rejection_reason = str(metadata.get("rejectionReason")) if metadata.get("rejectionReason") and status == "CANDIDATE" else None
+            boundary_id = self._stable_id(
+                "analysis-graph-boundary",
+                row["source_id"],
+                row["relative_path"],
+                boundary.localId,
+                node_id,
+                boundary.role,
+            )
+            boundary_evidence_ids: list[str] = []
+            evidence_id_by_key: dict[str, str] = {}
+            for index, item in enumerate(boundary.evidence, start=1):
+                evidence_row = self._evidence(
+                    row,
+                    job_id,
+                    lines,
+                    item,
+                    owner_kind="BOUNDARY",
+                    owner_local_id=boundary.localId,
+                    owner_id=boundary_id,
+                    owner_index=boundary_index,
+                    fact_origin=fact_origin,
+                    flow_domain=flow_domain,
+                    index=index,
+                    owner_metadata={"boundaryRole": boundary.role, "nodeId": node_id},
+                    used_ids=used_evidence_ids,
+                )
+                evidence.append(evidence_row)
+                boundary_evidence_ids.append(evidence_row["id"])
+                evidence_id_by_key[self._evidence_key(item)] = evidence_row["id"]
+            descriptor_rows, descriptor_indexes, descriptor_links = self._materialize_boundary_descriptors(
+                row,
+                job_id,
+                lines,
+                boundary,
+                boundary_id,
+                boundary_index,
+                fact_origin,
+                flow_domain,
+                boundary_evidence_ids,
+                evidence_id_by_key,
+                evidence,
+                used_evidence_ids,
+            )
+            if not descriptor_rows:
+                continue
+            boundary_row = boundary_row_by_id.get(boundary_id)
+            if boundary_row is None:
+                boundary_row = {
+                    "id": boundary_id,
+                    "job_id": job_id,
+                    "source_id": row["source_id"],
+                    "inventory_file_id": row["id"],
+                    "analysis_file_id": row["id"],
+                    "stable_key": metadata.get("stableKey") or boundary.localId,
+                    "node_id": node_id,
+                    "role": boundary.role,
+                    "confidence": boundary.confidence,
+                    "status": status,
+                    "rejection_reason": rejection_reason,
+                    "descriptor_json": self._boundary_descriptor_envelope(boundary.descriptors),
+                    "metadata": self._boundary_metadata(metadata),
+                    "fact_origin": fact_origin,
+                    "flow_domain": flow_domain,
+                    "evidence_ids": boundary_evidence_ids,
+                }
+                boundary_row_by_id[boundary_id] = boundary_row
+                boundaries.append(boundary_row)
+            else:
+                boundary_row["descriptor_json"].extend(self._boundary_descriptor_envelope(boundary.descriptors))
+                boundary_row["evidence_ids"] = list(dict.fromkeys([*boundary_row.get("evidence_ids", []), *boundary_evidence_ids]))
+            boundary_evidence_links.extend({"boundary_id": boundary_id, "evidence_id": evidence_id} for evidence_id in boundary_evidence_ids)
+            boundary_descriptors.extend(descriptor_rows)
+            boundary_descriptor_index.extend(descriptor_indexes)
+            boundary_descriptor_evidence_links.extend(descriptor_links)
+
         for index, diagnostic in enumerate(result.diagnostics or [], start=1):
             diagnostic_metadata = self._diagnostic_metadata(diagnostic)
             diagnostic_fact_origin = str(diagnostic.get("factOrigin") or diagnostic_metadata.get("factOrigin") or "LLM").upper()
@@ -270,7 +363,97 @@ class GraphAnalysisEngine:
                 }
             )
 
-        return {"nodes": nodes, "edges": edges, "claims": claims, "evidence": evidence, "diagnostics": diagnostics}
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "claims": claims,
+            "boundaries": boundaries,
+            "boundary_descriptors": boundary_descriptors,
+            "boundary_descriptor_index": boundary_descriptor_index,
+            "boundary_evidence_links": boundary_evidence_links,
+            "boundary_descriptor_evidence_links": boundary_descriptor_evidence_links,
+            "evidence": evidence,
+            "diagnostics": diagnostics,
+        }
+
+    def _materialize_boundary_descriptors(
+        self,
+        row: dict[str, Any],
+        job_id: str,
+        lines: list[str],
+        boundary: BoundaryFact,
+        boundary_id: str,
+        boundary_index: int,
+        fact_origin: str,
+        flow_domain: str,
+        boundary_evidence_ids: list[str],
+        evidence_id_by_key: dict[str, str],
+        evidence: list[dict[str, Any]],
+        used_evidence_ids: set[str],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        descriptor_rows: list[dict[str, Any]] = []
+        descriptor_indexes: list[dict[str, Any]] = []
+        descriptor_links: list[dict[str, Any]] = []
+        seen_descriptor_ids: set[str] = set()
+        for descriptor_index, descriptor in enumerate(boundary.descriptors, start=1):
+            value_json = self._json_dump(descriptor.value)
+            descriptor_origin = str(descriptor.origin or fact_origin or "LLM").upper()
+            descriptor_id = self._stable_id(
+                "analysis-graph-boundary-descriptor",
+                boundary_id,
+                descriptor.path,
+                value_json,
+                descriptor_origin,
+            )
+            descriptor_evidence_ids: list[str] = []
+            for index, item in enumerate(descriptor.evidence, start=1):
+                evidence_key = self._evidence_key(item)
+                existing_evidence_id = evidence_id_by_key.get(evidence_key)
+                if existing_evidence_id:
+                    descriptor_evidence_ids.append(existing_evidence_id)
+                    continue
+                evidence_row = self._evidence(
+                    row,
+                    job_id,
+                    lines,
+                    item,
+                    owner_kind="BOUNDARY_DESCRIPTOR",
+                    owner_local_id=f"{boundary.localId}:{descriptor.path}",
+                    owner_id=descriptor_id,
+                    owner_index=boundary_index,
+                    fact_origin=descriptor_origin,
+                    flow_domain=flow_domain,
+                    index=index,
+                    owner_metadata={"boundaryId": boundary_id, "descriptorPath": descriptor.path},
+                    used_ids=used_evidence_ids,
+                )
+                evidence.append(evidence_row)
+                descriptor_evidence_ids.append(evidence_row["id"])
+                evidence_id_by_key[evidence_key] = evidence_row["id"]
+            if not descriptor_evidence_ids:
+                descriptor_evidence_ids = list(boundary_evidence_ids)
+            if not descriptor_evidence_ids:
+                continue
+            if descriptor_id not in seen_descriptor_ids:
+                seen_descriptor_ids.add(descriptor_id)
+                descriptor_rows.append(
+                    {
+                        "id": descriptor_id,
+                        "boundary_id": boundary_id,
+                        "descriptor_path": descriptor.path,
+                        "value_type": str(descriptor.valueType or self._json_value_type(descriptor.value)).upper(),
+                        "value_json": value_json,
+                        "origin": descriptor_origin,
+                        "confidence": descriptor.confidence,
+                        "status": "TRUSTED" if descriptor.confidence is None else confidence_status(descriptor.confidence),
+                    }
+                )
+                descriptor_indexes.extend(self._descriptor_index_rows(descriptor_id, boundary_id, descriptor.path, descriptor.value))
+            descriptor_links.extend(
+                {"descriptor_id": descriptor_id, "evidence_id": evidence_id}
+                for evidence_id in descriptor_evidence_ids
+            )
+        return descriptor_rows, descriptor_indexes, descriptor_links
 
     def _parents_from_edges(self, edges: List[GraphEdge]) -> Dict[str, str]:
         parents: Dict[str, str] = {}
@@ -366,6 +549,90 @@ class GraphAnalysisEngine:
 
     def _allowlisted_metadata(self, metadata: Dict[str, Any], allowlist: Set[str]) -> Dict[str, Any]:
         return {key: value for key, value in (metadata or {}).items() if key in allowlist and value is not None}
+
+    def _boundary_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in (metadata or {}).items()
+            if key in {"sourceKind", "stableKey", "parser", "derivation", "status", "rejectionReason"} and value is not None
+        }
+
+    def _boundary_descriptor_envelope(self, descriptors: list[BoundaryDescriptor]) -> list[dict[str, Any]]:
+        return [
+            {
+                "path": descriptor.path,
+                "value": descriptor.value,
+                "valueType": str(descriptor.valueType or self._json_value_type(descriptor.value)).upper(),
+                "origin": str(descriptor.origin or "LLM").upper(),
+                "confidence": descriptor.confidence,
+            }
+            for descriptor in descriptors
+        ]
+
+    def _descriptor_index_rows(self, descriptor_id: str, boundary_id: str, descriptor_path: str, value: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "descriptor_id": descriptor_id,
+                "boundary_id": boundary_id,
+                "descriptor_path": path,
+                "value_type": value_type,
+                "normalized_scalar_value": normalized_value,
+            }
+            for path, value_type, normalized_value in self._scalar_projections(descriptor_path, value)
+        ]
+
+    def _scalar_projections(self, path: str, value: Any) -> list[tuple[str, str, str]]:
+        if value is None:
+            return []
+        value_type = self._json_value_type(value)
+        if value_type in {"STRING", "NUMBER", "BOOLEAN"}:
+            return [(path, value_type, self._normalize_scalar_value(value))]
+        if isinstance(value, list):
+            rows: list[tuple[str, str, str]] = []
+            for index, item in enumerate(value):
+                rows.extend(self._scalar_projections(f"{path}[{index}]", item))
+            return rows
+        if isinstance(value, dict):
+            rows = []
+            for key in sorted(value):
+                rows.extend(self._scalar_projections(f"{path}.{key}", value[key]))
+            return rows
+        return []
+
+    def _normalize_scalar_value(self, value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return json.dumps(value, separators=(",", ":"))
+        return str(value or "").strip().lower()
+
+    def _json_value_type(self, value: Any) -> str:
+        if value is None:
+            return "NULL"
+        if isinstance(value, bool):
+            return "BOOLEAN"
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return "NUMBER"
+        if isinstance(value, str):
+            return "STRING"
+        if isinstance(value, list):
+            return "LIST"
+        if isinstance(value, dict):
+            return "OBJECT"
+        return "OBJECT"
+
+    def _json_dump(self, value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def _evidence_key(self, item: GraphEvidenceRef) -> str:
+        return self._json_dump(
+            {
+                "lineStart": item.lineStart,
+                "lineEnd": item.lineEnd,
+                "text": item.text,
+                "metadata": item.metadata or {},
+            }
+        )
 
     def _flow_domain(self, row: Dict[str, Any], metadata: Dict[str, Any]) -> str:
         explicit = metadata.get("flowDomain")

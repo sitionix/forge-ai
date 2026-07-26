@@ -747,7 +747,7 @@ class AnalysisSupervisor:
                 "code": getattr(last_error, "code", "ANALYSIS_AI_RESPONSE_INVALID"),
                 "jsonPath": "$",
                 "message": getattr(last_error, "message", str(last_error)),
-                "expected": "valid claims-only JSON response",
+                "expected": "valid target-anchor JSON response",
             }
         ]
         json_parse_only = bool(validation_errors) and all(str(item.get("code") or item.get("errorType")) == "JSON_PARSE_ERROR" for item in validation_errors)
@@ -760,7 +760,7 @@ class AnalysisSupervisor:
             lines.extend(
                 [
                     "Output must be one valid JSON object.",
-                    "Corrected response must match the claims-only response shape.",
+                    "Corrected response must match the target-anchor response shape.",
                     "Return corrected JSON only.",
                 ]
             )

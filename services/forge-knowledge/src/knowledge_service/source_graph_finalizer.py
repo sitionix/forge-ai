@@ -55,8 +55,11 @@ class CrossSourceGraphResolver:
             return
         declaration_evidence = self._declaration_evidence_ids_by_node(conn, source_id)
         interface_entrypoint_claims = self._entrypoint_claims_by_node(conn, source_id)
+        interface_boundaries = self._provided_boundaries_by_node(conn, source_id)
         implementation_entrypoints = self._nodes_with_entrypoint_claims(conn, source_id)
+        implementation_boundary_nodes = self._nodes_with_provided_boundaries(conn, source_id)
         pending_claims_by_impl: Dict[str, List[sqlite3.Row]] = defaultdict(list)
+        pending_boundaries_by_impl: dict[str, list[sqlite3.Row]] = defaultdict(list)
         for interface_id, implementation_type_ids in sorted(implementation_type_ids_by_interface.items()):
             interface_methods = methods_by_type.get(interface_id, [])
             if not interface_methods:
@@ -81,6 +84,8 @@ class CrossSourceGraphResolver:
                         )
                         for claim in interface_entrypoint_claims.get(interface_method["id"], []):
                             pending_claims_by_impl[implementation_method["id"]].append(claim)
+                        for boundary in interface_boundaries.get(interface_method["id"], []):
+                            pending_boundaries_by_impl[implementation_method["id"]].append(boundary)
         for implementation_node_id, claims in sorted(pending_claims_by_impl.items()):
             unique_claims = {claim["id"]: claim for claim in claims}
             if len(unique_claims) != 1 or implementation_node_id in implementation_entrypoints:
@@ -93,6 +98,21 @@ class CrossSourceGraphResolver:
                 conn,
                 implementation_method,
                 claim,
+                declaration_evidence,
+                created_at,
+            )
+        for implementation_node_id, boundaries in sorted(pending_boundaries_by_impl.items()):
+            unique_boundaries = {boundary["id"]: boundary for boundary in boundaries}
+            if len(unique_boundaries) != 1 or implementation_node_id in implementation_boundary_nodes:
+                continue
+            implementation_method = self._callable_row_by_id(conn, source_id, implementation_node_id)
+            if implementation_method is None:
+                continue
+            boundary = next(iter(unique_boundaries.values()))
+            self._insert_inherited_provided_boundary(
+                conn,
+                implementation_method,
+                boundary,
                 declaration_evidence,
                 created_at,
             )
@@ -118,6 +138,16 @@ class CrossSourceGraphResolver:
             """,
             (source_id, contract.entrypoint_claim_kind, contract.derived_status),
         )
+        if self.store._table_exists(conn, "analysis_graph_boundaries"):
+            conn.execute(
+                """
+                DELETE FROM analysis_graph_boundaries
+                WHERE source_id = ?
+                  AND status = ?
+                  AND stable_key LIKE 'INHERITED_BOUNDARY:%'
+                """,
+                (source_id, contract.derived_status),
+            )
 
     def _current_type_rows(self, conn: sqlite3.Connection, source_id: str) -> Dict[str, sqlite3.Row]:
         contract = graph_query_contract()
@@ -316,6 +346,46 @@ class CrossSourceGraphResolver:
         ).fetchall()
         return {row["node_id"] for row in rows}
 
+    def _provided_boundaries_by_node(self, conn: sqlite3.Connection, source_id: str) -> dict[str, list[sqlite3.Row]]:
+        if not self.store._table_exists(conn, "analysis_graph_boundaries"):
+            return {}
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM analysis_graph_boundaries
+            WHERE source_id = ?
+              AND role = 'PROVIDED'
+              AND status IN ({current_status_sql})
+              AND rejection_reason IS NULL
+            ORDER BY node_id, confidence DESC, id
+            """,
+            (source_id, *current_status_params),
+        ).fetchall()
+        grouped: dict[str, list[sqlite3.Row]] = defaultdict(list)
+        for row in rows:
+            grouped[row["node_id"]].append(row)
+        return grouped
+
+    def _nodes_with_provided_boundaries(self, conn: sqlite3.Connection, source_id: str) -> set[str]:
+        if not self.store._table_exists(conn, "analysis_graph_boundaries"):
+            return set()
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT node_id
+            FROM analysis_graph_boundaries
+            WHERE source_id = ?
+              AND role = 'PROVIDED'
+              AND status IN ({current_status_sql})
+              AND rejection_reason IS NULL
+            """,
+            (source_id, *current_status_params),
+        ).fetchall()
+        return {row["node_id"] for row in rows}
+
     def _callable_row_by_id(self, conn: sqlite3.Connection, source_id: str, node_id: str) -> Optional[sqlite3.Row]:
         contract = graph_query_contract()
         return conn.execute(
@@ -437,6 +507,57 @@ class CrossSourceGraphResolver:
         ])
         self._insert_claim_evidence_link_rows(conn, claim_id, evidence_ids)
 
+    def _insert_inherited_provided_boundary(
+        self,
+        conn: sqlite3.Connection,
+        implementation_method: sqlite3.Row,
+        interface_boundary: sqlite3.Row,
+        declaration_evidence: Mapping[str, list[str]],
+        created_at: str,
+    ) -> None:
+        contract = graph_query_contract()
+        boundary_id = self._derived_graph_id("analysis-graph-boundary", implementation_method["id"], "INHERITED_BOUNDARY", interface_boundary["id"])
+        stable_key = f"INHERITED_BOUNDARY:{implementation_method['id']}:{interface_boundary['id']}"
+        metadata = self.store._json_dict(interface_boundary["metadata_json"])
+        metadata["derivation"] = "INHERITED_INTERFACE_BOUNDARY"
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_boundaries(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                stable_key, node_id, role, confidence, status, rejection_reason, descriptor_json,
+                metadata_json, created_at, updated_at, fact_origin, flow_domain
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                boundary_id,
+                implementation_method["job_id"],
+                implementation_method["source_id"],
+                implementation_method["inventory_file_id"],
+                implementation_method["analysis_file_id"],
+                implementation_method["file_id"],
+                implementation_method["relative_path"],
+                implementation_method["content_hash"],
+                stable_key,
+                implementation_method["id"],
+                "PROVIDED",
+                min(1.0, float(interface_boundary["confidence"] or 1.0)),
+                contract.derived_status,
+                interface_boundary["descriptor_json"],
+                json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                created_at,
+                created_at,
+                "DERIVED",
+                implementation_method["flow_domain"],
+            ),
+        )
+        boundary_evidence_ids = self._dedupe_strings([
+            *declaration_evidence.get(implementation_method["id"], []),
+            *self._boundary_evidence_ids(conn, interface_boundary["id"]),
+        ])
+        self._insert_boundary_evidence_link_rows(conn, boundary_id, boundary_evidence_ids)
+        self._copy_boundary_descriptors(conn, interface_boundary["id"], boundary_id, created_at)
+
     def _claim_evidence_ids(self, conn: sqlite3.Connection, claim_id: str) -> List[str]:
         return [
             row["evidence_id"]
@@ -450,6 +571,97 @@ class CrossSourceGraphResolver:
                 (claim_id,),
             ).fetchall()
         ]
+
+    def _boundary_evidence_ids(self, conn: sqlite3.Connection, boundary_id: str) -> list[str]:
+        return [
+            row["evidence_id"]
+            for row in conn.execute(
+                """
+                SELECT evidence_id
+                FROM analysis_graph_boundary_evidence
+                WHERE boundary_id = ?
+                ORDER BY evidence_id
+                """,
+                (boundary_id,),
+            ).fetchall()
+        ]
+
+    def _descriptor_evidence_ids(self, conn: sqlite3.Connection, descriptor_id: str) -> list[str]:
+        return [
+            row["evidence_id"]
+            for row in conn.execute(
+                """
+                SELECT evidence_id
+                FROM analysis_graph_boundary_descriptor_evidence
+                WHERE descriptor_id = ?
+                ORDER BY evidence_id
+                """,
+                (descriptor_id,),
+            ).fetchall()
+        ]
+
+    def _copy_boundary_descriptors(self, conn: sqlite3.Connection, source_boundary_id: str, target_boundary_id: str, created_at: str) -> None:
+        descriptors = conn.execute(
+            """
+            SELECT *
+            FROM analysis_graph_boundary_descriptors
+            WHERE boundary_id = ?
+            ORDER BY descriptor_path, id
+            """,
+            (source_boundary_id,),
+        ).fetchall()
+        for descriptor in descriptors:
+            descriptor_id = self._derived_graph_id("analysis-graph-boundary-descriptor", target_boundary_id, descriptor["id"])
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO analysis_graph_boundary_descriptors(
+                    id, boundary_id, descriptor_path, value_type, value_json, origin, confidence, status, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    descriptor_id,
+                    target_boundary_id,
+                    descriptor["descriptor_path"],
+                    descriptor["value_type"],
+                    descriptor["value_json"],
+                    descriptor["origin"],
+                    descriptor["confidence"],
+                    descriptor["status"],
+                    created_at,
+                    created_at,
+                ),
+            )
+            index_rows = conn.execute(
+                """
+                SELECT descriptor_path, value_type, normalized_scalar_value
+                FROM analysis_graph_boundary_descriptor_index
+                WHERE descriptor_id = ?
+                ORDER BY descriptor_path, normalized_scalar_value
+                """,
+                (descriptor["id"],),
+            ).fetchall()
+            for index_row in index_rows:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO analysis_graph_boundary_descriptor_index(
+                        descriptor_id, boundary_id, descriptor_path, value_type, normalized_scalar_value
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        descriptor_id,
+                        target_boundary_id,
+                        index_row["descriptor_path"],
+                        index_row["value_type"],
+                        index_row["normalized_scalar_value"],
+                    ),
+                )
+            self._insert_boundary_descriptor_evidence_link_rows(
+                conn,
+                descriptor_id,
+                self._descriptor_evidence_ids(conn, descriptor["id"]),
+            )
 
     def _insert_edge_evidence_link_rows(self, conn: sqlite3.Connection, edge_id: str, evidence_ids: Sequence[str]) -> None:
         conn.executemany(
@@ -498,6 +710,24 @@ class CrossSourceGraphResolver:
                 owner_edge_id="",
                 evidence_id=str(evidence_id),
             )
+
+    def _insert_boundary_evidence_link_rows(self, conn: sqlite3.Connection, boundary_id: str, evidence_ids: Sequence[str]) -> None:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO analysis_graph_boundary_evidence(boundary_id, evidence_id)
+            VALUES (?, ?)
+            """,
+            [(boundary_id, evidence_id) for evidence_id in evidence_ids],
+        )
+
+    def _insert_boundary_descriptor_evidence_link_rows(self, conn: sqlite3.Connection, descriptor_id: str, evidence_ids: Sequence[str]) -> None:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO analysis_graph_boundary_descriptor_evidence(descriptor_id, evidence_id)
+            VALUES (?, ?)
+            """,
+            [(descriptor_id, evidence_id) for evidence_id in evidence_ids],
+        )
 
     def _derived_graph_id(self, prefix: str, *parts: str) -> str:
         digest = hashlib.sha256("|".join(str(part) for part in parts).encode("utf-8")).hexdigest()[:24]

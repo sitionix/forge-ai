@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+import json
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Extra, Field, validator
@@ -134,10 +135,104 @@ class GraphClaim(BaseModel):
         return value.strip()
 
 
+class BoundaryDescriptor(BaseModel):
+    path: str
+    value: Any
+    valueType: str | None = None
+    origin: str = "LLM"
+    confidence: float | None = None
+    evidence: list[GraphEvidenceRef] = Field(default_factory=list)
+
+    class Config:
+        extra = Extra.forbid
+
+    @validator("path")
+    def descriptor_path_required(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("Boundary descriptor path is required")
+        return normalized
+
+    @validator("value")
+    def descriptor_value_json_compatible(cls, value: Any) -> Any:
+        try:
+            json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Boundary descriptor value must be JSON-compatible") from exc
+        return value
+
+    @validator("valueType", always=True)
+    def descriptor_value_type(cls, value: str | None, values: dict[str, Any]) -> str:
+        inferred = _json_value_type(values.get("value"))
+        if value is None:
+            return inferred
+        normalized = str(value or "").strip().upper()
+        if normalized not in {"STRING", "NUMBER", "BOOLEAN", "OBJECT", "LIST", "NULL"}:
+            raise ValueError("Boundary descriptor valueType is invalid")
+        return normalized
+
+    @validator("origin")
+    def descriptor_origin_required(cls, value: str) -> str:
+        normalized = str(value or "").strip().upper()
+        if not normalized:
+            raise ValueError("Boundary descriptor origin is required")
+        return normalized
+
+    @validator("confidence")
+    def descriptor_confidence_range(cls, value: float | None) -> float | None:
+        if value is not None and (value < 0 or value > 1):
+            raise ValueError("Descriptor confidence must be between 0 and 1")
+        return value
+
+
+class BoundaryFact(BaseModel):
+    localId: str
+    nodeLocalId: str
+    role: str
+    descriptors: list[BoundaryDescriptor] = Field(default_factory=list)
+    evidence: list[GraphEvidenceRef] = Field(default_factory=list)
+    origin: str | None = None
+    confidence: float = 1.0
+    status: str | None = None
+    flowDomain: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        extra = Extra.forbid
+
+    @validator("localId", "nodeLocalId")
+    def boundary_identity_required(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("Boundary identity fields are required")
+        return normalized
+
+    @validator("role")
+    def boundary_role_valid(cls, value: str) -> str:
+        normalized = str(value or "").strip().upper()
+        if normalized not in {"PROVIDED", "REQUIRED"}:
+            raise ValueError("Boundary role must be PROVIDED or REQUIRED")
+        return normalized
+
+    @validator("origin")
+    def boundary_origin_valid(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value or "").strip().upper()
+        return normalized or None
+
+    @validator("confidence")
+    def boundary_confidence_range(cls, value: float) -> float:
+        if value < 0 or value > 1:
+            raise ValueError("Boundary confidence must be between 0 and 1")
+        return value
+
+
 class GraphAnalysisResult(BaseModel):
     nodes: List[GraphNode] = Field(default_factory=list)
     edges: List[GraphEdge] = Field(default_factory=list)
     claims: List[GraphClaim] = Field(default_factory=list)
+    boundaries: list[BoundaryFact] = Field(default_factory=list)
     diagnostics: List[Dict[str, Any]] = Field(default_factory=list)
 
     class Config:
@@ -152,6 +247,12 @@ class GraphAnalysisResult(BaseModel):
         for claim in self.claims:
             for evidence in claim.evidence:
                 self._validate_range(evidence.lineStart, evidence.lineEnd, line_count)
+        for boundary in self.boundaries:
+            for evidence in boundary.evidence:
+                self._validate_range(evidence.lineStart, evidence.lineEnd, line_count)
+            for descriptor in boundary.descriptors:
+                for evidence in descriptor.evidence:
+                    self._validate_range(evidence.lineStart, evidence.lineEnd, line_count)
 
     def validate_references(self) -> None:
         local_ids = {node.localId for node in self.nodes}
@@ -166,6 +267,9 @@ class GraphAnalysisResult(BaseModel):
         for claim in self.claims:
             if claim.nodeLocalId not in local_ids:
                 raise ValueError("Graph claim references an unknown nodeLocalId")
+        for boundary in self.boundaries:
+            if boundary.nodeLocalId not in local_ids:
+                raise ValueError("Boundary fact references an unknown nodeLocalId")
 
     def _validate_optional_range(self, line_start: Optional[int], line_end: Optional[int], line_count: int) -> None:
         if line_start is None and line_end is None:
@@ -177,3 +281,19 @@ class GraphAnalysisResult(BaseModel):
     def _validate_range(self, line_start: int, line_end: int, line_count: int) -> None:
         if line_start < 1 or line_end < line_start or line_end > max(line_count, 1):
             raise ValueError("Line range outside file")
+
+
+def _json_value_type(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return "NUMBER"
+    if isinstance(value, str):
+        return "STRING"
+    if isinstance(value, list):
+        return "LIST"
+    if isinstance(value, dict):
+        return "OBJECT"
+    return "OBJECT"

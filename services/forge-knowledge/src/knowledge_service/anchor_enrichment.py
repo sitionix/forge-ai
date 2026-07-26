@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from knowledge_service.graph_analysis import confidence_status
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphNode
+from knowledge_service.graph_schema import BoundaryFact, GraphAnalysisResult, GraphClaim, GraphEdge, GraphNode
 
 
 class AnchorAwareGraphValidator:
@@ -15,6 +15,7 @@ class AnchorAwareGraphValidator:
         diagnostics: List[Dict[str, Any]] = list(static_graph.diagnostics or [])
         accepted_claims: List[GraphClaim] = list(static_graph.claims)
         accepted_edges: List[GraphEdge] = list(static_graph.edges)
+        accepted_boundaries: list[BoundaryFact] = list(static_graph.boundaries)
 
         for node in enrichment.nodes:
             diagnostics.append(
@@ -60,10 +61,29 @@ class AnchorAwareGraphValidator:
                 }
             )
 
+        for boundary in enrichment.boundaries:
+            target_local_id = self._resolve_boundary_target(boundary, anchors, source_nodes)
+            if target_local_id is None:
+                diagnostics.append(
+                    {
+                        "severity": "WARN",
+                        "stage": "ANCHOR_VALIDATION",
+                        "code": "LLM_BOUNDARY_TARGET_NOT_FOUND",
+                        "message": "LLM boundary target did not match any parser anchor.",
+                        "boundaryLocalId": boundary.localId,
+                        "nodeLocalId": boundary.nodeLocalId,
+                        "role": boundary.role,
+                    }
+                )
+                continue
+            validated = self._validated_boundary(boundary, target_local_id, anchors[target_local_id], line_count, diagnostics)
+            accepted_boundaries.append(validated)
+
         return GraphAnalysisResult(
             nodes=list(static_graph.nodes),
             edges=accepted_edges,
             claims=accepted_claims,
+            boundaries=accepted_boundaries,
             diagnostics=diagnostics,
         )
 
@@ -72,6 +92,9 @@ class AnchorAwareGraphValidator:
         if direct:
             return direct
         return None
+
+    def _resolve_boundary_target(self, boundary: BoundaryFact, anchors: dict[str, GraphNode], source_nodes: dict[str, GraphNode]) -> str | None:
+        return self._resolve_edge_endpoint(boundary.nodeLocalId, anchors, source_nodes)
 
     def _resolve_edge_endpoint(self, local_id: Optional[str], anchors: Dict[str, GraphNode], source_nodes: Dict[str, GraphNode]) -> Optional[str]:
         if not local_id:
@@ -135,10 +158,62 @@ class AnchorAwareGraphValidator:
             }
         )
 
+    def _validated_boundary(
+        self,
+        boundary: BoundaryFact,
+        target_local_id: str,
+        node: GraphNode,
+        line_count: int,
+        diagnostics: list[dict[str, Any]],
+    ) -> BoundaryFact:
+        metadata = dict(boundary.metadata or {})
+        metadata.setdefault("factOrigin", "LLM")
+        status = metadata.get("status") or boundary.status or confidence_status(boundary.confidence)
+        rejection_reason = None
+        evidence_ranges = [*boundary.evidence, *(item for descriptor in boundary.descriptors for item in descriptor.evidence)]
+        if not evidence_ranges:
+            rejection_reason = "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_MISSING"
+        for item in evidence_ranges:
+            if item.lineStart < 1 or item.lineEnd < item.lineStart or item.lineEnd > max(line_count, 1):
+                rejection_reason = rejection_reason or "ANALYSIS_GRAPH_LINE_RANGE_INVALID"
+            elif not self._evidence_range_overlaps_node(item, node):
+                rejection_reason = rejection_reason or "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+        if not boundary.descriptors:
+            rejection_reason = rejection_reason or "ANALYSIS_GRAPH_BOUNDARY_DESCRIPTOR_MISSING"
+        if rejection_reason:
+            status = "CANDIDATE"
+            metadata["status"] = status
+            metadata["rejectionReason"] = rejection_reason
+            diagnostics.append(
+                {
+                    "severity": "WARN",
+                    "stage": "ANCHOR_VALIDATION",
+                    "code": rejection_reason,
+                    "message": "LLM boundary was not trusted because its descriptors or evidence did not satisfy parser anchor validation.",
+                    "boundaryLocalId": boundary.localId,
+                    "nodeLocalId": target_local_id,
+                    "nodeKind": node.nodeKind,
+                }
+            )
+        else:
+            metadata["status"] = status
+        return boundary.copy(
+            update={
+                "nodeLocalId": target_local_id,
+                "status": str(status),
+                "metadata": metadata,
+            }
+        )
+
     def _evidence_overlaps_node(self, claim: GraphClaim, node: GraphNode) -> bool:
         if node.lineStart is None or node.lineEnd is None:
             return False
         for item in claim.evidence:
-            if item.lineStart <= node.lineEnd and item.lineEnd >= node.lineStart:
+            if self._evidence_range_overlaps_node(item, node):
                 return True
         return False
+
+    def _evidence_range_overlaps_node(self, evidence: Any, node: GraphNode) -> bool:
+        if node.lineStart is None or node.lineEnd is None:
+            return False
+        return evidence.lineStart <= node.lineEnd and evidence.lineEnd >= node.lineStart

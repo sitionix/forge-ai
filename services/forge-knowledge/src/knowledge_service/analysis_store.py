@@ -120,6 +120,7 @@ class AnalysisStore:
             self._create_graph_evidence_schema(conn)
             self._create_graph_claim_schema(conn)
             self._create_graph_edge_schema(conn)
+            self._create_graph_boundary_schema(conn)
             self._create_graph_evidence_link_schema(conn)
             self._create_graph_diagnostics_schema(conn)
             self._create_runtime_event_schema(conn)
@@ -227,6 +228,15 @@ class AnalysisStore:
                 "resolution_status",
                 "argument_count",
                 "metadata_json",
+            },
+            "analysis_graph_boundaries": {
+                "id",
+                "source_id",
+                "analysis_file_id",
+                "file_id",
+                "node_id",
+                "role",
+                "descriptor_json",
             },
             "analysis_graph_diagnostics": {"id", "source_id", "message", "severity", "metadata_json"},
         }
@@ -463,6 +473,79 @@ class AnalysisStore:
         """)
         self._ensure_column(conn, "analysis_graph_edges", "to_source_id", "TEXT")
 
+    def _create_graph_boundary_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_boundaries (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                inventory_file_id INTEGER NOT NULL,
+                analysis_file_id INTEGER NOT NULL,
+                file_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                stable_key TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                status TEXT NOT NULL,
+                rejection_reason TEXT,
+                descriptor_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                fact_origin TEXT,
+                flow_domain TEXT,
+                FOREIGN KEY(analysis_file_id) REFERENCES analysis_files(file_id) ON DELETE CASCADE,
+                FOREIGN KEY(node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_boundary_descriptors (
+                id TEXT PRIMARY KEY,
+                boundary_id TEXT NOT NULL,
+                descriptor_path TEXT NOT NULL,
+                value_type TEXT NOT NULL,
+                value_json TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                confidence REAL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(boundary_id) REFERENCES analysis_graph_boundaries(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_boundary_descriptor_index (
+                descriptor_id TEXT NOT NULL,
+                boundary_id TEXT NOT NULL,
+                descriptor_path TEXT NOT NULL,
+                value_type TEXT NOT NULL,
+                normalized_scalar_value TEXT NOT NULL,
+                PRIMARY KEY (descriptor_id, descriptor_path, normalized_scalar_value),
+                FOREIGN KEY(descriptor_id) REFERENCES analysis_graph_boundary_descriptors(id) ON DELETE CASCADE,
+                FOREIGN KEY(boundary_id) REFERENCES analysis_graph_boundaries(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_boundary_evidence (
+                boundary_id TEXT NOT NULL,
+                evidence_id TEXT NOT NULL,
+                PRIMARY KEY (boundary_id, evidence_id),
+                FOREIGN KEY(boundary_id) REFERENCES analysis_graph_boundaries(id) ON DELETE CASCADE,
+                FOREIGN KEY(evidence_id) REFERENCES analysis_graph_evidence(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_boundary_descriptor_evidence (
+                descriptor_id TEXT NOT NULL,
+                evidence_id TEXT NOT NULL,
+                PRIMARY KEY (descriptor_id, evidence_id),
+                FOREIGN KEY(descriptor_id) REFERENCES analysis_graph_boundary_descriptors(id) ON DELETE CASCADE,
+                FOREIGN KEY(evidence_id) REFERENCES analysis_graph_evidence(id) ON DELETE CASCADE
+            )
+        """)
+
     def _create_graph_evidence_link_schema(self, conn: sqlite3.Connection) -> None:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS analysis_graph_claim_evidence (
@@ -588,6 +671,25 @@ class AnalysisStore:
             ),
             "analysis_graph_edge_evidence": (
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edge_evidence_evidence ON analysis_graph_edge_evidence(evidence_id)",
+            ),
+            "analysis_graph_boundaries": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundaries_source_node ON analysis_graph_boundaries(source_id, node_id, role, status)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundaries_file ON analysis_graph_boundaries(analysis_file_id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundaries_source_flow_created ON analysis_graph_boundaries(source_id, flow_domain, created_at)",
+            ),
+            "analysis_graph_boundary_descriptors": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_descriptors_boundary ON analysis_graph_boundary_descriptors(boundary_id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_descriptors_path ON analysis_graph_boundary_descriptors(descriptor_path, value_type)",
+            ),
+            "analysis_graph_boundary_descriptor_index": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_descriptor_index_lookup ON analysis_graph_boundary_descriptor_index(descriptor_path, value_type, normalized_scalar_value)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_descriptor_index_boundary ON analysis_graph_boundary_descriptor_index(boundary_id)",
+            ),
+            "analysis_graph_boundary_evidence": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_evidence_evidence ON analysis_graph_boundary_evidence(evidence_id)",
+            ),
+            "analysis_graph_boundary_descriptor_evidence": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_descriptor_evidence_evidence ON analysis_graph_boundary_descriptor_evidence(evidence_id)",
             ),
             "analysis_graph_owner_evidence": (
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_owner_evidence_owner_edge ON analysis_graph_owner_evidence(owner_kind, owner_source_id, owner_edge_id)",
@@ -1408,9 +1510,12 @@ class AnalysisStore:
         self._insert_graph_evidence(conn, file_id, state, graph, created_at)
         self._insert_graph_claims(conn, graph, created_at)
         self._insert_graph_edges(conn, file_id, state, graph, created_at)
+        self._insert_graph_boundaries(conn, file_id, state, graph, created_at)
         self._insert_graph_diagnostics(conn, file_id, state, graph, created_at)
         self._insert_claim_evidence_links(conn, graph)
         self._insert_edge_evidence_links(conn, graph)
+        self._insert_boundary_evidence_links(conn, graph)
+        self._insert_boundary_descriptor_evidence_links(conn, graph)
         self._mark_source_graph_dirty_conn(conn, str(state["source_id"]), created_at)
 
     def finalize_source_graph(self, source_id: str) -> None:
@@ -1636,6 +1741,89 @@ class AnalysisStore:
 
         self._run_graph_store_step("analysis_graph_edges", "insert_edges", insert)
 
+    def _insert_graph_boundaries(
+        self,
+        conn: sqlite3.Connection,
+        file_id: int,
+        state: dict[str, Any],
+        graph: dict[str, list[dict[str, Any]]],
+        created_at: str,
+    ) -> None:
+        def insert() -> None:
+            for boundary in graph.get("boundaries") or []:
+                boundary_file_id = int(boundary.get("analysis_file_id") or boundary.get("inventory_file_id") or file_id)
+                conn.execute(
+                    """
+                    INSERT INTO analysis_graph_boundaries(
+                        id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                        stable_key, node_id, role, confidence, status, rejection_reason, descriptor_json,
+                        metadata_json, created_at, updated_at, fact_origin, flow_domain
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        boundary["id"],
+                        boundary["job_id"],
+                        boundary["source_id"],
+                        boundary.get("inventory_file_id") or boundary_file_id,
+                        boundary.get("analysis_file_id") or boundary_file_id,
+                        boundary_file_id,
+                        state["relative_path"],
+                        state["content_hash"],
+                        boundary["stable_key"],
+                        boundary["node_id"],
+                        boundary["role"],
+                        boundary["confidence"],
+                        boundary["status"],
+                        boundary.get("rejection_reason"),
+                        json.dumps(boundary.get("descriptor_json") or [], ensure_ascii=False, sort_keys=True, default=str),
+                        json.dumps(boundary.get("metadata") or {}, ensure_ascii=False, sort_keys=True, default=str),
+                        created_at,
+                        created_at,
+                        boundary.get("fact_origin"),
+                        boundary.get("flow_domain"),
+                    ),
+                )
+            for descriptor in graph.get("boundary_descriptors") or []:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO analysis_graph_boundary_descriptors(
+                        id, boundary_id, descriptor_path, value_type, value_json, origin, confidence, status, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        descriptor["id"],
+                        descriptor["boundary_id"],
+                        descriptor["descriptor_path"],
+                        descriptor["value_type"],
+                        descriptor["value_json"],
+                        descriptor["origin"],
+                        descriptor.get("confidence"),
+                        descriptor["status"],
+                        created_at,
+                        created_at,
+                    ),
+                )
+            for index_row in graph.get("boundary_descriptor_index") or []:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO analysis_graph_boundary_descriptor_index(
+                        descriptor_id, boundary_id, descriptor_path, value_type, normalized_scalar_value
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        index_row["descriptor_id"],
+                        index_row["boundary_id"],
+                        index_row["descriptor_path"],
+                        index_row["value_type"],
+                        index_row["normalized_scalar_value"],
+                    ),
+                )
+
+        self._run_graph_store_step("analysis_graph_boundaries", "insert_boundaries", insert)
+
     def _insert_graph_diagnostics(
         self,
         conn: sqlite3.Connection,
@@ -1724,6 +1912,32 @@ class AnalysisStore:
                     )
 
         self._run_graph_store_step("analysis_graph_edge_evidence", "insert_edge_evidence_links", insert)
+
+    def _insert_boundary_evidence_links(self, conn: sqlite3.Connection, graph: dict[str, list[dict[str, Any]]]) -> None:
+        def insert() -> None:
+            for link in graph.get("boundary_evidence_links") or []:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO analysis_graph_boundary_evidence(boundary_id, evidence_id)
+                    VALUES (?, ?)
+                    """,
+                    (link["boundary_id"], link["evidence_id"]),
+                )
+
+        self._run_graph_store_step("analysis_graph_boundary_evidence", "insert_boundary_evidence_links", insert)
+
+    def _insert_boundary_descriptor_evidence_links(self, conn: sqlite3.Connection, graph: dict[str, list[dict[str, Any]]]) -> None:
+        def insert() -> None:
+            for link in graph.get("boundary_descriptor_evidence_links") or []:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO analysis_graph_boundary_descriptor_evidence(descriptor_id, evidence_id)
+                    VALUES (?, ?)
+                    """,
+                    (link["descriptor_id"], link["evidence_id"]),
+                )
+
+        self._run_graph_store_step("analysis_graph_boundary_descriptor_evidence", "insert_boundary_descriptor_evidence_links", insert)
 
     def _insert_owner_evidence_link(
         self,
@@ -4387,6 +4601,8 @@ class AnalysisStore:
                 UNION
                 SELECT source_id FROM analysis_graph_claims WHERE source_id IS NOT NULL
                 UNION
+                SELECT source_id FROM analysis_graph_boundaries WHERE source_id IS NOT NULL
+                UNION
                 SELECT source_id FROM analysis_graph_evidence WHERE source_id IS NOT NULL
                 UNION
                 SELECT source_id FROM analysis_graph_state WHERE source_id IS NOT NULL
@@ -4502,7 +4718,7 @@ class AnalysisStore:
             placeholders = ",".join("?" for _ in batch)
             self._delete_semantic_documents_for_nodes(conn, batch)
             conn.execute(f"DELETE FROM analysis_graph_nodes WHERE id IN ({placeholders})", batch)
-        for table in ("analysis_graph_edges", "analysis_graph_evidence", "analysis_graph_diagnostics"):
+        for table in ("analysis_graph_edges", "analysis_graph_boundaries", "analysis_graph_evidence", "analysis_graph_diagnostics"):
             if not self._table_exists(conn, table):
                 continue
             rows = conn.execute(
@@ -4601,9 +4817,27 @@ class AnalysisStore:
                 UNION
                 SELECT source_id FROM analysis_graph_evidence WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?
                 UNION
+                SELECT source_id FROM analysis_graph_boundaries WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?
+                UNION
                 SELECT source_id FROM analysis_graph_diagnostics WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?
                 """,
-                (file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id),
+                (
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                ),
             ).fetchall()
             if row["source_id"]
         }
@@ -4617,6 +4851,10 @@ class AnalysisStore:
         )
         conn.execute(
             "DELETE FROM analysis_graph_evidence WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?",
+            (file_id, file_id, file_id),
+        )
+        conn.execute(
+            "DELETE FROM analysis_graph_boundaries WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?",
             (file_id, file_id, file_id),
         )
         conn.execute(

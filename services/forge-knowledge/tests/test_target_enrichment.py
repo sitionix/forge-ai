@@ -82,7 +82,7 @@ def test_llm_input_projection_includes_minimal_contract_and_excludes_internal_pa
     assert payload["targetRef"] == target.ref
     assert "RESPONSIBILITY" in llm_input["allowedValues"]["claimKind"]
     assert set(llm_input["allowedValues"]) == {"claimKind"}
-    assert set(llm_input["responseShape"]) == {"claims"}
+    assert set(llm_input["responseShape"]) == {"claims", "boundaries"}
     assert any(item["kind"] == "FIELD" and item["role"] == "context" for item in llm_input["contextAnchors"])
     for forbidden in (
         "anchorRegistry",
@@ -128,7 +128,7 @@ def test_target_prompt_renderer_loads_policy_template_and_response_shape():
     assert rendered_input["requestKind"] == TARGET_REQUEST_KIND
     assert rendered_input["file"]["contentLines"]
     response_shape = renderer.response_shape(payload=payload)
-    assert set(response_shape) == {"claims"}
+    assert set(response_shape) == {"claims", "boundaries"}
     assert not _contains_key(response_shape, "schemaVersion")
     assert not _contains_key(response_shape, "edgeType")
     assert not _contains_key(response_shape, "toRef")
@@ -171,7 +171,7 @@ def test_target_prompt_renderer_uses_format_specific_prompt_and_shared_response_
 
     assert payload["analysisPolicy"]["promptId"] == prompt_id
     assert prompt_text in prompt
-    assert set(renderer.response_shape(payload=payload)) == {"claims"}
+    assert set(renderer.response_shape(payload=payload)) == {"claims", "boundaries"}
     assert payload["llmInput"]["responseShape"] == renderer.response_shape(payload=payload)
 
 
@@ -417,6 +417,60 @@ def test_target_response_validator_accepts_minimal_claim_and_injects_backend_fie
     assert parsed.claims[0].metadata["factOrigin"] == "LLM"
 
 
+def test_target_response_validator_accepts_generic_boundary_descriptors():
+    payload, contract = _target_payload()
+    response = {
+        "claims": [],
+        "boundaries": [
+            {
+                "role": "REQUIRED",
+                "confidence": 0.74,
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
+                "descriptors": [
+                    {"path": "call.method", "value": "helper", "origin": "LLM", "confidence": 0.74},
+                    {"path": "payload.shape", "value": {"kind": "object", "required": ["id"]}, "origin": "LLM"},
+                ],
+            }
+        ],
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisResult)
+    assert parsed.claims == []
+    assert len(parsed.boundaries) == 1
+    boundary = parsed.boundaries[0]
+    assert boundary.nodeLocalId == "svc|src/Foo.java|CALLABLE|Foo.call()"
+    assert boundary.localId == "llm-boundary-M1-1"
+    assert boundary.role == "REQUIRED"
+    assert boundary.origin == "LLM"
+    assert boundary.confidence == 0.74
+    assert {descriptor.path for descriptor in boundary.descriptors} == {"call.method", "payload.shape"}
+    assert boundary.descriptors[1].value == {"kind": "object", "required": ["id"]}
+    assert boundary.descriptors[0].evidence[0].text == "  void call() { helper(); }"
+
+
+def test_target_response_validator_rejects_malformed_boundary_descriptor():
+    payload, contract = _target_payload()
+    response = {
+        "claims": [],
+        "boundaries": [
+            {
+                "role": "REQUIRED",
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
+                "descriptors": [
+                    {"path": "call.method", "value": None},
+                ],
+            }
+        ],
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    assert any(detail.get("code") == "BOUNDARY_DESCRIPTOR_VALUE_MISSING" for detail in parsed.error_details)
+
+
 def test_target_response_validator_rejects_callable_evidence_outside_target_range():
     payload, contract = _target_payload()
     response = _valid_target_response()
@@ -621,7 +675,7 @@ def test_validation_feedback_prompt_for_old_fields_includes_only_observed_field_
                 "code": "SEMANTIC_EDGES_RETURNED",
                 "errorType": "SEMANTIC_EDGES_RETURNED",
                 "jsonPath": "$.semanticEdges",
-                "message": "Unknown or removed field is not allowed by the target-anchor claims-only response contract.",
+                "message": "Unknown or removed field is not allowed by the target-anchor response contract.",
                 "actual": "semanticEdges",
                 "expected": "no extra fields",
             },
@@ -629,7 +683,7 @@ def test_validation_feedback_prompt_for_old_fields_includes_only_observed_field_
                 "code": "OLD_CONTRACT_FIELD_RETURNED",
                 "errorType": "OLD_CONTRACT_FIELD_RETURNED",
                 "jsonPath": "$.claims[0].confidence",
-                "message": "Unknown or removed field is not allowed by the target-anchor claims-only response contract.",
+                "message": "Unknown or removed field is not allowed by the target-anchor response contract.",
                 "actual": "confidence",
                 "expected": "no extra fields",
             }
@@ -756,7 +810,7 @@ def test_validation_feedback_prompt_for_json_parse_error_contains_no_evidence_ru
     assert "JSON_PARSE_ERROR" in prompt
     assert "line 1 column 2" in prompt
     assert "Output must be one valid JSON object." in prompt
-    assert "Corrected response must match the claims-only response shape." in prompt
+    assert "Corrected response must match the target-anchor response shape." in prompt
     assert "Fix only the listed validation errors." not in prompt
     assert "EVIDENCE_RANGE" not in prompt
     assert "material code lines" not in prompt

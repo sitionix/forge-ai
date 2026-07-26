@@ -35,6 +35,7 @@ class EntrypointFlowGraphRepository:
     def __init__(self, graph_store: Any) -> None:
         self.graph_store = graph_store
         self._metrics: Dict[str, int] = defaultdict(int)
+        self._boundary_fact_source_cache: dict[str, bool] = {}
 
     def load_nodes(self, node_keys: set[FlowNodeKey], *, include_tests: bool) -> dict[FlowNodeKey, FlowGraphNode]:
         self.graph_store.init()
@@ -193,9 +194,14 @@ class EntrypointFlowGraphRepository:
         facts: list[AvailableOperationFact] = []
         with self.graph_store._connect() as conn:
             for source_id, ids in sorted(grouped.items()):
+                has_boundary_facts = self._source_has_boundary_facts(conn, source_id)
                 for chunk in _chunks(sorted(ids)):
                     rows = self._query_available_operation_fact_rows(conn, source_id, list(chunk), include_tests)
                     self._metrics["operationFactRowsLoaded"] += len(rows)
+                    if has_boundary_facts:
+                        boundary_rows = self._query_boundary_operation_fact_rows(conn, source_id, list(chunk), include_tests)
+                        self._metrics["operationFactRowsLoaded"] += len(boundary_rows)
+                        facts.extend(self._operation_facts_from_boundary_rows(boundary_rows))
                     facts.extend(self._operation_facts_from_rows(rows))
                     edge_rows = self._query_edge_operation_fact_rows(conn, source_id, list(chunk), include_tests)
                     self._metrics["operationFactRowsLoaded"] += len(edge_rows)
@@ -223,11 +229,17 @@ class EntrypointFlowGraphRepository:
         methods = tuple(sorted({normalize_http_method(fact.method) or "" for fact in requested if normalize_http_method(fact.method)}))
         self.graph_store.init()
         with self.graph_store._connect() as conn:
+            boundary_rows = (
+                self._query_matching_inbound_boundary_operation_fact_rows(conn, source_ids, methods, include_tests)
+                if any(self._source_has_boundary_facts(conn, source_id) for source_id in source_ids)
+                else []
+            )
+            self._metrics["operationFactRowsLoaded"] += len(boundary_rows)
             rows = self._query_matching_inbound_operation_fact_rows(conn, source_ids, methods, include_tests)
             self._metrics["operationFactRowsLoaded"] += len(rows)
         facts = [
             fact
-            for fact in self._operation_facts_from_rows(rows)
+            for fact in (*self._operation_facts_from_boundary_rows(boundary_rows), *self._operation_facts_from_rows(rows))
             if self._inbound_fact_matches_any_outbound(fact, requested)
         ]
         return tuple(sorted(self._dedupe_operation_facts(facts), key=self._operation_fact_sort_key))
@@ -738,6 +750,216 @@ class EntrypointFlowGraphRepository:
         ).fetchall()
         return [self.graph_store._row_dict(row) for row in rows]
 
+    def _query_boundary_operation_fact_rows(
+        self,
+        conn: Any,
+        source_id: str,
+        ids: list[str],
+        include_tests: bool,
+    ) -> list[dict[str, Any]]:
+        if not ids:
+            return []
+        if not self.graph_store._table_exists(conn, "analysis_graph_boundaries"):
+            return []
+        self._metrics["sqlStatements"] += 1
+        placeholders = ",".join("?" for _ in ids)
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT b.id AS boundary_id,
+                   b.source_id AS source_id,
+                   b.node_id AS node_id,
+                   b.role AS boundary_role,
+                   b.status AS boundary_status,
+                   b.rejection_reason AS rejection_reason,
+                   b.fact_origin AS boundary_fact_origin,
+                   COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, b.flow_domain) AS effective_flow_domain,
+                   n.qualified_name AS owner_qualified_name,
+                   n.relative_path AS owner_relative_path,
+                   COALESCE(NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_id,
+                   COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_revision,
+                   EXISTS (
+                       SELECT 1
+                       FROM files f_current
+                       WHERE f_current.source_id = n.source_id
+                         AND f_current.relative_path = n.relative_path
+                         AND f_current.content_hash = n.content_hash
+                   ) AS inventory_current,
+                   EXISTS (
+                       SELECT 1
+                       FROM analysis_files af_current
+                       WHERE af_current.source_id = n.source_id
+                         AND af_current.relative_path = n.relative_path
+                         AND af_current.content_hash = n.content_hash
+                         AND af_current.status IN ('ANALYZED', 'ANALYZED_WITH_DIAGNOSTICS', 'PARTIAL')
+                   ) AS analyzed_current,
+                   d.id AS descriptor_id,
+                   d.descriptor_path AS descriptor_path,
+                   d.value_type AS descriptor_value_type,
+                   d.value_json AS descriptor_value_json,
+                   d.origin AS descriptor_origin,
+                   d.confidence AS descriptor_confidence,
+                   ev.source_id AS evidence_source_id,
+                   COALESCE(af.relative_path, ev.relative_path) AS evidence_relative_path,
+                   ev.line_start AS evidence_line_start,
+                   ev.line_end AS evidence_line_end,
+                   ev.excerpt AS evidence_excerpt
+            FROM analysis_graph_boundaries b
+            JOIN analysis_graph_nodes n
+              ON n.source_id = b.source_id
+             AND n.id = b.node_id
+             AND n.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("n")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            JOIN analysis_graph_boundary_descriptors d
+              ON d.boundary_id = b.id
+            LEFT JOIN analysis_graph_state state
+              ON state.source_id = b.source_id
+            LEFT JOIN analysis_graph_boundary_evidence be
+              ON be.boundary_id = b.id
+            LEFT JOIN analysis_graph_evidence ev
+              ON ev.id = be.evidence_id
+             AND ev.source_id = b.source_id
+            LEFT JOIN analysis_files af
+              ON af.file_id = ev.analysis_file_id
+            WHERE b.source_id = ?
+              AND b.node_id IN ({placeholders})
+              AND b.status IN ({current_status_sql})
+              AND b.rejection_reason IS NULL
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            ORDER BY b.source_id, b.node_id, b.role, b.id, d.descriptor_path, d.id,
+                     ev.relative_path, ev.line_start, ev.line_end, ev.id
+            """,
+            [
+                *current_status_params,
+                include_tests,
+                source_id,
+                *ids,
+                *current_status_params,
+                include_tests,
+            ],
+        ).fetchall()
+        return [self.graph_store._row_dict(row) for row in rows]
+
+    def _source_has_boundary_facts(self, conn: Any, source_id: str) -> bool:
+        source_key = str(source_id or "")
+        if source_key in self._boundary_fact_source_cache:
+            return self._boundary_fact_source_cache[source_key]
+        if not self.graph_store._table_exists(conn, "analysis_graph_boundaries"):
+            return False
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM analysis_graph_boundaries
+            WHERE source_id = ?
+            LIMIT 1
+            """,
+            (source_key,),
+        ).fetchone()
+        result = row is not None
+        if result:
+            self._boundary_fact_source_cache[source_key] = True
+        return result
+
+    def _query_matching_inbound_boundary_operation_fact_rows(
+        self,
+        conn: Any,
+        source_ids: Sequence[str],
+        methods: Sequence[str],
+        include_tests: bool,
+    ) -> list[dict[str, Any]]:
+        if not source_ids or not methods:
+            return []
+        if not self.graph_store._table_exists(conn, "analysis_graph_boundaries"):
+            return []
+        self._metrics["sqlStatements"] += 1
+        source_placeholders = ",".join("?" for _ in source_ids)
+        method_placeholders = ",".join("?" for _ in methods)
+        lowered_methods = [str(method or "").strip().lower() for method in methods]
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT b.id AS boundary_id,
+                   b.source_id AS source_id,
+                   b.node_id AS node_id,
+                   b.role AS boundary_role,
+                   b.status AS boundary_status,
+                   b.rejection_reason AS rejection_reason,
+                   b.fact_origin AS boundary_fact_origin,
+                   COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, b.flow_domain) AS effective_flow_domain,
+                   n.qualified_name AS owner_qualified_name,
+                   n.relative_path AS owner_relative_path,
+                   COALESCE(NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_id,
+                   COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_revision,
+                   EXISTS (
+                       SELECT 1
+                       FROM files f_current
+                       WHERE f_current.source_id = n.source_id
+                         AND f_current.relative_path = n.relative_path
+                         AND f_current.content_hash = n.content_hash
+                   ) AS inventory_current,
+                   EXISTS (
+                       SELECT 1
+                       FROM analysis_files af_current
+                       WHERE af_current.source_id = n.source_id
+                         AND af_current.relative_path = n.relative_path
+                         AND af_current.content_hash = n.content_hash
+                         AND af_current.status IN ('ANALYZED', 'ANALYZED_WITH_DIAGNOSTICS', 'PARTIAL')
+                   ) AS analyzed_current,
+                   d.id AS descriptor_id,
+                   d.descriptor_path AS descriptor_path,
+                   d.value_type AS descriptor_value_type,
+                   d.value_json AS descriptor_value_json,
+                   d.origin AS descriptor_origin,
+                   d.confidence AS descriptor_confidence,
+                   ev.source_id AS evidence_source_id,
+                   COALESCE(af.relative_path, ev.relative_path) AS evidence_relative_path,
+                   ev.line_start AS evidence_line_start,
+                   ev.line_end AS evidence_line_end,
+                   ev.excerpt AS evidence_excerpt
+            FROM analysis_graph_boundaries b
+            JOIN analysis_graph_boundary_descriptor_index method_index
+              ON method_index.boundary_id = b.id
+             AND method_index.descriptor_path IN ('http.method', 'operation.method')
+             AND method_index.normalized_scalar_value IN ({method_placeholders})
+            JOIN analysis_graph_nodes n
+              ON n.source_id = b.source_id
+             AND n.id = b.node_id
+             AND n.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("n")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            JOIN analysis_graph_boundary_descriptors d
+              ON d.boundary_id = b.id
+            LEFT JOIN analysis_graph_state state
+              ON state.source_id = b.source_id
+            LEFT JOIN analysis_graph_boundary_evidence be
+              ON be.boundary_id = b.id
+            LEFT JOIN analysis_graph_evidence ev
+              ON ev.id = be.evidence_id
+             AND ev.source_id = b.source_id
+            LEFT JOIN analysis_files af
+              ON af.file_id = ev.analysis_file_id
+            WHERE b.source_id IN ({source_placeholders})
+              AND b.role = 'PROVIDED'
+              AND b.status IN ({current_status_sql})
+              AND b.rejection_reason IS NULL
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            ORDER BY b.source_id, b.node_id, b.role, b.id, d.descriptor_path, d.id,
+                     ev.relative_path, ev.line_start, ev.line_end, ev.id
+            """,
+            [
+                *lowered_methods,
+                *current_status_params,
+                include_tests,
+                *source_ids,
+                *current_status_params,
+                include_tests,
+            ],
+        ).fetchall()
+        return [self.graph_store._row_dict(row) for row in rows]
+
     def _query_edge_operation_fact_rows(
         self,
         conn: Any,
@@ -945,6 +1167,110 @@ class EntrypointFlowGraphRepository:
                 )
             )
         return tuple(facts)
+
+    def _operation_facts_from_boundary_rows(self, rows: Sequence[dict[str, Any]]) -> tuple[AvailableOperationFact, ...]:
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            grouped[str(row.get("boundary_id") or "")].append(row)
+        facts: list[AvailableOperationFact] = []
+        for boundary_id, boundary_rows in grouped.items():
+            if not boundary_id or not boundary_rows:
+                continue
+            first = boundary_rows[0]
+            descriptors = self._boundary_descriptor_values(boundary_rows)
+            role = str(first.get("boundary_role") or "").strip().upper()
+            direction = "INBOUND" if role == "PROVIDED" else "OUTBOUND" if role == "REQUIRED" else None
+            if direction is None:
+                continue
+            transport = normalize_transport_kind(
+                self._first_descriptor(descriptors, "transport.kind")
+                or self._first_descriptor(descriptors, "provided.kind")
+                or self._first_descriptor(descriptors, "connector.kind")
+            )
+            method = normalize_http_method(
+                self._first_descriptor(descriptors, "http.method")
+                or self._first_descriptor(descriptors, "operation.method")
+            )
+            route = normalize_route(
+                self._first_descriptor(descriptors, "http.route")
+                or self._first_descriptor(descriptors, "operation.routeTemplate")
+                or self._first_descriptor(descriptors, "operation.route")
+            )
+            topic = clean_identity(self._first_descriptor(descriptors, "messaging.topic"))
+            schedule = clean_identity(self._first_descriptor(descriptors, "schedule.expression"))
+            if not any((transport, method, route, topic, schedule)):
+                continue
+            operation_identity = clean_identity(self._first_descriptor(descriptors, "operation.identity"))
+            interface_identity = clean_identity(
+                self._first_descriptor(descriptors, "interface.identity")
+                or self._first_descriptor(descriptors, "interface.method")
+            )
+            evidence = tuple(
+                dict.fromkeys(
+                    OperationFactEvidence(
+                        source_id=str(row.get("evidence_source_id") or first.get("source_id") or ""),
+                        relative_path=str(row.get("evidence_relative_path")) if row.get("evidence_relative_path") else None,
+                        line_start=int(row.get("evidence_line_start")) if row.get("evidence_line_start") is not None else None,
+                        line_end=int(row.get("evidence_line_end")) if row.get("evidence_line_end") is not None else None,
+                        excerpt=str(row.get("evidence_excerpt")) if row.get("evidence_excerpt") else None,
+                    )
+                    for row in boundary_rows
+                    if row.get("evidence_source_id")
+                )
+            )
+            facts.append(
+                AvailableOperationFact(
+                    owner_source_id=str(first.get("source_id") or ""),
+                    owner_graph_id=str(first.get("graph_id") or ""),
+                    owner_graph_revision=str(first.get("graph_revision")) if first.get("graph_revision") else None,
+                    owner_node_id=str(first.get("node_id") or ""),
+                    source_id=str(first.get("source_id") or ""),
+                    execution_role=role,
+                    transport_kind=transport,
+                    direction_role=direction,
+                    method=method,
+                    normalized_route=route,
+                    topic=topic,
+                    schedule=schedule,
+                    operation_identity=operation_identity,
+                    interface_identity=interface_identity,
+                    request_contract_identity=clean_identity(self._first_descriptor(descriptors, "contract.request")),
+                    response_contract_identity=clean_identity(self._first_descriptor(descriptors, "contract.response")),
+                    target_service_identity=clean_identity(self._first_descriptor(descriptors, "target.serviceIdentity")),
+                    owner_qualified_name=clean_identity(first.get("owner_qualified_name")),
+                    owner_relative_path=clean_identity(first.get("owner_relative_path")),
+                    evidence=evidence,
+                    eligibility=OperationFactEligibility(
+                        status=clean_identity(first.get("boundary_status")),
+                        rejection_reason=clean_identity(first.get("rejection_reason")),
+                        flow_domain=clean_identity(first.get("effective_flow_domain")),
+                        inventory_current=bool(first.get("inventory_current")),
+                        analyzed_current=bool(first.get("analyzed_current")),
+                    ),
+                    source_channel="BOUNDARY_FACT",
+                )
+            )
+        return tuple(facts)
+
+    def _boundary_descriptor_values(self, rows: Sequence[dict[str, Any]]) -> dict[str, list[Any]]:
+        values: dict[str, list[Any]] = defaultdict(list)
+        seen: set[tuple[str, str]] = set()
+        for row in rows:
+            path = str(row.get("descriptor_path") or "")
+            raw_json = str(row.get("descriptor_value_json") or "")
+            if not path or (path, raw_json) in seen:
+                continue
+            seen.add((path, raw_json))
+            try:
+                parsed = json.loads(raw_json)
+            except json.JSONDecodeError:
+                parsed = raw_json
+            values[path].append(parsed)
+        return values
+
+    def _first_descriptor(self, descriptors: dict[str, list[Any]], path: str) -> Any:
+        values = descriptors.get(path) or []
+        return values[0] if values else None
 
     def _claim_fact_direction(self, row: Dict[str, Any]) -> str | None:
         if normalize_transport_kind(row.get("entrypoint_kind")) != "HTTP":

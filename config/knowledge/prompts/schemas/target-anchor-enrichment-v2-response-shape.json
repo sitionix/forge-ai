@@ -10,5 +10,24 @@
         }
       ]
     }
+  ],
+  "boundaries": [
+    {
+      "role": "PROVIDED",
+      "evidence": [
+        {
+          "lineStart": 1,
+          "lineEnd": 1
+        }
+      ],
+      "descriptors": [
+        {
+          "path": "annotation.name",
+          "value": "Example",
+          "origin": "LLM",
+          "confidence": 0.8
+        }
+      ]
+    }
   ]
 }

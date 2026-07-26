@@ -40,7 +40,7 @@ from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
+from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.graph_state_repository import GRAPH_STATE_FAILED, GraphStateRepository
 from knowledge_service.inventory_builder import InventoryBuilder
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
@@ -1154,6 +1154,406 @@ def test_graph_materialization_generates_unique_evidence_ids_for_shared_ranges()
     assert len(edge_ids) == len(set(edge_ids))
     assert len(claim_ids) == len(set(claim_ids))
     assert len(graph["evidence"]) == 5
+
+
+def boundary_graph_result_for_test(*, flow_domain="CODE"):
+    evidence = GraphEvidenceRef(lineStart=1, lineEnd=1, text="void run() { remote.create(); }", metadata={"evidenceKind": "BOUNDARY"})
+    return GraphAnalysisResult(
+        nodes=[
+            GraphNode(
+                localId="handler",
+                nodeKind="CALLABLE",
+                name="Handler.run",
+                qualifiedName="example.Handler.run",
+                lineStart=1,
+                lineEnd=1,
+                confidence=1.0,
+                metadata={"factOrigin": "STATIC", "flowDomain": flow_domain},
+            )
+        ],
+        boundaries=[
+            BoundaryFact(
+                localId="boundary-shared",
+                nodeLocalId="handler",
+                role="REQUIRED",
+                origin="STATIC",
+                confidence=0.91,
+                flowDomain=flow_domain,
+                evidence=[evidence],
+                descriptors=[
+                    BoundaryDescriptor(path="custom.scalar", value=" Alpha ", origin="STATIC", confidence=0.91, evidence=[evidence]),
+                    BoundaryDescriptor(path="custom.list", value=["one", 2], origin="STATIC", confidence=0.91, evidence=[evidence]),
+                    BoundaryDescriptor(
+                        path="custom.object",
+                        value={"flag": True, "nested": {"id": "A-1"}},
+                        origin="STATIC",
+                        confidence=0.91,
+                        evidence=[evidence],
+                    ),
+                    BoundaryDescriptor(path="custom.boolean", value=True, origin="STATIC", confidence=0.91, evidence=[evidence]),
+                    BoundaryDescriptor(path="operation.name", value="first", origin="STATIC", confidence=0.91, evidence=[evidence]),
+                ],
+            ),
+            BoundaryFact(
+                localId="boundary-shared",
+                nodeLocalId="handler",
+                role="REQUIRED",
+                origin="LLM",
+                confidence=0.77,
+                flowDomain=flow_domain,
+                evidence=[evidence],
+                descriptors=[
+                    BoundaryDescriptor(path="operation.name", value="second", origin="LLM", confidence=0.77, evidence=[evidence]),
+                    BoundaryDescriptor(path="arbitrary.deep.key", value="kept", origin="LLM", confidence=0.77, evidence=[evidence]),
+                ],
+            ),
+        ],
+    )
+
+
+def test_boundary_facts_persist_arbitrary_descriptors_without_transport_columns(tmp_path):
+    content = "class Handler { void run() { remote.create(); } }\n"
+    graph = materialize_graph_for_test(boundary_graph_result_for_test(), content=content)
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+
+    store.replace_file_graph_analysis(1, graph_state_for_test(content), graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        boundary_columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_graph_boundaries)").fetchall()}
+        descriptor_columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_graph_boundary_descriptors)").fetchall()}
+        boundary = conn.execute("SELECT * FROM analysis_graph_boundaries").fetchone()
+        descriptors = conn.execute(
+            """
+            SELECT descriptor_path, value_type, value_json, origin
+            FROM analysis_graph_boundary_descriptors
+            ORDER BY descriptor_path, origin, value_json
+            """
+        ).fetchall()
+        index_rows = conn.execute(
+            """
+            SELECT descriptor_path, value_type, normalized_scalar_value
+            FROM analysis_graph_boundary_descriptor_index
+            ORDER BY descriptor_path, normalized_scalar_value
+            """
+        ).fetchall()
+        evidence_count = conn.execute("SELECT COUNT(*) FROM analysis_graph_boundary_evidence").fetchone()[0]
+        descriptor_evidence_count = conn.execute("SELECT COUNT(*) FROM analysis_graph_boundary_descriptor_evidence").fetchone()[0]
+
+    forbidden_columns = {"method", "route", "topic", "schedule", "service_name", "client_class", "controller_class"}
+    assert not (boundary_columns & forbidden_columns)
+    assert not (descriptor_columns & forbidden_columns)
+    assert boundary is not None
+    envelope = json.loads(boundary["descriptor_json"])
+    assert len(envelope) == 7
+    assert json.loads(next(row["value_json"] for row in descriptors if row["descriptor_path"] == "custom.list")) == ["one", 2]
+    assert json.loads(next(row["value_json"] for row in descriptors if row["descriptor_path"] == "custom.object")) == {
+        "flag": True,
+        "nested": {"id": "A-1"},
+    }
+    assert {json.loads(row["value_json"]) for row in descriptors if row["descriptor_path"] == "operation.name"} == {"first", "second"}
+    assert {(row["descriptor_path"], row["origin"]) for row in descriptors if row["descriptor_path"] == "operation.name"} == {
+        ("operation.name", "STATIC"),
+        ("operation.name", "LLM"),
+    }
+    assert ("arbitrary.deep.key", "STRING", "kept") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in index_rows
+    }
+    assert ("custom.boolean", "BOOLEAN", "true") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in index_rows
+    }
+    assert ("custom.list[0]", "STRING", "one") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in index_rows
+    }
+    assert ("custom.object.nested.id", "STRING", "a-1") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in index_rows
+    }
+    assert evidence_count == 2
+    assert descriptor_evidence_count >= len(descriptors)
+
+
+def test_boundary_operation_fact_projection_respects_currentness_and_include_tests(tmp_path):
+    content = "class Handler { void run() { remote.create(); } }\n"
+    relative_path = "src/main/java/example/ObjectHandler.java"
+    evidence = GraphEvidenceRef(lineStart=1, lineEnd=1, text="void run() { remote.create(); }", metadata={"evidenceKind": "BOUNDARY"})
+    result = GraphAnalysisResult(
+        nodes=[GraphNode(localId="handler", nodeKind="CALLABLE", name="Handler.run", lineStart=1, lineEnd=1, confidence=1.0)],
+        boundaries=[
+            BoundaryFact(
+                localId="http-required",
+                nodeLocalId="handler",
+                role="REQUIRED",
+                origin="STATIC",
+                evidence=[evidence],
+                descriptors=[
+                    BoundaryDescriptor(path="transport.kind", value="HTTP", origin="STATIC", evidence=[evidence]),
+                    BoundaryDescriptor(path="http.method", value="POST", origin="STATIC", evidence=[evidence]),
+                    BoundaryDescriptor(path="http.route", value="/items", origin="STATIC", evidence=[evidence]),
+                    BoundaryDescriptor(path="operation.identity", value="create-item", origin="STATIC", evidence=[evidence]),
+                ],
+            )
+        ],
+    )
+    inventory_store, _, _ = build_inventory(tmp_path, content=content)
+    store = AnalysisStore(inventory_store.db_path)
+    graph = materialize_graph_for_test(result, content=content, relative_path=relative_path)
+    store.replace_file_graph_analysis(1, graph_state_for_test(content, relative_path), graph)
+    node_id = graph["nodes"][0]["id"]
+    key = ("edge-gateway", "edge-gateway:query-current-facts", node_id)
+    repo = EntrypointFlowGraphRepository(store)
+
+    facts = repo.load_available_operation_facts({key}, include_tests=False)
+
+    assert [(fact.source_channel, fact.direction_role, fact.method, fact.normalized_route, fact.operation_identity) for fact in facts] == [
+        ("BOUNDARY_FACT", "OUTBOUND", "POST", "/items", "create-item")
+    ]
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("UPDATE files SET content_hash = 'changed' WHERE source_id = 'edge-gateway'")
+
+    assert repo.load_available_operation_facts({key}, include_tests=False) == ()
+
+    test_inventory_store, _, _ = build_inventory(tmp_path / "test-domain", content=content)
+    test_store = AnalysisStore(test_inventory_store.db_path)
+    test_store.replace_file_graph_analysis(1, graph_state_for_test(content, relative_path, source_id="edge-gateway"), graph)
+    with sqlite3.connect(test_store.db_path) as conn:
+        conn.execute("UPDATE files SET flow_domain = 'TEST' WHERE source_id = 'edge-gateway'")
+    test_repo = EntrypointFlowGraphRepository(test_store)
+
+    assert test_repo.load_available_operation_facts({key}, include_tests=False) == ()
+    assert len(test_repo.load_available_operation_facts({key}, include_tests=True)) == 1
+
+
+def test_representative_static_analysis_persists_temporary_boundary_flow_sides(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    cases = [
+        (
+            "registration-bff",
+            1,
+            "src/main/java/example/RegistrationBff.java",
+            """
+class RegistrationBff {
+  private final AuthGateway auth;
+  void createUser(Object request) {
+    auth.createUser(request);
+  }
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "auth-registration",
+            2,
+            "src/main/java/example/RegistrationController.java",
+            """
+import org.springframework.web.bind.annotation.PostMapping;
+
+class RegistrationController {
+  @PostMapping("/registrations")
+  void createUser(Object request) {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "login-bff",
+            3,
+            "src/main/java/example/LoginBff.java",
+            """
+class LoginBff {
+  private final AuthGateway auth;
+  void login(Object request) {
+    auth.login(request);
+  }
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "auth-login",
+            4,
+            "src/main/java/example/LoginController.java",
+            """
+import org.springframework.web.bind.annotation.PostMapping;
+
+class LoginController {
+  @PostMapping("/login")
+  void login(Object request) {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "refresh-bff",
+            5,
+            "src/main/java/example/RefreshBff.java",
+            """
+class RefreshBff {
+  private final AuthGateway auth;
+  void refreshAccessToken(Object request) {
+    auth.refreshAccessToken(request);
+  }
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "auth-refresh",
+            6,
+            "src/main/java/example/RefreshController.java",
+            """
+import org.springframework.web.bind.annotation.PostMapping;
+
+class RefreshController {
+  @PostMapping("/token/refresh")
+  void refreshAccessToken(Object request) {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "site-bff",
+            7,
+            "src/main/java/example/SiteBff.java",
+            """
+class SiteBff {
+  private final SiteGateway sites;
+  void createSite(Object request) {
+    sites.createSite(request);
+  }
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "site-service",
+            8,
+            "src/main/java/example/SiteController.java",
+            """
+import org.springframework.web.bind.annotation.PostMapping;
+
+class SiteController {
+  @PostMapping("/sites")
+  void createSite(Object request) {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "event-producer",
+            9,
+            "src/main/java/example/UserEventProducer.java",
+            """
+class UserEventProducer {
+  private final EventGateway events;
+  void publishUserCreated(Object event) {
+    events.publish(event);
+  }
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "event-consumer",
+            10,
+            "src/main/java/example/UserEventListener.java",
+            """
+import org.springframework.kafka.annotation.KafkaListener;
+
+class UserEventListener {
+  @KafkaListener(topics = "users.created")
+  void consume(String payload) {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "scheduled-worker",
+            11,
+            "src/main/java/example/ScheduledWorker.java",
+            """
+import org.springframework.scheduling.annotation.Scheduled;
+
+class ScheduledWorker {
+  @Scheduled(fixedDelayString = "${jobs.refresh-ms}")
+  void runJob() {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "health-service",
+            12,
+            "src/main/java/example/HealthController.java",
+            """
+import org.springframework.web.bind.annotation.GetMapping;
+
+class HealthController {
+  @GetMapping("/health")
+  String health() {
+    return "ok";
+  }
+}
+""".strip()
+            + "\n",
+        ),
+    ]
+
+    for source_id, file_id, relative_path, content in cases:
+        graph = _materialize_static_java_for_test(content, file_id, relative_path, source_id)
+        store.replace_file_graph_analysis(file_id, graph_state_for_test(content, relative_path, source_id), graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        boundary_rows = conn.execute("SELECT id, source_id, role FROM analysis_graph_boundaries ORDER BY source_id, id").fetchall()
+        descriptor_rows = conn.execute(
+            """
+            SELECT boundary_id, descriptor_path, value_json
+            FROM analysis_graph_boundary_descriptors
+            ORDER BY boundary_id, descriptor_path
+            """
+        ).fetchall()
+        boundary_evidence_count = conn.execute(
+            "SELECT COUNT(DISTINCT boundary_id) FROM analysis_graph_boundary_evidence"
+        ).fetchone()[0]
+        descriptor_evidence_count = conn.execute(
+            "SELECT COUNT(DISTINCT descriptor_id) FROM analysis_graph_boundary_descriptor_evidence"
+        ).fetchone()[0]
+
+    descriptors_by_boundary = {}
+    for row in descriptor_rows:
+        descriptors_by_boundary.setdefault(row["boundary_id"], {})[row["descriptor_path"]] = json.loads(row["value_json"])
+
+    def has_boundary(source_id, role, expected):
+        return any(
+            row["source_id"] == source_id
+            and row["role"] == role
+            and all(descriptors_by_boundary.get(row["id"], {}).get(path) == value for path, value in expected.items())
+            for row in boundary_rows
+        )
+
+    assert has_boundary("registration-bff", "REQUIRED", {"call.method": "createUser", "call.receiverTypeHint": "AuthGateway"})
+    assert has_boundary("auth-registration", "PROVIDED", {"http.method": "POST", "http.route": "/registrations"})
+    assert has_boundary("login-bff", "REQUIRED", {"call.method": "login", "call.receiverTypeHint": "AuthGateway"})
+    assert has_boundary("auth-login", "PROVIDED", {"http.method": "POST", "http.route": "/login"})
+    assert has_boundary("refresh-bff", "REQUIRED", {"call.method": "refreshAccessToken", "call.receiverTypeHint": "AuthGateway"})
+    assert has_boundary("auth-refresh", "PROVIDED", {"http.method": "POST", "http.route": "/token/refresh"})
+    assert has_boundary("site-bff", "REQUIRED", {"call.method": "createSite", "call.receiverTypeHint": "SiteGateway"})
+    assert has_boundary("site-service", "PROVIDED", {"http.method": "POST", "http.route": "/sites"})
+    assert has_boundary("event-producer", "REQUIRED", {"call.method": "publish", "call.receiverTypeHint": "EventGateway"})
+    assert has_boundary("event-consumer", "PROVIDED", {"messaging.topic": "users.created"})
+    assert has_boundary("scheduled-worker", "PROVIDED", {"provided.kind": "SCHEDULED"})
+    assert has_boundary("health-service", "PROVIDED", {"http.method": "GET", "http.route": "/health"})
+    assert boundary_evidence_count == len(boundary_rows)
+    assert descriptor_evidence_count == len(descriptor_rows)
+    assert all(
+        "http.route" not in descriptors
+        for row in boundary_rows
+        if row["source_id"] == "scheduled-worker"
+        for descriptors in [descriptors_by_boundary[row["id"]]]
+    )
 
 
 def test_graph_store_accepts_shared_evidence_ranges_and_replaces_file_twice(tmp_path):
