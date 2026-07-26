@@ -24,7 +24,6 @@
         {
           "path": "annotation.name",
           "value": "Example",
-          "origin": "LLM",
           "confidence": 0.8
         }
       ]

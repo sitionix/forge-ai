@@ -55,7 +55,7 @@ class CrossSourceGraphResolver:
             return
         declaration_evidence = self._declaration_evidence_ids_by_node(conn, source_id)
         interface_entrypoint_claims = self._entrypoint_claims_by_node(conn, source_id)
-        interface_boundaries = self._provided_boundaries_by_node(conn, source_id)
+        interface_boundaries = self._provided_boundaries_by_node(conn)
         implementation_entrypoints = self._nodes_with_entrypoint_claims(conn, source_id)
         implementation_boundary_nodes = self._nodes_with_provided_boundaries(conn, source_id)
         pending_claims_by_impl: Dict[str, List[sqlite3.Row]] = defaultdict(list)
@@ -346,7 +346,7 @@ class CrossSourceGraphResolver:
         ).fetchall()
         return {row["node_id"] for row in rows}
 
-    def _provided_boundaries_by_node(self, conn: sqlite3.Connection, source_id: str) -> dict[str, list[sqlite3.Row]]:
+    def _provided_boundaries_by_node(self, conn: sqlite3.Connection) -> dict[str, list[sqlite3.Row]]:
         if not self.store._table_exists(conn, "analysis_graph_boundaries"):
             return {}
         contract = graph_query_contract()
@@ -355,13 +355,12 @@ class CrossSourceGraphResolver:
             f"""
             SELECT *
             FROM analysis_graph_boundaries
-            WHERE source_id = ?
-              AND role = 'PROVIDED'
+            WHERE role = 'PROVIDED'
               AND status IN ({current_status_sql})
               AND rejection_reason IS NULL
             ORDER BY node_id, confidence DESC, id
             """,
-            (source_id, *current_status_params),
+            (*current_status_params,),
         ).fetchall()
         grouped: dict[str, list[sqlite3.Row]] = defaultdict(list)
         for row in rows:
@@ -625,7 +624,7 @@ class CrossSourceGraphResolver:
                     descriptor["descriptor_path"],
                     descriptor["value_type"],
                     descriptor["value_json"],
-                    descriptor["origin"],
+                    graph_query_contract().derived_status,
                     descriptor["confidence"],
                     descriptor["status"],
                     created_at,

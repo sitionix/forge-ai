@@ -163,13 +163,7 @@ class BoundaryDescriptor(BaseModel):
 
     @validator("valueType", always=True)
     def descriptor_value_type(cls, value: str | None, values: dict[str, Any]) -> str:
-        inferred = _json_value_type(values.get("value"))
-        if value is None:
-            return inferred
-        normalized = str(value or "").strip().upper()
-        if normalized not in {"STRING", "NUMBER", "BOOLEAN", "OBJECT", "LIST", "NULL"}:
-            raise ValueError("Boundary descriptor valueType is invalid")
-        return normalized
+        return _json_value_type(values.get("value"))
 
     @validator("origin")
     def descriptor_origin_required(cls, value: str) -> str:
@@ -187,6 +181,7 @@ class BoundaryDescriptor(BaseModel):
 
 class BoundaryFact(BaseModel):
     localId: str
+    identity: str | None = None
     nodeLocalId: str
     role: str
     descriptors: list[BoundaryDescriptor] = Field(default_factory=list)
@@ -206,6 +201,13 @@ class BoundaryFact(BaseModel):
         if not normalized:
             raise ValueError("Boundary identity fields are required")
         return normalized
+
+    @validator("identity")
+    def boundary_group_identity_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value or "").strip()
+        return normalized or None
 
     @validator("role")
     def boundary_role_valid(cls, value: str) -> str:

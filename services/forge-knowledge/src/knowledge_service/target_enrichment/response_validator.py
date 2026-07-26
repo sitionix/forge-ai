@@ -10,11 +10,11 @@ from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, Gra
 
 class TargetResponseParserValidator:
     _TOP_LEVEL_FIELDS: ClassVar[set[str]] = {"claims", "boundaries"}
-    _CLAIM_FIELDS = {"claimKind", "summary", "evidence"}
-    _BOUNDARY_FIELDS: ClassVar[set[str]] = {"role", "descriptors", "evidence", "confidence", "status", "flowDomain"}
-    _DESCRIPTOR_FIELDS: ClassVar[set[str]] = {"path", "value", "valueType", "origin", "confidence", "evidence"}
-    _EVIDENCE_FIELDS = {"lineStart", "lineEnd"}
-    _OLD_CONTRACT_FIELDS = {
+    _CLAIM_FIELDS: ClassVar[set[str]] = {"claimKind", "summary", "evidence"}
+    _BOUNDARY_FIELDS: ClassVar[set[str]] = {"role", "descriptors", "evidence", "confidence"}
+    _DESCRIPTOR_FIELDS: ClassVar[set[str]] = {"path", "value", "confidence", "evidence"}
+    _EVIDENCE_FIELDS: ClassVar[set[str]] = {"lineStart", "lineEnd"}
+    _OLD_CONTRACT_FIELDS: ClassVar[set[str]] = {
         "schemaVersion",
         "localId",
         "targetRef",
@@ -31,7 +31,7 @@ class TargetResponseParserValidator:
     _DEFAULT_CONFIDENCE = 0.8
     _MAX_SUMMARY_CHARS = 600
     _MAX_EVIDENCE_TEXT_CHARS = 2000
-    _CLOSING_BRACE_LINES = {"}", "};", ");", ")"}
+    _CLOSING_BRACE_LINES: ClassVar[set[str]] = {"}", "};", ");", ")"}
 
     def parse(
         self,
@@ -557,8 +557,7 @@ class TargetResponseParserValidator:
                     BoundaryDescriptor(
                         path=str(descriptor["path"]),
                         value=descriptor["value"],
-                        valueType=descriptor.get("valueType"),
-                        origin=str(descriptor.get("origin") or "LLM"),
+                        origin="LLM",
                         confidence=descriptor.get("confidence"),
                         evidence=descriptor_evidence,
                     )
@@ -572,8 +571,6 @@ class TargetResponseParserValidator:
                     evidence=evidence,
                     origin="LLM",
                     confidence=float(item.get("confidence") if item.get("confidence") is not None else self._DEFAULT_CONFIDENCE),
-                    status=str(item.get("status")) if item.get("status") is not None else None,
-                    flowDomain=str(item.get("flowDomain")) if item.get("flowDomain") is not None else None,
                     metadata={"factOrigin": "LLM"},
                 )
             )

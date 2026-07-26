@@ -522,7 +522,12 @@ def _materialize_static_plus_enrichment_for_test(
     )
 
 
-def graph_state_for_test(content=None, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java", source_id="edge-gateway"):
+def graph_state_for_test(
+    content=None,
+    relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java",
+    source_id="edge-gateway",
+    flow_domain="CODE",
+):
     content = content or "class EmailVerificationLinkClientImpl {}\n"
     return {
         "source_id": source_id,
@@ -530,7 +535,7 @@ def graph_state_for_test(content=None, relative_path="src/main/java/example/Emai
         "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
         "analyzer_name": "test-analyzer",
         "analyzer_version": "1",
-        "flow_domain": "CODE",
+        "flow_domain": flow_domain,
         "status": "ANALYZED",
         "analyzed_at": "now",
         "diagnostics": [],
@@ -1271,6 +1276,217 @@ def test_boundary_facts_persist_arbitrary_descriptors_without_transport_columns(
     }
     assert evidence_count == 2
     assert descriptor_evidence_count >= len(descriptors)
+
+
+def test_llm_boundary_lifecycle_fields_are_backend_authoritative(tmp_path):
+    content = "class Handler { void run() { remote.create(); } }\n"
+    evidence = GraphEvidenceRef(lineStart=1, lineEnd=1, text="void run() { remote.create(); }")
+    static_graph = GraphAnalysisResult(
+        nodes=[
+            GraphNode(
+                localId="handler",
+                nodeKind="CALLABLE",
+                name="Handler.run",
+                lineStart=1,
+                lineEnd=1,
+                confidence=1.0,
+                metadata={"factOrigin": "STATIC", "flowDomain": "WORKFLOW"},
+            )
+        ]
+    )
+    enrichment = GraphAnalysisResult(
+        boundaries=[
+            BoundaryFact(
+                localId="llm-forged",
+                nodeLocalId="handler",
+                role="REQUIRED",
+                origin="DERIVED",
+                confidence=0.2,
+                status="TRUSTED",
+                flowDomain="TEST",
+                metadata={"factOrigin": "STATIC", "status": "TRUSTED", "flowDomain": "TEST"},
+                evidence=[evidence],
+                descriptors=[
+                    BoundaryDescriptor(
+                        path="call.enabled",
+                        value=True,
+                        valueType="STRING",
+                        origin="STATIC",
+                        confidence=0.2,
+                        evidence=[evidence],
+                    )
+                ],
+            )
+        ]
+    )
+    merged = AnchorAwareGraphValidator().merge(static_graph, enrichment, len(content.splitlines()))
+    graph = materialize_graph_for_test(merged, content=content)
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(1, graph_state_for_test(content, flow_domain="WORKFLOW"), graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        boundary = conn.execute("SELECT fact_origin, status, flow_domain, metadata_json FROM analysis_graph_boundaries").fetchone()
+        descriptor = conn.execute("SELECT origin, value_type, value_json FROM analysis_graph_boundary_descriptors").fetchone()
+        envelope = json.loads(boundary["metadata_json"])
+
+    assert boundary["fact_origin"] == "LLM"
+    assert boundary["status"] == "CANDIDATE"
+    assert boundary["flow_domain"] == "WORKFLOW"
+    assert envelope["boundaryIdentity"].startswith("LLM_BOUNDARY:")
+    assert descriptor["origin"] == "LLM"
+    assert descriptor["value_type"] == "BOOLEAN"
+    assert json.loads(descriptor["value_json"]) is True
+
+
+def test_boundary_merge_identity_preserves_conflicts_types_evidence_and_order_stability(tmp_path):
+    content = "void first() { remote.create(); }\nvoid second() { // llm evidence }\nvoid third() { other.create(); }"
+    first_evidence = GraphEvidenceRef(lineStart=1, lineEnd=1, text="void first() { remote.create(); }")
+    second_evidence = GraphEvidenceRef(lineStart=2, lineEnd=2, text="void second() { // llm evidence }")
+    third_evidence = GraphEvidenceRef(lineStart=3, lineEnd=3, text="void third() { other.create(); }")
+
+    def result(boundaries):
+        return GraphAnalysisResult(
+            nodes=[
+                GraphNode(
+                    localId="handler",
+                    nodeKind="CALLABLE",
+                    name="Handler.run",
+                    lineStart=1,
+                    lineEnd=3,
+                    confidence=1.0,
+                    metadata={"factOrigin": "STATIC", "flowDomain": "WORKFLOW"},
+                )
+            ],
+            boundaries=boundaries,
+        )
+
+    static_boundary = BoundaryFact(
+        localId="static-a",
+        identity="boundary:a",
+        nodeLocalId="handler",
+        role="REQUIRED",
+        origin="STATIC",
+        confidence=0.91,
+        evidence=[first_evidence],
+        descriptors=[
+            BoundaryDescriptor(path="operation.name", value="first", origin="STATIC", confidence=0.91, evidence=[first_evidence]),
+            BoundaryDescriptor(path="operation.name", value="first", origin="STATIC", confidence=0.91, evidence=[first_evidence]),
+            BoundaryDescriptor(path="custom.boolean", value=True, valueType="STRING", origin="STATIC", confidence=0.91, evidence=[first_evidence]),
+            BoundaryDescriptor(path="custom.number", value=7, origin="STATIC", confidence=0.91, evidence=[first_evidence]),
+            BoundaryDescriptor(
+                path="custom.object",
+                value={"enabled": False, "nested": {"id": "A-1"}},
+                origin="STATIC",
+                confidence=0.91,
+                evidence=[first_evidence],
+            ),
+            BoundaryDescriptor(path="custom.list", value=["one", 2], origin="STATIC", confidence=0.91, evidence=[first_evidence]),
+        ],
+    )
+    llm_boundary = BoundaryFact(
+        localId="llm-a",
+        identity="boundary:a",
+        nodeLocalId="handler",
+        role="REQUIRED",
+        origin="LLM",
+        confidence=0.77,
+        evidence=[second_evidence],
+        descriptors=[
+            BoundaryDescriptor(path="operation.name", value="second", origin="LLM", confidence=0.77, evidence=[second_evidence]),
+            BoundaryDescriptor(path="payload.kind", value="event", origin="LLM", confidence=0.77, evidence=[second_evidence]),
+            BoundaryDescriptor(path="payload.kind", value="event", origin="LLM", confidence=0.77, evidence=[second_evidence]),
+        ],
+    )
+    independent_boundary = BoundaryFact(
+        localId="static-b",
+        identity="boundary:b",
+        nodeLocalId="handler",
+        role="REQUIRED",
+        origin="STATIC",
+        confidence=0.91,
+        evidence=[third_evidence],
+        descriptors=[
+            BoundaryDescriptor(path="operation.name", value="third", origin="STATIC", confidence=0.91, evidence=[third_evidence]),
+        ],
+    )
+    first_graph = materialize_graph_for_test(result([static_boundary, llm_boundary, independent_boundary]), content=content)
+    second_graph = materialize_graph_for_test(result([llm_boundary, static_boundary, independent_boundary]), content=content)
+
+    def persisted_rows(db_path):
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            return {
+                "boundaries": [dict(row) for row in conn.execute("SELECT id, stable_key, role, status, fact_origin, flow_domain FROM analysis_graph_boundaries ORDER BY id")],
+                "descriptors": [
+                    dict(row)
+                    for row in conn.execute(
+                        """
+                        SELECT boundary_id, descriptor_path, value_type, value_json, origin
+                        FROM analysis_graph_boundary_descriptors
+                        ORDER BY boundary_id, descriptor_path, origin, value_json
+                        """
+                    )
+                ],
+                "index": [
+                    dict(row)
+                    for row in conn.execute(
+                        """
+                        SELECT descriptor_path, value_type, normalized_scalar_value
+                        FROM analysis_graph_boundary_descriptor_index
+                        ORDER BY descriptor_path, value_type, normalized_scalar_value
+                        """
+                    )
+                ],
+                "boundaryEvidence": [
+                    dict(row)
+                    for row in conn.execute("SELECT boundary_id, evidence_id FROM analysis_graph_boundary_evidence ORDER BY boundary_id, evidence_id")
+                ],
+                "descriptorEvidence": [
+                    dict(row)
+                    for row in conn.execute(
+                        "SELECT descriptor_id, evidence_id FROM analysis_graph_boundary_descriptor_evidence ORDER BY descriptor_id, evidence_id"
+                    )
+                ],
+            }
+
+    first_store = AnalysisStore(tmp_path / "first.sqlite")
+    second_store = AnalysisStore(tmp_path / "second.sqlite")
+    first_store.init()
+    second_store.init()
+    first_store.replace_file_graph_analysis(1, graph_state_for_test(content, flow_domain="WORKFLOW"), first_graph)
+    first_store.replace_file_graph_analysis(1, graph_state_for_test(content, flow_domain="WORKFLOW"), first_graph)
+    second_store.replace_file_graph_analysis(1, graph_state_for_test(content, flow_domain="WORKFLOW"), second_graph)
+    first_rows = persisted_rows(first_store.db_path)
+    second_rows = persisted_rows(second_store.db_path)
+
+    assert first_rows == second_rows
+    assert len(first_rows["boundaries"]) == 2
+    assert {row["stable_key"] for row in first_rows["boundaries"]} == {"boundary:a", "boundary:b"}
+    assert next(row for row in first_rows["boundaries"] if row["stable_key"] == "boundary:a")["fact_origin"] == "STATIC"
+    merged_boundary_id = next(row["id"] for row in first_rows["boundaries"] if row["stable_key"] == "boundary:a")
+    merged_descriptors = [row for row in first_rows["descriptors"] if row["boundary_id"] == merged_boundary_id]
+    assert len(merged_descriptors) == 7
+    assert {json.loads(row["value_json"]) for row in merged_descriptors if row["descriptor_path"] == "operation.name"} == {"first", "second"}
+    assert {(row["descriptor_path"], row["origin"]) for row in merged_descriptors if row["descriptor_path"] == "operation.name"} == {
+        ("operation.name", "STATIC"),
+        ("operation.name", "LLM"),
+    }
+    assert ("custom.boolean", "BOOLEAN", "true") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in first_rows["index"]
+    }
+    assert ("custom.number", "NUMBER", "7") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in first_rows["index"]
+    }
+    assert ("custom.object.enabled", "BOOLEAN", "false") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in first_rows["index"]
+    }
+    assert ("custom.list[1]", "NUMBER", "2") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in first_rows["index"]
+    }
+    assert first_rows["boundaryEvidence"]
+    assert first_rows["descriptorEvidence"]
 
 
 def test_boundary_operation_fact_projection_respects_currentness_and_include_tests(tmp_path):
@@ -2669,6 +2885,19 @@ class TaskWorkflow {
             ORDER BY node.signature
             """
         ).fetchall()
+        inherited_boundaries = conn.execute(
+            """
+            SELECT boundary.status, boundary.fact_origin, descriptor.origin AS descriptor_origin,
+                   descriptor.descriptor_path, descriptor.value_json
+            FROM analysis_graph_boundaries boundary
+            JOIN analysis_graph_nodes node ON node.id = boundary.node_id
+            JOIN analysis_graph_boundary_descriptors descriptor ON descriptor.boundary_id = boundary.id
+            WHERE boundary.source_id = 'task-service'
+              AND node.qualified_name = 'service.impl.TaskController.handle'
+              AND boundary.status = 'DERIVED'
+            ORDER BY descriptor.descriptor_path
+            """
+        ).fetchall()
         dispatch_edge = conn.execute(
             """
             SELECT caller.qualified_name AS caller_method,
@@ -2714,6 +2943,13 @@ class TaskWorkflow {
     assert inherited_claims[0]["entrypoint_route"] == "/tasks/handle"
     assert inherited_claims[0]["entrypoint_interface_method"] == "generated.api.TaskApi.handle"
     assert inherited_claims[0]["entrypoint_execution_kind"] == "EXECUTABLE"
+    assert inherited_boundaries
+    assert {row["status"] for row in inherited_boundaries} == {"DERIVED"}
+    assert {row["fact_origin"] for row in inherited_boundaries} == {"DERIVED"}
+    assert {row["descriptor_origin"] for row in inherited_boundaries} == {"DERIVED"}
+    inherited_boundary_descriptors = {row["descriptor_path"]: json.loads(row["value_json"]) for row in inherited_boundaries}
+    assert inherited_boundary_descriptors["http.method"] == "POST"
+    assert inherited_boundary_descriptors["http.route"] == "/tasks/handle"
     assert interface_claim is not None
     assert interface_claim["entrypoint_execution_kind"] == "CONTRACT_DECLARATION"
     assert dispatch_edge is not None

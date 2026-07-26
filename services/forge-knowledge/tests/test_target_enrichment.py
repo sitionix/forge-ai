@@ -11,14 +11,14 @@ import pytest
 
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
-from knowledge_service.analysis_service import AnalysisSupervisor
-from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
+from knowledge_service.analysis_parse_failure import GraphAnalysisParseFailure
 from knowledge_service.analysis_policy import PromptDefinition
 from knowledge_service.analysis_policy_loader import load_analysis_policy
+from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
+from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.analysis_parse_failure import GraphAnalysisParseFailure
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphEdge, GraphEvidenceRef, GraphNode
+from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.target_enrichment import (
     BEGIN_INPUT_MARKER,
     END_INPUT_MARKER,
@@ -31,7 +31,6 @@ from knowledge_service.target_enrichment import (
     TargetPromptRenderer,
     TargetResponseParserValidator,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = REPO_ROOT / "config" / "knowledge" / "analysis-policy.yaml"
@@ -427,8 +426,8 @@ def test_target_response_validator_accepts_generic_boundary_descriptors():
                 "confidence": 0.74,
                 "evidence": [{"lineStart": 2, "lineEnd": 2}],
                 "descriptors": [
-                    {"path": "call.method", "value": "helper", "origin": "LLM", "confidence": 0.74},
-                    {"path": "payload.shape", "value": {"kind": "object", "required": ["id"]}, "origin": "LLM"},
+                    {"path": "call.method", "value": "helper", "confidence": 0.74},
+                    {"path": "payload.shape", "value": {"kind": "object", "required": ["id"]}},
                 ],
             }
         ],
@@ -446,8 +445,89 @@ def test_target_response_validator_accepts_generic_boundary_descriptors():
     assert boundary.origin == "LLM"
     assert boundary.confidence == 0.74
     assert {descriptor.path for descriptor in boundary.descriptors} == {"call.method", "payload.shape"}
+    assert {descriptor.origin for descriptor in boundary.descriptors} == {"LLM"}
+    assert boundary.descriptors[0].valueType == "STRING"
+    assert boundary.descriptors[1].valueType == "OBJECT"
     assert boundary.descriptors[1].value == {"kind": "object", "required": ["id"]}
     assert boundary.descriptors[0].evidence[0].text == "  void call() { helper(); }"
+
+
+def test_target_response_validator_rejects_backend_owned_boundary_fields():
+    payload, contract = _target_payload()
+    response = {
+        "claims": [],
+        "boundaries": [
+            {
+                "role": "REQUIRED",
+                "status": "TRUSTED",
+                "flowDomain": "WORKFLOW",
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
+                "descriptors": [
+                    {
+                        "path": "call.enabled",
+                        "value": True,
+                        "valueType": "STRING",
+                        "origin": "STATIC",
+                    },
+                ],
+            }
+        ],
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    paths = {detail.get("jsonPath") for detail in parsed.error_details}
+    assert {
+        "$.boundaries[0].status",
+        "$.boundaries[0].flowDomain",
+        "$.boundaries[0].descriptors[0].valueType",
+        "$.boundaries[0].descriptors[0].origin",
+    }.issubset(paths)
+
+
+def test_file_enrichment_merger_merges_boundaries_by_identity_and_dedupes_descriptors():
+    evidence_a = GraphEvidenceRef(lineStart=2, lineEnd=2, text="call();")
+    evidence_b = GraphEvidenceRef(lineStart=3, lineEnd=3, text="payload();")
+    first = GraphAnalysisResult(
+        boundaries=[
+            BoundaryFact(
+                localId="first",
+                identity="boundary:shared",
+                nodeLocalId="node",
+                role="REQUIRED",
+                evidence=[evidence_a],
+                descriptors=[
+                    BoundaryDescriptor(path="call.method", value="send", origin="LLM", evidence=[evidence_a]),
+                    BoundaryDescriptor(path="call.method", value="send", origin="LLM", evidence=[evidence_a]),
+                ],
+            )
+        ]
+    )
+    second = GraphAnalysisResult(
+        boundaries=[
+            BoundaryFact(
+                localId="second",
+                identity="boundary:shared",
+                nodeLocalId="node",
+                role="REQUIRED",
+                evidence=[evidence_b],
+                descriptors=[
+                    BoundaryDescriptor(path="payload.kind", value="event", origin="LLM", evidence=[evidence_b]),
+                ],
+            )
+        ]
+    )
+
+    merged = FileEnrichmentMerger().merge([first, second])
+
+    assert len(merged.boundaries) == 1
+    boundary = merged.boundaries[0]
+    assert {(item.lineStart, item.lineEnd) for item in boundary.evidence} == {(2, 2), (3, 3)}
+    assert [(descriptor.path, descriptor.value) for descriptor in boundary.descriptors] == [
+        ("call.method", "send"),
+        ("payload.kind", "event"),
+    ]
 
 
 def test_target_response_validator_rejects_malformed_boundary_descriptor():
