@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphEdge, GraphEvidenceRef
@@ -58,6 +59,258 @@ def confidence_status(confidence: Optional[float]) -> str:
     return "CANDIDATE"
 
 
+@dataclass(frozen=True)
+class BoundaryLifecycle:
+    status: str
+    rejection_reason: str | None = None
+
+
+BOUNDARY_LIFECYCLE_STATUSES = {"TRUSTED", "CANDIDATE", "DERIVED"}
+BOUNDARY_METADATA_KEYS = {"sourceKind", "stableKey", "boundaryIdentity", "parser", "derivation", "lifecycleSource"}
+BOUNDARY_METADATA_LIST_KEYS = {"originContributors", "lifecycleContributions"}
+BOUNDARY_METADATA_CONFLICTS_KEY = "metadataConflicts"
+BOUNDARY_ORIGIN_RANK = {"LLM": 0, "STATIC": 1, "RESOLVER": 2, "DERIVED": 3}
+
+
+def resolve_boundary_lifecycle(
+    confidence: float | None,
+    explicit_status: object = None,
+    rejection_reason: object = None,
+) -> BoundaryLifecycle:
+    reason = _normalize_rejection_reason(rejection_reason)
+    if reason:
+        return BoundaryLifecycle("CANDIDATE", reason)
+    normalized_status = _normalize_boundary_status(explicit_status)
+    if normalized_status:
+        return BoundaryLifecycle(normalized_status, None)
+    return BoundaryLifecycle(confidence_status(confidence), None)
+
+
+def aggregate_boundary_lifecycle(contributions: Iterable[BoundaryLifecycle], confidence: float | None) -> BoundaryLifecycle:
+    lifecycles = list(contributions)
+    reasons = sorted({item.rejection_reason for item in lifecycles if item.rejection_reason})
+    if reasons:
+        return BoundaryLifecycle("CANDIDATE", ";".join(reasons))
+    statuses = {item.status for item in lifecycles if item.status}
+    if "CANDIDATE" in statuses:
+        return BoundaryLifecycle("CANDIDATE", None)
+    if statuses == {"DERIVED"}:
+        return BoundaryLifecycle("DERIVED", None)
+    if "TRUSTED" in statuses:
+        return BoundaryLifecycle("TRUSTED", None)
+    if "DERIVED" in statuses:
+        return BoundaryLifecycle("DERIVED", None)
+    return resolve_boundary_lifecycle(confidence)
+
+
+def aggregate_boundary_origin(origins: Iterable[object]) -> str:
+    normalized = {str(item or "").strip().upper() for item in origins if str(item or "").strip()}
+    if not normalized:
+        return "LLM"
+    return max(normalized, key=lambda item: (BOUNDARY_ORIGIN_RANK.get(item, -1), item))
+
+
+def merge_boundary_metadata(*metadata_items: dict[str, Any]) -> dict[str, Any]:
+    scalar_values: dict[str, dict[str, Any]] = {}
+    list_values: dict[str, dict[str, Any]] = {}
+    conflict_values: dict[str, dict[str, Any]] = {}
+    for metadata in metadata_items:
+        for key, value in (metadata or {}).items():
+            if value is None:
+                continue
+            if key in BOUNDARY_METADATA_LIST_KEYS:
+                items = value if isinstance(value, list) else [value]
+                target = list_values.setdefault(key, {})
+                for item in items:
+                    target[_json_dump(item)] = item
+                continue
+            if key == BOUNDARY_METADATA_CONFLICTS_KEY and isinstance(value, dict):
+                for conflict_key, conflict_items in value.items():
+                    items = conflict_items if isinstance(conflict_items, list) else [conflict_items]
+                    target = conflict_values.setdefault(str(conflict_key), {})
+                    for item in items:
+                        target[_json_dump(item)] = item
+                continue
+            if key in BOUNDARY_METADATA_KEYS:
+                scalar_values.setdefault(key, {})[_json_dump(value)] = value
+    result: dict[str, Any] = {}
+    for key in sorted(scalar_values):
+        values = scalar_values[key]
+        if len(values) == 1:
+            result[key] = next(iter(values.values()))
+        elif len(values) > 1:
+            target = conflict_values.setdefault(key, {})
+            target.update(values)
+    for key in sorted(list_values):
+        result[key] = [list_values[key][item_key] for item_key in sorted(list_values[key])]
+    if conflict_values:
+        result[BOUNDARY_METADATA_CONFLICTS_KEY] = {
+            key: [values[item_key] for item_key in sorted(values)]
+            for key, values in sorted(conflict_values.items())
+        }
+    return result
+
+
+def boundary_lifecycle_metadata(origin: str, lifecycle: BoundaryLifecycle) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in {
+            "origin": str(origin or "LLM").upper(),
+            "status": lifecycle.status,
+            "rejectionReason": lifecycle.rejection_reason,
+        }.items()
+        if value is not None
+    }
+
+
+def boundary_descriptor_origin(descriptor: BoundaryDescriptor, boundary_fact_origin: str) -> str:
+    normalized_boundary_origin = str(boundary_fact_origin or "LLM").upper()
+    if normalized_boundary_origin in {"LLM", "DERIVED"}:
+        return normalized_boundary_origin
+    return str(descriptor.origin or normalized_boundary_origin).upper()
+
+
+def canonical_boundary_descriptor_envelope(
+    descriptors: Iterable[BoundaryDescriptor],
+    boundary_fact_origin: str,
+) -> list[dict[str, Any]]:
+    return canonicalize_boundary_descriptor_envelope(
+        {
+            "path": descriptor.path,
+            "value": descriptor.value,
+            "valueType": json_value_type(descriptor.value),
+            "origin": boundary_descriptor_origin(descriptor, boundary_fact_origin),
+            "confidence": descriptor.confidence,
+        }
+        for descriptor in descriptors
+    )
+
+
+def canonical_boundary_descriptor_envelope_from_rows(rows: Iterable[Any], *, origin: str | None = None) -> list[dict[str, Any]]:
+    items = []
+    for row in rows:
+        value = json.loads(row["value_json"])
+        items.append(
+            {
+                "path": row["descriptor_path"],
+                "value": value,
+                "valueType": json_value_type(value),
+                "origin": str(origin or row["origin"] or "LLM").upper(),
+                "confidence": row["confidence"],
+            }
+        )
+    return canonicalize_boundary_descriptor_envelope(items)
+
+
+def canonicalize_boundary_descriptor_envelope(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in items:
+        value = item.get("value")
+        normalized = {
+            "path": str(item.get("path") or "").strip(),
+            "value": value,
+            "valueType": json_value_type(value),
+            "origin": str(item.get("origin") or "LLM").upper(),
+            "confidence": item.get("confidence"),
+        }
+        if not normalized["path"]:
+            continue
+        key = (normalized["path"], _json_dump(value), normalized["origin"])
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = normalized
+            continue
+        existing_confidence = existing.get("confidence")
+        next_confidence = normalized.get("confidence")
+        if existing_confidence is None:
+            existing["confidence"] = next_confidence
+        elif next_confidence is not None:
+            existing["confidence"] = max(float(existing_confidence), float(next_confidence))
+    return [
+        by_key[key]
+        for key in sorted(
+            by_key,
+            key=lambda item: (
+                item[0],
+                item[2],
+                item[1],
+            ),
+        )
+    ]
+
+
+def boundary_descriptor_index_rows(descriptor_id: str, boundary_id: str, descriptor_path: str, value: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "descriptor_id": descriptor_id,
+            "boundary_id": boundary_id,
+            "descriptor_path": path,
+            "value_type": value_type,
+            "normalized_scalar_value": normalized_value,
+        }
+        for path, value_type, normalized_value in scalar_descriptor_projections(descriptor_path, value)
+    ]
+
+
+def scalar_descriptor_projections(path: str, value: Any) -> list[tuple[str, str, str]]:
+    if value is None:
+        return []
+    value_type = json_value_type(value)
+    if value_type in {"STRING", "NUMBER", "BOOLEAN"}:
+        return [(path, value_type, normalize_scalar_descriptor_value(value))]
+    if isinstance(value, list):
+        rows: list[tuple[str, str, str]] = []
+        for index, item in enumerate(value):
+            rows.extend(scalar_descriptor_projections(f"{path}[{index}]", item))
+        return rows
+    if isinstance(value, dict):
+        rows = []
+        for key in sorted(value):
+            rows.extend(scalar_descriptor_projections(f"{path}.{key}", value[key]))
+        return rows
+    return []
+
+
+def normalize_scalar_descriptor_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return json.dumps(value, separators=(",", ":"))
+    return str(value or "").strip().lower()
+
+
+def json_value_type(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return "NUMBER"
+    if isinstance(value, str):
+        return "STRING"
+    if isinstance(value, list):
+        return "LIST"
+    if isinstance(value, dict):
+        return "OBJECT"
+    return "OBJECT"
+
+
+def _normalize_rejection_reason(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _normalize_boundary_status(value: object) -> str | None:
+    text = str(value or "").strip().upper()
+    if text in BOUNDARY_LIFECYCLE_STATUSES:
+        return text
+    return None
+
+
+def _json_dump(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
 class GraphAnalysisEngine:
     def materialize(
         self, row: Dict[str, Any], job_id: str, analyzer_name: str, analyzer_version: str, result: GraphAnalysisResult, lines: List[str]
@@ -76,7 +329,6 @@ class GraphAnalysisEngine:
         used_evidence_ids: Set[str] = set()
         parent_by_local_id = self._parents_from_edges(result.edges)
         boundary_row_by_id: dict[str, dict[str, Any]] = {}
-        boundary_descriptor_envelope_keys_by_id: dict[str, set[tuple[str, str, str]]] = {}
         materialized_descriptor_ids: set[str] = set()
 
         for node in result.nodes:
@@ -262,8 +514,13 @@ class GraphAnalysisEngine:
             metadata = dict(boundary.metadata or {})
             fact_origin = self._boundary_fact_origin(boundary, metadata, node)
             flow_domain = str(node.get("flow_domain") or self._flow_domain(row, {})).upper()
-            status = confidence_status(boundary.confidence)
-            rejection_reason = str(metadata.get("rejectionReason")) if metadata.get("rejectionReason") and status == "CANDIDATE" else None
+            lifecycle = resolve_boundary_lifecycle(
+                boundary.confidence,
+                explicit_status=self._boundary_explicit_status(boundary, metadata, fact_origin),
+                rejection_reason=metadata.get("rejectionReason"),
+            )
+            status = lifecycle.status
+            rejection_reason = lifecycle.rejection_reason
             boundary_identity = self._boundary_identity(boundary, metadata)
             boundary_id = self._stable_id(
                 "analysis-graph-boundary",
@@ -308,13 +565,13 @@ class GraphAnalysisEngine:
                 evidence,
                 used_evidence_ids,
                 materialized_descriptor_ids,
+                lifecycle,
             )
             if not descriptor_rows and not descriptor_links:
                 continue
+            contribution_metadata = self._boundary_contribution_metadata(metadata, boundary_identity, fact_origin, lifecycle)
             boundary_row = boundary_row_by_id.get(boundary_id)
             if boundary_row is None:
-                boundary_metadata = self._boundary_metadata(metadata)
-                boundary_metadata["boundaryIdentity"] = boundary_identity
                 boundary_row = {
                     "id": boundary_id,
                     "job_id": job_id,
@@ -328,34 +585,28 @@ class GraphAnalysisEngine:
                     "status": status,
                     "rejection_reason": rejection_reason,
                     "descriptor_json": [],
-                    "metadata": boundary_metadata,
+                    "metadata": contribution_metadata,
                     "fact_origin": fact_origin,
                     "flow_domain": flow_domain,
                     "evidence_ids": boundary_evidence_ids,
                 }
                 boundary_row_by_id[boundary_id] = boundary_row
-                boundary_descriptor_envelope_keys_by_id[boundary_id] = set()
                 boundaries.append(boundary_row)
             else:
                 boundary_row["confidence"] = max(float(boundary_row["confidence"]), float(boundary.confidence))
-                boundary_row["status"] = confidence_status(boundary_row["confidence"])
-                boundary_row["fact_origin"] = self._stronger_fact_origin(str(boundary_row.get("fact_origin") or "LLM"), fact_origin)
-                if boundary_row["status"] == "CANDIDATE" and not boundary_row.get("rejection_reason"):
-                    boundary_row["rejection_reason"] = rejection_reason
-                elif boundary_row["status"] != "CANDIDATE":
-                    boundary_row["rejection_reason"] = None
-                boundary_row["evidence_ids"] = list(dict.fromkeys([*boundary_row.get("evidence_ids", []), *boundary_evidence_ids]))
-            envelope_seen = boundary_descriptor_envelope_keys_by_id.setdefault(boundary_id, set())
-            for envelope_item in self._boundary_descriptor_envelope(boundary.descriptors, fact_origin):
-                envelope_key = (
-                    str(envelope_item["path"]),
-                    self._json_dump(envelope_item["value"]),
-                    str(envelope_item["origin"]),
+                merged_lifecycle = aggregate_boundary_lifecycle(
+                    [
+                        BoundaryLifecycle(str(boundary_row.get("status") or "CANDIDATE"), boundary_row.get("rejection_reason")),
+                        lifecycle,
+                    ],
+                    boundary_row["confidence"],
                 )
-                if envelope_key in envelope_seen:
-                    continue
-                envelope_seen.add(envelope_key)
-                boundary_row["descriptor_json"].append(envelope_item)
+                boundary_row["status"] = merged_lifecycle.status
+                boundary_row["rejection_reason"] = merged_lifecycle.rejection_reason
+                boundary_row["fact_origin"] = aggregate_boundary_origin([boundary_row.get("fact_origin"), fact_origin])
+                boundary_row["metadata"] = merge_boundary_metadata(boundary_row.get("metadata") or {}, contribution_metadata)
+                boundary_row["evidence_ids"] = list(dict.fromkeys([*boundary_row.get("evidence_ids", []), *boundary_evidence_ids]))
+            boundary_row["descriptor_json"].extend(canonical_boundary_descriptor_envelope(boundary.descriptors, fact_origin))
             boundary_evidence_links.extend({"boundary_id": boundary_id, "evidence_id": evidence_id} for evidence_id in boundary_evidence_ids)
             boundary_descriptors.extend(descriptor_rows)
             boundary_descriptor_index.extend(descriptor_indexes)
@@ -416,14 +667,7 @@ class GraphAnalysisEngine:
         boundary_descriptor_evidence_links: list[dict[str, Any]],
     ) -> None:
         for boundary in boundaries:
-            boundary["descriptor_json"] = sorted(
-                boundary.get("descriptor_json") or [],
-                key=lambda item: (
-                    str(item.get("path") or ""),
-                    str(item.get("origin") or ""),
-                    self._json_dump(item.get("value")),
-                ),
-            )
+            boundary["descriptor_json"] = canonicalize_boundary_descriptor_envelope(boundary.get("descriptor_json") or [])
             boundary["evidence_ids"] = sorted(set(boundary.get("evidence_ids") or []))
         boundaries.sort(key=lambda item: str(item.get("id") or ""))
         boundary_descriptors.sort(key=lambda item: str(item.get("id") or ""))
@@ -453,6 +697,7 @@ class GraphAnalysisEngine:
         evidence: list[dict[str, Any]],
         used_evidence_ids: set[str],
         materialized_descriptor_ids: set[str],
+        boundary_lifecycle: BoundaryLifecycle,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
         descriptor_rows: list[dict[str, Any]] = []
         descriptor_indexes: list[dict[str, Any]] = []
@@ -498,6 +743,11 @@ class GraphAnalysisEngine:
                 continue
             if descriptor_id not in materialized_descriptor_ids:
                 materialized_descriptor_ids.add(descriptor_id)
+                descriptor_lifecycle = resolve_boundary_lifecycle(
+                    descriptor.confidence,
+                    explicit_status=boundary_lifecycle.status,
+                    rejection_reason=boundary_lifecycle.rejection_reason,
+                )
                 descriptor_rows.append(
                     {
                         "id": descriptor_id,
@@ -507,7 +757,7 @@ class GraphAnalysisEngine:
                         "value_json": value_json,
                         "origin": descriptor_origin,
                         "confidence": descriptor.confidence,
-                        "status": "TRUSTED" if descriptor.confidence is None else confidence_status(descriptor.confidence),
+                        "status": descriptor_lifecycle.status,
                     }
                 )
                 descriptor_indexes.extend(self._descriptor_index_rows(descriptor_id, boundary_id, descriptor.path, descriptor.value))
@@ -605,13 +855,10 @@ class GraphAnalysisEngine:
     def _boundary_identity(self, boundary: BoundaryFact, metadata: dict[str, Any]) -> str:
         return str(boundary.identity or metadata.get("boundaryIdentity") or metadata.get("stableKey") or boundary.localId)
 
-    def _stronger_fact_origin(self, current: str, candidate: str) -> str:
-        rank = {"LLM": 0, "STATIC": 1, "DERIVED": 2}
-        current_normalized = str(current or "LLM").upper()
-        candidate_normalized = str(candidate or "LLM").upper()
-        if rank.get(candidate_normalized, 0) > rank.get(current_normalized, 0):
-            return candidate_normalized
-        return current_normalized
+    def _boundary_explicit_status(self, boundary: BoundaryFact, metadata: dict[str, Any], fact_origin: str) -> str | None:
+        if str(fact_origin or "").upper() == "LLM" and metadata.get("lifecycleSource") not in {"BACKEND_VALIDATION", "BACKEND_MERGE"}:
+            return None
+        return str(boundary.status or metadata.get("status") or "").strip().upper() or None
 
     def _resolution_status(self, edge: GraphEdge, to_node_id: Optional[str]) -> str:
         return str(edge.resolutionStatus or ("RESOLVED" if to_node_id else "UNRESOLVED")).upper()
@@ -627,81 +874,45 @@ class GraphAnalysisEngine:
         return {key: value for key, value in (metadata or {}).items() if key in allowlist and value is not None}
 
     def _boundary_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
-        return {
+        return merge_boundary_metadata({
             key: value
             for key, value in (metadata or {}).items()
-            if key in {"sourceKind", "stableKey", "boundaryIdentity", "parser", "derivation"} and value is not None
-        }
+            if key in BOUNDARY_METADATA_KEYS | BOUNDARY_METADATA_LIST_KEYS | {BOUNDARY_METADATA_CONFLICTS_KEY} and value is not None
+        })
+
+    def _boundary_contribution_metadata(
+        self,
+        metadata: dict[str, Any],
+        boundary_identity: str,
+        fact_origin: str,
+        lifecycle: BoundaryLifecycle,
+    ) -> dict[str, Any]:
+        return merge_boundary_metadata(
+            self._boundary_metadata(metadata),
+            {
+                "boundaryIdentity": boundary_identity,
+                "originContributors": [str(fact_origin or "LLM").upper()],
+                "lifecycleContributions": [boundary_lifecycle_metadata(fact_origin, lifecycle)],
+            },
+        )
 
     def _descriptor_fact_origin(self, descriptor: BoundaryDescriptor, boundary_fact_origin: str) -> str:
-        normalized_boundary_origin = str(boundary_fact_origin or "LLM").upper()
-        if normalized_boundary_origin in {"LLM", "DERIVED"}:
-            return normalized_boundary_origin
-        return str(descriptor.origin or normalized_boundary_origin).upper()
+        return boundary_descriptor_origin(descriptor, boundary_fact_origin)
 
     def _boundary_descriptor_envelope(self, descriptors: list[BoundaryDescriptor], boundary_fact_origin: str) -> list[dict[str, Any]]:
-        return [
-            {
-                "path": descriptor.path,
-                "value": descriptor.value,
-                "valueType": self._json_value_type(descriptor.value),
-                "origin": self._descriptor_fact_origin(descriptor, boundary_fact_origin),
-                "confidence": descriptor.confidence,
-            }
-            for descriptor in descriptors
-        ]
+        return canonical_boundary_descriptor_envelope(descriptors, boundary_fact_origin)
 
     def _descriptor_index_rows(self, descriptor_id: str, boundary_id: str, descriptor_path: str, value: Any) -> list[dict[str, Any]]:
-        return [
-            {
-                "descriptor_id": descriptor_id,
-                "boundary_id": boundary_id,
-                "descriptor_path": path,
-                "value_type": value_type,
-                "normalized_scalar_value": normalized_value,
-            }
-            for path, value_type, normalized_value in self._scalar_projections(descriptor_path, value)
-        ]
+        return boundary_descriptor_index_rows(descriptor_id, boundary_id, descriptor_path, value)
 
     def _scalar_projections(self, path: str, value: Any) -> list[tuple[str, str, str]]:
-        if value is None:
-            return []
-        value_type = self._json_value_type(value)
-        if value_type in {"STRING", "NUMBER", "BOOLEAN"}:
-            return [(path, value_type, self._normalize_scalar_value(value))]
-        if isinstance(value, list):
-            rows: list[tuple[str, str, str]] = []
-            for index, item in enumerate(value):
-                rows.extend(self._scalar_projections(f"{path}[{index}]", item))
-            return rows
-        if isinstance(value, dict):
-            rows = []
-            for key in sorted(value):
-                rows.extend(self._scalar_projections(f"{path}.{key}", value[key]))
-            return rows
-        return []
+        return scalar_descriptor_projections(path, value)
 
     def _normalize_scalar_value(self, value: Any) -> str:
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return json.dumps(value, separators=(",", ":"))
-        return str(value or "").strip().lower()
+        return normalize_scalar_descriptor_value(value)
 
     def _json_value_type(self, value: Any) -> str:
-        if value is None:
-            return "NULL"
-        if isinstance(value, bool):
-            return "BOOLEAN"
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return "NUMBER"
-        if isinstance(value, str):
-            return "STRING"
-        if isinstance(value, list):
-            return "LIST"
-        if isinstance(value, dict):
-            return "OBJECT"
-        return "OBJECT"
+        return json_value_type(value)
 
     def _json_dump(self, value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

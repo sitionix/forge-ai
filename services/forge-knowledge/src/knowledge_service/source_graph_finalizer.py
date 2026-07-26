@@ -10,6 +10,11 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Set
 
 from knowledge_service.entrypoint_kinds import EntrypointExecutionKind, EntrypointKind
 from knowledge_service.graph_call_intelligence import classify_call_metadata
+from knowledge_service.graph_analysis import (
+    boundary_descriptor_index_rows,
+    canonical_boundary_descriptor_envelope_from_rows,
+    json_value_type,
+)
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.graph_state_repository import GRAPH_STATE_FINALIZING, GraphStateRepository
 from knowledge_service.overview_projection import refresh_overview_for_sources
@@ -519,6 +524,8 @@ class CrossSourceGraphResolver:
         stable_key = f"INHERITED_BOUNDARY:{implementation_method['id']}:{interface_boundary['id']}"
         metadata = self.store._json_dict(interface_boundary["metadata_json"])
         metadata["derivation"] = "INHERITED_INTERFACE_BOUNDARY"
+        descriptor_rows = self._boundary_descriptor_rows(conn, interface_boundary["id"])
+        descriptor_json = canonical_boundary_descriptor_envelope_from_rows(descriptor_rows, origin=contract.derived_status)
         conn.execute(
             """
             INSERT OR IGNORE INTO analysis_graph_boundaries(
@@ -542,7 +549,7 @@ class CrossSourceGraphResolver:
                 "PROVIDED",
                 min(1.0, float(interface_boundary["confidence"] or 1.0)),
                 contract.derived_status,
-                interface_boundary["descriptor_json"],
+                json.dumps(descriptor_json, ensure_ascii=False, sort_keys=True),
                 json.dumps(metadata, ensure_ascii=False, sort_keys=True),
                 created_at,
                 created_at,
@@ -555,7 +562,7 @@ class CrossSourceGraphResolver:
             *self._boundary_evidence_ids(conn, interface_boundary["id"]),
         ])
         self._insert_boundary_evidence_link_rows(conn, boundary_id, boundary_evidence_ids)
-        self._copy_boundary_descriptors(conn, interface_boundary["id"], boundary_id, created_at)
+        self._copy_boundary_descriptors(conn, descriptor_rows, boundary_id, created_at)
 
     def _claim_evidence_ids(self, conn: sqlite3.Connection, claim_id: str) -> List[str]:
         return [
@@ -599,18 +606,22 @@ class CrossSourceGraphResolver:
             ).fetchall()
         ]
 
-    def _copy_boundary_descriptors(self, conn: sqlite3.Connection, source_boundary_id: str, target_boundary_id: str, created_at: str) -> None:
-        descriptors = conn.execute(
+    def _boundary_descriptor_rows(self, conn: sqlite3.Connection, boundary_id: str) -> list[sqlite3.Row]:
+        return conn.execute(
             """
             SELECT *
             FROM analysis_graph_boundary_descriptors
             WHERE boundary_id = ?
             ORDER BY descriptor_path, id
             """,
-            (source_boundary_id,),
+            (boundary_id,),
         ).fetchall()
+
+    def _copy_boundary_descriptors(self, conn: sqlite3.Connection, descriptors: Sequence[sqlite3.Row], target_boundary_id: str, created_at: str) -> None:
         for descriptor in descriptors:
             descriptor_id = self._derived_graph_id("analysis-graph-boundary-descriptor", target_boundary_id, descriptor["id"])
+            value = json.loads(descriptor["value_json"])
+            value_type = json_value_type(value)
             conn.execute(
                 """
                 INSERT OR IGNORE INTO analysis_graph_boundary_descriptors(
@@ -622,7 +633,7 @@ class CrossSourceGraphResolver:
                     descriptor_id,
                     target_boundary_id,
                     descriptor["descriptor_path"],
-                    descriptor["value_type"],
+                    value_type,
                     descriptor["value_json"],
                     graph_query_contract().derived_status,
                     descriptor["confidence"],
@@ -631,16 +642,7 @@ class CrossSourceGraphResolver:
                     created_at,
                 ),
             )
-            index_rows = conn.execute(
-                """
-                SELECT descriptor_path, value_type, normalized_scalar_value
-                FROM analysis_graph_boundary_descriptor_index
-                WHERE descriptor_id = ?
-                ORDER BY descriptor_path, normalized_scalar_value
-                """,
-                (descriptor["id"],),
-            ).fetchall()
-            for index_row in index_rows:
+            for index_row in boundary_descriptor_index_rows(descriptor_id, target_boundary_id, descriptor["descriptor_path"], value):
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO analysis_graph_boundary_descriptor_index(
@@ -649,8 +651,8 @@ class CrossSourceGraphResolver:
                     VALUES (?, ?, ?, ?, ?)
                     """,
                     (
-                        descriptor_id,
-                        target_boundary_id,
+                        index_row["descriptor_id"],
+                        index_row["boundary_id"],
                         index_row["descriptor_path"],
                         index_row["value_type"],
                         index_row["normalized_scalar_value"],

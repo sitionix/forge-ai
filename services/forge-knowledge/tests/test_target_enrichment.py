@@ -496,6 +496,17 @@ def test_file_enrichment_merger_merges_boundaries_by_identity_and_dedupes_descri
                 identity="boundary:shared",
                 nodeLocalId="node",
                 role="REQUIRED",
+                origin="LLM",
+                confidence=0.95,
+                status="CANDIDATE",
+                flowDomain="TEST",
+                metadata={
+                    "boundaryIdentity": "boundary:shared",
+                    "status": "CANDIDATE",
+                    "rejectionReason": "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER",
+                    "lifecycleSource": "BACKEND_VALIDATION",
+                    "nonAuthoritative": "ignored",
+                },
                 evidence=[evidence_a],
                 descriptors=[
                     BoundaryDescriptor(path="call.method", value="send", origin="LLM", evidence=[evidence_a]),
@@ -511,22 +522,50 @@ def test_file_enrichment_merger_merges_boundaries_by_identity_and_dedupes_descri
                 identity="boundary:shared",
                 nodeLocalId="node",
                 role="REQUIRED",
+                origin="STATIC",
+                confidence=0.91,
+                status="TRUSTED",
+                flowDomain="WORKFLOW",
+                metadata={"boundaryIdentity": "boundary:shared", "parser": "static"},
                 evidence=[evidence_b],
                 descriptors=[
-                    BoundaryDescriptor(path="payload.kind", value="event", origin="LLM", evidence=[evidence_b]),
+                    BoundaryDescriptor(path="payload.kind", value="event", origin="STATIC", evidence=[evidence_b]),
                 ],
             )
         ]
     )
 
     merged = FileEnrichmentMerger().merge([first, second])
+    reversed_merged = FileEnrichmentMerger().merge([second, first])
+
+    def snapshot(result):
+        boundary = result.boundaries[0]
+        return {
+            "origin": boundary.origin,
+            "status": boundary.status,
+            "flowDomain": boundary.flowDomain,
+            "confidence": boundary.confidence,
+            "metadata": boundary.metadata,
+            "evidence": [(item.lineStart, item.lineEnd, item.text) for item in boundary.evidence],
+            "descriptors": [
+                (descriptor.path, descriptor.value, descriptor.origin, [(item.lineStart, item.lineEnd, item.text) for item in descriptor.evidence])
+                for descriptor in boundary.descriptors
+            ],
+        }
 
     assert len(merged.boundaries) == 1
+    assert snapshot(merged) == snapshot(reversed_merged)
     boundary = merged.boundaries[0]
+    assert boundary.origin == "STATIC"
+    assert boundary.status == "CANDIDATE"
+    assert boundary.flowDomain is None
+    assert boundary.metadata["rejectionReason"] == "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+    assert boundary.metadata["originContributors"] == ["LLM", "STATIC"]
+    assert "nonAuthoritative" not in boundary.metadata
     assert {(item.lineStart, item.lineEnd) for item in boundary.evidence} == {(2, 2), (3, 3)}
-    assert [(descriptor.path, descriptor.value) for descriptor in boundary.descriptors] == [
-        ("call.method", "send"),
-        ("payload.kind", "event"),
+    assert [(descriptor.path, descriptor.value, descriptor.origin) for descriptor in boundary.descriptors] == [
+        ("call.method", "send", "LLM"),
+        ("payload.kind", "event", "STATIC"),
     ]
 
 

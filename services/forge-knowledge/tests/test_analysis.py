@@ -1340,6 +1340,60 @@ def test_llm_boundary_lifecycle_fields_are_backend_authoritative(tmp_path):
     assert json.loads(descriptor["value_json"]) is True
 
 
+def test_high_confidence_rejected_llm_boundary_persists_candidate(tmp_path):
+    content = "class Handler { void run() { remote.create(); } }\n// outside owner\n"
+    outside_owner = GraphEvidenceRef(lineStart=2, lineEnd=2, text="// outside owner")
+    static_graph = GraphAnalysisResult(
+        nodes=[
+            GraphNode(
+                localId="handler",
+                nodeKind="CALLABLE",
+                name="Handler.run",
+                lineStart=1,
+                lineEnd=1,
+                confidence=1.0,
+                metadata={"factOrigin": "STATIC", "flowDomain": "WORKFLOW"},
+            )
+        ]
+    )
+    enrichment = GraphAnalysisResult(
+        boundaries=[
+            BoundaryFact(
+                localId="llm-rejected",
+                nodeLocalId="handler",
+                role="REQUIRED",
+                origin="LLM",
+                confidence=0.95,
+                evidence=[outside_owner],
+                descriptors=[
+                    BoundaryDescriptor(path="call.method", value="create", origin="LLM", confidence=0.95, evidence=[outside_owner]),
+                ],
+            )
+        ]
+    )
+    merged = AnchorAwareGraphValidator().merge(static_graph, enrichment, len(content.splitlines()))
+    graph = materialize_graph_for_test(merged, content=content)
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(1, graph_state_for_test(content, flow_domain="WORKFLOW"), graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        boundary = conn.execute(
+            "SELECT status, rejection_reason, fact_origin, flow_domain, metadata_json FROM analysis_graph_boundaries"
+        ).fetchone()
+        descriptor = conn.execute("SELECT origin, status FROM analysis_graph_boundary_descriptors").fetchone()
+
+    assert boundary["status"] == "CANDIDATE"
+    assert boundary["rejection_reason"] == "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+    assert boundary["fact_origin"] == "LLM"
+    assert boundary["flow_domain"] == "WORKFLOW"
+    metadata = json.loads(boundary["metadata_json"])
+    assert metadata["lifecycleContributions"][0]["rejectionReason"] == "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+    assert descriptor["origin"] == "LLM"
+    assert descriptor["status"] == "CANDIDATE"
+
+
 def test_boundary_merge_identity_preserves_conflicts_types_evidence_and_order_stability(tmp_path):
     content = "void first() { remote.create(); }\nvoid second() { // llm evidence }\nvoid third() { other.create(); }"
     first_evidence = GraphEvidenceRef(lineStart=1, lineEnd=1, text="void first() { remote.create(); }")
@@ -1391,12 +1445,21 @@ def test_boundary_merge_identity_preserves_conflicts_types_evidence_and_order_st
         nodeLocalId="handler",
         role="REQUIRED",
         origin="LLM",
-        confidence=0.77,
+        confidence=0.95,
+        status="CANDIDATE",
+        metadata={
+            "boundaryIdentity": "boundary:a",
+            "lifecycleSource": "BACKEND_VALIDATION",
+            "status": "CANDIDATE",
+            "rejectionReason": "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER",
+            "flowDomain": "TEST",
+            "nonAuthoritative": "ignored",
+        },
         evidence=[second_evidence],
         descriptors=[
-            BoundaryDescriptor(path="operation.name", value="second", origin="LLM", confidence=0.77, evidence=[second_evidence]),
-            BoundaryDescriptor(path="payload.kind", value="event", origin="LLM", confidence=0.77, evidence=[second_evidence]),
-            BoundaryDescriptor(path="payload.kind", value="event", origin="LLM", confidence=0.77, evidence=[second_evidence]),
+            BoundaryDescriptor(path="operation.name", value="second", origin="LLM", confidence=0.95, evidence=[second_evidence]),
+            BoundaryDescriptor(path="payload.kind", value="event", origin="LLM", confidence=0.95, evidence=[second_evidence]),
+            BoundaryDescriptor(path="payload.kind", value="event", origin="LLM", confidence=0.95, evidence=[second_evidence]),
         ],
     )
     independent_boundary = BoundaryFact(
@@ -1418,12 +1481,22 @@ def test_boundary_merge_identity_preserves_conflicts_types_evidence_and_order_st
         with sqlite3.connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             return {
-                "boundaries": [dict(row) for row in conn.execute("SELECT id, stable_key, role, status, fact_origin, flow_domain FROM analysis_graph_boundaries ORDER BY id")],
+                "boundaries": [
+                    dict(row)
+                    for row in conn.execute(
+                        """
+                        SELECT id, stable_key, role, confidence, status, rejection_reason,
+                               fact_origin, flow_domain, metadata_json, descriptor_json
+                        FROM analysis_graph_boundaries
+                        ORDER BY id
+                        """
+                    )
+                ],
                 "descriptors": [
                     dict(row)
                     for row in conn.execute(
                         """
-                        SELECT boundary_id, descriptor_path, value_type, value_json, origin
+                        SELECT boundary_id, descriptor_path, value_type, value_json, origin, status
                         FROM analysis_graph_boundary_descriptors
                         ORDER BY boundary_id, descriptor_path, origin, value_json
                         """
@@ -1464,7 +1537,18 @@ def test_boundary_merge_identity_preserves_conflicts_types_evidence_and_order_st
     assert first_rows == second_rows
     assert len(first_rows["boundaries"]) == 2
     assert {row["stable_key"] for row in first_rows["boundaries"]} == {"boundary:a", "boundary:b"}
-    assert next(row for row in first_rows["boundaries"] if row["stable_key"] == "boundary:a")["fact_origin"] == "STATIC"
+    merged_boundary = next(row for row in first_rows["boundaries"] if row["stable_key"] == "boundary:a")
+    assert merged_boundary["fact_origin"] == "STATIC"
+    assert merged_boundary["status"] == "CANDIDATE"
+    assert merged_boundary["rejection_reason"] == "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+    assert merged_boundary["flow_domain"] == "WORKFLOW"
+    merged_metadata = json.loads(merged_boundary["metadata_json"])
+    assert merged_metadata["originContributors"] == ["LLM", "STATIC"]
+    assert "nonAuthoritative" not in merged_metadata
+    assert any(
+        contribution.get("rejectionReason") == "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+        for contribution in merged_metadata["lifecycleContributions"]
+    )
     merged_boundary_id = next(row["id"] for row in first_rows["boundaries"] if row["stable_key"] == "boundary:a")
     merged_descriptors = [row for row in first_rows["descriptors"] if row["boundary_id"] == merged_boundary_id]
     assert len(merged_descriptors) == 7
@@ -1472,6 +1556,13 @@ def test_boundary_merge_identity_preserves_conflicts_types_evidence_and_order_st
     assert {(row["descriptor_path"], row["origin"]) for row in merged_descriptors if row["descriptor_path"] == "operation.name"} == {
         ("operation.name", "STATIC"),
         ("operation.name", "LLM"),
+    }
+    assert {row["status"] for row in merged_descriptors if row["origin"] == "LLM"} == {"CANDIDATE"}
+    assert {row["status"] for row in merged_descriptors if row["origin"] == "STATIC"} == {"TRUSTED"}
+    envelope = json.loads(merged_boundary["descriptor_json"])
+    assert {(item["path"], item["origin"], item["valueType"]) for item in envelope if item["path"] == "operation.name"} == {
+        ("operation.name", "LLM", "STRING"),
+        ("operation.name", "STATIC", "STRING"),
     }
     assert ("custom.boolean", "BOOLEAN", "true") in {
         (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in first_rows["index"]
@@ -2845,6 +2936,7 @@ class TaskWorkflow {
         ),
     )
     store.finalize_source_graph("task-service")
+    store.finalize_source_graph("task-service")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -2887,8 +2979,10 @@ class TaskWorkflow {
         ).fetchall()
         inherited_boundaries = conn.execute(
             """
-            SELECT boundary.status, boundary.fact_origin, descriptor.origin AS descriptor_origin,
-                   descriptor.descriptor_path, descriptor.value_json
+            SELECT boundary.id AS boundary_id, boundary.status, boundary.fact_origin,
+                   boundary.descriptor_json, descriptor.id AS descriptor_id,
+                   descriptor.origin AS descriptor_origin, descriptor.descriptor_path,
+                   descriptor.value_type, descriptor.value_json
             FROM analysis_graph_boundaries boundary
             JOIN analysis_graph_nodes node ON node.id = boundary.node_id
             JOIN analysis_graph_boundary_descriptors descriptor ON descriptor.boundary_id = boundary.id
@@ -2898,6 +2992,41 @@ class TaskWorkflow {
             ORDER BY descriptor.descriptor_path
             """
         ).fetchall()
+        inherited_indexes = conn.execute(
+            """
+            SELECT idx.descriptor_path, idx.value_type, idx.normalized_scalar_value
+            FROM analysis_graph_boundary_descriptor_index idx
+            JOIN analysis_graph_boundaries boundary ON boundary.id = idx.boundary_id
+            JOIN analysis_graph_nodes node ON node.id = boundary.node_id
+            WHERE boundary.source_id = 'task-service'
+              AND node.qualified_name = 'service.impl.TaskController.handle'
+              AND boundary.status = 'DERIVED'
+            ORDER BY idx.descriptor_path, idx.value_type, idx.normalized_scalar_value
+            """
+        ).fetchall()
+        inherited_boundary_evidence_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM analysis_graph_boundary_evidence evidence
+            JOIN analysis_graph_boundaries boundary ON boundary.id = evidence.boundary_id
+            JOIN analysis_graph_nodes node ON node.id = boundary.node_id
+            WHERE boundary.source_id = 'task-service'
+              AND node.qualified_name = 'service.impl.TaskController.handle'
+              AND boundary.status = 'DERIVED'
+            """
+        ).fetchone()[0]
+        inherited_descriptor_evidence_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM analysis_graph_boundary_descriptor_evidence evidence
+            JOIN analysis_graph_boundary_descriptors descriptor ON descriptor.id = evidence.descriptor_id
+            JOIN analysis_graph_boundaries boundary ON boundary.id = descriptor.boundary_id
+            JOIN analysis_graph_nodes node ON node.id = boundary.node_id
+            WHERE boundary.source_id = 'task-service'
+              AND node.qualified_name = 'service.impl.TaskController.handle'
+              AND boundary.status = 'DERIVED'
+            """
+        ).fetchone()[0]
         dispatch_edge = conn.execute(
             """
             SELECT caller.qualified_name AS caller_method,
@@ -2944,12 +3073,40 @@ class TaskWorkflow {
     assert inherited_claims[0]["entrypoint_interface_method"] == "generated.api.TaskApi.handle"
     assert inherited_claims[0]["entrypoint_execution_kind"] == "EXECUTABLE"
     assert inherited_boundaries
+    assert len({row["boundary_id"] for row in inherited_boundaries}) == 1
+    assert len({(row["descriptor_path"], row["value_json"]) for row in inherited_boundaries}) == len(inherited_boundaries)
     assert {row["status"] for row in inherited_boundaries} == {"DERIVED"}
     assert {row["fact_origin"] for row in inherited_boundaries} == {"DERIVED"}
     assert {row["descriptor_origin"] for row in inherited_boundaries} == {"DERIVED"}
+    def inferred_value_type(value):
+        if value is None:
+            return "NULL"
+        if isinstance(value, bool):
+            return "BOOLEAN"
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return "NUMBER"
+        if isinstance(value, str):
+            return "STRING"
+        if isinstance(value, list):
+            return "LIST"
+        return "OBJECT"
+
+    assert all(row["value_type"] == inferred_value_type(json.loads(row["value_json"])) for row in inherited_boundaries)
+    descriptor_envelope = json.loads(inherited_boundaries[0]["descriptor_json"])
+    assert descriptor_envelope
+    assert {item["origin"] for item in descriptor_envelope} == {"DERIVED"}
+    assert all(item["valueType"] == inferred_value_type(item["value"]) for item in descriptor_envelope)
     inherited_boundary_descriptors = {row["descriptor_path"]: json.loads(row["value_json"]) for row in inherited_boundaries}
     assert inherited_boundary_descriptors["http.method"] == "POST"
     assert inherited_boundary_descriptors["http.route"] == "/tasks/handle"
+    assert ("http.method", "STRING", "post") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in inherited_indexes
+    }
+    assert ("http.route", "STRING", "/tasks/handle") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in inherited_indexes
+    }
+    assert inherited_boundary_evidence_count > 0
+    assert inherited_descriptor_evidence_count >= len(inherited_boundaries)
     assert interface_claim is not None
     assert interface_claim["entrypoint_execution_kind"] == "CONTRACT_DECLARATION"
     assert dispatch_edge is not None

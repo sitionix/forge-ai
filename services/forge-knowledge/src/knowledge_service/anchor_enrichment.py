@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from knowledge_service.graph_analysis import confidence_status
+from knowledge_service.graph_analysis import confidence_status, resolve_boundary_lifecycle
 from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphClaim, GraphEdge, GraphNode
 
 
@@ -181,7 +181,6 @@ class AnchorAwareGraphValidator:
             if key not in {"factOrigin", "status", "rejectionReason", "flowDomain"}
         }
         metadata["factOrigin"] = "LLM"
-        status = confidence_status(boundary.confidence)
         rejection_reason = None
         evidence_ranges = [*boundary.evidence, *(item for descriptor in boundary.descriptors for item in descriptor.evidence)]
         if not evidence_ranges:
@@ -193,23 +192,25 @@ class AnchorAwareGraphValidator:
                 rejection_reason = rejection_reason or "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
         if not boundary.descriptors:
             rejection_reason = rejection_reason or "ANALYSIS_GRAPH_BOUNDARY_DESCRIPTOR_MISSING"
+        lifecycle = resolve_boundary_lifecycle(boundary.confidence, rejection_reason=rejection_reason)
+        metadata["status"] = lifecycle.status
+        metadata["lifecycleSource"] = "BACKEND_VALIDATION"
+        if lifecycle.rejection_reason:
+            metadata["rejectionReason"] = lifecycle.rejection_reason
+        elif "rejectionReason" in metadata:
+            metadata.pop("rejectionReason", None)
         if rejection_reason:
-            status = "CANDIDATE"
-            metadata["status"] = status
-            metadata["rejectionReason"] = rejection_reason
             diagnostics.append(
                 {
                     "severity": "WARN",
                     "stage": "ANCHOR_VALIDATION",
-                    "code": rejection_reason,
+                    "code": lifecycle.rejection_reason,
                     "message": "LLM boundary was not trusted because its descriptors or evidence did not satisfy parser anchor validation.",
                     "boundaryLocalId": boundary.localId,
                     "nodeLocalId": target_local_id,
                     "nodeKind": node.nodeKind,
                 }
             )
-        else:
-            metadata["status"] = status
         identity = self._matching_static_boundary_identity(boundary, target_local_id, accepted_boundaries)
         metadata["boundaryIdentity"] = identity or self._llm_boundary_identity(boundary, target_local_id)
         descriptors = [
@@ -228,7 +229,7 @@ class AnchorAwareGraphValidator:
                 "nodeLocalId": target_local_id,
                 "descriptors": descriptors,
                 "origin": "LLM",
-                "status": str(status),
+                "status": lifecycle.status,
                 "flowDomain": None,
                 "metadata": metadata,
             }
