@@ -13,6 +13,18 @@ from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionNode,
     AnchorExpansionRequest,
 )
+from knowledge_service.boundary_contract import LocalBoundaryFact
+from knowledge_service.boundary_resolution import (
+    BOUNDARY_ROLE_REQUIRED,
+    BoundaryCandidateLoadLimits,
+    BoundaryOwnerIdentity,
+    BoundaryResolutionDiagnostic,
+    BoundaryResolutionResult,
+    BoundaryResolutionTruncationState,
+    BoundaryResolverMetrics,
+    GenericBoundaryResolver,
+    boundary_identity,
+)
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine, EntrypointFlowSeedProvenance, LocalFlowUnit
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.flow_family import FlowFamily, FlowFamilyAssembler, FlowFamilyAssemblyResult
@@ -36,14 +48,7 @@ from knowledge_service.knowledge_search import (
     SearchConfig,
     SearchDocument,
 )
-from knowledge_service.operation_facts import (
-    AvailableOperationFact,
-    clean_identity,
-    merge_semantic_operation_facts,
-    normalize_http_method,
-    normalize_route,
-    normalize_transport_kind,
-)
+from knowledge_service.operation_facts import AvailableOperationFact
 from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
@@ -89,6 +94,9 @@ _PRECISE_IDENTIFIER_REASONS = {
     "STABLE_KEY_MATCH",
     "PATH_MATCH",
 }
+
+_MAX_BOUNDARY_RESOLUTION_ROUNDS = 8
+_MAX_BOUNDARY_TARGET_UNITS = 50
 
 
 @dataclass(frozen=True)
@@ -210,6 +218,7 @@ class KnowledgeQueryExecutionResult:
     raw_flows: tuple[EntrypointFlow, ...] = ()
     family_assembly: FlowFamilyAssemblyResult | None = None
     local_units: tuple[LocalFlowUnit, ...] = ()
+    boundary_resolution: BoundaryResolutionResult | None = None
 
 
 @dataclass(frozen=True)
@@ -217,6 +226,8 @@ class ContinuationAssemblyResult:
     families: tuple[FlowFamily, ...]
     operation_facts: tuple[AvailableOperationFact, ...]
     diagnostics: tuple[KnowledgeQueryDiagnostic, ...]
+    local_units: tuple[LocalFlowUnit, ...] = ()
+    boundary_resolution: BoundaryResolutionResult | None = None
 
 
 class SourceScopeResolver:
@@ -1461,6 +1472,7 @@ class AnchorExpansionService:
     def _node_kind(self, value: str) -> str:
         return str(value or "").upper()
 
+
 class KnowledgeQueryService:
     def __init__(
         self,
@@ -1479,6 +1491,7 @@ class KnowledgeQueryService:
         self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_repository, "graph_store", None))
         self.family_assembler = FlowFamilyAssembler()
         self.narrative_planner = FlowNarrativePlanner()
+        self.boundary_resolver = GenericBoundaryResolver()
 
     def query(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryResponse:
         return self.query_with_flows(request, plan=plan).response
@@ -1539,8 +1552,9 @@ class KnowledgeQueryService:
         flows = self.family_assembler.rank(assembly_result.families)
         if plan is not None:
             flows = self._select_plan_flows(flows, plan)
-        continuation_result = self._assemble_exact_downstream_continuations(
+        continuation_result = self._assemble_generic_boundary_continuations(
             flows,
+            build_result.local_units,
             eligible_sources,
             include_tests=bool(request.includeTests),
         )
@@ -1633,7 +1647,8 @@ class KnowledgeQueryService:
             narrative_plans=narrative_plans,
             raw_flows=raw_flows,
             family_assembly=assembly_result,
-            local_units=build_result.local_units,
+            local_units=continuation_result.local_units or build_result.local_units,
+            boundary_resolution=continuation_result.boundary_resolution,
         )
 
     def _flow_seed_provenance(self, anchor_result: AnchorExpansionResult) -> tuple[EntrypointFlowSeedProvenance, ...]:
@@ -1741,6 +1756,9 @@ class KnowledgeQueryService:
         flows: Sequence[EntrypointFlow | FlowFamily],
         include_tests: bool,
     ):
+        # NARRATIVE_COMPATIBILITY: operation facts remain available for existing
+        # narrative and formatter projection. They do not authorize cross-source
+        # boundary resolution.
         if not flows or not hasattr(self.flow_repository, "load_available_operation_facts"):
             return ()
         node_keys = {
@@ -1750,179 +1768,370 @@ class KnowledgeQueryService:
         }
         return self.flow_repository.load_available_operation_facts(node_keys, include_tests=include_tests)
 
-    def _assemble_exact_downstream_continuations(
+    def _assemble_generic_boundary_continuations(
         self,
         initial_families: Sequence[FlowFamily],
+        initial_local_units: Sequence[LocalFlowUnit],
         eligible_sources: Sequence[QuerySource],
         *,
         include_tests: bool,
     ) -> ContinuationAssemblyResult:
         families: list[FlowFamily] = list(initial_families)
-        if not families:
-            return ContinuationAssemblyResult((), (), ())
-        operation_facts: tuple[AvailableOperationFact, ...] = self._available_operation_facts(families, include_tests)
-        if not hasattr(self.flow_repository, "load_matching_inbound_operation_facts"):
-            return ContinuationAssemblyResult(tuple(families), operation_facts, ())
+        local_units_by_id: dict[str, LocalFlowUnit] = {unit.unit_id: unit for unit in initial_local_units}
+        operation_facts: tuple[AvailableOperationFact, ...] = ()
+        if not families or not initial_local_units or not hasattr(self.flow_repository, "find_provided_boundary_candidates"):
+            operation_facts = self._available_operation_facts(families, include_tests)
+            return ContinuationAssemblyResult(tuple(families), operation_facts, (), tuple(local_units_by_id.values()), None)
 
-        diagnostics: list[KnowledgeQueryDiagnostic] = []
-        known_family_keys = {self._flow_family_key(family) for family in families}
-        processed_operations: set[tuple[str, str, str, str, str, str]] = set()
+        diagnostics: list[BoundaryResolutionDiagnostic] = []
+        all_resolutions: list[Any] = []
+        all_proven_links: list[Any] = []
+        all_ambiguous: list[Any] = []
+        unresolved: set[Any] = set()
+        discovered_owners: dict[BoundaryOwnerIdentity, BoundaryOwnerIdentity] = {}
+        visited_required: set[Any] = set()
+        visited_owners: set[tuple[str, str, str]] = set()
+        visited_units: set[str] = set(local_units_by_id)
+        pending_units: tuple[LocalFlowUnit, ...] = tuple(sorted(initial_local_units, key=lambda item: item.unit_id))
         eligible_source_ids = [source.source_id for source in eligible_sources]
+        known_family_keys = {self._flow_family_key(family) for family in families}
+        round_count = 0
+        cycle_count = 0
+        resolver_limit_reached = False
+        target_units_materialized = 0
 
-        while True:
-            fragments = self.narrative_planner.fragments(families, operation_facts=operation_facts)
-            outbound_facts: list[AvailableOperationFact] = []
-            for fragment in fragments:
-                for fact in fragment.operation_facts:
-                    if not self._is_usable_outbound_http_fact(fact):
-                        continue
-                    operation_key = fact.operation_key(fragment.key)
-                    if operation_key in processed_operations:
-                        continue
-                    processed_operations.add(operation_key)
-                    outbound_facts.append(fact)
-            if not outbound_facts:
+        while pending_units:
+            round_count += 1
+            if round_count > _MAX_BOUNDARY_RESOLUTION_ROUNDS:
+                resolver_limit_reached = True
+                diagnostics.append(
+                    BoundaryResolutionDiagnostic(
+                        code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
+                        message="Generic boundary resolution reached the internal round limit.",
+                        severity="WARN",
+                        metadata={"roundLimit": _MAX_BOUNDARY_RESOLUTION_ROUNDS},
+                    )
+                )
                 break
-
-            inbound_facts = self.flow_repository.load_matching_inbound_operation_facts(
-                outbound_facts,
+            round_units = self._units_with_unvisited_required_boundaries(pending_units, visited_required)
+            required_boundaries = self._required_boundaries(round_units)
+            if not required_boundaries:
+                break
+            for boundary in required_boundaries:
+                visited_required.add(boundary_identity(boundary))
+            candidate_load = self.flow_repository.find_provided_boundary_candidates(
+                required_boundaries,
                 eligible_source_ids=eligible_source_ids,
                 include_tests=include_tests,
+                internal_limits=BoundaryCandidateLoadLimits(),
             )
-            discovered: list[FlowFamily] = []
-            for outbound in sorted(outbound_facts, key=self._operation_fact_sort_key):
-                matches = [
-                    inbound
-                    for inbound in inbound_facts
-                    if self._operation_facts_match(outbound, inbound)
-                    and self._operation_owner_key(inbound) not in known_family_keys
-                ]
-                owner_keys = sorted({self._operation_owner_key(fact) for fact in matches})
-                if len(owner_keys) > 1:
+            round_result = self.boundary_resolver.resolve(round_units, candidate_load)
+            all_resolutions.extend(round_result.resolutions)
+            all_proven_links.extend(round_result.proven_links)
+            all_ambiguous.extend(round_result.ambiguous_links)
+            unresolved.update(round_result.unresolved_boundaries)
+            diagnostics.extend(round_result.diagnostics)
+            next_units: list[LocalFlowUnit] = []
+            for link in round_result.proven_links:
+                owner_key = (link.target_owner.source_id, link.target_owner.graph_revision, link.target_owner.owner_node_id)
+                discovered_owners.setdefault(link.target_owner, link.target_owner)
+                if owner_key in visited_owners:
+                    cycle_count += 1
                     diagnostics.append(
-                        KnowledgeQueryDiagnostic(
-                            code="FLOW_CONTINUATION_AMBIGUOUS",
-                            message="Multiple current inbound HTTP operation facts matched an outbound operation; no downstream flow was selected.",
+                        BoundaryResolutionDiagnostic(
+                            code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
+                            message="Generic boundary resolution cycle detected; owner was not materialized again.",
                             severity="INFO",
-                            sourceId=outbound.owner_source_id,
-                            metadata={
-                                "transportKind": "HTTP",
-                                "method": normalize_http_method(outbound.method),
-                                "route": normalize_route(outbound.normalized_route),
-                                "candidateCount": len(owner_keys),
-                            },
+                            source_id=link.target_owner.source_id,
+                            metadata={"targetOwner": self._target_owner_metadata(link.target_owner)},
                         )
                     )
                     continue
-                if len(owner_keys) != 1:
+                visited_owners.add(owner_key)
+                target_result = self._materialize_boundary_target_owner(
+                    link.target_owner,
+                    eligible_sources,
+                    include_tests=include_tests,
+                )
+                if not target_result.local_units:
+                    diagnostics.append(
+                        BoundaryResolutionDiagnostic(
+                            code="BOUNDARY_TARGET_UNIT_NOT_MATERIALIZED",
+                            message="A proven boundary target owner could not be materialized as a local unit.",
+                            severity="WARN",
+                            source_id=link.target_owner.source_id,
+                            metadata={"targetOwner": self._target_owner_metadata(link.target_owner)},
+                        )
+                    )
                     continue
-                inbound = sorted(
-                    [fact for fact in matches if self._operation_owner_key(fact) == owner_keys[0]],
-                    key=self._operation_fact_sort_key,
-                )[0]
-                new_families = [
-                    family
-                    for family in self._families_for_inbound_operation(inbound, include_tests=include_tests)
-                    if self._flow_family_key(family) not in known_family_keys
-                ]
-                for family in new_families:
-                    known_family_keys.add(self._flow_family_key(family))
-                discovered.extend(new_families)
-            if not discovered:
+                for unit in sorted(target_result.local_units, key=lambda item: item.unit_id):
+                    if unit.unit_id in visited_units:
+                        cycle_count += 1
+                        continue
+                    if target_units_materialized >= _MAX_BOUNDARY_TARGET_UNITS:
+                        resolver_limit_reached = True
+                        diagnostics.append(
+                            BoundaryResolutionDiagnostic(
+                                code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
+                                message="Generic boundary resolution reached the internal target-unit limit.",
+                                severity="WARN",
+                                metadata={"targetUnitLimit": _MAX_BOUNDARY_TARGET_UNITS},
+                            )
+                        )
+                        break
+                    visited_units.add(unit.unit_id)
+                    local_units_by_id[unit.unit_id] = unit
+                    next_units.append(unit)
+                    target_units_materialized += 1
+                for family in target_result.families:
+                    key = self._flow_family_key(family)
+                    if key in known_family_keys:
+                        continue
+                    known_family_keys.add(key)
+                    families.append(family)
+            if resolver_limit_reached:
                 break
-            families.extend(discovered)
-            operation_facts = merge_semantic_operation_facts((
-                *operation_facts,
-                *self._available_operation_facts(discovered, include_tests),
-            ))
+            pending_units = tuple(sorted(next_units, key=lambda item: item.unit_id))
 
-        return ContinuationAssemblyResult(tuple(families), operation_facts, tuple(diagnostics))
+        operation_facts = self._available_operation_facts(families, include_tests)
+        boundary_result = self._combined_boundary_resolution_result(
+            all_resolutions,
+            all_proven_links,
+            all_ambiguous,
+            unresolved,
+            discovered_owners,
+            tuple(sorted((unit for unit in local_units_by_id.values() if unit.unit_id not in {item.unit_id for item in initial_local_units}), key=lambda item: item.unit_id)),
+            diagnostics,
+            round_count,
+            cycle_count,
+            resolver_limit_reached,
+            target_units_materialized,
+        )
+        public_diagnostics = tuple(self._boundary_resolution_diagnostic(item) for item in boundary_result.diagnostics)
+        return ContinuationAssemblyResult(
+            tuple(families),
+            operation_facts,
+            public_diagnostics,
+            tuple(sorted(local_units_by_id.values(), key=lambda item: item.unit_id)),
+            boundary_result,
+        )
 
-    def _families_for_inbound_operation(
+    def _materialize_boundary_target_owner(
         self,
-        inbound: AvailableOperationFact,
+        owner: BoundaryOwnerIdentity,
+        eligible_sources: Sequence[QuerySource],
         *,
         include_tests: bool,
-    ) -> tuple[FlowFamily, ...]:
+    ) -> ContinuationAssemblyResult:
+        node_key = (owner.source_id, owner.graph_revision, owner.owner_node_id)
+        loaded = self.flow_repository.load_nodes({node_key}, include_tests=include_tests) if hasattr(self.flow_repository, "load_nodes") else {}
+        node = next((item for key, item in loaded.items() if key[0] == owner.source_id and key[2] == owner.owner_node_id), None)
+        if node is None:
+            return ContinuationAssemblyResult((), (), (), (), None)
         anchor = KnowledgeQueryMatchedNode(
-            sourceId=inbound.owner_source_id,
-            nodeId=inbound.owner_node_id,
-            stableKey=inbound.structural_owner,
-            nodeKind="CALLABLE",
-            label=self._operation_owner_label(inbound),
+            sourceId=node.source_id,
+            nodeId=node.node_id,
+            stableKey=node.stable_key or node.node_id,
+            nodeKind=node.node_kind,
+            label=node.label,
             score=1.0,
-            matchReasons=["TYPED_HTTP_OPERATION_MATCH"],
-            graphId=inbound.owner_graph_id or None,
-            graphRevision=inbound.owner_graph_revision or inbound.owner_graph_id or None,
-            relativePath=inbound.owner_relative_path,
-            qualifiedName=inbound.owner_qualified_name,
-            flowDomain=inbound.eligibility.flow_domain if inbound.eligibility is not None else None,
+            matchReasons=["GENERIC_BOUNDARY_RESOLUTION"],
+            graphId=node.graph_id,
+            graphRevision=node.graph_revision or node.graph_id,
+            relativePath=node.relative_path,
+            qualifiedName=node.qualified_name,
+            flowDomain=node.flow_domain,
         )
-        build_result = self.flow_engine.build([anchor], max_flows=0, include_tests=include_tests)
+        if str(node.node_kind or "").strip().upper() == "CALLABLE":
+            flow_seed_nodes = [anchor]
+            seed_provenance = (
+                EntrypointFlowSeedProvenance(
+                    original_anchor=anchor,
+                    expanded_seed=anchor,
+                    anchor_to_seed_reasons=("GENERIC_BOUNDARY_PROVIDED_OWNER",),
+                ),
+            )
+        else:
+            expansion = self.anchor_expander.expand([anchor], eligible_sources, self.policy)
+            flow_seed_nodes = [seed for seed in expansion.flow_seed_nodes if self._matched_node_is_executable(seed)]
+            seed_provenance = self._flow_seed_provenance(expansion)
+        if not flow_seed_nodes:
+            return ContinuationAssemblyResult((), (), (), (), None)
+        build_result = self.flow_engine.build(
+            flow_seed_nodes,
+            max_flows=0,
+            include_tests=include_tests,
+            anchor_seed_provenance=seed_provenance,
+        )
         if not build_result.flows:
-            return ()
+            return ContinuationAssemblyResult((), (), tuple(build_result.diagnostics), build_result.local_units, None)
         supporting_nodes, supporting_relations = self._supporting_relations(build_result.flows, include_tests)
         assembly = self.family_assembler.assemble(
             build_result.flows,
             supporting_nodes=supporting_nodes,
             supporting_relations=supporting_relations,
         )
-        return self.family_assembler.rank(assembly.families)
+        diagnostics = (*build_result.diagnostics, *assembly.diagnostics)
+        return ContinuationAssemblyResult(
+            self.family_assembler.rank(assembly.families),
+            (),
+            tuple(diagnostics),
+            build_result.local_units,
+            None,
+        )
 
-    def _is_usable_outbound_http_fact(self, fact: AvailableOperationFact) -> bool:
-        if normalize_transport_kind(fact.transport_kind) != "HTTP":
-            return False
-        if str(fact.direction_role or "").strip().upper() != "OUTBOUND":
-            return False
-        if not normalize_http_method(fact.method) or not normalize_route(fact.normalized_route):
-            return False
-        if fact.eligibility is not None and (not fact.eligibility.inventory_current or not fact.eligibility.analyzed_current):
-            return False
-        return True
+    def _units_with_unvisited_required_boundaries(
+        self,
+        units: Sequence[LocalFlowUnit],
+        visited_required: set[Any],
+    ) -> tuple[LocalFlowUnit, ...]:
+        result: list[LocalFlowUnit] = []
+        for unit in units:
+            retained = tuple(
+                boundary
+                for boundary in unit.generic_boundaries
+                if str(boundary.role or "").strip().upper() == BOUNDARY_ROLE_REQUIRED
+                and boundary_identity(boundary) not in visited_required
+            )
+            if retained:
+                result.append(replace(unit, generic_boundaries=retained))
+        return tuple(sorted(result, key=lambda item: item.unit_id))
 
-    def _operation_facts_match(self, outbound: AvailableOperationFact, inbound: AvailableOperationFact) -> bool:
-        if normalize_transport_kind(outbound.transport_kind) != normalize_transport_kind(inbound.transport_kind):
-            return False
-        if normalize_http_method(outbound.method) != normalize_http_method(inbound.method):
-            return False
-        if normalize_route(outbound.normalized_route) != normalize_route(inbound.normalized_route):
-            return False
-        target_identity = clean_identity(outbound.target_service_identity)
-        if target_identity and inbound.owner_source_id != target_identity:
-            return False
-        for attr in (
-            "operation_identity",
-            "interface_identity",
-            "request_contract_identity",
-            "response_contract_identity",
-        ):
-            outbound_value = clean_identity(getattr(outbound, attr))
-            inbound_value = clean_identity(getattr(inbound, attr))
-            if outbound_value and inbound_value and outbound_value != inbound_value:
-                return False
-        return True
+    def _required_boundaries(self, units: Sequence[LocalFlowUnit]) -> tuple[LocalBoundaryFact, ...]:
+        by_identity: dict[Any, LocalBoundaryFact] = {}
+        for unit in units:
+            for boundary in unit.generic_boundaries:
+                if str(boundary.role or "").strip().upper() == BOUNDARY_ROLE_REQUIRED:
+                    by_identity.setdefault(boundary_identity(boundary), boundary)
+        return tuple(by_identity[key] for key in sorted(by_identity))
 
-    def _operation_owner_key(self, fact: AvailableOperationFact) -> str:
-        return ":".join((fact.owner_source_id, fact.owner_graph_revision or fact.owner_graph_id, fact.owner_node_id))
+    def _matched_node_is_executable(self, node: KnowledgeQueryMatchedNode) -> bool:
+        return str(node.nodeKind or "").strip().upper() == "CALLABLE"
+
+    def _combined_boundary_resolution_result(
+        self,
+        resolutions: Sequence[Any],
+        proven_links: Sequence[Any],
+        ambiguous_links: Sequence[Any],
+        unresolved_boundaries: set[Any],
+        discovered_owners: Mapping[BoundaryOwnerIdentity, BoundaryOwnerIdentity],
+        discovered_local_units: Sequence[LocalFlowUnit],
+        diagnostics: Sequence[BoundaryResolutionDiagnostic],
+        round_count: int,
+        cycle_count: int,
+        resolver_limit_reached: bool,
+        target_units_materialized: int,
+    ) -> BoundaryResolutionResult:
+        proven = tuple(sorted(proven_links, key=lambda item: item.resolution_id))
+        ambiguous = tuple(sorted(ambiguous_links, key=lambda item: item.resolution_id))
+        unresolved = tuple(sorted(unresolved_boundaries))
+        candidates_by_source: dict[str, int] = defaultdict(int)
+        for item in diagnostics:
+            if item.code != "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS":
+                continue
+            for source_id, count in dict(item.metadata.get("providedCandidatesBySource") or {}).items():
+                candidates_by_source[str(source_id)] += int(count or 0)
+        metrics = BoundaryResolverMetrics(
+            required_boundary_count=len(resolutions),
+            eligible_provided_boundary_count=max(
+                (
+                    int(item.metadata.get("eligibleProvidedBoundaryCount") or 0)
+                    for item in diagnostics
+                    if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+                ),
+                default=0,
+            ),
+            provided_candidates_by_source=dict(sorted(candidates_by_source.items())),
+            descriptor_fingerprints_queried=sum(
+                int(item.metadata.get("descriptorFingerprintsQueried") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_pairs_evaluated=sum(len(item.evaluated_candidates) for item in resolutions),
+            proven_count=len(proven),
+            ambiguous_count=len(ambiguous),
+            unresolved_count=len(unresolved),
+            candidate_sets_truncated=sum(1 for item in diagnostics if item.code == "BOUNDARY_CANDIDATE_SET_INCOMPLETE"),
+            conflict_count=sum(
+                1
+                for resolution in resolutions
+                for candidate in resolution.evaluated_candidates
+                if candidate.conflicting_descriptors
+            ),
+            evidence_insufficient_count=sum(
+                1
+                for resolution in resolutions
+                for candidate in resolution.evaluated_candidates
+                if "BOUNDARY_EVIDENCE_INSUFFICIENT" in candidate.rejection_reasons
+            ),
+            target_owners_discovered=len(discovered_owners),
+            target_units_materialized=target_units_materialized,
+            resolution_rounds=round_count,
+            resolution_cycles_detected=cycle_count,
+            resolver_sql_statements=sum(
+                int(item.metadata.get("resolverSQLStatements") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+        )
+        aggregate = BoundaryResolutionDiagnostic(
+            code="GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS",
+            message="Generic boundary resolution diagnostics.",
+            severity="INFO",
+            metadata={
+                "requiredBoundaryCount": metrics.required_boundary_count,
+                "eligibleProvidedBoundaryCount": metrics.eligible_provided_boundary_count,
+                "providedCandidatesBySource": metrics.provided_candidates_by_source,
+                "descriptorFingerprintsQueried": metrics.descriptor_fingerprints_queried,
+                "candidatePairsEvaluated": metrics.candidate_pairs_evaluated,
+                "PROVENCount": metrics.proven_count,
+                "AMBIGUOUSCount": metrics.ambiguous_count,
+                "UNRESOLVEDCount": metrics.unresolved_count,
+                "candidateSetsTruncated": metrics.candidate_sets_truncated,
+                "conflictCount": metrics.conflict_count,
+                "evidenceInsufficientCount": metrics.evidence_insufficient_count,
+                "targetOwnersDiscovered": metrics.target_owners_discovered,
+                "targetUnitsMaterialized": metrics.target_units_materialized,
+                "resolutionRounds": metrics.resolution_rounds,
+                "resolutionCyclesDetected": metrics.resolution_cycles_detected,
+                "resolverSQLStatements": metrics.resolver_sql_statements,
+            },
+        )
+        return BoundaryResolutionResult(
+            resolutions=tuple(sorted(resolutions, key=lambda item: item.resolution_id)),
+            proven_links=proven,
+            ambiguous_links=ambiguous,
+            unresolved_boundaries=unresolved,
+            discovered_provided_owners=tuple(sorted(discovered_owners.values(), key=lambda item: (item.source_id, item.graph_revision, item.owner_node_id))),
+            discovered_local_units=tuple(sorted(discovered_local_units, key=lambda item: item.unit_id)),
+            diagnostics=(*tuple(diagnostics), aggregate),
+            truncation=BoundaryResolutionTruncationState(
+                candidate_sets_truncated=metrics.candidate_sets_truncated,
+                resolver_limit_reached=resolver_limit_reached,
+                recursion_limit_reached=round_count > _MAX_BOUNDARY_RESOLUTION_ROUNDS,
+            ),
+            metrics=metrics,
+        )
+
+    def _boundary_resolution_diagnostic(self, item: BoundaryResolutionDiagnostic) -> KnowledgeQueryDiagnostic:
+        return KnowledgeQueryDiagnostic(
+            code=item.code,
+            message=item.message,
+            severity=item.severity,
+            sourceId=item.source_id,
+            metadata=dict(item.metadata or {}),
+        )
 
     def _flow_family_key(self, family: FlowFamily) -> str:
         return ":".join((family.key.source_id, family.key.graph_revision, family.key.entrypoint_node_id))
 
-    def _operation_owner_label(self, fact: AvailableOperationFact) -> str:
-        qualified = clean_identity(fact.owner_qualified_name)
-        if qualified:
-            return qualified
-        return fact.owner_node_id
-
-    def _operation_fact_sort_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str, str]:
-        return (
-            fact.owner_source_id,
-            fact.owner_graph_revision or fact.owner_graph_id,
-            fact.owner_node_id,
-            normalize_transport_kind(fact.transport_kind) or "",
-            normalize_http_method(fact.method) or "",
-            normalize_route(fact.normalized_route) or "",
-        )
+    def _target_owner_metadata(self, owner: BoundaryOwnerIdentity) -> dict[str, Any]:
+        return {
+            "sourceId": owner.source_id,
+            "graphRevision": owner.graph_revision,
+            "ownerNodeId": owner.owner_node_id,
+            "boundaryKey": owner.boundary_identity.boundary_key,
+        }
 
     def _supporting_relations(
         self,

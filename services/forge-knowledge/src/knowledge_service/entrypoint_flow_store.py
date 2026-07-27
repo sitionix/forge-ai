@@ -5,7 +5,19 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import Any, Dict, Iterable, List, Sequence
 
-from knowledge_service.entrypoint_flow_engine import EntrypointFlow, LocalBoundaryDescriptor, LocalBoundaryFact
+from knowledge_service.boundary_contract import LocalBoundaryDescriptor, LocalBoundaryFact
+from knowledge_service.boundary_resolution import (
+    ACCEPTED_BOUNDARY_STATUSES,
+    BOUNDARY_ROLE_PROVIDED,
+    BoundaryCandidateLoadLimits,
+    BoundaryCandidateLoadResult,
+    BoundaryIdentity,
+    BoundaryResolutionDiagnostic,
+    boundary_identity,
+    descriptor_fingerprint,
+    descriptor_fingerprint_from_row,
+)
+from knowledge_service.entrypoint_flow_engine import EntrypointFlow
 from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
@@ -29,6 +41,31 @@ _SQLITE_BIND_CHUNK_SIZE = 800
 def _chunks(values: Sequence[str], size: int = _SQLITE_BIND_CHUNK_SIZE) -> Iterable[Sequence[str]]:
     for offset in range(0, len(values), size):
         yield values[offset: offset + size]
+
+
+def _source_fair_boundary_identity_limit(identities: Sequence[BoundaryIdentity], limit: int) -> tuple[BoundaryIdentity, ...]:
+    if limit <= 0:
+        return ()
+    by_source: dict[str, list[BoundaryIdentity]] = defaultdict(list)
+    for identity in sorted(identities):
+        by_source[identity.source_id].append(identity)
+    offsets = {source_id: 0 for source_id in by_source}
+    retained: list[BoundaryIdentity] = []
+    while len(retained) < limit:
+        progressed = False
+        for source_id in sorted(by_source):
+            offset = offsets[source_id]
+            values = by_source[source_id]
+            if offset >= len(values):
+                continue
+            retained.append(values[offset])
+            offsets[source_id] = offset + 1
+            progressed = True
+            if len(retained) >= limit:
+                break
+        if not progressed:
+            break
+    return tuple(sorted(retained))
 
 
 class EntrypointFlowGraphRepository:
@@ -215,6 +252,8 @@ class EntrypointFlowGraphRepository:
         *,
         include_tests: bool,
     ) -> tuple[AvailableOperationFact, ...]:
+        # NARRATIVE_COMPATIBILITY: operation facts are loaded only for legacy
+        # narrative/formatter projections, not for cross-source boundary resolution.
         self.graph_store.init()
         grouped = self._group_node_ids_by_source(node_keys)
         if not grouped:
@@ -243,6 +282,8 @@ class EntrypointFlowGraphRepository:
         eligible_source_ids: Sequence[str],
         include_tests: bool,
     ) -> tuple[AvailableOperationFact, ...]:
+        # NARRATIVE_COMPATIBILITY: retained for confirmed operation-fact tests
+        # and callers; the active continuation path uses find_provided_boundary_candidates.
         requested = tuple(
             fact
             for fact in outbound_facts
@@ -271,6 +312,168 @@ class EntrypointFlowGraphRepository:
             if self._inbound_fact_matches_any_outbound(fact, requested)
         ]
         return tuple(sorted(self._dedupe_operation_facts(facts), key=self._operation_fact_sort_key))
+
+    def find_provided_boundary_candidates(
+        self,
+        required_boundaries: Sequence[LocalBoundaryFact],
+        *,
+        eligible_source_ids: Sequence[str],
+        include_tests: bool,
+        internal_limits: BoundaryCandidateLoadLimits | None = None,
+    ) -> BoundaryCandidateLoadResult:
+        limits = internal_limits or BoundaryCandidateLoadLimits()
+        source_ids = tuple(dict.fromkeys(str(source_id or "").strip() for source_id in eligible_source_ids if str(source_id or "").strip()))
+        required = tuple(
+            sorted(
+                (
+                    boundary
+                    for boundary in required_boundaries
+                    if str(boundary.role or "").strip().upper() == "REQUIRED"
+                    and str(boundary.status or "").strip().upper() in ACCEPTED_BOUNDARY_STATUSES
+                ),
+                key=self._boundary_sort_key,
+            )
+        )
+        fingerprints_by_required: dict[BoundaryIdentity, tuple[Any, ...]] = {}
+        for boundary in required:
+            fingerprints_by_required[boundary_identity(boundary)] = tuple(sorted({descriptor_fingerprint(descriptor) for descriptor in boundary.descriptors}))
+        queried_fingerprints = tuple(sorted({fingerprint for values in fingerprints_by_required.values() for fingerprint in values}))
+        if not required or not source_ids or not queried_fingerprints:
+            return BoundaryCandidateLoadResult(
+                candidates_by_required_identity={boundary_identity(boundary): () for boundary in required},
+                provided_boundaries_by_fingerprint={},
+                eligible_provided_boundary_count=0,
+                provided_candidates_by_source={},
+                descriptor_fingerprints_queried=len(queried_fingerprints),
+            )
+
+        diagnostics: list[BoundaryResolutionDiagnostic] = []
+        truncated_required: set[BoundaryIdentity] = set()
+        path_type_pairs = tuple(sorted({(fingerprint.path, fingerprint.value_type) for fingerprint in queried_fingerprints}))
+        if len(path_type_pairs) > limits.max_descriptor_path_type_pairs:
+            path_type_pairs = path_type_pairs[: limits.max_descriptor_path_type_pairs]
+            truncated_required.update(fingerprints_by_required)
+            diagnostics.append(
+                BoundaryResolutionDiagnostic(
+                    code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
+                    message="Boundary descriptor path/type query set reached the internal resolver limit.",
+                    severity="WARN",
+                    metadata={"pathTypePairLimit": limits.max_descriptor_path_type_pairs},
+                )
+            )
+
+        self.graph_store.init()
+        sql_before = int(self._metrics.get("sqlStatements", 0))
+        candidate_ids_by_fingerprint: dict[Any, set[BoundaryIdentity]] = defaultdict(set)
+        candidate_db_ids_by_identity: dict[BoundaryIdentity, tuple[str, str]] = {}
+        eligible_provided_count = 0
+        with self.graph_store._connect() as conn:
+            if not self.graph_store._table_exists(conn, "analysis_graph_boundaries"):
+                return BoundaryCandidateLoadResult(
+                    candidates_by_required_identity={boundary_identity(boundary): () for boundary in required},
+                    provided_boundaries_by_fingerprint={},
+                    eligible_provided_boundary_count=0,
+                    provided_candidates_by_source={},
+                    descriptor_fingerprints_queried=len(queried_fingerprints),
+                    diagnostics=tuple(diagnostics),
+                    sql_statements=int(self._metrics.get("sqlStatements", 0)) - sql_before,
+                )
+            eligible_provided_count = self._count_eligible_provided_boundaries(conn, source_ids, include_tests)
+            queried_set = set(queried_fingerprints)
+            for source_chunk in _chunks(source_ids, max(1, limits.max_source_chunk_size)):
+                for pair_chunk in _chunks(path_type_pairs, max(1, limits.max_path_type_chunk_size)):
+                    rows = self._query_provided_boundary_descriptor_candidate_rows(conn, source_chunk, pair_chunk, include_tests)
+                    for row in rows:
+                        fingerprint = descriptor_fingerprint_from_row(
+                            row.get("descriptor_path"),
+                            row.get("descriptor_value_type"),
+                            row.get("descriptor_value_json"),
+                        )
+                        if fingerprint not in queried_set:
+                            continue
+                        identity = BoundaryIdentity(
+                            source_id=str(row.get("source_id") or ""),
+                            graph_revision=str(row.get("graph_revision") or row.get("graph_id") or ""),
+                            boundary_key=str(row.get("boundary_stable_key") or row.get("boundary_id") or ""),
+                            owner_node_id=str(row.get("node_id") or ""),
+                        )
+                        candidate_ids_by_fingerprint[fingerprint].add(identity)
+                        candidate_db_ids_by_identity.setdefault(identity, (str(row.get("source_id") or ""), str(row.get("boundary_id") or "")))
+
+            candidate_identities_by_required: dict[BoundaryIdentity, tuple[BoundaryIdentity, ...]] = {}
+            for required_identity, fingerprints in sorted(fingerprints_by_required.items()):
+                identities = sorted(
+                    {
+                        identity
+                        for fingerprint in fingerprints
+                        for identity in candidate_ids_by_fingerprint.get(fingerprint, set())
+                        if identity.source_id != required_identity.source_id
+                    }
+                )
+                if len(identities) > limits.max_candidates_per_required:
+                    truncated_required.add(required_identity)
+                    identities = identities[: limits.max_candidates_per_required]
+                candidate_identities_by_required[required_identity] = tuple(identities)
+
+            selected_identities = sorted({identity for values in candidate_identities_by_required.values() for identity in values})
+            if len(selected_identities) > limits.max_candidate_boundaries_total:
+                retained = set(_source_fair_boundary_identity_limit(selected_identities, limits.max_candidate_boundaries_total))
+                truncated_required.update(
+                    required_identity
+                    for required_identity, identities in candidate_identities_by_required.items()
+                    if any(identity not in retained for identity in identities)
+                )
+                selected_identities = sorted(retained)
+
+            facts_by_identity: dict[BoundaryIdentity, LocalBoundaryFact] = {}
+            ids_by_source: dict[str, list[str]] = defaultdict(list)
+            for identity in selected_identities:
+                source_id, boundary_id = candidate_db_ids_by_identity.get(identity, ("", ""))
+                if source_id and boundary_id:
+                    ids_by_source[source_id].append(boundary_id)
+            identity_by_source = self.graph_store._graph_identity_by_source(conn, sorted(ids_by_source))
+            for source_id, boundary_ids in sorted(ids_by_source.items()):
+                identity = identity_by_source.get(source_id) or {}
+                for chunk in _chunks(sorted(set(boundary_ids)), max(1, limits.max_boundary_id_chunk_size)):
+                    rows = self._query_boundary_rows_by_boundary_ids(conn, source_id, list(chunk), include_tests)
+                    self._metrics["boundaryCandidateRowsLoaded"] += len(rows)
+                    for fact in self._boundary_facts_from_rows(rows, identity):
+                        facts_by_identity[boundary_identity(fact)] = fact
+
+        provided_by_fingerprint = {
+            fingerprint: frozenset(identities)
+            for fingerprint, identities in sorted(candidate_ids_by_fingerprint.items(), key=lambda item: item[0])
+        }
+        candidates_by_required = {
+            required_identity: tuple(
+                facts_by_identity[identity]
+                for identity in identities
+                if identity in facts_by_identity
+            )
+            for required_identity, identities in sorted(candidate_identities_by_required.items())
+        }
+        candidates_by_source: dict[str, int] = defaultdict(int)
+        for fact in {boundary_identity(fact): fact for values in candidates_by_required.values() for fact in values}.values():
+            candidates_by_source[fact.source_id] += 1
+        if truncated_required:
+            diagnostics.append(
+                BoundaryResolutionDiagnostic(
+                    code="BOUNDARY_CANDIDATE_SET_INCOMPLETE",
+                    message="One or more boundary candidate sets reached an internal resolver limit.",
+                    severity="WARN",
+                    metadata={"requiredBoundaryCount": len(truncated_required)},
+                )
+            )
+        return BoundaryCandidateLoadResult(
+            candidates_by_required_identity=candidates_by_required,
+            provided_boundaries_by_fingerprint=provided_by_fingerprint,
+            eligible_provided_boundary_count=eligible_provided_count,
+            provided_candidates_by_source=dict(sorted(candidates_by_source.items())),
+            descriptor_fingerprints_queried=len(queried_fingerprints),
+            truncated_required_identities=frozenset(truncated_required),
+            diagnostics=tuple(diagnostics),
+            sql_statements=int(self._metrics.get("sqlStatements", 0)) - sql_before,
+        )
 
     def metrics(self) -> dict[str, int]:
         return dict(self._metrics)
@@ -669,6 +872,7 @@ class EntrypointFlowGraphRepository:
             LEFT JOIN analysis_graph_evidence boundary_ev
               ON boundary_ev.id = be.evidence_id
              AND boundary_ev.source_id = b.source_id
+             AND {self._current_evidence_clause("boundary_ev")}
             LEFT JOIN analysis_files boundary_af
               ON boundary_af.file_id = boundary_ev.analysis_file_id
             LEFT JOIN analysis_graph_boundary_descriptor_evidence de
@@ -676,6 +880,7 @@ class EntrypointFlowGraphRepository:
             LEFT JOIN analysis_graph_evidence descriptor_ev
               ON descriptor_ev.id = de.evidence_id
              AND descriptor_ev.source_id = b.source_id
+             AND {self._current_evidence_clause("descriptor_ev")}
             LEFT JOIN analysis_files descriptor_af
               ON descriptor_af.file_id = descriptor_ev.analysis_file_id
             WHERE b.source_id = ?
@@ -694,6 +899,203 @@ class EntrypointFlowGraphRepository:
                 *current_status_params,
                 source_id,
                 *ids,
+                *current_status_params,
+                include_tests,
+            ],
+        ).fetchall()
+        return [self.graph_store._row_dict(row) for row in rows]
+
+    def _count_eligible_provided_boundaries(
+        self,
+        conn: Any,
+        source_ids: Sequence[str],
+        include_tests: bool,
+    ) -> int:
+        if not source_ids:
+            return 0
+        self._metrics["sqlStatements"] += 1
+        source_sql, source_params = sql_in_clause(source_ids)
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        row = conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT b.id) AS count
+            FROM analysis_graph_boundaries b
+            JOIN analysis_graph_nodes n
+              ON n.source_id = b.source_id
+             AND n.id = b.node_id
+             AND n.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("n")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            WHERE b.source_id IN ({source_sql})
+              AND b.role = ?
+              AND b.status IN ({current_status_sql})
+              AND b.rejection_reason IS NULL
+              AND {self.graph_store._inventory_membership_graph_edge_clause("b")}
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            """,
+            [
+                *current_status_params,
+                include_tests,
+                *source_params,
+                BOUNDARY_ROLE_PROVIDED,
+                *current_status_params,
+                include_tests,
+            ],
+        ).fetchone()
+        return int(row["count"] or 0) if row is not None else 0
+
+    def _query_provided_boundary_descriptor_candidate_rows(
+        self,
+        conn: Any,
+        source_ids: Sequence[str],
+        path_type_pairs: Sequence[tuple[str, str]],
+        include_tests: bool,
+    ) -> list[dict[str, Any]]:
+        if not source_ids or not path_type_pairs:
+            return []
+        self._metrics["sqlStatements"] += 1
+        source_sql, source_params = sql_in_clause(source_ids)
+        path_type_sql = " OR ".join("(TRIM(d.descriptor_path) = ? AND TRIM(d.value_type) = ?)" for _ in path_type_pairs)
+        path_type_params = [value for pair in path_type_pairs for value in pair]
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT b.id AS boundary_id,
+                   b.source_id AS source_id,
+                   b.stable_key AS boundary_stable_key,
+                   b.node_id AS node_id,
+                   COALESCE(NULLIF(state.graph_id, ''), b.source_id || ':query-current-facts') AS graph_id,
+                   COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), b.source_id || ':query-current-facts') AS graph_revision,
+                   d.id AS descriptor_id,
+                   d.descriptor_path AS descriptor_path,
+                   d.value_type AS descriptor_value_type,
+                   d.value_json AS descriptor_value_json
+            FROM analysis_graph_boundaries b
+            JOIN analysis_graph_nodes n
+              ON n.source_id = b.source_id
+             AND n.id = b.node_id
+             AND n.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("n")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            JOIN analysis_graph_boundary_descriptors d
+              ON d.boundary_id = b.id
+             AND d.status IN ({current_status_sql})
+            LEFT JOIN analysis_graph_state state
+              ON state.source_id = b.source_id
+            WHERE b.source_id IN ({source_sql})
+              AND b.role = ?
+              AND b.status IN ({current_status_sql})
+              AND b.rejection_reason IS NULL
+              AND {self.graph_store._inventory_membership_graph_edge_clause("b")}
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+              AND ({path_type_sql})
+            ORDER BY b.source_id, graph_revision, b.stable_key, b.node_id, b.id, d.descriptor_path, d.value_type, d.id
+            """,
+            [
+                *current_status_params,
+                include_tests,
+                *current_status_params,
+                *source_params,
+                BOUNDARY_ROLE_PROVIDED,
+                *current_status_params,
+                include_tests,
+                *path_type_params,
+            ],
+        ).fetchall()
+        return [self.graph_store._row_dict(row) for row in rows]
+
+    def _query_boundary_rows_by_boundary_ids(
+        self,
+        conn: Any,
+        source_id: str,
+        boundary_ids: list[str],
+        include_tests: bool,
+    ) -> list[dict[str, Any]]:
+        if not source_id or not boundary_ids:
+            return []
+        self._metrics["sqlStatements"] += 1
+        placeholders = ",".join("?" for _ in boundary_ids)
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT b.id AS boundary_id,
+                   b.source_id AS source_id,
+                   b.stable_key AS boundary_stable_key,
+                   b.node_id AS node_id,
+                   b.role AS boundary_role,
+                   b.status AS boundary_status,
+                   b.fact_origin AS boundary_fact_origin,
+                   b.confidence AS boundary_confidence,
+                   COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, b.flow_domain) AS effective_flow_domain,
+                   COALESCE(NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_id,
+                   COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_revision,
+                   d.id AS descriptor_id,
+                   d.descriptor_path AS descriptor_path,
+                   d.value_type AS descriptor_value_type,
+                   d.value_json AS descriptor_value_json,
+                   d.origin AS descriptor_origin,
+                   d.confidence AS descriptor_confidence,
+                   boundary_ev.id AS boundary_evidence_id,
+                   boundary_ev.source_id AS boundary_evidence_source_id,
+                   COALESCE(boundary_af.relative_path, boundary_ev.relative_path) AS boundary_evidence_relative_path,
+                   boundary_ev.line_start AS boundary_evidence_line_start,
+                   boundary_ev.line_end AS boundary_evidence_line_end,
+                   boundary_ev.excerpt AS boundary_evidence_excerpt,
+                   descriptor_ev.id AS descriptor_evidence_id,
+                   descriptor_ev.source_id AS descriptor_evidence_source_id,
+                   COALESCE(descriptor_af.relative_path, descriptor_ev.relative_path) AS descriptor_evidence_relative_path,
+                   descriptor_ev.line_start AS descriptor_evidence_line_start,
+                   descriptor_ev.line_end AS descriptor_evidence_line_end,
+                   descriptor_ev.excerpt AS descriptor_evidence_excerpt
+            FROM analysis_graph_boundaries b
+            JOIN analysis_graph_nodes n
+              ON n.source_id = b.source_id
+             AND n.id = b.node_id
+             AND n.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("n")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            LEFT JOIN analysis_graph_state state
+              ON state.source_id = b.source_id
+            LEFT JOIN analysis_graph_boundary_descriptors d
+              ON d.boundary_id = b.id
+             AND d.status IN ({current_status_sql})
+            LEFT JOIN analysis_graph_boundary_evidence be
+              ON be.boundary_id = b.id
+            LEFT JOIN analysis_graph_evidence boundary_ev
+              ON boundary_ev.id = be.evidence_id
+             AND boundary_ev.source_id = b.source_id
+             AND {self._current_evidence_clause("boundary_ev")}
+            LEFT JOIN analysis_files boundary_af
+              ON boundary_af.file_id = boundary_ev.analysis_file_id
+            LEFT JOIN analysis_graph_boundary_descriptor_evidence de
+              ON de.descriptor_id = d.id
+            LEFT JOIN analysis_graph_evidence descriptor_ev
+              ON descriptor_ev.id = de.evidence_id
+             AND descriptor_ev.source_id = b.source_id
+             AND {self._current_evidence_clause("descriptor_ev")}
+            LEFT JOIN analysis_files descriptor_af
+              ON descriptor_af.file_id = descriptor_ev.analysis_file_id
+            WHERE b.source_id = ?
+              AND b.id IN ({placeholders})
+              AND b.role = ?
+              AND b.status IN ({current_status_sql})
+              AND b.rejection_reason IS NULL
+              AND {self.graph_store._inventory_membership_graph_edge_clause("b")}
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            ORDER BY b.source_id, b.node_id, b.role, b.id, d.descriptor_path, d.id,
+                     boundary_ev.relative_path, boundary_ev.line_start, boundary_ev.line_end, boundary_ev.id,
+                     descriptor_ev.relative_path, descriptor_ev.line_start, descriptor_ev.line_end, descriptor_ev.id
+            """,
+            [
+                *current_status_params,
+                include_tests,
+                *current_status_params,
+                source_id,
+                *boundary_ids,
+                BOUNDARY_ROLE_PROVIDED,
                 *current_status_params,
                 include_tests,
             ],
@@ -812,6 +1214,25 @@ class EntrypointFlowGraphRepository:
                 )
             )
         return tuple(result)
+
+    def _current_evidence_clause(self, alias: str) -> str:
+        return f"""
+        EXISTS (
+            SELECT 1
+            FROM analysis_files af_current
+            WHERE af_current.source_id = {alias}.source_id
+              AND af_current.relative_path = {alias}.relative_path
+              AND af_current.content_hash = {alias}.content_hash
+              AND af_current.status IN ('ANALYZED', 'ANALYZED_WITH_DIAGNOSTICS', 'PARTIAL')
+        )
+        AND EXISTS (
+            SELECT 1
+            FROM files f_current
+            WHERE f_current.source_id = {alias}.source_id
+              AND f_current.relative_path = {alias}.relative_path
+              AND f_current.content_hash = {alias}.content_hash
+        )
+        """
 
     def _query_available_operation_fact_rows(
         self,
@@ -1543,6 +1964,7 @@ class EntrypointFlowGraphRepository:
         inbound: AvailableOperationFact,
         outbound_facts: Sequence[AvailableOperationFact],
     ) -> bool:
+        # NARRATIVE_COMPATIBILITY: legacy HTTP operation-fact correlation helper.
         if not self._is_current_inbound_http_fact(inbound):
             return False
         return any(self._operation_facts_match(outbound, inbound) for outbound in outbound_facts)
@@ -1559,6 +1981,7 @@ class EntrypointFlowGraphRepository:
         return True
 
     def _operation_facts_match(self, outbound: AvailableOperationFact, inbound: AvailableOperationFact) -> bool:
+        # NARRATIVE_COMPATIBILITY: this matcher must not authorize boundary resolution.
         if normalize_transport_kind(outbound.transport_kind) != normalize_transport_kind(inbound.transport_kind):
             return False
         if normalize_http_method(outbound.method) != normalize_http_method(inbound.method):

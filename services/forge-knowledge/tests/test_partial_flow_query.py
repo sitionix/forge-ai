@@ -723,7 +723,7 @@ def test_matching_inbound_operation_lookup_discovers_auth_after_initial_bff_only
     ]
 
 
-def test_registration_query_rejects_expansion_only_agent_project_and_adds_auth_continuation(tmp_path):
+def test_registration_query_rejects_expansion_only_agent_project_without_legacy_http_continuation(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     _bff_key, _auth_key = _seed_registration_query_graph(db_path)
 
@@ -737,21 +737,15 @@ def test_registration_query_rejects_expansion_only_agent_project_and_adds_auth_c
     assert {source.sourceId for source in result.response.matchedSources} == {"registration-bff"}
     assert len(result.narrative_plans) == 1
     parts = result.narrative_plans[0].parts
-    assert [part.kind for part in parts] == [
-        FlowNarrativePartKind.VERIFIED_FRAGMENT,
-        FlowNarrativePartKind.UNVERIFIED_GAP,
-        FlowNarrativePartKind.VERIFIED_FRAGMENT,
-    ]
+    assert [part.kind for part in parts] == [FlowNarrativePartKind.VERIFIED_FRAGMENT]
     assert parts[0].fragment.source_id == "registration-bff"
-    assert parts[1].gap.verification_status == "UNVERIFIED"
-    assert parts[1].gap.method == "POST"
-    assert parts[1].gap.route == "/api/v1/registrations"
-    assert parts[2].fragment.source_id == "registration-auth"
-    assert any(node.qualified_name == "auth.IdentityService.persist" for node in parts[2].fragment.family.nodes)
-    assert sum(1 for part in parts if part.kind is FlowNarrativePartKind.UNVERIFIED_GAP) == 1
+    assert all(part.fragment is None or part.fragment.source_id != "registration-auth" for part in parts)
+    assert sum(1 for part in parts if part.kind is FlowNarrativePartKind.UNVERIFIED_GAP) == 0
+    assert result.boundary_resolution is not None
+    assert result.boundary_resolution.proven_links == ()
 
 
-def test_create_site_query_uses_typed_continuation_without_catalog_attachment(tmp_path):
+def test_create_site_query_does_not_use_http_facts_as_continuation_authority(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     seed_semantic_graph(
         db_path,
@@ -815,8 +809,10 @@ def test_create_site_query_uses_typed_continuation_without_catalog_attachment(tm
 
     assert len(result.narrative_plans) == 1
     parts = result.narrative_plans[0].parts
-    assert [part.fragment.source_id for part in parts if part.fragment is not None] == ["site-bff", "site-service"]
-    assert sum(1 for part in parts if part.kind is FlowNarrativePartKind.UNVERIFIED_GAP) == 1
+    assert [part.fragment.source_id for part in parts if part.fragment is not None] == ["site-bff"]
+    assert sum(1 for part in parts if part.kind is FlowNarrativePartKind.UNVERIFIED_GAP) == 0
+    assert result.boundary_resolution is not None
+    assert result.boundary_resolution.proven_links == ()
 
 
 def test_graph_analysis_persisted_http_operation_metadata_loads_and_correlates(tmp_path):
@@ -1171,7 +1167,7 @@ def test_multiple_exact_downstream_http_operation_matches_are_ambiguous(tmp_path
 
 def test_continuation_lookup_ambiguous_missing_stale_malformed_and_test_inbound_facts_fail_closed(tmp_path):
     ambiguous_db = tmp_path / "ambiguous.sqlite"
-    upstream_key, _first_downstream_key = _seed_registration_operation_pair(ambiguous_db, outbound_target_service_identity="")
+    _upstream_key, _first_downstream_key = _seed_registration_operation_pair(ambiguous_db, outbound_target_service_identity="")
     seed_semantic_graph(
         ambiguous_db,
         source_id="fixture-auth-copy",
@@ -1188,14 +1184,7 @@ def test_continuation_lookup_ambiguous_missing_stale_malformed_and_test_inbound_
         evidence_ids=["ev-auth-register-copy"],
     )
     ambiguous_service = _service(ambiguous_db)
-    upstream_family = _families(_flow(EntrypointFlowGraphRepository(AnalysisStore(ambiguous_db)).load_nodes({upstream_key}, include_tests=False)[upstream_key]))
-    ambiguous_result = ambiguous_service._assemble_exact_downstream_continuations(
-        upstream_family,
-        SourceScopeResolver(AnalysisStore(ambiguous_db)).resolve()[0],
-        include_tests=False,
-    )
-    assert [family.key.source_id for family in ambiguous_result.families] == ["fixture-bff"]
-    assert any(item.code == "FLOW_CONTINUATION_AMBIGUOUS" for item in ambiguous_result.diagnostics)
+    assert not hasattr(ambiguous_service, "_assemble_exact_downstream_continuations")
 
     missing_db = tmp_path / "missing.sqlite"
     missing_upstream_key, _missing_downstream_key = _seed_registration_operation_pair(missing_db, downstream_source="missing-auth")
@@ -1235,7 +1224,7 @@ def test_continuation_lookup_ambiguous_missing_stale_malformed_and_test_inbound_
     assert len(test_repo.load_matching_inbound_operation_facts(test_facts, eligible_source_ids=["fixture-bff", "test-auth"], include_tests=True)) == 1
 
 
-def test_recursive_exact_continuation_terminates_without_duplicate_fragments_or_gaps(tmp_path):
+def test_recursive_legacy_http_continuation_is_not_used_without_generic_boundaries(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     seed_semantic_graph(
         db_path,
@@ -1309,8 +1298,10 @@ def test_recursive_exact_continuation_terminates_without_duplicate_fragments_or_
     gap_keys = [(part.gap.from_source, part.gap.to_source, part.gap.route) for part in parts if part.gap is not None]
     assert fragment_keys == list(dict.fromkeys(fragment_keys))
     assert gap_keys == list(dict.fromkeys(gap_keys))
-    assert [part.fragment.source_id for part in parts if part.fragment is not None] == ["chain-a", "chain-b", "chain-c"]
-    assert [part.gap.route for part in parts if part.gap is not None] == ["/b", "/c"]
+    assert [part.fragment.source_id for part in parts if part.fragment is not None] == ["chain-a"]
+    assert [part.gap.route for part in parts if part.gap is not None] == []
+    assert result.boundary_resolution is not None
+    assert result.boundary_resolution.proven_links == ()
 
 
 def test_missing_http_method_or_route_does_not_create_false_correlation(tmp_path):
