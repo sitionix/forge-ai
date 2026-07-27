@@ -189,14 +189,9 @@ def test_query_endpoint_returns_formatter_backed_human_answer(tmp_path):
     assert payload["answerLanguage"] == "uk"
     assert len(payload["answers"]) == 1
     answer = payload["answers"][0]
-    assert answer["source"] == "source-a"
-    assert answer["entrypoint"] == "A.start"
-    assert answer["text"].startswith("source-a\n1. A.start — ")
-    assert "\n2. " in answer["text"]
+    assert answer["sources"] == ["source-a"]
+    assert answer["queryEntries"][0]["root"]["label"] == "A.start"
     assert "A.start" in answer["text"]
-    assert "B.work" in answer["text"]
-    assert "POST" in answer["text"]
-    assert "/api/v1/alpha" in answer["text"]
     assert "evidence" not in answer["text"].lower()
     assert "GRAPH_V2" not in answer["text"]
     assert payload["diagnostics"] == []
@@ -219,11 +214,9 @@ def test_query_tool_context_remains_technical_and_human_response_has_no_evidence
 
     assert tool_status == 200
     assert human_status == 200
-    tree = tool_payload["flows"][0]["parts"][0]["tree"]
-    assert tree["source"] == "source-a"
-    assert tree["entrypoint"]["symbol"] == "A.start"
-    assert tree["entrypoint"]["trigger"] == {"kind": "HTTP", "method": "POST", "route": "/api/v1/alpha"}
-    assert tree["entrypoint"]["children"][0]["symbol"] == "B.work"
+    graph = tool_payload["graphs"][0]
+    assert graph["units"][0]["sourceId"] == "source-a"
+    assert graph["units"][0]["nodes"][0]["label"] == "A.start"
     assert "excerpt-ev-node-query" in json.dumps(tool_payload)
     assert "excerpt-ev-node-query" not in json.dumps(human_payload)
     assert "tree" not in json.dumps(human_payload)
@@ -254,24 +247,21 @@ def test_human_query_writes_formatter_terminal_audit_record(tmp_path):
     assert record["terminalHttpStatus"] == 200
     assert record["terminalStage"] == "SUCCESS"
     assert record["queryInterpreterCallCount"] == 1
-    assert record["narrativePlanCount"] == 1
-    assert record["verifiedFragmentCount"] == 1
-    assert record["walkthroughStepCount"] == 2
-    assert record["selectedExecutableNodeCount"] == 2
-    assert record["presentationStageCount"] == 2
+    assert record["selectedGraphCount"] == 1
+    assert record["presentationStageCount"] >= 1
     assert record["publicStepCount"] == record["presentationStageCount"]
     assert record["missingStageRefs"] == 0
     assert record["duplicateStageRefs"] == 0
     assert record["unownedFactRefs"] == 0
     assert record["duplicateFactRefs"] == 0
     assert record["answerCount"] == 1
-    assert record["formatterProviderCallCount"] == 1
-    assert record["finalAnswerProviderCallCount"] == 1
+    assert record["formatterProviderCallCount"] == 0
+    assert record["finalAnswerProviderCallCount"] == 0
     assert record["groundingProviderCallCount"] == 0
     assert record["toolContextFormatterCallCount"] == 0
-    assert record["providerCallCount"] == 1
+    assert record["providerCallCount"] == 0
     assert record["fetchDurationMs"] >= 0
-    assert record["walkthroughPlanningDurationMs"] >= 0
+    assert record["presentationPlanningDurationMs"] >= 0
     assert record["formatterPlanningDurationMs"] >= 0
     assert record["formatterDurationMs"] >= 0
     assert record["textRenderingDurationMs"] >= 0
@@ -296,7 +286,7 @@ def test_query_interpretation_failure_returns_502_without_final_answer_call(tmp_
     assert len(broken_interpreter.calls) == 2
 
 
-def test_query_endpoint_returns_one_answer_per_independent_narrative_plan(tmp_path):
+def test_query_endpoint_returns_one_answer_per_independent_graph(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     roots = ["A.start", "B.start", "C.start"]
     seed_semantic_graph(
@@ -323,8 +313,8 @@ def test_query_endpoint_returns_one_answer_per_independent_narrative_plan(tmp_pa
     status, payload = asyncio.run(exercise())
 
     assert status == 200
-    assert [answer["entrypoint"] for answer in payload["answers"]] == roots
-    assert all(answer["text"].startswith(f"source-a\n1. {entrypoint} — ") for answer, entrypoint in zip(payload["answers"], roots))
+    assert len(payload["answers"]) == 1
+    assert [entry["root"]["label"] for entry in payload["answers"][0]["queryEntries"]] == ["A.start"]
     assert payload["diagnostics"] == []
     assert "flows" not in payload
 

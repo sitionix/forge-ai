@@ -4,16 +4,14 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import Sequence
 
+from knowledge_service.boundary_contract import LocalBoundaryDescriptor, LocalBoundaryFact
 from knowledge_service.entrypoint_flow_engine import (
     EntrypointFlow,
     EntrypointFlowEngine,
     EntrypointFlowOrigin,
     EntrypointFlowSeedProvenance,
-    LocalBoundaryDescriptor,
-    LocalBoundaryFact,
 )
 from knowledge_service.file_classification import FileClassifier
-from knowledge_service.flow_family import FlowFamilyAssembler
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
 from knowledge_service.knowledge_defaults import load_knowledge_defaults
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode
@@ -311,25 +309,6 @@ def unit_signature(unit):
     }
 
 
-def assert_public_refs_close(payload):
-    node_refs = {item["nodeRef"] for item in payload["nodes"]}
-    transition_refs = {item["transitionRef"] for item in payload["transitions"]}
-    boundary_refs = {item["boundaryRef"] for item in payload["boundaries"]}
-    evidence_refs = {item["evidenceRef"] for item in payload["evidence"]}
-    assert payload["entrypoint"]["nodeRef"] in node_refs
-    for item in payload["transitions"]:
-        assert item["fromNodeRef"] in node_refs
-        assert item["toNodeRef"] in node_refs
-        assert set(item.get("evidenceRefs", [])) <= evidence_refs
-    for item in payload["boundaries"]:
-        assert item["fromNodeRef"] in node_refs
-        assert set(item.get("evidenceRefs", [])) <= evidence_refs
-    for item in payload["matchedAnchors"]:
-        assert item["anchorRef"] in node_refs
-    for item in payload["evidence"]:
-        assert item["ownerRef"] in node_refs | transition_refs | boundary_refs
-
-
 def test_bidirectional_corridor_excludes_pre_anchor_sibling_and_retains_downstream_boundaries():
     root = node("Root", entrypoint=True)
     repository = node("Repository")
@@ -448,12 +427,6 @@ def test_multi_root_compatibility_projection_is_root_specific_for_nodes_boundari
     assert "ev-node-RootA" not in {item.evidence_id for item in flows["RootB"].evidence}
     assert all(flow.coverage.cycle_detected for flow in result.flows)
 
-    families = FlowFamilyAssembler().assemble(result.flows).families
-    families_by_root = {family.entrypoint.node_id: family for family in families}
-    assert set(families_by_root) == {"RootA", "RootB"}
-    assert {item.node_id for item in families_by_root["RootA"].nodes} == {"RootA", "Shared", "Anchor", "Downstream"}
-    assert {item.node_id for item in families_by_root["RootB"].nodes} == {"RootB", "Shared", "Anchor", "Downstream"}
-
 
 def test_explicit_root_for_one_anchor_does_not_suppress_another_inferred_root():
     nodes = [node("Root", entrypoint=True), node("AnchorA"), node("Detached")]
@@ -560,7 +533,6 @@ def test_topology_boundaries_are_separate_for_unresolved_external_cross_source_a
 
     result, _repo = build(nodes, edges, [anchor("Anchor")])
     unit = result.local_units[0]
-    public = result.public_flows[0].dict()
 
     assert unit.execution_transitions == ()
     assert {(item.edge_id, item.boundary_reason, item.resolution_status) for item in unit.topology_boundaries} == {
@@ -569,8 +541,6 @@ def test_topology_boundaries_are_separate_for_unresolved_external_cross_source_a
         ("cross", "CROSS_SOURCE_TARGET", "RESOLVED"),
         ("missing", "CURRENT_TARGET_NODE_MISSING", "RESOLVED"),
     }
-    assert {item["kind"] for item in public["boundaries"]} == {"UNRESOLVED", "EXTERNAL", "CROSS_SOURCE_TARGET", "CURRENT_TARGET_NODE_MISSING"}
-    assert_public_refs_close(public)
 
 
 def test_generic_boundary_descriptors_and_descriptor_evidence_are_preserved_without_collapsing_conflicts():
@@ -612,7 +582,6 @@ def test_original_type_file_field_and_callable_anchor_provenance_survives_seed_m
 
     result, _repo = build(nodes, edges, [anchor("Callable")], provenance=provenance)
     unit = result.local_units[0]
-    public = result.public_flows[0].dict()
 
     assert {(item.original_anchor.nodeKind, item.original_anchor.nodeId, item.expanded_seed.node_id) for item in unit.anchors} == {
         ("TYPE", "Type", "Callable"),
@@ -622,8 +591,6 @@ def test_original_type_file_field_and_callable_anchor_provenance_survives_seed_m
     }
     assert {item.node_id for item in unit.supporting_context} == {"File", "Type", "Field"}
     assert {(item.from_node_id, item.to_node_id, item.edge_type) for item in unit.execution_transitions} == {("Root", "Callable", "CALLS")}
-    assert len(public["matchedAnchors"]) == 4
-    assert_public_refs_close(public)
 
 
 def test_include_tests_false_excludes_test_domain_flow_content():
@@ -673,17 +640,6 @@ def test_wide_fanout_loads_by_frontier_rounds_not_per_child():
     assert repo.calls["load_outgoing_calls"] <= 2
     assert repo.calls["load_nodes"] <= 4
     assert repo.calls["load_boundaries"] == 1
-
-
-def test_public_flow_uses_response_local_refs_without_graph_ids():
-    result, _repo = build([node("Alpha", entrypoint=True), node("Beta")], [edge("secret-edge", "Alpha", "Beta")], [anchor("Beta")])
-    payload = result.public_flows[0].dict()
-    rendered = str(payload)
-    assert "secret-edge" not in rendered
-    assert "revision-current" not in rendered
-    assert {item["nodeRef"] for item in payload["nodes"]} == {"n1", "n2"}
-    assert "local_units" not in payload
-    assert_public_refs_close(payload)
 
 
 def test_evidence_hydration_remains_batched_for_edges_nodes_and_boundaries():

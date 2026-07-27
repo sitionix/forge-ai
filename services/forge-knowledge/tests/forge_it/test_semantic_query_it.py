@@ -53,10 +53,10 @@ def test_semantic_query_improves_human_retrieval_and_entrypoint_flows(tmp_path):
             for label in matched_labels
             if label in relevant_labels
         )
-    assert response.flows
-    for flow in response.flows:
-        node_refs = {node.nodeRef for node in flow.nodes}
-        assert all(edge.fromNodeRef in node_refs and edge.toNodeRef in node_refs for edge in flow.transitions)
+    assert response.graphs
+    for graph in response.graphs:
+        unit_ids = {unit.unitId for unit in graph.units}
+        assert set(graph.queryEntryUnitIds).issubset(unit_ids)
 
 
 def test_exact_query_beats_semantic_candidate(tmp_path):

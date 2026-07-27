@@ -8,30 +8,19 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Mapping, Protocol, Sequence
 
-from knowledge_service.boundary_contract import LocalBoundaryDescriptor as LocalBoundaryDescriptor
-from knowledge_service.boundary_contract import LocalBoundaryFact as LocalBoundaryFact
+from knowledge_service.boundary_contract import LocalBoundaryFact
 from knowledge_service.flow_boundary_classifier import FLOW_BOUNDARY_CLASSIFIER, FlowBoundaryClassifier
 from knowledge_service.flow_graph_contract import (
     FlowEdgeKey,
     FlowGraphEdge,
     FlowGraphEvidence,
-    FlowGraphEvidenceKey,
     FlowGraphNode,
     FlowNodeKey,
     dedupe_evidence,
-    evidence_key,
 )
 from knowledge_service.graph_relation_semantics import GraphRelationSemantics, graph_relation_semantics
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryDiagnostic,
-    KnowledgeQueryEntrypointOrigin,
-    KnowledgeQueryFlow,
-    KnowledgeQueryFlowBoundary,
-    KnowledgeQueryFlowCoverage,
-    KnowledgeQueryFlowEvidence,
-    KnowledgeQueryFlowNode,
-    KnowledgeQueryFlowOrigin,
-    KnowledgeQueryFlowTransition,
     KnowledgeQueryMatchedNode,
 )
 
@@ -155,7 +144,6 @@ class EntrypointFlow:
 @dataclass(frozen=True)
 class EntrypointFlowBuildResult:
     flows: tuple[EntrypointFlow, ...]
-    public_flows: list[KnowledgeQueryFlow]
     diagnostics: list[KnowledgeQueryDiagnostic]
     truncated: bool
     discovered_entrypoint_count: int = 0
@@ -258,7 +246,7 @@ class EntrypointFlowEngine:
                 message="No traversal seeds were available for local flow exploration.",
                 severity="INFO",
             )
-            return EntrypointFlowBuildResult((), [], [diagnostic], False, stage_timings_ms={}, traversal_stats=self.repository.metrics())
+            return EntrypointFlowBuildResult((), [diagnostic], False, stage_timings_ms={}, traversal_stats=self.repository.metrics())
 
         seed_keys = {self._anchor_lookup_key(spec.expanded_seed) for spec in specs}
         original_keys = {self._anchor_lookup_key(spec.original_anchor) for spec in specs}
@@ -292,7 +280,6 @@ class EntrypointFlowEngine:
             )
             return EntrypointFlowBuildResult(
                 (),
-                [],
                 [*diagnostics, diagnostic],
                 False,
                 stage_timings_ms={"nodeResolution": round(load_ms, 3)},
@@ -312,7 +299,6 @@ class EntrypointFlowEngine:
         flows = self.repository.hydrate_evidence(flows)
         hydration_ms = (time.monotonic() - hydration_started) * 1000
         local_units = self._hydrate_local_units_from_flows(local_units, flows)
-        public = self.public_flows(flows)
 
         stats = dict(self.repository.metrics())
         stats.update(
@@ -326,7 +312,6 @@ class EntrypointFlowEngine:
         )
         return EntrypointFlowBuildResult(
             flows=flows,
-            public_flows=public,
             diagnostics=diagnostics,
             truncated=any(unit.coverage.truncated for unit in local_units),
             discovered_entrypoint_count=sum(len(unit.roots) for unit in local_units),
@@ -340,9 +325,6 @@ class EntrypointFlowEngine:
             traversal_stats=stats,
             local_units=local_units,
         )
-
-    def public_flows(self, flows: Sequence[EntrypointFlow]) -> list[KnowledgeQueryFlow]:
-        return [self._public_flow(index, flow) for index, flow in enumerate(flows, start=1)]
 
     def _seed_specs(
         self,
@@ -855,123 +837,6 @@ class EntrypointFlowEngine:
                 and (item.owner_source_id or item.source_id, item.owner_node_id) in boundary_owner_nodes
             ]
         )
-
-    def _public_flow(self, index: int, flow: EntrypointFlow) -> KnowledgeQueryFlow:
-        node_ref_by_key = {self._node_key(node): f"n{position}" for position, node in enumerate(flow.nodes, start=1)}
-        node_ref_by_id = {node.node_id: node_ref_by_key[self._node_key(node)] for node in flow.nodes}
-        transition_ref_by_key = {self._edge_key(edge): f"t{position}" for position, edge in enumerate(flow.transitions, start=1)}
-        boundary_ref_by_key = {self._edge_key(edge): f"b{position}" for position, edge in enumerate(flow.boundary_transitions, start=1)}
-        transition_ref_by_id = {edge.edge_id: transition_ref_by_key[self._edge_key(edge)] for edge in flow.transitions}
-        boundary_ref_by_id = {edge.edge_id: boundary_ref_by_key[self._edge_key(edge)] for edge in flow.boundary_transitions}
-        evidence_ref_by_key = {evidence_key(item): f"e{position}" for position, item in enumerate(flow.evidence, start=1)}
-        public_nodes = [self._public_node(node, node_ref_by_key[self._node_key(node)]) for node in flow.nodes]
-        public_evidence: list[KnowledgeQueryFlowEvidence] = []
-        for item in flow.evidence:
-            owner_ref = transition_ref_by_id.get(item.edge_id or "") or boundary_ref_by_id.get(item.edge_id or "") or node_ref_by_id.get(item.node_id or "")
-            if not owner_ref:
-                continue
-            public_evidence.append(
-                KnowledgeQueryFlowEvidence(
-                    evidenceRef=evidence_ref_by_key[evidence_key(item)],
-                    ownerRef=owner_ref,
-                    relativePath=item.relative_path,
-                    lineStart=item.line_start,
-                    lineEnd=item.line_end,
-                    excerpt=item.text,
-                )
-            )
-        return KnowledgeQueryFlow(
-            flowIndex=index,
-            source=flow.key.source_id,
-            entrypoint=self._public_node(flow.entrypoint, node_ref_by_key[self._node_key(flow.entrypoint)]),
-            entrypointOrigin=KnowledgeQueryEntrypointOrigin(flow.origin.value),
-            matchedAnchors=[
-                KnowledgeQueryFlowOrigin(
-                    anchorRef=node_ref_by_id[item.node_id],
-                    label=item.label,
-                    score=round(item.score, 4),
-                    distance=item.distance,
-                    matchReasons=list(item.match_reasons),
-                )
-                for item in flow.anchors
-                if item.node_id in node_ref_by_id
-            ],
-            nodes=public_nodes,
-            transitions=[
-                KnowledgeQueryFlowTransition(
-                    transitionRef=transition_ref_by_key[self._edge_key(edge)],
-                    fromNodeRef=node_ref_by_key[self._from_key(edge)],
-                    toNodeRef=node_ref_by_key[self._to_key(edge)],
-                    evidenceRefs=self._public_edge_evidence_refs(edge, flow.evidence, evidence_ref_by_key),
-                )
-                for edge in flow.transitions
-                if self._from_key(edge) in node_ref_by_key and self._to_key(edge) in node_ref_by_key
-            ],
-            boundaries=[
-                self._public_boundary(edge, boundary_ref_by_key[self._edge_key(edge)], node_ref_by_key, flow.evidence, evidence_ref_by_key)
-                for edge in flow.boundary_transitions
-                if self._from_key(edge) in node_ref_by_key
-            ],
-            evidence=public_evidence,
-            complete=flow.complete,
-            coverage=KnowledgeQueryFlowCoverage(
-                nodeCount=flow.coverage.node_count,
-                transitionCount=flow.coverage.transition_count,
-                boundaryCount=flow.coverage.boundary_count,
-                anchorCount=flow.coverage.anchor_count,
-                maxDepthReached=flow.coverage.max_depth_reached,
-                cycleDetected=flow.coverage.cycle_detected,
-                truncated=flow.coverage.truncated,
-            ),
-            diagnostics=list(flow.diagnostics),
-        )
-
-    def _public_node(self, node: FlowGraphNode, ref: str) -> KnowledgeQueryFlowNode:
-        return KnowledgeQueryFlowNode(
-            nodeRef=ref,
-            label=node.label,
-            kind=node.node_kind,
-            qualifiedName=node.qualified_name,
-            relativePath=node.relative_path,
-            lineStart=node.line_start,
-            lineEnd=node.line_end,
-        )
-
-    def _public_boundary(
-        self,
-        edge: FlowGraphEdge,
-        boundary_ref: str,
-        node_ref_by_key: dict[FlowNodeKey, str],
-        evidence: Sequence[FlowGraphEvidence],
-        evidence_ref_by_key: dict[FlowGraphEvidenceKey, str],
-    ) -> KnowledgeQueryFlowBoundary:
-        projection = self.boundary_classifier.project(edge)
-        return KnowledgeQueryFlowBoundary(
-            boundaryRef=boundary_ref,
-            fromNodeRef=node_ref_by_key[self._from_key(edge)],
-            kind=projection.kind.value,
-            resolutionStatus=projection.resolution_status,
-            target=projection.target,
-            evidenceRefs=self._public_edge_evidence_refs(edge, evidence, evidence_ref_by_key),
-        )
-
-    def _public_edge_evidence_refs(
-        self,
-        edge: FlowGraphEdge,
-        evidence: Sequence[FlowGraphEvidence],
-        evidence_ref_by_key: dict[FlowGraphEvidenceKey, str],
-    ) -> list[str]:
-        refs: list[str] = []
-        linked_evidence_ids = set(edge.evidence_ids)
-        for item in evidence:
-            if item.edge_id != edge.edge_id:
-                continue
-            if linked_evidence_ids and item.evidence_id not in linked_evidence_ids:
-                continue
-            ref = evidence_ref_by_key.get(evidence_key(item))
-            if ref and ref not in refs:
-                refs.append(ref)
-        return refs
 
     def _load_unit_boundaries(self, node_keys: set[FlowNodeKey], include_tests: bool) -> tuple[LocalBoundaryFact, ...]:
         if not node_keys or not hasattr(self.repository, "load_boundaries"):

@@ -89,11 +89,7 @@ def test_status_actions_command_and_query_success_paths(tmp_path):
     assert knowledge.paths == ["/api/v1/knowledge/query"]
     assert model.prompts == []
     assert model.health_calls == 0
-    assert query == {
-        "answerLanguage": "uk",
-        "answers": [{"source": "forge-ai", "entrypoint": "JarvisGateway", "text": "JarvisGateway handles the request."}],
-        "diagnostics": [],
-    }
+    assert query == human_answer_bundle()
     assert "status" not in query
     assert "matchedNodes" not in query
     assert "flows" not in query
@@ -119,17 +115,10 @@ def test_human_query_query_uses_dedicated_knowledge_contract(tmp_path):
     ]
     assert knowledge.paths == ["/api/v1/knowledge/query"]
     assert model.prompts == []
-    assert body == {
-        "answerLanguage": "uk",
-        "answers": [
-            {
-                "source": "stsssox",
-                "entrypoint": "SiteController.createSite",
-                "text": "Сайт створюється через контролер і use case.",
-            }
-        ],
-        "diagnostics": [],
-    }
+    assert body == human_answer_bundle(
+        text="Сайт створюється через контролер і use case.",
+        sources=[{"source": "stsssox", "entrypoint": "SiteController.createSite"}],
+    )
     assert "status" not in body
     assert "flows" not in body
     assert "flowExplanations" not in body

@@ -51,7 +51,18 @@ function submitEvent() {
 function humanResponse(text = 'stsssox\n1. SiteController.createSite — Сайт створюється через збережені факти.') {
   return {
     answerLanguage: 'uk',
-    answers: [{ source: 'stsssox', entrypoint: 'SiteController.createSite', text }],
+    answers: [graphAnswer('stsssox', 'SiteController.createSite', text)],
+    diagnostics: []
+  };
+}
+
+function graphAnswer(sourceId: string, entrypoint: string, text: string) {
+  return {
+    graphId: `graph-${entrypoint}`,
+    sources: [sourceId],
+    queryEntries: [{ unitId: `${sourceId}:unit:${entrypoint}`, sourceId, root: { qualifiedName: entrypoint, label: entrypoint } }],
+    text,
+    complete: true,
     diagnostics: []
   };
 }
@@ -259,9 +270,9 @@ describe('Jarvis human chat', () => {
     const response = {
       answerLanguage: 'uk',
       answers: [
-        { source: 'svc', entrypoint: 'ControllerA.create', text: 'Перша відповідь.' },
-        { source: 'svc', entrypoint: 'ListenerB.handle', text: 'Друга відповідь.' },
-        { source: 'svc', entrypoint: 'JobC.run', text: 'Третя відповідь.' }
+        graphAnswer('svc', 'ControllerA.create', 'Перша відповідь.'),
+        graphAnswer('svc', 'ListenerB.handle', 'Друга відповідь.'),
+        graphAnswer('svc', 'JobC.run', 'Третя відповідь.')
       ],
       diagnostics: [
         {

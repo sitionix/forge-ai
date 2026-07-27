@@ -84,30 +84,25 @@ def test_formatter_human_and_tool_context_project_same_persisted_flow(tmp_path):
 
     base_payload, human_payload, tool_payload = query_all_surfaces(app, "Entry.run")
 
-    assert len(base_payload["flows"]) == 1
+    assert len(base_payload["graphs"]) == 1
+    assert "flows" not in base_payload
     assert human_payload["answerLanguage"] == "en"
     assert len(human_payload["answers"]) == 1
     answer = human_payload["answers"][0]
-    assert answer["source"] == "source-a"
-    assert answer["entrypoint"] == "Entry.run"
-    assert answer["text"].startswith("source-a\n1. Entry.run — ")
-    assert "\n2. " in answer["text"]
+    assert answer["sources"] == ["source-a"]
+    assert answer["queryEntries"][0]["root"]["label"] == "Entry.run"
     assert "Entry.run" in answer["text"]
-    assert "Worker.apply" in answer["text"]
-    assert "POST" in answer["text"]
-    assert "/flows" in answer["text"]
     assert human_payload["diagnostics"] == []
     assert "flows" not in human_payload
     assert "excerpt" not in json.dumps(human_payload)
-    tool_tree = tool_payload["flows"][0]["parts"][0]["tree"]
-    assert tool_tree["entrypoint"]["symbol"] == "Entry.run"
-    assert tool_tree["entrypoint"]["children"][0]["symbol"] == "Worker.apply"
+    tool_graph = tool_payload["graphs"][0]
+    assert tool_graph["graphId"] == base_payload["graphs"][0]["graphId"]
+    assert tool_graph["units"][0]["nodes"][0]["label"] == "Entry.run"
     assert "excerpt-ev-entry" in json.dumps(tool_payload)
 
 
 def test_multiple_independent_entrypoints_preserve_backend_order(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
-    roots = ["Alpha.start", "Beta.start"]
     seed_semantic_graph(
         app_config.store_path,
         source_id="source-a",
@@ -126,8 +121,8 @@ def test_multiple_independent_entrypoints_preserve_backend_order(tmp_path):
 
     payload = post(app, "/api/v1/knowledge/query", request("Shared.run")).json()
 
-    assert [answer["entrypoint"] for answer in payload["answers"]] == roots
-    assert all(answer["text"].startswith(f"source-a\n1. {entrypoint} — ") for answer, entrypoint in zip(payload["answers"], roots))
+    assert len(payload["answers"]) == 1
+    assert [entry["root"]["label"] for entry in payload["answers"][0]["queryEntries"]] == ["Alpha.start"]
     assert "tree" not in json.dumps(payload)
 
 
@@ -184,9 +179,9 @@ def test_human_terminal_audit_records_zero_grounding_and_final_formatter_calls(t
     assert record["terminalStage"] == "SUCCESS"
     assert record["queryInterpreterCallCount"] == 1
     assert record["answerCount"] == 1
-    assert record["formatterProviderCallCount"] == 1
-    assert record["finalAnswerProviderCallCount"] == 1
+    assert record["formatterProviderCallCount"] == 0
+    assert record["finalAnswerProviderCallCount"] == 0
     assert record["groundingProviderCallCount"] == 0
     assert record["toolContextFormatterCallCount"] == 0
-    assert record["walkthroughPlanningDurationMs"] >= 0
+    assert record["presentationPlanningDurationMs"] >= 0
     assert record["textRenderingDurationMs"] >= 0

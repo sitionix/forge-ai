@@ -1,68 +1,72 @@
 {
   "queryText": "Public Entry",
-  "flows": [
+  "graphs": [
     {
-      "source": "source-a",
-      "entrypoint": "PublicEntry.start",
-      "parts": [
+      "graphId": "graph-public-entry",
+      "queryEntryUnitIds": ["unit-public-entry"],
+      "topologyEntryUnitIds": ["unit-public-entry"],
+      "units": [
         {
-          "kind": "VERIFIED_FRAGMENT",
-          "tree": {
-            "source": "source-a",
-            "entrypoint": {
-              "symbol": "PublicEntry.start",
+          "unitId": "unit-public-entry",
+          "sourceId": "source-a",
+          "graphRevision": "rev-a",
+          "querySelectedInitial": true,
+          "recursivelyDiscovered": false,
+          "roots": [],
+          "anchors": [],
+          "nodes": [
+            {
+              "sourceId": "source-a",
+              "graphRevision": "rev-a",
+              "nodeId": "public-entry",
+              "stableKey": "PublicEntry.start",
               "kind": "HTTP_ENDPOINT",
-              "path": "src/PublicEntry.java",
+              "label": "PublicEntry.start",
+              "qualifiedName": "PublicEntry.start",
+              "relativePath": "src/PublicEntry.java",
               "lineStart": 10,
-              "lineEnd": 15,
-              "description": "Receives the public request.",
-              "evidence": [
-                {
-                  "path": "src/PublicEntry.java",
-                  "lineStart": 10,
-                  "lineEnd": 15,
-                  "excerpt": "@PostMapping public Response start()"
-                }
-              ],
-              "children": [
-                {
-                  "symbol": "WorkerA.run",
-                  "kind": "METHOD",
-                  "path": "src/WorkerA.java",
-                  "lineStart": 20,
-                  "lineEnd": 24,
-                  "description": "Handles branch A.",
-                  "evidence": [],
-                  "children": [
-                    {
-                      "symbol": "PaymentApi",
-                      "kind": "EXTERNAL_CALL",
-                      "path": null,
-                      "lineStart": null,
-                      "lineEnd": null,
-                      "description": "Calls an external client boundary.",
-                      "evidence": [],
-                      "children": []
-                    }
-                  ]
-                },
-                {
-                  "symbol": "dynamicMapper",
-                  "kind": "UNRESOLVED_CALL",
-                  "path": null,
-                  "lineStart": null,
-                  "lineEnd": null,
-                  "description": null,
-                  "evidence": [],
-                  "children": []
-                }
-              ]
-            },
-            "supportingRelations": []
-          }
+              "lineEnd": 15
+            }
+          ],
+          "localTransitions": [],
+          "genericBoundaries": [],
+          "topologyBoundaries": [],
+          "supportingContext": [],
+          "evidence": [],
+          "complete": true,
+          "coverage": {
+            "nodeCount": 1,
+            "transitionCount": 0,
+            "genericBoundaryCount": 0,
+            "topologyBoundaryCount": 0,
+            "anchorCount": 0,
+            "rootCount": 1,
+            "maxDepthReached": 0,
+            "cycleDetected": false,
+            "truncated": false
+          },
+          "diagnostics": []
         }
       ],
+      "provenTransitions": [],
+      "openBoundaries": [],
       "complete": true,
+      "coverage": {
+        "unitCount": 1,
+        "sourceCount": 1,
+        "localNodeCount": 1,
+        "localExecutionTransitionCount": 0,
+        "provenCrossSourceTransitionCount": 0,
+        "openAmbiguousBoundaryCount": 0,
+        "openUnresolvedBoundaryCount": 0,
+        "queryEntryUnitCount": 1,
+        "topologyEntryUnitCount": 1,
+        "cycleCount": 0,
+        "orphanResolutionCount": 0,
+        "missingUnitMappingCount": 0,
+        "complete": true,
+        "truncated": false
+      },
       "diagnostics": []
     }
   ],

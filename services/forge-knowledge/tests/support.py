@@ -16,7 +16,6 @@ from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.main import create_app
 from knowledge_service.query_interpretation import QueryInterpretationProviderResult
-from knowledge_service.flow_formatter import FlowFormatterProviderResult
 
 
 @dataclass(frozen=True)
@@ -210,7 +209,7 @@ class DeterministicFinalFlowFormatterProvider:
             for stage in section.get("stages", []):
                 steps.append(_formatter_step(stage, response_language))
             sections.append({"sectionRef": section.get("sectionRef"), "steps": steps})
-        return FlowFormatterProviderResult(raw_text=json.dumps({"sections": sections}, ensure_ascii=False), prompt_char_length=100)
+        return type("ProviderResult", (), {"raw_text": json.dumps({"sections": sections}, ensure_ascii=False), "prompt_char_length": 100, "truncated": False})()
 
 
 def _strip_code_symbols(value: str) -> str:

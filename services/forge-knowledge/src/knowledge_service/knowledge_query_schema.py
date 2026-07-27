@@ -21,11 +21,6 @@ class KnowledgeQueryIntent(str, Enum):
     FLOW_EXPLANATION = "FLOW_EXPLANATION"
 
 
-class KnowledgeQueryEntrypointOrigin(str, Enum):
-    EXPLICIT_GRAPH_FACT = "EXPLICIT_GRAPH_FACT"
-    INFERRED_ROOT = "INFERRED_ROOT"
-
-
 class KnowledgeQueryRequest(BaseModel):
     queryText: str = Field(..., min_length=1)
     intent: KnowledgeQueryIntent = KnowledgeQueryIntent.AUTO
@@ -121,84 +116,109 @@ class KnowledgeQueryMatchedNodePreview(BaseModel):
     flowDomain: Optional[str] = None
 
 
-class KnowledgeQueryFlowNode(BaseModel):
-    nodeRef: str
-    label: str
-    kind: str
-    qualifiedName: Optional[str] = None
-    relativePath: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
+class KnowledgeQueryCoverage(BaseModel):
+    searchedSourceCount: int = 0
+    matchedSourceCount: int = 0
+    matchedNodeCount: int = 0
+    discoveredGraphCount: int = 0
+    returnedGraphCount: int = 0
+    omittedGraphCount: int = 0
+    maxFlows: int = 0
+    selectedLocalUnitCount: int = 0
+    localUnitCount: int = 0
+    nodeCount: int = 0
+    edgeCount: int = 0
+    evidenceCount: int = 0
+    provenTransitionCount: int = 0
+    openAmbiguousBoundaryCount: int = 0
+    openUnresolvedBoundaryCount: int = 0
+    truncated: bool = False
+    continuationAvailable: bool = False
 
 
-class KnowledgeQueryFlowOrigin(BaseModel):
-    anchorRef: str
-    label: str
-    score: float
-    distance: int
-    matchReasons: List[str] = Field(default_factory=list)
+class KnowledgeQueryGraphCoverage(BaseModel):
+    unitCount: int = 0
+    sourceCount: int = 0
+    localNodeCount: int = 0
+    localExecutionTransitionCount: int = 0
+    provenCrossSourceTransitionCount: int = 0
+    openAmbiguousBoundaryCount: int = 0
+    openUnresolvedBoundaryCount: int = 0
+    queryEntryUnitCount: int = 0
+    topologyEntryUnitCount: int = 0
+    cycleCount: int = 0
+    orphanResolutionCount: int = 0
+    missingUnitMappingCount: int = 0
+    complete: bool = True
+    truncated: bool = False
 
 
-class KnowledgeQueryFlowTransition(BaseModel):
-    transitionRef: str
-    fromNodeRef: str
-    toNodeRef: str
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class KnowledgeQueryFlowBoundary(BaseModel):
-    boundaryRef: str
-    fromNodeRef: str
-    kind: str
-    resolutionStatus: str
-    target: Optional[str] = None
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class KnowledgeQueryFlowEvidence(BaseModel):
-    evidenceRef: str
-    ownerRef: str
-    relativePath: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
-    excerpt: Optional[str] = None
-
-
-class KnowledgeQueryFlowCoverage(BaseModel):
+class KnowledgeQueryGraphUnitCoverage(BaseModel):
     nodeCount: int = 0
     transitionCount: int = 0
-    boundaryCount: int = 0
+    genericBoundaryCount: int = 0
+    topologyBoundaryCount: int = 0
     anchorCount: int = 0
+    rootCount: int = 0
     maxDepthReached: int = 0
     cycleDetected: bool = False
     truncated: bool = False
 
 
-class KnowledgeQueryFlow(BaseModel):
-    flowIndex: int
-    source: str
-    entrypoint: KnowledgeQueryFlowNode
-    entrypointOrigin: KnowledgeQueryEntrypointOrigin
-    matchedAnchors: List[KnowledgeQueryFlowOrigin] = Field(default_factory=list)
-    nodes: List[KnowledgeQueryFlowNode] = Field(default_factory=list)
-    transitions: List[KnowledgeQueryFlowTransition] = Field(default_factory=list)
-    boundaries: List[KnowledgeQueryFlowBoundary] = Field(default_factory=list)
-    evidence: List[KnowledgeQueryFlowEvidence] = Field(default_factory=list)
+class KnowledgeQueryGraphUnit(BaseModel):
+    unitId: str
+    sourceId: str
+    graphRevision: str
+    querySelectedInitial: bool = False
+    recursivelyDiscovered: bool = False
+    roots: List[Dict[str, Any]] = Field(default_factory=list)
+    anchors: List[Dict[str, Any]] = Field(default_factory=list)
+    nodes: List[Dict[str, Any]] = Field(default_factory=list)
+    localTransitions: List[Dict[str, Any]] = Field(default_factory=list)
+    genericBoundaries: List[Dict[str, Any]] = Field(default_factory=list)
+    topologyBoundaries: List[Dict[str, Any]] = Field(default_factory=list)
+    supportingContext: List[Dict[str, Any]] = Field(default_factory=list)
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
     complete: bool = True
-    coverage: KnowledgeQueryFlowCoverage = Field(default_factory=KnowledgeQueryFlowCoverage)
+    coverage: KnowledgeQueryGraphUnitCoverage = Field(default_factory=KnowledgeQueryGraphUnitCoverage)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
-class KnowledgeQueryCoverage(BaseModel):
-    searchedSourceCount: int = 0
-    matchedSourceCount: int = 0
-    matchedNodeCount: int = 0
-    flowCount: int = 0
-    nodeCount: int = 0
-    edgeCount: int = 0
-    evidenceCount: int = 0
-    truncated: bool = False
-    continuationAvailable: bool = False
+class KnowledgeQueryGraphTransition(BaseModel):
+    transitionId: str
+    kind: str = "PROVEN_BOUNDARY_CONTINUATION"
+    verificationStatus: str = "PROVEN"
+    resolutionId: str
+    sourceUnitId: str
+    targetUnitId: str
+    requiredBoundary: Dict[str, Any]
+    providedBoundary: Dict[str, Any]
+    targetSeeds: List[Dict[str, Any]] = Field(default_factory=list)
+    provingDescriptorFingerprintHashes: List[str] = Field(default_factory=list)
+    evidenceRefs: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class KnowledgeQueryGraphOpenBoundary(BaseModel):
+    requiredBoundary: Dict[str, Any]
+    sourceUnitIds: List[str] = Field(default_factory=list)
+    status: str
+    viableCandidateOwners: List[Dict[str, Any]] = Field(default_factory=list)
+    viableCandidateBoundaries: List[Dict[str, Any]] = Field(default_factory=list)
+    rejectionReasonCodes: List[str] = Field(default_factory=list)
+    descriptorFingerprintHashes: List[str] = Field(default_factory=list)
+    diagnostics: List[str] = Field(default_factory=list)
+
+
+class KnowledgeQueryGraph(BaseModel):
+    graphId: str
+    queryEntryUnitIds: List[str] = Field(default_factory=list)
+    topologyEntryUnitIds: List[str] = Field(default_factory=list)
+    units: List[KnowledgeQueryGraphUnit] = Field(default_factory=list)
+    provenTransitions: List[KnowledgeQueryGraphTransition] = Field(default_factory=list)
+    openBoundaries: List[KnowledgeQueryGraphOpenBoundary] = Field(default_factory=list)
+    complete: bool = True
+    coverage: KnowledgeQueryGraphCoverage = Field(default_factory=KnowledgeQueryGraphCoverage)
+    diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
 class KnowledgeQueryResponse(BaseModel):
@@ -207,123 +227,45 @@ class KnowledgeQueryResponse(BaseModel):
     intent: str
     matchedSources: List[KnowledgeQueryMatchedSource] = Field(default_factory=list)
     matchedNodes: List[KnowledgeQueryMatchedNodePreview] = Field(default_factory=list)
-    flows: List[KnowledgeQueryFlow] = Field(default_factory=list)
+    graphs: List[KnowledgeQueryGraph] = Field(default_factory=list)
     coverage: KnowledgeQueryCoverage = Field(default_factory=KnowledgeQueryCoverage)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
-class KnowledgeHumanAnswer(BaseModel):
+class KnowledgeGraphAnswerQueryEntry(BaseModel):
+    unitId: str
+    sourceId: str
+    root: Dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeGraphAnswer(BaseModel):
+    graphId: str
+    sources: List[str] = Field(default_factory=list)
+    queryEntries: List[KnowledgeGraphAnswerQueryEntry] = Field(default_factory=list)
     text: str
-
-
-class KnowledgeHumanAnswerSource(BaseModel):
-    source: str
-    entrypoint: str
-
-
-class KnowledgeFlowAnswer(BaseModel):
-    source: str
-    entrypoint: str
-    text: str
+    complete: bool = True
+    diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
 class KnowledgeHumanQueryResponse(BaseModel):
     answerLanguage: str
-    answers: List[KnowledgeFlowAnswer] = Field(default_factory=list)
+    answers: List[KnowledgeGraphAnswer] = Field(default_factory=list)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
-class FlowToolEvidence(BaseModel):
-    path: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
-    excerpt: Optional[str] = None
-
-
-class FlowToolTrigger(BaseModel):
-    kind: str
-    method: Optional[str] = None
-    route: Optional[str] = None
-    topic: Optional[str] = None
-    schedule: Optional[str] = None
-    interfaceMethod: Optional[str] = None
-
-
-class FlowToolTransition(BaseModel):
-    edgeType: str
-    resolutionStatus: str
-    crossSource: Optional[bool] = None
-    connectorKind: Optional[str] = None
-    method: Optional[str] = None
-    route: Optional[str] = None
-
-
-class FlowToolTreeItem(BaseModel):
-    source: Optional[str] = None
-    symbol: str
-    kind: str
-    trigger: Optional[FlowToolTrigger] = None
-    transition: Optional[FlowToolTransition] = None
-    path: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
-    description: Optional[str] = None
-    evidence: List[FlowToolEvidence] = Field(default_factory=list)
-    children: List["FlowToolTreeItem"] = Field(default_factory=list)
-    cycle: Optional[bool] = None
-    shared: Optional[bool] = None
-
-
-class FlowToolSupportingRelation(BaseModel):
-    relation: str
-    source: Optional[str] = None
-    targetSource: Optional[str] = None
-    symbol: str
-    path: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
-    description: Optional[str] = None
-    evidence: List[FlowToolEvidence] = Field(default_factory=list)
-
-
-class FlowToolTree(BaseModel):
-    source: str
-    entrypoint: FlowToolTreeItem
-    supportingRelations: List[FlowToolSupportingRelation] = Field(default_factory=list)
-
-
-class FlowToolGap(BaseModel):
-    kind: str
-    verificationStatus: str
-    fromSource: Optional[str] = None
-    fromSymbol: Optional[str] = None
-    toSource: Optional[str] = None
-    toSymbol: Optional[str] = None
-    transportKind: Optional[str] = None
-    method: Optional[str] = None
-    route: Optional[str] = None
-    operationIdentity: Optional[str] = None
-    reason: Optional[str] = None
-
-
-class FlowToolPart(BaseModel):
-    kind: str
-    tree: Optional[FlowToolTree] = None
-    gap: Optional[FlowToolGap] = None
-
-
-class FlowToolFlow(BaseModel):
-    source: Optional[str] = None
-    entrypoint: Optional[str] = None
-    parts: List[FlowToolPart] = Field(default_factory=list)
+class KnowledgeQueryToolContextGraph(BaseModel):
+    graphId: str
+    queryEntryUnitIds: List[str] = Field(default_factory=list)
+    topologyEntryUnitIds: List[str] = Field(default_factory=list)
+    units: List[KnowledgeQueryGraphUnit] = Field(default_factory=list)
+    provenTransitions: List[KnowledgeQueryGraphTransition] = Field(default_factory=list)
+    openBoundaries: List[KnowledgeQueryGraphOpenBoundary] = Field(default_factory=list)
     complete: bool = True
+    coverage: KnowledgeQueryGraphCoverage = Field(default_factory=KnowledgeQueryGraphCoverage)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
 class KnowledgeQueryToolContextResponse(BaseModel):
     queryText: str
-    flows: List[FlowToolFlow] = Field(default_factory=list)
+    graphs: List[KnowledgeQueryToolContextGraph] = Field(default_factory=list)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
-
-
-FlowToolTreeItem.update_forward_refs()

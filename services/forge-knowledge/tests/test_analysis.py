@@ -1580,58 +1580,6 @@ def test_boundary_merge_identity_preserves_conflicts_types_evidence_and_order_st
     assert first_rows["descriptorEvidence"]
 
 
-def test_boundary_operation_fact_projection_respects_currentness_and_include_tests(tmp_path):
-    content = "class Handler { void run() { remote.create(); } }\n"
-    relative_path = "src/main/java/example/ObjectHandler.java"
-    evidence = GraphEvidenceRef(lineStart=1, lineEnd=1, text="void run() { remote.create(); }", metadata={"evidenceKind": "BOUNDARY"})
-    result = GraphAnalysisResult(
-        nodes=[GraphNode(localId="handler", nodeKind="CALLABLE", name="Handler.run", lineStart=1, lineEnd=1, confidence=1.0)],
-        boundaries=[
-            BoundaryFact(
-                localId="http-required",
-                nodeLocalId="handler",
-                role="REQUIRED",
-                origin="STATIC",
-                evidence=[evidence],
-                descriptors=[
-                    BoundaryDescriptor(path="transport.kind", value="HTTP", origin="STATIC", evidence=[evidence]),
-                    BoundaryDescriptor(path="http.method", value="POST", origin="STATIC", evidence=[evidence]),
-                    BoundaryDescriptor(path="http.route", value="/items", origin="STATIC", evidence=[evidence]),
-                    BoundaryDescriptor(path="operation.identity", value="create-item", origin="STATIC", evidence=[evidence]),
-                ],
-            )
-        ],
-    )
-    inventory_store, _, _ = build_inventory(tmp_path, content=content)
-    store = AnalysisStore(inventory_store.db_path)
-    graph = materialize_graph_for_test(result, content=content, relative_path=relative_path)
-    store.replace_file_graph_analysis(1, graph_state_for_test(content, relative_path), graph)
-    node_id = graph["nodes"][0]["id"]
-    key = ("edge-gateway", "edge-gateway:query-current-facts", node_id)
-    repo = EntrypointFlowGraphRepository(store)
-
-    facts = repo.load_available_operation_facts({key}, include_tests=False)
-
-    assert [(fact.source_channel, fact.direction_role, fact.method, fact.normalized_route, fact.operation_identity) for fact in facts] == [
-        ("BOUNDARY_FACT", "OUTBOUND", "POST", "/items", "create-item")
-    ]
-
-    with sqlite3.connect(store.db_path) as conn:
-        conn.execute("UPDATE files SET content_hash = 'changed' WHERE source_id = 'edge-gateway'")
-
-    assert repo.load_available_operation_facts({key}, include_tests=False) == ()
-
-    test_inventory_store, _, _ = build_inventory(tmp_path / "test-domain", content=content)
-    test_store = AnalysisStore(test_inventory_store.db_path)
-    test_store.replace_file_graph_analysis(1, graph_state_for_test(content, relative_path, source_id="edge-gateway"), graph)
-    with sqlite3.connect(test_store.db_path) as conn:
-        conn.execute("UPDATE files SET flow_domain = 'TEST' WHERE source_id = 'edge-gateway'")
-    test_repo = EntrypointFlowGraphRepository(test_store)
-
-    assert test_repo.load_available_operation_facts({key}, include_tests=False) == ()
-    assert len(test_repo.load_available_operation_facts({key}, include_tests=True)) == 1
-
-
 def test_entrypoint_flow_repository_load_boundaries_preserves_generic_facts_and_currentness(tmp_path):
     content = "class Handler { void run() { remote.create(); } }\n"
     relative_path = "src/main/java/example/ObjectHandler.java"

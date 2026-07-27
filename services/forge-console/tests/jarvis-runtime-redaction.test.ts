@@ -43,7 +43,18 @@ function queryPayload(queryText: string) {
 function humanAnswer(text = 'JarvisGateway answers from compact human context.') {
   return {
     answerLanguage: 'uk',
-    answers: [{ source: 'forge-ai', entrypoint: 'JarvisGateway', text }],
+    answers: [graphAnswer('forge-ai', 'JarvisGateway', text)],
+    diagnostics: []
+  };
+}
+
+function graphAnswer(sourceId: string, entrypoint: string, text: string) {
+  return {
+    graphId: `graph-${entrypoint}`,
+    sources: [sourceId],
+    queryEntries: [{ unitId: `${sourceId}:unit:${entrypoint}`, sourceId, root: { qualifiedName: entrypoint, label: entrypoint } }],
+    text,
+    complete: true,
     diagnostics: []
   };
 }

@@ -94,16 +94,38 @@
         "title": "Intent",
         "type": "object"
       },
-      "JarvisFlowAnswer": {
+      "JarvisGraphAnswer": {
         "additionalProperties": false,
         "properties": {
-          "entrypoint": {
-            "title": "Entrypoint",
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "graphId": {
+            "title": "Graphid",
             "type": "string"
           },
-          "source": {
-            "title": "Source",
-            "type": "string"
+          "queryEntries": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisGraphAnswerQueryEntry"
+            },
+            "title": "Queryentries",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
           },
           "text": {
             "title": "Text",
@@ -111,11 +133,33 @@
           }
         },
         "required": [
-          "source",
-          "entrypoint",
+          "graphId",
           "text"
         ],
-        "title": "JarvisFlowAnswer",
+        "title": "JarvisGraphAnswer",
+        "type": "object"
+      },
+      "JarvisGraphAnswerQueryEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "root": {
+            "title": "Root",
+            "type": "object"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "unitId": {
+            "title": "Unitid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceId"
+        ],
+        "title": "JarvisGraphAnswerQueryEntry",
         "type": "object"
       },
       "JarvisHumanAnswerResponse": {
@@ -127,7 +171,7 @@
           },
           "answers": {
             "items": {
-              "$ref": "#/components/schemas/JarvisFlowAnswer"
+              "$ref": "#/components/schemas/JarvisGraphAnswer"
             },
             "title": "Answers",
             "type": "array"

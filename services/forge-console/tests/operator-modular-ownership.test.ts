@@ -134,7 +134,18 @@ function queryPayload(queryText: string) {
 function humanAnswer(text = 'JarvisGateway handles the request.') {
   return {
     answerLanguage: 'uk',
-    answers: [{ source: 'svc', entrypoint: 'run', text }],
+    answers: [graphAnswer('svc', 'run', text)],
+    diagnostics: []
+  };
+}
+
+function graphAnswer(sourceId: string, entrypoint: string, text: string) {
+  return {
+    graphId: `graph-${entrypoint}`,
+    sources: [sourceId],
+    queryEntries: [{ unitId: `${sourceId}:unit:${entrypoint}`, sourceId, root: { qualifiedName: entrypoint, label: entrypoint } }],
+    text,
+    complete: true,
     diagnostics: []
   };
 }
@@ -261,7 +272,7 @@ describe('Operator Console modular request ownership', () => {
       get: vi.fn(),
       post: vi.fn(() => Promise.resolve({
         answerLanguage: 'uk',
-        answers: [{ source: 'svc', entrypoint: 'run', text: 'The run entrypoint was found without exposing raw source content.' }],
+        answers: [graphAnswer('svc', 'run', 'The run entrypoint was found without exposing raw source content.')],
         diagnostics: []
       }))
     };

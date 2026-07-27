@@ -110,7 +110,7 @@ class InfrastructureProxyTransportTest {
                     final HttpResponse<InputStream> response = mock(HttpResponse.class);
                     when(response.statusCode()).thenReturn(200);
                     when(response.body()).thenReturn(new ByteArrayInputStream("""
-                            {"answerLanguage":"uk","answers":[{"source":"source-a","entrypoint":"JarvisGateway","text":"JarvisGateway handles the request."}],"diagnostics":[]}
+                            {"answerLanguage":"uk","answers":[{"graphId":"graph-1","sources":["source-a"],"queryEntries":[{"unitId":"source-a:unit:JarvisGateway","sourceId":"source-a","root":{"qualifiedName":"JarvisGateway","label":"JarvisGateway"}}],"text":"JarvisGateway handles the request.","complete":true,"diagnostics":[]}],"diagnostics":[]}
                             """.strip().getBytes(UTF_8)));
                     when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of("Content-Type", List.of("application/json")), (left, right) -> true));
                     return CompletableFuture.completedFuture(response);
@@ -161,7 +161,7 @@ class InfrastructureProxyTransportTest {
                     final HttpResponse<InputStream> response = mock(HttpResponse.class);
                     when(response.statusCode()).thenReturn(200);
                     when(response.body()).thenReturn(new ByteArrayInputStream(
-                            "{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"A.start\",\"text\":\"ok\"}],\"diagnostics\":[]}".getBytes(UTF_8)
+                            "{\"answerLanguage\":\"uk\",\"answers\":[{\"graphId\":\"graph-1\",\"sources\":[\"source-a\"],\"queryEntries\":[{\"unitId\":\"source-a:unit:A.start\",\"sourceId\":\"source-a\",\"root\":{\"qualifiedName\":\"A.start\",\"label\":\"A.start\"}}],\"text\":\"ok\",\"complete\":true,\"diagnostics\":[]}],\"diagnostics\":[]}".getBytes(UTF_8)
                     ));
                     when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of("Content-Type", List.of("application/json")), (left, right) -> true));
                     return CompletableFuture.completedFuture(response);

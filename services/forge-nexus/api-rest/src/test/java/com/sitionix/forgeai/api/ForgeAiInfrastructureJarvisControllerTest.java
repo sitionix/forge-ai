@@ -24,6 +24,8 @@ import org.springframework.http.ResponseEntity;
 
 class ForgeAiInfrastructureJarvisControllerTest {
 
+    private static final String HUMAN_GRAPH_RESPONSE = "{\"answerLanguage\":\"uk\",\"answers\":[{\"graphId\":\"graph-1\",\"sources\":[\"source-a\"],\"queryEntries\":[{\"unitId\":\"source-a:unit:JarvisGateway\",\"sourceId\":\"source-a\",\"root\":{\"qualifiedName\":\"JarvisGateway\",\"label\":\"JarvisGateway\"}}],\"text\":\"ok\",\"complete\":true,\"diagnostics\":[]}],\"diagnostics\":[]}";
+
     private final InfrastructureProxyTransport transport = mock(InfrastructureProxyTransport.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ForgeAiInfrastructureJarvisController controller = new ForgeAiInfrastructureJarvisController(this.transport, this.objectMapper);
@@ -60,7 +62,7 @@ class ForgeAiInfrastructureJarvisControllerTest {
 
     @Test
     void querySerializesMinimalRequestAndDelegatesToGenericProxyRoute() {
-        this.stub("{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
+        this.stub(HUMAN_GRAPH_RESPONSE);
         final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
                 "JarvisGateway",
                 null,
@@ -83,7 +85,7 @@ class ForgeAiInfrastructureJarvisControllerTest {
 
     @Test
     void querySerializesFullFlowExplanationRequestAndDelegatesToGenericProxyRoute() {
-        this.stub("{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
+        this.stub(HUMAN_GRAPH_RESPONSE);
         final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
                 "JarvisGateway",
                 JarvisKnowledgeQueryIntent.FLOW_EXPLANATION,
@@ -108,7 +110,7 @@ class ForgeAiInfrastructureJarvisControllerTest {
     @Test
     void queryAcceptsDynamicExplicitLanguagesAndDelegatesToJarvis() {
         for (final String answerLanguage : List.of("de", "fr", "ru")) {
-            this.stub("{\"answerLanguage\":\"" + answerLanguage + "\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
+            this.stub(HUMAN_GRAPH_RESPONSE.replace("\"answerLanguage\":\"uk\"", "\"answerLanguage\":\"" + answerLanguage + "\""));
             final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
                     "JarvisGateway",
                     JarvisKnowledgeQueryIntent.FLOW_EXPLANATION,
@@ -149,7 +151,7 @@ class ForgeAiInfrastructureJarvisControllerTest {
 
     @Test
     void querySerializesAutoIntentAndDelegatesToGenericProxyRoute() {
-        this.stub("{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
+        this.stub(HUMAN_GRAPH_RESPONSE);
         final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
                 "як створити сайт",
                 JarvisKnowledgeQueryIntent.AUTO,
@@ -173,7 +175,7 @@ class ForgeAiInfrastructureJarvisControllerTest {
 
     @Test
     void queryPreservesSuccessfulHumanAnswerBytes() throws Exception {
-        final String response = "{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}";
+        final String response = HUMAN_GRAPH_RESPONSE;
         this.stub(response);
 
         final ResponseEntity<byte[]> result = this.controller.query(

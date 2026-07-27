@@ -30,10 +30,10 @@ from knowledge_service.boundary_resolution import (
     boundary_identity,
 )
 from knowledge_service.end_to_end_flow import EndToEndFlowAssembler, EndToEndFlowAssemblyResult, EndToEndFlowDiagnostic
-from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine, EntrypointFlowSeedProvenance, LocalFlowUnit
+from knowledge_service.end_to_end_projection import EndToEndProjectionBuilder
+from knowledge_service.end_to_end_selection import EndToEndGraphSelectionResult, EndToEndGraphSelector
+from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine, EntrypointFlowSeedProvenance, LocalFlowUnit
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
-from knowledge_service.flow_family import FlowFamily, FlowFamilyAssembler, FlowFamilyAssemblyResult
-from knowledge_service.flow_narrative import FlowNarrativePlan, FlowNarrativePlanner, replace_plan_fragments
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryCoverage,
     KnowledgeQueryDiagnostic,
@@ -53,7 +53,7 @@ from knowledge_service.knowledge_search import (
     SearchConfig,
     SearchDocument,
 )
-from knowledge_service.operation_facts import AvailableOperationFact
+from knowledge_service.local_flow_selection import LocalFlowUnitSelectionResult, LocalFlowUnitSelector
 from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
@@ -218,24 +218,22 @@ class PhaseRetrievalOutput:
 @dataclass(frozen=True)
 class KnowledgeQueryExecutionResult:
     response: KnowledgeQueryResponse
-    flows: tuple[FlowFamily, ...] = ()
-    narrative_plans: tuple[FlowNarrativePlan, ...] = ()
-    raw_flows: tuple[EntrypointFlow, ...] = ()
-    family_assembly: FlowFamilyAssemblyResult | None = None
+    local_unit_selection: LocalFlowUnitSelectionResult | None = None
     local_units: tuple[LocalFlowUnit, ...] = ()
     boundary_resolution: BoundaryResolutionResult | None = None
     end_to_end_assembly: EndToEndFlowAssemblyResult | None = None
+    graph_selection: EndToEndGraphSelectionResult | None = None
+    selected_graphs: tuple[Any, ...] = ()
+    presentation_plans: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True)
 class ContinuationAssemblyResult:
-    families: tuple[FlowFamily, ...]
-    operation_facts: tuple[AvailableOperationFact, ...]
-    diagnostics: tuple[KnowledgeQueryDiagnostic, ...]
+    initial_selected_local_unit_ids: tuple[str, ...]
     local_units: tuple[LocalFlowUnit, ...] = ()
     boundary_resolution: BoundaryResolutionResult | None = None
-    initial_selected_local_unit_ids: tuple[str, ...] = ()
     target_seed_provenance: tuple[EntrypointFlowSeedProvenance, ...] = ()
+    diagnostics: tuple[KnowledgeQueryDiagnostic, ...] = ()
 
 
 class SourceScopeResolver:
@@ -1497,10 +1495,14 @@ class KnowledgeQueryService:
         self.flow_engine = flow_engine or EntrypointFlowEngine(flow_repository)
         self.policy = policy or KnowledgeQueryPolicy()
         self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_repository, "graph_store", None))
-        self.family_assembler = FlowFamilyAssembler()
-        self.narrative_planner = FlowNarrativePlanner()
+        self.local_unit_selector = LocalFlowUnitSelector(
+            min_relevance_score=self.policy.plan_flow_min_relevance_score,
+            top_delta=self.policy.plan_flow_top_delta,
+        )
         self.boundary_resolver = GenericBoundaryResolver()
         self.end_to_end_assembler = EndToEndFlowAssembler()
+        self.graph_selector = EndToEndGraphSelector()
+        self.graph_projector = EndToEndProjectionBuilder()
 
     def query(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryResponse:
         return self.query_with_flows(request, plan=plan).response
@@ -1551,81 +1553,61 @@ class KnowledgeQueryService:
             include_tests=bool(request.includeTests),
             anchor_seed_provenance=seed_provenance,
         )
-        raw_flows = build_result.flows
-        supporting_nodes, supporting_relations = self._supporting_relations(raw_flows, bool(request.includeTests))
-        assembly_result = self.family_assembler.assemble(
-            raw_flows,
-            supporting_nodes=supporting_nodes,
-            supporting_relations=supporting_relations,
-        )
-        flows = self.family_assembler.rank(assembly_result.families)
-        if plan is not None:
-            flows = self._select_plan_flows(flows, plan)
-        continuation_result = self._assemble_generic_boundary_continuations(
-            flows,
+        selection_started = time.monotonic()
+        local_unit_selection = self.local_unit_selector.select(
             build_result.local_units,
+            code_identifiers=tuple(plan.code_identifiers if plan is not None else ()),
+        )
+        selection_ms = (time.monotonic() - selection_started) * 1000
+        continuation_result = self._assemble_generic_boundary_continuations(
+            local_unit_selection.selected_units,
             eligible_sources,
             include_tests=bool(request.includeTests),
         )
         resolver_incomplete = self._boundary_resolution_incomplete(continuation_result.boundary_resolution)
+        assembly_started = time.monotonic()
         end_to_end_assembly = self.end_to_end_assembler.assemble(
             continuation_result.local_units,
             query_entry_unit_ids=continuation_result.initial_selected_local_unit_ids,
             boundary_resolution=continuation_result.boundary_resolution,
             resolver_truncated=resolver_incomplete,
         )
-        flows = continuation_result.families
-        operation_facts = continuation_result.operation_facts
+        assembly_ms = (time.monotonic() - assembly_started) * 1000
+        graph_selection = self.graph_selector.select(
+            end_to_end_assembly.graphs,
+            score_by_unit_id=local_unit_selection.score_by_unit_id,
+            selected_initial_unit_ids=local_unit_selection.selected_unit_ids,
+            max_graphs=request_flow_limit,
+        )
+        public_graphs = self.graph_projector.graphs(graph_selection.selected_graphs)
         diagnostics.extend(continuation_result.diagnostics)
         diagnostics.extend(self._end_to_end_assembly_diagnostic(item) for item in end_to_end_assembly.diagnostics)
-        narrative_plans, narrative_diagnostics = self.narrative_planner.assemble(
-            flows,
-            max_plans=request_flow_limit,
-            operation_facts=operation_facts,
-        )
-        diagnostics.extend(narrative_diagnostics)
-        selected_fragments = []
-        seen_fragment_keys: set[str] = set()
-        selected_fragment_keys: list[str] = []
-        for narrative_plan in narrative_plans:
-            for fragment in narrative_plan.fragments:
-                if fragment.key in seen_fragment_keys:
-                    continue
-                seen_fragment_keys.add(fragment.key)
-                selected_fragment_keys.append(fragment.key)
-                selected_fragments.append(fragment)
-        hydrated_families = tuple(self.flow_repository.hydrate_evidence([fragment.family for fragment in selected_fragments]))
-        hydrated_by_key = {
-            fragment.key: hydrated
-            for fragment, hydrated in zip(selected_fragments, hydrated_families)
-        }
-        narrative_plans = tuple(replace_plan_fragments(narrative_plan, hydrated_by_key) for narrative_plan in narrative_plans)
-        selected_flows = tuple(hydrated_by_key[key] for key in selected_fragment_keys if key in hydrated_by_key)
-        public_flows = self.flow_engine.public_flows(selected_flows)
+        diagnostics.extend(self._selection_diagnostic(item) for item in local_unit_selection.diagnostics)
+        diagnostics.extend(self._selection_diagnostic(item) for item in graph_selection.diagnostics)
         repository_metric_delta = self._repository_metric_delta(repository_metrics_before, self._repository_metrics())
         request_traversal_stats = dict(build_result.traversal_stats or {})
         request_traversal_stats.update(repository_metric_delta)
-        omitted_plan_count = max(
-            (int(item.metadata.get("omittedPlanCount") or 0) for item in narrative_diagnostics if item.code == "NARRATIVE_PLAN_MAX_FLOWS_REACHED"),
-            default=0,
-        )
         diagnostics.extend(build_result.diagnostics)
-        diagnostics.extend(assembly_result.diagnostics)
         diagnostics.append(KnowledgeQueryDiagnostic(
             code="ENTRYPOINT_FLOW_TIMINGS",
             message="Entrypoint flow query stage timings.",
             severity="INFO",
             metadata={
                 "candidateSearchMs": round(candidate_ms, 3),
+                "localUnitSelectionDurationMs": round(selection_ms, 3),
                 **(build_result.stage_timings_ms or {}),
+                "boundaryResolutionDurationMs": self._boundary_resolution_duration_ms(continuation_result.boundary_resolution),
+                "endToEndAssemblyDurationMs": round(assembly_ms, 3),
                 "totalMs": round((time.monotonic() - query_started) * 1000, 3),
                 **request_traversal_stats,
-                "availableOperationFactCount": len(operation_facts),
-                "rawCandidateFlowCount": assembly_result.raw_candidate_flow_count,
-                "discoveredFamilyCount": assembly_result.discovered_family_count,
-                "selectedFamilyCount": len(selected_flows),
-                "narrativePlanCount": len(narrative_plans),
-                "omittedPlanCount": omitted_plan_count,
+                "selectedLocalUnitCount": len(local_unit_selection.selected_unit_ids),
+                "rejectedLocalUnitCount": len(local_unit_selection.rejected_unit_ids),
+                "discoveredGraphCount": len(end_to_end_assembly.graphs),
+                "selectedGraphCount": len(graph_selection.selected_graphs),
+                "omittedGraphCount": len(graph_selection.omitted_graph_ids),
+                "provenTransitionCount": sum(graph.coverage.proven_cross_source_transition_count for graph in graph_selection.selected_graphs),
+                "openAmbiguousBoundaryCount": sum(graph.coverage.open_ambiguous_boundary_count for graph in graph_selection.selected_graphs),
+                "openUnresolvedBoundaryCount": sum(graph.coverage.open_unresolved_boundary_count for graph in graph_selection.selected_graphs),
             },
         ))
         matched_sources = self._matched_sources(matched_nodes, eligible_sources)
@@ -1646,27 +1628,34 @@ class KnowledgeQueryService:
                 intent=effective_intent,
                 matchedSources=matched_sources,
                 matchedNodes=[self._matched_node_preview(item) for item in display_matched_nodes],
-                flows=public_flows,
+                graphs=public_graphs,
                 coverage=KnowledgeQueryCoverage(
                     searchedSourceCount=len(eligible_sources),
                     matchedSourceCount=len(matched_sources),
                     matchedNodeCount=len(matched_nodes),
-                    flowCount=len(narrative_plans),
-                    nodeCount=sum(flow.coverage.node_count for flow in selected_flows),
-                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in selected_flows),
-                    evidenceCount=sum(len(flow.evidence) for flow in selected_flows),
-                    truncated=candidate_result.truncated or anchor_result.truncated or omitted_plan_count > 0 or resolver_incomplete,
-                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or omitted_plan_count > 0 or resolver_incomplete,
+                    discoveredGraphCount=len(end_to_end_assembly.graphs),
+                    returnedGraphCount=len(graph_selection.selected_graphs),
+                    omittedGraphCount=len(graph_selection.omitted_graph_ids),
+                    maxFlows=request_flow_limit,
+                    selectedLocalUnitCount=len(local_unit_selection.selected_unit_ids),
+                    localUnitCount=len(continuation_result.local_units),
+                    nodeCount=sum(graph.coverage.local_node_count for graph in graph_selection.selected_graphs),
+                    edgeCount=sum(graph.coverage.local_execution_transition_count + graph.coverage.proven_cross_source_transition_count for graph in graph_selection.selected_graphs),
+                    evidenceCount=sum(len(ref.local_unit.evidence) for graph in graph_selection.selected_graphs for ref in graph.unit_refs),
+                    provenTransitionCount=sum(graph.coverage.proven_cross_source_transition_count for graph in graph_selection.selected_graphs),
+                    openAmbiguousBoundaryCount=sum(graph.coverage.open_ambiguous_boundary_count for graph in graph_selection.selected_graphs),
+                    openUnresolvedBoundaryCount=sum(graph.coverage.open_unresolved_boundary_count for graph in graph_selection.selected_graphs),
+                    truncated=candidate_result.truncated or anchor_result.truncated or graph_selection.truncated or resolver_incomplete or end_to_end_assembly.truncated,
+                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or graph_selection.truncated or resolver_incomplete or end_to_end_assembly.truncated,
                 ),
                 diagnostics=diagnostics,
             ),
-            flows=selected_flows,
-            narrative_plans=narrative_plans,
-            raw_flows=raw_flows,
-            family_assembly=assembly_result,
+            local_unit_selection=local_unit_selection,
             local_units=continuation_result.local_units,
             boundary_resolution=continuation_result.boundary_resolution,
             end_to_end_assembly=end_to_end_assembly,
+            graph_selection=graph_selection,
+            selected_graphs=graph_selection.selected_graphs,
         )
 
     def _flow_seed_provenance(self, anchor_result: AnchorExpansionResult) -> tuple[EntrypointFlowSeedProvenance, ...]:
@@ -1769,63 +1758,24 @@ class KnowledgeQueryService:
             for key in sorted(set(before) | set(after))
         }
 
-    def _available_operation_facts(
-        self,
-        flows: Sequence[EntrypointFlow | FlowFamily],
-        include_tests: bool,
-    ):
-        # NARRATIVE_COMPATIBILITY: operation facts remain available for existing
-        # narrative and formatter projection. They do not authorize cross-source
-        # boundary resolution.
-        if not flows or not hasattr(self.flow_repository, "load_available_operation_facts"):
-            return ()
-        node_keys = {
-            (node.source_id, node.graph_revision or node.graph_id, node.node_id)
-            for flow in flows
-            for node in flow.nodes
-        }
-        return self.flow_repository.load_available_operation_facts(node_keys, include_tests=include_tests)
-
     def _assemble_generic_boundary_continuations(
         self,
-        initial_families: Sequence[FlowFamily],
         initial_local_units: Sequence[LocalFlowUnit],
         eligible_sources: Sequence[QuerySource],
         *,
         include_tests: bool,
     ) -> ContinuationAssemblyResult:
-        families: list[FlowFamily] = list(initial_families)
-        active_units, provenance_diagnostics, provenance_missing = self._active_local_units_for_boundary_resolution(families, initial_local_units)
+        active_units = tuple(sorted({unit.unit_id: unit for unit in initial_local_units or ()}.values(), key=lambda item: item.unit_id))
         local_units_by_id: dict[str, LocalFlowUnit] = {unit.unit_id: unit for unit in active_units}
         initial_selected_local_unit_ids = tuple(sorted(local_units_by_id))
-        operation_facts: tuple[AvailableOperationFact, ...] = ()
-        if provenance_missing:
-            operation_facts = self._available_operation_facts(families, include_tests)
-            boundary_result = self._empty_boundary_resolution_result(
-                provenance_diagnostics,
-                active_unit_provenance_missing=True,
-                active_unit_ids=tuple(sorted(local_units_by_id)),
-            )
+        if not active_units or not hasattr(self.flow_repository, "find_provided_boundary_candidates"):
             return ContinuationAssemblyResult(
-                tuple(families),
-                operation_facts,
-                tuple(self._boundary_resolution_diagnostic(item) for item in boundary_result.diagnostics),
-                tuple(sorted(local_units_by_id.values(), key=lambda item: item.unit_id)),
-                boundary_result,
                 initial_selected_local_unit_ids,
-            )
-        if not families or not active_units or not hasattr(self.flow_repository, "find_provided_boundary_candidates"):
-            operation_facts = self._available_operation_facts(families, include_tests)
-            return ContinuationAssemblyResult(
-                tuple(families),
-                operation_facts,
-                (),
                 tuple(sorted(local_units_by_id.values(), key=lambda item: item.unit_id)),
                 None,
-                initial_selected_local_unit_ids,
             )
 
-        diagnostics: list[BoundaryResolutionDiagnostic] = list(provenance_diagnostics)
+        diagnostics: list[BoundaryResolutionDiagnostic] = []
         all_resolutions: list[Any] = []
         all_proven_links: list[Any] = []
         all_ambiguous: list[Any] = []
@@ -1840,7 +1790,6 @@ class KnowledgeQueryService:
         initial_active_unit_ids = set(local_units_by_id)
         pending_units: tuple[LocalFlowUnit, ...] = tuple(sorted(active_units, key=lambda item: item.unit_id))
         eligible_source_ids = [source.source_id for source in eligible_sources]
-        known_family_keys = {self._flow_family_key(family) for family in families}
         round_count = 0
         cycle_count = 0
         resolver_limit_reached = False
@@ -2031,12 +1980,6 @@ class KnowledgeQueryService:
                 )
                 target_materializations.append(materialization)
                 materialized_by_owner.setdefault(owner_key, materialization)
-                for family in target_result.families:
-                    key = self._flow_family_key(family)
-                    if key in known_family_keys:
-                        continue
-                    known_family_keys.add(key)
-                    families.append(family)
             if resolver_limit_reached:
                 resolver_limit_required_identities.update(
                     boundary_identity(boundary)
@@ -2045,7 +1988,6 @@ class KnowledgeQueryService:
                 break
             pending_units = tuple(sorted(next_units, key=lambda item: item.unit_id))
 
-        operation_facts = self._available_operation_facts(families, include_tests)
         boundary_result = self._combined_boundary_resolution_result(
             all_resolutions,
             all_proven_links,
@@ -2067,12 +2009,10 @@ class KnowledgeQueryService:
         )
         public_diagnostics = tuple(self._boundary_resolution_diagnostic(item) for item in boundary_result.diagnostics)
         return ContinuationAssemblyResult(
-            tuple(families),
-            operation_facts,
-            public_diagnostics,
+            initial_selected_local_unit_ids,
             tuple(sorted(local_units_by_id.values(), key=lambda item: item.unit_id)),
             boundary_result,
-            initial_selected_local_unit_ids,
+            diagnostics=public_diagnostics,
         )
 
     def _materialize_boundary_target_owner(
@@ -2086,7 +2026,7 @@ class KnowledgeQueryService:
         loaded = self.flow_repository.load_nodes({node_key}, include_tests=include_tests) if hasattr(self.flow_repository, "load_nodes") else {}
         node = next((item for key, item in loaded.items() if key[0] == owner.source_id and key[2] == owner.owner_node_id), None)
         if node is None:
-            return ContinuationAssemblyResult((), (), (), (), None, (), ())
+            return ContinuationAssemblyResult((), (), None)
         anchor = KnowledgeQueryMatchedNode(
             sourceId=node.source_id,
             nodeId=node.node_id,
@@ -2115,7 +2055,7 @@ class KnowledgeQueryService:
             flow_seed_nodes = [seed for seed in expansion.flow_seed_nodes if self._matched_node_is_executable(seed)]
             seed_provenance = self._flow_seed_provenance(expansion)
         if not flow_seed_nodes:
-            return ContinuationAssemblyResult((), (), (), (), None, (), seed_provenance)
+            return ContinuationAssemblyResult((), (), None, seed_provenance)
         build_result = self.flow_engine.build(
             flow_seed_nodes,
             max_flows=0,
@@ -2123,22 +2063,13 @@ class KnowledgeQueryService:
             anchor_seed_provenance=seed_provenance,
         )
         if not build_result.flows:
-            return ContinuationAssemblyResult((), (), tuple(build_result.diagnostics), build_result.local_units, None, (), seed_provenance)
-        supporting_nodes, supporting_relations = self._supporting_relations(build_result.flows, include_tests)
-        assembly = self.family_assembler.assemble(
-            build_result.flows,
-            supporting_nodes=supporting_nodes,
-            supporting_relations=supporting_relations,
-        )
-        diagnostics = (*build_result.diagnostics, *assembly.diagnostics)
+            return ContinuationAssemblyResult((), build_result.local_units, None, seed_provenance, tuple(build_result.diagnostics))
         return ContinuationAssemblyResult(
-            self.family_assembler.rank(assembly.families),
             (),
-            tuple(diagnostics),
             build_result.local_units,
             None,
-            (),
             seed_provenance,
+            tuple(build_result.diagnostics),
         )
 
     def _units_with_unvisited_required_boundaries(
@@ -2168,44 +2099,6 @@ class KnowledgeQueryService:
 
     def _matched_node_is_executable(self, node: KnowledgeQueryMatchedNode) -> bool:
         return str(node.nodeKind or "").strip().upper() == "CALLABLE"
-
-    def _active_local_units_for_boundary_resolution(
-        self,
-        families: Sequence[FlowFamily],
-        local_units: Sequence[LocalFlowUnit],
-    ) -> tuple[tuple[LocalFlowUnit, ...], tuple[BoundaryResolutionDiagnostic, ...], bool]:
-        if not families:
-            return (), (), False
-        units_by_id = {unit.unit_id: unit for unit in local_units}
-        active_ids: set[str] = set()
-        missing_family_count = 0
-        missing_unit_ids: set[str] = set()
-        for family in families:
-            family_unit_ids = tuple(str(item or "") for item in getattr(family, "local_unit_ids", ()) if str(item or ""))
-            if not family_unit_ids:
-                missing_family_count += 1
-                continue
-            for unit_id in family_unit_ids:
-                if unit_id in units_by_id:
-                    active_ids.add(unit_id)
-                else:
-                    missing_unit_ids.add(unit_id)
-        provenance_missing = missing_family_count > 0 or bool(missing_unit_ids)
-        diagnostics: list[BoundaryResolutionDiagnostic] = []
-        if provenance_missing:
-            diagnostics.append(
-                BoundaryResolutionDiagnostic(
-                    code="BOUNDARY_ACTIVE_UNIT_PROVENANCE_MISSING",
-                    message="Selected flow families did not retain complete local-unit provenance; boundary resolution failed closed.",
-                    severity="WARN",
-                    metadata={
-                        "selectedFamilyCount": len(families),
-                        "missingFamilyCount": missing_family_count,
-                        "missingLocalUnitIdCount": len(missing_unit_ids),
-                    },
-                )
-            )
-        return tuple(units_by_id[unit_id] for unit_id in sorted(active_ids)), tuple(diagnostics), provenance_missing
 
     def _empty_boundary_resolution_result(
         self,
@@ -2542,8 +2435,20 @@ class KnowledgeQueryService:
             metadata=dict(item.metadata or {}),
         )
 
-    def _flow_family_key(self, family: FlowFamily) -> str:
-        return ":".join((family.key.source_id, family.key.graph_revision, family.key.entrypoint_node_id))
+    def _selection_diagnostic(self, item: Mapping[str, Any]) -> KnowledgeQueryDiagnostic:
+        metadata = dict(item)
+        code = str(metadata.pop("code", "END_TO_END_GRAPH_SELECTION_DIAGNOSTICS"))
+        return KnowledgeQueryDiagnostic(
+            code=code,
+            message="Canonical flow graph selection diagnostics.",
+            severity="INFO",
+            metadata=metadata,
+        )
+
+    def _boundary_resolution_duration_ms(self, boundary_result: BoundaryResolutionResult | None) -> float:
+        if boundary_result is None:
+            return 0.0
+        return 0.0
 
     def _target_owner_metadata(self, owner: BoundaryOwnerIdentity) -> dict[str, Any]:
         return {
@@ -2552,109 +2457,6 @@ class KnowledgeQueryService:
             "ownerNodeId": owner.owner_node_id,
             "boundaryKey": owner.boundary_identity.boundary_key,
         }
-
-    def _supporting_relations(
-        self,
-        raw_flows: Sequence[EntrypointFlow],
-        include_tests: bool,
-    ):
-        if not raw_flows or not hasattr(self.flow_repository, "load_supporting_relations"):
-            return {}, ()
-        node_keys = {
-            (node.source_id, node.graph_revision or node.graph_id, node.node_id)
-            for flow in raw_flows
-            for node in flow.nodes
-        }
-        return self.flow_repository.load_supporting_relations(node_keys, include_tests=include_tests)
-
-    def _select_plan_flows(
-        self,
-        flows: Sequence[EntrypointFlow],
-        plan: QueryRetrievalPlan,
-    ) -> tuple[EntrypointFlow, ...]:
-        if not flows:
-            return ()
-        exact = self._filter_flows_by_code_identifiers(flows, plan.code_identifiers)
-        if plan.code_identifiers:
-            return exact
-        return self._rank_flows_by_grounded_relevance(flows)
-
-    def _filter_flows_by_code_identifiers(
-        self,
-        flows: Sequence[EntrypointFlow],
-        identifiers: Sequence[str],
-    ) -> tuple[EntrypointFlow, ...]:
-        exact_identifiers = [identifier for identifier in identifiers if str(identifier or "").strip()]
-        if not exact_identifiers:
-            return ()
-        result: List[EntrypointFlow] = []
-        for flow in flows:
-            if any(self._flow_matches_identifier(flow, identifier) for identifier in exact_identifiers):
-                result.append(flow)
-        return tuple(result)
-
-    def _flow_matches_identifier(self, flow: EntrypointFlow, identifier: str) -> bool:
-        normalized = str(identifier or "").strip()
-        if not normalized:
-            return False
-        for candidate in self._flow_identifier_candidates(flow):
-            if candidate == normalized:
-                return True
-            if self._has_symbol_suffix(candidate, normalized):
-                return True
-        return False
-
-    def _has_symbol_suffix(self, candidate: str, identifier: str) -> bool:
-        if len(candidate) <= len(identifier) or not candidate.endswith(identifier):
-            return False
-        delimiter_index = len(candidate) - len(identifier) - 1
-        return delimiter_index >= 0 and candidate[delimiter_index] in {".", "#", ":", "/", "$"}
-
-    def _flow_identifier_candidates(self, flow: EntrypointFlow) -> set[str]:
-        candidates: set[str] = set()
-        for node in flow.nodes:
-            candidates.update(
-                str(value or "").strip()
-                for value in (
-                    node.label,
-                    node.qualified_name,
-                    node.entrypoint_route,
-                    node.entrypoint_topic,
-                    node.entrypoint_interface_method,
-                )
-                if str(value or "").strip()
-            )
-        for anchor in flow.anchors:
-            candidates.update(
-                str(value or "").strip()
-                for value in (anchor.label,)
-                if str(value or "").strip()
-            )
-        return candidates
-
-    def _rank_flows_by_grounded_relevance(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]:
-        scored = [
-            (max(float(flow.relevance_score or 0.0), self._aggregate_anchor_score(flow)), flow)
-            for flow in flows
-        ]
-        if not scored:
-            return ()
-        top_score = max(score for score, _flow in scored)
-        threshold = max(self.policy.plan_flow_min_relevance_score, top_score - self.policy.plan_flow_top_delta)
-        selected = [
-            flow
-            for score, flow in sorted(scored, key=lambda item: (-item[0], item[1].key.source_id, item[1].key.entrypoint_node_id))
-            if score >= threshold
-        ]
-        return tuple(selected)
-
-    def _aggregate_anchor_score(self, flow: EntrypointFlow) -> float:
-        if not flow.anchors:
-            return 0.0
-        best = max(float(anchor.score or 0.0) for anchor in flow.anchors)
-        support = min(len(flow.anchors), 10) * 0.01
-        proximity = 0.01 / (1 + min(anchor.distance for anchor in flow.anchors))
-        return best + support + proximity
 
     def _matched_sources(
         self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], eligible_sources: Sequence[QuerySource]

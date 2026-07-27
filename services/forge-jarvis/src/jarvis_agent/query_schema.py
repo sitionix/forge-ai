@@ -88,10 +88,22 @@ class JarvisQueryDiagnostic(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class JarvisFlowAnswer(BaseModel):
-    source: str
-    entrypoint: str
+class JarvisGraphAnswerQueryEntry(BaseModel):
+    unitId: str
+    sourceId: str
+    root: Dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        extra = "forbid"
+
+
+class JarvisGraphAnswer(BaseModel):
+    graphId: str
+    sources: List[str] = Field(default_factory=list)
+    queryEntries: List[JarvisGraphAnswerQueryEntry] = Field(default_factory=list)
     text: str
+    complete: bool = True
+    diagnostics: List[JarvisQueryDiagnostic] = Field(default_factory=list)
 
     class Config:
         extra = "forbid"
@@ -99,7 +111,7 @@ class JarvisFlowAnswer(BaseModel):
 
 class JarvisHumanAnswerResponse(BaseModel):
     answerLanguage: str
-    answers: List[JarvisFlowAnswer] = Field(default_factory=list)
+    answers: List[JarvisGraphAnswer] = Field(default_factory=list)
     diagnostics: List[JarvisQueryDiagnostic] = Field(default_factory=list)
 
     class Config:

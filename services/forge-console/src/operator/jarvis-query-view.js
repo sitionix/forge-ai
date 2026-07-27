@@ -97,18 +97,23 @@ export class JarvisQueryView {
     }
     return items.map((item) => `
       <section class="jarvis-answer">
-        ${this.shouldRenderAnswerTitle(item) ? `<strong>${escapeHtml(text(item.entrypoint))}</strong>` : ''}
+        ${this.shouldRenderAnswerTitle(item) ? `<strong>${escapeHtml(this.answerTitle(item))}</strong>` : ''}
         <p class="jarvis-answer-text">${escapeHtml(text(item.text))}</p>
       </section>
     `).join('');
   }
 
   shouldRenderAnswerTitle(item) {
-    const entrypoint = text(item?.entrypoint);
-    if (!entrypoint) {
+    const title = this.answerTitle(item);
+    if (!title) {
       return false;
     }
-    return !text(item?.text).includes(entrypoint);
+    return !text(item?.text).includes(title);
+  }
+
+  answerTitle(item) {
+    const entry = list(item?.queryEntries)[0] || {};
+    return text(entry?.root?.qualifiedName || entry?.root?.label || item?.graphId);
   }
 
   panel() {

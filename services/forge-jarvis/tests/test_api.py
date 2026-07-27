@@ -39,13 +39,10 @@ GRAPH_BUNDLE_FIELDS = {
 def assert_compact_human_response(body, *, answer_language="uk", entrypoint="JarvisGateway") -> None:
     assert set(body) == {"answerLanguage", "answers", "diagnostics"}
     assert body["answerLanguage"] == answer_language
-    assert body["answers"] == [
-        {
-            "source": "forge-ai",
-            "entrypoint": entrypoint,
-            "text": "JarvisGateway handles the request.",
-        }
-    ]
+    assert body["answers"] == human_answer_bundle(
+        answer_language=answer_language,
+        sources=[{"source": "forge-ai", "entrypoint": entrypoint}],
+    )["answers"]
     assert body["diagnostics"] == []
     assert not (GRAPH_BUNDLE_FIELDS & set(body))
 
@@ -330,13 +327,12 @@ def test_human_query_response_preserves_multiple_answers_and_diagnostics(tmp_pat
         response = client.post("/api/v1/jarvis/query", json=flow_query_payload("site flow"))
 
     assert response.status_code == 200
-    assert response.json() == {
-        "answerLanguage": "uk",
-        "answers": [
+    assert response.json() == human_answer_bundle(
+        answers=[
             {"source": "service-a", "entrypoint": "ControllerA.create", "text": "A creates the site."},
             {"source": "service-b", "entrypoint": "ListenerB.handle", "text": "B handles the event."},
         ],
-        "diagnostics": [
+        diagnostics=[
             {
                 "code": "FLOW_WALKTHROUGH_LANGUAGE_FALLBACK",
                 "message": "Requested response language catalog is unavailable; deterministic flow text used the default catalog.",
@@ -345,7 +341,7 @@ def test_human_query_response_preserves_multiple_answers_and_diagnostics(tmp_pat
                 "metadata": {"requestedLanguage": "de", "usedLanguage": "en"},
             }
         ],
-    }
+    )
     assert knowledge.paths == ["/api/v1/knowledge/query"]
 
 

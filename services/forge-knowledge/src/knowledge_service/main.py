@@ -33,22 +33,21 @@ from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.flow_formatter import (
-    FlowFormatterAllPlansFailed,
-    FlowFormatterAnswerService,
-    FlowFormatterDeadlineExceeded,
-    FlowFormatterPromptRenderer,
-    FlowFormatterSegmentPlanner,
-    LocalOllamaFlowFormatterClient,
+    EndToEndFormatterAllGraphsFailed,
+    EndToEndFormatterAnswerService,
+    EndToEndFormatterDeadlineExceeded,
+    EndToEndFormatterPromptRenderer,
+    EndToEndFormatterSegmentPlanner,
+    LocalOllamaEndToEndFormatterClient,
 )
 from knowledge_service.freshness_service import KnowledgeFreshnessService
-from knowledge_service.flow_explanations import FlowProjectionBuilder
+from knowledge_service.end_to_end_projection import EndToEndProjectionBuilder
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.knowledge_query_schema import (
     KnowledgeHumanQueryResponse,
-    KnowledgeQueryDiagnostic,
     KnowledgeQueryRequest,
     KnowledgeQueryToolContextResponse,
 )
@@ -275,7 +274,7 @@ def create_app(
                 correlation_id=correlation_id,
                 retrieval_plan=None,
                 query_result=None,
-                selected_flows=(),
+                selected_graphs=(),
                 interpretation_records=[],
                 answer_records=[],
                 pipeline_records=[],
@@ -691,12 +690,12 @@ def _knowledge_human_query_response(
     unexpected_exception_stage: str | None = None
     retrieval_plan = None
     query_result = None
-    selected_flows = ()
+    selected_graphs = ()
     interpretation_records = []
     answer_records = []
     pipeline_records = []
     fetch_duration_ms = 0.0
-    family_assembly_duration_ms = 0.0
+    graph_assembly_duration_ms = 0.0
     answer_service = None
     try:
         if is_forbidden_response_language(body.answerLanguage):
@@ -730,9 +729,9 @@ def _knowledge_human_query_response(
         retrieval_started = time.perf_counter()
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
         fetch_duration_ms = round((time.perf_counter() - retrieval_started) * 1000, 3)
-        selected_flows = tuple(query_result.narrative_plans or ())
-        terminal_stage = "FLOW_ASSEMBLY"
-        if not selected_flows:
+        selected_graphs = tuple(query_result.selected_graphs or ())
+        terminal_stage = "END_TO_END_GRAPH_ASSEMBLY"
+        if not selected_graphs:
             _record_query_interpretation_audits(request, body, interpretation_service.audit_records)
             terminal_status = 404
             terminal_error_code = "NO_GROUNDED_GRAPH_CANDIDATES"
@@ -743,10 +742,10 @@ def _knowledge_human_query_response(
                 terminal_error_message,
                 correlation_id=correlation_id,
             )
-        family_assembly_duration_ms = fetch_duration_ms
+        graph_assembly_duration_ms = fetch_duration_ms
         answer_service, close_formatter = _flow_formatter_service(request, config)
         try:
-            terminal_stage = "FORMATTER_PLAN_BUILDING"
+            terminal_stage = "END_TO_END_PRESENTATION_PLANNING"
             result = answer_service.answer(
                 body,
                 query_result,
@@ -761,7 +760,7 @@ def _knowledge_human_query_response(
                 close_formatter()
         if pipeline_records:
             pipeline_records[0]["fetchDurationMs"] = fetch_duration_ms
-            pipeline_records[0]["familyAssemblyDurationMs"] = family_assembly_duration_ms
+            pipeline_records[0]["endToEndAssemblyDurationMs"] = graph_assembly_duration_ms
         terminal_stage = "FINAL_FORMATTER"
         response = answer_service.to_response(result)
         terminal_status = 200
@@ -803,7 +802,7 @@ def _knowledge_human_query_response(
             terminal_error_message,
             correlation_id=correlation_id,
         )
-    except FlowFormatterDeadlineExceeded:
+    except EndToEndFormatterDeadlineExceeded:
         terminal_stage = getattr(answer_service, "current_stage", None) or "FINAL_FORMATTER"
         terminal_status = 504
         terminal_error_code = "ANSWER_GENERATION_TIMEOUT"
@@ -815,7 +814,7 @@ def _knowledge_human_query_response(
             terminal_error_message,
             correlation_id=correlation_id,
         )
-    except FlowFormatterAllPlansFailed:
+    except EndToEndFormatterAllGraphsFailed:
         terminal_stage = getattr(answer_service, "current_stage", None) or "FINAL_FORMATTER"
         terminal_status = 502
         terminal_error_code = "FINAL_FORMATTER_FAILED"
@@ -853,15 +852,14 @@ def _knowledge_human_query_response(
         total_duration_ms = round((time.perf_counter() - total_started) * 1000, 3)
         if pipeline_records:
             pipeline_records[0]["totalDurationMs"] = total_duration_ms
-        elif selected_flows:
+        elif selected_graphs:
             pipeline_records = [{
-                "narrativePlanCount": len(selected_flows),
-                "walkthroughStepCount": 0,
-                "branchCount": 0,
-                "gapCount": 0,
+                "selectedGraphCount": len(selected_graphs),
+                "presentationStageCount": 0,
                 "answerCount": 0,
                 "fetchDurationMs": fetch_duration_ms,
-                "familyAssemblyDurationMs": family_assembly_duration_ms,
+                "endToEndAssemblyDurationMs": graph_assembly_duration_ms,
+                "presentationPlanningDurationMs": 0.0,
                 "walkthroughPlanningDurationMs": 0.0,
                 "formatterPlanningDurationMs": 0.0,
                 "formatterDurationMs": 0.0,
@@ -880,11 +878,9 @@ def _knowledge_human_query_response(
                 "missingExecutableStageRefs": 0,
                 "duplicateExecutableStageRefs": 0,
                 "standaloneOperationStageCount": 0,
-                "gapStageCount": 0,
                 "boundaryStageCount": 0,
                 "ownerlessBoundaryStageCount": 0,
                 "structuralStageCount": 0,
-                "presentationStageCount": 0,
                 "expectedPublicStageCount": 0,
                 "validatedFormatterStepCount": 0,
                 "stitchedPublicStepCount": 0,
@@ -908,7 +904,7 @@ def _knowledge_human_query_response(
             correlation_id=correlation_id,
             retrieval_plan=retrieval_plan,
             query_result=query_result,
-            selected_flows=selected_flows,
+            selected_graphs=selected_graphs,
             interpretation_records=interpretation_records,
             answer_records=answer_records,
             pipeline_records=pipeline_records,
@@ -939,13 +935,13 @@ def _knowledge_query_tool_context_response(
             if close_interpreter:
                 close_interpreter()
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
-        if not tuple(query_result.flows or ()):
+        if not tuple(query_result.selected_graphs or ()):
             return _public_error_response(
                 404,
                 "NO_GROUNDED_GRAPH_CANDIDATES",
                 "No grounded graph candidates were found.",
             )
-        return FlowProjectionBuilder().to_tool_response(body, query_result)
+        return EndToEndProjectionBuilder().tool_response(body, query_result)
     except QueryPlanningDeadlineExceeded:
         return _public_error_response(
             504,
@@ -996,7 +992,7 @@ def _record_human_query_terminal_audit(
     correlation_id: str,
     retrieval_plan,
     query_result,
-    selected_flows,
+    selected_graphs,
     interpretation_records,
     answer_records,
     pipeline_records,
@@ -1013,7 +1009,7 @@ def _record_human_query_terminal_audit(
         correlation_id=correlation_id,
         retrieval_plan=retrieval_plan,
         query_result=query_result,
-        selected_flows=tuple(selected_flows or ()),
+        selected_graphs=tuple(selected_graphs or ()),
         interpretation_records=list(interpretation_records or []),
         answer_records=list(answer_records or []),
         pipeline_records=list(pipeline_records or []),
@@ -1038,7 +1034,7 @@ def _human_query_terminal_audit_record(
     correlation_id: str,
     retrieval_plan,
     query_result,
-    selected_flows,
+    selected_graphs,
     interpretation_records,
     answer_records,
     pipeline_records,
@@ -1049,8 +1045,8 @@ def _human_query_terminal_audit_record(
     unexpected_exception_class: str | None,
     unexpected_exception_stage: str | None,
 ) -> Dict[str, Any]:
-    selected_flow_summaries = _selected_flow_audit_summaries(selected_flows)
-    family_assembly_summary = _family_assembly_terminal_payload(query_result, selected_flow_summaries)
+    selected_graph_summaries = _selected_graph_audit_summaries(selected_graphs)
+    graph_assembly_summary = _graph_assembly_terminal_payload(query_result, selected_graph_summaries)
     walkthrough_metrics = _walkthrough_terminal_metrics(pipeline_records)
     retrieval_summary = _retrieval_terminal_payload(query_result)
     query_interpreter = _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage, terminal_error_code)
@@ -1067,19 +1063,16 @@ def _human_query_terminal_audit_record(
         "queryInterpreterCallCount": query_interpreter_call_count,
         "retrieval": retrieval_summary,
         "candidateCount": int(retrieval_summary.get("matchedNodeCount") or 0),
-        "familyAssembly": family_assembly_summary,
-        "rawCandidateFlowCount": family_assembly_summary.get("rawCandidateFlowCount"),
-        "discoveredFamilyCount": family_assembly_summary.get("discoveredFamilyCount"),
-        "selectedFamilyCount": family_assembly_summary.get("selectedFamilyCount"),
-        "verifiedFragmentCount": _verified_fragment_count(selected_flows),
-        "narrativePlanCount": int(walkthrough_metrics.get("narrativePlanCount") or len(selected_flow_summaries)),
-        "walkthroughStepCount": int(walkthrough_metrics.get("walkthroughStepCount") or 0),
+        "graphAssembly": graph_assembly_summary,
+        "selectedGraphCount": int(walkthrough_metrics.get("selectedGraphCount") or len(selected_graph_summaries)),
+        "discoveredGraphCount": graph_assembly_summary.get("discoveredGraphCount"),
+        "omittedGraphCount": graph_assembly_summary.get("omittedGraphCount"),
+        "presentationStageCount": int(walkthrough_metrics.get("presentationStageCount") or 0),
         "branchCount": int(walkthrough_metrics.get("branchCount") or 0),
-        "gapCount": int(walkthrough_metrics.get("gapCount") or 0),
         "answerCount": int(walkthrough_metrics.get("answerCount") or 0),
         "fetchDurationMs": float(walkthrough_metrics.get("fetchDurationMs") or 0.0),
-        "familyAssemblyDurationMs": float(walkthrough_metrics.get("familyAssemblyDurationMs") or 0.0),
-        "walkthroughPlanningDurationMs": float(walkthrough_metrics.get("walkthroughPlanningDurationMs") or 0.0),
+        "endToEndAssemblyDurationMs": float(walkthrough_metrics.get("endToEndAssemblyDurationMs") or 0.0),
+        "presentationPlanningDurationMs": float(walkthrough_metrics.get("presentationPlanningDurationMs") or 0.0),
         "textRenderingDurationMs": float(walkthrough_metrics.get("textRenderingDurationMs") or 0.0),
         "formatterGroupCount": int(walkthrough_metrics.get("formatterGroupCount") or 0),
         "selectedExecutableNodeCount": int(walkthrough_metrics.get("selectedExecutableNodeCount") or 0),
@@ -1089,12 +1082,9 @@ def _human_query_terminal_audit_record(
         "executablePublicStageCount": int(walkthrough_metrics.get("executablePublicStageCount") or 0),
         "missingExecutableStageRefs": int(walkthrough_metrics.get("missingExecutableStageRefs") or 0),
         "duplicateExecutableStageRefs": int(walkthrough_metrics.get("duplicateExecutableStageRefs") or 0),
-        "standaloneOperationStageCount": int(walkthrough_metrics.get("standaloneOperationStageCount") or 0),
-        "gapStageCount": int(walkthrough_metrics.get("gapStageCount") or 0),
         "boundaryStageCount": int(walkthrough_metrics.get("boundaryStageCount") or 0),
         "ownerlessBoundaryStageCount": int(walkthrough_metrics.get("ownerlessBoundaryStageCount") or 0),
         "structuralStageCount": int(walkthrough_metrics.get("structuralStageCount") or 0),
-        "presentationStageCount": int(walkthrough_metrics.get("presentationStageCount") or 0),
         "expectedPublicStageCount": int(walkthrough_metrics.get("expectedPublicStageCount") or 0),
         "validatedFormatterStepCount": int(walkthrough_metrics.get("validatedFormatterStepCount") or 0),
         "stitchedPublicStepCount": int(walkthrough_metrics.get("stitchedPublicStepCount") or 0),
@@ -1122,11 +1112,8 @@ def _human_query_terminal_audit_record(
         "totalFormatterDurationMs": float(walkthrough_metrics.get("totalFormatterDurationMs") or 0.0),
         "stitchingDurationMs": float(walkthrough_metrics.get("stitchingDurationMs") or 0.0),
         "totalDurationMs": float(walkthrough_metrics.get("totalDurationMs") or 0.0),
-        "familyRoots": family_assembly_summary.get("familyRoots"),
-        "selectedFlowCount": len(selected_flow_summaries),
-        "selectedSources": sorted({item["source"] for item in selected_flow_summaries if item.get("source")}),
-        "selectedEntrypoints": [item["entrypoint"] for item in selected_flow_summaries if item.get("entrypoint")],
-        "selectedFlows": selected_flow_summaries,
+        "selectedSources": sorted({source for item in selected_graph_summaries for source in item.get("sources", [])}),
+        "selectedGraphs": selected_graph_summaries,
         "walkthrough": walkthrough_metrics,
         "walkthroughPlans": pipeline_records,
         "formatterRecords": [_compact_provider_audit_record(dict(record)) for record in (answer_records or [])],
@@ -1148,19 +1135,14 @@ def _human_query_terminal_audit_record(
     }
 
 
-def _family_assembly_terminal_payload(query_result, selected_flow_summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    assembly = getattr(query_result, "family_assembly", None)
-    raw_flows = tuple(getattr(query_result, "raw_flows", ()) or ())
-    selected_roots = [
-        {"source": item.get("source"), "entrypoint": item.get("entrypoint")}
-        for item in selected_flow_summaries
-    ]
+def _graph_assembly_terminal_payload(query_result, selected_graph_summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    assembly = getattr(query_result, "end_to_end_assembly", None)
+    selection = getattr(query_result, "graph_selection", None)
     return {
-        "rawCandidateFlowCount": int(getattr(assembly, "raw_candidate_flow_count", len(raw_flows))),
-        "discoveredFamilyCount": int(getattr(assembly, "discovered_family_count", len(selected_flow_summaries))),
-        "selectedFamilyCount": len(selected_flow_summaries),
-        "familyRoots": selected_roots,
-        "rootReachability": dict(getattr(assembly, "root_reachability", {}) or {}),
+        "discoveredGraphCount": int(len(getattr(assembly, "graphs", ()) or ())),
+        "returnedGraphCount": len(selected_graph_summaries),
+        "omittedGraphCount": int(len(getattr(selection, "omitted_graph_ids", ()) or ())),
+        "selectedGraphIds": [item.get("graphId") for item in selected_graph_summaries if item.get("graphId")],
     }
 
 
@@ -1182,14 +1164,14 @@ def _walkthrough_terminal_metrics(pipeline_records) -> Dict[str, Any]:
         return values
 
     return {
-        "narrativePlanCount": total_int("narrativePlanCount"),
-        "walkthroughStepCount": total_int("walkthroughStepCount"),
+        "selectedGraphCount": total_int("selectedGraphCount"),
+        "walkthroughStepCount": total_int("presentationStageCount"),
         "branchCount": total_int("branchCount"),
-        "gapCount": total_int("gapCount"),
         "answerCount": total_int("answerCount"),
         "fetchDurationMs": total_float("fetchDurationMs"),
-        "familyAssemblyDurationMs": total_float("familyAssemblyDurationMs"),
-        "walkthroughPlanningDurationMs": total_float("walkthroughPlanningDurationMs"),
+        "endToEndAssemblyDurationMs": total_float("endToEndAssemblyDurationMs"),
+        "presentationPlanningDurationMs": total_float("presentationPlanningDurationMs"),
+        "walkthroughPlanningDurationMs": total_float("presentationPlanningDurationMs"),
         "textRenderingDurationMs": total_float("textRenderingDurationMs"),
         "formatterGroupCount": total_int("formatterGroupCount"),
         "selectedExecutableNodeCount": total_int("selectedExecutableNodeCount"),
@@ -1199,8 +1181,6 @@ def _walkthrough_terminal_metrics(pipeline_records) -> Dict[str, Any]:
         "executablePublicStageCount": total_int("executablePublicStageCount"),
         "missingExecutableStageRefs": total_int("missingExecutableStageRefs"),
         "duplicateExecutableStageRefs": total_int("duplicateExecutableStageRefs"),
-        "standaloneOperationStageCount": total_int("standaloneOperationStageCount"),
-        "gapStageCount": total_int("gapStageCount"),
         "boundaryStageCount": total_int("boundaryStageCount"),
         "ownerlessBoundaryStageCount": total_int("ownerlessBoundaryStageCount"),
         "structuralStageCount": total_int("structuralStageCount"),
@@ -1259,10 +1239,6 @@ def _walkthrough_terminal_metrics(pipeline_records) -> Dict[str, Any]:
     }
 
 
-def _verified_fragment_count(selected_flows) -> int:
-    return sum(len(tuple(getattr(plan, "fragments", ()) or ())) for plan in tuple(selected_flows or ()))
-
-
 def _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage: str, terminal_error_code: str | None) -> Dict[str, Any]:
     validation_errors = [
         str(error)
@@ -1299,32 +1275,28 @@ def _retrieval_terminal_payload(query_result) -> Dict[str, Any]:
         "status": getattr(getattr(response, "status", None), "value", getattr(response, "status", None)),
         "matchedSourceCount": len(matched_sources),
         "matchedNodeCount": len(matched_nodes),
-        "flowCount": getattr(coverage, "flowCount", None),
+        "discoveredGraphCount": getattr(coverage, "discoveredGraphCount", None),
+        "returnedGraphCount": getattr(coverage, "returnedGraphCount", None),
+        "omittedGraphCount": getattr(coverage, "omittedGraphCount", None),
         "nodeCount": getattr(coverage, "nodeCount", None),
         "edgeCount": getattr(coverage, "edgeCount", None),
         "evidenceCount": getattr(coverage, "evidenceCount", None),
     }
 
 
-def _selected_flow_audit_summaries(selected_flows) -> list[Dict[str, Any]]:
-    projector = FlowProjectionBuilder()
+def _selected_graph_audit_summaries(selected_graphs) -> list[Dict[str, Any]]:
     summaries: list[Dict[str, Any]] = []
-    for index, flow in enumerate(tuple(selected_flows or ()), start=1):
-        source, entrypoint = projector.flow_answer_identity(flow)
-        coverage = getattr(flow, "coverage", None)
-        evidence_items = tuple(getattr(flow, "evidence", ()) or ())
+    for graph in tuple(selected_graphs or ()):
+        coverage = getattr(graph, "coverage", None)
         summaries.append(
             {
-                "flowIndex": index,
-                "source": source,
-                "entrypoint": entrypoint,
-                "nodeCount": int(getattr(coverage, "node_count", len(getattr(flow, "nodes", ()) or ()))),
-                "transitionCount": int(getattr(coverage, "transition_count", len(getattr(flow, "transitions", ()) or ()))),
-                "boundaryCount": int(getattr(coverage, "boundary_count", len(getattr(flow, "boundary_transitions", ()) or ()))),
-                "evidenceRecordCount": len(evidence_items),
-                "evidenceExcerptUtf8Bytes": sum(len(str(getattr(item, "text", "") or "").encode("utf-8")) for item in evidence_items),
-                "supportingRelationCount": len(tuple(getattr(flow, "supporting_transitions", ()) or ())),
-                "subordinateEntrypointCount": int(getattr(flow, "subordinate_entrypoint_count", 0) or 0),
+                "graphId": getattr(graph, "stable_graph_id", ""),
+                "sources": sorted({ref.source_id for ref in getattr(graph, "unit_refs", ()) or ()}),
+                "queryEntryUnitIds": list(getattr(graph, "query_entry_unit_ids", ()) or ()),
+                "unitCount": int(getattr(coverage, "unit_count", 0) or 0),
+                "provenTransitionCount": int(getattr(coverage, "proven_cross_source_transition_count", 0) or 0),
+                "openAmbiguousBoundaryCount": int(getattr(coverage, "open_ambiguous_boundary_count", 0) or 0),
+                "openUnresolvedBoundaryCount": int(getattr(coverage, "open_unresolved_boundary_count", 0) or 0),
             }
         )
     return summaries
@@ -1548,13 +1520,13 @@ def _query_interpretation_service(
 def _flow_formatter_service(
     request: Request,
     config: AppConfig,
-) -> tuple[FlowFormatterAnswerService, Optional[Any]]:
+) -> tuple[EndToEndFormatterAnswerService, Optional[Any]]:
     injected_provider = getattr(request.app.state, "final_flow_formatter_provider", None)
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
-    segment_planner = FlowFormatterSegmentPlanner(context_tokens=config.analysis_context_tokens)
+    segment_planner = EndToEndFormatterSegmentPlanner(context_tokens=config.analysis_context_tokens)
     formatter_model = str(os.environ.get("FORGE_FLOW_FORMATTER_MODEL") or config.analysis_model)
     if injected_provider is not None:
-        return FlowFormatterAnswerService(
+        return EndToEndFormatterAnswerService(
             injected_provider,
             segment_planner=segment_planner,
             request_deadline_seconds=request_deadline_seconds,
@@ -1562,14 +1534,14 @@ def _flow_formatter_service(
             provider_model=formatter_model,
             audit_max_records=config.query_audit_memory_max_records,
         ), None
-    provider = LocalOllamaFlowFormatterClient(
+    provider = LocalOllamaEndToEndFormatterClient(
         config.analysis_base_url,
         formatter_model,
         config.analysis_ai_call_timeout_seconds,
         config.analysis_context_tokens,
-        renderer=FlowFormatterPromptRenderer(),
+        renderer=EndToEndFormatterPromptRenderer(),
     )
-    return FlowFormatterAnswerService(
+    return EndToEndFormatterAnswerService(
         provider,
         segment_planner=segment_planner,
         request_deadline_seconds=request_deadline_seconds,

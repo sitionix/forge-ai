@@ -22,20 +22,13 @@ from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.graph_relation_semantics import EXECUTION_CONTINUATION, SUPPORTING_RELATION, graph_relation_semantics
-from knowledge_service.operation_facts import (
-    AvailableOperationFact,
-    OperationFactEligibility,
-    OperationFactEvidence,
-    clean_identity,
-    edge_backed_http_direction,
-    merge_semantic_operation_facts,
-    normalize_http_method,
-    normalize_route,
-    normalize_transport_kind,
-    split_operation_interface_identity,
-)
 
 _SQLITE_BIND_CHUNK_SIZE = 800
+
+
+def clean_identity(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _chunks(values: Sequence[Any], size: int = _SQLITE_BIND_CHUNK_SIZE) -> Iterable[Sequence[Any]]:
@@ -245,73 +238,6 @@ class EntrypointFlowGraphRepository:
                         endpoint_keys.add(to_key)
         nodes = self.load_nodes(endpoint_keys, include_tests=include_tests)
         return nodes, tuple(sorted(edges.values(), key=self._edge_sort_key))
-
-    def load_available_operation_facts(
-        self,
-        node_keys: set[FlowNodeKey],
-        *,
-        include_tests: bool,
-    ) -> tuple[AvailableOperationFact, ...]:
-        # NARRATIVE_COMPATIBILITY: operation facts are loaded only for legacy
-        # narrative/formatter projections, not for cross-source boundary resolution.
-        self.graph_store.init()
-        grouped = self._group_node_ids_by_source(node_keys)
-        if not grouped:
-            return ()
-        facts: list[AvailableOperationFact] = []
-        with self.graph_store._connect() as conn:
-            for source_id, ids in sorted(grouped.items()):
-                has_boundary_facts = self._source_has_boundary_facts(conn, source_id)
-                for chunk in _chunks(sorted(ids)):
-                    rows = self._query_available_operation_fact_rows(conn, source_id, list(chunk), include_tests)
-                    self._metrics["operationFactRowsLoaded"] += len(rows)
-                    if has_boundary_facts:
-                        boundary_rows = self._query_boundary_operation_fact_rows(conn, source_id, list(chunk), include_tests)
-                        self._metrics["operationFactRowsLoaded"] += len(boundary_rows)
-                        facts.extend(self._operation_facts_from_boundary_rows(boundary_rows))
-                    facts.extend(self._operation_facts_from_rows(rows))
-                    edge_rows = self._query_edge_operation_fact_rows(conn, source_id, list(chunk), include_tests)
-                    self._metrics["operationFactRowsLoaded"] += len(edge_rows)
-                    facts.extend(self._operation_facts_from_edge_rows(edge_rows))
-        return tuple(sorted(self._dedupe_operation_facts(facts), key=self._operation_fact_sort_key))
-
-    def load_matching_inbound_operation_facts(
-        self,
-        outbound_facts: Sequence[AvailableOperationFact],
-        *,
-        eligible_source_ids: Sequence[str],
-        include_tests: bool,
-    ) -> tuple[AvailableOperationFact, ...]:
-        # NARRATIVE_COMPATIBILITY: retained for confirmed operation-fact tests
-        # and callers; the active continuation path uses find_provided_boundary_candidates.
-        requested = tuple(
-            fact
-            for fact in outbound_facts
-            if normalize_transport_kind(fact.transport_kind) == "HTTP"
-            and str(fact.direction_role or "").strip().upper() == "OUTBOUND"
-            and normalize_http_method(fact.method)
-            and normalize_route(fact.normalized_route)
-        )
-        source_ids = tuple(sorted(dict.fromkeys(str(source_id or "").strip() for source_id in eligible_source_ids if str(source_id or "").strip())))
-        if not requested or not source_ids:
-            return ()
-        methods = tuple(sorted({normalize_http_method(fact.method) or "" for fact in requested if normalize_http_method(fact.method)}))
-        self.graph_store.init()
-        with self.graph_store._connect() as conn:
-            boundary_rows = (
-                self._query_matching_inbound_boundary_operation_fact_rows(conn, source_ids, methods, include_tests)
-                if any(self._source_has_boundary_facts(conn, source_id) for source_id in source_ids)
-                else []
-            )
-            self._metrics["operationFactRowsLoaded"] += len(boundary_rows)
-            rows = self._query_matching_inbound_operation_fact_rows(conn, source_ids, methods, include_tests)
-            self._metrics["operationFactRowsLoaded"] += len(rows)
-        facts = [
-            fact
-            for fact in (*self._operation_facts_from_boundary_rows(boundary_rows), *self._operation_facts_from_rows(rows))
-            if self._inbound_fact_matches_any_outbound(fact, requested)
-        ]
-        return tuple(sorted(self._dedupe_operation_facts(facts), key=self._operation_fact_sort_key))
 
     def find_provided_boundary_candidates(
         self,
@@ -1862,215 +1788,6 @@ class EntrypointFlowGraphRepository:
         ).fetchall()
         return [self.graph_store._row_dict(row) for row in rows]
 
-    def _operation_facts_from_rows(
-        self,
-        rows: Sequence[Dict[str, Any]],
-    ) -> tuple[AvailableOperationFact, ...]:
-        grouped: dict[str, list[Dict[str, Any]]] = defaultdict(list)
-        for row in rows:
-            grouped[str(row.get("claim_id") or "")].append(row)
-        facts: list[AvailableOperationFact] = []
-        for claim_id, claim_rows in grouped.items():
-            if not claim_id or not claim_rows:
-                continue
-            first = claim_rows[0]
-            operation_identity, interface_identity = split_operation_interface_identity(first.get("entrypoint_interface_method"))
-            evidence = tuple(
-                OperationFactEvidence(
-                    source_id=str(row.get("evidence_source_id") or first.get("source_id") or ""),
-                    relative_path=str(row.get("evidence_relative_path")) if row.get("evidence_relative_path") else None,
-                    line_start=int(row.get("evidence_line_start")) if row.get("evidence_line_start") is not None else None,
-                    line_end=int(row.get("evidence_line_end")) if row.get("evidence_line_end") is not None else None,
-                    excerpt=str(row.get("evidence_excerpt")) if row.get("evidence_excerpt") else None,
-                )
-                for row in claim_rows
-                if row.get("evidence_source_id")
-            )
-            facts.append(
-                AvailableOperationFact(
-                    owner_source_id=str(first.get("source_id") or ""),
-                    owner_graph_id=str(first.get("graph_id") or ""),
-                    owner_graph_revision=str(first.get("graph_revision")) if first.get("graph_revision") else None,
-                    owner_node_id=str(first.get("node_id") or ""),
-                    source_id=str(first.get("source_id") or ""),
-                    execution_role=clean_identity(first.get("entrypoint_execution_kind")),
-                    transport_kind=normalize_transport_kind(first.get("entrypoint_kind")),
-                    direction_role=self._claim_fact_direction(first),
-                    method=normalize_http_method(first.get("entrypoint_http_method")),
-                    normalized_route=normalize_route(first.get("entrypoint_route")),
-                    topic=clean_identity(first.get("entrypoint_topic")),
-                    schedule=clean_identity(first.get("entrypoint_schedule")),
-                    operation_identity=operation_identity,
-                    interface_identity=interface_identity,
-                    owner_qualified_name=clean_identity(first.get("owner_qualified_name")),
-                    owner_relative_path=clean_identity(first.get("owner_relative_path")),
-                    evidence=evidence,
-                    eligibility=OperationFactEligibility(
-                        status=clean_identity(first.get("claim_status")),
-                        rejection_reason=clean_identity(first.get("rejection_reason")),
-                        flow_domain=clean_identity(first.get("effective_flow_domain")),
-                        inventory_current=bool(first.get("inventory_current")),
-                        analyzed_current=bool(first.get("analyzed_current")),
-                    ),
-                    source_channel="ENTRYPOINT_HINT",
-                )
-            )
-        return tuple(facts)
-
-    def _operation_facts_from_edge_rows(self, rows: Sequence[Dict[str, Any]]) -> tuple[AvailableOperationFact, ...]:
-        grouped: dict[str, list[Dict[str, Any]]] = defaultdict(list)
-        for row in rows:
-            grouped[str(row.get("edge_id") or "")].append(row)
-        facts: list[AvailableOperationFact] = []
-        for edge_id, edge_rows in grouped.items():
-            if not edge_id or not edge_rows:
-                continue
-            first = edge_rows[0]
-            metadata = self._json_object(first.get("metadata_json"))
-            transport = normalize_transport_kind(metadata.get("transportKind") or metadata.get("connectorKind"))
-            method = normalize_http_method(metadata.get("httpMethod") or metadata.get("method"))
-            route = normalize_route(metadata.get("routeTemplate") or metadata.get("route"))
-            if transport != "HTTP" or not method or not route:
-                continue
-            direction = self._edge_fact_direction(first.get("edge_type"), metadata)
-            if direction is None:
-                continue
-            operation_identity = clean_identity(metadata.get("operationIdentity"))
-            interface_identity = clean_identity(
-                metadata.get("interfaceIdentity")
-                or metadata.get("interfaceMethod")
-                or metadata.get("targetInterfaceMethod")
-            )
-            if not operation_identity and not interface_identity:
-                operation_identity, interface_identity = split_operation_interface_identity(metadata.get("targetEntrypoint"))
-            evidence = tuple(
-                OperationFactEvidence(
-                    source_id=str(row.get("evidence_source_id") or first.get("source_id") or ""),
-                    relative_path=str(row.get("evidence_relative_path")) if row.get("evidence_relative_path") else None,
-                    line_start=int(row.get("evidence_line_start")) if row.get("evidence_line_start") is not None else None,
-                    line_end=int(row.get("evidence_line_end")) if row.get("evidence_line_end") is not None else None,
-                    excerpt=str(row.get("evidence_excerpt")) if row.get("evidence_excerpt") else None,
-                )
-                for row in edge_rows
-                if row.get("evidence_source_id")
-            )
-            facts.append(
-                AvailableOperationFact(
-                    owner_source_id=str(first.get("source_id") or ""),
-                    owner_graph_id=str(first.get("graph_id") or ""),
-                    owner_graph_revision=str(first.get("graph_revision")) if first.get("graph_revision") else None,
-                    owner_node_id=str(first.get("from_node_id") or ""),
-                    source_id=str(first.get("source_id") or ""),
-                    execution_role="EDGE_METADATA",
-                    transport_kind=transport,
-                    direction_role=direction,
-                    method=method,
-                    normalized_route=route,
-                    operation_identity=operation_identity,
-                    interface_identity=interface_identity,
-                    request_contract_identity=clean_identity(metadata.get("requestContractIdentity")),
-                    response_contract_identity=clean_identity(metadata.get("responseContractIdentity")),
-                    target_service_identity=clean_identity(metadata.get("targetServiceIdentity")),
-                    owner_qualified_name=clean_identity(first.get("owner_qualified_name")),
-                    owner_relative_path=clean_identity(first.get("owner_relative_path")),
-                    owner_edge_id=edge_id,
-                    evidence=evidence,
-                    eligibility=OperationFactEligibility(
-                        status=clean_identity(first.get("edge_status")),
-                        rejection_reason=None,
-                        flow_domain=clean_identity(first.get("effective_flow_domain")),
-                        inventory_current=bool(first.get("inventory_current")),
-                        analyzed_current=bool(first.get("analyzed_current")),
-                    ),
-                    source_channel="EDGE_METADATA",
-                )
-            )
-        return tuple(facts)
-
-    def _operation_facts_from_boundary_rows(self, rows: Sequence[dict[str, Any]]) -> tuple[AvailableOperationFact, ...]:
-        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for row in rows:
-            grouped[str(row.get("boundary_id") or "")].append(row)
-        facts: list[AvailableOperationFact] = []
-        for boundary_id, boundary_rows in grouped.items():
-            if not boundary_id or not boundary_rows:
-                continue
-            first = boundary_rows[0]
-            descriptors = self._boundary_descriptor_values(boundary_rows)
-            role = str(first.get("boundary_role") or "").strip().upper()
-            direction = "INBOUND" if role == "PROVIDED" else "OUTBOUND" if role == "REQUIRED" else None
-            if direction is None:
-                continue
-            transport = normalize_transport_kind(
-                self._first_descriptor(descriptors, "transport.kind")
-                or self._first_descriptor(descriptors, "provided.kind")
-                or self._first_descriptor(descriptors, "connector.kind")
-            )
-            method = normalize_http_method(
-                self._first_descriptor(descriptors, "http.method")
-                or self._first_descriptor(descriptors, "operation.method")
-            )
-            route = normalize_route(
-                self._first_descriptor(descriptors, "http.route")
-                or self._first_descriptor(descriptors, "operation.routeTemplate")
-                or self._first_descriptor(descriptors, "operation.route")
-            )
-            topic = clean_identity(self._first_descriptor(descriptors, "messaging.topic"))
-            schedule = clean_identity(self._first_descriptor(descriptors, "schedule.expression"))
-            if not any((transport, method, route, topic, schedule)):
-                continue
-            operation_identity = clean_identity(self._first_descriptor(descriptors, "operation.identity"))
-            interface_identity = clean_identity(
-                self._first_descriptor(descriptors, "interface.identity")
-                or self._first_descriptor(descriptors, "interface.method")
-            )
-            evidence = tuple(
-                dict.fromkeys(
-                    OperationFactEvidence(
-                        source_id=str(row.get("evidence_source_id") or first.get("source_id") or ""),
-                        relative_path=str(row.get("evidence_relative_path")) if row.get("evidence_relative_path") else None,
-                        line_start=int(row.get("evidence_line_start")) if row.get("evidence_line_start") is not None else None,
-                        line_end=int(row.get("evidence_line_end")) if row.get("evidence_line_end") is not None else None,
-                        excerpt=str(row.get("evidence_excerpt")) if row.get("evidence_excerpt") else None,
-                    )
-                    for row in boundary_rows
-                    if row.get("evidence_source_id")
-                )
-            )
-            facts.append(
-                AvailableOperationFact(
-                    owner_source_id=str(first.get("source_id") or ""),
-                    owner_graph_id=str(first.get("graph_id") or ""),
-                    owner_graph_revision=str(first.get("graph_revision")) if first.get("graph_revision") else None,
-                    owner_node_id=str(first.get("node_id") or ""),
-                    source_id=str(first.get("source_id") or ""),
-                    execution_role=role,
-                    transport_kind=transport,
-                    direction_role=direction,
-                    method=method,
-                    normalized_route=route,
-                    topic=topic,
-                    schedule=schedule,
-                    operation_identity=operation_identity,
-                    interface_identity=interface_identity,
-                    request_contract_identity=clean_identity(self._first_descriptor(descriptors, "contract.request")),
-                    response_contract_identity=clean_identity(self._first_descriptor(descriptors, "contract.response")),
-                    target_service_identity=clean_identity(self._first_descriptor(descriptors, "target.serviceIdentity")),
-                    owner_qualified_name=clean_identity(first.get("owner_qualified_name")),
-                    owner_relative_path=clean_identity(first.get("owner_relative_path")),
-                    evidence=evidence,
-                    eligibility=OperationFactEligibility(
-                        status=clean_identity(first.get("boundary_status")),
-                        rejection_reason=clean_identity(first.get("rejection_reason")),
-                        flow_domain=clean_identity(first.get("effective_flow_domain")),
-                        inventory_current=bool(first.get("inventory_current")),
-                        analyzed_current=bool(first.get("analyzed_current")),
-                    ),
-                    source_channel="BOUNDARY_FACT",
-                )
-            )
-        return tuple(facts)
-
     def _boundary_descriptor_values(self, rows: Sequence[dict[str, Any]]) -> dict[str, list[Any]]:
         values: dict[str, list[Any]] = defaultdict(list)
         seen: set[tuple[str, str]] = set()
@@ -2091,67 +1808,6 @@ class EntrypointFlowGraphRepository:
         values = descriptors.get(path) or []
         return values[0] if values else None
 
-    def _claim_fact_direction(self, row: Dict[str, Any]) -> str | None:
-        if normalize_transport_kind(row.get("entrypoint_kind")) != "HTTP":
-            return None
-        if not normalize_http_method(row.get("entrypoint_http_method")) or not normalize_route(row.get("entrypoint_route")):
-            return None
-        role = str(row.get("entrypoint_execution_kind") or "").strip().upper()
-        if role == EntrypointExecutionKind.EXECUTABLE.value:
-            return "INBOUND"
-        if role == EntrypointExecutionKind.CLIENT_OPERATION.value:
-            return "OUTBOUND"
-        return None
-
-    def _edge_fact_direction(self, edge_type: object, metadata: Dict[str, Any]) -> str | None:
-        return edge_backed_http_direction(
-            metadata,
-            execution_continuation=EXECUTION_CONTINUATION in graph_relation_semantics().edge_semantics(str(edge_type or "")),
-        )
-
-    def _inbound_fact_matches_any_outbound(
-        self,
-        inbound: AvailableOperationFact,
-        outbound_facts: Sequence[AvailableOperationFact],
-    ) -> bool:
-        # NARRATIVE_COMPATIBILITY: legacy HTTP operation-fact correlation helper.
-        if not self._is_current_inbound_http_fact(inbound):
-            return False
-        return any(self._operation_facts_match(outbound, inbound) for outbound in outbound_facts)
-
-    def _is_current_inbound_http_fact(self, fact: AvailableOperationFact) -> bool:
-        if normalize_transport_kind(fact.transport_kind) != "HTTP":
-            return False
-        if str(fact.direction_role or "").strip().upper() != "INBOUND":
-            return False
-        if not normalize_http_method(fact.method) or not normalize_route(fact.normalized_route):
-            return False
-        if fact.eligibility is not None and (not fact.eligibility.inventory_current or not fact.eligibility.analyzed_current):
-            return False
-        return True
-
-    def _operation_facts_match(self, outbound: AvailableOperationFact, inbound: AvailableOperationFact) -> bool:
-        # NARRATIVE_COMPATIBILITY: this matcher must not authorize boundary resolution.
-        if normalize_transport_kind(outbound.transport_kind) != normalize_transport_kind(inbound.transport_kind):
-            return False
-        if normalize_http_method(outbound.method) != normalize_http_method(inbound.method):
-            return False
-        if normalize_route(outbound.normalized_route) != normalize_route(inbound.normalized_route):
-            return False
-        if outbound.target_service_identity and inbound.owner_source_id != outbound.target_service_identity:
-            return False
-        for attr in (
-            "operation_identity",
-            "interface_identity",
-            "request_contract_identity",
-            "response_contract_identity",
-        ):
-            outbound_value = clean_identity(getattr(outbound, attr))
-            inbound_value = clean_identity(getattr(inbound, attr))
-            if outbound_value and inbound_value and outbound_value != inbound_value:
-                return False
-        return True
-
     def _json_object(self, value: object) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
@@ -2160,9 +1816,6 @@ class EntrypointFlowGraphRepository:
         except json.JSONDecodeError:
             return {}
         return parsed if isinstance(parsed, dict) else {}
-
-    def _dedupe_operation_facts(self, facts: Sequence[AvailableOperationFact]) -> tuple[AvailableOperationFact, ...]:
-        return merge_semantic_operation_facts(facts)
 
     def _query_edge_evidence(self, conn: Any, source_id: str, edge_ids: Sequence[str]) -> List[Dict[str, Any]]:
         result: List[Dict[str, Any]] = []
@@ -2330,14 +1983,4 @@ class EntrypointFlowGraphRepository:
             descriptor.value_type,
             json.dumps(descriptor.value, sort_keys=True, default=str),
             descriptor.descriptor_id,
-        )
-
-    def _operation_fact_sort_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str, str]:
-        return (
-            fact.owner_source_id,
-            fact.owner_graph_revision or fact.owner_graph_id,
-            fact.owner_node_id,
-            fact.transport_kind or "",
-            fact.method or "",
-            fact.normalized_route or "",
         )
