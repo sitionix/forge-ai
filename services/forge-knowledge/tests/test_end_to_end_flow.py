@@ -520,3 +520,221 @@ def test_assembly_limits_fail_closed_without_path_enumeration():
         for result in (unit_limited, transition_limited, open_limited, component_limited)
     )
     assert len(cyclic.graphs[0].proven_cross_source_transitions) == 3
+
+
+def test_component_local_mapping_failure_does_not_contaminate_independent_singleton():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    owner_d = node("D", source="source-d")
+    required = neutral_boundary("required-a", owner_a, "REQUIRED", "b")
+    provided = neutral_boundary("provided-b", owner_b, "PROVIDED", "b")
+    unit_a = unit("unit-a", owner_a, boundaries=(required,))
+    unit_d = unit("unit-d", owner_d)
+    missing_target = proven(
+        required,
+        provided,
+        required_unit_ids=("unit-a",),
+        target_unit_ids=(),
+        status=BoundaryTargetMaterializationStatus.NOT_MATERIALIZED,
+    )
+
+    result = assemble((unit_a, unit_d), ("unit-a",), missing_target)
+
+    graph_a = next(graph for graph in result.graphs if tuple(ref.unit_id for ref in graph.unit_refs) == ("unit-a",))
+    graph_d = next(graph for graph in result.graphs if tuple(ref.unit_id for ref in graph.unit_refs) == ("unit-d",))
+    assert graph_a.coverage.complete is False
+    assert graph_a.coverage.missing_unit_mapping_count == 1
+    assert graph_d.coverage.complete is True
+    assert graph_d.coverage.missing_unit_mapping_count == 0
+    assert not any(item.code == "END_TO_END_TARGET_UNIT_MAPPING_MISSING" for item in graph_d.diagnostics)
+    assert result.complete is False
+    assert result.metrics.missing_target_unit_mapping_count == 1
+
+
+def test_orphan_with_no_valid_affected_unit_remains_assembly_level_only():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    owner_d = node("D", source="source-d")
+    required = neutral_boundary("required-a", owner_a, "REQUIRED", "b")
+    provided = neutral_boundary("provided-b", owner_b, "PROVIDED", "b")
+    unit_d = unit("unit-d", owner_d)
+    orphan = proven(
+        required,
+        provided,
+        required_unit_ids=(),
+        target_unit_ids=(),
+        status=BoundaryTargetMaterializationStatus.NOT_MATERIALIZED,
+    )
+
+    result = assemble((unit_d,), ("unit-d",), orphan)
+
+    assert result.graphs[0].coverage.complete is True
+    assert result.graphs[0].diagnostics == ()
+    assert result.complete is False
+    assert result.orphaned_proven_resolutions == orphan.proven_links
+    assert any(item.code == "END_TO_END_TARGET_UNIT_MAPPING_MISSING" for item in result.diagnostics)
+
+
+def test_shared_open_boundary_is_projected_per_component_and_counted_once():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    required = neutral_boundary("required-shared", owner_a, "REQUIRED", "shared")
+    unit_a = unit("unit-a", owner_a)
+    unit_b = unit("unit-b", owner_b)
+    unresolved = open_result(required, BoundaryResolutionStatus.UNRESOLVED, ("unit-b", "unit-a"))
+
+    forward = assemble((unit_a, unit_b), ("unit-a",), unresolved)
+    reversed_units = assemble((unit_b, unit_a), ("unit-a",), unresolved)
+
+    assert len(forward.graphs) == 2
+    projections = sorted(graph.open_boundaries[0].source_unit_ids for graph in forward.graphs)
+    assert projections == [("unit-a",), ("unit-b",)]
+    for graph in forward.graphs:
+        graph_unit_ids = {ref.unit_id for ref in graph.unit_refs}
+        assert set(graph.open_boundaries[0].source_unit_ids) <= graph_unit_ids
+    assert forward.metrics.open_unresolved_boundary_count == 1
+    assert [graph.stable_graph_id for graph in forward.graphs] == [graph.stable_graph_id for graph in reversed_units.graphs]
+
+
+def test_unit_limit_preserves_input_and_unassembled_unit_accounting():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    owner_c = node("C", source="source-c")
+    unit_a = unit("unit-a", owner_a)
+    unit_b = unit("unit-b", owner_b)
+    unit_c = unit("unit-c", owner_c)
+
+    result = assemble(
+        (unit_c, unit_b, unit_a),
+        ("unit-c",),
+        None,
+        limits=EndToEndFlowAssemblyLimits(max_units=2),
+    )
+
+    assert result.input_local_unit_ids == ("unit-a", "unit-b", "unit-c")
+    assert result.retained_canonical_unit_ids == ("unit-a", "unit-b")
+    assert result.unassembled_local_unit_ids == ("unit-c",)
+    assert result.truncated is True
+    assert any(
+        item.code == "END_TO_END_ASSEMBLY_LIMIT_REACHED" and item.metadata.get("omittedQueryEntryUnitIds") == ("unit-c",)
+        for item in result.diagnostics
+    )
+
+
+def test_transition_limit_accounts_for_every_overflowing_proven_link_without_partial_assembly():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    owner_c = node("C", source="source-c")
+    owner_d = node("D", source="source-d")
+    required_ab = neutral_boundary("required-ab", owner_a, "REQUIRED", "b")
+    required_ac = neutral_boundary("required-ac", owner_a, "REQUIRED", "c")
+    required_ad = neutral_boundary("required-ad", owner_a, "REQUIRED", "d")
+    provided_b = neutral_boundary("provided-b", owner_b, "PROVIDED", "b")
+    provided_c = neutral_boundary("provided-c", owner_c, "PROVIDED", "c")
+    provided_d = neutral_boundary("provided-d", owner_d, "PROVIDED", "d")
+    unit_a = unit("unit-a", owner_a, boundaries=(required_ab, required_ac, required_ad))
+    unit_b = unit("unit-b", owner_b)
+    unit_c = unit("unit-c", owner_c)
+    unit_d = unit("unit-d", owner_d)
+    resolutions = combine_results(
+        proven(required_ab, provided_b, required_unit_ids=("unit-a",), target_unit_ids=("unit-b",), resolution_id="resolution-1"),
+        proven(required_ac, provided_c, required_unit_ids=("unit-a",), target_unit_ids=("unit-c",), resolution_id="resolution-2"),
+        proven(required_ad, provided_d, required_unit_ids=("unit-a",), target_unit_ids=("unit-d",), resolution_id="resolution-3"),
+    )
+
+    result = assemble((unit_a, unit_b, unit_c, unit_d), ("unit-a",), resolutions, limits=EndToEndFlowAssemblyLimits(max_proven_transitions=1))
+
+    assert result.metrics.input_proven_link_count == 3
+    assert result.metrics.assembled_proven_link_count == 1
+    assert result.metrics.unassembled_proven_link_count == 2
+    assert len(result.graphs[0].proven_cross_source_transitions) == 1
+    assert [item.reason for item in result.unassembled_proven_links] == ["TRANSITION_LIMIT_REACHED", "TRANSITION_LIMIT_REACHED"]
+    assert {item.link.resolution_id for item in result.unassembled_proven_links} == {"resolution-2", "resolution-3"}
+
+
+def test_component_limit_records_omitted_component_units_without_returning_graphs():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    unit_a = unit("unit-a", owner_a)
+    unit_b = unit("unit-b", owner_b)
+
+    result = assemble((unit_b, unit_a), ("unit-a",), None, limits=EndToEndFlowAssemblyLimits(max_connected_components=1))
+
+    assert len(result.graphs) == 1
+    assert tuple(ref.unit_id for ref in result.graphs[0].unit_refs) == ("unit-a",)
+    assert result.unassembled_local_unit_ids == ("unit-b",)
+    assert result.metrics.discovered_component_count == 2
+    assert result.metrics.returned_component_count == 1
+    assert result.metrics.omitted_component_count == 1
+
+
+def test_canonical_record_mismatch_blocks_link_without_affecting_unrelated_component():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    owner_c = node("C", source="source-c")
+    owner_d = node("D", source="source-d")
+    required = neutral_boundary("required-a", owner_a, "REQUIRED", "b")
+    provided = neutral_boundary("provided-b", owner_b, "PROVIDED", "b")
+    other_provided = neutral_boundary("provided-c", owner_c, "PROVIDED", "b")
+    unit_a = unit("unit-a", owner_a, boundaries=(required,))
+    unit_b = unit("unit-b", owner_b)
+    unit_d = unit("unit-d", owner_d)
+    result = proven(required, provided, required_unit_ids=("unit-a",), target_unit_ids=("unit-b",))
+    inconsistent = replace(
+        result,
+        resolutions=(replace(result.resolutions[0], selected_provided_boundary=other_provided),),
+    )
+
+    assembled = assemble((unit_a, unit_b, unit_d), ("unit-a",), inconsistent)
+
+    assert all(not graph.proven_cross_source_transitions for graph in assembled.graphs)
+    graph_d = next(graph for graph in assembled.graphs if tuple(ref.unit_id for ref in graph.unit_refs) == ("unit-d",))
+    assert graph_d.coverage.complete is True
+    assert not graph_d.diagnostics
+    assert assembled.unassembled_proven_links[0].reason == "CANONICAL_RECORD_INCONSISTENT"
+    assert any(item.code == "END_TO_END_RESOLUTION_IDENTITY_MISMATCH" for item in assembled.diagnostics)
+    assert result.resolutions[0].selected_provided_boundary == provided
+
+
+def test_partial_materialization_assembles_only_explicit_targets_and_remains_incomplete():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    owner_c = node("C", source="source-c")
+    required = neutral_boundary("required-a", owner_a, "REQUIRED", "target")
+    provided = neutral_boundary("provided-b", owner_b, "PROVIDED", "target")
+    unit_a = unit("unit-a", owner_a, boundaries=(required,))
+    unit_b = unit("unit-b", owner_b)
+    unit_c = unit("unit-c", owner_c)
+
+    partial = assemble(
+        (unit_a, unit_b, unit_c),
+        ("unit-a",),
+        proven(
+            required,
+            provided,
+            required_unit_ids=("unit-a",),
+            target_unit_ids=("unit-b", "unit-c"),
+            status=BoundaryTargetMaterializationStatus.PARTIAL,
+        ),
+    )
+    empty_partial = assemble(
+        (unit_a, unit_b, unit_c),
+        ("unit-a",),
+        proven(
+            required,
+            provided,
+            required_unit_ids=("unit-a",),
+            target_unit_ids=(),
+            status=BoundaryTargetMaterializationStatus.PARTIAL,
+        ),
+    )
+
+    assert sorted((item.source_unit_id, item.target_unit_id) for item in partial.graphs[0].proven_cross_source_transitions) == [
+        ("unit-a", "unit-b"),
+        ("unit-a", "unit-c"),
+    ]
+    assert partial.complete is False
+    assert partial.graphs[0].coverage.complete is False
+    assert partial.truncated is True
+    assert empty_partial.graphs[0].proven_cross_source_transitions == ()
+    assert empty_partial.unassembled_proven_links[0].reason == "TARGET_UNIT_MAPPING_MISSING"
