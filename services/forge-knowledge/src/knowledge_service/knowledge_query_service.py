@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
@@ -51,6 +51,7 @@ from knowledge_service.query_interpretation import QueryRetrievalPlan
 class KnowledgeQueryPolicy:
     max_search_documents: int = 5000
     max_candidates_per_provider: int = 100
+    max_selected_anchors: int = 12
     max_display_candidates: int = 20
     min_lexical_score: float = 0.28
     min_fuzzy_score: float = 0.58
@@ -58,9 +59,8 @@ class KnowledgeQueryPolicy:
     enable_fuzzy_search: bool = True
     enable_search_diagnostics: bool = True
     plan_candidate_min_score: float = 0.42
-    plan_candidate_top_delta: float = 0.18
     exact_identifier_min_score: float = 0.75
-    exact_identifier_top_delta: float = 0.12
+    fallback_anchor_trigger_count: int = 3
     plan_flow_min_relevance_score: float = 0.05
     plan_flow_top_delta: float = 0.25
 
@@ -72,6 +72,11 @@ class CandidatePoolKind(str, Enum):
     LEXICAL = "LEXICAL"
     FUZZY = "FUZZY"
     SEMANTIC = "SEMANTIC"
+
+
+class RetrievalPhase(str, Enum):
+    PRIMARY = "PRIMARY"
+    FALLBACK = "FALLBACK"
 
 
 _PRECISE_IDENTIFIER_REASONS = {
@@ -142,6 +147,45 @@ class QuerySource:
     node_count: int
     edge_count: int
     graph_status: str | None = None
+
+
+@dataclass(frozen=True)
+class RetrievalScope:
+    primary_sources: tuple[QuerySource, ...]
+    fallback_sources: tuple[QuerySource, ...] = ()
+
+    @classmethod
+    def primary(cls, sources: Sequence[QuerySource]) -> RetrievalScope:
+        return cls(primary_sources=tuple(sources), fallback_sources=())
+
+
+@dataclass(frozen=True)
+class SourceDocumentLoadStats:
+    phase: RetrievalPhase
+    source_id: str
+    eligible_document_count: int
+    allocated_document_count: int
+    inspected_document_count: int
+    truncated_document_count: int
+    starved: bool = False
+
+
+@dataclass(frozen=True)
+class SourceDocumentLoadResult:
+    documents: list[SearchDocument]
+    stats: tuple[SourceDocumentLoadStats, ...]
+    truncated: bool = False
+
+
+@dataclass(frozen=True)
+class PhaseRetrievalOutput:
+    phase: RetrievalPhase
+    raw_candidates: list[SearchCandidate]
+    merged_candidates: list[MergedCandidate]
+    diagnostics: list[KnowledgeQueryDiagnostic]
+    document_stats: tuple[SourceDocumentLoadStats, ...]
+    document_truncated: bool = False
+    candidate_limit_reached: bool = False
 
 
 @dataclass(frozen=True)
@@ -238,192 +282,105 @@ class SourceScopeResolver:
         return eligible, diagnostics
 
 
-class UnifiedAnchorSearcher:
-    def __init__(self, graph_store: Any, search_engine: DeterministicCodeSearchEngine | None = None) -> None:
-        self.graph_store = graph_store
-        self.search_engine = search_engine or DeterministicCodeSearchEngine()
-        self.normalizer = QueryNormalizer()
-        self.candidate_merger = CandidateMerger()
+class SourceDiverseAnchorSelector:
+    """Deterministic quality-first selection with marginal diversity scoring."""
 
-    def search(
-        self,
-        query: str,
-        eligible_sources: Sequence[QuerySource],
-        policy: KnowledgeQueryPolicy,
-        include_tests: bool = False,
-    ) -> CandidateRetrievalResult:
-        search_query = self.normalizer.normalize(query)
-        if not search_query.tokens or not eligible_sources:
-            return self._empty_result()
-        raw_documents, document_truncated = self._load_search_documents(search_query.tokens, eligible_sources, policy)
-        if not include_tests:
-            raw_documents = [item for item in raw_documents if str(item.get("flowDomain") or "").upper() != "TEST"]
-        documents = [SearchDocument.from_graph_node(candidate) for candidate in raw_documents if candidate.get("sourceId") or candidate.get("source_id")]
-        result = self.search_engine.search(query, documents, self._search_config(policy, eligible_sources, include_tests))
-        raw_candidates = list(getattr(result, "raw_candidates", []) or [])
-        pools = self._candidate_pools(raw_candidates)
-        all_candidates = self._all_candidates(raw_candidates)
-        if not all_candidates:
-            all_candidates = [self._matched_node(candidate) for candidate in result.candidates]
-            pools = self._fallback_candidate_pools(result.candidates)
-        display_limit = max(1, int(policy.max_display_candidates or 1))
-        display_candidates = all_candidates[:display_limit]
-        truncated = document_truncated or bool(getattr(result, "candidate_limit_reached", False))
-        diagnostics: List[KnowledgeQueryDiagnostic] = [self._search_diagnostic(item) for item in result.diagnostics]
-        if policy.enable_search_diagnostics and truncated:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="SEARCH_CANDIDATE_LIMIT_REACHED",
-                    message="Search reached an internal candidate safety limit before ranking completed.",
-                    severity="INFO",
-                    metadata={
-                        "maxSearchDocuments": policy.max_search_documents,
-                        "maxCandidatesPerProvider": policy.max_candidates_per_provider,
-                    },
-                )
-            )
-        if policy.enable_search_diagnostics and documents and not all_candidates:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="SEARCH_MATCHES_BELOW_THRESHOLD",
-                    message="Search inspected current graph facts, but deterministic matches did not clear ranking thresholds.",
-                    severity="INFO",
-                )
-            )
-        if policy.enable_search_diagnostics and len(display_candidates) < len(all_candidates):
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="MATCHED_NODE_PREVIEW_LIMITED",
-                    message="Matched node preview is limited for response size; graph processing used the full candidate set.",
-                    severity="INFO",
-                    metadata={"displayed": len(display_candidates), "internalCandidates": len(all_candidates)},
-                )
-            )
-        return CandidateRetrievalResult(
-            pools=pools,
-            all_candidates=all_candidates,
-            display_candidates=display_candidates,
-            diagnostics=diagnostics,
-            truncated=truncated,
-        )
-
-    def search_plan(
-        self,
-        plan: QueryRetrievalPlan,
-        eligible_sources: Sequence[QuerySource],
-        policy: KnowledgeQueryPolicy,
-        include_tests: bool = False,
-    ) -> CandidateRetrievalResult:
-        query_inputs = plan.query_inputs()
-        combined_tokens = self.normalizer.normalize(" ".join(value for _, value in query_inputs)).tokens
-        if not combined_tokens or not eligible_sources:
-            return self._empty_result()
-        raw_documents, document_truncated = self._load_search_documents(combined_tokens, eligible_sources, policy)
-        if not include_tests:
-            raw_documents = [item for item in raw_documents if str(item.get("flowDomain") or "").upper() != "TEST"]
-        documents = [SearchDocument.from_graph_node(candidate) for candidate in raw_documents if candidate.get("sourceId") or candidate.get("source_id")]
-        config = self._search_config(policy, eligible_sources, include_tests)
-        raw_candidates: List[SearchCandidate] = []
-        diagnostics: List[KnowledgeQueryDiagnostic] = []
-        candidate_limit_reached = False
-        for query_reason, query_value in query_inputs:
-            result = self.search_engine.search(query_value, documents, config)
-            candidate_limit_reached = candidate_limit_reached or bool(getattr(result, "candidate_limit_reached", False))
-            for item in result.diagnostics:
-                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-                diagnostics.append(self._search_diagnostic({**item, "metadata": {**metadata, "queryReason": query_reason}}))
-            raw_candidates.extend(self._annotated_candidates(getattr(result, "raw_candidates", []) or [], query_reason))
-
-        pools = self._candidate_pools(raw_candidates)
-        merged_candidates = self.candidate_merger.merge(raw_candidates) if raw_candidates else []
-        merged_candidates = self._filter_plan_candidates(merged_candidates, plan, policy)
-        all_candidates = [self._matched_node(candidate) for candidate in merged_candidates]
-        display_limit = max(1, int(policy.max_display_candidates or 1))
-        display_candidates = all_candidates[:display_limit]
-        truncated = document_truncated or candidate_limit_reached
-        if policy.enable_search_diagnostics and truncated:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="SEARCH_CANDIDATE_LIMIT_REACHED",
-                    message="Search reached an internal candidate safety limit before ranking completed.",
-                    severity="INFO",
-                    metadata={
-                        "maxSearchDocuments": policy.max_search_documents,
-                        "maxCandidatesPerProvider": policy.max_candidates_per_provider,
-                    },
-                )
-            )
-        if policy.enable_search_diagnostics and documents and not all_candidates:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="SEARCH_MATCHES_BELOW_THRESHOLD",
-                    message="Search inspected current graph facts, but deterministic matches did not clear ranking thresholds.",
-                    severity="INFO",
-                )
-            )
-        if policy.enable_search_diagnostics and len(display_candidates) < len(all_candidates):
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="MATCHED_NODE_PREVIEW_LIMITED",
-                    message="Matched node preview is limited for response size; graph processing used the full candidate set.",
-                    severity="INFO",
-                    metadata={"displayed": len(display_candidates), "internalCandidates": len(all_candidates)},
-                )
-            )
-        return CandidateRetrievalResult(
-            pools=pools,
-            all_candidates=all_candidates,
-            display_candidates=display_candidates,
-            diagnostics=diagnostics,
-            truncated=truncated,
-        )
-
-    def _filter_plan_candidates(
+    def select(
         self,
         candidates: Sequence[MergedCandidate],
-        plan: QueryRetrievalPlan,
         policy: KnowledgeQueryPolicy,
-    ) -> List[MergedCandidate]:
-        ranked = list(candidates)
-        if not ranked:
+        *,
+        preserve_candidates: Sequence[MergedCandidate] = (),
+    ) -> list[MergedCandidate]:
+        budget = max(1, int(policy.max_selected_anchors or 1))
+        eligible = self.usable_candidates(candidates, policy)
+        if not eligible:
             return []
-        ranked = [
-            candidate
-            for candidate in ranked
-            if not self._is_expansion_only_candidate(candidate)
-        ]
-        if not ranked:
-            return []
-        if plan.code_identifiers:
-            exact_identifier = [
-                candidate
-                for candidate in ranked
-                if self._is_precise_identifier_candidate(candidate)
-            ]
-            if exact_identifier:
-                callable_exact = [candidate for candidate in exact_identifier if self._node_kind(candidate.document.node_kind) == "CALLABLE"]
-                if callable_exact:
-                    exact_identifier = callable_exact
-                top_exact = max(candidate.score for candidate in exact_identifier)
-                threshold = max(policy.exact_identifier_min_score, top_exact - policy.exact_identifier_top_delta)
-                return [candidate for candidate in exact_identifier if candidate.score >= threshold] or exact_identifier
 
-        callable_ranked = [candidate for candidate in ranked if self._node_kind(candidate.document.node_kind) == "CALLABLE"]
-        if callable_ranked:
-            top_callable_score = max(candidate.score for candidate in callable_ranked)
-            ranked = [
-                candidate
-                for candidate in ranked
-                if self._node_kind(candidate.document.node_kind) == "CALLABLE"
-                or candidate.score > top_callable_score
+        by_key = {self._candidate_key(candidate): candidate for candidate in eligible}
+        preserved_keys = [self._candidate_key(candidate) for candidate in preserve_candidates if self._candidate_key(candidate) in by_key]
+        selected: list[MergedCandidate] = []
+        selected_keys: set[tuple[str, str, str]] = set()
+        source_counts: Counter[str] = Counter()
+        selected_query_inputs: set[str] = set()
+
+        for key in preserved_keys:
+            if key in selected_keys or len(selected) >= budget:
+                continue
+            candidate = by_key[key]
+            self._append_selected(candidate, selected, selected_keys, source_counts, selected_query_inputs)
+
+        while len(selected) < budget:
+            remaining = [candidate for candidate in eligible if self._candidate_key(candidate) not in selected_keys]
+            if not remaining:
+                break
+            scored = [
+                (
+                    self._marginal_quality(candidate, source_counts, selected_query_inputs),
+                    self._quality(candidate),
+                    candidate,
+                )
+                for candidate in remaining
             ]
-        top_score = max(candidate.score for candidate in ranked)
-        threshold = max(policy.plan_candidate_min_score, top_score - policy.plan_candidate_top_delta)
-        return [
+            scored.sort(key=lambda item: (-round(item[0], 6), -round(item[1], 6), self._candidate_sort_key(item[2])))
+            best_marginal, _quality, best = scored[0]
+            if best_marginal < max(0.0, policy.plan_candidate_min_score - 0.12):
+                break
+            self._append_selected(best, selected, selected_keys, source_counts, selected_query_inputs)
+        return selected
+
+    def usable_candidates(self, candidates: Sequence[MergedCandidate], policy: KnowledgeQueryPolicy) -> list[MergedCandidate]:
+        usable = [
             candidate
-            for candidate in ranked
-            if candidate.score >= threshold
+            for candidate in candidates
+            if not self._is_expansion_only_candidate(candidate)
+            and self._quality(candidate) >= self._minimum_quality(candidate, policy)
         ]
+        return sorted(usable, key=lambda candidate: (-round(self._quality(candidate), 6), self._candidate_sort_key(candidate)))
+
+    def _append_selected(
+        self,
+        candidate: MergedCandidate,
+        selected: list[MergedCandidate],
+        selected_keys: set[tuple[str, str, str]],
+        source_counts: Counter[str],
+        selected_query_inputs: set[str],
+    ) -> None:
+        selected.append(candidate)
+        selected_keys.add(self._candidate_key(candidate))
+        source_counts[candidate.document.source_id] += 1
+        selected_query_inputs.update(candidate.query_inputs)
+
+    def _minimum_quality(self, candidate: MergedCandidate, policy: KnowledgeQueryPolicy) -> float:
+        if self._is_precise_identifier_candidate(candidate):
+            return min(policy.exact_identifier_min_score, 0.72)
+        return max(0.0, float(policy.plan_candidate_min_score or 0.0))
+
+    def _marginal_quality(
+        self,
+        candidate: MergedCandidate,
+        source_counts: Counter[str],
+        selected_query_inputs: set[str],
+    ) -> float:
+        quality = self._quality(candidate)
+        quality -= min(0.14, 0.045 * source_counts[candidate.document.source_id])
+        if set(candidate.query_inputs).difference(selected_query_inputs):
+            quality += 0.015
+        if RetrievalPhase.FALLBACK.value in candidate.retrieval_phases and RetrievalPhase.PRIMARY.value not in candidate.retrieval_phases:
+            quality -= 0.015
+        return quality
+
+    def _quality(self, candidate: MergedCandidate) -> float:
+        score = float(candidate.score or 0.0)
+        if self._is_precise_identifier_candidate(candidate):
+            score += 0.055
+        elif any(reason.startswith("EXACT") and reason != "EXACT_KIND" for reason in candidate.reasons):
+            score += 0.035
+        score += min(0.04, 0.01 * max(0, len(candidate.providers) - 1))
+        score += min(0.025, 0.006 * max(0, len(set(candidate.query_inputs)) - 1))
+        if str(candidate.confidence or "").upper() == "HIGH":
+            score += 0.01
+        return min(1.2, score)
 
     def _is_expansion_only_candidate(self, candidate: MergedCandidate) -> bool:
         reasons = set(candidate.reasons)
@@ -435,17 +392,196 @@ class UnifiedAnchorSearcher:
         reasons = set(candidate.reasons)
         if "QUERY_EXACT_IDENTIFIER" not in reasons:
             return False
-        return any(
-            (reason.startswith("EXACT") and reason != "EXACT_KIND")
-            or reason in _PRECISE_IDENTIFIER_REASONS
-            for reason in reasons
+        return any((reason.startswith("EXACT") and reason != "EXACT_KIND") or reason in _PRECISE_IDENTIFIER_REASONS for reason in reasons)
+
+    def _candidate_key(self, candidate: MergedCandidate) -> tuple[str, str, str]:
+        return (
+            candidate.document.source_id,
+            candidate.document.graph_revision or candidate.document.graph_id or "",
+            candidate.document.node_id,
         )
 
-    def _node_kind(self, value: str) -> str:
-        return str(value or "").upper()
+    def _candidate_sort_key(self, candidate: MergedCandidate) -> tuple[str, str, str, str, str]:
+        return (
+            candidate.document.source_id,
+            candidate.document.graph_revision or candidate.document.graph_id or "",
+            candidate.document.node_kind,
+            (candidate.document.label or candidate.document.name or "").lower(),
+            candidate.document.node_id,
+        )
 
-    def _annotated_candidates(self, candidates: Sequence[SearchCandidate], query_reason: str) -> List[SearchCandidate]:
-        result: List[SearchCandidate] = []
+
+class UnifiedAnchorSearcher:
+    def __init__(
+        self,
+        graph_store: Any,
+        search_engine: DeterministicCodeSearchEngine | None = None,
+        selector: SourceDiverseAnchorSelector | None = None,
+    ) -> None:
+        self.graph_store = graph_store
+        self.search_engine = search_engine or DeterministicCodeSearchEngine()
+        self.normalizer = QueryNormalizer()
+        self.candidate_merger = CandidateMerger()
+        self.selector = selector or SourceDiverseAnchorSelector()
+
+    def search(
+        self,
+        query: str,
+        eligible_sources: Sequence[QuerySource],
+        policy: KnowledgeQueryPolicy,
+        include_tests: bool = False,
+    ) -> CandidateRetrievalResult:
+        return self.search_scope(
+            (("ORIGINAL_QUERY", query),),
+            RetrievalScope.primary(eligible_sources),
+            policy,
+            include_tests=include_tests,
+        )
+
+    def search_plan(
+        self,
+        plan: QueryRetrievalPlan,
+        eligible_sources: Sequence[QuerySource],
+        policy: KnowledgeQueryPolicy,
+        include_tests: bool = False,
+        scope: RetrievalScope | None = None,
+    ) -> CandidateRetrievalResult:
+        return self.search_scope(
+            self._plan_query_inputs(plan),
+            scope or RetrievalScope.primary(eligible_sources),
+            policy,
+            include_tests=include_tests,
+        )
+
+    def search_scope(
+        self,
+        query_inputs: Sequence[tuple[str, str]],
+        scope: RetrievalScope,
+        policy: KnowledgeQueryPolicy,
+        *,
+        include_tests: bool = False,
+    ) -> CandidateRetrievalResult:
+        query_inputs = tuple((str(reason or ""), str(value or "")) for reason, value in query_inputs if str(value or "").strip())
+        combined_tokens = self.normalizer.normalize(" ".join(value for _reason, value in query_inputs)).tokens
+        if not combined_tokens or not scope.primary_sources:
+            return self._empty_result()
+
+        primary = self._run_phase(RetrievalPhase.PRIMARY, scope.primary_sources, query_inputs, combined_tokens, policy, include_tests)
+        outputs = [primary]
+        selected_primary = self.selector.select(primary.merged_candidates, policy)
+        all_raw_candidates = list(primary.raw_candidates)
+        final_merged_candidates = list(primary.merged_candidates)
+
+        if scope.fallback_sources and len(selected_primary) < max(1, int(policy.fallback_anchor_trigger_count or 1)):
+            fallback = self._run_phase(RetrievalPhase.FALLBACK, scope.fallback_sources, query_inputs, combined_tokens, policy, include_tests)
+            outputs.append(fallback)
+            all_raw_candidates.extend(fallback.raw_candidates)
+            final_merged_candidates = self.candidate_merger.merge(all_raw_candidates) if all_raw_candidates else []
+            selected_candidates = self.selector.select(final_merged_candidates, policy, preserve_candidates=selected_primary)
+        else:
+            selected_candidates = selected_primary
+
+        display_limit = max(1, int(policy.max_display_candidates or 1))
+        all_candidates = [self._matched_node(candidate) for candidate in selected_candidates]
+        display_candidates = all_candidates[:display_limit]
+        usable_count = len(self.selector.usable_candidates(final_merged_candidates, policy))
+        candidate_budget_reached = usable_count > len(selected_candidates) and len(selected_candidates) >= max(1, int(policy.max_selected_anchors or 1))
+        truncated = any(output.document_truncated or output.candidate_limit_reached for output in outputs) or candidate_budget_reached
+        diagnostics = self._collect_diagnostics(
+            outputs,
+            scope,
+            final_merged_candidates,
+            selected_candidates,
+            usable_count,
+            candidate_budget_reached,
+            policy,
+        )
+        if policy.enable_search_diagnostics and any(output.document_stats for output in outputs) and not all_candidates:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="SEARCH_MATCHES_BELOW_THRESHOLD",
+                    message="Search inspected current graph facts, but matches did not clear source-diverse anchor thresholds.",
+                    severity="INFO",
+                )
+            )
+        if policy.enable_search_diagnostics and len(display_candidates) < len(all_candidates):
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="MATCHED_NODE_PREVIEW_LIMITED",
+                    message="Matched node preview is limited for response size; graph processing used the full candidate set.",
+                    severity="INFO",
+                    metadata={"displayed": len(display_candidates), "internalCandidates": len(all_candidates)},
+                )
+            )
+        return CandidateRetrievalResult(
+            pools=self._candidate_pools(all_raw_candidates),
+            all_candidates=all_candidates,
+            display_candidates=display_candidates,
+            diagnostics=diagnostics,
+            truncated=truncated,
+        )
+
+    def _run_phase(
+        self,
+        phase: RetrievalPhase,
+        sources: Sequence[QuerySource],
+        query_inputs: Sequence[tuple[str, str]],
+        combined_tokens: Sequence[str],
+        policy: KnowledgeQueryPolicy,
+        include_tests: bool,
+    ) -> PhaseRetrievalOutput:
+        loaded = self._load_search_documents(combined_tokens, sources, policy, include_tests, phase)
+        config = self._search_config(policy, sources, include_tests)
+        raw_candidates: list[SearchCandidate] = []
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
+        candidate_limit_reached = False
+        for query_reason, query_value in query_inputs:
+            result = self.search_engine.search(query_value, loaded.documents, config)
+            candidate_limit_reached = candidate_limit_reached or bool(getattr(result, "candidate_limit_reached", False))
+            for item in result.diagnostics:
+                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+                diagnostics.append(
+                    self._search_diagnostic(
+                        {
+                            **item,
+                            "metadata": {
+                                **metadata,
+                                "queryReason": query_reason,
+                                "queryInput": query_value,
+                                "retrievalPhase": phase.value,
+                            },
+                        }
+                    )
+                )
+            raw_candidates.extend(self._annotated_candidates(getattr(result, "raw_candidates", []) or [], query_reason, query_value, phase))
+        merged = self.candidate_merger.merge(raw_candidates) if raw_candidates else []
+        return PhaseRetrievalOutput(
+            phase=phase,
+            raw_candidates=raw_candidates,
+            merged_candidates=merged,
+            diagnostics=diagnostics,
+            document_stats=loaded.stats,
+            document_truncated=loaded.truncated,
+            candidate_limit_reached=candidate_limit_reached,
+        )
+
+    def _plan_query_inputs(self, plan: QueryRetrievalPlan) -> tuple[tuple[str, str], ...]:
+        original_query = str(plan.original_query or "")
+        inputs: list[tuple[str, str]] = []
+        for query_reason, query_value in plan.query_inputs():
+            if query_reason == "CODE_IDENTIFIER" and str(query_value or "") not in original_query:
+                continue
+            inputs.append((query_reason, query_value))
+        return tuple(inputs)
+
+    def _annotated_candidates(
+        self,
+        candidates: Sequence[SearchCandidate],
+        query_reason: str,
+        query_input: str,
+        phase: RetrievalPhase,
+    ) -> list[SearchCandidate]:
+        result: list[SearchCandidate] = []
         marker_reason = {
             "ORIGINAL_QUERY": "QUERY_ORIGINAL",
             "NORMALIZED_QUERY": "QUERY_NORMALIZED",
@@ -462,7 +598,14 @@ class UnifiedAnchorSearcher:
         for candidate in candidates:
             adjusted_score = min(1.0, float(candidate.score) + score_bonus)
             adjusted_priority = max(1, int(candidate.priority) + priority_bonus)
-            adjusted = replace(candidate, score=adjusted_score, priority=adjusted_priority)
+            metadata = {
+                **dict(candidate.metadata or {}),
+                "queryReason": query_reason,
+                "queryInput": query_input,
+                "retrievalPhase": phase.value,
+                "providerScore": round(float(candidate.score), 6),
+            }
+            adjusted = replace(candidate, score=adjusted_score, priority=adjusted_priority, metadata=metadata)
             result.append(adjusted)
             result.append(
                 SearchCandidate(
@@ -472,6 +615,7 @@ class UnifiedAnchorSearcher:
                     score=adjusted_score,
                     confidence=candidate.confidence,
                     priority=adjusted_priority,
+                    metadata=metadata,
                 )
             )
         return result
@@ -494,28 +638,8 @@ class UnifiedAnchorSearcher:
             pools[kind] = [self._matched_node(candidate) for candidate in self.candidate_merger.merge(pool_candidates)]
         return pools
 
-    def _all_candidates(self, candidates: Sequence[SearchCandidate]) -> List[KnowledgeQueryMatchedNode]:
-        return [self._matched_node(candidate) for candidate in self.candidate_merger.merge(candidates)] if candidates else []
-
-    def _fallback_candidate_pools(self, candidates: Sequence[MergedCandidate]) -> Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]]:
-        pools: Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]] = {kind: [] for kind in CandidatePoolKind}
-        for candidate in candidates:
-            matched_node = self._matched_node(candidate)
-            for kind in self._candidate_pool_kinds(candidate):
-                pools[kind].append(matched_node)
-        return pools
-
     def _matched_node(self, candidate: MergedCandidate) -> KnowledgeQueryMatchedNode:
         return KnowledgeQueryMatchedNode(**candidate.document.to_matched_node_dict(candidate.score, candidate.reasons))
-
-    def _candidate_pool_kinds(self, candidate: MergedCandidate) -> List[CandidatePoolKind]:
-        kinds: set[CandidatePoolKind] = set()
-        for provider in candidate.providers:
-            kinds.add(self._candidate_pool_kind(provider, ""))
-        for reason in candidate.reasons:
-            kinds.add(self._candidate_pool_kind("", reason))
-        ordered = {kind: index for index, kind in enumerate(CandidatePoolKind)}
-        return sorted(kinds or {CandidatePoolKind.EXACT}, key=lambda kind: ordered[kind])
 
     def _candidate_pool_kind(self, provider: str, reason: str) -> CandidatePoolKind:
         provider_name = str(provider or "")
@@ -557,25 +681,240 @@ class UnifiedAnchorSearcher:
             metadata=dict(metadata),
         )
 
+    def _collect_diagnostics(
+        self,
+        outputs: Sequence[PhaseRetrievalOutput],
+        scope: RetrievalScope,
+        merged_candidates: Sequence[MergedCandidate],
+        selected_candidates: Sequence[MergedCandidate],
+        usable_candidate_count: int,
+        candidate_budget_reached: bool,
+        policy: KnowledgeQueryPolicy,
+    ) -> list[KnowledgeQueryDiagnostic]:
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
+        for output in outputs:
+            diagnostics.extend(output.diagnostics)
+        if not policy.enable_search_diagnostics:
+            return diagnostics
+        any_limit_reached = any(output.document_truncated or output.candidate_limit_reached for output in outputs) or candidate_budget_reached
+        if any_limit_reached:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="SEARCH_CANDIDATE_LIMIT_REACHED",
+                    message="Search reached a bounded retrieval limit before all candidates could be retained.",
+                    severity="INFO",
+                    metadata={
+                        "maxSearchDocuments": policy.max_search_documents,
+                        "maxCandidatesPerProvider": policy.max_candidates_per_provider,
+                        "maxSelectedAnchors": policy.max_selected_anchors,
+                    },
+                )
+            )
+        diagnostics.append(
+            KnowledgeQueryDiagnostic(
+                code="SOURCE_DIVERSE_RETRIEVAL_DIAGNOSTICS",
+                message="Source-diverse anchor retrieval diagnostics.",
+                severity="INFO",
+                metadata=self._retrieval_diagnostic_metadata(
+                    outputs,
+                    scope,
+                    merged_candidates,
+                    selected_candidates,
+                    usable_candidate_count,
+                    candidate_budget_reached,
+                ),
+            )
+        )
+        return diagnostics
+
+    def _retrieval_diagnostic_metadata(
+        self,
+        outputs: Sequence[PhaseRetrievalOutput],
+        scope: RetrievalScope,
+        merged_candidates: Sequence[MergedCandidate],
+        selected_candidates: Sequence[MergedCandidate],
+        usable_candidate_count: int,
+        candidate_budget_reached: bool,
+    ) -> dict[str, Any]:
+        document_stats = [stats for output in outputs for stats in output.document_stats]
+        raw_by_provider_source: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        primary_raw_count = 0
+        fallback_raw_count = 0
+        for output in outputs:
+            for candidate in output.raw_candidates:
+                raw_by_provider_source[candidate.provider][candidate.document.source_id] += 1
+            if output.phase == RetrievalPhase.PRIMARY:
+                primary_raw_count += len(output.raw_candidates)
+            elif output.phase == RetrievalPhase.FALLBACK:
+                fallback_raw_count += len(output.raw_candidates)
+        merged_by_source = Counter(candidate.document.source_id for candidate in merged_candidates)
+        selected_by_source = Counter(candidate.document.source_id for candidate in selected_candidates)
+        documents_by_source = {
+            stats.source_id: {
+                "phase": stats.phase.value,
+                "eligible": stats.eligible_document_count,
+                "allocated": stats.allocated_document_count,
+                "inspected": stats.inspected_document_count,
+                "truncated": stats.truncated_document_count,
+                "starved": stats.starved,
+            }
+            for stats in sorted(document_stats, key=lambda item: (item.phase.value, item.source_id))
+        }
+        return {
+            "eligiblePrimarySourceCount": len(scope.primary_sources),
+            "eligibleFallbackSourceCount": len(scope.fallback_sources),
+            "documentsInspectedBySource": {source_id: value["inspected"] for source_id, value in documents_by_source.items()},
+            "documentsTruncatedBySource": {
+                source_id: value["truncated"]
+                for source_id, value in documents_by_source.items()
+                if int(value["truncated"] or 0) > 0
+            },
+            "documentStatsBySource": documents_by_source,
+            "rawCandidatesByProviderAndSource": {
+                provider: dict(sorted(source_counts.items()))
+                for provider, source_counts in sorted(raw_by_provider_source.items())
+            },
+            "mergedCandidatesBySource": dict(sorted(merged_by_source.items())),
+            "selectedAnchorsBySource": dict(sorted(selected_by_source.items())),
+            "primaryCandidateCount": primary_raw_count,
+            "fallbackCandidateCount": fallback_raw_count,
+            "usableCandidateCount": usable_candidate_count,
+            "candidateBudgetReached": candidate_budget_reached,
+            "sourcesStarved": sorted(stats.source_id for stats in document_stats if stats.starved),
+        }
+
     def _load_search_documents(
         self,
         tokens: Sequence[str],
         eligible_sources: Sequence[QuerySource],
         policy: KnowledgeQueryPolicy,
-    ) -> tuple[List[Dict[str, Any]], bool]:
-        source_ids = [source.source_id for source in eligible_sources]
+        include_tests: bool,
+        phase: RetrievalPhase,
+    ) -> SourceDocumentLoadResult:
+        source_ids = [source.source_id for source in eligible_sources if source.source_id]
+        if not source_ids:
+            return SourceDocumentLoadResult(documents=[], stats=(), truncated=False)
         total_limit = max(1, int(policy.max_search_documents or 1))
+        counts = self._search_document_counts(source_ids, eligible_sources, include_tests)
+        allocations = self._allocate_source_document_limits(counts, total_limit)
+        expected_revision_by_source = {
+            source.source_id: source.graph_revision or source.graph_id
+            for source in eligible_sources
+            if source.source_id and (source.graph_revision or source.graph_id)
+        }
+        documents: list[SearchDocument] = []
+        stats: list[SourceDocumentLoadStats] = []
+        for source in sorted(eligible_sources, key=lambda item: (counts.get(item.source_id, 0), item.source_id)):
+            source_id = source.source_id
+            eligible_count = max(0, int(counts.get(source_id, 0)))
+            allocation = max(0, int(allocations.get(source_id, 0)))
+            raw_documents = self._query_search_documents(source_id, tokens, allocation, include_tests) if allocation > 0 else []
+            source_documents: list[SearchDocument] = []
+            for raw_document in raw_documents:
+                if not raw_document.get("sourceId") and not raw_document.get("source_id"):
+                    continue
+                document = SearchDocument.from_graph_node(raw_document)
+                if not include_tests and document.flow_domain.upper() == "TEST":
+                    continue
+                expected_revision = expected_revision_by_source.get(document.source_id)
+                actual_revision = document.graph_revision or document.graph_id
+                if expected_revision and actual_revision and actual_revision != expected_revision:
+                    continue
+                source_documents.append(document)
+            documents.extend(source_documents)
+            inspected = len(source_documents)
+            truncated_count = max(0, eligible_count - inspected)
+            stats.append(
+                SourceDocumentLoadStats(
+                    phase=phase,
+                    source_id=source_id,
+                    eligible_document_count=eligible_count,
+                    allocated_document_count=allocation,
+                    inspected_document_count=inspected,
+                    truncated_document_count=truncated_count,
+                    starved=allocation <= 0 and eligible_count > 0,
+                )
+            )
+        documents.sort(key=lambda item: (item.source_id, item.node_kind, (item.label or item.name or "").lower(), item.node_id))
+        return SourceDocumentLoadResult(
+            documents=documents,
+            stats=tuple(stats),
+            truncated=any(item.truncated_document_count > 0 or item.starved for item in stats),
+        )
+
+    def _search_document_counts(
+        self,
+        source_ids: Sequence[str],
+        eligible_sources: Sequence[QuerySource],
+        include_tests: bool,
+    ) -> dict[str, int]:
+        if hasattr(self.graph_store, "query_search_document_counts"):
+            try:
+                raw_counts = self.graph_store.query_search_document_counts(list(source_ids), include_tests=include_tests)
+            except TypeError:
+                raw_counts = self.graph_store.query_search_document_counts(list(source_ids))
+            return {str(source_id): max(0, int(raw_counts.get(source_id, 0))) for source_id in source_ids}
+        return {
+            source.source_id: max(0, int(source.node_count or 0))
+            for source in eligible_sources
+            if source.source_id in set(source_ids)
+        }
+
+    def _allocate_source_document_limits(self, counts: Mapping[str, int], total_limit: int) -> dict[str, int]:
+        positive_counts = {str(source_id): max(0, int(count or 0)) for source_id, count in counts.items() if int(count or 0) > 0}
+        allocations = {str(source_id): 0 for source_id in counts}
+        if not positive_counts:
+            return allocations
+        remaining_budget = min(max(1, int(total_limit or 1)), sum(positive_counts.values()))
+        active = set(positive_counts)
+        while active and remaining_budget > 0:
+            share = max(1, remaining_budget // len(active))
+            progressed = False
+            for source_id in sorted(active, key=lambda value: (positive_counts[value] - allocations[value], value)):
+                need = positive_counts[source_id] - allocations[source_id]
+                amount = min(share, need, remaining_budget)
+                if amount <= 0:
+                    continue
+                allocations[source_id] += amount
+                remaining_budget -= amount
+                progressed = True
+                if remaining_budget <= 0:
+                    break
+            active = {source_id for source_id in active if allocations[source_id] < positive_counts[source_id]}
+            if not progressed:
+                break
+        while active and remaining_budget > 0:
+            for source_id in sorted(active, key=lambda value: (-(positive_counts[value] - allocations[value]), value)):
+                if remaining_budget <= 0:
+                    break
+                if allocations[source_id] >= positive_counts[source_id]:
+                    continue
+                allocations[source_id] += 1
+                remaining_budget -= 1
+            active = {source_id for source_id in active if allocations[source_id] < positive_counts[source_id]}
+        return allocations
+
+    def _query_search_documents(
+        self,
+        source_id: str,
+        tokens: Sequence[str],
+        allocation: int,
+        include_tests: bool,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(0, int(allocation or 0))
+        if safe_limit <= 0:
+            return []
         if hasattr(self.graph_store, "query_search_documents"):
-            raw_documents = list(self.graph_store.query_search_documents(source_ids, total_limit + 1))
-            truncated = len(raw_documents) > total_limit
-            if truncated:
-                raw_documents = raw_documents[:total_limit]
-        else:
-            raw_documents = list(self.graph_store.query_anchor_candidates(list(tokens), source_ids, total_limit + 1))
-            truncated = len(raw_documents) > total_limit
-            if truncated:
-                raw_documents = raw_documents[:total_limit]
-        return raw_documents, truncated
+            try:
+                return list(self.graph_store.query_search_documents([source_id], safe_limit, include_tests=include_tests))
+            except TypeError:
+                return list(self.graph_store.query_search_documents([source_id], safe_limit))
+        if hasattr(self.graph_store, "query_anchor_candidates"):
+            try:
+                return list(self.graph_store.query_anchor_candidates(list(tokens), [source_id], safe_limit, include_tests=include_tests))
+            except TypeError:
+                return list(self.graph_store.query_anchor_candidates(list(tokens), [source_id], safe_limit))
+        return []
 
     def _search_config(self, policy: KnowledgeQueryPolicy, eligible_sources: Sequence[QuerySource], include_tests: bool) -> SearchConfig:
         return SearchConfig(

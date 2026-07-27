@@ -2166,7 +2166,31 @@ class AnalysisStore:
             for row in rows
         ]
 
-    def query_search_documents(self, source_ids: List[str], limit: int) -> List[Dict[str, Any]]:
+    def query_search_document_counts(self, source_ids: list[str], include_tests: bool = True) -> dict[str, int]:
+        self.init()
+        if not source_ids:
+            return {}
+        source_placeholders = ",".join("?" for _ in source_ids)
+        current_status_sql, current_status_params = sql_in_clause(graph_query_contract().statuses_for_current_graph())
+        flow_domain_sql = self._inventory_flow_domain_sql("n")
+        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT n.source_id, COUNT(*) AS document_count
+                FROM analysis_graph_nodes n
+                WHERE n.source_id IN ({source_placeholders})
+                  AND n.status IN ({current_status_sql})
+                  AND {self._inventory_membership_graph_node_clause("n")}
+                  AND (? OR UPPER(COALESCE(({flow_domain_sql}), '')) != 'TEST')
+                GROUP BY n.source_id
+                """,
+                [*source_ids, *current_status_params, 1 if include_tests else 0],
+            ).fetchall()
+        counts = {str(source_id): 0 for source_id in source_ids if str(source_id or "")}
+        counts.update({str(row["source_id"]): int(row["document_count"] or 0) for row in rows})
+        return counts
+
+    def query_search_documents(self, source_ids: list[str], limit: int, include_tests: bool = True) -> list[dict[str, Any]]:
         self.init()
         if not source_ids:
             return []
@@ -2175,6 +2199,7 @@ class AnalysisStore:
         contract = graph_query_contract()
         claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_responsibility_summary())
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        flow_domain_sql = self._inventory_flow_domain_sql("n")
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             rows = conn.execute(
                 f"""
@@ -2255,6 +2280,7 @@ class AnalysisStore:
                 WHERE n.source_id IN ({source_placeholders})
                   AND n.status IN ({entry_status_sql})
                   AND {self._inventory_membership_graph_node_clause("n")}
+                  AND (? OR UPPER(COALESCE(({flow_domain_sql}), '')) != 'TEST')
                 ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
                 """,
@@ -2269,6 +2295,7 @@ class AnalysisStore:
                     contract.external_target_status,
                     *source_ids,
                     *entry_status_params,
+                    1 if include_tests else 0,
                     safe_limit,
                 ],
             ).fetchall()
@@ -2436,7 +2463,7 @@ class AnalysisStore:
             documents.append(projected)
         return documents
 
-    def query_anchor_candidates(self, tokens: List[str], source_ids: List[str], limit: int) -> List[Dict[str, Any]]:
+    def query_anchor_candidates(self, tokens: list[str], source_ids: list[str], limit: int, include_tests: bool = True) -> list[dict[str, Any]]:
         self.init()
         if not tokens or not source_ids:
             return []
@@ -2445,6 +2472,7 @@ class AnalysisStore:
         contract = graph_query_contract()
         claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_responsibility_summary())
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        flow_domain_sql = self._inventory_flow_domain_sql("n")
         token_clauses: List[str] = []
         token_params: List[Any] = []
         for token in tokens[:12]:
@@ -2542,6 +2570,7 @@ class AnalysisStore:
                  AND external_target.node_id = n.id
                 WHERE n.source_id IN ({source_placeholders})
                   AND {self._inventory_membership_graph_node_clause("n")}
+                  AND (? OR UPPER(COALESCE(({flow_domain_sql}), '')) != 'TEST')
                   AND ({" OR ".join(token_clauses)})
                 ORDER BY n.confidence DESC, graph_degree DESC, n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
@@ -2554,6 +2583,7 @@ class AnalysisStore:
                     *entry_status_params,
                     contract.external_target_status,
                     *source_ids,
+                    1 if include_tests else 0,
                     *token_params,
                     safe_limit,
                 ],

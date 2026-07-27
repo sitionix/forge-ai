@@ -398,6 +398,9 @@ class MergedCandidate:
     priority: int
     reasons: List[str] = field(default_factory=list)
     providers: List[str] = field(default_factory=list)
+    retrieval_phases: list[str] = field(default_factory=list)
+    query_inputs: list[str] = field(default_factory=list)
+    contributions: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -738,10 +741,14 @@ _REASON_ALIASES = {
 
 
 class CandidateMerger:
-    def merge(self, candidates: Sequence[SearchCandidate]) -> List[MergedCandidate]:
-        merged: Dict[Tuple[str, str], MergedCandidate] = {}
+    def merge(self, candidates: Sequence[SearchCandidate]) -> list[MergedCandidate]:
+        merged: dict[tuple[str, str, str], MergedCandidate] = {}
         for candidate in candidates:
-            key = (candidate.document.source_id, candidate.document.node_id)
+            key = (
+                candidate.document.source_id,
+                candidate.document.graph_revision or candidate.document.graph_id or "",
+                candidate.document.node_id,
+            )
             current = merged.get(key)
             if current is None:
                 current = MergedCandidate(
@@ -761,6 +768,25 @@ class CandidateMerger:
             alias = _REASON_ALIASES.get(candidate.reason)
             if alias:
                 _append_reason(current.reasons, alias)
+            metadata = dict(candidate.metadata or {})
+            phase = str(metadata.get("retrievalPhase") or "")
+            query_input = str(metadata.get("queryInput") or "")
+            if phase:
+                _append_unique(current.retrieval_phases, phase)
+            if query_input:
+                _append_unique(current.query_inputs, query_input)
+            current.contributions.append(
+                {
+                    "provider": candidate.provider,
+                    "reason": candidate.reason,
+                    "score": round(float(candidate.score), 6),
+                    "sourceId": candidate.document.source_id,
+                    "graphRevision": candidate.document.graph_revision or candidate.document.graph_id or None,
+                    "queryReason": metadata.get("queryReason"),
+                    "queryInput": metadata.get("queryInput"),
+                    "retrievalPhase": metadata.get("retrievalPhase"),
+                }
+            )
 
         for item in merged.values():
             provider_bonus = min(0.035, 0.012 * max(0, len(item.providers) - 1))
@@ -769,6 +795,18 @@ class CandidateMerger:
             item.score = min(1.0, item.score + provider_bonus + reason_bonus + graph_bonus)
             item.reasons.sort(key=lambda value: (0 if value.startswith("EXACT") else 1, value))
             item.providers.sort()
+            item.retrieval_phases.sort()
+            item.query_inputs.sort()
+            item.contributions.sort(
+                key=lambda value: (
+                    str(value.get("retrievalPhase") or ""),
+                    str(value.get("queryReason") or ""),
+                    str(value.get("queryInput") or ""),
+                    str(value.get("provider") or ""),
+                    str(value.get("reason") or ""),
+                    -float(value.get("score") or 0.0),
+                )
+            )
         return sorted(merged.values(), key=self.sort_key)
 
     def sort_key(self, candidate: MergedCandidate) -> Tuple[float, int, str, str, str, str]:
@@ -839,11 +877,10 @@ class DeterministicCodeSearchEngine:
         diagnostics.extend(precise_candidates.diagnostics)
         candidate_limit_reached = candidate_limit_reached or precise_candidates.limit_reached
 
-        if not self._has_definitive_precise_match(query, precise_candidates.candidates):
-            broad_candidates = self._run_providers(self.broad_providers, query, documents, config)
-            all_candidates.extend(broad_candidates.candidates)
-            diagnostics.extend(broad_candidates.diagnostics)
-            candidate_limit_reached = candidate_limit_reached or broad_candidates.limit_reached
+        broad_candidates = self._run_providers(self.broad_providers, query, documents, config)
+        all_candidates.extend(broad_candidates.candidates)
+        diagnostics.extend(broad_candidates.diagnostics)
+        candidate_limit_reached = candidate_limit_reached or broad_candidates.limit_reached
 
         supplemental_candidates = self._run_providers(self.supplemental_providers, query, documents, config)
         all_candidates.extend(supplemental_candidates.candidates)
@@ -879,14 +916,41 @@ class DeterministicCodeSearchEngine:
             candidates.sort(key=lambda candidate: (-candidate.score, candidate.priority, candidate.document.source_id, candidate.document.node_id, candidate.reason))
             if len(candidates) > provider_limit:
                 limit_reached = True
-                candidates = candidates[:provider_limit]
+                candidates = self._bounded_provider_candidates(candidates, provider_limit)
             results.extend(candidates)
         return _ProviderRun(candidates=results, limit_reached=limit_reached, diagnostics=results_diagnostics)
 
-    def _has_definitive_precise_match(self, query: SearchQuery, candidates: Sequence[SearchCandidate]) -> bool:
-        if query.profile in {SearchQueryProfile.HUMAN_TEXT_LIKE, SearchQueryProfile.MIXED}:
-            return False
-        return any(candidate.score >= 0.98 and candidate.priority <= 20 for candidate in candidates)
+    def _bounded_provider_candidates(self, candidates: Sequence[SearchCandidate], limit: int) -> list[SearchCandidate]:
+        remaining_by_source: dict[str, list[SearchCandidate]] = {}
+        for candidate in candidates:
+            remaining_by_source.setdefault(candidate.document.source_id, []).append(candidate)
+        selected: list[SearchCandidate] = []
+        while remaining_by_source and len(selected) < limit:
+            next_round: list[tuple[SearchCandidate, str]] = []
+            for source_id, source_candidates in list(remaining_by_source.items()):
+                if not source_candidates:
+                    remaining_by_source.pop(source_id, None)
+                    continue
+                next_round.append((source_candidates[0], source_id))
+            if not next_round:
+                break
+            next_round.sort(
+                key=lambda item: (
+                    -round(item[0].score, 6),
+                    item[0].priority,
+                    item[0].document.source_id,
+                    item[0].document.node_id,
+                    item[0].reason,
+                )
+            )
+            for candidate, source_id in next_round:
+                if len(selected) >= limit:
+                    break
+                selected.append(candidate)
+                remaining_by_source[source_id] = remaining_by_source[source_id][1:]
+                if not remaining_by_source[source_id]:
+                    remaining_by_source.pop(source_id, None)
+        return selected
 
 
 @dataclass(frozen=True)
