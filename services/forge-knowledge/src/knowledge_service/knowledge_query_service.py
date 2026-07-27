@@ -1956,10 +1956,10 @@ class KnowledgeQueryService:
                         )
                     )
                     continue
-                materialization_status = BoundaryTargetMaterializationStatus.MATERIALIZED
                 retained_target_unit_ids: list[str] = []
                 omitted_target_unit_ids: list[str] = []
-                for index, unit in enumerate(candidate_target_units):
+                target_limit_diagnosed = False
+                for unit in candidate_target_units:
                     if unit.unit_id in visited_units:
                         retained_target_unit_ids.append(unit.unit_id)
                         cycle_count += 1
@@ -1975,24 +1975,31 @@ class KnowledgeQueryService:
                         continue
                     if target_units_materialized >= _MAX_BOUNDARY_TARGET_UNITS:
                         resolver_limit_reached = True
-                        materialization_status = BoundaryTargetMaterializationStatus.PARTIAL
-                        omitted_target_unit_ids.extend(item.unit_id for item in candidate_target_units[index:])
-                        target_units_omitted += len(omitted_target_unit_ids)
-                        partial_target_materialization_count += 1
-                        diagnostics.append(
-                            BoundaryResolutionDiagnostic(
-                                code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
-                                message="Generic boundary resolution reached the internal target-unit limit.",
-                                severity="WARN",
-                                metadata={"targetUnitLimit": _MAX_BOUNDARY_TARGET_UNITS},
+                        omitted_target_unit_ids.append(unit.unit_id)
+                        target_units_omitted += 1
+                        if not target_limit_diagnosed:
+                            target_limit_diagnosed = True
+                            diagnostics.append(
+                                BoundaryResolutionDiagnostic(
+                                    code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
+                                    message="Generic boundary resolution reached the internal target-unit limit.",
+                                    severity="WARN",
+                                    metadata={"targetUnitLimit": _MAX_BOUNDARY_TARGET_UNITS},
+                                )
                             )
-                        )
-                        break
+                        continue
                     visited_units.add(unit.unit_id)
                     local_units_by_id[unit.unit_id] = unit
                     next_units.append(unit)
                     retained_target_unit_ids.append(unit.unit_id)
                     target_units_materialized += 1
+                if omitted_target_unit_ids:
+                    partial_target_materialization_count += 1
+                materialization_status = (
+                    BoundaryTargetMaterializationStatus.PARTIAL
+                    if omitted_target_unit_ids
+                    else BoundaryTargetMaterializationStatus.MATERIALIZED
+                )
                 materialization = self._boundary_target_materialization(
                     link,
                     target_local_unit_ids=retained_target_unit_ids,
@@ -2031,6 +2038,10 @@ class KnowledgeQueryService:
                     known_family_keys.add(key)
                     families.append(family)
             if resolver_limit_reached:
+                resolver_limit_required_identities.update(
+                    boundary_identity(boundary)
+                    for boundary in self._required_boundaries(self._units_with_unvisited_required_boundaries(next_units, visited_required))
+                )
                 break
             pending_units = tuple(sorted(next_units, key=lambda item: item.unit_id))
 
