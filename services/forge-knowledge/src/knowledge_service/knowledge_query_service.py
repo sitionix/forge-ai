@@ -1648,7 +1648,7 @@ class KnowledgeQueryService:
             narrative_plans=narrative_plans,
             raw_flows=raw_flows,
             family_assembly=assembly_result,
-            local_units=continuation_result.local_units or build_result.local_units,
+            local_units=continuation_result.local_units,
             boundary_resolution=continuation_result.boundary_resolution,
         )
 

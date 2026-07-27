@@ -10,7 +10,15 @@ from knowledge_service.anchor_expansion_contract import AnchorExpansionBundle, A
 from knowledge_service.boundary_resolution import BoundaryCandidateLoadResult, BoundaryResolutionStatus, boundary_identity, descriptor_fingerprint
 from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
 from knowledge_service.flow_family import FlowFamilyAssembler
-from knowledge_service.knowledge_query_service import AnchorExpansionService, KnowledgeQueryService, QuerySource
+from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
+from knowledge_service.knowledge_query_service import (
+    AnchorExpansionService,
+    CandidatePoolKind,
+    CandidateRetrievalResult,
+    KnowledgeQueryService,
+    QuerySource,
+)
+from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
 class BoundaryResolvingRepository(FakeFlowRepository):
@@ -57,6 +65,111 @@ def service_for(repo: BoundaryResolvingRepository) -> KnowledgeQueryService:
     return KnowledgeQueryService(None, None, repo, flow_engine=EntrypointFlowEngine(repo))
 
 
+class StaticSourceScopeResolver:
+    def __init__(self, eligible_sources):
+        self.eligible_sources = tuple(eligible_sources)
+
+    def resolve(self):
+        return list(self.eligible_sources), []
+
+
+class StaticAnchorSearcher:
+    def __init__(self, anchors):
+        self.anchors = tuple(anchors)
+
+    def search(self, query, eligible_sources, policy, include_tests=False):
+        return self._result()
+
+    def search_plan(self, plan, eligible_sources, policy, include_tests=False, scope=None):
+        return self._result()
+
+    def _result(self):
+        anchors = list(self.anchors)
+        return CandidateRetrievalResult(
+            pools={kind: [] for kind in CandidatePoolKind},
+            all_candidates=anchors,
+            display_candidates=anchors,
+            diagnostics=[],
+            truncated=False,
+        )
+
+
+class ReorderingFlowEngine:
+    def __init__(self, repo: BoundaryResolvingRepository, *, reverse: bool = False) -> None:
+        self.inner = EntrypointFlowEngine(repo)
+        self.reverse = reverse
+
+    def build(self, anchors, *, max_flows, include_tests, anchor_seed_provenance=()):
+        result = self.inner.build(
+            anchors,
+            max_flows=max_flows,
+            include_tests=include_tests,
+            anchor_seed_provenance=anchor_seed_provenance,
+        )
+        if not self.reverse:
+            return result
+        return replace(result, flows=tuple(reversed(result.flows)), local_units=tuple(reversed(result.local_units)))
+
+    def public_flows(self, flows):
+        return self.inner.public_flows(flows)
+
+
+class ReorderingFamilyAssembler:
+    def __init__(self, *, reverse: bool = False, strip_local_unit_ids: bool = False) -> None:
+        self.inner = FlowFamilyAssembler()
+        self.reverse = reverse
+        self.strip_local_unit_ids = strip_local_unit_ids
+
+    def assemble(self, raw_flows, *, supporting_nodes=None, supporting_relations=()):
+        result = self.inner.assemble(
+            raw_flows,
+            supporting_nodes=supporting_nodes,
+            supporting_relations=supporting_relations,
+        )
+        families = result.families
+        if self.strip_local_unit_ids:
+            families = tuple(replace(family, local_unit_ids=()) for family in families)
+        if self.reverse:
+            families = tuple(reversed(families))
+        return replace(result, families=families)
+
+    def rank(self, families):
+        ranked = self.inner.rank(families)
+        return tuple(reversed(ranked)) if self.reverse else ranked
+
+
+def full_query_service(
+    repo: BoundaryResolvingRepository,
+    anchors,
+    eligible_sources,
+    *,
+    reverse_flow_result: bool = False,
+    family_assembler=None,
+) -> KnowledgeQueryService:
+    service = KnowledgeQueryService(
+        StaticSourceScopeResolver(eligible_sources),
+        StaticAnchorSearcher(anchors),
+        repo,
+        flow_engine=ReorderingFlowEngine(repo, reverse=reverse_flow_result),
+    )
+    if family_assembler is not None:
+        service.family_assembler = family_assembler
+    return service
+
+
+def plan_for_code_identifier(identifier: str) -> QueryRetrievalPlan:
+    return QueryRetrievalPlan(
+        original_query=identifier,
+        normalized_query=identifier,
+        search_queries=(),
+        code_identifiers=(identifier,),
+        concepts=(),
+        effective_intent="FLOW_EXPLANATION",
+        detected_language="und",
+        response_language="en",
+    )
+
+
 class ExpansionStore:
     def __init__(self, bundle: AnchorExpansionBundle) -> None:
         self.bundle = bundle
@@ -81,6 +194,149 @@ def unit_containing(units, node_id: str):
 
 def family_for(families, node_id: str):
     return next(family for family in families if family.entrypoint.node_id == node_id)
+
+
+def test_query_with_flows_all_plan_rejected_families_return_no_local_units():
+    root_a = node("RootA", source="source-a", entrypoint=True)
+    root_b = node("RootB", source="source-a", entrypoint=True)
+    repo = BoundaryResolvingRepository([root_a, root_b], [], boundaries=())
+
+    result = full_query_service(
+        repo,
+        [anchor("RootA", source="source-a"), anchor("RootB", source="source-a")],
+        sources("source-a"),
+    ).query_with_flows(
+        KnowledgeQueryRequest(queryText="RootA RootB"),
+        plan=plan_for_code_identifier("DoesNotExist.handle"),
+    )
+
+    assert result.flows == ()
+    assert result.response.flows == []
+    assert result.local_units == ()
+    assert repo.calls["find_provided_boundary_candidates"] == 0
+
+
+def test_query_with_flows_missing_family_provenance_keeps_empty_local_units_fail_closed():
+    root_a = node("RootA", source="source-a", entrypoint=True)
+    root_b = node("RootB", source="source-a", entrypoint=True)
+    repo = BoundaryResolvingRepository([root_a, root_b], [], boundaries=())
+
+    result = full_query_service(
+        repo,
+        [anchor("RootA", source="source-a"), anchor("RootB", source="source-a")],
+        sources("source-a"),
+        family_assembler=ReorderingFamilyAssembler(strip_local_unit_ids=True),
+    ).query_with_flows(
+        KnowledgeQueryRequest(queryText="RootA"),
+        plan=plan_for_code_identifier("RootA"),
+    )
+
+    assert result.boundary_resolution is not None
+    assert result.boundary_resolution.truncation.active_unit_provenance_missing is True
+    assert any(item.code == "BOUNDARY_ACTIVE_UNIT_PROVENANCE_MISSING" for item in result.response.diagnostics)
+    assert result.response.coverage.truncated is True
+    assert result.response.coverage.continuationAvailable is True
+    assert result.local_units == ()
+    assert repo.calls["find_provided_boundary_candidates"] == 0
+
+
+def test_query_with_flows_selected_unit_continues_without_rejected_initial_unit():
+    selected_root = node("RootA", source="source-a", entrypoint=True)
+    rejected_root = node("RootB", source="source-a", entrypoint=True)
+    target_owner = node("TargetC", source="source-c", entrypoint=True)
+    required_a = boundary(
+        "required-a",
+        selected_root,
+        "REQUIRED",
+        descriptors=(descriptor("required-a-key", "neutral.identity", "c", evidence_items=(node_evidence(selected_root),)),),
+        evidence_items=(node_evidence(selected_root),),
+    )
+    required_b = boundary(
+        "required-b",
+        rejected_root,
+        "REQUIRED",
+        descriptors=(descriptor("required-b-key", "neutral.other", "ignored", evidence_items=(node_evidence(rejected_root),)),),
+        evidence_items=(node_evidence(rejected_root),),
+    )
+    provided_c = boundary(
+        "provided-c",
+        target_owner,
+        "PROVIDED",
+        descriptors=(descriptor("provided-c-key", "neutral.identity", "c", evidence_items=(node_evidence(target_owner),)),),
+        evidence_items=(node_evidence(target_owner),),
+    )
+    repo = BoundaryResolvingRepository([selected_root, rejected_root, target_owner], [], boundaries=[required_a, required_b, provided_c])
+
+    result = full_query_service(
+        repo,
+        [anchor("RootB", source="source-a"), anchor("RootA", source="source-a")],
+        sources("source-a", "source-c"),
+    ).query_with_flows(
+        KnowledgeQueryRequest(queryText="RootA"),
+        plan=plan_for_code_identifier("RootA"),
+    )
+
+    assert result.boundary_resolution is not None
+    assert [item.status for item in result.boundary_resolution.resolutions] == [BoundaryResolutionStatus.PROVEN]
+    assert {node_item.node_id for unit in result.local_units for node_item in unit.execution_nodes} == {"RootA", "TargetC"}
+    assert "RootB" not in {node_item.node_id for unit in result.local_units for node_item in unit.execution_nodes}
+
+
+def test_query_with_flows_reversed_internal_order_preserves_local_units():
+    def execute(*, reverse: bool):
+        selected_root = node("RootA", source="source-a", entrypoint=True)
+        rejected_root = node("RootB", source="source-a", entrypoint=True)
+        target_owner = node("TargetC", source="source-c", entrypoint=True)
+        required_a = boundary(
+            "required-a",
+            selected_root,
+            "REQUIRED",
+            descriptors=(descriptor("required-a-key", "neutral.identity", "c", evidence_items=(node_evidence(selected_root),)),),
+            evidence_items=(node_evidence(selected_root),),
+        )
+        required_b = boundary(
+            "required-b",
+            rejected_root,
+            "REQUIRED",
+            descriptors=(descriptor("required-b-key", "neutral.other", "ignored", evidence_items=(node_evidence(rejected_root),)),),
+            evidence_items=(node_evidence(rejected_root),),
+        )
+        provided_c = boundary(
+            "provided-c",
+            target_owner,
+            "PROVIDED",
+            descriptors=(descriptor("provided-c-key", "neutral.identity", "c", evidence_items=(node_evidence(target_owner),)),),
+            evidence_items=(node_evidence(target_owner),),
+        )
+        repo = BoundaryResolvingRepository([selected_root, rejected_root, target_owner], [], boundaries=[required_a, required_b, provided_c])
+        anchors = [anchor("RootA", source="source-a"), anchor("RootB", source="source-a")]
+        eligible = sources("source-a", "source-c")
+        if reverse:
+            anchors = list(reversed(anchors))
+            eligible = tuple(reversed(eligible))
+        service = full_query_service(
+            repo,
+            anchors,
+            eligible,
+            reverse_flow_result=reverse,
+            family_assembler=ReorderingFamilyAssembler(reverse=reverse),
+        )
+        return service.query_with_flows(
+            KnowledgeQueryRequest(queryText="RootA"),
+            plan=plan_for_code_identifier("RootA"),
+        )
+
+    forward = execute(reverse=False)
+    reversed_order = execute(reverse=True)
+
+    assert [unit.unit_id for unit in forward.local_units] == [unit.unit_id for unit in reversed_order.local_units]
+    assert [
+        tuple(node_item.node_id for node_item in unit.execution_nodes)
+        for unit in forward.local_units
+    ] == [
+        tuple(node_item.node_id for node_item in unit.execution_nodes)
+        for unit in reversed_order.local_units
+    ]
 
 
 def test_proven_boundary_materializes_target_unit_separately_without_cross_source_edge():
