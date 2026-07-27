@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from typing import Dict, Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from knowledge_service.entrypoint_flow_engine import (
     EntrypointFlow,
@@ -18,7 +18,6 @@ from knowledge_service.flow_graph_contract import (
     FlowGraphNode,
     FlowNodeKey,
     dedupe_evidence,
-    evidence_key,
 )
 from knowledge_service.graph_relation_semantics import GraphRelationSemantics, graph_relation_semantics
 from knowledge_service.knowledge_query_schema import KnowledgeQueryDiagnostic
@@ -360,7 +359,7 @@ class FlowFamilyAssembler:
         result: dict[FlowNodeKey, set[FlowNodeKey]] = {root: set() for root in roots}
         for root in roots:
             seen: set[FlowNodeKey] = set()
-            stack = list(sorted(adjacency.get(root, set())))
+            stack = sorted(adjacency.get(root, set()))
             while stack:
                 node_key = stack.pop()
                 if node_key in seen:
@@ -442,18 +441,25 @@ class FlowFamilyAssembler:
         return result
 
     def _merge_anchors(self, anchors: Sequence[EntrypointFlowAnchor]) -> tuple[EntrypointFlowAnchor, ...]:
-        merged: dict[str, EntrypointFlowAnchor] = {}
+        merged: dict[tuple[str, str | None, str | None], EntrypointFlowAnchor] = {}
         for item in anchors:
-            current = merged.get(item.node_id)
+            key = (item.node_id, item.original_stable_key, item.expanded_seed_node_id)
+            current = merged.get(key)
             if current is None:
-                merged[item.node_id] = item
+                merged[key] = item
                 continue
-            merged[item.node_id] = EntrypointFlowAnchor(
+            merged[key] = EntrypointFlowAnchor(
                 node_id=item.node_id,
                 label=current.label if current.score >= item.score else item.label,
                 score=max(current.score, item.score),
                 match_reasons=tuple(sorted(set(current.match_reasons) | set(item.match_reasons))),
                 distance=min(current.distance, item.distance),
+                original_stable_key=current.original_stable_key or item.original_stable_key,
+                original_node_kind=current.original_node_kind or item.original_node_kind,
+                expanded_seed_node_id=current.expanded_seed_node_id or item.expanded_seed_node_id,
+                expanded_seed_stable_key=current.expanded_seed_stable_key or item.expanded_seed_stable_key,
+                anchor_to_seed_reasons=tuple(sorted(set(current.anchor_to_seed_reasons) | set(item.anchor_to_seed_reasons))),
+                query_provenance=tuple(sorted(set(current.query_provenance) | set(item.query_provenance))),
             )
         return tuple(sorted(merged.values(), key=lambda item: (-item.score, item.distance, item.node_id)))
 

@@ -146,10 +146,13 @@ class EntrypointFlowGraphRepository:
             for item in edge_evidence:
                 if item.edge_id:
                     edge_ids_by_edge[item.edge_id].append(item.evidence_id)
-            evidence = dedupe_evidence([
-                *edge_evidence,
-                *node_evidence,
-            ])
+            evidence = dedupe_evidence(
+                [
+                    *flow.evidence,
+                    *edge_evidence,
+                    *node_evidence,
+                ]
+            )
             replacements: Dict[str, Any] = {
                 "transitions": tuple(self._edge_with_evidence(edge, edge_ids_by_edge) for edge in flow.transitions),
                 "boundary_transitions": tuple(self._edge_with_evidence(edge, edge_ids_by_edge) for edge in flow.boundary_transitions),

@@ -13,6 +13,7 @@ from knowledge_service.entrypoint_flow_engine import (
     LocalBoundaryFact,
 )
 from knowledge_service.file_classification import FileClassifier
+from knowledge_service.flow_family import FlowFamilyAssembler
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
 from knowledge_service.knowledge_defaults import load_knowledge_defaults
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode
@@ -375,6 +376,83 @@ def test_two_roots_converging_on_one_anchor_are_one_local_unit_and_two_legacy_pr
     assert {flow.local_unit_id for flow in result.flows} == {result.local_units[0].unit_id}
     assert {flow.entrypoint.node_id for flow in result.flows} == {"RootA", "RootB"}
     assert all(any(item.code == "ENTRYPOINT_FLOW_COMPATIBILITY_MULTI_ROOT_PROJECTION" for item in flow.diagnostics) for flow in result.flows)
+
+
+def test_multi_root_compatibility_projection_is_root_specific_for_nodes_boundaries_evidence_and_families():
+    root_a = node("RootA", entrypoint=True)
+    root_b = node("RootB", entrypoint=True)
+    shared = node("Shared")
+    selected = node("Anchor")
+    downstream = node("Downstream")
+    nodes = [root_b, downstream, selected, root_a, shared]
+    edges = [
+        edge("downstream-boundary", "Downstream", None, status="UNRESOLVED"),
+        edge("anchor-downstream", "Anchor", "Downstream"),
+        edge("b-shared", "RootB", "Shared"),
+        edge("anchor-shared-cycle", "Anchor", "Shared"),
+        edge("shared-anchor", "Shared", "Anchor"),
+        edge("a-boundary", "RootA", None, status="UNRESOLVED"),
+        edge("b-boundary", "RootB", None, status="UNRESOLVED"),
+        edge("a-shared", "RootA", "Shared"),
+    ]
+    evidence_items = [
+        *(evidence(item) for item in edges),
+        node_evidence(root_a),
+        node_evidence(root_b),
+        node_evidence(shared),
+        node_evidence(selected),
+        node_evidence(downstream),
+    ]
+    result, _repo = build(
+        nodes,
+        list(reversed(edges)),
+        [anchor("Anchor")],
+        boundaries=[
+            boundary("root-a-provided", root_a, "PROVIDED", evidence_items=(node_evidence(root_a),)),
+            boundary("root-b-provided", root_b, "PROVIDED", evidence_items=(node_evidence(root_b),)),
+            boundary("downstream-required", downstream, "REQUIRED", evidence_items=(node_evidence(downstream),)),
+        ],
+        evidence_items=evidence_items,
+    )
+
+    assert len(result.local_units) == 1
+    assert {root.node.node_id for root in result.local_units[0].roots} == {"RootA", "RootB"}
+    assert len(result.flows) == 2
+
+    flows = {flow.entrypoint.node_id: flow for flow in result.flows}
+    assert ids(flows["RootA"]) == {"RootA", "Shared", "Anchor", "Downstream"}
+    assert ids(flows["RootB"]) == {"RootB", "Shared", "Anchor", "Downstream"}
+    assert transitions(flows["RootA"]) == {
+        ("RootA", "Shared"),
+        ("Shared", "Anchor"),
+        ("Anchor", "Downstream"),
+        ("Anchor", "Shared"),
+    }
+    assert transitions(flows["RootB"]) == {
+        ("RootB", "Shared"),
+        ("Shared", "Anchor"),
+        ("Anchor", "Downstream"),
+        ("Anchor", "Shared"),
+    }
+    assert {item.edge_id for item in flows["RootA"].boundary_transitions} == {"downstream-boundary"}
+    assert {item.edge_id for item in flows["RootB"].boundary_transitions} == {"downstream-boundary"}
+    assert {item.owner_node_id for item in flows["RootA"].generic_boundaries} == {"RootA", "Downstream"}
+    assert {item.owner_node_id for item in flows["RootB"].generic_boundaries} == {"RootB", "Downstream"}
+    assert "RootB" not in ids(flows["RootA"])
+    assert "RootA" not in ids(flows["RootB"])
+    assert "b-shared" not in {item.edge_id for item in flows["RootA"].transitions}
+    assert "a-shared" not in {item.edge_id for item in flows["RootB"].transitions}
+    assert "ev-b-shared" not in {item.evidence_id for item in flows["RootA"].evidence}
+    assert "ev-node-RootB" not in {item.evidence_id for item in flows["RootA"].evidence}
+    assert "ev-a-shared" not in {item.evidence_id for item in flows["RootB"].evidence}
+    assert "ev-node-RootA" not in {item.evidence_id for item in flows["RootB"].evidence}
+    assert all(flow.coverage.cycle_detected for flow in result.flows)
+
+    families = FlowFamilyAssembler().assemble(result.flows).families
+    families_by_root = {family.entrypoint.node_id: family for family in families}
+    assert set(families_by_root) == {"RootA", "RootB"}
+    assert {item.node_id for item in families_by_root["RootA"].nodes} == {"RootA", "Shared", "Anchor", "Downstream"}
+    assert {item.node_id for item in families_by_root["RootB"].nodes} == {"RootB", "Shared", "Anchor", "Downstream"}
 
 
 def test_explicit_root_for_one_anchor_does_not_suppress_another_inferred_root():

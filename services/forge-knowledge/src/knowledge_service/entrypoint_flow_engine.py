@@ -704,11 +704,45 @@ class EntrypointFlowEngine:
 
     def _project_local_unit(self, unit: LocalFlowUnit, root: LocalFlowRoot) -> EntrypointFlow:
         root_key = self._node_key(root.node)
+        reachable_node_keys, transitions = self._root_reachable_execution(unit, root_key)
+        retained_anchors = tuple(
+            sorted(
+                (anchor for anchor in unit.anchors if self._node_key(anchor.expanded_seed) in reachable_node_keys),
+                key=self._local_anchor_sort_key,
+            )
+        )
+        retained_supporting_context = self._root_projection_supporting_context(unit, retained_anchors, reachable_node_keys)
+        projected_node_keys = reachable_node_keys | {self._node_key(node) for node in retained_supporting_context}
+        node_map = self._node_map(
+            [
+                *(node for node in unit.execution_nodes if self._node_key(node) in reachable_node_keys),
+                *retained_supporting_context,
+            ]
+        )
         nodes = tuple(
             sorted(
-                self._node_map([*unit.execution_nodes, *unit.supporting_context]).values(),
+                node_map.values(),
                 key=lambda node: self._node_sort_key(node, root.node),
             )
+        )
+        topology_boundaries = tuple(
+            sorted(
+                (edge for edge in unit.topology_boundaries if self._from_key(edge) in projected_node_keys),
+                key=self._edge_sort_key,
+            )
+        )
+        generic_boundaries = tuple(
+            sorted(
+                (boundary for boundary in unit.generic_boundaries if boundary.owner_key in projected_node_keys),
+                key=self._boundary_sort_key,
+            )
+        )
+        evidence = self._projection_evidence(
+            unit.evidence,
+            node_keys=projected_node_keys,
+            transitions=transitions,
+            topology_boundaries=topology_boundaries,
+            generic_boundaries=generic_boundaries,
         )
         diagnostics = list(unit.diagnostics)
         if root.origin is EntrypointFlowOrigin.INFERRED_ROOT:
@@ -730,26 +764,26 @@ class EntrypointFlowEngine:
                     metadata={"localUnitId": unit.unit_id, "rootCount": len(unit.roots)},
                 )
             )
-        if unit.generic_boundaries:
+        if generic_boundaries:
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
                     code="ENTRYPOINT_FLOW_GENERIC_BOUNDARY_FACTS_PRESENT",
                     message="Generic boundary facts are retained on the internal local flow unit and are not projected as topology boundaries.",
                     severity="INFO",
                     sourceId=unit.source_id,
-                    metadata={"localUnitId": unit.unit_id, "genericBoundaryCount": len(unit.generic_boundaries)},
+                    metadata={"localUnitId": unit.unit_id, "genericBoundaryCount": len(generic_boundaries)},
                 )
             )
         anchors = tuple(
             sorted(
-                (self._legacy_anchor(anchor) for anchor in unit.anchors),
+                (self._legacy_anchor(anchor) for anchor in retained_anchors),
                 key=lambda item: (-item.score, item.distance, item.node_id, item.expanded_seed_node_id or ""),
             )
         )
         coverage = EntrypointFlowCoverage(
             node_count=len(nodes),
-            transition_count=len(unit.execution_transitions),
-            boundary_count=len(unit.topology_boundaries) + len(unit.generic_boundaries),
+            transition_count=len(transitions),
+            boundary_count=len(topology_boundaries) + len(generic_boundaries),
             anchor_count=len(anchors),
             max_depth_reached=unit.coverage.max_depth_reached,
             cycle_detected=unit.coverage.cycle_detected,
@@ -761,16 +795,95 @@ class EntrypointFlowEngine:
             origin=root.origin,
             anchors=self._merge_anchors(anchors),
             nodes=nodes,
-            transitions=unit.execution_transitions,
-            boundary_transitions=unit.topology_boundaries,
-            evidence=unit.evidence,
+            transitions=transitions,
+            boundary_transitions=topology_boundaries,
+            evidence=evidence,
             complete=unit.complete,
             coverage=coverage,
             diagnostics=self._dedupe_diagnostics(diagnostics),
             relevance_score=self._relevance(root.origin, anchors),
             local_unit_id=unit.unit_id,
-            root_nodes=tuple(root.node for root in unit.roots),
-            generic_boundaries=unit.generic_boundaries,
+            root_nodes=(root.node,),
+            generic_boundaries=generic_boundaries,
+        )
+
+    def _root_reachable_execution(
+        self,
+        unit: LocalFlowUnit,
+        root_key: FlowNodeKey,
+    ) -> tuple[set[FlowNodeKey], tuple[FlowGraphEdge, ...]]:
+        unit_node_keys = {self._node_key(node) for node in unit.execution_nodes}
+        if root_key not in unit_node_keys:
+            return {root_key}, ()
+        outgoing: dict[FlowNodeKey, list[FlowGraphEdge]] = defaultdict(list)
+        for edge in unit.execution_transitions:
+            source_key = self._from_key(edge)
+            target_key = self._to_key(edge)
+            if source_key in unit_node_keys and target_key in unit_node_keys:
+                outgoing[source_key].append(edge)
+        for values in outgoing.values():
+            values.sort(key=self._edge_sort_key)
+
+        reachable: set[FlowNodeKey] = {root_key}
+        retained_edges: dict[FlowEdgeKey, FlowGraphEdge] = {}
+        expanded: set[FlowNodeKey] = set()
+        frontier: list[FlowNodeKey] = [root_key]
+        while frontier:
+            current = frontier.pop(0)
+            if current in expanded:
+                continue
+            expanded.add(current)
+            for edge in outgoing.get(current, ()):
+                target_key = self._to_key(edge)
+                if target_key is None:
+                    continue
+                retained_edges.setdefault(self._edge_key(edge), edge)
+                if target_key not in reachable:
+                    reachable.add(target_key)
+                    frontier.append(target_key)
+        return reachable, tuple(sorted(retained_edges.values(), key=self._edge_sort_key))
+
+    def _root_projection_supporting_context(
+        self,
+        unit: LocalFlowUnit,
+        retained_anchors: Sequence[LocalFlowAnchorProvenance],
+        reachable_node_keys: set[FlowNodeKey],
+    ) -> tuple[FlowGraphNode, ...]:
+        candidates = self._node_map(unit.supporting_context)
+        retained: dict[FlowNodeKey, FlowGraphNode] = {}
+        for anchor in retained_anchors:
+            original_key = self._anchor_lookup_key(anchor.original_anchor)
+            original_node = self._find_node_by_id(candidates, original_key)
+            if original_node is None:
+                continue
+            key = self._node_key(original_node)
+            if key not in reachable_node_keys:
+                retained[key] = original_node
+        return tuple(sorted(retained.values(), key=lambda node: self._node_sort_key(node, None)))
+
+    def _projection_evidence(
+        self,
+        evidence: Sequence[FlowGraphEvidence],
+        *,
+        node_keys: set[FlowNodeKey],
+        transitions: Sequence[FlowGraphEdge],
+        topology_boundaries: Sequence[FlowGraphEdge],
+        generic_boundaries: Sequence[LocalBoundaryFact],
+    ) -> tuple[FlowGraphEvidence, ...]:
+        node_source_ids = {(source_id, node_id) for source_id, _revision, node_id in node_keys}
+        edge_ids = {edge.edge_id for edge in (*transitions, *topology_boundaries)}
+        boundary_owner_nodes = {(boundary.source_id, boundary.owner_node_id) for boundary in generic_boundaries}
+        return dedupe_evidence(
+            [
+                item
+                for item in evidence
+                if item.edge_id in edge_ids
+                or item.node_id is not None
+                and (item.source_id, item.node_id) in node_source_ids
+                or str(item.owner_kind or "").upper() in {"BOUNDARY", "BOUNDARY_DESCRIPTOR"}
+                and item.owner_node_id is not None
+                and (item.owner_source_id or item.source_id, item.owner_node_id) in boundary_owner_nodes
+            ]
         )
 
     def _public_flow(self, index: int, flow: EntrypointFlow) -> KnowledgeQueryFlow:

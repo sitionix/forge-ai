@@ -120,12 +120,26 @@ class AnchorExpansionReason(str, Enum):
 
 
 @dataclass(frozen=True)
+class AnchorSeedExpansion:
+    original_source_id: str
+    original_graph_revision: str
+    original_node_id: str
+    original_stable_key: str
+    expanded_seed_source_id: str
+    expanded_seed_graph_revision: str
+    expanded_seed_node_id: str
+    expanded_seed_stable_key: str
+    reason: AnchorExpansionReason
+
+
+@dataclass(frozen=True)
 class ExpandedAnchor:
     node: KnowledgeQueryMatchedNode
     roles: tuple[AnchorRole, ...]
     reasons: tuple[AnchorExpansionReason, ...]
     originNodeIds: tuple[str, ...]
     score: float
+    seedExpansions: tuple[AnchorSeedExpansion, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -979,6 +993,7 @@ class _MutableExpandedAnchor:
     roles: set[AnchorRole]
     reasons: set[AnchorExpansionReason]
     origin_node_ids: set[str]
+    seed_expansions: set[AnchorSeedExpansion]
     score: float
     order: int
 
@@ -999,10 +1014,12 @@ class _AnchorAccumulator:
         score: float,
         *,
         original: bool = False,
+        origin_anchor: KnowledgeQueryMatchedNode | None = None,
     ) -> tuple[AnchorNodeKey | None, bool]:
         key = self.node_key(node)
         if key is None:
             return None, False
+        seed_expansions = self._seed_expansions(origin_anchor, node, reasons)
         existing = self.items.get(key)
         if existing is None:
             self.items[key] = _MutableExpandedAnchor(
@@ -1010,6 +1027,7 @@ class _AnchorAccumulator:
                 roles=set(roles),
                 reasons=set(reasons),
                 origin_node_ids={origin_node_id} if origin_node_id else set(),
+                seed_expansions=set(seed_expansions),
                 score=float(score),
                 order=self._next_order,
             )
@@ -1020,6 +1038,7 @@ class _AnchorAccumulator:
 
         existing.roles.update(roles)
         existing.reasons.update(reasons)
+        existing.seed_expansions.update(seed_expansions)
         if origin_node_id:
             existing.origin_node_ids.add(origin_node_id)
         if original:
@@ -1061,11 +1080,50 @@ class _AnchorAccumulator:
                     node=item.node,
                     roles=tuple(sorted(item.roles, key=lambda role: _ANCHOR_ROLE_ORDER[role])),
                     reasons=tuple(sorted(item.reasons, key=lambda reason: _ANCHOR_REASON_ORDER[reason])),
-                    originNodeIds=tuple(sorted(item.origin_node_ids)),
+                    originNodeIds=tuple(sorted({record.original_node_id for record in item.seed_expansions} or item.origin_node_ids)),
                     score=item.score,
+                    seedExpansions=tuple(sorted(item.seed_expansions, key=self._seed_expansion_sort_key)),
                 )
             )
         return anchors
+
+    def _seed_expansions(
+        self,
+        origin_anchor: KnowledgeQueryMatchedNode | None,
+        expanded_seed: KnowledgeQueryMatchedNode,
+        reasons: set[AnchorExpansionReason],
+    ) -> tuple[AnchorSeedExpansion, ...]:
+        if origin_anchor is None:
+            return ()
+        records = []
+        for reason in reasons:
+            records.append(
+                AnchorSeedExpansion(
+                    original_source_id=str(origin_anchor.sourceId or ""),
+                    original_graph_revision=str(origin_anchor.graphRevision or origin_anchor.graphId or ""),
+                    original_node_id=str(origin_anchor.nodeId or ""),
+                    original_stable_key=str(origin_anchor.stableKey or origin_anchor.nodeId or ""),
+                    expanded_seed_source_id=str(expanded_seed.sourceId or ""),
+                    expanded_seed_graph_revision=str(expanded_seed.graphRevision or expanded_seed.graphId or ""),
+                    expanded_seed_node_id=str(expanded_seed.nodeId or ""),
+                    expanded_seed_stable_key=str(expanded_seed.stableKey or expanded_seed.nodeId or ""),
+                    reason=reason,
+                )
+            )
+        return tuple(sorted(set(records), key=self._seed_expansion_sort_key))
+
+    def _seed_expansion_sort_key(self, item: AnchorSeedExpansion) -> tuple[str, str, str, str, str, str, str, str, int]:
+        return (
+            item.expanded_seed_source_id,
+            item.expanded_seed_graph_revision,
+            item.expanded_seed_stable_key,
+            item.expanded_seed_node_id,
+            item.original_source_id,
+            item.original_graph_revision,
+            item.original_stable_key,
+            item.original_node_id,
+            _ANCHOR_REASON_ORDER[item.reason],
+        )
 
 
 class AnchorExpansionService:
@@ -1126,7 +1184,7 @@ class AnchorExpansionService:
             origin_key = accumulator.node_key(origin)
             if node_key is None or origin_key is None:
                 return
-            accumulator.add_anchor(node, roles, {reason}, origin.nodeId, node.score)
+            accumulator.add_anchor(node, roles, {reason}, origin.nodeId, node.score, origin_anchor=origin)
 
         for candidate in original_candidates:
             origin_key = accumulator.node_key(candidate)
@@ -1202,6 +1260,7 @@ class AnchorExpansionService:
             candidate.nodeId,
             candidate.score,
             original=True,
+            origin_anchor=candidate,
         )
 
     def _result(
@@ -1578,58 +1637,80 @@ class KnowledgeQueryService:
         )
 
     def _flow_seed_provenance(self, anchor_result: AnchorExpansionResult) -> tuple[EntrypointFlowSeedProvenance, ...]:
-        originals_by_source_node: dict[tuple[str, str], list[KnowledgeQueryMatchedNode]] = defaultdict(list)
+        originals_by_identity: dict[tuple[str, str, str, str], KnowledgeQueryMatchedNode] = {}
         for candidate in anchor_result.original_candidates:
-            originals_by_source_node[(candidate.sourceId, candidate.nodeId)].append(candidate)
-        for values in originals_by_source_node.values():
-            values.sort(key=lambda item: (-float(item.score or 0.0), item.stableKey, item.nodeId))
+            originals_by_identity.setdefault(self._matched_anchor_identity(candidate), candidate)
 
-        specs: list[EntrypointFlowSeedProvenance] = []
-        seen: set[tuple[str, str, str, str, str]] = set()
+        reasons_by_pair: dict[tuple[tuple[str, str, str, str], tuple[str, str, str, str]], set[str]] = defaultdict(set)
+        seed_by_identity: dict[tuple[str, str, str, str], KnowledgeQueryMatchedNode] = {}
         for expanded in anchor_result.expanded_anchors:
             if AnchorRole.FLOW_SEED not in expanded.roles:
                 continue
-            origin_node_ids = expanded.originNodeIds or (expanded.node.nodeId,)
-            reasons = tuple(str(reason.value if isinstance(reason, AnchorExpansionReason) else reason) for reason in expanded.reasons)
-            for origin_node_id in origin_node_ids:
-                originals = originals_by_source_node.get((expanded.node.sourceId, origin_node_id), ())
-                if not originals and expanded.node.nodeId == origin_node_id:
-                    originals = (expanded.node,)
-                for original in originals:
-                    key = (
-                        original.sourceId,
-                        original.stableKey,
-                        original.nodeId,
-                        expanded.node.stableKey,
-                        expanded.node.nodeId,
-                    )
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    specs.append(
-                        EntrypointFlowSeedProvenance(
-                            original_anchor=original,
-                            expanded_seed=expanded.node,
-                            anchor_to_seed_reasons=reasons,
-                        )
-                    )
+            seed_identity = self._matched_anchor_identity(expanded.node)
+            seed_by_identity.setdefault(seed_identity, expanded.node)
+            for expansion in expanded.seedExpansions:
+                original_identity = self._seed_expansion_original_identity(expansion)
+                expanded_identity = self._seed_expansion_seed_identity(expansion)
+                if expanded_identity != seed_identity:
+                    continue
+                if original_identity not in originals_by_identity:
+                    continue
+                reasons_by_pair[(original_identity, expanded_identity)].add(
+                    str(expansion.reason.value if isinstance(expansion.reason, AnchorExpansionReason) else expansion.reason)
+                )
+
+        specs = [
+            EntrypointFlowSeedProvenance(
+                original_anchor=originals_by_identity[original_identity],
+                expanded_seed=seed_by_identity[expanded_identity],
+                anchor_to_seed_reasons=tuple(sorted(reasons)),
+            )
+            for (original_identity, expanded_identity), reasons in sorted(reasons_by_pair.items())
+            if original_identity in originals_by_identity and expanded_identity in seed_by_identity and reasons
+        ]
 
         if specs:
             return tuple(sorted(specs, key=self._flow_seed_provenance_sort_key))
 
+        seen: set[tuple[str, str, str, str, str]] = set()
+        fallback_specs: list[EntrypointFlowSeedProvenance] = []
         for seed in anchor_result.flow_seed_nodes:
             key = (seed.sourceId, seed.stableKey, seed.nodeId, seed.stableKey, seed.nodeId)
             if key in seen:
                 continue
             seen.add(key)
-            specs.append(
+            fallback_specs.append(
                 EntrypointFlowSeedProvenance(
                     original_anchor=seed,
                     expanded_seed=seed,
                     anchor_to_seed_reasons=("ORIGINAL_MATCH",),
                 )
             )
-        return tuple(sorted(specs, key=self._flow_seed_provenance_sort_key))
+        return tuple(sorted(fallback_specs, key=self._flow_seed_provenance_sort_key))
+
+    def _matched_anchor_identity(self, item: KnowledgeQueryMatchedNode) -> tuple[str, str, str, str]:
+        return (
+            str(item.sourceId or ""),
+            str(item.graphRevision or item.graphId or ""),
+            str(item.nodeId or ""),
+            str(item.stableKey or item.nodeId or ""),
+        )
+
+    def _seed_expansion_original_identity(self, item: AnchorSeedExpansion) -> tuple[str, str, str, str]:
+        return (
+            item.original_source_id,
+            item.original_graph_revision,
+            item.original_node_id,
+            item.original_stable_key,
+        )
+
+    def _seed_expansion_seed_identity(self, item: AnchorSeedExpansion) -> tuple[str, str, str, str]:
+        return (
+            item.expanded_seed_source_id,
+            item.expanded_seed_graph_revision,
+            item.expanded_seed_node_id,
+            item.expanded_seed_stable_key,
+        )
 
     def _flow_seed_provenance_sort_key(self, item: EntrypointFlowSeedProvenance) -> tuple[str, str, str, str, str]:
         return (
