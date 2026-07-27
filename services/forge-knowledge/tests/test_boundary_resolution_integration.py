@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 
 from test_entrypoint_flow_engine import FakeFlowRepository, anchor, boundary, descriptor, edge, node, node_evidence
 
+from knowledge_service import knowledge_query_service as query_module
 from knowledge_service.anchor_expansion_contract import AnchorExpansionBundle, AnchorExpansionEdge, AnchorExpansionNode
 from knowledge_service.boundary_resolution import BoundaryCandidateLoadResult, BoundaryResolutionStatus, boundary_identity, descriptor_fingerprint
 from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
@@ -73,6 +75,14 @@ def sources(*source_ids: str):
     return tuple(QuerySource(source_id=item, display_name=item, graph_id="revision-current", graph_revision="revision-current", node_count=1, edge_count=0) for item in source_ids)
 
 
+def unit_containing(units, node_id: str):
+    return next(unit for unit in units if any(node_item.node_id == node_id for node_item in unit.execution_nodes))
+
+
+def family_for(families, node_id: str):
+    return next(family for family in families if family.entrypoint.node_id == node_id)
+
+
 def test_proven_boundary_materializes_target_unit_separately_without_cross_source_edge():
     source_root = node("RootA", source="source-a", entrypoint=True)
     source_call = node("CallA", source="source-a")
@@ -112,6 +122,174 @@ def test_proven_boundary_materializes_target_unit_separately_without_cross_sourc
         for unit in result.local_units
         for edge_item in unit.execution_transitions
     )
+
+
+def test_rejected_initial_unit_cannot_resolve_or_materialize_target_unit():
+    selected_root = node("RootA", source="source-a", entrypoint=True)
+    rejected_root = node("RootB", source="source-a", entrypoint=True)
+    target_owner = node("TargetC", source="source-c", entrypoint=True)
+    required_b = boundary(
+        "required-b",
+        rejected_root,
+        "REQUIRED",
+        descriptors=(descriptor("required-b-key", "neutral.identity", "c", evidence_items=(node_evidence(rejected_root),)),),
+        evidence_items=(node_evidence(rejected_root),),
+    )
+    provided_c = boundary(
+        "provided-c",
+        target_owner,
+        "PROVIDED",
+        descriptors=(descriptor("provided-c-key", "neutral.identity", "c", evidence_items=(node_evidence(target_owner),)),),
+        evidence_items=(node_evidence(target_owner),),
+    )
+    repo = BoundaryResolvingRepository([selected_root, rejected_root, target_owner], [], boundaries=[required_b, provided_c])
+    families, units = family_inputs(repo, [anchor("RootA", source="source-a"), anchor("RootB", source="source-a")])
+
+    result = service_for(repo)._assemble_generic_boundary_continuations(
+        (family_for(families, "RootA"),),
+        units,
+        sources("source-a", "source-c"),
+        include_tests=False,
+    )
+
+    assert repo.calls["find_provided_boundary_candidates"] == 0
+    assert result.boundary_resolution is not None
+    assert result.boundary_resolution.resolutions == ()
+    assert {node_item.node_id for unit in result.local_units for node_item in unit.execution_nodes} == {"RootA"}
+
+
+def test_selected_initial_unit_can_continue_while_rejected_unit_stays_inactive():
+    selected_root = node("RootA", source="source-a", entrypoint=True)
+    rejected_root = node("RootB", source="source-a", entrypoint=True)
+    target_owner = node("TargetC", source="source-c", entrypoint=True)
+    required_a = boundary(
+        "required-a",
+        selected_root,
+        "REQUIRED",
+        descriptors=(descriptor("required-a-key", "neutral.identity", "c", evidence_items=(node_evidence(selected_root),)),),
+        evidence_items=(node_evidence(selected_root),),
+    )
+    required_b = boundary(
+        "required-b",
+        rejected_root,
+        "REQUIRED",
+        descriptors=(descriptor("required-b-key", "neutral.other", "ignored", evidence_items=(node_evidence(rejected_root),)),),
+        evidence_items=(node_evidence(rejected_root),),
+    )
+    provided_c = boundary(
+        "provided-c",
+        target_owner,
+        "PROVIDED",
+        descriptors=(descriptor("provided-c-key", "neutral.identity", "c", evidence_items=(node_evidence(target_owner),)),),
+        evidence_items=(node_evidence(target_owner),),
+    )
+    repo = BoundaryResolvingRepository([selected_root, rejected_root, target_owner], [], boundaries=[required_a, required_b, provided_c])
+    families, units = family_inputs(repo, [anchor("RootB", source="source-a"), anchor("RootA", source="source-a")])
+    selected = (family_for(families, "RootA"),)
+    service = service_for(repo)
+
+    forward = service._assemble_generic_boundary_continuations(selected, units, sources("source-a", "source-c"), include_tests=False)
+    reversed_order = service._assemble_generic_boundary_continuations(tuple(reversed(selected)), tuple(reversed(units)), sources("source-c", "source-a"), include_tests=False)
+
+    assert forward.boundary_resolution is not None
+    assert [item.status for item in forward.boundary_resolution.resolutions] == [BoundaryResolutionStatus.PROVEN]
+    assert {node_item.node_id for unit in forward.local_units for node_item in unit.execution_nodes} == {"RootA", "TargetC"}
+    assert "RootB" not in {node_item.node_id for unit in forward.local_units for node_item in unit.execution_nodes}
+    assert [item.resolution_id for item in forward.boundary_resolution.resolutions] == [
+        item.resolution_id for item in reversed_order.boundary_resolution.resolutions
+    ]
+    assert [unit.unit_id for unit in forward.local_units] == [unit.unit_id for unit in reversed_order.local_units]
+
+
+def test_shared_family_provenance_activates_only_exact_originating_units():
+    root_a = node("RootA", source="source-a", entrypoint=True)
+    root_b = node("RootB", source="source-a", entrypoint=True)
+    unrelated = node("RootD", source="source-a", entrypoint=True)
+    target_c = node("TargetC", source="source-c", entrypoint=True)
+    target_e = node("TargetE", source="source-e", entrypoint=True)
+    required_b = boundary(
+        "required-b",
+        root_b,
+        "REQUIRED",
+        descriptors=(descriptor("required-b-key", "neutral.shared", "c", evidence_items=(node_evidence(root_b),)),),
+        evidence_items=(node_evidence(root_b),),
+    )
+    provided_c = boundary(
+        "provided-c",
+        target_c,
+        "PROVIDED",
+        descriptors=(descriptor("provided-c-key", "neutral.shared", "c", evidence_items=(node_evidence(target_c),)),),
+        evidence_items=(node_evidence(target_c),),
+    )
+    required_d = boundary(
+        "required-d",
+        unrelated,
+        "REQUIRED",
+        descriptors=(descriptor("required-d-key", "neutral.unrelated", "e", evidence_items=(node_evidence(unrelated),)),),
+        evidence_items=(node_evidence(unrelated),),
+    )
+    provided_e = boundary(
+        "provided-e",
+        target_e,
+        "PROVIDED",
+        descriptors=(descriptor("provided-e-key", "neutral.unrelated", "e", evidence_items=(node_evidence(target_e),)),),
+        evidence_items=(node_evidence(target_e),),
+    )
+    repo = BoundaryResolvingRepository([root_a, root_b, unrelated, target_c, target_e], [], boundaries=[required_b, provided_c, required_d, provided_e])
+    families, units = family_inputs(
+        repo,
+        [anchor("RootA", source="source-a"), anchor("RootB", source="source-a"), anchor("RootD", source="source-a")],
+    )
+    selected = replace(
+        family_for(families, "RootA"),
+        local_unit_ids=tuple(sorted((unit_containing(units, "RootA").unit_id, unit_containing(units, "RootB").unit_id))),
+    )
+
+    result = service_for(repo)._assemble_generic_boundary_continuations(
+        (selected,),
+        units,
+        sources("source-a", "source-c", "source-e"),
+        include_tests=False,
+    )
+
+    assert result.boundary_resolution is not None
+    assert [item.required_boundary.boundary_id for item in result.boundary_resolution.resolutions] == ["required-b"]
+    assert {node_item.node_id for unit in result.local_units for node_item in unit.execution_nodes} == {"RootA", "RootB", "TargetC"}
+
+
+def test_missing_family_local_unit_provenance_fails_closed():
+    root = node("RootA", source="source-a", entrypoint=True)
+    target = node("TargetB", source="source-b", entrypoint=True)
+    required = boundary(
+        "required-a",
+        root,
+        "REQUIRED",
+        descriptors=(descriptor("required-key", "neutral.identity", "b", evidence_items=(node_evidence(root),)),),
+        evidence_items=(node_evidence(root),),
+    )
+    provided = boundary(
+        "provided-b",
+        target,
+        "PROVIDED",
+        descriptors=(descriptor("provided-key", "neutral.identity", "b", evidence_items=(node_evidence(target),)),),
+        evidence_items=(node_evidence(target),),
+    )
+    repo = BoundaryResolvingRepository([root, target], [], boundaries=[required, provided])
+    families, units = family_inputs(repo, [anchor("RootA", source="source-a")])
+    selected_without_provenance = replace(families[0], local_unit_ids=())
+
+    result = service_for(repo)._assemble_generic_boundary_continuations(
+        (selected_without_provenance,),
+        units,
+        sources("source-a", "source-b"),
+        include_tests=False,
+    )
+
+    assert repo.calls["find_provided_boundary_candidates"] == 0
+    assert result.boundary_resolution is not None
+    assert result.boundary_resolution.truncation.active_unit_provenance_missing is True
+    assert any(item.code == "BOUNDARY_ACTIVE_UNIT_PROVENANCE_MISSING" for item in result.diagnostics)
+    assert {node_item.node_id for unit in result.local_units for node_item in unit.execution_nodes} == set()
 
 
 def test_ambiguous_and_unresolved_boundaries_do_not_materialize_target_units():
@@ -281,3 +459,18 @@ def test_recursive_resolution_discovers_second_target_and_cycle_terminates():
     assert {unit.source_id for unit in result.local_units} == {"source-a", "source-b", "source-c"}
     assert len(result.boundary_resolution.proven_links) == 3
     assert result.boundary_resolution.metrics.resolution_cycles_detected >= 1
+    assert any(item.code == "BOUNDARY_RESOLUTION_CYCLE_DETECTED" for item in result.boundary_resolution.diagnostics)
+    assert not any(item.code == "BOUNDARY_RESOLUTION_LIMIT_REACHED" for item in result.boundary_resolution.diagnostics)
+
+
+def test_actual_round_limit_uses_limit_diagnostic(monkeypatch):
+    root = node("RootA", source="source-a", entrypoint=True)
+    repo = BoundaryResolvingRepository([root], [], boundaries=[])
+    families, units = family_inputs(repo, [anchor("RootA", source="source-a")])
+    monkeypatch.setattr(query_module, "_MAX_BOUNDARY_RESOLUTION_ROUNDS", 0)
+
+    result = service_for(repo)._assemble_generic_boundary_continuations(families, units, sources("source-a"), include_tests=False)
+
+    assert result.boundary_resolution is not None
+    assert result.boundary_resolution.truncation.resolver_limit_reached is True
+    assert any(item.code == "BOUNDARY_RESOLUTION_LIMIT_REACHED" for item in result.boundary_resolution.diagnostics)

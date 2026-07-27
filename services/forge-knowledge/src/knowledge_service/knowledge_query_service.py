@@ -1558,6 +1558,7 @@ class KnowledgeQueryService:
             eligible_sources,
             include_tests=bool(request.includeTests),
         )
+        resolver_incomplete = self._boundary_resolution_incomplete(continuation_result.boundary_resolution)
         flows = continuation_result.families
         operation_facts = continuation_result.operation_facts
         diagnostics.extend(continuation_result.diagnostics)
@@ -1638,8 +1639,8 @@ class KnowledgeQueryService:
                     nodeCount=sum(flow.coverage.node_count for flow in selected_flows),
                     edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in selected_flows),
                     evidenceCount=sum(len(flow.evidence) for flow in selected_flows),
-                    truncated=candidate_result.truncated or anchor_result.truncated or omitted_plan_count > 0,
-                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or omitted_plan_count > 0,
+                    truncated=candidate_result.truncated or anchor_result.truncated or omitted_plan_count > 0 or resolver_incomplete,
+                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or omitted_plan_count > 0 or resolver_incomplete,
                 ),
                 diagnostics=diagnostics,
             ),
@@ -1777,22 +1778,38 @@ class KnowledgeQueryService:
         include_tests: bool,
     ) -> ContinuationAssemblyResult:
         families: list[FlowFamily] = list(initial_families)
-        local_units_by_id: dict[str, LocalFlowUnit] = {unit.unit_id: unit for unit in initial_local_units}
+        active_units, provenance_diagnostics, provenance_missing = self._active_local_units_for_boundary_resolution(families, initial_local_units)
+        local_units_by_id: dict[str, LocalFlowUnit] = {unit.unit_id: unit for unit in active_units}
         operation_facts: tuple[AvailableOperationFact, ...] = ()
-        if not families or not initial_local_units or not hasattr(self.flow_repository, "find_provided_boundary_candidates"):
+        if provenance_missing:
+            operation_facts = self._available_operation_facts(families, include_tests)
+            boundary_result = self._empty_boundary_resolution_result(
+                provenance_diagnostics,
+                active_unit_provenance_missing=True,
+            )
+            return ContinuationAssemblyResult(
+                tuple(families),
+                operation_facts,
+                tuple(self._boundary_resolution_diagnostic(item) for item in boundary_result.diagnostics),
+                tuple(sorted(local_units_by_id.values(), key=lambda item: item.unit_id)),
+                boundary_result,
+            )
+        if not families or not active_units or not hasattr(self.flow_repository, "find_provided_boundary_candidates"):
             operation_facts = self._available_operation_facts(families, include_tests)
             return ContinuationAssemblyResult(tuple(families), operation_facts, (), tuple(local_units_by_id.values()), None)
 
-        diagnostics: list[BoundaryResolutionDiagnostic] = []
+        diagnostics: list[BoundaryResolutionDiagnostic] = list(provenance_diagnostics)
         all_resolutions: list[Any] = []
         all_proven_links: list[Any] = []
         all_ambiguous: list[Any] = []
         unresolved: set[Any] = set()
+        truncated_required_identities: set[Any] = set()
         discovered_owners: dict[BoundaryOwnerIdentity, BoundaryOwnerIdentity] = {}
         visited_required: set[Any] = set()
         visited_owners: set[tuple[str, str, str]] = set()
         visited_units: set[str] = set(local_units_by_id)
-        pending_units: tuple[LocalFlowUnit, ...] = tuple(sorted(initial_local_units, key=lambda item: item.unit_id))
+        initial_active_unit_ids = set(local_units_by_id)
+        pending_units: tuple[LocalFlowUnit, ...] = tuple(sorted(active_units, key=lambda item: item.unit_id))
         eligible_source_ids = [source.source_id for source in eligible_sources]
         known_family_keys = {self._flow_family_key(family) for family in families}
         round_count = 0
@@ -1825,6 +1842,7 @@ class KnowledgeQueryService:
                 include_tests=include_tests,
                 internal_limits=BoundaryCandidateLoadLimits(),
             )
+            truncated_required_identities.update(candidate_load.truncated_required_identities)
             round_result = self.boundary_resolver.resolve(round_units, candidate_load)
             all_resolutions.extend(round_result.resolutions)
             all_proven_links.extend(round_result.proven_links)
@@ -1839,7 +1857,7 @@ class KnowledgeQueryService:
                     cycle_count += 1
                     diagnostics.append(
                         BoundaryResolutionDiagnostic(
-                            code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
+                            code="BOUNDARY_RESOLUTION_CYCLE_DETECTED",
                             message="Generic boundary resolution cycle detected; owner was not materialized again.",
                             severity="INFO",
                             source_id=link.target_owner.source_id,
@@ -1867,6 +1885,15 @@ class KnowledgeQueryService:
                 for unit in sorted(target_result.local_units, key=lambda item: item.unit_id):
                     if unit.unit_id in visited_units:
                         cycle_count += 1
+                        diagnostics.append(
+                            BoundaryResolutionDiagnostic(
+                                code="BOUNDARY_RESOLUTION_CYCLE_DETECTED",
+                                message="Generic boundary resolution cycle detected; local unit was not materialized again.",
+                                severity="INFO",
+                                source_id=unit.source_id,
+                                metadata={"targetUnitId": unit.unit_id},
+                            )
+                        )
                         continue
                     if target_units_materialized >= _MAX_BOUNDARY_TARGET_UNITS:
                         resolver_limit_reached = True
@@ -1899,8 +1926,9 @@ class KnowledgeQueryService:
             all_proven_links,
             all_ambiguous,
             unresolved,
+            truncated_required_identities,
             discovered_owners,
-            tuple(sorted((unit for unit in local_units_by_id.values() if unit.unit_id not in {item.unit_id for item in initial_local_units}), key=lambda item: item.unit_id)),
+            tuple(sorted((unit for unit in local_units_by_id.values() if unit.unit_id not in initial_active_unit_ids), key=lambda item: item.unit_id)),
             diagnostics,
             round_count,
             cycle_count,
@@ -2008,12 +2036,112 @@ class KnowledgeQueryService:
     def _matched_node_is_executable(self, node: KnowledgeQueryMatchedNode) -> bool:
         return str(node.nodeKind or "").strip().upper() == "CALLABLE"
 
+    def _active_local_units_for_boundary_resolution(
+        self,
+        families: Sequence[FlowFamily],
+        local_units: Sequence[LocalFlowUnit],
+    ) -> tuple[tuple[LocalFlowUnit, ...], tuple[BoundaryResolutionDiagnostic, ...], bool]:
+        if not families:
+            return (), (), False
+        units_by_id = {unit.unit_id: unit for unit in local_units}
+        active_ids: set[str] = set()
+        missing_family_count = 0
+        missing_unit_ids: set[str] = set()
+        for family in families:
+            family_unit_ids = tuple(str(item or "") for item in getattr(family, "local_unit_ids", ()) if str(item or ""))
+            if not family_unit_ids:
+                missing_family_count += 1
+                continue
+            for unit_id in family_unit_ids:
+                if unit_id in units_by_id:
+                    active_ids.add(unit_id)
+                else:
+                    missing_unit_ids.add(unit_id)
+        provenance_missing = missing_family_count > 0 or bool(missing_unit_ids)
+        diagnostics: list[BoundaryResolutionDiagnostic] = []
+        if provenance_missing:
+            diagnostics.append(
+                BoundaryResolutionDiagnostic(
+                    code="BOUNDARY_ACTIVE_UNIT_PROVENANCE_MISSING",
+                    message="Selected flow families did not retain complete local-unit provenance; boundary resolution failed closed.",
+                    severity="WARN",
+                    metadata={
+                        "selectedFamilyCount": len(families),
+                        "missingFamilyCount": missing_family_count,
+                        "missingLocalUnitIdCount": len(missing_unit_ids),
+                    },
+                )
+            )
+        return tuple(units_by_id[unit_id] for unit_id in sorted(active_ids)), tuple(diagnostics), provenance_missing
+
+    def _empty_boundary_resolution_result(
+        self,
+        diagnostics: Sequence[BoundaryResolutionDiagnostic],
+        *,
+        active_unit_provenance_missing: bool = False,
+    ) -> BoundaryResolutionResult:
+        metrics = BoundaryResolverMetrics()
+        aggregate = BoundaryResolutionDiagnostic(
+            code="GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS",
+            message="Generic boundary resolution diagnostics.",
+            severity="INFO",
+            metadata={
+                "requiredBoundaryCount": 0,
+                "eligibleProvidedBoundaryCount": 0,
+                "providedCandidatesBySource": {},
+                "descriptorFingerprintsQueried": 0,
+                "candidatePairsEvaluated": 0,
+                "PROVENCount": 0,
+                "AMBIGUOUSCount": 0,
+                "UNRESOLVEDCount": 0,
+                "candidateSetsTruncated": 0,
+                "conflictCount": 0,
+                "evidenceInsufficientCount": 0,
+                "targetOwnersDiscovered": 0,
+                "targetUnitsMaterialized": 0,
+                "resolutionRounds": 0,
+                "resolutionCyclesDetected": 0,
+                "resolverSQLStatements": 0,
+                "candidateDescriptorRowsScanned": 0,
+                "candidateDescriptorRowsMatchedExactly": 0,
+                "candidateDescriptorRowBudget": 0,
+                "candidateDescriptorScanTruncated": False,
+                "candidateSourcesInspected": 0,
+                "candidateSourcesTruncated": 0,
+                "candidatePagesLoaded": 0,
+                "requiredCandidateSetsIncomplete": 0,
+            },
+        )
+        return BoundaryResolutionResult(
+            resolutions=(),
+            proven_links=(),
+            ambiguous_links=(),
+            unresolved_boundaries=(),
+            discovered_provided_owners=(),
+            diagnostics=(*tuple(diagnostics), aggregate),
+            truncation=BoundaryResolutionTruncationState(active_unit_provenance_missing=active_unit_provenance_missing),
+            metrics=metrics,
+        )
+
+    def _boundary_resolution_incomplete(self, boundary_result: BoundaryResolutionResult | None) -> bool:
+        if boundary_result is None:
+            return False
+        truncation = boundary_result.truncation
+        return (
+            truncation.candidate_sets_truncated > 0
+            or truncation.resolver_limit_reached
+            or truncation.recursion_limit_reached
+            or truncation.candidate_descriptor_scan_truncated
+            or truncation.active_unit_provenance_missing
+        )
+
     def _combined_boundary_resolution_result(
         self,
         resolutions: Sequence[Any],
         proven_links: Sequence[Any],
         ambiguous_links: Sequence[Any],
         unresolved_boundaries: set[Any],
+        truncated_required_identities: set[Any],
         discovered_owners: Mapping[BoundaryOwnerIdentity, BoundaryOwnerIdentity],
         discovered_local_units: Sequence[LocalFlowUnit],
         diagnostics: Sequence[BoundaryResolutionDiagnostic],
@@ -2051,7 +2179,7 @@ class KnowledgeQueryService:
             proven_count=len(proven),
             ambiguous_count=len(ambiguous),
             unresolved_count=len(unresolved),
-            candidate_sets_truncated=sum(1 for item in diagnostics if item.code == "BOUNDARY_CANDIDATE_SET_INCOMPLETE"),
+            candidate_sets_truncated=len(truncated_required_identities),
             conflict_count=sum(
                 1
                 for resolution in resolutions
@@ -2073,6 +2201,45 @@ class KnowledgeQueryService:
                 for item in diagnostics
                 if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
             ),
+            candidate_descriptor_rows_scanned=sum(
+                int(item.metadata.get("candidateDescriptorRowsScanned") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_descriptor_rows_matched_exactly=sum(
+                int(item.metadata.get("candidateDescriptorRowsMatchedExactly") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_descriptor_row_budget=max(
+                (
+                    int(item.metadata.get("candidateDescriptorRowBudget") or 0)
+                    for item in diagnostics
+                    if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+                ),
+                default=0,
+            ),
+            candidate_descriptor_scan_truncated=any(
+                bool(item.metadata.get("candidateDescriptorScanTruncated"))
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_sources_inspected=sum(
+                int(item.metadata.get("candidateSourcesInspected") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_sources_truncated=sum(
+                int(item.metadata.get("candidateSourcesTruncated") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_pages_loaded=sum(
+                int(item.metadata.get("candidatePagesLoaded") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            required_candidate_sets_incomplete=len(truncated_required_identities),
         )
         aggregate = BoundaryResolutionDiagnostic(
             code="GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS",
@@ -2095,6 +2262,14 @@ class KnowledgeQueryService:
                 "resolutionRounds": metrics.resolution_rounds,
                 "resolutionCyclesDetected": metrics.resolution_cycles_detected,
                 "resolverSQLStatements": metrics.resolver_sql_statements,
+                "candidateDescriptorRowsScanned": metrics.candidate_descriptor_rows_scanned,
+                "candidateDescriptorRowsMatchedExactly": metrics.candidate_descriptor_rows_matched_exactly,
+                "candidateDescriptorRowBudget": metrics.candidate_descriptor_row_budget,
+                "candidateDescriptorScanTruncated": metrics.candidate_descriptor_scan_truncated,
+                "candidateSourcesInspected": metrics.candidate_sources_inspected,
+                "candidateSourcesTruncated": metrics.candidate_sources_truncated,
+                "candidatePagesLoaded": metrics.candidate_pages_loaded,
+                "requiredCandidateSetsIncomplete": metrics.required_candidate_sets_incomplete,
             },
         )
         return BoundaryResolutionResult(
@@ -2109,6 +2284,7 @@ class KnowledgeQueryService:
                 candidate_sets_truncated=metrics.candidate_sets_truncated,
                 resolver_limit_reached=resolver_limit_reached,
                 recursion_limit_reached=round_count > _MAX_BOUNDARY_RESOLUTION_ROUNDS,
+                candidate_descriptor_scan_truncated=metrics.candidate_descriptor_scan_truncated,
             ),
             metrics=metrics,
         )

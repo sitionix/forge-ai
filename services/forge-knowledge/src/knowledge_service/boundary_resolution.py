@@ -136,6 +136,8 @@ class BoundaryResolutionTruncationState:
     candidate_sets_truncated: int = 0
     resolver_limit_reached: bool = False
     recursion_limit_reached: bool = False
+    candidate_descriptor_scan_truncated: bool = False
+    active_unit_provenance_missing: bool = False
 
 
 @dataclass(frozen=True)
@@ -156,6 +158,14 @@ class BoundaryResolverMetrics:
     resolution_rounds: int = 0
     resolution_cycles_detected: int = 0
     resolver_sql_statements: int = 0
+    candidate_descriptor_rows_scanned: int = 0
+    candidate_descriptor_rows_matched_exactly: int = 0
+    candidate_descriptor_row_budget: int = 0
+    candidate_descriptor_scan_truncated: bool = False
+    candidate_sources_inspected: int = 0
+    candidate_sources_truncated: int = 0
+    candidate_pages_loaded: int = 0
+    required_candidate_sets_incomplete: int = 0
 
 
 @dataclass(frozen=True)
@@ -168,6 +178,14 @@ class BoundaryCandidateLoadResult:
     truncated_required_identities: frozenset[BoundaryIdentity] = frozenset()
     diagnostics: tuple[BoundaryResolutionDiagnostic, ...] = ()
     sql_statements: int = 0
+    candidate_descriptor_rows_scanned: int = 0
+    candidate_descriptor_rows_matched_exactly: int = 0
+    candidate_descriptor_row_budget: int = 0
+    candidate_descriptor_scan_truncated: bool = False
+    candidate_sources_inspected: int = 0
+    candidate_sources_truncated: int = 0
+    candidate_pages_loaded: int = 0
+    required_candidate_sets_incomplete: int = 0
 
 
 @dataclass(frozen=True)
@@ -175,6 +193,8 @@ class BoundaryCandidateLoadLimits:
     max_descriptor_path_type_pairs: int = 5000
     max_candidate_boundaries_total: int = 20000
     max_candidates_per_required: int = 1000
+    max_candidate_descriptor_rows_scanned: int = 100000
+    max_candidate_descriptor_page_size: int = 500
     max_source_chunk_size: int = 200
     max_path_type_chunk_size: int = 200
     max_boundary_id_chunk_size: int = 500
@@ -310,7 +330,10 @@ class GenericBoundaryResolver:
         ambiguous = tuple(resolution for resolution in resolutions if resolution.status is BoundaryResolutionStatus.AMBIGUOUS)
         unresolved = tuple(boundary_identity(resolution.required_boundary) for resolution in resolutions if resolution.status is BoundaryResolutionStatus.UNRESOLVED)
         owners = tuple(sorted((link.target_owner for link in proven_links), key=_owner_sort_key))
-        truncation = BoundaryResolutionTruncationState(candidate_sets_truncated=len(candidate_load.truncated_required_identities))
+        truncation = BoundaryResolutionTruncationState(
+            candidate_sets_truncated=len(candidate_load.truncated_required_identities),
+            candidate_descriptor_scan_truncated=candidate_load.candidate_descriptor_scan_truncated,
+        )
         metrics = BoundaryResolverMetrics(
             required_boundary_count=len(required_by_identity),
             eligible_provided_boundary_count=candidate_load.eligible_provided_boundary_count,
@@ -325,6 +348,14 @@ class GenericBoundaryResolver:
             evidence_insufficient_count=evidence_insufficient_count,
             target_owners_discovered=len(owners),
             resolver_sql_statements=candidate_load.sql_statements,
+            candidate_descriptor_rows_scanned=candidate_load.candidate_descriptor_rows_scanned,
+            candidate_descriptor_rows_matched_exactly=candidate_load.candidate_descriptor_rows_matched_exactly,
+            candidate_descriptor_row_budget=candidate_load.candidate_descriptor_row_budget,
+            candidate_descriptor_scan_truncated=candidate_load.candidate_descriptor_scan_truncated,
+            candidate_sources_inspected=candidate_load.candidate_sources_inspected,
+            candidate_sources_truncated=candidate_load.candidate_sources_truncated,
+            candidate_pages_loaded=candidate_load.candidate_pages_loaded,
+            required_candidate_sets_incomplete=len(candidate_load.truncated_required_identities),
         )
         diagnostics.append(
             BoundaryResolutionDiagnostic(
@@ -348,6 +379,14 @@ class GenericBoundaryResolver:
                     "resolutionRounds": metrics.resolution_rounds,
                     "resolutionCyclesDetected": metrics.resolution_cycles_detected,
                     "resolverSQLStatements": metrics.resolver_sql_statements,
+                    "candidateDescriptorRowsScanned": metrics.candidate_descriptor_rows_scanned,
+                    "candidateDescriptorRowsMatchedExactly": metrics.candidate_descriptor_rows_matched_exactly,
+                    "candidateDescriptorRowBudget": metrics.candidate_descriptor_row_budget,
+                    "candidateDescriptorScanTruncated": metrics.candidate_descriptor_scan_truncated,
+                    "candidateSourcesInspected": metrics.candidate_sources_inspected,
+                    "candidateSourcesTruncated": metrics.candidate_sources_truncated,
+                    "candidatePagesLoaded": metrics.candidate_pages_loaded,
+                    "requiredCandidateSetsIncomplete": metrics.required_candidate_sets_incomplete,
                 },
             )
         )

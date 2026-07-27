@@ -38,7 +38,7 @@ from knowledge_service.operation_facts import (
 _SQLITE_BIND_CHUNK_SIZE = 800
 
 
-def _chunks(values: Sequence[str], size: int = _SQLITE_BIND_CHUNK_SIZE) -> Iterable[Sequence[str]]:
+def _chunks(values: Sequence[Any], size: int = _SQLITE_BIND_CHUNK_SIZE) -> Iterable[Sequence[Any]]:
     for offset in range(0, len(values), size):
         yield values[offset: offset + size]
 
@@ -292,7 +292,7 @@ class EntrypointFlowGraphRepository:
             and normalize_http_method(fact.method)
             and normalize_route(fact.normalized_route)
         )
-        source_ids = tuple(dict.fromkeys(str(source_id or "").strip() for source_id in eligible_source_ids if str(source_id or "").strip()))
+        source_ids = tuple(sorted(dict.fromkeys(str(source_id or "").strip() for source_id in eligible_source_ids if str(source_id or "").strip())))
         if not requested or not source_ids:
             return ()
         methods = tuple(sorted({normalize_http_method(fact.method) or "" for fact in requested if normalize_http_method(fact.method)}))
@@ -322,7 +322,7 @@ class EntrypointFlowGraphRepository:
         internal_limits: BoundaryCandidateLoadLimits | None = None,
     ) -> BoundaryCandidateLoadResult:
         limits = internal_limits or BoundaryCandidateLoadLimits()
-        source_ids = tuple(dict.fromkeys(str(source_id or "").strip() for source_id in eligible_source_ids if str(source_id or "").strip()))
+        source_ids = tuple(sorted(dict.fromkeys(str(source_id or "").strip() for source_id in eligible_source_ids if str(source_id or "").strip())))
         required = tuple(
             sorted(
                 (
@@ -345,14 +345,24 @@ class EntrypointFlowGraphRepository:
                 eligible_provided_boundary_count=0,
                 provided_candidates_by_source={},
                 descriptor_fingerprints_queried=len(queried_fingerprints),
+                candidate_descriptor_row_budget=max(0, int(limits.max_candidate_descriptor_rows_scanned)),
             )
 
         diagnostics: list[BoundaryResolutionDiagnostic] = []
         truncated_required: set[BoundaryIdentity] = set()
         path_type_pairs = tuple(sorted({(fingerprint.path, fingerprint.value_type) for fingerprint in queried_fingerprints}))
+        required_by_path_type: dict[tuple[str, str], set[BoundaryIdentity]] = defaultdict(set)
+        for required_identity, fingerprints in fingerprints_by_required.items():
+            for fingerprint in fingerprints:
+                required_by_path_type[(fingerprint.path, fingerprint.value_type)].add(required_identity)
         if len(path_type_pairs) > limits.max_descriptor_path_type_pairs:
+            omitted_path_type_pairs = set(path_type_pairs[limits.max_descriptor_path_type_pairs:])
             path_type_pairs = path_type_pairs[: limits.max_descriptor_path_type_pairs]
-            truncated_required.update(fingerprints_by_required)
+            truncated_required.update(
+                required_identity
+                for pair in omitted_path_type_pairs
+                for required_identity in required_by_path_type.get(pair, set())
+            )
             diagnostics.append(
                 BoundaryResolutionDiagnostic(
                     code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
@@ -367,6 +377,13 @@ class EntrypointFlowGraphRepository:
         candidate_ids_by_fingerprint: dict[Any, set[BoundaryIdentity]] = defaultdict(set)
         candidate_db_ids_by_identity: dict[BoundaryIdentity, tuple[str, str]] = {}
         eligible_provided_count = 0
+        descriptor_rows_scanned = 0
+        descriptor_rows_matched_exactly = 0
+        descriptor_row_budget = max(0, int(limits.max_candidate_descriptor_rows_scanned))
+        descriptor_scan_truncated = False
+        inspected_sources: set[str] = set()
+        truncated_sources: set[str] = set()
+        candidate_pages_loaded = 0
         with self.graph_store._connect() as conn:
             if not self.graph_store._table_exists(conn, "analysis_graph_boundaries"):
                 return BoundaryCandidateLoadResult(
@@ -377,12 +394,50 @@ class EntrypointFlowGraphRepository:
                     descriptor_fingerprints_queried=len(queried_fingerprints),
                     diagnostics=tuple(diagnostics),
                     sql_statements=int(self._metrics.get("sqlStatements", 0)) - sql_before,
+                    candidate_descriptor_row_budget=descriptor_row_budget,
+                    required_candidate_sets_incomplete=len(truncated_required),
                 )
             eligible_provided_count = self._count_eligible_provided_boundaries(conn, source_ids, include_tests)
             queried_set = set(queried_fingerprints)
-            for source_chunk in _chunks(source_ids, max(1, limits.max_source_chunk_size)):
-                for pair_chunk in _chunks(path_type_pairs, max(1, limits.max_path_type_chunk_size)):
-                    rows = self._query_provided_boundary_descriptor_candidate_rows(conn, source_chunk, pair_chunk, include_tests)
+            path_type_chunks = tuple(tuple(chunk) for chunk in _chunks(path_type_pairs, max(1, limits.max_path_type_chunk_size)))
+            scan_keys = tuple((source_id, index, chunk) for source_id in source_ids for index, chunk in enumerate(path_type_chunks))
+            active_scan_keys = set(scan_keys)
+            cursors: dict[tuple[str, int, tuple[tuple[str, str], ...]], tuple[str, str, str, str, str, str, str]] = {}
+            page_turn_size = max(
+                1,
+                min(
+                    max(1, int(limits.max_candidate_descriptor_page_size)),
+                    max(1, descriptor_row_budget // max(1, len(source_ids))),
+                ),
+            )
+            if descriptor_row_budget <= 0 and active_scan_keys:
+                descriptor_scan_truncated = True
+                truncated_sources.update(source_ids)
+                truncated_required.update(fingerprints_by_required)
+                active_scan_keys = set()
+            while active_scan_keys and descriptor_rows_scanned < descriptor_row_budget:
+                progressed = False
+                for scan_key in sorted(active_scan_keys, key=lambda item: (item[1], item[0])):
+                    if descriptor_rows_scanned >= descriptor_row_budget:
+                        break
+                    source_id, _chunk_index, pair_chunk = scan_key
+                    remaining_budget = descriptor_row_budget - descriptor_rows_scanned
+                    page_limit = min(page_turn_size, remaining_budget)
+                    rows = self._query_provided_boundary_descriptor_candidate_row_page(
+                        conn,
+                        source_id,
+                        pair_chunk,
+                        include_tests,
+                        cursor=cursors.get(scan_key),
+                        limit=page_limit,
+                    )
+                    candidate_pages_loaded += 1
+                    inspected_sources.add(source_id)
+                    if not rows:
+                        active_scan_keys.remove(scan_key)
+                        continue
+                    progressed = True
+                    descriptor_rows_scanned += len(rows)
                     for row in rows:
                         fingerprint = descriptor_fingerprint_from_row(
                             row.get("descriptor_path"),
@@ -391,6 +446,7 @@ class EntrypointFlowGraphRepository:
                         )
                         if fingerprint not in queried_set:
                             continue
+                        descriptor_rows_matched_exactly += 1
                         identity = BoundaryIdentity(
                             source_id=str(row.get("source_id") or ""),
                             graph_revision=str(row.get("graph_revision") or row.get("graph_id") or ""),
@@ -399,6 +455,15 @@ class EntrypointFlowGraphRepository:
                         )
                         candidate_ids_by_fingerprint[fingerprint].add(identity)
                         candidate_db_ids_by_identity.setdefault(identity, (str(row.get("source_id") or ""), str(row.get("boundary_id") or "")))
+                    cursors[scan_key] = self._candidate_descriptor_scan_key(rows[-1])
+                    if len(rows) < page_limit:
+                        active_scan_keys.remove(scan_key)
+                if not progressed:
+                    break
+            if active_scan_keys:
+                descriptor_scan_truncated = True
+                truncated_sources.update(scan_key[0] for scan_key in active_scan_keys)
+                truncated_required.update(fingerprints_by_required)
 
             candidate_identities_by_required: dict[BoundaryIdentity, tuple[BoundaryIdentity, ...]] = {}
             for required_identity, fingerprints in sorted(fingerprints_by_required.items()):
@@ -412,7 +477,7 @@ class EntrypointFlowGraphRepository:
                 )
                 if len(identities) > limits.max_candidates_per_required:
                     truncated_required.add(required_identity)
-                    identities = identities[: limits.max_candidates_per_required]
+                    identities = list(_source_fair_boundary_identity_limit(identities, limits.max_candidates_per_required))
                 candidate_identities_by_required[required_identity] = tuple(identities)
 
             selected_identities = sorted({identity for values in candidate_identities_by_required.values() for identity in values})
@@ -461,7 +526,17 @@ class EntrypointFlowGraphRepository:
                     code="BOUNDARY_CANDIDATE_SET_INCOMPLETE",
                     message="One or more boundary candidate sets reached an internal resolver limit.",
                     severity="WARN",
-                    metadata={"requiredBoundaryCount": len(truncated_required)},
+                    metadata={
+                        "requiredBoundaryCount": len(truncated_required),
+                        "candidateDescriptorRowsScanned": descriptor_rows_scanned,
+                        "candidateDescriptorRowsMatchedExactly": descriptor_rows_matched_exactly,
+                        "candidateDescriptorRowBudget": descriptor_row_budget,
+                        "candidateDescriptorScanTruncated": descriptor_scan_truncated,
+                        "candidateSourcesInspected": len(inspected_sources),
+                        "candidateSourcesTruncated": len(truncated_sources),
+                        "candidatePagesLoaded": candidate_pages_loaded,
+                        "requiredCandidateSetsIncomplete": len(truncated_required),
+                    },
                 )
             )
         return BoundaryCandidateLoadResult(
@@ -473,6 +548,14 @@ class EntrypointFlowGraphRepository:
             truncated_required_identities=frozenset(truncated_required),
             diagnostics=tuple(diagnostics),
             sql_statements=int(self._metrics.get("sqlStatements", 0)) - sql_before,
+            candidate_descriptor_rows_scanned=descriptor_rows_scanned,
+            candidate_descriptor_rows_matched_exactly=descriptor_rows_matched_exactly,
+            candidate_descriptor_row_budget=descriptor_row_budget,
+            candidate_descriptor_scan_truncated=descriptor_scan_truncated,
+            candidate_sources_inspected=len(inspected_sources),
+            candidate_sources_truncated=len(truncated_sources),
+            candidate_pages_loaded=candidate_pages_loaded,
+            required_candidate_sets_incomplete=len(truncated_required),
         )
 
     def metrics(self) -> dict[str, int]:
@@ -945,66 +1028,133 @@ class EntrypointFlowGraphRepository:
         ).fetchone()
         return int(row["count"] or 0) if row is not None else 0
 
-    def _query_provided_boundary_descriptor_candidate_rows(
+    def _query_provided_boundary_descriptor_candidate_row_page(
         self,
         conn: Any,
-        source_ids: Sequence[str],
+        source_id: str,
         path_type_pairs: Sequence[tuple[str, str]],
         include_tests: bool,
+        *,
+        cursor: tuple[str, str, str, str, str, str, str] | None,
+        limit: int,
     ) -> list[dict[str, Any]]:
-        if not source_ids or not path_type_pairs:
+        if not source_id or not path_type_pairs or limit <= 0:
             return []
         self._metrics["sqlStatements"] += 1
-        source_sql, source_params = sql_in_clause(source_ids)
         path_type_sql = " OR ".join("(TRIM(d.descriptor_path) = ? AND TRIM(d.value_type) = ?)" for _ in path_type_pairs)
         path_type_params = [value for pair in path_type_pairs for value in pair]
         contract = graph_query_contract()
         current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        cursor_values = cursor or ("", "", "", "", "", "", "")
+        cursor_clause = """
+              AND (
+                    ? = 0
+                 OR source_id > ?
+                 OR (source_id = ? AND graph_revision > ?)
+                 OR (source_id = ? AND graph_revision = ? AND boundary_sort_key > ?)
+                 OR (source_id = ? AND graph_revision = ? AND boundary_sort_key = ? AND boundary_id > ?)
+                 OR (source_id = ? AND graph_revision = ? AND boundary_sort_key = ? AND boundary_id = ? AND descriptor_path > ?)
+                 OR (source_id = ? AND graph_revision = ? AND boundary_sort_key = ? AND boundary_id = ? AND descriptor_path = ? AND descriptor_value_type > ?)
+                 OR (source_id = ? AND graph_revision = ? AND boundary_sort_key = ? AND boundary_id = ? AND descriptor_path = ? AND descriptor_value_type = ? AND descriptor_id > ?)
+              )
+        """
+        cursor_params = [
+            0 if cursor is None else 1,
+            cursor_values[0],
+            cursor_values[0],
+            cursor_values[1],
+            cursor_values[0],
+            cursor_values[1],
+            cursor_values[2],
+            cursor_values[0],
+            cursor_values[1],
+            cursor_values[2],
+            cursor_values[3],
+            cursor_values[0],
+            cursor_values[1],
+            cursor_values[2],
+            cursor_values[3],
+            cursor_values[4],
+            cursor_values[0],
+            cursor_values[1],
+            cursor_values[2],
+            cursor_values[3],
+            cursor_values[4],
+            cursor_values[5],
+            cursor_values[0],
+            cursor_values[1],
+            cursor_values[2],
+            cursor_values[3],
+            cursor_values[4],
+            cursor_values[5],
+            cursor_values[6],
+        ]
         rows = conn.execute(
             f"""
-            SELECT b.id AS boundary_id,
-                   b.source_id AS source_id,
-                   b.stable_key AS boundary_stable_key,
-                   b.node_id AS node_id,
-                   COALESCE(NULLIF(state.graph_id, ''), b.source_id || ':query-current-facts') AS graph_id,
-                   COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), b.source_id || ':query-current-facts') AS graph_revision,
-                   d.id AS descriptor_id,
-                   d.descriptor_path AS descriptor_path,
-                   d.value_type AS descriptor_value_type,
-                   d.value_json AS descriptor_value_json
-            FROM analysis_graph_boundaries b
-            JOIN analysis_graph_nodes n
-              ON n.source_id = b.source_id
-             AND n.id = b.node_id
-             AND n.status IN ({current_status_sql})
-             AND {self.graph_store._inventory_membership_graph_node_clause("n")}
-             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
-            JOIN analysis_graph_boundary_descriptors d
-              ON d.boundary_id = b.id
-             AND d.status IN ({current_status_sql})
-            LEFT JOIN analysis_graph_state state
-              ON state.source_id = b.source_id
-            WHERE b.source_id IN ({source_sql})
-              AND b.role = ?
-              AND b.status IN ({current_status_sql})
-              AND b.rejection_reason IS NULL
-              AND {self.graph_store._inventory_membership_graph_edge_clause("b")}
-              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
-              AND ({path_type_sql})
-            ORDER BY b.source_id, graph_revision, b.stable_key, b.node_id, b.id, d.descriptor_path, d.value_type, d.id
+            WITH candidate_rows AS (
+                SELECT b.id AS boundary_id,
+                       b.source_id AS source_id,
+                       COALESCE(NULLIF(b.stable_key, ''), b.id) AS boundary_sort_key,
+                       b.stable_key AS boundary_stable_key,
+                       b.node_id AS node_id,
+                       COALESCE(NULLIF(state.graph_id, ''), b.source_id || ':query-current-facts') AS graph_id,
+                       COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), b.source_id || ':query-current-facts') AS graph_revision,
+                       d.id AS descriptor_id,
+                       TRIM(d.descriptor_path) AS descriptor_path,
+                       TRIM(d.value_type) AS descriptor_value_type,
+                       d.value_json AS descriptor_value_json
+                FROM analysis_graph_boundaries b
+                JOIN analysis_graph_nodes n
+                  ON n.source_id = b.source_id
+                 AND n.id = b.node_id
+                 AND n.status IN ({current_status_sql})
+                 AND {self.graph_store._inventory_membership_graph_node_clause("n")}
+                 AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+                JOIN analysis_graph_boundary_descriptors d
+                  ON d.boundary_id = b.id
+                 AND d.status IN ({current_status_sql})
+                LEFT JOIN analysis_graph_state state
+                  ON state.source_id = b.source_id
+                WHERE b.source_id = ?
+                  AND b.role = ?
+                  AND b.status IN ({current_status_sql})
+                  AND b.rejection_reason IS NULL
+                  AND {self.graph_store._inventory_membership_graph_edge_clause("b")}
+                  AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+                  AND ({path_type_sql})
+            )
+            SELECT *
+            FROM candidate_rows
+            WHERE 1 = 1
+            {cursor_clause}
+            ORDER BY source_id, graph_revision, boundary_sort_key, boundary_id, descriptor_path, descriptor_value_type, descriptor_id
+            LIMIT ?
             """,
             [
                 *current_status_params,
                 include_tests,
                 *current_status_params,
-                *source_params,
+                source_id,
                 BOUNDARY_ROLE_PROVIDED,
                 *current_status_params,
                 include_tests,
                 *path_type_params,
+                *cursor_params,
+                limit,
             ],
         ).fetchall()
         return [self.graph_store._row_dict(row) for row in rows]
+
+    def _candidate_descriptor_scan_key(self, row: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
+        return (
+            str(row.get("source_id") or ""),
+            str(row.get("graph_revision") or row.get("graph_id") or ""),
+            str(row.get("boundary_sort_key") or row.get("boundary_stable_key") or row.get("boundary_id") or ""),
+            str(row.get("boundary_id") or ""),
+            str(row.get("descriptor_path") or ""),
+            str(row.get("descriptor_value_type") or ""),
+            str(row.get("descriptor_id") or ""),
+        )
 
     def _query_boundary_rows_by_boundary_ids(
         self,

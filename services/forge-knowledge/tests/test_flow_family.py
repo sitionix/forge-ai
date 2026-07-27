@@ -18,7 +18,6 @@ from knowledge_service.graph_relation_semantics import (
     GraphRelationSemantics,
 )
 
-
 REVISION = "graph-current"
 
 
@@ -90,7 +89,14 @@ def ev(evidence_id: str, owner: FlowGraphNode | FlowGraphEdge, text: str) -> Flo
     )
 
 
-def f(root: FlowGraphNode, nodes: tuple[FlowGraphNode, ...], edges: tuple[FlowGraphEdge, ...], *, score: float = 1.0) -> EntrypointFlow:
+def f(
+    root: FlowGraphNode,
+    nodes: tuple[FlowGraphNode, ...],
+    edges: tuple[FlowGraphEdge, ...],
+    *,
+    score: float = 1.0,
+    local_unit_id: str | None = None,
+) -> EntrypointFlow:
     return EntrypointFlow(
         key=EntrypointFlowKey(root.source_id, root.graph_revision or root.graph_id, root.node_id),
         entrypoint=root,
@@ -104,6 +110,7 @@ def f(root: FlowGraphNode, nodes: tuple[FlowGraphNode, ...], edges: tuple[FlowGr
         coverage=EntrypointFlowCoverage(len(nodes), len(edges), 0, 1, len(nodes)),
         diagnostics=(),
         relevance_score=score,
+        local_unit_id=local_unit_id,
     )
 
 
@@ -166,6 +173,26 @@ def test_same_root_raw_flows_are_merged_without_losing_branches_or_evidence():
     assert {item.evidence_id for item in family.evidence} == {"ev-a", "ev-b"}
     assert family.relevance_score == 0.9
     assert set(family.anchors[0].match_reasons) == {"ANCHOR_A", "ANCHOR_B"}
+
+
+def test_family_retains_exact_local_unit_ids_through_same_root_and_subordinate_aggregation():
+    root_a = n("root-a", symbol="RootA.handle", entrypoint=True)
+    root_b = n("root-b", symbol="RootB.handle", entrypoint=True)
+    branch = n("branch", symbol="Branch.run")
+    a_to_b = e("a-to-b", root_a, root_b)
+    b_to_branch = e("b-to-branch", root_b, branch)
+    raw_flows = (
+        f(root_b, (root_b, branch), (b_to_branch,), local_unit_id="unit-b"),
+        f(root_a, (root_a, root_b, branch), (a_to_b, b_to_branch), local_unit_id="unit-a"),
+        f(root_a, (root_a,), (), score=0.7, local_unit_id="unit-a-extra"),
+    )
+
+    forward = assembler().assemble(raw_flows).families
+    reversed_result = assembler().assemble(tuple(reversed(raw_flows))).families
+
+    assert len(forward) == 1
+    assert forward[0].local_unit_ids == ("unit-a", "unit-a-extra", "unit-b")
+    assert [family.local_unit_ids for family in forward] == [family.local_unit_ids for family in reversed_result]
 
 
 def test_inferred_roots_are_scoped_to_their_own_reachability_component():

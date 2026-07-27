@@ -18,8 +18,8 @@ from knowledge_service.boundary_resolution import (
 from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.flow_family import FlowFamilyAssembler
-from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode
-from knowledge_service.knowledge_query_service import KnowledgeQueryService, QuerySource
+from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest
+from knowledge_service.knowledge_query_service import KnowledgeQueryService, QuerySource, SourceScopeResolver, UnifiedAnchorSearcher
 
 
 def owner_id(source_id: str) -> str:
@@ -179,6 +179,29 @@ def sqlite_family_inputs(repo: EntrypointFlowGraphRepository, db_path: Path, sou
     return FlowFamilyAssembler().rank(assembly.families), result.local_units
 
 
+class LimitedBoundaryCandidateRepository(EntrypointFlowGraphRepository):
+    def __init__(self, graph_store: AnalysisStore, limits: BoundaryCandidateLoadLimits) -> None:
+        super().__init__(graph_store)
+        self.limits = limits
+
+    def find_provided_boundary_candidates(self, required_boundaries, *, eligible_source_ids, include_tests, internal_limits=None):
+        return super().find_provided_boundary_candidates(
+            required_boundaries,
+            eligible_source_ids=eligible_source_ids,
+            include_tests=include_tests,
+            internal_limits=self.limits,
+        )
+
+
+def query_service(db_path: Path, repo: EntrypointFlowGraphRepository | None = None) -> KnowledgeQueryService:
+    store = AnalysisStore(db_path)
+    return KnowledgeQueryService(
+        SourceScopeResolver(store),
+        UnifiedAnchorSearcher(store),
+        repo or EntrypointFlowGraphRepository(store),
+    )
+
+
 def evidence_refs(boundary):
     return [item.evidence_id for item in boundary.evidence] + [item.evidence_id for descriptor in boundary.descriptors for item in descriptor.evidence]
 
@@ -284,7 +307,8 @@ def test_candidate_loading_is_batched_chunked_and_truncation_blocks_proof(tmp_pa
         internal_limits=BoundaryCandidateLoadLimits(max_source_chunk_size=3, max_path_type_chunk_size=4, max_candidates_per_required=20),
     )
     assert len(result.candidates_by_required_identity[boundary_identity(required)]) == 17
-    assert result.sql_statements < 40
+    assert result.sql_statements < 80
+    assert result.candidate_pages_loaded == 39
 
     truncated = repo.find_provided_boundary_candidates(
         [required],
@@ -304,6 +328,336 @@ def test_candidate_loading_is_batched_chunked_and_truncation_blocks_proof(tmp_pa
     )
     retained_sources = {item.source_id for item in source_fair.candidates_by_required_identity[boundary_identity(required)]}
     assert len(retained_sources) == 3
+
+
+def test_descriptor_scan_row_budget_truncates_before_candidate_materialization(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_source(db_path, "source-a")
+    seed_source(db_path, "source-b")
+    insert_boundary(
+        db_path,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required",
+        role="REQUIRED",
+        descriptors=(("neutral.common", "STRING", "match"),),
+    )
+    for index in range(1200):
+        insert_boundary(
+            db_path,
+            source_id="source-b",
+            node_id=owner_id("source-b"),
+            boundary_id=f"provided-{index:04d}",
+            role="PROVIDED",
+            descriptors=(("neutral.common", "STRING", "match" if index == 1199 else f"other-{index}"),),
+        )
+    repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
+    required = load_required(db_path, "source-a")
+
+    result = repo.find_provided_boundary_candidates(
+        [required],
+        eligible_source_ids=["source-a", "source-b"],
+        include_tests=False,
+        internal_limits=BoundaryCandidateLoadLimits(max_candidate_descriptor_rows_scanned=25, max_candidate_descriptor_page_size=7),
+    )
+    resolution = GenericBoundaryResolver().resolve((Unit("unit-a", (required,)),), result)
+
+    assert result.candidate_descriptor_rows_scanned == 25
+    assert result.candidate_descriptor_row_budget == 25
+    assert result.candidate_descriptor_scan_truncated is True
+    assert result.required_candidate_sets_incomplete == 1
+    assert boundary_identity(required) in result.truncated_required_identities
+    assert resolution.resolutions[0].status is BoundaryResolutionStatus.UNRESOLVED
+    assert resolution.metrics.required_candidate_sets_incomplete == 1
+
+
+def test_source_fair_descriptor_scan_and_per_required_limit_keep_minor_source_visible(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    for source in ("source-a", "source-b", "source-dominant"):
+        seed_source(db_path, source)
+    insert_boundary(
+        db_path,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required",
+        role="REQUIRED",
+        descriptors=(("neutral.identity", "STRING", "match"),),
+    )
+    for index in range(8):
+        insert_boundary(
+            db_path,
+            source_id="source-dominant",
+            node_id=owner_id("source-dominant"),
+            boundary_id=f"provided-dominant-{index}",
+            role="PROVIDED",
+            descriptors=(("neutral.identity", "STRING", "match"),),
+        )
+    insert_boundary(
+        db_path,
+        source_id="source-b",
+        node_id=owner_id("source-b"),
+        boundary_id="provided-b",
+        role="PROVIDED",
+        descriptors=(("neutral.identity", "STRING", "match"),),
+    )
+    repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
+    required = load_required(db_path, "source-a")
+
+    scanned = repo.find_provided_boundary_candidates(
+        [required],
+        eligible_source_ids=["source-a", "source-dominant", "source-b"],
+        include_tests=False,
+        internal_limits=BoundaryCandidateLoadLimits(max_candidate_descriptor_rows_scanned=4, max_candidate_descriptor_page_size=100),
+    )
+    assert scanned.candidate_sources_inspected >= 2
+    assert scanned.candidate_descriptor_scan_truncated is True
+    assert any(item.source_id == "source-b" for item in scanned.candidates_by_required_identity[boundary_identity(required)])
+
+    limited = repo.find_provided_boundary_candidates(
+        [required],
+        eligible_source_ids=["source-a", "source-dominant", "source-b"],
+        include_tests=False,
+        internal_limits=BoundaryCandidateLoadLimits(max_candidates_per_required=2),
+    )
+    retained = limited.candidates_by_required_identity[boundary_identity(required)]
+    assert {item.source_id for item in retained} == {"source-b", "source-dominant"}
+    assert boundary_identity(required) in limited.truncated_required_identities
+    assert GenericBoundaryResolver().resolve((Unit("unit-a", (required,)),), limited).resolutions[0].status is BoundaryResolutionStatus.UNRESOLVED
+
+
+def test_source_fair_scan_order_spans_sources_before_repeating_descriptor_chunks(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    for source in ("source-a", "source-b", "source-dominant"):
+        seed_source(db_path, source)
+    insert_boundary(
+        db_path,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required",
+        role="REQUIRED",
+        descriptors=tuple((f"neutral.chunk.{index}", "STRING", f"value-{index}") for index in range(6)),
+    )
+    for index in range(6):
+        insert_boundary(
+            db_path,
+            source_id="source-dominant",
+            node_id=owner_id("source-dominant"),
+            boundary_id=f"provided-dominant-{index}",
+            role="PROVIDED",
+            descriptors=((f"neutral.chunk.{index}", "STRING", f"value-{index}"),),
+        )
+    insert_boundary(
+        db_path,
+        source_id="source-b",
+        node_id=owner_id("source-b"),
+        boundary_id="provided-b",
+        role="PROVIDED",
+        descriptors=(("neutral.chunk.0", "STRING", "value-0"),),
+    )
+    repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
+    required = load_required(db_path, "source-a")
+
+    result = repo.find_provided_boundary_candidates(
+        [required],
+        eligible_source_ids=["source-a", "source-dominant", "source-b"],
+        include_tests=False,
+        internal_limits=BoundaryCandidateLoadLimits(
+            max_path_type_chunk_size=1,
+            max_candidate_descriptor_rows_scanned=2,
+            max_candidate_descriptor_page_size=100,
+        ),
+    )
+
+    assert result.candidate_descriptor_rows_scanned == 2
+    assert result.candidate_sources_inspected >= 2
+    assert result.candidate_descriptor_scan_truncated is True
+    assert any(item.source_id == "source-b" for item in result.candidates_by_required_identity[boundary_identity(required)])
+    assert boundary_identity(required) in result.truncated_required_identities
+
+
+def test_keyset_pages_do_not_skip_duplicate_or_depend_on_insertion_order(tmp_path):
+    def build_db(db_path: Path, order: Sequence[int]):
+        seed_source(db_path, "source-a")
+        seed_source(db_path, "source-b")
+        insert_boundary(
+            db_path,
+            source_id="source-a",
+            node_id=owner_id("source-a"),
+            boundary_id="required",
+            role="REQUIRED",
+            descriptors=(("neutral.identity", "STRING", "match"),),
+        )
+        for index in order:
+            insert_boundary(
+                db_path,
+                source_id="source-b",
+                node_id=owner_id("source-b"),
+                boundary_id=f"provided-{index}",
+                role="PROVIDED",
+                descriptors=(("neutral.identity", "STRING", "match"),),
+            )
+
+    forward_db = tmp_path / "forward.sqlite"
+    reverse_db = tmp_path / "reverse.sqlite"
+    build_db(forward_db, range(7))
+    build_db(reverse_db, reversed(range(7)))
+
+    observed: list[tuple[str, ...]] = []
+    for db_path in (forward_db, reverse_db):
+        repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
+        required = load_required(db_path, "source-a")
+        result = repo.find_provided_boundary_candidates(
+            [required],
+            eligible_source_ids=["source-a", "source-b"],
+            include_tests=False,
+            internal_limits=BoundaryCandidateLoadLimits(max_candidate_descriptor_page_size=2),
+        )
+        observed.append(tuple(item.boundary_id for item in result.candidates_by_required_identity[boundary_identity(required)]))
+        assert result.candidate_descriptor_rows_scanned == 7
+        assert result.candidate_pages_loaded >= 4
+
+    assert observed[0] == observed[1] == tuple(f"provided-{index}" for index in range(7))
+
+
+def test_loader_exact_value_filtering_and_complete_vs_incomplete_uniqueness(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    for source in ("source-a", "source-b", "source-c"):
+        seed_source(db_path, source)
+    insert_boundary(
+        db_path,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required",
+        role="REQUIRED",
+        descriptors=(("neutral.identity", "STRING", "1"),),
+    )
+    insert_boundary(
+        db_path,
+        source_id="source-b",
+        node_id=owner_id("source-b"),
+        boundary_id="provided-string",
+        role="PROVIDED",
+        descriptors=(("neutral.identity", "STRING", "1"),),
+    )
+    insert_boundary(
+        db_path,
+        source_id="source-c",
+        node_id=owner_id("source-c"),
+        boundary_id="provided-number",
+        role="PROVIDED",
+        descriptors=(("neutral.identity", "INT", 1),),
+    )
+    repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
+    required = load_required(db_path, "source-a")
+
+    complete = repo.find_provided_boundary_candidates(
+        [required],
+        eligible_source_ids=["source-a", "source-b", "source-c"],
+        include_tests=False,
+    )
+    assert [(item.source_id, item.boundary_id) for item in complete.candidates_by_required_identity[boundary_identity(required)]] == [
+        ("source-b", "provided-string")
+    ]
+    assert GenericBoundaryResolver().resolve((Unit("unit-a", (required,)),), complete).resolutions[0].status is BoundaryResolutionStatus.PROVEN
+
+    incomplete = repo.find_provided_boundary_candidates(
+        [required],
+        eligible_source_ids=["source-a", "source-b", "source-c"],
+        include_tests=False,
+        internal_limits=BoundaryCandidateLoadLimits(max_candidate_descriptor_rows_scanned=1, max_candidate_descriptor_page_size=1),
+    )
+    assert incomplete.candidate_descriptor_scan_truncated is True
+    assert GenericBoundaryResolver().resolve((Unit("unit-a", (required,)),), incomplete).resolutions[0].status is BoundaryResolutionStatus.UNRESOLVED
+
+
+def test_resolver_truncation_sets_public_query_coverage_flags(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_source(db_path, "source-a")
+    seed_source(db_path, "source-b")
+    insert_boundary(
+        db_path,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required",
+        role="REQUIRED",
+        descriptors=(("neutral.identity", "STRING", "match"),),
+    )
+    for index in range(20):
+        insert_boundary(
+            db_path,
+            source_id="source-b",
+            node_id=owner_id("source-b"),
+            boundary_id=f"provided-{index}",
+            role="PROVIDED",
+            descriptors=(("neutral.identity", "STRING", "match"),),
+        )
+    store = AnalysisStore(db_path)
+    repo = LimitedBoundaryCandidateRepository(
+        store,
+        BoundaryCandidateLoadLimits(max_candidate_descriptor_rows_scanned=1, max_candidate_descriptor_page_size=1),
+    )
+
+    result = query_service(db_path, repo).query_with_flows(KnowledgeQueryRequest(queryText=owner_id("source-a")))
+
+    assert result.response.coverage.truncated is True
+    assert result.response.coverage.continuationAvailable is True
+    assert result.boundary_resolution is not None
+    assert result.boundary_resolution.truncation.candidate_sets_truncated == 1
+    assert any(item.code == "BOUNDARY_CANDIDATE_SET_INCOMPLETE" for item in result.response.diagnostics)
+
+
+def test_complete_ambiguous_and_unresolved_do_not_set_public_query_truncation(tmp_path):
+    ambiguous_db = tmp_path / "ambiguous.sqlite"
+    for source in ("source-a", "source-b", "source-c"):
+        seed_source(ambiguous_db, source)
+    insert_boundary(
+        ambiguous_db,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required-ambiguous",
+        role="REQUIRED",
+        descriptors=(("neutral.identity", "STRING", "same"), ("neutral.variant", "STRING", "same")),
+    )
+    for source in ("source-b", "source-c"):
+        insert_boundary(
+            ambiguous_db,
+            source_id=source,
+            node_id=owner_id(source),
+            boundary_id=f"provided-{source}",
+            role="PROVIDED",
+            descriptors=(("neutral.identity", "STRING", "same"), ("neutral.variant", "STRING", "same")),
+        )
+    ambiguous = query_service(ambiguous_db).query_with_flows(KnowledgeQueryRequest(queryText=owner_id("source-a")))
+
+    unresolved_db = tmp_path / "unresolved.sqlite"
+    seed_source(unresolved_db, "source-a")
+    seed_source(unresolved_db, "source-b")
+    insert_boundary(
+        unresolved_db,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required-unresolved",
+        role="REQUIRED",
+        descriptors=(("neutral.identity", "STRING", "missing"),),
+    )
+    insert_boundary(
+        unresolved_db,
+        source_id="source-b",
+        node_id=owner_id("source-b"),
+        boundary_id="provided-other",
+        role="PROVIDED",
+        descriptors=(("neutral.identity", "STRING", "other"),),
+    )
+    unresolved = query_service(unresolved_db).query_with_flows(KnowledgeQueryRequest(queryText=owner_id("source-a")))
+
+    assert ambiguous.boundary_resolution is not None
+    assert ambiguous.boundary_resolution.resolutions[0].status is BoundaryResolutionStatus.AMBIGUOUS
+    assert ambiguous.response.coverage.truncated is False
+    assert ambiguous.response.coverage.continuationAvailable is False
+    assert unresolved.boundary_resolution is not None
+    assert unresolved.boundary_resolution.resolutions[0].status is BoundaryResolutionStatus.UNRESOLVED
+    assert unresolved.response.coverage.truncated is False
+    assert unresolved.response.coverage.continuationAvailable is False
 
 
 def test_temporary_sqlite_seeded_schema_acceptance_proven_ambiguous_unresolved(tmp_path):

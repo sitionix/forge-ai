@@ -41,6 +41,7 @@ class FlowFamily:
     nested_entrypoints: tuple[FlowGraphNode, ...] = ()
     subordinate_entrypoint_count: int = 0
     raw_flow_keys: tuple[EntrypointFlowKey, ...] = ()
+    local_unit_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,12 @@ class FlowFamilyAssembler:
         supporting_relations: Sequence[FlowGraphEdge] = (),
     ) -> FlowFamilyAssemblyResult:
         raw_flow_count = len(raw_flows or ())
-        flows = self._aggregate_same_root_flows(tuple(raw_flows or ()))
+        raw_input_flows = tuple(raw_flows or ())
+        local_unit_ids_by_root: dict[FlowNodeKey, set[str]] = defaultdict(set)
+        for flow in raw_input_flows:
+            if flow.local_unit_id:
+                local_unit_ids_by_root[self._node_key(flow.entrypoint)].add(flow.local_unit_id)
+        flows = self._aggregate_same_root_flows(raw_input_flows)
         if not flows:
             return FlowFamilyAssemblyResult((), (), 0, 0, {})
 
@@ -126,6 +132,7 @@ class FlowFamilyAssembler:
                 boundary_edges=boundary_edges,
                 support_edges=support_edges,
                 diagnostics=diagnostics,
+                local_unit_ids_by_root=local_unit_ids_by_root,
             )
             for root in sorted(independent_roots, key=lambda key: self._family_sort_key(flow_by_root[key]))
         )
@@ -196,10 +203,12 @@ class FlowFamilyAssembler:
         boundary_edges: Mapping[FlowEdgeKey, FlowGraphEdge],
         support_edges: Mapping[FlowEdgeKey, FlowGraphEdge],
         diagnostics: Sequence[KnowledgeQueryDiagnostic],
+        local_unit_ids_by_root: Mapping[FlowNodeKey, set[str]],
     ) -> FlowFamily:
         root_flow = flow_by_root[root]
         included_roots = {root, *self._strict_subordinate_reachable_roots(root, reachability)}
         included_raw_flows = [flow_by_root[item] for item in included_roots if item in flow_by_root]
+        local_unit_ids = tuple(sorted({unit_id for item in included_roots for unit_id in local_unit_ids_by_root.get(item, set()) if unit_id}))
         family_node_keys: set[FlowNodeKey] = set()
         for flow in included_raw_flows:
             family_node_keys.update(self._node_key(node) for node in flow.nodes)
@@ -270,6 +279,7 @@ class FlowFamilyAssembler:
             nested_entrypoints=nested_entrypoints,
             subordinate_entrypoint_count=max(0, len(included_roots) - 1),
             raw_flow_keys=tuple(sorted((flow.key for flow in included_raw_flows), key=lambda key: (key.source_id, key.graph_revision, key.entrypoint_node_id))),
+            local_unit_ids=local_unit_ids,
         )
 
     def _root_may_stand(
