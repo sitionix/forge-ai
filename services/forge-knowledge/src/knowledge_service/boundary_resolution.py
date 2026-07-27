@@ -150,6 +150,7 @@ class BoundaryTargetMaterialization:
     owner_to_seed_reasons: tuple[BoundaryTargetSeedRelation, ...]
     materialization_status: BoundaryTargetMaterializationStatus
     diagnostics: tuple[BoundaryResolutionDiagnostic, ...] = ()
+    omitted_target_local_unit_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -172,6 +173,10 @@ class BoundaryResolutionTruncationState:
     recursion_limit_reached: bool = False
     candidate_descriptor_scan_truncated: bool = False
     active_unit_provenance_missing: bool = False
+    truncated_required_identities: tuple[BoundaryIdentity, ...] = ()
+    descriptor_scan_truncated_required_identities: tuple[BoundaryIdentity, ...] = ()
+    resolver_limit_required_identities: tuple[BoundaryIdentity, ...] = ()
+    active_unit_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -188,7 +193,10 @@ class BoundaryResolverMetrics:
     conflict_count: int = 0
     evidence_insufficient_count: int = 0
     target_owners_discovered: int = 0
+    target_units_considered: int = 0
     target_units_materialized: int = 0
+    target_units_omitted: int = 0
+    partial_target_materialization_count: int = 0
     resolution_rounds: int = 0
     resolution_cycles_detected: int = 0
     resolver_sql_statements: int = 0
@@ -371,6 +379,10 @@ class GenericBoundaryResolver:
         truncation = BoundaryResolutionTruncationState(
             candidate_sets_truncated=len(candidate_load.truncated_required_identities),
             candidate_descriptor_scan_truncated=candidate_load.candidate_descriptor_scan_truncated,
+            truncated_required_identities=tuple(sorted(candidate_load.truncated_required_identities)),
+            descriptor_scan_truncated_required_identities=tuple(sorted(candidate_load.truncated_required_identities))
+            if candidate_load.candidate_descriptor_scan_truncated
+            else (),
         )
         metrics = BoundaryResolverMetrics(
             required_boundary_count=len(required_by_identity),
@@ -413,7 +425,10 @@ class GenericBoundaryResolver:
                     "conflictCount": metrics.conflict_count,
                     "evidenceInsufficientCount": metrics.evidence_insufficient_count,
                     "targetOwnersDiscovered": metrics.target_owners_discovered,
+                    "targetUnitsConsidered": metrics.target_units_considered,
                     "targetUnitsMaterialized": metrics.target_units_materialized,
+                    "targetUnitsOmitted": metrics.target_units_omitted,
+                    "partialTargetMaterializationCount": metrics.partial_target_materialization_count,
                     "resolutionRounds": metrics.resolution_rounds,
                     "resolutionCyclesDetected": metrics.resolution_cycles_detected,
                     "resolverSQLStatements": metrics.resolver_sql_statements,

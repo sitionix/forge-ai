@@ -8,10 +8,12 @@ from typing import Any, Sequence
 from semantic_test_support import seed_semantic_graph
 from test_boundary_resolution import Unit
 
+import knowledge_service.knowledge_query_service as knowledge_query_service_module
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.boundary_resolution import (
     BoundaryCandidateLoadLimits,
     BoundaryResolutionStatus,
+    BoundaryTargetMaterializationStatus,
     GenericBoundaryResolver,
     boundary_identity,
 )
@@ -19,7 +21,13 @@ from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.flow_family import FlowFamilyAssembler
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest
-from knowledge_service.knowledge_query_service import KnowledgeQueryService, QuerySource, SourceScopeResolver, UnifiedAnchorSearcher
+from knowledge_service.knowledge_query_service import (
+    ContinuationAssemblyResult,
+    KnowledgeQueryService,
+    QuerySource,
+    SourceScopeResolver,
+    UnifiedAnchorSearcher,
+)
 
 
 def owner_id(source_id: str) -> str:
@@ -758,6 +766,88 @@ def test_temporary_sqlite_seeded_schema_acceptance_proven_ambiguous_unresolved(t
     assert continuation.boundary_resolution is not None
     assert continuation.boundary_resolution.proven_links[0].target_owner.source_id == "source-proven"
     assert {unit.source_id for unit in continuation.boundary_resolution.discovered_local_units} == {"source-proven"}
+
+
+def test_production_partial_target_materialization_retains_only_accepted_units(tmp_path, monkeypatch):
+    db_path = tmp_path / "partial.sqlite"
+    for source in ("source-a", "source-b", "source-c"):
+        seed_source(db_path, source)
+    insert_boundary(
+        db_path,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required-a-b",
+        role="REQUIRED",
+        descriptors=(("neutral.partial", "STRING", "target"),),
+    )
+    insert_boundary(
+        db_path,
+        source_id="source-b",
+        node_id=owner_id("source-b"),
+        boundary_id="provided-b",
+        role="PROVIDED",
+        descriptors=(("neutral.partial", "STRING", "target"),),
+    )
+    repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
+    families, units = sqlite_family_inputs(repo, db_path, "source-a")
+    _, target_b_units = sqlite_family_inputs(repo, db_path, "source-b")
+    _, target_c_units = sqlite_family_inputs(repo, db_path, "source-c")
+    service = KnowledgeQueryService(
+        None,
+        None,
+        repo,
+        flow_engine=EntrypointFlowEngine(repo),
+    )
+    monkeypatch.setattr(knowledge_query_service_module, "_MAX_BOUNDARY_TARGET_UNITS", 1)
+
+    def materialize_two_targets(owner, eligible_sources, *, include_tests):
+        return ContinuationAssemblyResult(
+            (),
+            (),
+            (),
+            tuple(sorted((*target_b_units, *target_c_units), key=lambda item: item.unit_id)),
+            None,
+            (),
+            (),
+        )
+
+    monkeypatch.setattr(service, "_materialize_boundary_target_owner", materialize_two_targets)
+
+    continuation = service._assemble_generic_boundary_continuations(
+        families,
+        units,
+        query_sources(db_path, ("source-a", "source-b", "source-c")),
+        include_tests=False,
+    )
+
+    assert continuation.boundary_resolution is not None
+    materialization = continuation.boundary_resolution.target_materializations[0]
+    assert materialization.materialization_status is BoundaryTargetMaterializationStatus.PARTIAL
+    assert materialization.target_local_unit_ids == (target_b_units[0].unit_id,)
+    assert materialization.omitted_target_local_unit_ids == (target_c_units[0].unit_id,)
+    assert {unit.unit_id for unit in continuation.local_units} == {units[0].unit_id, target_b_units[0].unit_id}
+
+    assembly = service.end_to_end_assembler.assemble(
+        continuation.local_units,
+        query_entry_unit_ids=continuation.initial_selected_local_unit_ids,
+        boundary_resolution=continuation.boundary_resolution,
+        resolver_truncated=service._boundary_resolution_incomplete(continuation.boundary_resolution),
+    )
+
+    transitions = [transition for graph in assembly.graphs for transition in graph.proven_cross_source_transitions]
+    assert [(transition.source_unit_id, transition.target_unit_id) for transition in transitions] == [
+        (units[0].unit_id, target_b_units[0].unit_id)
+    ]
+    assert all(transition.target_unit_id != target_c_units[0].unit_id for transition in transitions)
+    assert not any(item.code == "END_TO_END_REFERENCED_UNIT_MISSING" for item in assembly.diagnostics)
+    assert assembly.truncated is True
+    assert assembly.complete is False
+    assert any(graph.coverage.truncated is True and graph.coverage.complete is False for graph in assembly.graphs)
+    assert any(
+        item.code == "END_TO_END_TARGET_MATERIALIZATION_PARTIAL"
+        and item.metadata.get("omittedTargetLocalUnitIds") == (target_c_units[0].unit_id,)
+        for item in assembly.diagnostics
+    )
 
 
 def test_temporary_sqlite_end_to_end_assembly_acceptance(tmp_path):

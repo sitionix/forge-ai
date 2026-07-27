@@ -179,6 +179,13 @@ class EndToEndFlowAssemblyMetrics:
     assembled_cross_source_transition_count: int = 0
     open_ambiguous_boundary_count: int = 0
     open_unresolved_boundary_count: int = 0
+    discovered_open_boundary_count: int = 0
+    retained_open_boundary_count: int = 0
+    omitted_open_boundary_count: int = 0
+    discovered_open_ambiguous_boundary_count: int = 0
+    discovered_open_unresolved_boundary_count: int = 0
+    retained_open_ambiguous_boundary_count: int = 0
+    retained_open_unresolved_boundary_count: int = 0
     required_boundaries_without_resolution_count: int = 0
     orphaned_proven_resolution_count: int = 0
     missing_required_unit_mapping_count: int = 0
@@ -407,6 +414,9 @@ class EndToEndFlowAssembler:
 
             if materialization.materialization_status is BoundaryTargetMaterializationStatus.PARTIAL:
                 truncated = True
+                omitted_target_unit_ids = tuple(
+                    sorted({str(item or "") for item in materialization.omitted_target_local_unit_ids if str(item or "")})
+                )
                 issues.append(
                     EndToEndAssemblyIssue(
                         code="END_TO_END_TARGET_MATERIALIZATION_PARTIAL",
@@ -415,9 +425,11 @@ class EndToEndFlowAssembler:
                         required_boundary_identity=link.required_boundary_identity,
                         provided_boundary_identity=link.provided_boundary_identity,
                         affected_local_unit_ids=tuple(sorted(set(required_unit_ids) | set(target_unit_ids))),
+                        missing_local_unit_ids=tuple(unit_id for unit_id in omitted_target_unit_ids if unit_id not in units_by_id),
                         metadata={
                             "materializationStatus": materialization.materialization_status.value,
                             "targetLocalUnitIds": target_unit_ids,
+                            "omittedTargetLocalUnitIds": omitted_target_unit_ids,
                         },
                     )
                 )
@@ -455,23 +467,26 @@ class EndToEndFlowAssembler:
                     )
             assembled_proven_links.append(link)
 
-        open_boundaries, required_without_resolution, open_truncated = self._open_boundaries(
+        issues.extend(_resolver_issues(boundary_resolution, resolution_by_required, required_units_by_boundary))
+
+        all_discovered_open_boundaries, required_without_resolution = self._open_boundaries(
             ordered_units,
             required_units_by_boundary,
             resolution_by_required,
-            boundary_resolution,
+            tuple(resolution_by_id.values()),
             issues,
         )
-        truncated = truncated or open_truncated
+        retained_open_boundaries = all_discovered_open_boundaries
+        omitted_open_boundaries: tuple[EndToEndOpenBoundary, ...] = ()
 
-        if len(open_boundaries) > self.limits.max_open_boundaries:
+        if len(all_discovered_open_boundaries) > self.limits.max_open_boundaries:
             truncated = True
-            omitted_open_boundaries = tuple(open_boundaries[self.limits.max_open_boundaries :])
+            omitted_open_boundaries = tuple(all_discovered_open_boundaries[self.limits.max_open_boundaries :])
             diagnostics.append(
                 _limit_diagnostic(
                     "open boundary",
                     self.limits.max_open_boundaries,
-                    len(open_boundaries),
+                    len(all_discovered_open_boundaries),
                     metadata={"omittedOpenBoundaryCount": len(omitted_open_boundaries)},
                 )
             )
@@ -485,12 +500,12 @@ class EndToEndFlowAssembler:
                         metadata={
                             "limitKind": "open boundary",
                             "limit": self.limits.max_open_boundaries,
-                            "attempted": len(open_boundaries),
+                            "attempted": len(all_discovered_open_boundaries),
                             "requiredBoundary": _identity_payload(item.required_boundary_identity),
                         },
                     )
                 )
-            open_boundaries = open_boundaries[: self.limits.max_open_boundaries]
+            retained_open_boundaries = all_discovered_open_boundaries[: self.limits.max_open_boundaries]
 
         discovered_components = _components(tuple(unit_ref_by_id), tuple(transitions))
         components = discovered_components
@@ -534,9 +549,8 @@ class EndToEndFlowAssembler:
                 component,
                 unit_ref_by_id,
                 transitions,
-                open_boundaries,
+                retained_open_boundaries,
                 query_entry_ids,
-                resolver_truncated,
                 issues,
             )
             graphs.append(graph)
@@ -555,7 +569,9 @@ class EndToEndFlowAssembler:
             unit_refs,
             graphs,
             discovered_components,
-            open_boundaries,
+            all_discovered_open_boundaries,
+            retained_open_boundaries,
+            omitted_open_boundaries,
             boundary_resolution,
             len(unassembled_proven),
             len(assembled_proven_links),
@@ -585,6 +601,13 @@ class EndToEndFlowAssembler:
                 "assembledCrossSourceTransitionCount": metrics.assembled_cross_source_transition_count,
                 "openAmbiguousBoundaryCount": metrics.open_ambiguous_boundary_count,
                 "openUnresolvedBoundaryCount": metrics.open_unresolved_boundary_count,
+                "discoveredOpenBoundaryCount": metrics.discovered_open_boundary_count,
+                "retainedOpenBoundaryCount": metrics.retained_open_boundary_count,
+                "omittedOpenBoundaryCount": metrics.omitted_open_boundary_count,
+                "discoveredOpenAmbiguousBoundaryCount": metrics.discovered_open_ambiguous_boundary_count,
+                "discoveredOpenUnresolvedBoundaryCount": metrics.discovered_open_unresolved_boundary_count,
+                "retainedOpenAmbiguousBoundaryCount": metrics.retained_open_ambiguous_boundary_count,
+                "retainedOpenUnresolvedBoundaryCount": metrics.retained_open_unresolved_boundary_count,
                 "requiredBoundariesWithoutResolutionCount": metrics.required_boundaries_without_resolution_count,
                 "orphanedProvenResolutionCount": metrics.orphaned_proven_resolution_count,
                 "missingRequiredUnitMappingCount": metrics.missing_required_unit_mapping_count,
@@ -617,21 +640,11 @@ class EndToEndFlowAssembler:
         units: Sequence[LocalFlowUnit],
         required_units_by_boundary: Mapping[BoundaryIdentity, tuple[str, ...]],
         resolution_by_required: Mapping[BoundaryIdentity, BoundaryResolution],
-        boundary_resolution: BoundaryResolutionResult | None,
+        resolutions: Sequence[BoundaryResolution],
         issues: list[EndToEndAssemblyIssue],
-    ) -> tuple[list[EndToEndOpenBoundary], int, bool]:
+    ) -> tuple[tuple[EndToEndOpenBoundary, ...], int]:
         open_boundaries: list[EndToEndOpenBoundary] = []
-        truncated = bool(
-            boundary_resolution
-            and (
-                boundary_resolution.truncation.candidate_sets_truncated > 0
-                or boundary_resolution.truncation.resolver_limit_reached
-                or boundary_resolution.truncation.recursion_limit_reached
-                or boundary_resolution.truncation.candidate_descriptor_scan_truncated
-                or boundary_resolution.truncation.active_unit_provenance_missing
-            )
-        )
-        for resolution in sorted((boundary_resolution.resolutions if boundary_resolution else ()), key=lambda item: item.resolution_id):
+        for resolution in sorted(resolutions, key=lambda item: item.resolution_id):
             if resolution.status is BoundaryResolutionStatus.PROVEN:
                 continue
             open_boundaries.append(_open_boundary_from_resolution(resolution))
@@ -661,7 +674,7 @@ class EndToEndFlowAssembler:
                     diagnostics=("END_TO_END_REQUIRED_BOUNDARY_NOT_RESOLVED",),
                 )
             )
-        return sorted(open_boundaries, key=_open_boundary_sort_key), required_without_resolution, truncated
+        return tuple(sorted(open_boundaries, key=_open_boundary_sort_key)), required_without_resolution
 
     def _graph(
         self,
@@ -670,7 +683,6 @@ class EndToEndFlowAssembler:
         transitions: Sequence[EndToEndCrossSourceTransition],
         open_boundaries: Sequence[EndToEndOpenBoundary],
         query_entry_ids: Sequence[str],
-        resolver_truncated: bool,
         issues: Sequence[EndToEndAssemblyIssue],
     ) -> EndToEndFlowGraph:
         graph_units = tuple(unit_ref_by_id[unit_id] for unit_id in sorted(component))
@@ -708,8 +720,9 @@ class EndToEndFlowAssembler:
         local_node_count = sum(len(unit.local_unit.execution_nodes) for unit in graph_units)
         local_transition_count = sum(len(unit.local_unit.execution_transitions) for unit in graph_units)
         source_count = len({unit.source_id for unit in graph_units})
-        graph_truncated = resolver_truncated or any(
+        graph_truncated = any(
             issue.code == "END_TO_END_ASSEMBLY_LIMIT_REACHED" or issue.code == "END_TO_END_TARGET_MATERIALIZATION_PARTIAL"
+            or issue.code == "END_TO_END_RESOLVER_INCOMPLETE"
             for issue in graph_issues
         )
         orphan_resolution_count = sum(1 for issue in graph_issues if issue.code in _ORPHAN_PROVEN_LINK_ISSUE_CODES)
@@ -764,7 +777,9 @@ class EndToEndFlowAssembler:
         unit_refs: Sequence[EndToEndUnitRef],
         graphs: Sequence[EndToEndFlowGraph],
         discovered_components: Sequence[frozenset[str]],
-        open_boundaries: Sequence[EndToEndOpenBoundary],
+        discovered_open_boundaries: Sequence[EndToEndOpenBoundary],
+        retained_open_boundaries: Sequence[EndToEndOpenBoundary],
+        omitted_open_boundaries: Sequence[EndToEndOpenBoundary],
         boundary_resolution: BoundaryResolutionResult | None,
         orphaned_proven_resolution_count: int,
         assembled_proven_link_count: int,
@@ -775,7 +790,8 @@ class EndToEndFlowAssembler:
         truncated: bool,
     ) -> EndToEndFlowAssemblyMetrics:
         graph_count = len(graphs)
-        unique_open_boundaries = tuple({_open_boundary_unique_key(item): item for item in open_boundaries}.values())
+        unique_discovered_open_boundaries = tuple({_open_boundary_unique_key(item): item for item in discovered_open_boundaries}.values())
+        unique_retained_open_boundaries = tuple({_open_boundary_unique_key(item): item for item in retained_open_boundaries}.values())
         return EndToEndFlowAssemblyMetrics(
             input_local_unit_count=len(tuple(input_local_unit_ids)),
             input_initial_unit_count=len(tuple(requested_query_entries)),
@@ -792,8 +808,19 @@ class EndToEndFlowAssembler:
             unassembled_proven_link_count=orphaned_proven_resolution_count,
             proven_resolution_count=len(boundary_resolution.proven_links if boundary_resolution else ()),
             assembled_cross_source_transition_count=sum(len(graph.proven_cross_source_transitions) for graph in graphs),
-            open_ambiguous_boundary_count=sum(1 for item in unique_open_boundaries if item.status is BoundaryResolutionStatus.AMBIGUOUS),
-            open_unresolved_boundary_count=sum(1 for item in unique_open_boundaries if item.status is BoundaryResolutionStatus.UNRESOLVED),
+            open_ambiguous_boundary_count=sum(1 for item in unique_discovered_open_boundaries if item.status is BoundaryResolutionStatus.AMBIGUOUS),
+            open_unresolved_boundary_count=sum(1 for item in unique_discovered_open_boundaries if item.status is BoundaryResolutionStatus.UNRESOLVED),
+            discovered_open_boundary_count=len(unique_discovered_open_boundaries),
+            retained_open_boundary_count=len(unique_retained_open_boundaries),
+            omitted_open_boundary_count=len(tuple({_open_boundary_unique_key(item): item for item in omitted_open_boundaries}.values())),
+            discovered_open_ambiguous_boundary_count=sum(
+                1 for item in unique_discovered_open_boundaries if item.status is BoundaryResolutionStatus.AMBIGUOUS
+            ),
+            discovered_open_unresolved_boundary_count=sum(
+                1 for item in unique_discovered_open_boundaries if item.status is BoundaryResolutionStatus.UNRESOLVED
+            ),
+            retained_open_ambiguous_boundary_count=sum(1 for item in unique_retained_open_boundaries if item.status is BoundaryResolutionStatus.AMBIGUOUS),
+            retained_open_unresolved_boundary_count=sum(1 for item in unique_retained_open_boundaries if item.status is BoundaryResolutionStatus.UNRESOLVED),
             required_boundaries_without_resolution_count=required_boundaries_without_resolution_count,
             orphaned_proven_resolution_count=orphaned_proven_resolution_count,
             missing_required_unit_mapping_count=missing_required_unit_mapping_count,
@@ -850,6 +877,90 @@ def _resolution_records_by_id(
     return records, frozenset(duplicates)
 
 
+def _resolver_issues(
+    boundary_resolution: BoundaryResolutionResult | None,
+    resolution_by_required: Mapping[BoundaryIdentity, BoundaryResolution],
+    required_units_by_boundary: Mapping[BoundaryIdentity, tuple[str, ...]],
+) -> tuple[EndToEndAssemblyIssue, ...]:
+    if boundary_resolution is None:
+        return ()
+    truncation = boundary_resolution.truncation
+    issues: list[EndToEndAssemblyIssue] = []
+    issues.extend(
+        _resolver_boundary_issues(
+            "CANDIDATE_SET_TRUNCATED",
+            truncation.truncated_required_identities,
+            resolution_by_required,
+            required_units_by_boundary,
+        )
+    )
+    issues.extend(
+        _resolver_boundary_issues(
+            "CANDIDATE_DESCRIPTOR_SCAN_TRUNCATED",
+            truncation.descriptor_scan_truncated_required_identities,
+            resolution_by_required,
+            required_units_by_boundary,
+        )
+    )
+    issues.extend(
+        _resolver_boundary_issues(
+            "RESOLVER_LIMIT_REACHED",
+            truncation.resolver_limit_required_identities,
+            resolution_by_required,
+            required_units_by_boundary,
+        )
+    )
+    if truncation.resolver_limit_reached and not truncation.resolver_limit_required_identities:
+        issues.append(_resolver_issue("RESOLVER_LIMIT_REACHED", affected_local_unit_ids=()))
+    if truncation.recursion_limit_reached and not truncation.resolver_limit_required_identities:
+        issues.append(_resolver_issue("RECURSION_LIMIT_REACHED", affected_local_unit_ids=()))
+    if truncation.candidate_sets_truncated > 0 and not truncation.truncated_required_identities:
+        issues.append(_resolver_issue("CANDIDATE_SET_TRUNCATED", affected_local_unit_ids=()))
+    if truncation.candidate_descriptor_scan_truncated and not truncation.descriptor_scan_truncated_required_identities:
+        issues.append(_resolver_issue("CANDIDATE_DESCRIPTOR_SCAN_TRUNCATED", affected_local_unit_ids=()))
+    if truncation.active_unit_provenance_missing:
+        issues.append(_resolver_issue("ACTIVE_UNIT_PROVENANCE_MISSING", affected_local_unit_ids=truncation.active_unit_ids))
+    return tuple(sorted(issues, key=_issue_sort_key))
+
+
+def _resolver_boundary_issues(
+    reason: str,
+    identities: Sequence[BoundaryIdentity],
+    resolution_by_required: Mapping[BoundaryIdentity, BoundaryResolution],
+    required_units_by_boundary: Mapping[BoundaryIdentity, tuple[str, ...]],
+) -> tuple[EndToEndAssemblyIssue, ...]:
+    issues: list[EndToEndAssemblyIssue] = []
+    for identity in sorted(set(identities)):
+        resolution = resolution_by_required.get(identity)
+        unit_ids = resolution.required_unit_ids if resolution is not None else required_units_by_boundary.get(identity, ())
+        issues.append(
+            _resolver_issue(
+                reason,
+                affected_required_boundary_identity=identity,
+                affected_resolution_id=resolution.resolution_id if resolution is not None else None,
+                affected_local_unit_ids=unit_ids,
+            )
+        )
+    return tuple(issues)
+
+
+def _resolver_issue(
+    reason: str,
+    *,
+    affected_required_boundary_identity: BoundaryIdentity | None = None,
+    affected_resolution_id: str | None = None,
+    affected_local_unit_ids: Sequence[str] = (),
+) -> EndToEndAssemblyIssue:
+    return EndToEndAssemblyIssue(
+        code="END_TO_END_RESOLVER_INCOMPLETE",
+        message="Generic boundary resolver incompleteness affected end-to-end assembly.",
+        resolution_id=affected_resolution_id,
+        required_boundary_identity=affected_required_boundary_identity,
+        affected_local_unit_ids=tuple(sorted({str(item or "") for item in affected_local_unit_ids if str(item or "")})),
+        metadata={"reason": reason},
+    )
+
+
 def _target_materializations_by_id(
     boundary_resolution: BoundaryResolutionResult | None,
     units_by_id: Mapping[str, LocalFlowUnit],
@@ -868,7 +979,7 @@ def _target_materializations_by_id(
                     {
                         unit_id
                         for item in items
-                        for unit_id in item.target_local_unit_ids
+                        for unit_id in (*item.target_local_unit_ids, *item.omitted_target_local_unit_ids)
                         if unit_id in units_by_id
                     }
                 )
@@ -1005,12 +1116,27 @@ def _validate_proven_link(
             provided_boundary_identity=link.provided_boundary_identity,
             metadata={"reason": "TARGET_UNIT_MAPPING_MISSING"},
         )
+    retained_target_ids = tuple(sorted({str(item or "") for item in materialization.target_local_unit_ids if str(item or "")}))
+    omitted_target_ids = tuple(sorted({str(item or "") for item in materialization.omitted_target_local_unit_ids if str(item or "")}))
+    if set(retained_target_ids) & set(omitted_target_ids):
+        return _target_materialization_mismatch(link, "retainedOmittedOverlap")
     if materialization.resolution_id != link.resolution_id:
         return _target_materialization_mismatch(link, "resolutionId")
     if materialization.selected_provided_boundary_identity != link.provided_boundary_identity:
         return _target_materialization_mismatch(link, "selectedProvidedBoundary")
     if materialization.target_owner_identity != link.target_owner:
         return _target_materialization_mismatch(link, "targetOwner")
+    if materialization.materialization_status is BoundaryTargetMaterializationStatus.MATERIALIZED and omitted_target_ids:
+        return _target_materialization_mismatch(link, "materializedContainsOmittedTargets")
+    if materialization.materialization_status is BoundaryTargetMaterializationStatus.NOT_MATERIALIZED and retained_target_ids:
+        return _target_materialization_mismatch(link, "notMaterializedContainsRetainedTargets")
+    if (
+        materialization.materialization_status is BoundaryTargetMaterializationStatus.PARTIAL
+        and not retained_target_ids
+        and not omitted_target_ids
+        and not materialization.diagnostics
+    ):
+        return _target_materialization_mismatch(link, "partialWithoutTargetsOrDiagnostic")
     if materialization.materialization_status not in {
         BoundaryTargetMaterializationStatus.MATERIALIZED,
         BoundaryTargetMaterializationStatus.PARTIAL,
@@ -1048,7 +1174,8 @@ def _link_unit_scope(
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     required_ids = tuple(sorted({*(link.required_unit_ids or ()), *required_units_by_boundary.get(link.required_boundary_identity, ())}))
     target_ids = tuple(sorted(materialization.target_local_unit_ids if materialization else ()))
-    referenced = tuple(sorted({str(item or "") for item in (*required_ids, *target_ids) if str(item or "")}))
+    omitted_ids = tuple(sorted(materialization.omitted_target_local_unit_ids if materialization else ()))
+    referenced = tuple(sorted({str(item or "") for item in (*required_ids, *target_ids, *omitted_ids) if str(item or "")}))
     affected = tuple(unit_id for unit_id in referenced if unit_id in units_by_id)
     missing = tuple(unit_id for unit_id in referenced if unit_id not in units_by_id)
     return affected, missing
@@ -1263,8 +1390,16 @@ def _unassembled_link_sort_key(item: EndToEndUnassembledProvenLink) -> tuple[str
     return (*_proven_link_sort_key(item.link), item.reason)
 
 
-def _target_materialization_sort_key(item: BoundaryTargetMaterialization) -> tuple[str, BoundaryIdentity, BoundaryOwnerIdentity, tuple[str, ...]]:
-    return (item.resolution_id, item.selected_provided_boundary_identity, item.target_owner_identity, item.target_local_unit_ids)
+def _target_materialization_sort_key(
+    item: BoundaryTargetMaterialization,
+) -> tuple[str, BoundaryIdentity, BoundaryOwnerIdentity, tuple[str, ...], tuple[str, ...]]:
+    return (
+        item.resolution_id,
+        item.selected_provided_boundary_identity,
+        item.target_owner_identity,
+        item.target_local_unit_ids,
+        item.omitted_target_local_unit_ids,
+    )
 
 
 def _open_boundary_sort_key(item: EndToEndOpenBoundary) -> tuple[BoundaryIdentity, str, tuple[str, ...]]:

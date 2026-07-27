@@ -1804,6 +1804,7 @@ class KnowledgeQueryService:
             boundary_result = self._empty_boundary_resolution_result(
                 provenance_diagnostics,
                 active_unit_provenance_missing=True,
+                active_unit_ids=tuple(sorted(local_units_by_id)),
             )
             return ContinuationAssemblyResult(
                 tuple(families),
@@ -1843,12 +1844,20 @@ class KnowledgeQueryService:
         round_count = 0
         cycle_count = 0
         resolver_limit_reached = False
+        resolver_limit_required_identities: set[Any] = set()
+        target_units_considered = 0
         target_units_materialized = 0
+        target_units_omitted = 0
+        partial_target_materialization_count = 0
 
         while pending_units:
             round_count += 1
             if round_count > _MAX_BOUNDARY_RESOLUTION_ROUNDS:
                 resolver_limit_reached = True
+                resolver_limit_required_identities.update(
+                    boundary_identity(boundary)
+                    for boundary in self._required_boundaries(self._units_with_unvisited_required_boundaries(pending_units, visited_required))
+                )
                 diagnostics.append(
                     BoundaryResolutionDiagnostic(
                         code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
@@ -1898,9 +1907,10 @@ class KnowledgeQueryService:
                             self._boundary_target_materialization(
                                 link,
                                 target_local_unit_ids=existing.target_local_unit_ids,
+                                omitted_target_local_unit_ids=existing.omitted_target_local_unit_ids,
                                 seed_identities=existing.expanded_target_seed_identities,
                                 seed_relations=existing.owner_to_seed_reasons,
-                                status=BoundaryTargetMaterializationStatus.MATERIALIZED,
+                                status=existing.materialization_status,
                                 diagnostics=(
                                     BoundaryResolutionDiagnostic(
                                         code="BOUNDARY_RESOLUTION_CYCLE_DETECTED",
@@ -1921,7 +1931,8 @@ class KnowledgeQueryService:
                 )
                 seed_identities = self._target_seed_identities(target_result.target_seed_provenance)
                 seed_relations = self._target_seed_relations(target_result.target_seed_provenance)
-                target_unit_ids = tuple(sorted(unit.unit_id for unit in target_result.local_units))
+                candidate_target_units = tuple(sorted(target_result.local_units, key=lambda item: item.unit_id))
+                target_units_considered += len(candidate_target_units)
                 if not target_result.local_units:
                     target_diagnostic = BoundaryResolutionDiagnostic(
                         code="BOUNDARY_TARGET_UNIT_NOT_MATERIALIZED",
@@ -1937,6 +1948,7 @@ class KnowledgeQueryService:
                         self._boundary_target_materialization(
                             link,
                             target_local_unit_ids=(),
+                            omitted_target_local_unit_ids=(),
                             seed_identities=seed_identities,
                             seed_relations=seed_relations,
                             status=BoundaryTargetMaterializationStatus.NOT_MATERIALIZED,
@@ -1945,8 +1957,11 @@ class KnowledgeQueryService:
                     )
                     continue
                 materialization_status = BoundaryTargetMaterializationStatus.MATERIALIZED
-                for unit in sorted(target_result.local_units, key=lambda item: item.unit_id):
+                retained_target_unit_ids: list[str] = []
+                omitted_target_unit_ids: list[str] = []
+                for index, unit in enumerate(candidate_target_units):
                     if unit.unit_id in visited_units:
+                        retained_target_unit_ids.append(unit.unit_id)
                         cycle_count += 1
                         diagnostics.append(
                             BoundaryResolutionDiagnostic(
@@ -1961,6 +1976,9 @@ class KnowledgeQueryService:
                     if target_units_materialized >= _MAX_BOUNDARY_TARGET_UNITS:
                         resolver_limit_reached = True
                         materialization_status = BoundaryTargetMaterializationStatus.PARTIAL
+                        omitted_target_unit_ids.extend(item.unit_id for item in candidate_target_units[index:])
+                        target_units_omitted += len(omitted_target_unit_ids)
+                        partial_target_materialization_count += 1
                         diagnostics.append(
                             BoundaryResolutionDiagnostic(
                                 code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
@@ -1973,14 +1991,36 @@ class KnowledgeQueryService:
                     visited_units.add(unit.unit_id)
                     local_units_by_id[unit.unit_id] = unit
                     next_units.append(unit)
+                    retained_target_unit_ids.append(unit.unit_id)
                     target_units_materialized += 1
                 materialization = self._boundary_target_materialization(
                     link,
-                    target_local_unit_ids=target_unit_ids,
+                    target_local_unit_ids=retained_target_unit_ids,
+                    omitted_target_local_unit_ids=omitted_target_unit_ids,
                     seed_identities=seed_identities,
                     seed_relations=seed_relations,
                     status=materialization_status,
-                    diagnostics=self._continuation_boundary_diagnostics(target_result.diagnostics),
+                    diagnostics=(
+                        *self._continuation_boundary_diagnostics(target_result.diagnostics),
+                        *(
+                            (
+                                BoundaryResolutionDiagnostic(
+                                    code="BOUNDARY_TARGET_MATERIALIZATION_PARTIAL",
+                                    message="Boundary target materialization retained only the target local units accepted before the target-unit limit.",
+                                    severity="WARN",
+                                    source_id=link.target_owner.source_id,
+                                    metadata={
+                                        "targetUnitsConsidered": len(candidate_target_units),
+                                        "targetUnitsRetained": len(retained_target_unit_ids),
+                                        "targetUnitsOmitted": len(omitted_target_unit_ids),
+                                        "omittedTargetLocalUnitIds": tuple(sorted(omitted_target_unit_ids)),
+                                    },
+                                ),
+                            )
+                            if omitted_target_unit_ids
+                            else ()
+                        ),
+                    ),
                 )
                 target_materializations.append(materialization)
                 materialized_by_owner.setdefault(owner_key, materialization)
@@ -2007,7 +2047,11 @@ class KnowledgeQueryService:
             round_count,
             cycle_count,
             resolver_limit_reached,
+            resolver_limit_required_identities,
+            target_units_considered,
             target_units_materialized,
+            target_units_omitted,
+            partial_target_materialization_count,
             target_materializations,
         )
         public_diagnostics = tuple(self._boundary_resolution_diagnostic(item) for item in boundary_result.diagnostics)
@@ -2157,6 +2201,7 @@ class KnowledgeQueryService:
         diagnostics: Sequence[BoundaryResolutionDiagnostic],
         *,
         active_unit_provenance_missing: bool = False,
+        active_unit_ids: Sequence[str] = (),
     ) -> BoundaryResolutionResult:
         metrics = BoundaryResolverMetrics()
         aggregate = BoundaryResolutionDiagnostic(
@@ -2176,7 +2221,10 @@ class KnowledgeQueryService:
                 "conflictCount": 0,
                 "evidenceInsufficientCount": 0,
                 "targetOwnersDiscovered": 0,
+                "targetUnitsConsidered": 0,
                 "targetUnitsMaterialized": 0,
+                "targetUnitsOmitted": 0,
+                "partialTargetMaterializationCount": 0,
                 "resolutionRounds": 0,
                 "resolutionCyclesDetected": 0,
                 "resolverSQLStatements": 0,
@@ -2197,7 +2245,10 @@ class KnowledgeQueryService:
             unresolved_boundaries=(),
             discovered_provided_owners=(),
             diagnostics=(*tuple(diagnostics), aggregate),
-            truncation=BoundaryResolutionTruncationState(active_unit_provenance_missing=active_unit_provenance_missing),
+            truncation=BoundaryResolutionTruncationState(
+                active_unit_provenance_missing=active_unit_provenance_missing,
+                active_unit_ids=tuple(sorted({str(item or "") for item in active_unit_ids if str(item or "")})),
+            ),
             metrics=metrics,
         )
 
@@ -2226,7 +2277,11 @@ class KnowledgeQueryService:
         round_count: int,
         cycle_count: int,
         resolver_limit_reached: bool,
+        resolver_limit_required_identities: set[Any],
+        target_units_considered: int,
         target_units_materialized: int,
+        target_units_omitted: int,
+        partial_target_materialization_count: int,
         target_materializations: Sequence[BoundaryTargetMaterialization],
     ) -> BoundaryResolutionResult:
         proven = tuple(sorted(proven_links, key=lambda item: item.resolution_id))
@@ -2272,7 +2327,10 @@ class KnowledgeQueryService:
                 if "BOUNDARY_EVIDENCE_INSUFFICIENT" in candidate.rejection_reasons
             ),
             target_owners_discovered=len(discovered_owners),
+            target_units_considered=target_units_considered,
             target_units_materialized=target_units_materialized,
+            target_units_omitted=target_units_omitted,
+            partial_target_materialization_count=partial_target_materialization_count,
             resolution_rounds=round_count,
             resolution_cycles_detected=cycle_count,
             resolver_sql_statements=sum(
@@ -2337,7 +2395,10 @@ class KnowledgeQueryService:
                 "conflictCount": metrics.conflict_count,
                 "evidenceInsufficientCount": metrics.evidence_insufficient_count,
                 "targetOwnersDiscovered": metrics.target_owners_discovered,
+                "targetUnitsConsidered": metrics.target_units_considered,
                 "targetUnitsMaterialized": metrics.target_units_materialized,
+                "targetUnitsOmitted": metrics.target_units_omitted,
+                "partialTargetMaterializationCount": metrics.partial_target_materialization_count,
                 "resolutionRounds": metrics.resolution_rounds,
                 "resolutionCyclesDetected": metrics.resolution_cycles_detected,
                 "resolverSQLStatements": metrics.resolver_sql_statements,
@@ -2365,6 +2426,11 @@ class KnowledgeQueryService:
                 resolver_limit_reached=resolver_limit_reached,
                 recursion_limit_reached=round_count > _MAX_BOUNDARY_RESOLUTION_ROUNDS,
                 candidate_descriptor_scan_truncated=metrics.candidate_descriptor_scan_truncated,
+                truncated_required_identities=tuple(sorted(truncated_required_identities)),
+                descriptor_scan_truncated_required_identities=tuple(sorted(truncated_required_identities))
+                if metrics.candidate_descriptor_scan_truncated
+                else (),
+                resolver_limit_required_identities=tuple(sorted(resolver_limit_required_identities)),
             ),
             metrics=metrics,
         )
@@ -2374,6 +2440,7 @@ class KnowledgeQueryService:
         link: Any,
         *,
         target_local_unit_ids: Sequence[str],
+        omitted_target_local_unit_ids: Sequence[str] = (),
         seed_identities: Sequence[BoundaryTargetSeedIdentity],
         seed_relations: Sequence[BoundaryTargetSeedRelation],
         status: BoundaryTargetMaterializationStatus,
@@ -2388,6 +2455,7 @@ class KnowledgeQueryService:
             owner_to_seed_reasons=tuple(sorted(set(seed_relations))),
             materialization_status=status,
             diagnostics=tuple(sorted(diagnostics, key=lambda item: (item.code, item.source_id or "", item.message))),
+            omitted_target_local_unit_ids=tuple(sorted({str(item or "") for item in omitted_target_local_unit_ids if str(item or "")})),
         )
 
     def _target_seed_identities(

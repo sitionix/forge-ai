@@ -9,6 +9,7 @@ from knowledge_service.boundary_resolution import (
     BoundaryResolution,
     BoundaryResolutionResult,
     BoundaryResolutionStatus,
+    BoundaryResolutionTruncationState,
     BoundaryTargetMaterialization,
     BoundaryTargetMaterializationStatus,
     BoundaryTargetSeedIdentity,
@@ -416,7 +417,11 @@ def test_candidate_incomplete_resolution_marks_graph_and_assembly_truncated():
     unresolved = open_result(required, BoundaryResolutionStatus.UNRESOLVED, ("unit-a",))
     unresolved = replace(
         unresolved,
-        truncation=replace(unresolved.truncation, candidate_sets_truncated=1),
+        truncation=replace(
+            unresolved.truncation,
+            candidate_sets_truncated=1,
+            truncated_required_identities=(boundary_identity(required),),
+        ),
     )
 
     result = assemble((unit_a,), ("unit-a",), unresolved, resolver_truncated=True)
@@ -737,4 +742,137 @@ def test_partial_materialization_assembles_only_explicit_targets_and_remains_inc
     assert partial.graphs[0].coverage.complete is False
     assert partial.truncated is True
     assert empty_partial.graphs[0].proven_cross_source_transitions == ()
-    assert empty_partial.unassembled_proven_links[0].reason == "TARGET_UNIT_MAPPING_MISSING"
+    assert empty_partial.unassembled_proven_links[0].reason == "CANONICAL_RECORD_INCONSISTENT"
+
+
+def test_resolver_truncation_is_component_scoped():
+    owner_a = node("A", source="source-a")
+    owner_d = node("D", source="source-d")
+    required = neutral_boundary("required-a", owner_a, "REQUIRED", "missing")
+    unit_a = unit("unit-a", owner_a, boundaries=(required,))
+    unit_d = unit("unit-d", owner_d)
+    unresolved = replace(
+        open_result(required, BoundaryResolutionStatus.UNRESOLVED, ("unit-a",)),
+        truncation=BoundaryResolutionTruncationState(
+            candidate_sets_truncated=1,
+            truncated_required_identities=(boundary_identity(required),),
+        ),
+    )
+
+    result = assemble((unit_d, unit_a), ("unit-a",), unresolved, resolver_truncated=True)
+
+    graph_a = next(graph for graph in result.graphs if tuple(ref.unit_id for ref in graph.unit_refs) == ("unit-a",))
+    graph_d = next(graph for graph in result.graphs if tuple(ref.unit_id for ref in graph.unit_refs) == ("unit-d",))
+    assert graph_a.coverage.truncated is True
+    assert graph_a.coverage.complete is False
+    assert graph_d.coverage.truncated is False
+    assert graph_d.coverage.complete is True
+    assert result.truncated is True
+    assert result.complete is False
+
+
+def test_unscoped_resolver_issue_is_assembly_level_only():
+    owner_d = node("D", source="source-d")
+    result = assemble(
+        (unit("unit-d", owner_d),),
+        ("unit-d",),
+        BoundaryResolutionResult(
+            resolutions=(),
+            proven_links=(),
+            ambiguous_links=(),
+            unresolved_boundaries=(),
+            discovered_provided_owners=(),
+            truncation=BoundaryResolutionTruncationState(resolver_limit_reached=True),
+        ),
+        resolver_truncated=True,
+    )
+
+    assert result.truncated is True
+    assert result.complete is False
+    assert result.graphs[0].coverage.truncated is False
+    assert result.graphs[0].coverage.complete is True
+    assert not result.graphs[0].diagnostics
+
+
+def test_duplicate_non_proven_resolution_falls_back_to_one_missing_resolution_open_boundary():
+    owner_a = node("A", source="source-a")
+    required = neutral_boundary("required-a", owner_a, "REQUIRED", "missing")
+    unit_a = unit("unit-a", owner_a, boundaries=(required,))
+    unresolved = open_result(required, BoundaryResolutionStatus.UNRESOLVED, ("unit-a",))
+    duplicate = replace(unresolved, resolutions=(unresolved.resolutions[0], unresolved.resolutions[0]))
+
+    result = assemble((unit_a,), ("unit-a",), duplicate)
+
+    graph = result.graphs[0]
+    assert len(graph.open_boundaries) == 1
+    assert graph.open_boundaries[0].diagnostics == ("END_TO_END_REQUIRED_BOUNDARY_NOT_RESOLVED",)
+    assert graph.coverage.open_unresolved_boundary_count == 1
+    assert any(item.code == "END_TO_END_DUPLICATE_CANONICAL_RECORD" for item in result.diagnostics)
+
+
+def test_open_boundary_limit_counts_all_discovered_and_scopes_omissions():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    owner_c = node("C", source="source-c")
+    owner_d = node("D", source="source-d")
+    required_a = neutral_boundary("required-a", owner_a, "REQUIRED", "a")
+    required_b = neutral_boundary("required-b", owner_b, "REQUIRED", "b")
+    required_c = neutral_boundary("required-c", owner_c, "REQUIRED", "c")
+    unit_a = unit("unit-a", owner_a, boundaries=(required_a,))
+    unit_b = unit("unit-b", owner_b, boundaries=(required_b,))
+    unit_c = unit("unit-c", owner_c, boundaries=(required_c,))
+    unit_d = unit("unit-d", owner_d)
+    result = assemble(
+        (unit_d, unit_c, unit_b, unit_a),
+        ("unit-a",),
+        combine_results(
+            open_result(required_a, BoundaryResolutionStatus.UNRESOLVED, ("unit-a",)),
+            open_result(required_b, BoundaryResolutionStatus.UNRESOLVED, ("unit-b",)),
+            open_result(required_c, BoundaryResolutionStatus.UNRESOLVED, ("unit-c",)),
+        ),
+        limits=EndToEndFlowAssemblyLimits(max_open_boundaries=1),
+    )
+
+    assert result.metrics.discovered_open_boundary_count == 3
+    assert result.metrics.retained_open_boundary_count == 1
+    assert result.metrics.omitted_open_boundary_count == 2
+    assert result.metrics.open_unresolved_boundary_count == 3
+    assert sum(len(graph.open_boundaries) for graph in result.graphs) == 1
+    graph_d = next(graph for graph in result.graphs if tuple(ref.unit_id for ref in graph.unit_refs) == ("unit-d",))
+    assert graph_d.coverage.complete is True
+    omitted_graphs = [
+        graph
+        for graph in result.graphs
+        if tuple(ref.unit_id for ref in graph.unit_refs) in {("unit-b",), ("unit-c",)}
+    ]
+    assert all(graph.coverage.truncated is True and graph.coverage.complete is False for graph in omitted_graphs)
+    assert any(
+        item.code == "END_TO_END_ASSEMBLY_LIMIT_REACHED" and item.metadata.get("limitKind") == "open boundary"
+        for item in result.diagnostics
+    )
+
+
+def test_partial_materialization_consistency_rejects_overlapping_retained_and_omitted_targets():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    required = neutral_boundary("required-a", owner_a, "REQUIRED", "b")
+    provided = neutral_boundary("provided-b", owner_b, "PROVIDED", "b")
+    unit_a = unit("unit-a", owner_a, boundaries=(required,))
+    unit_b = unit("unit-b", owner_b)
+    result = proven(
+        required,
+        provided,
+        required_unit_ids=("unit-a",),
+        target_unit_ids=("unit-b",),
+        status=BoundaryTargetMaterializationStatus.PARTIAL,
+    )
+    malformed = replace(
+        result,
+        target_materializations=(replace(result.target_materializations[0], omitted_target_local_unit_ids=("unit-b",)),),
+    )
+
+    assembled = assemble((unit_a, unit_b), ("unit-a",), malformed)
+
+    assert all(not graph.proven_cross_source_transitions for graph in assembled.graphs)
+    assert assembled.unassembled_proven_links[0].reason == "CANONICAL_RECORD_INCONSISTENT"
+    assert any(item.code == "END_TO_END_TARGET_MATERIALIZATION_MISMATCH" for item in assembled.diagnostics)
