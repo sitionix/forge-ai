@@ -371,12 +371,15 @@ class SourceDiverseAnchorSelector:
         return quality
 
     def _quality(self, candidate: MergedCandidate) -> float:
+        # Anchor quality combines bounded, independent components: merged
+        # provider score, exactness, unique real providers, unique query inputs,
+        # and confidence. Query variants never count as provider agreement.
         score = float(candidate.score or 0.0)
         if self._is_precise_identifier_candidate(candidate):
             score += 0.055
         elif any(reason.startswith("EXACT") and reason != "EXACT_KIND" for reason in candidate.reasons):
             score += 0.035
-        score += min(0.04, 0.01 * max(0, len(candidate.providers) - 1))
+        score += min(0.04, 0.01 * max(0, len(set(candidate.providers)) - 1))
         score += min(0.025, 0.006 * max(0, len(set(candidate.query_inputs)) - 1))
         if str(candidate.confidence or "").upper() == "HIGH":
             score += 0.01
@@ -604,20 +607,10 @@ class UnifiedAnchorSearcher:
                 "queryInput": query_input,
                 "retrievalPhase": phase.value,
                 "providerScore": round(float(candidate.score), 6),
+                "queryMarkerReason": marker_reason,
             }
             adjusted = replace(candidate, score=adjusted_score, priority=adjusted_priority, metadata=metadata)
             result.append(adjusted)
-            result.append(
-                SearchCandidate(
-                    document=candidate.document,
-                    provider="QueryPlanCandidateProvider",
-                    reason=marker_reason,
-                    score=adjusted_score,
-                    confidence=candidate.confidence,
-                    priority=adjusted_priority,
-                    metadata=metadata,
-                )
-            )
         return result
 
     def _empty_result(self) -> CandidateRetrievalResult:

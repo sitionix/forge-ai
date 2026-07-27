@@ -739,10 +739,18 @@ _REASON_ALIASES = {
     "EXACT_ENDPOINT": "PATH_MATCH",
 }
 
+_QUERY_MARKER_REASONS = {
+    "QUERY_ORIGINAL",
+    "QUERY_NORMALIZED",
+    "QUERY_EXPANSION",
+    "QUERY_EXACT_IDENTIFIER",
+}
+
 
 class CandidateMerger:
     def merge(self, candidates: Sequence[SearchCandidate]) -> list[MergedCandidate]:
         merged: dict[tuple[str, str, str], MergedCandidate] = {}
+        contribution_keys: dict[tuple[str, str, str], set[tuple[str, str, float, str, str, str, str]]] = {}
         for candidate in candidates:
             key = (
                 candidate.document.source_id,
@@ -769,28 +777,48 @@ class CandidateMerger:
             if alias:
                 _append_reason(current.reasons, alias)
             metadata = dict(candidate.metadata or {})
+            query_marker = str(metadata.get("queryMarkerReason") or "")
+            if query_marker:
+                _append_reason(current.reasons, query_marker)
             phase = str(metadata.get("retrievalPhase") or "")
             query_input = str(metadata.get("queryInput") or "")
             if phase:
                 _append_unique(current.retrieval_phases, phase)
             if query_input:
                 _append_unique(current.query_inputs, query_input)
-            current.contributions.append(
-                {
-                    "provider": candidate.provider,
-                    "reason": candidate.reason,
-                    "score": round(float(candidate.score), 6),
-                    "sourceId": candidate.document.source_id,
-                    "graphRevision": candidate.document.graph_revision or candidate.document.graph_id or None,
-                    "queryReason": metadata.get("queryReason"),
-                    "queryInput": metadata.get("queryInput"),
-                    "retrievalPhase": metadata.get("retrievalPhase"),
-                }
+            contribution_key = (
+                candidate.provider,
+                candidate.reason,
+                round(float(candidate.score), 6),
+                str(metadata.get("queryReason") or ""),
+                str(metadata.get("queryInput") or ""),
+                str(metadata.get("retrievalPhase") or ""),
+                query_marker,
             )
+            seen_contributions = contribution_keys.setdefault(key, set())
+            if contribution_key not in seen_contributions:
+                seen_contributions.add(contribution_key)
+                current.contributions.append(
+                    {
+                        "provider": candidate.provider,
+                        "reason": candidate.reason,
+                        "score": round(float(candidate.score), 6),
+                        "sourceId": candidate.document.source_id,
+                        "graphRevision": candidate.document.graph_revision or candidate.document.graph_id or None,
+                        "queryReason": metadata.get("queryReason"),
+                        "queryInput": metadata.get("queryInput"),
+                        "retrievalPhase": metadata.get("retrievalPhase"),
+                        "queryMarkerReason": query_marker or None,
+                    }
+                )
 
         for item in merged.values():
+            # Merge score components are intentionally bounded: max raw provider
+            # score, unique real providers, unique match reasons excluding query
+            # provenance markers, and a small graph-context signal.
             provider_bonus = min(0.035, 0.012 * max(0, len(item.providers) - 1))
-            reason_bonus = min(0.025, 0.004 * max(0, len(item.reasons) - 1))
+            scored_reasons = [reason for reason in item.reasons if reason not in _QUERY_MARKER_REASONS]
+            reason_bonus = min(0.025, 0.004 * max(0, len(scored_reasons) - 1))
             graph_bonus = min(0.015, max(0.0, item.document.confidence) * 0.006 + min(item.document.degree, 10) * 0.001)
             item.score = min(1.0, item.score + provider_bonus + reason_bonus + graph_bonus)
             item.reasons.sort(key=lambda value: (0 if value.startswith("EXACT") else 1, value))
@@ -921,35 +949,63 @@ class DeterministicCodeSearchEngine:
         return _ProviderRun(candidates=results, limit_reached=limit_reached, diagnostics=results_diagnostics)
 
     def _bounded_provider_candidates(self, candidates: Sequence[SearchCandidate], limit: int) -> list[SearchCandidate]:
-        remaining_by_source: dict[str, list[SearchCandidate]] = {}
-        for candidate in candidates:
-            remaining_by_source.setdefault(candidate.document.source_id, []).append(candidate)
+        remaining = sorted(
+            candidates,
+            key=lambda candidate: (
+                -round(candidate.score, 6),
+                candidate.priority,
+                candidate.document.source_id,
+                candidate.document.node_id,
+                candidate.reason,
+            ),
+        )
         selected: list[SearchCandidate] = []
-        while remaining_by_source and len(selected) < limit:
-            next_round: list[tuple[SearchCandidate, str]] = []
-            for source_id, source_candidates in list(remaining_by_source.items()):
-                if not source_candidates:
-                    remaining_by_source.pop(source_id, None)
+        selected_keys: set[tuple[str, str, str]] = set()
+        source_counts: dict[str, int] = {}
+        while remaining and len(selected) < limit:
+            scored: list[tuple[float, SearchCandidate]] = []
+            for candidate in remaining:
+                key = (
+                    candidate.document.source_id,
+                    candidate.document.graph_revision or candidate.document.graph_id or "",
+                    candidate.document.node_id,
+                )
+                if key in selected_keys:
                     continue
-                next_round.append((source_candidates[0], source_id))
-            if not next_round:
+                repeat_count = source_counts.get(candidate.document.source_id, 0)
+                marginal = float(candidate.score) - min(0.075, 0.025 * repeat_count)
+                scored.append((marginal, candidate))
+            if not scored:
                 break
-            next_round.sort(
+            scored.sort(
                 key=lambda item: (
-                    -round(item[0].score, 6),
-                    item[0].priority,
-                    item[0].document.source_id,
-                    item[0].document.node_id,
-                    item[0].reason,
+                    -round(item[0], 6),
+                    -round(item[1].score, 6),
+                    item[1].priority,
+                    item[1].document.source_id,
+                    item[1].document.node_id,
+                    item[1].reason,
                 )
             )
-            for candidate, source_id in next_round:
-                if len(selected) >= limit:
-                    break
-                selected.append(candidate)
-                remaining_by_source[source_id] = remaining_by_source[source_id][1:]
-                if not remaining_by_source[source_id]:
-                    remaining_by_source.pop(source_id, None)
+            _marginal, best = scored[0]
+            selected.append(best)
+            key = (
+                best.document.source_id,
+                best.document.graph_revision or best.document.graph_id or "",
+                best.document.node_id,
+            )
+            selected_keys.add(key)
+            source_counts[best.document.source_id] = source_counts.get(best.document.source_id, 0) + 1
+            remaining = [
+                candidate
+                for candidate in remaining
+                if (
+                    candidate.document.source_id,
+                    candidate.document.graph_revision or candidate.document.graph_id or "",
+                    candidate.document.node_id,
+                )
+                not in selected_keys
+            ]
         return selected
 
 

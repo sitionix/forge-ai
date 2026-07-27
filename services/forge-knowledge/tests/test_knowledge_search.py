@@ -250,6 +250,91 @@ def test_ranker_merges_duplicate_candidates_and_preserves_reasons():
     assert {"ExactCandidateProvider", "LexicalCandidateProvider"} <= set(merged[0].providers)
 
 
+def test_query_provenance_does_not_create_synthetic_provider_agreement():
+    document = doc("lexical", "CreateUserFlow", summary="create user")
+    candidate = SearchCandidate(
+        document,
+        "LexicalCandidateProvider",
+        "LEXICAL_TOKEN_OVERLAP",
+        0.7,
+        "MEDIUM",
+        42,
+        metadata={
+            "queryReason": "ORIGINAL_QUERY",
+            "queryInput": "create user",
+            "retrievalPhase": "PRIMARY",
+            "queryMarkerReason": "QUERY_ORIGINAL",
+        },
+    )
+
+    merged = CandidateMerger().merge([candidate])
+
+    assert merged[0].providers == ["LexicalCandidateProvider"]
+    assert {"LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"} <= set(merged[0].reasons)
+    assert merged[0].query_inputs == ["create user"]
+    assert merged[0].contributions == [
+        {
+            "provider": "LexicalCandidateProvider",
+            "reason": "LEXICAL_TOKEN_OVERLAP",
+            "score": 0.7,
+            "sourceId": "source-a",
+            "graphRevision": None,
+            "queryReason": "ORIGINAL_QUERY",
+            "queryInput": "create user",
+            "retrievalPhase": "PRIMARY",
+            "queryMarkerReason": "QUERY_ORIGINAL",
+        }
+    ]
+
+
+def test_provider_agreement_counts_only_unique_real_providers():
+    document = doc("shared", "CreateUserFlow", summary="create user")
+    lexical_original = SearchCandidate(
+        document,
+        "LexicalCandidateProvider",
+        "LEXICAL_TOKEN_OVERLAP",
+        0.7,
+        "MEDIUM",
+        42,
+        metadata={"queryReason": "ORIGINAL_QUERY", "queryInput": "create user", "queryMarkerReason": "QUERY_ORIGINAL"},
+    )
+    lexical_normalized = SearchCandidate(
+        document,
+        "LexicalCandidateProvider",
+        "LEXICAL_TOKEN_OVERLAP",
+        0.7,
+        "MEDIUM",
+        42,
+        metadata={"queryReason": "NORMALIZED_QUERY", "queryInput": "register user", "queryMarkerReason": "QUERY_NORMALIZED"},
+    )
+    semantic = SearchCandidate(document, "SEMANTIC", "SEMANTIC_VECTOR_SIMILARITY", 0.82, "HIGH", 52)
+
+    lexical_only = CandidateMerger().merge([lexical_original, lexical_normalized, lexical_original])[0]
+    lexical_and_semantic = CandidateMerger().merge([lexical_original, semantic])[0]
+
+    assert lexical_only.providers == ["LexicalCandidateProvider"]
+    assert set(lexical_only.query_inputs) == {"create user", "register user"}
+    assert len(lexical_only.contributions) == 2
+    assert lexical_and_semantic.providers == ["LexicalCandidateProvider", "SEMANTIC"]
+    assert lexical_and_semantic.score > lexical_only.score
+
+
+def test_provider_limit_preserves_source_diverse_semantic_candidates():
+    engine = DeterministicCodeSearchEngine(providers=[FakeSemanticProvider({"a-1", "a-2", "a-3", "b-1"})])
+    documents = [
+        doc("a-1", "A1", source_id="source-a"),
+        doc("a-2", "A2", source_id="source-a"),
+        doc("a-3", "A3", source_id="source-a"),
+        doc("b-1", "B1", source_id="source-b"),
+    ]
+
+    result = engine.search("semantic", documents, SearchConfig(max_candidates_per_provider=3)).raw_candidates
+
+    assert len(result) == 3
+    assert "source-b" in {candidate.document.source_id for candidate in result}
+    assert sum(1 for candidate in result if candidate.document.source_id == "source-a") == 2
+
+
 def test_source_diverse_selector_rejects_expansion_only_candidates():
     selector = SourceDiverseAnchorSelector()
     top = doc("top", "UserRegistrationController.create", summary="creates a user account")
