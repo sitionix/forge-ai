@@ -22,9 +22,14 @@ from knowledge_service.boundary_resolution import (
     BoundaryResolutionResult,
     BoundaryResolutionTruncationState,
     BoundaryResolverMetrics,
+    BoundaryTargetMaterialization,
+    BoundaryTargetMaterializationStatus,
+    BoundaryTargetSeedIdentity,
+    BoundaryTargetSeedRelation,
     GenericBoundaryResolver,
     boundary_identity,
 )
+from knowledge_service.end_to_end_flow import EndToEndFlowAssembler, EndToEndFlowAssemblyResult, EndToEndFlowDiagnostic
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine, EntrypointFlowSeedProvenance, LocalFlowUnit
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.flow_family import FlowFamily, FlowFamilyAssembler, FlowFamilyAssemblyResult
@@ -219,6 +224,7 @@ class KnowledgeQueryExecutionResult:
     family_assembly: FlowFamilyAssemblyResult | None = None
     local_units: tuple[LocalFlowUnit, ...] = ()
     boundary_resolution: BoundaryResolutionResult | None = None
+    end_to_end_assembly: EndToEndFlowAssemblyResult | None = None
 
 
 @dataclass(frozen=True)
@@ -228,6 +234,8 @@ class ContinuationAssemblyResult:
     diagnostics: tuple[KnowledgeQueryDiagnostic, ...]
     local_units: tuple[LocalFlowUnit, ...] = ()
     boundary_resolution: BoundaryResolutionResult | None = None
+    initial_selected_local_unit_ids: tuple[str, ...] = ()
+    target_seed_provenance: tuple[EntrypointFlowSeedProvenance, ...] = ()
 
 
 class SourceScopeResolver:
@@ -1492,6 +1500,7 @@ class KnowledgeQueryService:
         self.family_assembler = FlowFamilyAssembler()
         self.narrative_planner = FlowNarrativePlanner()
         self.boundary_resolver = GenericBoundaryResolver()
+        self.end_to_end_assembler = EndToEndFlowAssembler()
 
     def query(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryResponse:
         return self.query_with_flows(request, plan=plan).response
@@ -1559,9 +1568,16 @@ class KnowledgeQueryService:
             include_tests=bool(request.includeTests),
         )
         resolver_incomplete = self._boundary_resolution_incomplete(continuation_result.boundary_resolution)
+        end_to_end_assembly = self.end_to_end_assembler.assemble(
+            continuation_result.local_units,
+            query_entry_unit_ids=continuation_result.initial_selected_local_unit_ids,
+            boundary_resolution=continuation_result.boundary_resolution,
+            resolver_truncated=resolver_incomplete,
+        )
         flows = continuation_result.families
         operation_facts = continuation_result.operation_facts
         diagnostics.extend(continuation_result.diagnostics)
+        diagnostics.extend(self._end_to_end_assembly_diagnostic(item) for item in end_to_end_assembly.diagnostics)
         narrative_plans, narrative_diagnostics = self.narrative_planner.assemble(
             flows,
             max_plans=request_flow_limit,
@@ -1650,6 +1666,7 @@ class KnowledgeQueryService:
             family_assembly=assembly_result,
             local_units=continuation_result.local_units,
             boundary_resolution=continuation_result.boundary_resolution,
+            end_to_end_assembly=end_to_end_assembly,
         )
 
     def _flow_seed_provenance(self, anchor_result: AnchorExpansionResult) -> tuple[EntrypointFlowSeedProvenance, ...]:
@@ -1780,6 +1797,7 @@ class KnowledgeQueryService:
         families: list[FlowFamily] = list(initial_families)
         active_units, provenance_diagnostics, provenance_missing = self._active_local_units_for_boundary_resolution(families, initial_local_units)
         local_units_by_id: dict[str, LocalFlowUnit] = {unit.unit_id: unit for unit in active_units}
+        initial_selected_local_unit_ids = tuple(sorted(local_units_by_id))
         operation_facts: tuple[AvailableOperationFact, ...] = ()
         if provenance_missing:
             operation_facts = self._available_operation_facts(families, include_tests)
@@ -1793,18 +1811,28 @@ class KnowledgeQueryService:
                 tuple(self._boundary_resolution_diagnostic(item) for item in boundary_result.diagnostics),
                 tuple(sorted(local_units_by_id.values(), key=lambda item: item.unit_id)),
                 boundary_result,
+                initial_selected_local_unit_ids,
             )
         if not families or not active_units or not hasattr(self.flow_repository, "find_provided_boundary_candidates"):
             operation_facts = self._available_operation_facts(families, include_tests)
-            return ContinuationAssemblyResult(tuple(families), operation_facts, (), tuple(local_units_by_id.values()), None)
+            return ContinuationAssemblyResult(
+                tuple(families),
+                operation_facts,
+                (),
+                tuple(sorted(local_units_by_id.values(), key=lambda item: item.unit_id)),
+                None,
+                initial_selected_local_unit_ids,
+            )
 
         diagnostics: list[BoundaryResolutionDiagnostic] = list(provenance_diagnostics)
         all_resolutions: list[Any] = []
         all_proven_links: list[Any] = []
         all_ambiguous: list[Any] = []
+        target_materializations: list[BoundaryTargetMaterialization] = []
         unresolved: set[Any] = set()
         truncated_required_identities: set[Any] = set()
         discovered_owners: dict[BoundaryOwnerIdentity, BoundaryOwnerIdentity] = {}
+        materialized_by_owner: dict[tuple[str, str, str], BoundaryTargetMaterialization] = {}
         visited_required: set[Any] = set()
         visited_owners: set[tuple[str, str, str]] = set()
         visited_units: set[str] = set(local_units_by_id)
@@ -1864,6 +1892,26 @@ class KnowledgeQueryService:
                             metadata={"targetOwner": self._target_owner_metadata(link.target_owner)},
                         )
                     )
+                    existing = materialized_by_owner.get(owner_key)
+                    if existing is not None:
+                        target_materializations.append(
+                            self._boundary_target_materialization(
+                                link,
+                                target_local_unit_ids=existing.target_local_unit_ids,
+                                seed_identities=existing.expanded_target_seed_identities,
+                                seed_relations=existing.owner_to_seed_reasons,
+                                status=BoundaryTargetMaterializationStatus.MATERIALIZED,
+                                diagnostics=(
+                                    BoundaryResolutionDiagnostic(
+                                        code="BOUNDARY_RESOLUTION_CYCLE_DETECTED",
+                                        message="Generic boundary resolution cycle reused an existing target materialization.",
+                                        severity="INFO",
+                                        source_id=link.target_owner.source_id,
+                                        metadata={"targetOwner": self._target_owner_metadata(link.target_owner)},
+                                    ),
+                                ),
+                            )
+                        )
                     continue
                 visited_owners.add(owner_key)
                 target_result = self._materialize_boundary_target_owner(
@@ -1871,17 +1919,32 @@ class KnowledgeQueryService:
                     eligible_sources,
                     include_tests=include_tests,
                 )
+                seed_identities = self._target_seed_identities(target_result.target_seed_provenance)
+                seed_relations = self._target_seed_relations(target_result.target_seed_provenance)
+                target_unit_ids = tuple(sorted(unit.unit_id for unit in target_result.local_units))
                 if not target_result.local_units:
+                    target_diagnostic = BoundaryResolutionDiagnostic(
+                        code="BOUNDARY_TARGET_UNIT_NOT_MATERIALIZED",
+                        message="A proven boundary target owner could not be materialized as a local unit.",
+                        severity="WARN",
+                        source_id=link.target_owner.source_id,
+                        metadata={"targetOwner": self._target_owner_metadata(link.target_owner)},
+                    )
                     diagnostics.append(
-                        BoundaryResolutionDiagnostic(
-                            code="BOUNDARY_TARGET_UNIT_NOT_MATERIALIZED",
-                            message="A proven boundary target owner could not be materialized as a local unit.",
-                            severity="WARN",
-                            source_id=link.target_owner.source_id,
-                            metadata={"targetOwner": self._target_owner_metadata(link.target_owner)},
+                        target_diagnostic
+                    )
+                    target_materializations.append(
+                        self._boundary_target_materialization(
+                            link,
+                            target_local_unit_ids=(),
+                            seed_identities=seed_identities,
+                            seed_relations=seed_relations,
+                            status=BoundaryTargetMaterializationStatus.NOT_MATERIALIZED,
+                            diagnostics=(*self._continuation_boundary_diagnostics(target_result.diagnostics), target_diagnostic),
                         )
                     )
                     continue
+                materialization_status = BoundaryTargetMaterializationStatus.MATERIALIZED
                 for unit in sorted(target_result.local_units, key=lambda item: item.unit_id):
                     if unit.unit_id in visited_units:
                         cycle_count += 1
@@ -1897,6 +1960,7 @@ class KnowledgeQueryService:
                         continue
                     if target_units_materialized >= _MAX_BOUNDARY_TARGET_UNITS:
                         resolver_limit_reached = True
+                        materialization_status = BoundaryTargetMaterializationStatus.PARTIAL
                         diagnostics.append(
                             BoundaryResolutionDiagnostic(
                                 code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
@@ -1910,6 +1974,16 @@ class KnowledgeQueryService:
                     local_units_by_id[unit.unit_id] = unit
                     next_units.append(unit)
                     target_units_materialized += 1
+                materialization = self._boundary_target_materialization(
+                    link,
+                    target_local_unit_ids=target_unit_ids,
+                    seed_identities=seed_identities,
+                    seed_relations=seed_relations,
+                    status=materialization_status,
+                    diagnostics=self._continuation_boundary_diagnostics(target_result.diagnostics),
+                )
+                target_materializations.append(materialization)
+                materialized_by_owner.setdefault(owner_key, materialization)
                 for family in target_result.families:
                     key = self._flow_family_key(family)
                     if key in known_family_keys:
@@ -1934,6 +2008,7 @@ class KnowledgeQueryService:
             cycle_count,
             resolver_limit_reached,
             target_units_materialized,
+            target_materializations,
         )
         public_diagnostics = tuple(self._boundary_resolution_diagnostic(item) for item in boundary_result.diagnostics)
         return ContinuationAssemblyResult(
@@ -1942,6 +2017,7 @@ class KnowledgeQueryService:
             public_diagnostics,
             tuple(sorted(local_units_by_id.values(), key=lambda item: item.unit_id)),
             boundary_result,
+            initial_selected_local_unit_ids,
         )
 
     def _materialize_boundary_target_owner(
@@ -1955,7 +2031,7 @@ class KnowledgeQueryService:
         loaded = self.flow_repository.load_nodes({node_key}, include_tests=include_tests) if hasattr(self.flow_repository, "load_nodes") else {}
         node = next((item for key, item in loaded.items() if key[0] == owner.source_id and key[2] == owner.owner_node_id), None)
         if node is None:
-            return ContinuationAssemblyResult((), (), (), (), None)
+            return ContinuationAssemblyResult((), (), (), (), None, (), ())
         anchor = KnowledgeQueryMatchedNode(
             sourceId=node.source_id,
             nodeId=node.node_id,
@@ -1984,7 +2060,7 @@ class KnowledgeQueryService:
             flow_seed_nodes = [seed for seed in expansion.flow_seed_nodes if self._matched_node_is_executable(seed)]
             seed_provenance = self._flow_seed_provenance(expansion)
         if not flow_seed_nodes:
-            return ContinuationAssemblyResult((), (), (), (), None)
+            return ContinuationAssemblyResult((), (), (), (), None, (), seed_provenance)
         build_result = self.flow_engine.build(
             flow_seed_nodes,
             max_flows=0,
@@ -1992,7 +2068,7 @@ class KnowledgeQueryService:
             anchor_seed_provenance=seed_provenance,
         )
         if not build_result.flows:
-            return ContinuationAssemblyResult((), (), tuple(build_result.diagnostics), build_result.local_units, None)
+            return ContinuationAssemblyResult((), (), tuple(build_result.diagnostics), build_result.local_units, None, (), seed_provenance)
         supporting_nodes, supporting_relations = self._supporting_relations(build_result.flows, include_tests)
         assembly = self.family_assembler.assemble(
             build_result.flows,
@@ -2006,6 +2082,8 @@ class KnowledgeQueryService:
             tuple(diagnostics),
             build_result.local_units,
             None,
+            (),
+            seed_provenance,
         )
 
     def _units_with_unvisited_required_boundaries(
@@ -2149,6 +2227,7 @@ class KnowledgeQueryService:
         cycle_count: int,
         resolver_limit_reached: bool,
         target_units_materialized: int,
+        target_materializations: Sequence[BoundaryTargetMaterialization],
     ) -> BoundaryResolutionResult:
         proven = tuple(sorted(proven_links, key=lambda item: item.resolution_id))
         ambiguous = tuple(sorted(ambiguous_links, key=lambda item: item.resolution_id))
@@ -2279,6 +2358,7 @@ class KnowledgeQueryService:
             unresolved_boundaries=unresolved,
             discovered_provided_owners=tuple(sorted(discovered_owners.values(), key=lambda item: (item.source_id, item.graph_revision, item.owner_node_id))),
             discovered_local_units=tuple(sorted(discovered_local_units, key=lambda item: item.unit_id)),
+            target_materializations=tuple(sorted(target_materializations, key=lambda item: (item.resolution_id, item.selected_provided_boundary_identity, item.target_owner_identity))),
             diagnostics=(*tuple(diagnostics), aggregate),
             truncation=BoundaryResolutionTruncationState(
                 candidate_sets_truncated=metrics.candidate_sets_truncated,
@@ -2289,7 +2369,92 @@ class KnowledgeQueryService:
             metrics=metrics,
         )
 
+    def _boundary_target_materialization(
+        self,
+        link: Any,
+        *,
+        target_local_unit_ids: Sequence[str],
+        seed_identities: Sequence[BoundaryTargetSeedIdentity],
+        seed_relations: Sequence[BoundaryTargetSeedRelation],
+        status: BoundaryTargetMaterializationStatus,
+        diagnostics: Sequence[BoundaryResolutionDiagnostic],
+    ) -> BoundaryTargetMaterialization:
+        return BoundaryTargetMaterialization(
+            resolution_id=link.resolution_id,
+            selected_provided_boundary_identity=link.provided_boundary_identity,
+            target_owner_identity=link.target_owner,
+            target_local_unit_ids=tuple(sorted({str(item or "") for item in target_local_unit_ids if str(item or "")})),
+            expanded_target_seed_identities=tuple(sorted(set(seed_identities))),
+            owner_to_seed_reasons=tuple(sorted(set(seed_relations))),
+            materialization_status=status,
+            diagnostics=tuple(sorted(diagnostics, key=lambda item: (item.code, item.source_id or "", item.message))),
+        )
+
+    def _target_seed_identities(
+        self,
+        seed_provenance: Sequence[EntrypointFlowSeedProvenance],
+    ) -> tuple[BoundaryTargetSeedIdentity, ...]:
+        identities = {
+            BoundaryTargetSeedIdentity(
+                source_id=str(item.expanded_seed.sourceId or ""),
+                graph_revision=str(item.expanded_seed.graphRevision or item.expanded_seed.graphId or ""),
+                node_id=str(item.expanded_seed.nodeId or ""),
+                stable_key=str(item.expanded_seed.stableKey or item.expanded_seed.nodeId or ""),
+            )
+            for item in seed_provenance
+            if str(item.expanded_seed.nodeId or "")
+        }
+        return tuple(sorted(identities))
+
+    def _target_seed_relations(
+        self,
+        seed_provenance: Sequence[EntrypointFlowSeedProvenance],
+    ) -> tuple[BoundaryTargetSeedRelation, ...]:
+        reasons_by_seed: dict[BoundaryTargetSeedIdentity, set[str]] = defaultdict(set)
+        for item in seed_provenance:
+            seed = BoundaryTargetSeedIdentity(
+                source_id=str(item.expanded_seed.sourceId or ""),
+                graph_revision=str(item.expanded_seed.graphRevision or item.expanded_seed.graphId or ""),
+                node_id=str(item.expanded_seed.nodeId or ""),
+                stable_key=str(item.expanded_seed.stableKey or item.expanded_seed.nodeId or ""),
+            )
+            if not seed.node_id:
+                continue
+            reasons_by_seed[seed].update(str(reason or "") for reason in item.anchor_to_seed_reasons if str(reason or ""))
+        return tuple(
+            sorted(
+                (
+                    BoundaryTargetSeedRelation(seed_identity=seed, reasons=tuple(sorted(reasons)))
+                    for seed, reasons in reasons_by_seed.items()
+                )
+            )
+        )
+
+    def _continuation_boundary_diagnostics(
+        self,
+        diagnostics: Sequence[KnowledgeQueryDiagnostic],
+    ) -> tuple[BoundaryResolutionDiagnostic, ...]:
+        return tuple(
+            BoundaryResolutionDiagnostic(
+                code=item.code,
+                message=item.message,
+                severity=item.severity,
+                source_id=item.sourceId,
+                metadata=dict(item.metadata or {}),
+            )
+            for item in diagnostics
+        )
+
     def _boundary_resolution_diagnostic(self, item: BoundaryResolutionDiagnostic) -> KnowledgeQueryDiagnostic:
+        return KnowledgeQueryDiagnostic(
+            code=item.code,
+            message=item.message,
+            severity=item.severity,
+            sourceId=item.source_id,
+            metadata=dict(item.metadata or {}),
+        )
+
+    def _end_to_end_assembly_diagnostic(self, item: EndToEndFlowDiagnostic) -> KnowledgeQueryDiagnostic:
         return KnowledgeQueryDiagnostic(
             code=item.code,
             message=item.message,

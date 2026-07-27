@@ -758,3 +758,184 @@ def test_temporary_sqlite_seeded_schema_acceptance_proven_ambiguous_unresolved(t
     assert continuation.boundary_resolution is not None
     assert continuation.boundary_resolution.proven_links[0].target_owner.source_id == "source-proven"
     assert {unit.source_id for unit in continuation.boundary_resolution.discovered_local_units} == {"source-proven"}
+
+
+def test_temporary_sqlite_end_to_end_assembly_acceptance(tmp_path):
+    def e2e(db_path: Path, source_ids: Sequence[str]):
+        repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
+        families, units = sqlite_family_inputs(repo, db_path, "source-a")
+        service = KnowledgeQueryService(
+            None,
+            None,
+            repo,
+            flow_engine=EntrypointFlowEngine(repo),
+        )
+        continuation = service._assemble_generic_boundary_continuations(
+            families,
+            units,
+            query_sources(db_path, source_ids),
+            include_tests=False,
+        )
+        return service.end_to_end_assembler.assemble(
+            continuation.local_units,
+            query_entry_unit_ids=continuation.initial_selected_local_unit_ids,
+            boundary_resolution=continuation.boundary_resolution,
+            resolver_truncated=service._boundary_resolution_incomplete(continuation.boundary_resolution),
+        )
+
+    linear_db = tmp_path / "linear.sqlite"
+    for source in ("source-a", "source-b", "source-c"):
+        seed_source(linear_db, source)
+    insert_boundary(
+        linear_db,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required-a-b",
+        role="REQUIRED",
+        descriptors=(("neutral.linear.ab", "STRING", "b"),),
+    )
+    insert_boundary(
+        linear_db,
+        source_id="source-b",
+        node_id=owner_id("source-b"),
+        boundary_id="provided-b",
+        role="PROVIDED",
+        descriptors=(("neutral.linear.ab", "STRING", "b"),),
+    )
+    insert_boundary(
+        linear_db,
+        source_id="source-b",
+        node_id=owner_id("source-b"),
+        boundary_id="required-b-c",
+        role="REQUIRED",
+        descriptors=(("neutral.linear.bc", "STRING", "c"),),
+    )
+    insert_boundary(
+        linear_db,
+        source_id="source-c",
+        node_id=owner_id("source-c"),
+        boundary_id="provided-c",
+        role="PROVIDED",
+        descriptors=(("neutral.linear.bc", "STRING", "c"),),
+    )
+    linear = e2e(linear_db, ("source-a", "source-b", "source-c"))
+    linear_graph = linear.graphs[0]
+    assert len(linear.graphs) == 1
+    assert linear_graph.coverage.unit_count == 3
+    assert linear_graph.coverage.proven_cross_source_transition_count == 2
+    assert linear_graph.coverage.query_entry_unit_count == 1
+    assert linear_graph.coverage.topology_entry_unit_count == 1
+    assert linear_graph.coverage.complete is True
+
+    branch_db = tmp_path / "branch.sqlite"
+    for source in ("source-a", "source-b", "source-c"):
+        seed_source(branch_db, source)
+    insert_boundary(
+        branch_db,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required-a-b",
+        role="REQUIRED",
+        descriptors=(("neutral.branch.ab", "STRING", "b"),),
+    )
+    insert_boundary(
+        branch_db,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required-a-c",
+        role="REQUIRED",
+        descriptors=(("neutral.branch.ac", "STRING", "c"),),
+    )
+    insert_boundary(
+        branch_db,
+        source_id="source-b",
+        node_id=owner_id("source-b"),
+        boundary_id="provided-b",
+        role="PROVIDED",
+        descriptors=(("neutral.branch.ab", "STRING", "b"),),
+    )
+    insert_boundary(
+        branch_db,
+        source_id="source-c",
+        node_id=owner_id("source-c"),
+        boundary_id="provided-c",
+        role="PROVIDED",
+        descriptors=(("neutral.branch.ac", "STRING", "c"),),
+    )
+    branch = e2e(branch_db, ("source-a", "source-b", "source-c"))
+    branch_graph = branch.graphs[0]
+    outgoing = [
+        item
+        for item in branch_graph.proven_cross_source_transitions
+        if item.source_unit_id in branch_graph.query_entry_unit_ids
+    ]
+    assert branch_graph.coverage.unit_count == 3
+    assert len(outgoing) == 2
+
+    ambiguous_db = tmp_path / "ambiguous-e2e.sqlite"
+    for source in ("source-a", "source-b", "source-c"):
+        seed_source(ambiguous_db, source)
+    insert_boundary(
+        ambiguous_db,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required-ambiguous",
+        role="REQUIRED",
+        descriptors=(("neutral.ambiguous.one", "STRING", "same"), ("neutral.ambiguous.two", "STRING", "same")),
+    )
+    for source in ("source-b", "source-c"):
+        insert_boundary(
+            ambiguous_db,
+            source_id=source,
+            node_id=owner_id(source),
+            boundary_id=f"provided-{source}",
+            role="PROVIDED",
+            descriptors=(("neutral.ambiguous.one", "STRING", "same"), ("neutral.ambiguous.two", "STRING", "same")),
+        )
+    ambiguous = e2e(ambiguous_db, ("source-a", "source-b", "source-c"))
+    ambiguous_graph = ambiguous.graphs[0]
+    assert ambiguous_graph.coverage.unit_count == 1
+    assert ambiguous_graph.coverage.open_ambiguous_boundary_count == 1
+    assert ambiguous_graph.coverage.proven_cross_source_transition_count == 0
+    assert ambiguous_graph.coverage.complete is False
+
+    cycle_db = tmp_path / "cycle.sqlite"
+    for source in ("source-a", "source-b"):
+        seed_source(cycle_db, source)
+    insert_boundary(
+        cycle_db,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="required-a-b",
+        role="REQUIRED",
+        descriptors=(("neutral.cycle.ab", "STRING", "b"),),
+    )
+    insert_boundary(
+        cycle_db,
+        source_id="source-b",
+        node_id=owner_id("source-b"),
+        boundary_id="provided-b",
+        role="PROVIDED",
+        descriptors=(("neutral.cycle.ab", "STRING", "b"),),
+    )
+    insert_boundary(
+        cycle_db,
+        source_id="source-b",
+        node_id=owner_id("source-b"),
+        boundary_id="required-b-a",
+        role="REQUIRED",
+        descriptors=(("neutral.cycle.ba", "STRING", "a"),),
+    )
+    insert_boundary(
+        cycle_db,
+        source_id="source-a",
+        node_id=owner_id("source-a"),
+        boundary_id="provided-a",
+        role="PROVIDED",
+        descriptors=(("neutral.cycle.ba", "STRING", "a"),),
+    )
+    cycle = e2e(cycle_db, ("source-a", "source-b"))
+    cycle_graph = cycle.graphs[0]
+    assert cycle_graph.coverage.proven_cross_source_transition_count == 2
+    assert cycle_graph.coverage.topology_entry_unit_count == 0
+    assert cycle_graph.topology_entry_unit_ids == ()

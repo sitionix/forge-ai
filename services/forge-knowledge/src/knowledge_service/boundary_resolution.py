@@ -21,6 +21,12 @@ class BoundaryResolutionStatus(str, Enum):
     UNRESOLVED = "UNRESOLVED"
 
 
+class BoundaryTargetMaterializationStatus(str, Enum):
+    MATERIALIZED = "MATERIALIZED"
+    PARTIAL = "PARTIAL"
+    NOT_MATERIALIZED = "NOT_MATERIALIZED"
+
+
 @dataclass(frozen=True, order=True)
 class BoundaryIdentity:
     source_id: str
@@ -108,6 +114,7 @@ class ProvenBoundaryLink:
     target_owner: BoundaryOwnerIdentity
     proving_descriptor_fingerprints: tuple[DescriptorFingerprint, ...]
     evidence_references: tuple[EvidenceReference, ...]
+    required_unit_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -117,6 +124,32 @@ class BoundaryResolutionDiagnostic:
     severity: str = "INFO"
     source_id: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, order=True)
+class BoundaryTargetSeedIdentity:
+    source_id: str
+    graph_revision: str
+    node_id: str
+    stable_key: str
+
+
+@dataclass(frozen=True, order=True)
+class BoundaryTargetSeedRelation:
+    seed_identity: BoundaryTargetSeedIdentity
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BoundaryTargetMaterialization:
+    resolution_id: str
+    selected_provided_boundary_identity: BoundaryIdentity
+    target_owner_identity: BoundaryOwnerIdentity
+    target_local_unit_ids: tuple[str, ...]
+    expanded_target_seed_identities: tuple[BoundaryTargetSeedIdentity, ...]
+    owner_to_seed_reasons: tuple[BoundaryTargetSeedRelation, ...]
+    materialization_status: BoundaryTargetMaterializationStatus
+    diagnostics: tuple[BoundaryResolutionDiagnostic, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -129,6 +162,7 @@ class BoundaryResolution:
     proving_descriptor_fingerprints: tuple[DescriptorFingerprint, ...]
     evidence_references: tuple[EvidenceReference, ...]
     diagnostics: tuple[BoundaryResolutionDiagnostic, ...]
+    required_unit_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -208,6 +242,7 @@ class BoundaryResolutionResult:
     unresolved_boundaries: tuple[BoundaryIdentity, ...]
     discovered_provided_owners: tuple[BoundaryOwnerIdentity, ...]
     discovered_local_units: tuple[Any, ...] = ()
+    target_materializations: tuple[BoundaryTargetMaterialization, ...] = ()
     diagnostics: tuple[BoundaryResolutionDiagnostic, ...] = ()
     truncation: BoundaryResolutionTruncationState = BoundaryResolutionTruncationState()
     metrics: BoundaryResolverMetrics = BoundaryResolverMetrics()
@@ -295,13 +330,16 @@ class GenericBoundaryResolver:
         local_units: Sequence[Any],
         candidate_load: BoundaryCandidateLoadResult,
     ) -> BoundaryResolutionResult:
-        required_by_identity: dict[BoundaryIdentity, tuple[LocalBoundaryFact, str]] = {}
+        required_by_identity: dict[BoundaryIdentity, tuple[LocalBoundaryFact, set[str]]] = {}
         for unit in sorted(local_units, key=lambda item: str(getattr(item, "unit_id", ""))):
+            unit_id = str(getattr(unit, "unit_id", "") or "")
             for boundary in sorted(getattr(unit, "generic_boundaries", ()) or (), key=_boundary_sort_key):
                 if str(boundary.role or "").strip().upper() != BOUNDARY_ROLE_REQUIRED:
                     continue
                 identity = boundary_identity(boundary)
-                required_by_identity.setdefault(identity, (boundary, str(getattr(unit, "unit_id", ""))))
+                _boundary, unit_ids = required_by_identity.setdefault(identity, (boundary, set()))
+                if unit_id:
+                    unit_ids.add(unit_id)
 
         resolutions: list[BoundaryResolution] = []
         diagnostics: list[BoundaryResolutionDiagnostic] = list(candidate_load.diagnostics)
@@ -310,12 +348,12 @@ class GenericBoundaryResolver:
         candidate_pairs_evaluated = 0
 
         for identity in sorted(required_by_identity):
-            required, unit_id = required_by_identity[identity]
+            required, unit_ids = required_by_identity[identity]
             candidates = tuple(sorted(candidate_load.candidates_by_required_identity.get(identity, ()), key=_boundary_sort_key))
             truncated = identity in candidate_load.truncated_required_identities
             resolution = self._resolve_required_boundary(
                 required,
-                unit_id,
+                tuple(sorted(unit_ids)),
                 candidates,
                 candidate_load.provided_boundaries_by_fingerprint,
                 candidate_set_truncated=truncated,
@@ -404,14 +442,16 @@ class GenericBoundaryResolver:
     def _resolve_required_boundary(
         self,
         required: LocalBoundaryFact,
-        required_unit_identity: str,
+        required_unit_ids: Sequence[str],
         candidates: Sequence[LocalBoundaryFact],
         provided_boundaries_by_fingerprint: Mapping[DescriptorFingerprint, frozenset[BoundaryIdentity]],
         *,
         candidate_set_truncated: bool,
     ) -> BoundaryResolution:
+        unit_ids = tuple(sorted({str(item or "") for item in required_unit_ids if str(item or "")}))
+        candidate_unit_identity = unit_ids[0] if len(unit_ids) == 1 else ",".join(unit_ids)
         evaluations = tuple(
-            self._evaluate_candidate(required, required_unit_identity, candidate, provided_boundaries_by_fingerprint)
+            self._evaluate_candidate(required, candidate_unit_identity, candidate, provided_boundaries_by_fingerprint)
             for candidate in candidates
         )
         diagnostics: list[BoundaryResolutionDiagnostic] = []
@@ -499,6 +539,7 @@ class GenericBoundaryResolver:
             proving_descriptor_fingerprints=proving,
             evidence_references=evidence_refs,
             diagnostics=tuple(diagnostics),
+            required_unit_ids=unit_ids,
         )
 
     def _evaluate_candidate(
@@ -608,6 +649,7 @@ class GenericBoundaryResolver:
             target_owner=boundary_owner_identity(resolution.selected_provided_boundary),
             proving_descriptor_fingerprints=resolution.proving_descriptor_fingerprints,
             evidence_references=resolution.evidence_references,
+            required_unit_ids=resolution.required_unit_ids,
         )
 
 

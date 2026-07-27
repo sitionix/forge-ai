@@ -195,6 +195,24 @@ def test_unique_exact_evidence_backed_descriptor_produces_proven():
     assert result.proven_links[0].target_owner.owner_node_id == "owner"
 
 
+def test_required_boundary_unit_membership_preserves_all_exact_local_units():
+    required = boundary("required", "REQUIRED", descriptors=(descriptor("required-key", "contract.identity", "alpha"),))
+    provided = boundary("provided", "PROVIDED", source="source-b", descriptors=(descriptor("provided-key", "contract.identity", "alpha", source="source-b"),))
+    load = load_result((required,), (provided,))
+
+    result = GenericBoundaryResolver().resolve(
+        (
+            Unit("unit-b", (required,)),
+            Unit("unit-a", (required,)),
+            Unit("unit-b", (required,)),
+        ),
+        load,
+    )
+
+    assert result.resolutions[0].required_unit_ids == ("unit-a", "unit-b")
+    assert result.proven_links[0].required_unit_ids == ("unit-a", "unit-b")
+
+
 def test_unique_composite_descriptor_set_produces_proven_when_individual_fingerprints_are_common():
     required = boundary(
         "required",

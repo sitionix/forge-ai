@@ -213,6 +213,8 @@ def test_query_with_flows_all_plan_rejected_families_return_no_local_units():
     assert result.flows == ()
     assert result.response.flows == []
     assert result.local_units == ()
+    assert result.end_to_end_assembly is not None
+    assert result.end_to_end_assembly.graphs == ()
     assert repo.calls["find_provided_boundary_candidates"] == 0
 
 
@@ -237,6 +239,9 @@ def test_query_with_flows_missing_family_provenance_keeps_empty_local_units_fail
     assert result.response.coverage.truncated is True
     assert result.response.coverage.continuationAvailable is True
     assert result.local_units == ()
+    assert result.end_to_end_assembly is not None
+    assert result.end_to_end_assembly.truncated is True
+    assert result.end_to_end_assembly.all_canonical_unit_refs == ()
     assert repo.calls["find_provided_boundary_candidates"] == 0
 
 
@@ -278,6 +283,11 @@ def test_query_with_flows_selected_unit_continues_without_rejected_initial_unit(
 
     assert result.boundary_resolution is not None
     assert [item.status for item in result.boundary_resolution.resolutions] == [BoundaryResolutionStatus.PROVEN]
+    assert result.end_to_end_assembly is not None
+    assert len(result.end_to_end_assembly.graphs) == 1
+    assert {unit_ref.unit_id for graph in result.end_to_end_assembly.graphs for unit_ref in graph.unit_refs} == {
+        unit.unit_id for unit in result.local_units
+    }
     assert {node_item.node_id for unit in result.local_units for node_item in unit.execution_nodes} == {"RootA", "TargetC"}
     assert "RootB" not in {node_item.node_id for unit in result.local_units for node_item in unit.execution_nodes}
 
@@ -330,6 +340,11 @@ def test_query_with_flows_reversed_internal_order_preserves_local_units():
     reversed_order = execute(reverse=True)
 
     assert [unit.unit_id for unit in forward.local_units] == [unit.unit_id for unit in reversed_order.local_units]
+    assert forward.end_to_end_assembly is not None
+    assert reversed_order.end_to_end_assembly is not None
+    assert [graph.stable_graph_id for graph in forward.end_to_end_assembly.graphs] == [
+        graph.stable_graph_id for graph in reversed_order.end_to_end_assembly.graphs
+    ]
     assert [
         tuple(node_item.node_id for node_item in unit.execution_nodes)
         for unit in forward.local_units
@@ -714,6 +729,7 @@ def test_recursive_resolution_discovers_second_target_and_cycle_terminates():
     assert result.boundary_resolution is not None
     assert {unit.source_id for unit in result.local_units} == {"source-a", "source-b", "source-c"}
     assert len(result.boundary_resolution.proven_links) == 3
+    assert len(result.boundary_resolution.target_materializations) == 3
     assert result.boundary_resolution.metrics.resolution_cycles_detected >= 1
     assert any(item.code == "BOUNDARY_RESOLUTION_CYCLE_DETECTED" for item in result.boundary_resolution.diagnostics)
     assert not any(item.code == "BOUNDARY_RESOLUTION_LIMIT_REACHED" for item in result.boundary_resolution.diagnostics)
