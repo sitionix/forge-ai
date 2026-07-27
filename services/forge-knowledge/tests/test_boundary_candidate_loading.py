@@ -15,7 +15,11 @@ from knowledge_service.boundary_resolution import (
     GenericBoundaryResolver,
     boundary_identity,
 )
+from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
+from knowledge_service.flow_family import FlowFamilyAssembler
+from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode
+from knowledge_service.knowledge_query_service import KnowledgeQueryService, QuerySource
 
 
 def owner_id(source_id: str) -> str:
@@ -138,6 +142,41 @@ def load_required(db_path: Path, source_id: str, node_id: str | None = None):
     revision = next(item["graphRevision"] for item in graph_id if item["sourceId"] == source_id)
     boundaries = repo.load_boundaries({(source_id, revision, node_id)}, include_tests=False)[(source_id, revision, node_id)]
     return next(item for item in boundaries if item.role == "REQUIRED")
+
+
+def query_sources(db_path: Path, source_ids: Sequence[str]) -> tuple[QuerySource, ...]:
+    current = {item["sourceId"]: item for item in AnalysisStore(db_path).query_current_graph_sources()}
+    return tuple(
+        QuerySource(
+            source_id=source_id,
+            display_name=source_id,
+            graph_id=current[source_id]["graphId"],
+            graph_revision=current[source_id]["graphRevision"],
+            node_count=1,
+            edge_count=0,
+        )
+        for source_id in source_ids
+    )
+
+
+def sqlite_family_inputs(repo: EntrypointFlowGraphRepository, db_path: Path, source_id: str):
+    current = {item["sourceId"]: item for item in AnalysisStore(db_path).query_current_graph_sources()}
+    revision = current[source_id]["graphRevision"]
+    node_id = owner_id(source_id)
+    anchor = KnowledgeQueryMatchedNode(
+        sourceId=source_id,
+        nodeId=node_id,
+        stableKey=node_id,
+        nodeKind="CALLABLE",
+        label=node_id,
+        score=1.0,
+        matchReasons=["SQLITE_ACCEPTANCE"],
+        graphId=revision,
+        graphRevision=revision,
+    )
+    result = EntrypointFlowEngine(repo).build([anchor], max_flows=10, include_tests=False)
+    assembly = FlowFamilyAssembler().assemble(result.flows)
+    return FlowFamilyAssembler().rank(assembly.families), result.local_units
 
 
 def evidence_refs(boundary):
@@ -345,3 +384,23 @@ def test_temporary_sqlite_seeded_schema_acceptance_proven_ambiguous_unresolved(t
         "required-ambiguous": BoundaryResolutionStatus.AMBIGUOUS,
         "required-unresolved": BoundaryResolutionStatus.UNRESOLVED,
     }
+
+    families, units = sqlite_family_inputs(repo, db_path, "source-a")
+    continuation = KnowledgeQueryService(
+        None,
+        None,
+        repo,
+        flow_engine=EntrypointFlowEngine(repo),
+    )._assemble_generic_boundary_continuations(
+        families,
+        units,
+        query_sources(
+            db_path,
+            ("source-a", "source-proven", "source-ambiguous-a", "source-ambiguous-b", "source-unresolved", "source-unresolved-extra"),
+        ),
+        include_tests=False,
+    )
+
+    assert continuation.boundary_resolution is not None
+    assert continuation.boundary_resolution.proven_links[0].target_owner.source_id == "source-proven"
+    assert {unit.source_id for unit in continuation.boundary_resolution.discovered_local_units} == {"source-proven"}
