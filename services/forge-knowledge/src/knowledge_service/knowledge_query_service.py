@@ -13,7 +13,7 @@ from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionNode,
     AnchorExpansionRequest,
 )
-from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
+from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine, EntrypointFlowSeedProvenance, LocalFlowUnit
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.flow_family import FlowFamily, FlowFamilyAssembler, FlowFamilyAssemblyResult
 from knowledge_service.flow_narrative import FlowNarrativePlan, FlowNarrativePlanner, replace_plan_fragments
@@ -195,6 +195,7 @@ class KnowledgeQueryExecutionResult:
     narrative_plans: tuple[FlowNarrativePlan, ...] = ()
     raw_flows: tuple[EntrypointFlow, ...] = ()
     family_assembly: FlowFamilyAssemblyResult | None = None
+    local_units: tuple[LocalFlowUnit, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1461,11 +1462,13 @@ class KnowledgeQueryService:
         anchor_result = self.anchor_expander.expand(matched_nodes, eligible_sources, self.policy)
         diagnostics.extend(anchor_result.diagnostics)
         flow_seed_nodes = anchor_result.flow_seed_nodes
+        seed_provenance = self._flow_seed_provenance(anchor_result)
         request_flow_limit = max(1, min(int(request.maxFlows or 10), 10))
         build_result = self.flow_engine.build(
             flow_seed_nodes,
             max_flows=0,
             include_tests=bool(request.includeTests),
+            anchor_seed_provenance=seed_provenance,
         )
         raw_flows = build_result.flows
         supporting_nodes, supporting_relations = self._supporting_relations(raw_flows, bool(request.includeTests))
@@ -1571,6 +1574,70 @@ class KnowledgeQueryService:
             narrative_plans=narrative_plans,
             raw_flows=raw_flows,
             family_assembly=assembly_result,
+            local_units=build_result.local_units,
+        )
+
+    def _flow_seed_provenance(self, anchor_result: AnchorExpansionResult) -> tuple[EntrypointFlowSeedProvenance, ...]:
+        originals_by_source_node: dict[tuple[str, str], list[KnowledgeQueryMatchedNode]] = defaultdict(list)
+        for candidate in anchor_result.original_candidates:
+            originals_by_source_node[(candidate.sourceId, candidate.nodeId)].append(candidate)
+        for values in originals_by_source_node.values():
+            values.sort(key=lambda item: (-float(item.score or 0.0), item.stableKey, item.nodeId))
+
+        specs: list[EntrypointFlowSeedProvenance] = []
+        seen: set[tuple[str, str, str, str, str]] = set()
+        for expanded in anchor_result.expanded_anchors:
+            if AnchorRole.FLOW_SEED not in expanded.roles:
+                continue
+            origin_node_ids = expanded.originNodeIds or (expanded.node.nodeId,)
+            reasons = tuple(str(reason.value if isinstance(reason, AnchorExpansionReason) else reason) for reason in expanded.reasons)
+            for origin_node_id in origin_node_ids:
+                originals = originals_by_source_node.get((expanded.node.sourceId, origin_node_id), ())
+                if not originals and expanded.node.nodeId == origin_node_id:
+                    originals = (expanded.node,)
+                for original in originals:
+                    key = (
+                        original.sourceId,
+                        original.stableKey,
+                        original.nodeId,
+                        expanded.node.stableKey,
+                        expanded.node.nodeId,
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    specs.append(
+                        EntrypointFlowSeedProvenance(
+                            original_anchor=original,
+                            expanded_seed=expanded.node,
+                            anchor_to_seed_reasons=reasons,
+                        )
+                    )
+
+        if specs:
+            return tuple(sorted(specs, key=self._flow_seed_provenance_sort_key))
+
+        for seed in anchor_result.flow_seed_nodes:
+            key = (seed.sourceId, seed.stableKey, seed.nodeId, seed.stableKey, seed.nodeId)
+            if key in seen:
+                continue
+            seen.add(key)
+            specs.append(
+                EntrypointFlowSeedProvenance(
+                    original_anchor=seed,
+                    expanded_seed=seed,
+                    anchor_to_seed_reasons=("ORIGINAL_MATCH",),
+                )
+            )
+        return tuple(sorted(specs, key=self._flow_seed_provenance_sort_key))
+
+    def _flow_seed_provenance_sort_key(self, item: EntrypointFlowSeedProvenance) -> tuple[str, str, str, str, str]:
+        return (
+            item.expanded_seed.sourceId,
+            item.expanded_seed.graphRevision or item.expanded_seed.graphId or "",
+            item.expanded_seed.stableKey,
+            item.original_anchor.stableKey,
+            item.original_anchor.nodeId,
         )
 
     def _repository_metrics(self) -> Dict[str, int]:

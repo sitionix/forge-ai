@@ -5,7 +5,7 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import Any, Dict, Iterable, List, Sequence
 
-from knowledge_service.entrypoint_flow_engine import EntrypointFlow
+from knowledge_service.entrypoint_flow_engine import EntrypointFlow, LocalBoundaryDescriptor, LocalBoundaryFact
 from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
@@ -73,6 +73,31 @@ class EntrypointFlowGraphRepository:
         include_tests: bool,
     ) -> dict[FlowNodeKey, tuple[FlowGraphEdge, ...]]:
         return self._load_call_edges(source_keys, include_tests=include_tests, direction="outgoing")
+
+    def load_boundaries(
+        self,
+        node_keys: set[FlowNodeKey],
+        *,
+        include_tests: bool,
+    ) -> dict[FlowNodeKey, tuple[LocalBoundaryFact, ...]]:
+        self.graph_store.init()
+        grouped = self._group_node_ids_by_source(node_keys)
+        if not grouped:
+            return {}
+        result: dict[FlowNodeKey, list[LocalBoundaryFact]] = defaultdict(list)
+        with self.graph_store._connect() as conn:
+            if not self.graph_store._table_exists(conn, "analysis_graph_boundaries"):
+                return {}
+            identity_by_source = self.graph_store._graph_identity_by_source(conn, sorted(grouped))
+            for source_id, ids in sorted(grouped.items()):
+                identity = identity_by_source.get(source_id) or {}
+                for chunk in _chunks(sorted(ids)):
+                    rows = self._query_boundary_rows(conn, source_id, list(chunk), include_tests)
+                    self._metrics["boundaryFactRowsLoaded"] += len(rows)
+                    facts = self._boundary_facts_from_rows(rows, identity)
+                    for fact in facts:
+                        result[fact.owner_key].append(fact)
+        return {key: tuple(sorted(values, key=self._boundary_sort_key)) for key, values in result.items()}
 
     def hydrate_evidence(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]:
         self.graph_store.init()
@@ -258,13 +283,16 @@ class EntrypointFlowGraphRepository:
         grouped = self._group_node_ids_by_source(node_keys)
         if not grouped:
             return {}
+        execution_edge_types = graph_relation_semantics().edge_types_with(EXECUTION_CONTINUATION)
+        if not execution_edge_types:
+            return {}
         result: dict[FlowNodeKey, list[FlowGraphEdge]] = defaultdict(list)
         with self.graph_store._connect() as conn:
             target_identity_by_source = self.graph_store._graph_identity_by_source(conn, sorted(grouped))
             for source_id, ids in sorted(grouped.items()):
                 target_identity = target_identity_by_source.get(source_id) or {}
                 for chunk in _chunks(sorted(ids)):
-                    rows = self._query_call_edges(conn, source_id, list(chunk), include_tests, direction)
+                    rows = self._query_call_edges(conn, source_id, list(chunk), include_tests, direction, execution_edge_types)
                     self._metrics["edgeRowsLoaded"] += len(rows)
                     self.graph_store._attach_current_graph_identity(conn, rows)
                     edge_identity_by_source = self.graph_store._graph_identity_by_source(
@@ -382,19 +410,30 @@ class EntrypointFlowGraphRepository:
         ids: list[str],
         include_tests: bool,
         direction: str,
+        edge_types: Sequence[str],
     ) -> List[Dict[str, Any]]:
-        if not ids:
+        if not ids or not edge_types:
             return []
         self._metrics["sqlStatements"] += 1
         placeholders = ",".join("?" for _ in ids)
         contract = graph_query_contract()
         current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        edge_type_sql, edge_type_params = sql_in_clause(edge_types)
         if direction == "incoming":
-            return self._query_incoming_call_edges(conn, source_id, ids, include_tests, current_status_sql, current_status_params)
+            return self._query_incoming_call_edges(
+                conn,
+                source_id,
+                ids,
+                include_tests,
+                current_status_sql,
+                current_status_params,
+                edge_type_sql,
+                edge_type_params,
+            )
         frontier_column = "e.from_node_id"
         params: list[Any] = [
             source_id,
-            contract.calls_edge_type,
+            *edge_type_params,
             *current_status_params,
             *ids,
             include_tests,
@@ -422,7 +461,7 @@ class EntrypointFlowGraphRepository:
             LEFT JOIN analysis_graph_state target_state
               ON target_state.source_id = tn.source_id
             WHERE e.source_id = ?
-              AND e.edge_type = ?
+              AND e.edge_type IN ({edge_type_sql})
               AND e.status IN ({current_status_sql})
               AND {self.graph_store._inventory_membership_graph_edge_clause("e")}
               AND {frontier_column} IN ({placeholders})
@@ -447,9 +486,10 @@ class EntrypointFlowGraphRepository:
         include_tests: bool,
         current_status_sql: str,
         current_status_params: Sequence[Any],
+        edge_type_sql: str,
+        edge_type_params: Sequence[Any],
     ) -> List[Dict[str, Any]]:
         placeholders = ",".join("?" for _ in ids)
-        contract = graph_query_contract()
         rows = conn.execute(
             f"""
             SELECT e.*,
@@ -479,7 +519,7 @@ class EntrypointFlowGraphRepository:
              AND fn.status IN ({current_status_sql})
              AND {self.graph_store._inventory_membership_graph_node_clause("fn")}
              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("fn")}, '') != 'TEST')
-            WHERE e.edge_type = ?
+            WHERE e.edge_type IN ({edge_type_sql})
               AND e.status IN ({current_status_sql})
               AND {self.graph_store._inventory_membership_graph_edge_clause("e")}
               AND e.to_node_id IN ({placeholders})
@@ -492,7 +532,7 @@ class EntrypointFlowGraphRepository:
                 include_tests,
                 *current_status_params,
                 include_tests,
-                contract.calls_edge_type,
+                *edge_type_params,
                 *current_status_params,
                 *ids,
                 include_tests,
@@ -564,6 +604,211 @@ class EntrypointFlowGraphRepository:
             item["flowDomain"] = item.get("flowDomain") or row["effective_flow_domain"]
             projected.append(item)
         return projected
+
+    def _query_boundary_rows(
+        self,
+        conn: Any,
+        source_id: str,
+        ids: list[str],
+        include_tests: bool,
+    ) -> list[dict[str, Any]]:
+        if not ids:
+            return []
+        self._metrics["sqlStatements"] += 1
+        placeholders = ",".join("?" for _ in ids)
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT b.id AS boundary_id,
+                   b.source_id AS source_id,
+                   b.stable_key AS boundary_stable_key,
+                   b.node_id AS node_id,
+                   b.role AS boundary_role,
+                   b.status AS boundary_status,
+                   b.fact_origin AS boundary_fact_origin,
+                   b.confidence AS boundary_confidence,
+                   COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, b.flow_domain) AS effective_flow_domain,
+                   COALESCE(NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_id,
+                   COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_revision,
+                   d.id AS descriptor_id,
+                   d.descriptor_path AS descriptor_path,
+                   d.value_type AS descriptor_value_type,
+                   d.value_json AS descriptor_value_json,
+                   d.origin AS descriptor_origin,
+                   d.confidence AS descriptor_confidence,
+                   boundary_ev.id AS boundary_evidence_id,
+                   boundary_ev.source_id AS boundary_evidence_source_id,
+                   COALESCE(boundary_af.relative_path, boundary_ev.relative_path) AS boundary_evidence_relative_path,
+                   boundary_ev.line_start AS boundary_evidence_line_start,
+                   boundary_ev.line_end AS boundary_evidence_line_end,
+                   boundary_ev.excerpt AS boundary_evidence_excerpt,
+                   descriptor_ev.id AS descriptor_evidence_id,
+                   descriptor_ev.source_id AS descriptor_evidence_source_id,
+                   COALESCE(descriptor_af.relative_path, descriptor_ev.relative_path) AS descriptor_evidence_relative_path,
+                   descriptor_ev.line_start AS descriptor_evidence_line_start,
+                   descriptor_ev.line_end AS descriptor_evidence_line_end,
+                   descriptor_ev.excerpt AS descriptor_evidence_excerpt
+            FROM analysis_graph_boundaries b
+            JOIN analysis_graph_nodes n
+              ON n.source_id = b.source_id
+             AND n.id = b.node_id
+             AND n.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("n")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            LEFT JOIN analysis_graph_state state
+              ON state.source_id = b.source_id
+            LEFT JOIN analysis_graph_boundary_descriptors d
+              ON d.boundary_id = b.id
+             AND d.status IN ({current_status_sql})
+            LEFT JOIN analysis_graph_boundary_evidence be
+              ON be.boundary_id = b.id
+            LEFT JOIN analysis_graph_evidence boundary_ev
+              ON boundary_ev.id = be.evidence_id
+             AND boundary_ev.source_id = b.source_id
+            LEFT JOIN analysis_files boundary_af
+              ON boundary_af.file_id = boundary_ev.analysis_file_id
+            LEFT JOIN analysis_graph_boundary_descriptor_evidence de
+              ON de.descriptor_id = d.id
+            LEFT JOIN analysis_graph_evidence descriptor_ev
+              ON descriptor_ev.id = de.evidence_id
+             AND descriptor_ev.source_id = b.source_id
+            LEFT JOIN analysis_files descriptor_af
+              ON descriptor_af.file_id = descriptor_ev.analysis_file_id
+            WHERE b.source_id = ?
+              AND b.node_id IN ({placeholders})
+              AND b.status IN ({current_status_sql})
+              AND b.rejection_reason IS NULL
+              AND {self.graph_store._inventory_membership_graph_edge_clause("b")}
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            ORDER BY b.source_id, b.node_id, b.role, b.id, d.descriptor_path, d.id,
+                     boundary_ev.relative_path, boundary_ev.line_start, boundary_ev.line_end, boundary_ev.id,
+                     descriptor_ev.relative_path, descriptor_ev.line_start, descriptor_ev.line_end, descriptor_ev.id
+            """,
+            [
+                *current_status_params,
+                include_tests,
+                *current_status_params,
+                source_id,
+                *ids,
+                *current_status_params,
+                include_tests,
+            ],
+        ).fetchall()
+        return [self.graph_store._row_dict(row) for row in rows]
+
+    def _boundary_facts_from_rows(
+        self,
+        rows: Sequence[dict[str, Any]],
+        identity: dict[str, str | None],
+    ) -> tuple[LocalBoundaryFact, ...]:
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            grouped[str(row.get("boundary_id") or "")].append(row)
+        facts: list[LocalBoundaryFact] = []
+        for boundary_id, boundary_rows in grouped.items():
+            if not boundary_id or not boundary_rows:
+                continue
+            first = boundary_rows[0]
+            graph_id = str(first.get("graph_id") or "")
+            graph_revision = str(first.get("graph_revision")) if first.get("graph_revision") else None
+            probe = FlowGraphNode(
+                source_id=str(first.get("source_id") or ""),
+                graph_id=graph_id,
+                graph_revision=graph_revision,
+                node_id=str(first.get("node_id") or ""),
+                stable_key=str(first.get("node_id") or ""),
+                node_kind="CALLABLE",
+                label=str(first.get("node_id") or ""),
+            )
+            if not self._matches_current_identity(probe, identity):
+                continue
+            facts.append(
+                LocalBoundaryFact(
+                    boundary_id=boundary_id,
+                    stable_key=str(first.get("boundary_stable_key") or boundary_id),
+                    source_id=str(first.get("source_id") or ""),
+                    graph_id=graph_id,
+                    graph_revision=graph_revision,
+                    owner_node_id=str(first.get("node_id") or ""),
+                    role=str(first.get("boundary_role") or "").strip().upper(),
+                    status=str(first.get("boundary_status") or ""),
+                    provenance=clean_identity(first.get("boundary_fact_origin")),
+                    confidence=float(first.get("boundary_confidence") or 0.0),
+                    flow_domain=clean_identity(first.get("effective_flow_domain")),
+                    descriptors=self._local_boundary_descriptors(boundary_rows, graph_id, graph_revision),
+                    evidence=dedupe_evidence(self._local_boundary_evidence(boundary_rows, "boundary")),
+                )
+            )
+        return tuple(sorted(facts, key=self._boundary_sort_key))
+
+    def _local_boundary_descriptors(
+        self,
+        rows: Sequence[dict[str, Any]],
+        graph_id: str,
+        graph_revision: str | None,
+    ) -> tuple[LocalBoundaryDescriptor, ...]:
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            descriptor_id = str(row.get("descriptor_id") or "")
+            if descriptor_id:
+                grouped[descriptor_id].append(row)
+        descriptors: list[LocalBoundaryDescriptor] = []
+        for descriptor_id, descriptor_rows in grouped.items():
+            first = descriptor_rows[0]
+            raw_value = str(first.get("descriptor_value_json") or "")
+            try:
+                value: Any = json.loads(raw_value)
+            except json.JSONDecodeError:
+                value = raw_value
+            descriptors.append(
+                LocalBoundaryDescriptor(
+                    descriptor_id=descriptor_id,
+                    path=str(first.get("descriptor_path") or ""),
+                    value_type=str(first.get("descriptor_value_type") or ""),
+                    value=value,
+                    origin=str(first.get("descriptor_origin") or ""),
+                    confidence=float(first.get("descriptor_confidence")) if first.get("descriptor_confidence") is not None else None,
+                    evidence=dedupe_evidence(self._local_boundary_evidence(descriptor_rows, "descriptor", graph_id=graph_id, graph_revision=graph_revision)),
+                )
+            )
+        return tuple(sorted(descriptors, key=self._local_boundary_descriptor_sort_key))
+
+    def _local_boundary_evidence(
+        self,
+        rows: Sequence[dict[str, Any]],
+        prefix: str,
+        *,
+        graph_id: str | None = None,
+        graph_revision: str | None = None,
+    ) -> tuple[FlowGraphEvidence, ...]:
+        result: list[FlowGraphEvidence] = []
+        seen: set[tuple[str, str]] = set()
+        for row in rows:
+            evidence_id = str(row.get(f"{prefix}_evidence_id") or "")
+            evidence_source_id = str(row.get(f"{prefix}_evidence_source_id") or "")
+            if not evidence_id or not evidence_source_id or (evidence_source_id, evidence_id) in seen:
+                continue
+            seen.add((evidence_source_id, evidence_id))
+            result.append(
+                FlowGraphEvidence(
+                    source_id=evidence_source_id,
+                    graph_id=graph_id or str(row.get("graph_id") or ""),
+                    graph_revision=graph_revision or (str(row.get("graph_revision")) if row.get("graph_revision") else None),
+                    evidence_id=evidence_id,
+                    node_id=str(row.get("node_id") or "") or None,
+                    edge_id=None,
+                    relative_path=str(row.get(f"{prefix}_evidence_relative_path")) if row.get(f"{prefix}_evidence_relative_path") else None,
+                    line_start=int(row.get(f"{prefix}_evidence_line_start")) if row.get(f"{prefix}_evidence_line_start") is not None else None,
+                    line_end=int(row.get(f"{prefix}_evidence_line_end")) if row.get(f"{prefix}_evidence_line_end") is not None else None,
+                    text=str(row.get(f"{prefix}_evidence_excerpt")) if row.get(f"{prefix}_evidence_excerpt") else None,
+                    owner_kind="BOUNDARY_DESCRIPTOR" if prefix == "descriptor" else "BOUNDARY",
+                    owner_source_id=str(row.get("source_id") or ""),
+                    owner_node_id=str(row.get("node_id") or "") or None,
+                    owner_edge_id=None,
+                )
+            )
+        return tuple(result)
 
     def _query_available_operation_fact_rows(
         self,
@@ -1461,12 +1706,16 @@ class EntrypointFlowGraphRepository:
         graph_id = str(identity.get("graphId") or "")
         revision = str(identity.get("graphRevision") or graph_id)
         item_revision = item.graph_revision or item.graph_id
+        if not graph_id and not revision:
+            return bool(item_revision)
         return bool(item_revision) and item_revision in {graph_id, revision}
 
     def _matches_target_identity(self, edge: FlowGraphEdge, identity: dict[str, str | None]) -> bool:
         graph_id = str(identity.get("graphId") or "")
         revision = str(identity.get("graphRevision") or graph_id)
         item_revision = edge.to_graph_revision or edge.to_graph_id
+        if not graph_id and not revision:
+            return bool(item_revision)
         return bool(item_revision) and item_revision in {graph_id, revision}
 
     def _from_key(self, edge: FlowGraphEdge) -> FlowNodeKey:
@@ -1488,6 +1737,23 @@ class EntrypointFlowGraphRepository:
             edge.from_node_id,
             edge.to_node_id or "",
             edge.edge_id,
+        )
+
+    def _boundary_sort_key(self, boundary: LocalBoundaryFact) -> tuple[str, str, str, str, str]:
+        return (
+            boundary.source_id,
+            boundary.graph_revision or boundary.graph_id,
+            boundary.owner_node_id,
+            boundary.role,
+            boundary.stable_key or boundary.boundary_id,
+        )
+
+    def _local_boundary_descriptor_sort_key(self, descriptor: LocalBoundaryDescriptor) -> tuple[str, str, str, str]:
+        return (
+            descriptor.path,
+            descriptor.value_type,
+            json.dumps(descriptor.value, sort_keys=True, default=str),
+            descriptor.descriptor_id,
         )
 
     def _operation_fact_sort_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str, str]:

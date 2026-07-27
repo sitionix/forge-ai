@@ -36,7 +36,7 @@ from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
+from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine, EntrypointFlowOrigin
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
@@ -1632,6 +1632,54 @@ def test_boundary_operation_fact_projection_respects_currentness_and_include_tes
     assert len(test_repo.load_available_operation_facts({key}, include_tests=True)) == 1
 
 
+def test_entrypoint_flow_repository_load_boundaries_preserves_generic_facts_and_currentness(tmp_path):
+    content = "class Handler { void run() { remote.create(); } }\n"
+    relative_path = "src/main/java/example/ObjectHandler.java"
+    inventory_store, _, _ = build_inventory(tmp_path, content=content)
+    graph = materialize_graph_for_test(boundary_graph_result_for_test(), content=content, relative_path=relative_path)
+    store = AnalysisStore(inventory_store.db_path)
+    store.replace_file_graph_analysis(1, graph_state_for_test(content, relative_path), graph)
+    node_id = graph["nodes"][0]["id"]
+    key = ("edge-gateway", "edge-gateway:query-current-facts", node_id)
+    repo = EntrypointFlowGraphRepository(store)
+
+    loaded = repo.load_boundaries({key}, include_tests=False)
+    assert len(loaded) == 1
+    current_key, facts = next(iter(loaded.items()))
+
+    assert len(facts) == 1
+    assert current_key[0] == key[0]
+    assert current_key[2] == key[2]
+    assert {fact.role for fact in facts} == {"REQUIRED"}
+    assert {fact.provenance for fact in facts} == {"STATIC"}
+    descriptor_values = {
+        (descriptor.path, json.dumps(descriptor.value, sort_keys=True))
+        for fact in facts
+        for descriptor in fact.descriptors
+    }
+    assert ("custom.object", json.dumps({"flag": True, "nested": {"id": "A-1"}}, sort_keys=True)) in descriptor_values
+    assert ("operation.name", json.dumps("first")) in descriptor_values
+    assert ("operation.name", json.dumps("second")) in descriptor_values
+    assert all(fact.evidence for fact in facts)
+    assert all(descriptor.evidence for fact in facts for descriptor in fact.descriptors)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("UPDATE files SET content_hash = 'changed' WHERE source_id = 'edge-gateway'")
+
+    assert repo.load_boundaries({key}, include_tests=False) == {}
+
+    test_inventory_store, _, _ = build_inventory(tmp_path / "test-domain", content=content)
+    test_store = AnalysisStore(test_inventory_store.db_path)
+    test_store.replace_file_graph_analysis(1, graph_state_for_test(content, relative_path, flow_domain="TEST"), graph)
+    with sqlite3.connect(test_store.db_path) as conn:
+        conn.execute("UPDATE files SET flow_domain = 'TEST' WHERE source_id = 'edge-gateway'")
+    test_repo = EntrypointFlowGraphRepository(test_store)
+
+    assert test_repo.load_boundaries({key}, include_tests=False) == {}
+    loaded_tests = test_repo.load_boundaries({key}, include_tests=True)
+    assert len(next(iter(loaded_tests.values()))) == 1
+
+
 def test_representative_static_analysis_persists_temporary_boundary_flow_sides(tmp_path):
     store = AnalysisStore(tmp_path / "knowledge.sqlite")
     store.init()
@@ -3207,7 +3255,7 @@ public class SiteController implements SiteApi {
     assert inherited_claim["entrypoint_execution_kind"] == "EXECUTABLE"
 
 
-def test_cross_source_incoming_traversal_reaches_service_entrypoint_from_app_anchor(tmp_path):
+def test_cross_source_incoming_edge_is_not_traversed_by_local_flow_explorer(tmp_path):
     app_source = """package app.afesox;
 
 public class SiteUseCase {
@@ -3328,16 +3376,15 @@ public class SiteController {
     result = EntrypointFlowEngine(EntrypointFlowGraphRepository(store)).build([anchor], max_flows=10, include_tests=False)
 
     assert len(result.flows) == 1
+    assert len(result.local_units) == 1
+    unit = result.local_units[0]
     flow = result.flows[0]
-    assert flow.entrypoint.source_id == "site-service"
-    assert flow.entrypoint.qualified_name == "service.api.SiteController.create"
-    assert any(node.source_id == "app-afesox" and node.qualified_name == "app.afesox.SiteUseCase.createSite" for node in flow.nodes)
-    assert any(
-        edge.source_id == "site-service"
-        and edge.from_node_id == flow.entrypoint.node_id
-        and edge.to_source_id == "app-afesox"
-        for edge in flow.transitions
-    )
+    assert flow.entrypoint.source_id == "app-afesox"
+    assert flow.entrypoint.qualified_name == "app.afesox.SiteUseCase.createSite"
+    assert flow.origin is EntrypointFlowOrigin.INFERRED_ROOT
+    assert {node.source_id for node in unit.execution_nodes} == {"app-afesox"}
+    assert unit.execution_transitions == ()
+    assert unit.topology_boundaries == ()
     with sqlite3.connect(store.db_path) as conn:
         plan_rows = conn.execute(
             """
