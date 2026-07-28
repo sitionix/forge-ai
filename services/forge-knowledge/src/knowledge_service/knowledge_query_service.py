@@ -224,7 +224,6 @@ class KnowledgeQueryExecutionResult:
     end_to_end_assembly: EndToEndFlowAssemblyResult | None = None
     graph_selection: EndToEndGraphSelectionResult | None = None
     selected_graphs: tuple[Any, ...] = ()
-    presentation_plans: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True)

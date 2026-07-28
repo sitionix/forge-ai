@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -44,11 +44,41 @@ class EndToEndFormatterProviderError(EndToEndFormatterError):
     pass
 
 
+class EndToEndFormatterStageTooLarge(EndToEndFormatterValidationError):
+    def __init__(self, *, graph_id: str, stage_ref: str, serialized_character_count: int, configured_character_budget: int) -> None:
+        self.graph_id = graph_id
+        self.stage_ref = stage_ref
+        self.serialized_character_count = serialized_character_count
+        self.configured_character_budget = configured_character_budget
+        super().__init__(
+            (
+                "END_TO_END_FORMATTER_STAGE_TOO_LARGE",
+                f"graphId={graph_id}",
+                f"stageRef={stage_ref}",
+                f"serializedCharacterCount={serialized_character_count}",
+                f"configuredCharacterBudget={configured_character_budget}",
+            )
+        )
+
+
+@dataclass(frozen=True)
+class CanonicalFormatterAssertion:
+    assertion_ref: str
+    predicate: str
+    subject_ref: str
+    object_ref: str | None = None
+    value: str | None = None
+
+
 @dataclass(frozen=True)
 class EndToEndPresentationStage:
     stage_ref: str
     kind: str
-    canonical_fact_refs: tuple[str, ...]
+    owned_fact_refs: tuple[str, ...]
+    context_fact_refs: tuple[str, ...]
+    required_assertions: tuple[CanonicalFormatterAssertion, ...]
+    allowed_canonical_refs: tuple[str, ...]
+    canonical_display_values: Mapping[str, str]
     payload: Mapping[str, Any]
 
 
@@ -61,6 +91,7 @@ class EndToEndPresentationPlan:
     topology_entries: tuple[str, ...]
     stages: tuple[EndToEndPresentationStage, ...]
     canonical_fact_refs: tuple[str, ...]
+    context_fact_refs: tuple[str, ...]
     complete: bool
     diagnostics: tuple[KnowledgeQueryDiagnostic, ...] = ()
     planning_duration_ms: float = 0.0
@@ -109,7 +140,6 @@ class EndToEndPresentationPlanner:
     def plan(self, graph: EndToEndFlowGraph, *, response_language: str = "en") -> EndToEndPresentationPlan:
         started = time.perf_counter()
         stages: list[EndToEndPresentationStage] = []
-        fact_refs: list[str] = []
         diagnostics = [
             KnowledgeQueryDiagnostic(code=item.code, message=item.message, severity=item.severity, sourceId=item.source_id, metadata=dict(item.metadata or {}))
             for item in graph.diagnostics
@@ -149,44 +179,37 @@ class EndToEndPresentationPlanner:
             ref = unit_refs_by_id[unit_id]
             inbound = tuple(transitions_by_target.get(unit_id, ()))
             if len(inbound) > 1:
-                stage = self._convergence_stage(unit_id, inbound)
+                stage = _STAGE_BUILDERS["convergence"](self, unit_id, inbound)
                 stages.append(stage)
-                fact_refs.extend(stage.canonical_fact_refs)
-                shared = self._shared_unit_stage(unit_id, inbound)
+                shared = _STAGE_BUILDERS["shared_unit"](self, unit_id, inbound)
                 stages.append(shared)
-                fact_refs.extend(shared.canonical_fact_refs)
-            unit_stage = self._unit_stage(ref)
+            unit_stage = _STAGE_BUILDERS["unit"](self, ref)
             stages.append(unit_stage)
-            fact_refs.extend(unit_stage.canonical_fact_refs)
             outbound = tuple(transitions_by_source.get(unit_id, ()))
             if len(outbound) > 1:
-                stage = self._branch_stage(unit_id, outbound)
+                stage = _STAGE_BUILDERS["branch"](self, unit_id, outbound)
                 stages.append(stage)
-                fact_refs.extend(stage.canonical_fact_refs)
             for transition in outbound:
-                transition_stage = self._transition_stage(transition)
+                transition_stage = _STAGE_BUILDERS["transition"](self, transition)
                 stages.append(transition_stage)
-                fact_refs.extend(transition_stage.canonical_fact_refs)
                 emitted_transitions.add(transition.stable_transition_id)
 
         for transition in sorted(graph.proven_cross_source_transitions, key=lambda item: item.stable_transition_id):
             if transition.stable_transition_id in emitted_transitions:
                 continue
-            transition_stage = self._transition_stage(transition)
+            transition_stage = _STAGE_BUILDERS["transition"](self, transition)
             stages.append(transition_stage)
-            fact_refs.extend(transition_stage.canonical_fact_refs)
 
         for boundary in sorted(graph.open_boundaries, key=lambda item: (str(item.status), item.required_boundary_identity.boundary_key, tuple(item.source_unit_ids))):
-            stage = self._open_boundary_stage(boundary)
+            stage = _STAGE_BUILDERS["open_boundary"](self, boundary)
             stages.append(stage)
-            fact_refs.extend(stage.canonical_fact_refs)
 
         if graph.coverage.cycle_count:
-            stage = self._cycle_stage(graph)
+            stage = _STAGE_BUILDERS["cycle"](self, graph)
             stages.append(stage)
-            fact_refs.extend(stage.canonical_fact_refs)
 
-        canonical_fact_refs = tuple(sorted(set(fact_refs)))
+        stage_diagnostics, canonical_fact_refs, context_fact_refs = _validate_presentation_stage_ownership(stages, graph.stable_graph_id)
+        diagnostics.extend(stage_diagnostics)
         return EndToEndPresentationPlan(
             graph_id=graph.stable_graph_id,
             response_language=response_language,
@@ -195,6 +218,7 @@ class EndToEndPresentationPlanner:
             topology_entries=tuple(graph.topology_entry_unit_ids),
             stages=tuple(stages),
             canonical_fact_refs=canonical_fact_refs,
+            context_fact_refs=context_fact_refs,
             complete=graph.coverage.complete,
             diagnostics=tuple(diagnostics),
             planning_duration_ms=round((time.perf_counter() - started) * 1000, 3),
@@ -243,10 +267,23 @@ class EndToEndPresentationPlanner:
     def _unit_stage(self, ref: Any) -> EndToEndPresentationStage:
         unit = ref.local_unit
         fact_refs = self._unit_fact_refs(unit)
-        return EndToEndPresentationStage(
-            stage_ref=f"unit:{unit.unit_id}",
+        stage_ref = f"unit:{unit.unit_id}"
+        return _presentation_stage(
+            stage_ref=stage_ref,
             kind="UNIT_ENTRY" if ref.query_selected_initial else "LOCAL_EXECUTION",
-            canonical_fact_refs=fact_refs,
+            owned_fact_refs=fact_refs,
+            context_fact_refs=(),
+            required_assertions=(
+                _assertion(
+                    stage_ref,
+                    "unit-execution",
+                    predicate="UNIT_EXECUTION",
+                    subject_ref=f"unit:{unit.unit_id}",
+                    value="CONNECTED",
+                ),
+            ),
+            allowed_canonical_refs=(),
+            canonical_display_values=self._unit_display_values(unit),
             payload={
                 "unitId": unit.unit_id,
                 "sourceId": unit.source_id,
@@ -305,10 +342,30 @@ class EndToEndPresentationPlanner:
             f"required-boundary:{_identity_ref(transition.required_endpoint.boundary_identity)}",
             f"provided-boundary:{_identity_ref(transition.provided_endpoint.boundary_identity)}",
         )
-        return EndToEndPresentationStage(
+        return _presentation_stage(
             stage_ref=fact_ref,
             kind="PROVEN_BOUNDARY_CONTINUATION",
-            canonical_fact_refs=tuple(sorted(set(fact_refs))),
+            owned_fact_refs=tuple(sorted(set(fact_refs))),
+            context_fact_refs=tuple(sorted({f"unit:{transition.source_unit_id}", f"unit:{transition.target_unit_id}"})),
+            required_assertions=(
+                _assertion(
+                    fact_ref,
+                    "connectivity",
+                    predicate="CONNECTIVITY_STATUS",
+                    subject_ref=f"unit:{transition.source_unit_id}",
+                    object_ref=f"unit:{transition.target_unit_id}",
+                    value="PROVEN",
+                ),
+            ),
+            allowed_canonical_refs=(),
+            canonical_display_values={
+                f"transition:{transition.stable_transition_id}": transition.stable_transition_id,
+                f"resolution:{transition.resolution_id}": transition.resolution_id,
+                f"unit:{transition.source_unit_id}": transition.source_unit_id,
+                f"unit:{transition.target_unit_id}": transition.target_unit_id,
+                f"required-boundary:{_identity_ref(transition.required_endpoint.boundary_identity)}": transition.required_endpoint.boundary_identity.boundary_key,
+                f"provided-boundary:{_identity_ref(transition.provided_endpoint.boundary_identity)}": transition.provided_endpoint.boundary_identity.boundary_key,
+            },
             payload={
                 "transitionId": transition.stable_transition_id,
                 "resolutionId": transition.resolution_id,
@@ -324,12 +381,71 @@ class EndToEndPresentationPlanner:
 
     def _open_boundary_stage(self, boundary: Any) -> EndToEndPresentationStage:
         status = boundary.status.value if hasattr(boundary.status, "value") else str(boundary.status)
-        kind = "OPEN_BOUNDARY_AMBIGUOUS" if status == "AMBIGUOUS" else "OPEN_BOUNDARY_UNRESOLVED"
+        kind = _OPEN_BOUNDARY_AMBIGUOUS_STAGE_KIND if status == "AMBIGUOUS" else _OPEN_BOUNDARY_UNRESOLVED_STAGE_KIND
         fact_ref = f"open-boundary:{_identity_ref(boundary.required_boundary_identity)}:{','.join(boundary.source_unit_ids)}"
-        return EndToEndPresentationStage(
+        assertions = [
+            _assertion(
+                fact_ref,
+                "boundary-status",
+                predicate="BOUNDARY_STATUS",
+                subject_ref=fact_ref,
+                value=status,
+            ),
+            _assertion(
+                fact_ref,
+                "target-selection",
+                predicate="TARGET_SELECTION_STATUS",
+                subject_ref=fact_ref,
+                value="NONE",
+            ),
+            _assertion(
+                fact_ref,
+                "proof-status",
+                predicate="PROOF_STATUS",
+                subject_ref=fact_ref,
+                value="NOT_PROVEN",
+            ),
+        ]
+        if status == "AMBIGUOUS":
+            assertions.append(
+                _assertion(
+                    fact_ref,
+                    "candidate-cardinality",
+                    predicate="CANDIDATE_CARDINALITY",
+                    subject_ref=fact_ref,
+                    value="MULTIPLE",
+                )
+            )
+        return _presentation_stage(
             stage_ref=fact_ref,
             kind=kind,
-            canonical_fact_refs=(fact_ref,),
+            owned_fact_refs=(fact_ref,),
+            context_fact_refs=tuple(sorted(f"unit:{unit_id}" for unit_id in boundary.source_unit_ids)),
+            required_assertions=tuple(assertions),
+            allowed_canonical_refs=tuple(
+                sorted(
+                    {
+                        f"candidate-owner:{owner.source_id}:{owner.graph_revision}:{owner.owner_node_id}"
+                        for owner in boundary.viable_candidate_owner_identities
+                    }
+                    | {
+                        f"candidate-boundary:{_identity_ref(item)}"
+                        for item in boundary.viable_candidate_boundary_identities
+                    }
+                )
+            ),
+            canonical_display_values={
+                fact_ref: boundary.required_boundary_identity.boundary_key,
+                **{f"unit:{unit_id}": unit_id for unit_id in boundary.source_unit_ids},
+                **{
+                    f"candidate-owner:{owner.source_id}:{owner.graph_revision}:{owner.owner_node_id}": owner.owner_node_id
+                    for owner in boundary.viable_candidate_owner_identities
+                },
+                **{
+                    f"candidate-boundary:{_identity_ref(item)}": item.boundary_key
+                    for item in boundary.viable_candidate_boundary_identities
+                },
+            },
             payload={
                 "requiredBoundary": self._identity_payload(boundary.required_boundary_identity),
                 "sourceUnitIds": list(boundary.source_unit_ids),
@@ -345,40 +461,105 @@ class EndToEndPresentationPlanner:
     def _branch_stage(self, source_unit_id: str, transitions: Sequence[Any]) -> EndToEndPresentationStage:
         transition_ids = tuple(sorted(transition.stable_transition_id for transition in transitions))
         fact_ref = f"branch:{source_unit_id}:{_sha256('|'.join(transition_ids))[:12]}"
-        return EndToEndPresentationStage(
+        return _presentation_stage(
             stage_ref=fact_ref,
             kind="BRANCH",
-            canonical_fact_refs=(fact_ref, *tuple(f"transition:{item}" for item in transition_ids)),
+            owned_fact_refs=(fact_ref,),
+            context_fact_refs=tuple(sorted({f"unit:{source_unit_id}", *tuple(f"transition:{item}" for item in transition_ids)})),
+            required_assertions=(
+                _assertion(
+                    fact_ref,
+                    "structural-relation",
+                    predicate="STRUCTURAL_RELATION",
+                    subject_ref=f"unit:{source_unit_id}",
+                    value="BRANCH",
+                ),
+            ),
+            allowed_canonical_refs=tuple(sorted(f"unit:{item.target_unit_id}" for item in transitions)),
+            canonical_display_values={
+                fact_ref: "branch",
+                f"unit:{source_unit_id}": source_unit_id,
+                **{f"unit:{item.target_unit_id}": item.target_unit_id for item in transitions},
+                **{f"transition:{item}": item for item in transition_ids},
+            },
             payload={"sourceUnitId": source_unit_id, "transitionIds": list(transition_ids), "targetUnitIds": sorted({item.target_unit_id for item in transitions})},
         )
 
     def _convergence_stage(self, target_unit_id: str, transitions: Sequence[Any]) -> EndToEndPresentationStage:
         transition_ids = tuple(sorted(transition.stable_transition_id for transition in transitions))
         fact_ref = f"convergence:{target_unit_id}:{_sha256('|'.join(transition_ids))[:12]}"
-        return EndToEndPresentationStage(
+        return _presentation_stage(
             stage_ref=fact_ref,
             kind="CONVERGENCE",
-            canonical_fact_refs=(fact_ref, *tuple(f"transition:{item}" for item in transition_ids)),
+            owned_fact_refs=(fact_ref,),
+            context_fact_refs=tuple(sorted({f"unit:{target_unit_id}", *tuple(f"transition:{item}" for item in transition_ids)})),
+            required_assertions=(
+                _assertion(
+                    fact_ref,
+                    "structural-relation",
+                    predicate="STRUCTURAL_RELATION",
+                    subject_ref=f"unit:{target_unit_id}",
+                    value="CONVERGENCE",
+                ),
+            ),
+            allowed_canonical_refs=tuple(sorted(f"unit:{item.source_unit_id}" for item in transitions)),
+            canonical_display_values={
+                fact_ref: "convergence",
+                f"unit:{target_unit_id}": target_unit_id,
+                **{f"unit:{item.source_unit_id}": item.source_unit_id for item in transitions},
+                **{f"transition:{item}": item for item in transition_ids},
+            },
             payload={"targetUnitId": target_unit_id, "transitionIds": list(transition_ids), "sourceUnitIds": sorted({item.source_unit_id for item in transitions})},
         )
 
     def _shared_unit_stage(self, target_unit_id: str, transitions: Sequence[Any]) -> EndToEndPresentationStage:
         transition_ids = tuple(sorted(transition.stable_transition_id for transition in transitions))
         fact_ref = f"shared-unit:{target_unit_id}:{_sha256('|'.join(transition_ids))[:12]}"
-        return EndToEndPresentationStage(
+        return _presentation_stage(
             stage_ref=fact_ref,
             kind="SHARED_UNIT_REFERENCE",
-            canonical_fact_refs=(fact_ref, *tuple(f"transition:{item}" for item in transition_ids), f"unit:{target_unit_id}"),
+            owned_fact_refs=(fact_ref,),
+            context_fact_refs=tuple(sorted({f"unit:{target_unit_id}", *tuple(f"transition:{item}" for item in transition_ids)})),
+            required_assertions=(
+                _assertion(
+                    fact_ref,
+                    "structural-relation",
+                    predicate="STRUCTURAL_RELATION",
+                    subject_ref=f"unit:{target_unit_id}",
+                    value="SHARED_UNIT",
+                ),
+            ),
+            allowed_canonical_refs=(),
+            canonical_display_values={
+                fact_ref: "shared unit",
+                f"unit:{target_unit_id}": target_unit_id,
+                **{f"transition:{item}": item for item in transition_ids},
+            },
             payload={"unitId": target_unit_id, "transitionIds": list(transition_ids), "renderedOnce": True},
         )
 
     def _cycle_stage(self, graph: EndToEndFlowGraph) -> EndToEndPresentationStage:
         transition_ids = tuple(sorted(transition.stable_transition_id for transition in graph.proven_cross_source_transitions))
         fact_ref = f"cycle:{graph.stable_graph_id}"
-        return EndToEndPresentationStage(
+        return _presentation_stage(
             stage_ref=fact_ref,
             kind="CYCLE_REFERENCE",
-            canonical_fact_refs=(fact_ref, *tuple(f"transition:{item}" for item in transition_ids)),
+            owned_fact_refs=(fact_ref,),
+            context_fact_refs=tuple(sorted(f"transition:{item}" for item in transition_ids)),
+            required_assertions=(
+                _assertion(
+                    fact_ref,
+                    "structural-relation",
+                    predicate="STRUCTURAL_RELATION",
+                    subject_ref=fact_ref,
+                    value="CYCLE",
+                ),
+            ),
+            allowed_canonical_refs=(),
+            canonical_display_values={
+                fact_ref: "cycle",
+                **{f"transition:{item}": item for item in transition_ids},
+            },
             payload={"graphId": graph.stable_graph_id, "cycleCount": graph.coverage.cycle_count, "transitionIds": list(transition_ids)},
         )
 
@@ -392,6 +573,51 @@ class EndToEndPresentationPlanner:
         refs.extend(f"context:{node.source_id}:{node.graph_revision or node.graph_id}:{node.node_id}" for node in unit.supporting_context)
         refs.extend(f"evidence:{item.source_id}:{item.graph_revision or item.graph_id}:{item.evidence_id}" for item in unit.evidence)
         return tuple(sorted(set(refs)))
+
+    def _unit_display_values(self, unit: Any) -> dict[str, str]:
+        values = {f"unit:{unit.unit_id}": self._unit_display(unit)}
+        for root in unit.roots:
+            node = root.node
+            values[f"root:{node.source_id}:{node.graph_revision or node.graph_id}:{node.node_id}"] = self._node_display(node)
+        for node in unit.execution_nodes:
+            values[f"node:{node.source_id}:{node.graph_revision or node.graph_id}:{node.node_id}"] = self._node_display(node)
+        for edge in unit.execution_transitions:
+            values[f"edge:{edge.source_id}:{edge.graph_revision or edge.graph_id}:{edge.edge_id}"] = self._edge_display(edge)
+        for edge in unit.topology_boundaries:
+            values[f"topology-boundary:{edge.source_id}:{edge.graph_revision or edge.graph_id}:{edge.edge_id}"] = self._edge_display(edge)
+        for boundary in unit.generic_boundaries:
+            values[f"generic-boundary:{_identity_ref(boundary_identity(boundary))}"] = str(boundary.stable_key or boundary.boundary_id)
+        for node in unit.supporting_context:
+            values[f"context:{node.source_id}:{node.graph_revision or node.graph_id}:{node.node_id}"] = self._node_display(node)
+        for evidence in unit.evidence:
+            values[f"evidence:{evidence.source_id}:{evidence.graph_revision or evidence.graph_id}:{evidence.evidence_id}"] = self._evidence_display(evidence)
+        return values
+
+    def _unit_display(self, unit: Any) -> str:
+        for root in unit.roots:
+            display = self._node_display(root.node)
+            if display:
+                return display
+        return str(unit.unit_id)
+
+    def _node_display(self, node: Any) -> str:
+        return str(getattr(node, "qualified_name", None) or getattr(node, "label", None) or getattr(node, "node_id", "") or "")
+
+    def _edge_display(self, edge: Any) -> str:
+        unresolved = getattr(edge, "unresolved_target", None)
+        if isinstance(unresolved, Mapping):
+            for key in ("qualifiedName", "qualified_name", "name", "symbol", "target"):
+                value = unresolved.get(key)
+                if value:
+                    return str(value)
+        return str(getattr(edge, "to_node_id", None) or getattr(edge, "edge_id", "") or "")
+
+    def _evidence_display(self, evidence: Any) -> str:
+        location = str(getattr(evidence, "relative_path", None) or getattr(evidence, "evidence_id", "") or "")
+        line_start = getattr(evidence, "line_start", None)
+        if line_start is not None:
+            return f"{location}:{line_start}"
+        return location
 
     def _node_payload(self, item: Any) -> dict[str, Any]:
         return {
@@ -495,6 +721,45 @@ class EndToEndPresentationPlanner:
         }
 
 
+def _build_unit_stage(planner: EndToEndPresentationPlanner, ref: Any) -> EndToEndPresentationStage:
+    return planner._unit_stage(ref)
+
+
+def _build_transition_stage(planner: EndToEndPresentationPlanner, transition: Any) -> EndToEndPresentationStage:
+    return planner._transition_stage(transition)
+
+
+def _build_open_boundary_stage(planner: EndToEndPresentationPlanner, boundary: Any) -> EndToEndPresentationStage:
+    return planner._open_boundary_stage(boundary)
+
+
+def _build_branch_stage(planner: EndToEndPresentationPlanner, source_unit_id: str, transitions: Sequence[Any]) -> EndToEndPresentationStage:
+    return planner._branch_stage(source_unit_id, transitions)
+
+
+def _build_convergence_stage(planner: EndToEndPresentationPlanner, target_unit_id: str, transitions: Sequence[Any]) -> EndToEndPresentationStage:
+    return planner._convergence_stage(target_unit_id, transitions)
+
+
+def _build_shared_unit_stage(planner: EndToEndPresentationPlanner, target_unit_id: str, transitions: Sequence[Any]) -> EndToEndPresentationStage:
+    return planner._shared_unit_stage(target_unit_id, transitions)
+
+
+def _build_cycle_stage(planner: EndToEndPresentationPlanner, graph: EndToEndFlowGraph) -> EndToEndPresentationStage:
+    return planner._cycle_stage(graph)
+
+
+_STAGE_BUILDERS = {
+    "unit": _build_unit_stage,
+    "transition": _build_transition_stage,
+    "open_boundary": _build_open_boundary_stage,
+    "branch": _build_branch_stage,
+    "convergence": _build_convergence_stage,
+    "shared_unit": _build_shared_unit_stage,
+    "cycle": _build_cycle_stage,
+}
+
+
 class EndToEndFormatterPromptRenderer:
     def render(self, formatter_input: Mapping[str, Any], validation_errors: Sequence[str] | None = None) -> str:
         payload = json.dumps(dict(formatter_input), ensure_ascii=False, indent=2, sort_keys=True)
@@ -503,13 +768,14 @@ class EndToEndFormatterPromptRenderer:
         return (
             "Format canonical end-to-end execution graph facts as grounded prose.\n"
             "Return strict JSON only. Do not include prose outside JSON.\n"
-            "The JSON shape is exactly: {\"steps\":[{\"stageRef\":\"string\",\"coveredFactRefs\":[\"string\"],\"text\":\"string\"}]}.\n"
+            "The JSON shape is exactly: {\"steps\":[{\"stageRef\":\"string\",\"coveredFactRefs\":[\"string\"],\"assertions\":[{\"assertionRef\":\"string\",\"predicate\":\"string\",\"subjectRef\":\"string\",\"objectRef\":\"string|null\",\"value\":\"string|null\"}],\"referencedCanonicalRefs\":[\"string\"],\"textTemplate\":\"string with {{ref:canonical-ref}} placeholders\"}]}.\n"
             "Return exactly one step per supplied stage, in the supplied stageOrder.\n"
+            "coveredFactRefs must exactly equal the supplied ownedFactRefs for the same stage, sorted in ascending order.\n"
+            "assertions must exactly equal requiredAssertions for the same stage, sorted by assertionRef.\n"
+            "referencedCanonicalRefs may contain only allowedCanonicalRefs for that same stage and every referencedCanonicalRef must appear as a {{ref:...}} placeholder.\n"
             "Use responseLanguage for every text value.\n"
-            "Use only facts present in the stage payloads and coveredFactRefs. Do not invent source IDs, symbols, transitions, routes, HTTP methods, or targets.\n"
-            "For AMBIGUOUS boundaries, say several eligible continuations exist and no target was selected.\n"
-            "For UNRESOLVED boundaries, say no proven continuation is available.\n"
-            "Do not describe AMBIGUOUS or UNRESOLVED boundaries as proven.\n"
+            "Use requiredAssertions as the semantic source of truth and do not add claims outside those assertions.\n"
+            "Use placeholders instead of printing canonical IDs, symbols, routes, methods, transitions, or sources directly.\n"
             f"{repair}"
             "BEGIN_CANONICAL_FORMATTER_INPUT_JSON\n"
             f"{payload}\n"
@@ -531,6 +797,14 @@ class EndToEndFormatterSegmentPlanner:
         segments: list[EndToEndFormatterSegment] = []
         current: list[EndToEndPresentationStage] = []
         for stage in stages:
+            stage_serialized = self._serialize_input(base, (stage,))
+            if len(stage_serialized) > max_chars:
+                raise EndToEndFormatterStageTooLarge(
+                    graph_id=plan.graph_id,
+                    stage_ref=stage.stage_ref,
+                    serialized_character_count=len(stage_serialized),
+                    configured_character_budget=max_chars,
+                )
             candidate = (*current, stage)
             if current and len(self._serialize_input(base, candidate)) > max_chars:
                 segments.append(self._segment(plan, base, tuple(current), len(segments)))
@@ -589,7 +863,11 @@ class EndToEndFormatterSegmentPlanner:
         return {
             "stageRef": stage.stage_ref,
             "kind": stage.kind,
-            "ownedFactRefs": list(stage.canonical_fact_refs),
+            "ownedFactRefs": list(stage.owned_fact_refs),
+            "contextFactRefs": list(stage.context_fact_refs),
+            "requiredAssertions": [_assertion_payload(item) for item in stage.required_assertions],
+            "allowedCanonicalRefs": list(stage.allowed_canonical_refs),
+            "canonicalDisplayValues": dict(stage.canonical_display_values),
             "payload": _json_safe(stage.payload),
         }
 
@@ -716,22 +994,41 @@ class EndToEndFormatterAnswerService:
             )
         answers: list[EndToEndFormatterAnswer] = []
         diagnostics: list[KnowledgeQueryDiagnostic] = []
-        presentation_plans: list[EndToEndPresentationPlan] = []
+        planned_presentations: list[EndToEndPresentationPlan] = []
         planning_ms = 0.0
         total_provider_calls = 0
         total_repair_calls = 0
         total_formatter_ms = 0.0
         total_segment_count = 0
+        failed_graph_ids: list[str] = []
+        validation_summaries: list[Mapping[str, Any]] = []
         for graph in graphs:
             self._check_cancelled(cancel_event)
             if time.monotonic() >= deadline_at:
                 raise EndToEndFormatterDeadlineExceeded("canonical formatter deadline exceeded")
             self.current_stage = "END_TO_END_PRESENTATION_PLANNING"
             presentation_plan = self.planner.plan(graph, response_language=plan.response_language)
-            presentation_plans.append(presentation_plan)
+            planned_presentations.append(presentation_plan)
             planning_ms += presentation_plan.planning_duration_ms
+            invalid_plan_diagnostics = tuple(item for item in presentation_plan.diagnostics if item.code == "END_TO_END_PRESENTATION_OWNERSHIP_INVALID")
+            if invalid_plan_diagnostics:
+                self._record_formatter_audit(presentation_plan, 0, 0, "", "FAILED_PLAN_OWNERSHIP", 0.0)
+                failed_graph_ids.append(presentation_plan.graph_id)
+                diagnostics.append(
+                    KnowledgeQueryDiagnostic(
+                        code="FINAL_FORMATTER_PLAN_INVALID",
+                        message="The canonical presentation plan failed ownership validation.",
+                        severity="WARN",
+                        metadata={
+                            "graphId": presentation_plan.graph_id,
+                            "diagnosticCodes": tuple(item.code for item in invalid_plan_diagnostics),
+                        },
+                    )
+                )
+                continue
             if not presentation_plan.query_entries:
                 self._record_formatter_audit(presentation_plan, 0, 0, "", "FAILED_NO_QUERY_ENTRY", 0.0)
+                failed_graph_ids.append(presentation_plan.graph_id)
                 diagnostics.append(
                     KnowledgeQueryDiagnostic(
                         code="FINAL_FORMATTER_QUERY_ENTRY_MISSING",
@@ -743,7 +1040,7 @@ class EndToEndFormatterAnswerService:
                 continue
             self.current_stage = "END_TO_END_TEXT_RENDERING"
             try:
-                text, provider_calls, repair_calls, formatter_ms, prompt_hash, validation_result, segment_count = self._render_text(
+                text, provider_calls, repair_calls, formatter_ms, prompt_hash, validation_result, segment_count, validation_summary = self._render_text(
                     presentation_plan,
                     deadline_at=deadline_at,
                     cancel_event=cancel_event,
@@ -757,6 +1054,7 @@ class EndToEndFormatterAnswerService:
                 prompt_hash = str(getattr(exc, "prompt_hash", "") or "")
                 validation_result = str(getattr(exc, "validation_result", "FAILED") or "FAILED")
                 segment_count = int(getattr(exc, "segment_count", 0) or 0)
+                validation_summary = dict(getattr(exc, "validation_summary", {}) or {})
                 self._record_formatter_audit(presentation_plan, provider_calls, repair_calls, prompt_hash, validation_result, formatter_ms)
                 diagnostics.append(
                     KnowledgeQueryDiagnostic(
@@ -766,16 +1064,19 @@ class EndToEndFormatterAnswerService:
                         metadata={"graphId": presentation_plan.graph_id},
                     )
                 )
+                failed_graph_ids.append(presentation_plan.graph_id)
                 total_provider_calls += provider_calls
                 total_repair_calls += repair_calls
                 total_formatter_ms += formatter_ms
                 total_segment_count += segment_count
+                validation_summaries.append(validation_summary)
                 continue
             self._record_formatter_audit(presentation_plan, provider_calls, repair_calls, prompt_hash, validation_result, formatter_ms)
             total_provider_calls += provider_calls
             total_repair_calls += repair_calls
             total_formatter_ms += formatter_ms
             total_segment_count += segment_count
+            validation_summaries.append(validation_summary)
             answers.append(
                 EndToEndFormatterAnswer(
                     graph_id=presentation_plan.graph_id,
@@ -788,18 +1089,28 @@ class EndToEndFormatterAnswerService:
                 )
             )
         metrics = self._metrics(
-            presentation_plans,
+            planned_presentations,
             planning_ms,
-            answer_count=len(answers),
+            answer_count=0 if failed_graph_ids else len(answers),
             provider_call_count=total_provider_calls,
             repair_call_count=total_repair_calls,
             formatter_duration_ms=total_formatter_ms,
             segment_count=total_segment_count,
+            validation_summaries=validation_summaries,
         )
         self.pipeline_records.append(metrics)
-        if graphs and not answers:
+        if failed_graph_ids:
             self.current_stage = "END_TO_END_TEXT_RENDERING"
-            raise EndToEndFormatterAllGraphsFailed("no canonical graph answer succeeded")
+            failure = EndToEndFormatterAllGraphsFailed("one or more selected canonical graph answers failed")
+            failure.failed_graph_ids = tuple(failed_graph_ids)
+            failure.diagnostics = tuple(diagnostics)
+            raise failure
+        if graphs and len(answers) != len(graphs):
+            self.current_stage = "END_TO_END_TEXT_RENDERING"
+            failure = EndToEndFormatterAllGraphsFailed("selectedGraphCount did not equal humanAnswerCount")
+            failure.failed_graph_ids = tuple(graph.stable_graph_id for graph in graphs)
+            failure.diagnostics = tuple(diagnostics)
+            raise failure
         self.current_stage = "SUCCESS"
         return EndToEndFormatterAnswerResult(
             answer_language=plan.response_language,
@@ -831,7 +1142,7 @@ class EndToEndFormatterAnswerService:
         *,
         deadline_at: float,
         cancel_event: Any | None,
-    ) -> tuple[str, int, int, float, str, str, int]:
+    ) -> tuple[str, int, int, float, str, str, int, dict[str, Any]]:
         segments = self.segment_planner.segments(plan)
         if not segments:
             raise EndToEndFormatterValidationError(("presentation plan contains no canonical stages",))
@@ -844,7 +1155,7 @@ class EndToEndFormatterAnswerService:
         for attempt_index in (0, 1):
             if attempt_index == 1:
                 repair_call_count += len(segments)
-            segment_steps: dict[str, dict[str, Any]] = {}
+            segment_steps: dict[str, list[dict[str, Any]]] = defaultdict(list)
             prompt_hashes.clear()
             formatter_duration_ms = 0.0
             structure_errors: list[str] = []
@@ -863,18 +1174,36 @@ class EndToEndFormatterAnswerService:
                 except EndToEndFormatterValidationError as exc:
                     structure_errors.extend(exc.errors)
                     continue
-                segment_steps.update(parsed_steps)
+                for stage_ref, step in parsed_steps.items():
+                    segment_steps[stage_ref].append(step)
             if structure_errors:
                 last_errors = tuple(structure_errors)
                 if attempt_index == 0:
                     validation_errors = last_errors
                     continue
                 break
-            ordered_steps = [segment_steps[stage.stage_ref] for stage in plan.stages]
+            try:
+                validation_summary = self._validate_combined_provider_steps(plan, segment_steps)
+            except EndToEndFormatterValidationError as exc:
+                last_errors = exc.errors
+                if attempt_index == 0:
+                    validation_errors = last_errors
+                    continue
+                break
+            ordered_steps = [segment_steps[stage.stage_ref][0] for stage in plan.stages]
             text = "\n".join(str(step["text"]).strip() for step in ordered_steps if str(step.get("text") or "").strip())
             language_result = self.language_validator.validate(text, plan.response_language)
             if language_result.valid:
-                return text, provider_call_count, repair_call_count, round(formatter_duration_ms, 3), _sha256("|".join(prompt_hashes)), "VALID", len(segments)
+                return (
+                    text,
+                    provider_call_count,
+                    repair_call_count,
+                    round(formatter_duration_ms, 3),
+                    _sha256("|".join(prompt_hashes)),
+                    "VALID",
+                    len(segments),
+                    validation_summary,
+                )
             last_errors = tuple(language_result.errors)
             if attempt_index == 0:
                 validation_errors = last_errors
@@ -886,6 +1215,7 @@ class EndToEndFormatterAnswerService:
         error.prompt_hash = _sha256("|".join(prompt_hashes))
         error.validation_result = "FAILED"
         error.segment_count = len(segments)
+        error.validation_summary = _formatter_validation_summary(plan, {})
         raise error
 
     def _provider_generate(
@@ -954,41 +1284,96 @@ class EndToEndFormatterAnswerService:
             if not isinstance(step, dict):
                 errors.append(f"formatter step {index} must be an object")
                 continue
-            if set(step) != {"stageRef", "coveredFactRefs", "text"}:
-                errors.append(f"formatter step {index} must contain exactly stageRef, coveredFactRefs, and text")
+            if set(step) != {"stageRef", "coveredFactRefs", "assertions", "referencedCanonicalRefs", "textTemplate"}:
+                errors.append(f"formatter step {index} must contain exactly stageRef, coveredFactRefs, assertions, referencedCanonicalRefs, and textTemplate")
             stage_ref = str(step.get("stageRef") or "")
             stage = stage_by_ref.get(stage_ref)
             covered = step.get("coveredFactRefs")
             if not isinstance(covered, list) or not all(isinstance(item, str) and item for item in covered):
                 errors.append(f"formatter step {stage_ref or index} coveredFactRefs must be non-empty strings")
                 covered = []
+            raw_assertions = step.get("assertions")
+            assertions = _normalised_assertion_payloads(raw_assertions)
+            if assertions is None:
+                errors.append(f"formatter step {stage_ref or index} assertions must be assertion objects")
+                assertions = []
+            referenced = step.get("referencedCanonicalRefs")
+            if not isinstance(referenced, list) or not all(isinstance(item, str) and item for item in referenced):
+                errors.append(f"formatter step {stage_ref or index} referencedCanonicalRefs must be strings")
+                referenced = []
             if stage is not None:
-                owned = set(stage.canonical_fact_refs)
-                unknown_facts = tuple(str(item) for item in covered if str(item) not in owned)
-                if unknown_facts:
-                    errors.append(f"formatter step {stage_ref} covers facts not owned by that stage: {list(unknown_facts)}")
-            text = str(step.get("text") or "").strip()
-            if not text:
-                errors.append(f"formatter step {stage_ref or index} text must be non-empty")
+                expected_coverage = list(stage.owned_fact_refs)
+                sorted_covered = sorted(dict.fromkeys(str(item) for item in covered))
+                if list(covered) != sorted_covered:
+                    errors.append(f"formatter step {stage_ref} coveredFactRefs must be sorted and deduplicated")
+                if set(covered) != set(stage.owned_fact_refs):
+                    missing = sorted(set(stage.owned_fact_refs) - set(covered))
+                    extra = sorted(set(covered) - set(stage.owned_fact_refs))
+                    errors.append(f"formatter step {stage_ref} coverage must equal owned facts; missing={missing}; extra={extra}")
+                elif list(covered) != expected_coverage:
+                    errors.append(f"formatter step {stage_ref} coveredFactRefs must preserve canonical owned fact order")
+                expected_assertions = [_assertion_payload(item) for item in stage.required_assertions]
+                if assertions != expected_assertions:
+                    expected_refs = [item["assertionRef"] for item in expected_assertions]
+                    actual_refs = [str(item.get("assertionRef") or "") for item in assertions]
+                    missing_assertions = sorted(set(expected_refs) - set(actual_refs))
+                    extra_assertions = sorted(set(actual_refs) - set(expected_refs))
+                    errors.append(
+                        f"formatter step {stage_ref} assertions must equal required assertions; missing={missing_assertions}; extra={extra_assertions}"
+                    )
+                elif assertions != sorted(assertions, key=lambda item: str(item.get("assertionRef") or "")):
+                    errors.append(f"formatter step {stage_ref} assertions must be sorted by assertionRef")
+                if len([item.get("assertionRef") for item in assertions]) != len({item.get("assertionRef") for item in assertions}):
+                    errors.append(f"formatter step {stage_ref} assertions contain duplicate assertion refs")
+                sorted_referenced = sorted(dict.fromkeys(str(item) for item in referenced))
+                if list(referenced) != sorted_referenced:
+                    errors.append(f"formatter step {stage_ref} referencedCanonicalRefs must be sorted and deduplicated")
+                allowed_refs = set(stage.allowed_canonical_refs)
+                unknown_references = tuple(str(item) for item in referenced if str(item) not in allowed_refs)
+                if unknown_references:
+                    errors.append(f"formatter step {stage_ref} references canonical refs outside the stage contract: {list(unknown_references)}")
+            text_template = str(step.get("textTemplate") or "").strip()
+            if not text_template:
+                errors.append(f"formatter step {stage_ref or index} textTemplate must be non-empty")
+            rendered_text = text_template
             if stage is not None:
-                errors.extend(self._validate_text_against_stage(text, stage))
-            validated[stage_ref] = {"stageRef": stage_ref, "coveredFactRefs": list(covered), "text": text}
+                placeholder_result = _validate_placeholders(text_template, referenced, stage)
+                errors.extend(placeholder_result.errors)
+                rendered_text = placeholder_result.rendered_text
+            validated[stage_ref] = {
+                "stageRef": stage_ref,
+                "coveredFactRefs": list(covered),
+                "assertions": list(assertions),
+                "referencedCanonicalRefs": list(referenced),
+                "textTemplate": text_template,
+                "text": rendered_text,
+            }
         if errors:
             raise EndToEndFormatterValidationError(tuple(errors))
         return validated
 
-    def _validate_text_against_stage(self, text: str, stage: EndToEndPresentationStage) -> tuple[str, ...]:
+    def _validate_combined_provider_steps(
+        self,
+        plan: EndToEndPresentationPlan,
+        segment_steps: Mapping[str, Sequence[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        summary = _formatter_validation_summary(plan, segment_steps)
         errors: list[str] = []
-        allowed_values = _approved_public_values(stage.payload)
-        for route in _HTTP_ROUTE_RE.findall(text):
-            if route not in allowed_values:
-                errors.append(f"formatter step {stage.stage_ref} invented HTTP route {route}")
-        for method in _HTTP_METHOD_RE.findall(text):
-            if method.upper() not in allowed_values:
-                errors.append(f"formatter step {stage.stage_ref} invented HTTP method {method.upper()}")
-        if stage.kind in {"OPEN_BOUNDARY_AMBIGUOUS", "OPEN_BOUNDARY_UNRESOLVED"} and _PROVEN_BOUNDARY_TEXT_RE.search(text):
-            errors.append(f"formatter step {stage.stage_ref} describes an open boundary as proven or selected")
-        return tuple(errors)
+        if summary["missingStageRefs"]:
+            errors.append(f"formatter response is missing stage refs: {summary['missingStageRefsList']}")
+        if summary["duplicateStageRefs"]:
+            errors.append(f"formatter response duplicated stage refs: {summary['duplicateStageRefsList']}")
+        if summary["unknownStageRefs"]:
+            errors.append(f"formatter response returned unknown stage refs: {summary['unknownStageRefsList']}")
+        if summary["omittedOwnedFactRefs"]:
+            errors.append(f"formatter omitted owned fact refs: {summary['omittedOwnedFactRefsList']}")
+        if summary["duplicateFactRefs"]:
+            errors.append(f"formatter covered owned facts more than once: {summary['duplicateFactRefsList']}")
+        if summary["unownedFactRefs"]:
+            errors.append(f"formatter covered unowned or wrong-stage fact refs: {summary['unownedFactRefsList']}")
+        if errors:
+            raise EndToEndFormatterValidationError(tuple(errors))
+        return summary
 
     def _record_formatter_audit(
         self,
@@ -1025,10 +1410,32 @@ class EndToEndFormatterAnswerService:
         repair_call_count: int,
         formatter_duration_ms: float,
         segment_count: int,
+        validation_summaries: Sequence[Mapping[str, Any]] = (),
     ) -> dict[str, Any]:
         stage_count = sum(len(plan.stages) for plan in plans)
+        ownership_metrics = _presentation_ownership_metrics(plans)
+        coverage_metrics = _rollup_formatter_validation_summaries(validation_summaries)
+        missing_stage_refs = int(coverage_metrics.get("missingStageRefs") or 0)
+        duplicate_stage_refs = int(ownership_metrics.get("duplicateStageRefs") or 0) + int(coverage_metrics.get("duplicateStageRefs") or 0)
+        unowned_fact_refs = int(ownership_metrics.get("unownedFactRefs") or 0) + int(coverage_metrics.get("unownedFactRefs") or 0)
+        duplicate_fact_refs = int(ownership_metrics.get("duplicateFactRefs") or 0) + int(coverage_metrics.get("duplicateFactRefs") or 0)
+        public_step_count = int(coverage_metrics.get("publicStepCount") or 0) if answer_count else 0
+        validated_step_count = int(coverage_metrics.get("validatedFormatterStepCount") or 0) if answer_count else 0
+        stage_count_contract_matched = (
+            int(answer_count) == len(plans)
+            and missing_stage_refs == 0
+            and duplicate_stage_refs == 0
+            and unowned_fact_refs == 0
+            and duplicate_fact_refs == 0
+            and validated_step_count == stage_count
+        )
         stage_ownership = [
-            {"stageRef": stage.stage_ref, "kind": stage.kind, "ownedFactRefs": list(stage.canonical_fact_refs)}
+            {
+                "stageRef": stage.stage_ref,
+                "kind": stage.kind,
+                "ownedFactRefs": list(stage.owned_fact_refs),
+                "contextFactRefs": list(stage.context_fact_refs),
+            }
             for plan in plans
             for stage in plan.stages
         ]
@@ -1048,30 +1455,39 @@ class EndToEndFormatterAnswerService:
             "formatterOutputSplitCallCount": 0,
             "formatterSegmentCount": int(segment_count),
             "formatterSerializationCount": int(self.segment_planner.serialization_count),
-            "stageCountContractMatched": True,
+            "stageCountContractMatched": bool(stage_count_contract_matched),
             "stageCountContractExpected": stage_count,
             "expectedPublicStageCount": stage_count,
             "expectedPresentationStageCount": stage_count,
-            "validatedFormatterStepCount": stage_count if answer_count else 0,
-            "stitchedPublicStepCount": stage_count if answer_count else 0,
-            "publicStepCount": stage_count if answer_count else 0,
+            "validatedFormatterStepCount": validated_step_count,
+            "stitchedPublicStepCount": public_step_count,
+            "publicStepCount": public_step_count,
             "provenTransitionCount": sum(1 for plan in plans for stage in plan.stages if stage.kind == "PROVEN_BOUNDARY_CONTINUATION"),
-            "openAmbiguousBoundaryCount": sum(1 for plan in plans for stage in plan.stages if stage.kind == "OPEN_BOUNDARY_AMBIGUOUS"),
-            "openUnresolvedBoundaryCount": sum(1 for plan in plans for stage in plan.stages if stage.kind == "OPEN_BOUNDARY_UNRESOLVED"),
+            "openAmbiguousBoundaryCount": sum(1 for plan in plans for stage in plan.stages if stage.kind == _OPEN_BOUNDARY_AMBIGUOUS_STAGE_KIND),
+            "openUnresolvedBoundaryCount": sum(1 for plan in plans for stage in plan.stages if stage.kind == _OPEN_BOUNDARY_UNRESOLVED_STAGE_KIND),
             "branchCount": sum(1 for plan in plans for stage in plan.stages if stage.kind == "BRANCH"),
             "structuralStageCount": sum(1 for plan in plans for stage in plan.stages if stage.kind in {"BRANCH", "CONVERGENCE", "CYCLE_REFERENCE", "SHARED_UNIT_REFERENCE"}),
             "presentationStageRefs": [stage.stage_ref for plan in plans for stage in plan.stages],
             "presentationStages": [
-                {"stageRef": stage.stage_ref, "kind": stage.kind, "ownedFactRefs": list(stage.canonical_fact_refs)}
+                {
+                    "stageRef": stage.stage_ref,
+                    "kind": stage.kind,
+                    "ownedFactRefs": list(stage.owned_fact_refs),
+                    "contextFactRefs": list(stage.context_fact_refs),
+                }
                 for plan in plans
                 for stage in plan.stages
             ],
             "stageOwnershipRecords": stage_ownership,
             "deduplicatedFactCount": len({fact for plan in plans for fact in plan.canonical_fact_refs}),
-            "missingStageRefs": 0,
-            "duplicateStageRefs": 0,
-            "unownedFactRefs": 0,
-            "duplicateFactRefs": 0,
+            "missingStageRefs": missing_stage_refs,
+            "duplicateStageRefs": duplicate_stage_refs,
+            "unownedFactRefs": unowned_fact_refs,
+            "duplicateFactRefs": duplicate_fact_refs,
+            "unknownStageRefs": int(coverage_metrics.get("unknownStageRefs") or 0),
+            "omittedOwnedFactRefs": int(coverage_metrics.get("omittedOwnedFactRefs") or 0),
+            "unknownOwnedFactRefs": int(ownership_metrics.get("unknownOwnedFactRefs") or 0),
+            "unknownContextFactRefs": int(ownership_metrics.get("unknownContextFactRefs") or 0),
             "promptHash": _sha256(prompt_seed),
         }
 
@@ -1096,6 +1512,286 @@ def _query_entry_payload(item: KnowledgeGraphAnswerQueryEntry) -> dict[str, Any]
     return {"unitId": item.unitId, "sourceId": item.sourceId, "root": dict(item.root or {})}
 
 
+def _presentation_stage(
+    *,
+    stage_ref: str,
+    kind: str,
+    owned_fact_refs: Sequence[str],
+    context_fact_refs: Sequence[str],
+    required_assertions: Sequence[CanonicalFormatterAssertion],
+    allowed_canonical_refs: Sequence[str],
+    canonical_display_values: Mapping[str, str],
+    payload: Mapping[str, Any],
+) -> EndToEndPresentationStage:
+    owned = _sorted_unique(owned_fact_refs)
+    context = _sorted_unique(context_fact_refs)
+    assertions = tuple(sorted(required_assertions, key=lambda item: item.assertion_ref))
+    allowed = _sorted_unique((*owned, *context, *allowed_canonical_refs, *(canonical_display_values or {}).keys()))
+    display_values = {ref: _canonical_ref_display(ref) for ref in allowed}
+    display_values.update({str(ref): str(value) for ref, value in (canonical_display_values or {}).items() if str(ref).strip() and str(value).strip()})
+    return EndToEndPresentationStage(
+        stage_ref=stage_ref,
+        kind=kind,
+        owned_fact_refs=owned,
+        context_fact_refs=context,
+        required_assertions=assertions,
+        allowed_canonical_refs=allowed,
+        canonical_display_values={ref: display_values.get(ref, _canonical_ref_display(ref)) for ref in allowed},
+        payload=payload,
+    )
+
+
+def _assertion(
+    stage_ref: str,
+    local_ref: str,
+    *,
+    predicate: str,
+    subject_ref: str,
+    object_ref: str | None = None,
+    value: str | None = None,
+) -> CanonicalFormatterAssertion:
+    return CanonicalFormatterAssertion(
+        assertion_ref=f"assertion:{stage_ref}:{local_ref}",
+        predicate=predicate,
+        subject_ref=subject_ref,
+        object_ref=object_ref,
+        value=value,
+    )
+
+
+def _assertion_payload(item: CanonicalFormatterAssertion) -> dict[str, str | None]:
+    return {
+        "assertionRef": item.assertion_ref,
+        "predicate": item.predicate,
+        "subjectRef": item.subject_ref,
+        "objectRef": item.object_ref,
+        "value": item.value,
+    }
+
+
+def _normalised_assertion_payloads(value: Any) -> list[dict[str, str | None]] | None:
+    if not isinstance(value, list):
+        return None
+    result: list[dict[str, str | None]] = []
+    for item in value:
+        if not isinstance(item, Mapping) or set(item) != {"assertionRef", "predicate", "subjectRef", "objectRef", "value"}:
+            return None
+        assertion_ref = str(item.get("assertionRef") or "").strip()
+        predicate = str(item.get("predicate") or "").strip()
+        subject_ref = str(item.get("subjectRef") or "").strip()
+        object_ref = item.get("objectRef")
+        assertion_value = item.get("value")
+        if not assertion_ref or not predicate or not subject_ref:
+            return None
+        if object_ref is not None:
+            object_ref = str(object_ref).strip() or None
+        if assertion_value is not None:
+            assertion_value = str(assertion_value).strip() or None
+        result.append(
+            {
+                "assertionRef": assertion_ref,
+                "predicate": predicate,
+                "subjectRef": subject_ref,
+                "objectRef": object_ref,
+                "value": assertion_value,
+            }
+        )
+    return result
+
+
+@dataclass(frozen=True)
+class _PlaceholderValidationResult:
+    errors: tuple[str, ...]
+    rendered_text: str
+
+
+def _validate_placeholders(
+    text_template: str,
+    referenced_canonical_refs: Sequence[str],
+    stage: EndToEndPresentationStage,
+) -> _PlaceholderValidationResult:
+    errors: list[str] = []
+    placeholders = tuple(_PLACEHOLDER_RE.findall(text_template))
+    referenced = tuple(str(item) for item in referenced_canonical_refs)
+    allowed = set(stage.allowed_canonical_refs)
+    placeholder_set = set(placeholders)
+    referenced_set = set(referenced)
+    unknown_placeholders = sorted(ref for ref in placeholder_set if ref not in allowed)
+    if unknown_placeholders:
+        errors.append(f"formatter step {stage.stage_ref} contains unknown placeholders: {unknown_placeholders}")
+    missing_placeholders = sorted(ref for ref in referenced_set if ref not in placeholder_set)
+    if missing_placeholders:
+        errors.append(f"formatter step {stage.stage_ref} declares refs without placeholders: {missing_placeholders}")
+    undeclared_placeholders = sorted(ref for ref in placeholder_set if ref not in referenced_set)
+    if undeclared_placeholders:
+        errors.append(f"formatter step {stage.stage_ref} contains undeclared placeholders: {undeclared_placeholders}")
+    rendered = _PLACEHOLDER_RE.sub(lambda match: stage.canonical_display_values.get(match.group(1), _canonical_ref_display(match.group(1))), text_template)
+    if not rendered.strip():
+        errors.append(f"formatter step {stage.stage_ref} rendered text must be non-empty")
+    return _PlaceholderValidationResult(errors=tuple(errors), rendered_text=rendered.strip())
+
+
+def _validate_presentation_stage_ownership(
+    stages: Sequence[EndToEndPresentationStage],
+    graph_id: str,
+) -> tuple[list[KnowledgeQueryDiagnostic], tuple[str, ...], tuple[str, ...]]:
+    stage_refs = [stage.stage_ref for stage in stages]
+    duplicate_stage_refs = sorted(ref for ref, count in Counter(stage_refs).items() if count > 1)
+    owned_by_fact: dict[str, list[str]] = defaultdict(list)
+    unknown_owned_fact_refs: list[str] = []
+    for stage in stages:
+        for fact_ref in stage.owned_fact_refs:
+            if not _valid_canonical_fact_ref(fact_ref):
+                unknown_owned_fact_refs.append(str(fact_ref))
+            owned_by_fact[str(fact_ref)].append(stage.stage_ref)
+    duplicate_owned_fact_refs = sorted(fact_ref for fact_ref, owners in owned_by_fact.items() if len(owners) > 1)
+    context_refs = tuple(sorted({str(ref) for stage in stages for ref in stage.context_fact_refs if str(ref).strip()}))
+    unknown_context_fact_refs = sorted(ref for ref in context_refs if ref not in owned_by_fact)
+    diagnostics: list[KnowledgeQueryDiagnostic] = []
+    if duplicate_stage_refs or duplicate_owned_fact_refs or unknown_owned_fact_refs or unknown_context_fact_refs:
+        diagnostics.append(
+            KnowledgeQueryDiagnostic(
+                code="END_TO_END_PRESENTATION_OWNERSHIP_INVALID",
+                message="Canonical presentation plan fact ownership is invalid.",
+                severity="ERROR",
+                metadata={
+                    "graphId": graph_id,
+                    "duplicateStageRefs": duplicate_stage_refs,
+                    "duplicateOwnedFactRefs": duplicate_owned_fact_refs,
+                    "unknownOwnedFactRefs": sorted(set(unknown_owned_fact_refs)),
+                    "unknownContextFactRefs": unknown_context_fact_refs,
+                    "unownedRequiredFactRefs": unknown_context_fact_refs,
+                },
+            )
+        )
+    return diagnostics, tuple(sorted(owned_by_fact)), context_refs
+
+
+def _presentation_ownership_metrics(plans: Sequence[EndToEndPresentationPlan]) -> dict[str, Any]:
+    duplicate_stage_count = 0
+    duplicate_fact_count = 0
+    unknown_owned_count = 0
+    unknown_context_count = 0
+    for plan in plans:
+        stage_refs = [stage.stage_ref for stage in plan.stages]
+        duplicate_stage_count += sum(1 for count in Counter(stage_refs).values() if count > 1)
+        owned_by_fact: dict[str, list[str]] = defaultdict(list)
+        for stage in plan.stages:
+            for fact_ref in stage.owned_fact_refs:
+                if not _valid_canonical_fact_ref(fact_ref):
+                    unknown_owned_count += 1
+                owned_by_fact[str(fact_ref)].append(stage.stage_ref)
+        duplicate_fact_count += sum(1 for owners in owned_by_fact.values() if len(owners) > 1)
+        unknown_context_count += sum(
+            1
+            for stage in plan.stages
+            for fact_ref in stage.context_fact_refs
+            if str(fact_ref) not in owned_by_fact
+        )
+    return {
+        "duplicateStageRefs": duplicate_stage_count,
+        "duplicateFactRefs": duplicate_fact_count,
+        "unknownOwnedFactRefs": unknown_owned_count,
+        "unknownContextFactRefs": unknown_context_count,
+        "unownedFactRefs": unknown_context_count,
+    }
+
+
+def _formatter_validation_summary(
+    plan: EndToEndPresentationPlan,
+    segment_steps: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> dict[str, Any]:
+    expected_stage_refs = [stage.stage_ref for stage in plan.stages]
+    expected_stage_ref_set = set(expected_stage_refs)
+    actual_stage_refs = [str(ref) for ref in segment_steps]
+    missing_stage_refs = [ref for ref in expected_stage_refs if not segment_steps.get(ref)]
+    duplicate_stage_refs = sorted(ref for ref, steps in segment_steps.items() if len(steps) > 1)
+    unknown_stage_refs = sorted(ref for ref in actual_stage_refs if ref not in expected_stage_ref_set)
+    fact_owner_by_ref: dict[str, str] = {}
+    for stage in plan.stages:
+        for fact_ref in stage.owned_fact_refs:
+            fact_owner_by_ref[str(fact_ref)] = stage.stage_ref
+    covered_by_fact_ref: dict[str, list[str]] = defaultdict(list)
+    unowned_fact_refs: list[str] = []
+    for stage_ref, steps in segment_steps.items():
+        for step in steps:
+            for fact_ref in step.get("coveredFactRefs") or ():
+                fact_ref = str(fact_ref)
+                owner = fact_owner_by_ref.get(fact_ref)
+                if owner != stage_ref:
+                    unowned_fact_refs.append(fact_ref)
+                    continue
+                covered_by_fact_ref[fact_ref].append(stage_ref)
+    omitted_owned_fact_refs = sorted(fact_ref for fact_ref in plan.canonical_fact_refs if not covered_by_fact_ref.get(fact_ref))
+    duplicate_fact_refs = sorted(fact_ref for fact_ref, owners in covered_by_fact_ref.items() if len(owners) > 1)
+    stage_count_contract_matched = (
+        not missing_stage_refs
+        and not duplicate_stage_refs
+        and not unknown_stage_refs
+        and not omitted_owned_fact_refs
+        and not duplicate_fact_refs
+        and not unowned_fact_refs
+    )
+    validated_step_count = sum(len(steps) for ref, steps in segment_steps.items() if ref in expected_stage_ref_set)
+    return {
+        "missingStageRefs": len(missing_stage_refs),
+        "missingStageRefsList": missing_stage_refs,
+        "duplicateStageRefs": len(duplicate_stage_refs),
+        "duplicateStageRefsList": duplicate_stage_refs,
+        "unknownStageRefs": len(unknown_stage_refs),
+        "unknownStageRefsList": unknown_stage_refs,
+        "omittedOwnedFactRefs": len(omitted_owned_fact_refs),
+        "omittedOwnedFactRefsList": omitted_owned_fact_refs,
+        "duplicateFactRefs": len(duplicate_fact_refs),
+        "duplicateFactRefsList": duplicate_fact_refs,
+        "unownedFactRefs": len(unowned_fact_refs),
+        "unownedFactRefsList": sorted(set(unowned_fact_refs)),
+        "stageCountContractMatched": stage_count_contract_matched,
+        "validatedFormatterStepCount": validated_step_count,
+        "publicStepCount": len(expected_stage_refs) if stage_count_contract_matched else 0,
+    }
+
+
+def _rollup_formatter_validation_summaries(summaries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    keys = (
+        "missingStageRefs",
+        "duplicateStageRefs",
+        "unknownStageRefs",
+        "omittedOwnedFactRefs",
+        "duplicateFactRefs",
+        "unownedFactRefs",
+        "validatedFormatterStepCount",
+        "publicStepCount",
+    )
+    return {key: sum(int(summary.get(key) or 0) for summary in summaries) for key in keys}
+
+
+def _valid_canonical_fact_ref(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text or ":" not in text:
+        return False
+    prefix = text.split(":", 1)[0]
+    return prefix in {
+        "unit",
+        "root",
+        "node",
+        "edge",
+        "topology-boundary",
+        "generic-boundary",
+        "context",
+        "evidence",
+        "transition",
+        "resolution",
+        "required-boundary",
+        "provided-boundary",
+        "open-boundary",
+        "branch",
+        "convergence",
+        "cycle",
+        "shared-unit",
+    }
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {str(key): _json_safe(item) for key, item in value.items()}
@@ -1108,34 +1804,23 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _approved_public_values(value: Any) -> set[str]:
-    values: set[str] = set()
-
-    def visit(item: Any) -> None:
-        if isinstance(item, Mapping):
-            for child in item.values():
-                visit(child)
-            return
-        if isinstance(item, (list, tuple, set, frozenset)):
-            for child in item:
-                visit(child)
-            return
-        text = str(item or "").strip()
-        if text:
-            values.add(text)
-            values.add(text.upper())
-
-    visit(value)
-    return values
-
-
 def _sha256(value: str) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
-_HTTP_ROUTE_RE = re.compile(r"(?<!\w)/(?:[A-Za-z0-9._~!$&'()*+,;=:@%-]+/?)+")
-_HTTP_METHOD_RE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", re.IGNORECASE)
-_PROVEN_BOUNDARY_TEXT_RE = re.compile(
-    r"\b(proven|verified|confirmed|selected target|target selected|доведен|підтвердж|sélectionn|prouvé|confirmé|bewiesen|bestätigt|ausgewählt)\b",
-    re.IGNORECASE,
-)
+def _sorted_unique(values: Sequence[str]) -> tuple[str, ...]:
+    return tuple(sorted(dict.fromkeys(str(item) for item in values if str(item).strip())))
+
+
+def _canonical_ref_display(ref: str) -> str:
+    text = str(ref or "").strip()
+    if not text:
+        return ""
+    if ":" not in text:
+        return text
+    return text.rsplit(":", 1)[-1]
+
+
+_PLACEHOLDER_RE = re.compile(r"\{\{ref:([^{}]+)\}\}")
+_OPEN_BOUNDARY_AMBIGUOUS_STAGE_KIND = "OPEN_BOUNDARY_AMBIGUOUS"
+_OPEN_BOUNDARY_UNRESOLVED_STAGE_KIND = "OPEN_BOUNDARY_UNRESOLVED"

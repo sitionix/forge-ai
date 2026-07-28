@@ -232,79 +232,44 @@ def _query_identifiers(value: str) -> list[str]:
     return identifiers
 
 
-def _flatten_formatter_groups(groups):
-    for group in (groups if isinstance(groups, list) else []):
-        if not isinstance(group, dict):
-            continue
-        yield group
-        yield from _flatten_formatter_groups(group.get("childGroups", []))
-
-
 def _formatter_step(stage: dict[str, Any], language: str) -> dict[str, Any]:
-    certainty = str(stage.get("certainty") or "VERIFIED")
+    referenced = _formatter_references(stage)
     return {
         "stageRef": stage.get("stageRef"),
         "coveredFactRefs": list(stage.get("ownedFactRefs") or []),
-        "text": _formatter_sentence(stage, certainty, language),
+        "assertions": list(stage.get("requiredAssertions") or []),
+        "referencedCanonicalRefs": referenced,
+        "textTemplate": _formatter_sentence(stage, referenced, language),
     }
 
 
-def _formatter_sentence(stage: dict[str, Any], certainty: str, language: str) -> str:
-    identifiers: list[str] = []
-    for value in _formatter_identifiers(stage):
-        if value not in identifiers:
-            identifiers.append(value)
-    joined = ", ".join(identifiers) if identifiers else str(stage.get("kind") or "stage")
+def _formatter_sentence(stage: dict[str, Any], referenced: list[str], language: str) -> str:
+    joined = ", ".join(f"{{{{ref:{item}}}}}" for item in referenced) if referenced else str(stage.get("kind") or "stage")
     if language == "uk":
-        uncertainty = " з непідтвердженим зв'язком" if certainty == "UNVERIFIED" else " з неоднозначним зв'язком" if certainty == "AMBIGUOUS" else ""
-        return f"Цей крок описує доступний потік{uncertainty}: {joined}."
+        return f"Цей етап описує канонічні факти: {joined}."
     if language == "de":
-        uncertainty = " mit ungesicherter Verbindung" if certainty == "UNVERIFIED" else " mit mehrdeutiger Verbindung" if certainty == "AMBIGUOUS" else ""
-        return f"Dieser Schritt beschreibt den verfügbaren Ablauf{uncertainty}: {joined}."
+        return f"Dieser Schritt beschreibt kanonische Fakten: {joined}."
     if language == "fr":
-        uncertainty = " avec un lien non confirmé" if certainty == "UNVERIFIED" else " avec un lien ambigu" if certainty == "AMBIGUOUS" else ""
-        return f"Cette étape décrit le flux disponible{uncertainty}: {joined}."
-    uncertainty = " with an unconfirmed connection" if certainty == "UNVERIFIED" else " with an ambiguous connection" if certainty == "AMBIGUOUS" else ""
-    return f"This step describes the available flow{uncertainty}: {joined}."
+        return f"Cette étape décrit les faits canoniques: {joined}."
+    if language == "pl":
+        return f"Ten etap opisuje fakty kanoniczne: {joined}."
+    return f"This step describes canonical facts: {joined}."
 
 
-def _formatter_identifiers(group: dict[str, Any]) -> list[str]:
-    values: list[str] = []
-    containers: list[Any] = [group, group.get("payload")]
-    seen = set()
-    while containers:
-        container = containers.pop(0)
-        if id(container) in seen:
-            continue
-        seen.add(id(container))
-        if isinstance(container, list):
-            containers.extend(container)
-            continue
-        if not isinstance(container, dict):
-            continue
-        containers.extend(value for value in container.values() if isinstance(value, (dict, list)))
-        for key in (
-            "label",
-            "qualifiedName",
-            "unitId",
-            "sourceUnitId",
-            "targetUnitId",
-            "symbol",
-            "fromSymbol",
-            "toSymbol",
-            "method",
-            "route",
-            "topic",
-            "schedule",
-            "operationIdentity",
-            "interfaceIdentity",
-            "targetDescriptor",
-            "targetServiceIdentity",
-        ):
-            value = container.get(key)
-            if isinstance(value, str) and value.strip() and value.strip() not in values:
-                values.append(value.strip())
-    return values
+def _formatter_references(stage: dict[str, Any]) -> list[str]:
+    allowed = set(stage.get("allowedCanonicalRefs") or [])
+    preferred: list[str] = []
+    candidates = [ref for ref in list(stage.get("ownedFactRefs") or []) + list(stage.get("contextFactRefs") or []) if isinstance(ref, str) and ref in allowed]
+    for prefix in ("unit:", "topology-boundary:", "edge:", "root:", "node:", "transition:", "open-boundary:", "branch:", "convergence:", "cycle:", "shared-unit:"):
+        for ref in candidates:
+            if ref.startswith(prefix) and ref not in preferred:
+                preferred.append(ref)
+    for ref in candidates:
+        if ref not in preferred:
+            preferred.append(ref)
+    if preferred:
+        return sorted(preferred[:2])
+    return []
 
 
 def write_runtime_config(
