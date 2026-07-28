@@ -24,11 +24,6 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryMatchedNode,
 )
 
-_MAX_FRONTIER_ROUNDS = 256
-_MAX_UNIT_NODES = 1500
-_MAX_UNIT_TRANSITIONS = 3000
-_MAX_UNIT_BOUNDARIES = 1000
-
 
 class LocalFlowRootOrigin(str, Enum):
     EXPLICIT_GRAPH_FACT = "EXPLICIT_GRAPH_FACT"
@@ -87,6 +82,24 @@ class LocalFlowUnit:
     complete: bool
     coverage: LocalFlowCoverage
     diagnostics: tuple[KnowledgeQueryDiagnostic, ...]
+
+
+@dataclass(frozen=True)
+class LocalFlowTraversalPolicy:
+    max_frontier_rounds: int = 256
+    max_unit_nodes: int = 1500
+    max_unit_transitions: int = 3000
+    max_unit_boundaries: int = 1000
+
+    def __post_init__(self) -> None:
+        if self.max_frontier_rounds < 1:
+            raise ValueError("max_frontier_rounds must be at least 1")
+        if self.max_unit_nodes < 1:
+            raise ValueError("max_unit_nodes must be at least 1")
+        if self.max_unit_transitions < 1:
+            raise ValueError("max_unit_transitions must be at least 1")
+        if self.max_unit_boundaries < 1:
+            raise ValueError("max_unit_boundaries must be at least 1")
 
 
 @dataclass(frozen=True)
@@ -161,10 +174,12 @@ class LocalFlowUnitEngine:
         repository: LocalFlowUnitGraphRepository | None = None,
         boundary_classifier: FlowBoundaryClassifier | None = None,
         semantics: GraphRelationSemantics | None = None,
+        traversal_policy: LocalFlowTraversalPolicy | None = None,
     ) -> None:
         self.repository = repository
         self.boundary_classifier = boundary_classifier or FLOW_BOUNDARY_CLASSIFIER
         self.semantics = semantics or graph_relation_semantics()
+        self.traversal_policy = traversal_policy or LocalFlowTraversalPolicy()
 
     def build(
         self,
@@ -337,7 +352,7 @@ class LocalFlowUnitEngine:
         visited: set[FlowNodeKey] = {state.seed_key}
         while frontier:
             state.reverse_rounds += 1
-            if state.reverse_rounds > _MAX_FRONTIER_ROUNDS:
+            if state.reverse_rounds > self.traversal_policy.max_frontier_rounds:
                 self._mark_truncated(state, "LOCAL_FLOW_REVERSE_TRUNCATED", "Reverse local flow exploration reached the internal frontier-round limit.")
                 break
             query_frontier = {node_key for node_key in frontier if not self._is_explicit_executable_root(state.nodes.get(node_key))}
@@ -395,7 +410,7 @@ class LocalFlowUnitEngine:
         expanded: set[FlowNodeKey] = set()
         while frontier:
             state.forward_rounds += 1
-            if state.forward_rounds > _MAX_FRONTIER_ROUNDS:
+            if state.forward_rounds > self.traversal_policy.max_frontier_rounds:
                 self._mark_truncated(state, "LOCAL_FLOW_FORWARD_TRUNCATED", "Forward local flow exploration reached the internal frontier-round limit.")
                 break
             query_keys = {node_key for node_key in frontier if node_key not in expanded}
@@ -513,8 +528,8 @@ class LocalFlowUnitEngine:
 
         boundary_node_keys = set(node_map) | set(supporting_map)
         generic_boundaries = self._load_unit_boundaries(boundary_node_keys, include_tests)
-        if len(generic_boundaries) > _MAX_UNIT_BOUNDARIES:
-            generic_boundaries = generic_boundaries[:_MAX_UNIT_BOUNDARIES]
+        if len(generic_boundaries) > self.traversal_policy.max_unit_boundaries:
+            generic_boundaries = generic_boundaries[: self.traversal_policy.max_unit_boundaries]
             truncated = True
             diagnostics = (
                 *diagnostics,
@@ -615,7 +630,7 @@ class LocalFlowUnitEngine:
         state.root_distance_by_seed[key] = min(state.root_distance_by_seed.get(key, distance), distance)
 
     def _add_topology_boundary(self, state: _ExploredSeed, edge: FlowGraphEdge) -> None:
-        if len(state.topology_boundaries) >= _MAX_UNIT_BOUNDARIES:
+        if len(state.topology_boundaries) >= self.traversal_policy.max_unit_boundaries:
             self._mark_truncated(state, "LOCAL_FLOW_TOPOLOGY_BOUNDARIES_TRUNCATED", "Topology boundaries reached the internal local unit limit.")
             return
         state.topology_boundaries.setdefault(self._edge_key(edge), edge)
@@ -627,7 +642,7 @@ class LocalFlowUnitEngine:
         next_node: FlowNodeKey | None = None,
         next_edge: FlowEdgeKey | None = None,
     ) -> bool:
-        if next_node is not None and next_node not in state.nodes and len(state.nodes) >= _MAX_UNIT_NODES:
+        if next_node is not None and next_node not in state.nodes and len(state.nodes) >= self.traversal_policy.max_unit_nodes:
             self._mark_truncated(state, "LOCAL_FLOW_NODE_LIMIT_REACHED", "Local flow exploration reached the internal node limit.")
             return False
         edge_count = len(state.upstream_transitions) + len(state.downstream_transitions)
@@ -635,7 +650,7 @@ class LocalFlowUnitEngine:
             next_edge is not None
             and next_edge not in state.upstream_transitions
             and next_edge not in state.downstream_transitions
-            and edge_count >= _MAX_UNIT_TRANSITIONS
+            and edge_count >= self.traversal_policy.max_unit_transitions
         ):
             self._mark_truncated(state, "LOCAL_FLOW_TRANSITION_LIMIT_REACHED", "Local flow exploration reached the internal transition limit.")
             return False

@@ -203,12 +203,12 @@ class DeterministicFinalFlowFormatterProvider:
             }
         )
         response_language = str(formatter_input.get("responseLanguage") or "en").lower()
-        steps = [_formatter_step(stage, response_language) for stage in formatter_input.get("stages", [])]
+        clauses = [_formatter_clause(clause, response_language) for clause in formatter_input.get("clauses", [])]
         return type(
             "ProviderResult",
             (),
             {
-                "raw_text": json.dumps({"steps": steps}, ensure_ascii=False),
+                "raw_text": json.dumps({"clauses": clauses}, ensure_ascii=False),
                 "prompt_char_length": 100,
                 "prompt_hash": "deterministic-prompt-hash",
                 "duration_ms": 1.0,
@@ -232,34 +232,32 @@ def _query_identifiers(value: str) -> list[str]:
     return identifiers
 
 
-def _formatter_step(stage: dict[str, Any], language: str) -> dict[str, Any]:
-    referenced = _formatter_references(stage)
+def _formatter_clause(clause: dict[str, Any], language: str) -> dict[str, Any]:
+    referenced = _formatter_references(clause)
     return {
-        "stageRef": stage.get("stageRef"),
-        "coveredFactRefs": list(stage.get("ownedFactRefs") or []),
-        "assertions": list(stage.get("requiredAssertions") or []),
+        "clauseRef": clause.get("clauseRef"),
         "referencedCanonicalRefs": referenced,
-        "textTemplate": _formatter_sentence(stage, referenced, language),
+        "textTemplate": _formatter_sentence(clause, referenced, language),
     }
 
 
-def _formatter_sentence(stage: dict[str, Any], referenced: list[str], language: str) -> str:
-    joined = ", ".join(f"{{{{ref:{item}}}}}" for item in referenced) if referenced else str(stage.get("kind") or "stage")
+def _formatter_sentence(clause: dict[str, Any], referenced: list[str], language: str) -> str:
+    joined = ", ".join(f"{{{{ref:{item}}}}}" for item in referenced) if referenced else str(clause.get("clauseKind") or "clause")
     if language == "uk":
-        return f"Цей етап описує канонічні факти: {joined}."
+        return f"Цей пункт описує канонічні факти: {joined}."
     if language == "de":
-        return f"Dieser Schritt beschreibt kanonische Fakten: {joined}."
+        return f"Dieser Satz beschreibt kanonische Fakten: {joined}."
     if language == "fr":
-        return f"Cette étape décrit les faits canoniques: {joined}."
+        return f"Cette phrase décrit les faits canoniques: {joined}."
     if language == "pl":
-        return f"Ten etap opisuje fakty kanoniczne: {joined}."
-    return f"This step describes canonical facts: {joined}."
+        return f"To zdanie opisuje fakty kanoniczne: {joined}."
+    return f"This clause describes canonical facts: {joined}."
 
 
-def _formatter_references(stage: dict[str, Any]) -> list[str]:
-    allowed = set(stage.get("allowedCanonicalRefs") or [])
+def _formatter_references(clause: dict[str, Any]) -> list[str]:
+    allowed = set(clause.get("allowedCanonicalRefs") or [])
     preferred: list[str] = []
-    candidates = [ref for ref in list(stage.get("ownedFactRefs") or []) + list(stage.get("contextFactRefs") or []) if isinstance(ref, str) and ref in allowed]
+    candidates = [ref for ref in allowed if isinstance(ref, str)]
     for prefix in ("unit:", "topology-boundary:", "edge:", "root:", "node:", "transition:", "open-boundary:", "branch:", "convergence:", "cycle:", "shared-unit:"):
         for ref in candidates:
             if ref.startswith(prefix) and ref not in preferred:
@@ -417,7 +415,7 @@ def build_test_app(
     )
     app = create_app(settings=settings, dependencies=deps)
     app.state.query_interpretation_provider = DeterministicQueryInterpretationProvider()
-    app.state.final_flow_formatter_provider = DeterministicFinalFlowFormatterProvider()
+    app.state.end_to_end_formatter_provider = DeterministicFinalFlowFormatterProvider()
     return app, settings, app_config, deps
 
 

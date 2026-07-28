@@ -157,6 +157,36 @@ def test_partial_unresolved_boundary_is_formatted_and_successful(tmp_path):
     assert "formatter" not in text.lower()
 
 
+def test_http_only_metadata_does_not_merge_components_without_generic_proof(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    for source_id, node_id, qualified in (
+        ("source-a", "http-a", "HttpA.run"),
+        ("source-b", "http-b", "HttpB.run"),
+    ):
+        seed_semantic_graph(
+            app_config.store_path,
+            source_id=source_id,
+            nodes=[
+                {"id": node_id, "nodeKind": "CALLABLE", "name": qualified, "qualified": qualified, "path": f"src/{node_id}.java"},
+            ],
+            claims=[explicit(node_id, f"ev-{node_id}", method="POST", route="/same-route")],
+            evidence_ids=[f"ev-{node_id}"],
+        )
+
+    base_payload, _human_payload, tool_payload = query_all_surfaces(app, "HttpA.run HttpB.run")
+
+    assert base_payload["graphs"]
+    assert all(not graph["provenTransitions"] for graph in tool_payload["graphs"])
+    graph_sources = [sorted({unit["sourceId"] for unit in graph["units"]}) for graph in tool_payload["graphs"]]
+    assert graph_sources
+    assert all(len(source_ids) == 1 for source_ids in graph_sources)
+    assert sorted(source_ids[0] for source_ids in graph_sources) == ["source-a", "source-b"]
+    assert "gap" not in json.dumps(tool_payload).lower()
+    diagnostic_text = json.dumps([diagnostic for graph in tool_payload["graphs"] for diagnostic in graph.get("diagnostics", [])]).upper()
+    assert "TRANSPORT" not in diagnostic_text
+    assert "HTTP" not in diagnostic_text
+
+
 def test_human_terminal_audit_records_canonical_formatter_calls(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_semantic_graph(

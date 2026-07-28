@@ -100,8 +100,16 @@ _PRECISE_IDENTIFIER_REASONS = {
     "PATH_MATCH",
 }
 
-_MAX_BOUNDARY_RESOLUTION_ROUNDS = 8
-_MAX_BOUNDARY_TARGET_UNITS = 50
+@dataclass(frozen=True)
+class BoundaryContinuationPolicy:
+    max_boundary_resolution_rounds: int = 8
+    max_boundary_target_units: int = 50
+
+    def __post_init__(self) -> None:
+        if self.max_boundary_resolution_rounds < 1:
+            raise ValueError("max_boundary_resolution_rounds must be at least 1")
+        if self.max_boundary_target_units < 1:
+            raise ValueError("max_boundary_target_units must be at least 1")
 
 
 @dataclass(frozen=True)
@@ -1487,12 +1495,14 @@ class KnowledgeQueryService:
         flow_engine: LocalFlowUnitEngine | None = None,
         policy: KnowledgeQueryPolicy | None = None,
         anchor_expander: AnchorExpansionService | None = None,
+        continuation_policy: BoundaryContinuationPolicy | None = None,
     ) -> None:
         self.source_scope_resolver = source_scope_resolver
         self.anchor_searcher = anchor_searcher
         self.flow_repository = flow_repository
         self.flow_engine = flow_engine or LocalFlowUnitEngine(flow_repository)
         self.policy = policy or KnowledgeQueryPolicy()
+        self.continuation_policy = continuation_policy or BoundaryContinuationPolicy()
         self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_repository, "graph_store", None))
         self.local_unit_selector = LocalFlowUnitSelector(
             min_relevance_score=self.policy.local_unit_min_relevance_score,
@@ -1799,7 +1809,7 @@ class KnowledgeQueryService:
 
         while pending_units:
             round_count += 1
-            if round_count > _MAX_BOUNDARY_RESOLUTION_ROUNDS:
+            if round_count > self.continuation_policy.max_boundary_resolution_rounds:
                 resolver_limit_reached = True
                 resolver_limit_required_identities.update(
                     boundary_identity(boundary)
@@ -1810,7 +1820,7 @@ class KnowledgeQueryService:
                         code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
                         message="Generic boundary resolution reached the internal round limit.",
                         severity="WARN",
-                        metadata={"roundLimit": _MAX_BOUNDARY_RESOLUTION_ROUNDS},
+                        metadata={"roundLimit": self.continuation_policy.max_boundary_resolution_rounds},
                     )
                 )
                 break
@@ -1920,7 +1930,7 @@ class KnowledgeQueryService:
                             )
                         )
                         continue
-                    if target_units_materialized >= _MAX_BOUNDARY_TARGET_UNITS:
+                    if target_units_materialized >= self.continuation_policy.max_boundary_target_units:
                         resolver_limit_reached = True
                         omitted_target_unit_ids.append(unit.unit_id)
                         target_units_omitted += 1
@@ -1931,7 +1941,7 @@ class KnowledgeQueryService:
                                     code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
                                     message="Generic boundary resolution reached the internal target-unit limit.",
                                     severity="WARN",
-                                    metadata={"targetUnitLimit": _MAX_BOUNDARY_TARGET_UNITS},
+                                    metadata={"targetUnitLimit": self.continuation_policy.max_boundary_target_units},
                                 )
                             )
                         continue
@@ -2325,7 +2335,7 @@ class KnowledgeQueryService:
             truncation=BoundaryResolutionTruncationState(
                 candidate_sets_truncated=metrics.candidate_sets_truncated,
                 resolver_limit_reached=resolver_limit_reached,
-                recursion_limit_reached=round_count > _MAX_BOUNDARY_RESOLUTION_ROUNDS,
+                recursion_limit_reached=round_count > self.continuation_policy.max_boundary_resolution_rounds,
                 candidate_descriptor_scan_truncated=metrics.candidate_descriptor_scan_truncated,
                 truncated_required_identities=tuple(sorted(truncated_required_identities)),
                 descriptor_scan_truncated_required_identities=tuple(sorted(truncated_required_identities))

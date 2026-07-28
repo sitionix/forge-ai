@@ -1,88 +1,105 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from typing import Any, Mapping
 
 import pytest
 from test_end_to_end_flow import combine_results, neutral_boundary, open_result, proven, unit
-from test_local_flow_unit_engine import node
+from test_local_flow_unit_engine import edge, node
 
 from knowledge_service.boundary_resolution import BoundaryResolutionStatus
-from knowledge_service.end_to_end_flow import EndToEndFlowAssembler
-from knowledge_service.flow_formatter import (
-    EndToEndFormatterAllGraphsFailed,
-    EndToEndFormatterAnswerService,
-    EndToEndPresentationPlanner,
+from knowledge_service.canonical_narration_contract import (
+    FormatterAssertionPredicate,
+    FormatterAssertionValue,
+    NarrationClauseKind,
+    NarrationSemanticOperation,
 )
+from knowledge_service.canonical_narration_planner import CanonicalNarrationPlanner
+from knowledge_service.canonical_narration_strategies import CycleMembershipExtractor
+from knowledge_service.end_to_end_flow import EndToEndFlowAssembler
+from knowledge_service.formatter_policy import FormatterPolicy
+from knowledge_service.formatter_protocol import EndToEndFormatterAllGraphsFailed, EndToEndFormatterValidationError
+from knowledge_service.formatter_service import EndToEndFormatterAnswerService, EndToEndFormatterSegmentPlanner
+from knowledge_service.formatter_validation import validate_provider_clauses
 
 LANGUAGE_TEXTS = {
-    "en": "This canonical stage is grounded in {refs} with clear factual context.",
-    "uk": "Цей канонічний етап спирається на {refs} і має зрозумілий фактичний контекст.",
-    "fr": "Cette étape canonique s'appuie sur {refs} avec un contexte factuel clair.",
-    "de": "Dieser kanonische Schritt stützt sich auf {refs} mit klarem faktischem Kontext.",
-    "pl": "Ten etap kanoniczny opiera się na {refs} i ma jasny kontekst faktograficzny.",
+    "en": "This canonical clause is grounded in {refs} with clear factual context.",
+    "uk": "Цей канонічний пункт спирається на {refs} і має зрозумілий фактичний контекст.",
+    "fr": "Cette phrase canonique s'appuie sur {refs} avec un contexte factuel clair.",
+    "de": "Diese kanonische Aussage stützt sich auf {refs} mit klarem faktischem Kontext.",
+    "pl": "To kanoniczne zdanie opiera się na {refs} i ma jasny kontekst faktograficzny.",
 }
 
 
 class CanonicalFormatterProvider:
-    def __init__(self, *, bad_first: bool = False, mutate_step=None, text_by_language: dict[str, str] | None = None) -> None:
-        self.calls = []
+    def __init__(
+        self,
+        *,
+        bad_first: bool = False,
+        mutate_clause=None,
+        text_by_language: dict[str, str] | None = None,
+    ) -> None:
+        self.calls: list[dict[str, Any]] = []
         self.bad_first = bad_first
-        self.mutate_step = mutate_step
+        self.mutate_clause = mutate_clause
         self.text_by_language = text_by_language or {}
 
     def generate(self, formatter_input, *, deadline_at, cancel_event, validation_errors=()):
         del deadline_at, cancel_event
         self.calls.append({"input": dict(formatter_input), "validationErrors": list(validation_errors or [])})
-        stages = list(formatter_input.get("stages") or [])
+        clauses = list(formatter_input.get("clauses") or [])
         if self.bad_first and len(self.calls) == 1:
-            stages = stages[:-1]
+            clauses = clauses[:-1]
         language = str(formatter_input.get("responseLanguage") or "en")
-        steps = []
-        for stage in stages:
-            refs = self._refs(stage)
-            step = {
-                "stageRef": stage["stageRef"],
-                "coveredFactRefs": list(stage.get("ownedFactRefs") or []),
-                "assertions": list(stage.get("requiredAssertions") or []),
+        response_clauses = []
+        for clause in clauses:
+            refs = self._refs(clause)
+            rendered = {
+                "clauseRef": clause["clauseRef"],
                 "referencedCanonicalRefs": refs,
-                "textTemplate": self._text(stage, language, refs),
+                "textTemplate": self._text(clause, language, refs),
             }
-            if self.mutate_step is not None:
-                step = self.mutate_step(dict(step), stage, len(self.calls))
-            steps.append(step)
+            if self.mutate_clause is not None:
+                rendered = self.mutate_clause(dict(rendered), clause, dict(formatter_input), len(self.calls))
+            response_clauses.append(rendered)
         return type(
             "ProviderResult",
             (),
             {
-                "raw_text": json.dumps({"steps": steps}, ensure_ascii=False),
+                "raw_text": json.dumps({"clauses": response_clauses}, ensure_ascii=False),
                 "prompt_char_length": 100,
                 "prompt_hash": f"prompt-{len(self.calls)}",
                 "duration_ms": 1.0,
             },
         )()
 
-    def _refs(self, stage) -> list[str]:
-        allowed = set(stage.get("allowedCanonicalRefs") or [])
-        candidates = [
-            ref
-            for ref in [*list(stage.get("ownedFactRefs") or ()), *list(stage.get("contextFactRefs") or ())]
-            if isinstance(ref, str) and ref in allowed
-        ]
-        preferred = []
-        for prefix in ("unit:", "topology-boundary:", "edge:", "root:", "node:", "transition:", "open-boundary:", "branch:", "convergence:", "cycle:", "shared-unit:"):
-            for ref in candidates:
+    def _refs(self, clause: Mapping[str, Any]) -> list[str]:
+        allowed = {ref for ref in clause.get("allowedCanonicalRefs") or [] if isinstance(ref, str)}
+        preferred: list[str] = []
+        for prefix in (
+            "unit:",
+            "topology-boundary:",
+            "edge:",
+            "root:",
+            "node:",
+            "transition:",
+            "open-boundary:",
+            "branch:",
+            "convergence:",
+            "cycle:",
+            "shared-unit:",
+        ):
+            for ref in sorted(allowed):
                 if ref.startswith(prefix) and ref not in preferred:
                     preferred.append(ref)
-        for ref in candidates:
-            if ref not in preferred:
-                preferred.append(ref)
-        return sorted(dict.fromkeys(preferred[:2]))
+        return sorted(preferred[:2])
 
-    def _text(self, stage, language: str, refs: list[str]) -> str:
-        placeholder = ", ".join(f"{{{{ref:{ref}}}}}" for ref in refs) if refs else str(stage.get("kind") or "stage")
+    def _text(self, clause: Mapping[str, Any], language: str, refs: list[str]) -> str:
+        placeholder = ", ".join(f"{{{{ref:{ref}}}}}" for ref in refs) if refs else str(clause.get("clauseKind") or "clause")
         if language in self.text_by_language:
             return self.text_by_language[language].format(refs=placeholder)
-        return f"This canonical stage is grounded in {placeholder}."
+        return f"This canonical clause is grounded in {placeholder}."
 
 
 def test_formatter_calls_provider_and_validates_distinct_answer_languages():
@@ -96,13 +113,13 @@ def test_formatter_calls_provider_and_validates_distinct_answer_languages():
 
         assert result.metrics["formatterProviderCallCount"] == 1
         assert result.metrics["formatterRepairCallCount"] == 0
-        assert result.metrics["validatedFormatterStepCount"] == result.metrics["presentationStageCount"]
+        assert result.metrics["validatedFormatterClauseCount"] == result.metrics["presentationClauseCount"]
         assert provider.calls[0]["input"]["responseLanguage"] == language
         texts[language] = result.answers[0].text
     assert len(set(texts.values())) == 5
 
 
-def test_formatter_uses_one_bounded_repair_attempt_with_exact_validation_errors():
+def test_formatter_uses_policy_bounded_repair_attempt_with_exact_validation_errors():
     provider = CanonicalFormatterProvider(bad_first=True)
     service = EndToEndFormatterAnswerService(provider)
 
@@ -113,54 +130,52 @@ def test_formatter_uses_one_bounded_repair_attempt_with_exact_validation_errors(
     assert provider.calls[1]["validationErrors"]
 
 
-def test_open_boundary_stages_generate_machine_assertions():
-    ambiguous_plan = EndToEndPresentationPlanner().plan(_ambiguous_graph(), response_language="en")
-    ambiguous_stage = next(stage for stage in ambiguous_plan.stages if stage.stage_ref.startswith("open-boundary:"))
-    ambiguous_assertions = {(item.predicate, item.value) for item in ambiguous_stage.required_assertions}
+def test_open_boundary_clauses_generate_internal_machine_assertions():
+    ambiguous_plan = CanonicalNarrationPlanner().plan(_ambiguous_graph(), response_language="en")
+    ambiguous = next(clause for clause in ambiguous_plan.clauses if clause.semantic_operation is NarrationSemanticOperation.HAS_AMBIGUOUS_CONTINUATION)
+    ambiguous_assertions = {(item.predicate, item.value) for item in ambiguous.required_assertions}
 
-    assert ("BOUNDARY_STATUS", "AMBIGUOUS") in ambiguous_assertions
-    assert ("TARGET_SELECTION_STATUS", "NONE") in ambiguous_assertions
-    assert ("PROOF_STATUS", "NOT_PROVEN") in ambiguous_assertions
-    assert ("CANDIDATE_CARDINALITY", "MULTIPLE") in ambiguous_assertions
+    assert (FormatterAssertionPredicate.BOUNDARY_STATUS, FormatterAssertionValue.AMBIGUOUS) in ambiguous_assertions
+    assert (FormatterAssertionPredicate.TARGET_SELECTION_STATUS, FormatterAssertionValue.NONE) in ambiguous_assertions
+    assert (FormatterAssertionPredicate.PROOF_STATUS, FormatterAssertionValue.NOT_PROVEN) in ambiguous_assertions
+    assert (FormatterAssertionPredicate.CANDIDATE_CARDINALITY, FormatterAssertionValue.MULTIPLE) in ambiguous_assertions
 
-    unresolved_plan = EndToEndPresentationPlanner().plan(_unresolved_graph(), response_language="en")
-    unresolved_stage = next(stage for stage in unresolved_plan.stages if stage.stage_ref.startswith("open-boundary:"))
-    unresolved_assertions = {(item.predicate, item.value) for item in unresolved_stage.required_assertions}
+    unresolved_plan = CanonicalNarrationPlanner().plan(_unresolved_graph(), response_language="en")
+    unresolved = next(clause for clause in unresolved_plan.clauses if clause.semantic_operation is NarrationSemanticOperation.HAS_UNRESOLVED_CONTINUATION)
+    unresolved_assertions = {(item.predicate, item.value) for item in unresolved.required_assertions}
 
-    assert ("BOUNDARY_STATUS", "UNRESOLVED") in unresolved_assertions
-    assert ("TARGET_SELECTION_STATUS", "NONE") in unresolved_assertions
-    assert ("PROOF_STATUS", "NOT_PROVEN") in unresolved_assertions
-    assert "CANDIDATE_CARDINALITY" not in {item.predicate for item in unresolved_stage.required_assertions}
+    assert (FormatterAssertionPredicate.BOUNDARY_STATUS, FormatterAssertionValue.UNRESOLVED) in unresolved_assertions
+    assert (FormatterAssertionPredicate.TARGET_SELECTION_STATUS, FormatterAssertionValue.NONE) in unresolved_assertions
+    assert (FormatterAssertionPredicate.PROOF_STATUS, FormatterAssertionValue.NOT_PROVEN) in unresolved_assertions
+    assert FormatterAssertionPredicate.CANDIDATE_CARDINALITY not in {item.predicate for item in unresolved.required_assertions}
 
 
-def test_proven_transition_stage_generates_proven_connectivity_assertion():
-    plan = EndToEndPresentationPlanner().plan(_linear_graph(), response_language="en")
-    transition_stage = next(stage for stage in plan.stages if stage.stage_ref.startswith("transition:"))
+def test_proven_transition_clause_generates_proven_connectivity_assertion():
+    plan = CanonicalNarrationPlanner().plan(_linear_graph(), response_language="en")
+    transition = next(clause for clause in plan.clauses if clause.semantic_operation is NarrationSemanticOperation.CONTINUES_WITH_PROVEN_TARGET)
 
-    assert [item.assertion_ref for item in transition_stage.required_assertions] == sorted(item.assertion_ref for item in transition_stage.required_assertions)
+    assert [item.assertion_ref for item in transition.required_assertions] == sorted(item.assertion_ref for item in transition.required_assertions)
     assert [
         (item.predicate, item.subject_ref, item.object_ref, item.value)
-        for item in transition_stage.required_assertions
-    ] == [("CONNECTIVITY_STATUS", "unit:unit-a", "unit:unit-b", "PROVEN")]
+        for item in transition.required_assertions
+    ] == [
+        (
+            FormatterAssertionPredicate.CONNECTIVITY_STATUS,
+            "unit:unit-a",
+            "unit:unit-b",
+            FormatterAssertionValue.PROVEN,
+        )
+    ]
 
 
-@pytest.mark.parametrize(
-    "mutate_step",
-    [
-        lambda step, _stage, _call: {**step, "assertions": [*step["assertions"], {"assertionRef": "assertion:unknown", "predicate": "PROOF_STATUS", "subjectRef": "unit:missing", "objectRef": None, "value": "PROVEN"}]},
-        lambda step, _stage, _call: {**step, "assertions": step["assertions"][:-1]},
-        lambda step, _stage, _call: {**step, "assertions": [*step["assertions"], step["assertions"][0]]},
-        lambda step, _stage, _call: {
-            **step,
-            "assertions": [
-                {**assertion, "value": "WRONG_VALUE"} if index == 0 else assertion
-                for index, assertion in enumerate(step["assertions"])
-            ],
-        },
-    ],
-)
-def test_formatter_rejects_unknown_missing_duplicate_or_wrong_assertions(mutate_step):
-    provider = CanonicalFormatterProvider(mutate_step=mutate_step)
+def test_provider_response_rejects_unexpected_server_owned_fields():
+    provider = CanonicalFormatterProvider(
+        mutate_clause=lambda clause, _server_clause, _input, _call: {
+            **clause,
+            "serverOwnedFacts": ["unit:unit-a"],
+            "serverOwnedSemantics": [],
+        }
+    )
     service = EndToEndFormatterAnswerService(provider)
 
     with pytest.raises(EndToEndFormatterAllGraphsFailed):
@@ -183,19 +198,19 @@ def test_canonical_placeholder_is_substituted_with_display_value():
 @pytest.mark.parametrize(
     "graph_factory,unknown_ref",
     [
-        (lambda: _linear_graph(), "unit:not-owned-by-this-stage"),
+        (lambda: _linear_graph(), "unit:not-owned-by-this-clause"),
         (lambda: _ambiguous_graph(), "unit:unit-b"),
     ],
 )
 def test_formatter_rejects_unknown_or_unrelated_placeholders(graph_factory, unknown_ref):
-    def mutate(step, _stage, _call):
+    def mutate(clause, _server_clause, _input, _call):
         return {
-            **step,
-            "referencedCanonicalRefs": sorted([*step["referencedCanonicalRefs"], unknown_ref]),
-            "textTemplate": f"{step['textTemplate']} {{{{ref:{unknown_ref}}}}}",
+            **clause,
+            "referencedCanonicalRefs": sorted([*clause["referencedCanonicalRefs"], unknown_ref]),
+            "textTemplate": f"{clause['textTemplate']} {{{{ref:{unknown_ref}}}}}",
         }
 
-    provider = CanonicalFormatterProvider(mutate_step=mutate)
+    provider = CanonicalFormatterProvider(mutate_clause=mutate)
     service = EndToEndFormatterAnswerService(provider)
 
     with pytest.raises(EndToEndFormatterAllGraphsFailed):
@@ -205,11 +220,11 @@ def test_formatter_rejects_unknown_or_unrelated_placeholders(graph_factory, unkn
 
 
 def test_formatter_rejects_declared_reference_without_placeholder():
-    def mutate(step, _stage, _call):
-        owned = step["coveredFactRefs"][0]
-        return {**step, "referencedCanonicalRefs": [owned], "textTemplate": "This text omits the declared placeholder."}
+    def mutate(clause, server_clause, _input, _call):
+        declared = min(server_clause["allowedCanonicalRefs"])
+        return {**clause, "referencedCanonicalRefs": [declared], "textTemplate": "This clause omits the declared placeholder."}
 
-    provider = CanonicalFormatterProvider(mutate_step=mutate)
+    provider = CanonicalFormatterProvider(mutate_clause=mutate)
     service = EndToEndFormatterAnswerService(provider)
 
     with pytest.raises(EndToEndFormatterAllGraphsFailed):
@@ -217,13 +232,12 @@ def test_formatter_rejects_declared_reference_without_placeholder():
 
 
 def test_presentation_planner_does_not_invent_query_entry_when_missing():
-    graph = _linear_graph()
-    graph = _without_query_entries(graph)
+    graph = _without_query_entries(_linear_graph())
 
-    plan = EndToEndPresentationPlanner().plan(graph, response_language="en")
+    plan = CanonicalNarrationPlanner().plan(graph, response_language="en")
 
     assert plan.query_entries == ()
-    assert any(item.code == "END_TO_END_PRESENTATION_QUERY_ENTRY_ABSENT" for item in plan.diagnostics)
+    assert any(item.code == "CANONICAL_NARRATION_QUERY_ENTRY_ABSENT" for item in plan.diagnostics)
 
 
 def test_formatter_fails_closed_without_query_entry_and_does_not_call_provider():
@@ -239,42 +253,43 @@ def test_formatter_fails_closed_without_query_entry_and_does_not_call_provider()
     assert service.audit_records[-1]["validationResult"] == "FAILED_NO_QUERY_ENTRY"
 
 
-def test_presentation_plan_contains_branch_convergence_and_shared_unit_stages_without_duplicate_unit_rendering():
+def test_presentation_plan_contains_branch_convergence_and_shared_unit_clauses_without_duplicate_unit_introduction():
     graph = _branch_convergence_graph()
-    plan = EndToEndPresentationPlanner().plan(graph, response_language="en")
-    stage_kinds = [stage.kind for stage in plan.stages]
+    plan = CanonicalNarrationPlanner().plan(graph, response_language="en")
+    clause_kinds = [clause.clause_kind for clause in plan.clauses]
 
-    assert "BRANCH" in stage_kinds
-    assert "CONVERGENCE" in stage_kinds
-    assert "SHARED_UNIT_REFERENCE" in stage_kinds
-    assert [stage.stage_ref for stage in plan.stages if stage.stage_ref == "unit:unit-d"] == ["unit:unit-d"]
+    assert NarrationClauseKind.BRANCH in clause_kinds
+    assert NarrationClauseKind.CONVERGENCE in clause_kinds
+    assert NarrationClauseKind.SHARED_UNIT_REFERENCE in clause_kinds
+    assert [
+        clause.clause_ref
+        for clause in plan.clauses
+        if clause.semantic_operation is NarrationSemanticOperation.PRESENT_UNIT and clause.clause_ref.startswith("unit:unit-d:")
+    ] == ["unit:unit-d:overview"]
 
 
 def test_presentation_plan_owns_every_fact_once_and_structural_refs_are_context():
-    plan = EndToEndPresentationPlanner().plan(_branch_convergence_graph(), response_language="en")
-    owned = [fact for stage in plan.stages for fact in stage.owned_fact_refs]
+    plan = CanonicalNarrationPlanner().plan(_branch_convergence_graph(), response_language="en")
+    owned = [fact for clause in plan.clauses for fact in clause.canonical_fact_refs]
 
     assert len(owned) == len(set(owned))
-    for stage in plan.stages:
-        if stage.kind in {"BRANCH", "CONVERGENCE", "SHARED_UNIT_REFERENCE"}:
-            assert all(fact.startswith(("branch:", "convergence:", "shared-unit:")) for fact in stage.owned_fact_refs)
-            assert any(fact.startswith("transition:") for fact in stage.context_fact_refs)
+    for clause in plan.clauses:
+        if clause.clause_kind in {NarrationClauseKind.BRANCH, NarrationClauseKind.CONVERGENCE, NarrationClauseKind.SHARED_UNIT_REFERENCE}:
+            assert all(fact.startswith(("branch:", "convergence:", "shared-unit:")) for fact in clause.canonical_fact_refs)
+            assert any(ref.startswith("transition:") for ref in clause.qualifier_refs)
 
 
 @pytest.mark.parametrize(
-    "mutate_step",
+    "mutate_clause",
     [
-        lambda step, _stage, _call: {**step, "coveredFactRefs": []},
-        lambda step, _stage, _call: {**step, "coveredFactRefs": step["coveredFactRefs"][:-1]},
-        lambda step, _stage, _call: {**step, "coveredFactRefs": sorted([*step["coveredFactRefs"], "fact:extra"])},
-        lambda step, stage, _call: {
-            **step,
-            "coveredFactRefs": sorted([*step["coveredFactRefs"], *(stage.get("contextFactRefs") or ["fact:context"])]),
-        },
+        lambda _clause, _server_clause, _input, _call: {},
+        lambda clause, _server_clause, _input, _call: {**clause, "clauseRef": "clause:extra"},
+        lambda clause, _server_clause, _input, _call: {**clause, "referencedCanonicalRefs": []},
+        lambda clause, _server_clause, _input, _call: {**clause, "textTemplate": ""},
     ],
 )
-def test_formatter_rejects_empty_subset_extra_or_context_fact_coverage(mutate_step):
-    provider = CanonicalFormatterProvider(mutate_step=mutate_step)
+def test_formatter_rejects_invalid_clause_protocol(mutate_clause):
+    provider = CanonicalFormatterProvider(mutate_clause=mutate_clause)
     service = EndToEndFormatterAnswerService(provider)
 
     with pytest.raises(EndToEndFormatterAllGraphsFailed):
@@ -295,12 +310,14 @@ def test_two_selected_graphs_produce_two_answers():
 
 
 def test_second_selected_graph_failure_fails_entire_human_answer():
-    def mutate(step, _stage, call):
-        if call >= 2:
-            return {**step, "assertions": step["assertions"][:-1]}
-        return step
+    failing_graph_id = _branch_convergence_graph().stable_graph_id
 
-    provider = CanonicalFormatterProvider(mutate_step=mutate)
+    def mutate(clause, _server_clause, formatter_input, _call):
+        if formatter_input["graphId"] == failing_graph_id:
+            return {**clause, "clauseRef": "missing"}
+        return clause
+
+    provider = CanonicalFormatterProvider(mutate_clause=mutate)
     service = EndToEndFormatterAnswerService(provider)
 
     with pytest.raises(EndToEndFormatterAllGraphsFailed) as exc:
@@ -309,6 +326,100 @@ def test_second_selected_graph_failure_fails_entire_human_answer():
     assert len(exc.value.failed_graph_ids) == 1
     assert service.pipeline_records[-1]["selectedGraphCount"] == 2
     assert service.pipeline_records[-1]["answerCount"] == 0
+
+
+def test_segments_preserve_clause_order_and_do_not_split_clauses():
+    policy = FormatterPolicy(max_serialized_clause_chars=4096, max_serialized_segment_chars=8192, max_clauses_per_segment=2)
+    plan = CanonicalNarrationPlanner(policy=policy).plan(_branch_convergence_graph(), response_language="en")
+
+    segments = EndToEndFormatterSegmentPlanner(policy=policy).segments(plan)
+
+    assert all(len(segment.clauses) <= 2 for segment in segments)
+    assert [ref for segment in segments for ref in segment.clause_refs] == [clause.clause_ref for clause in plan.clauses]
+    assert len({ref for segment in segments for ref in segment.clause_refs}) == len(plan.clauses)
+
+
+def test_oversized_single_clause_fails_before_provider_call():
+    policy = FormatterPolicy(max_serialized_clause_chars=1024, max_serialized_segment_chars=4096)
+    graph = _large_unit_graph()
+    provider = CanonicalFormatterProvider()
+    service = EndToEndFormatterAnswerService(provider, segment_planner=EndToEndFormatterSegmentPlanner(policy=policy))
+
+    with pytest.raises(EndToEndFormatterAllGraphsFailed):
+        service.answer(None, type("Execution", (), {"selected_graphs": (graph,)})(), plan=_plan("en"))
+
+    assert provider.calls == []
+
+
+def test_unknown_open_boundary_status_fails_closed():
+    graph = _ambiguous_graph()
+    malformed_boundary = replace(graph.open_boundaries[0], status="MALFORMED")
+    malformed_graph = replace(graph, open_boundaries=(malformed_boundary,))
+
+    plan = CanonicalNarrationPlanner().plan(malformed_graph, response_language="en")
+
+    assert any(item.code == "CANONICAL_NARRATION_STRATEGY_RESOLUTION_FAILED" for item in plan.diagnostics)
+
+
+def test_unit_semantics_distinguish_singleton_transition_open_boundary_and_truncated():
+    singleton = CanonicalNarrationPlanner().plan(_singleton_graph(), response_language="en")
+    singleton_coverage = _coverage_clause(singleton)
+    assert any(item.value is FormatterAssertionValue.NO_LOCAL_TRANSITIONS for item in singleton_coverage.required_assertions)
+
+    transitioned = CanonicalNarrationPlanner().plan(_local_transition_graph(), response_language="en")
+    transitioned_coverage = _coverage_clause(transitioned)
+    assert any(item.value is FormatterAssertionValue.HAS_LOCAL_TRANSITIONS for item in transitioned_coverage.required_assertions)
+
+    open_boundary = CanonicalNarrationPlanner().plan(_topology_boundary_graph(), response_language="en")
+    open_coverage = _coverage_clause(open_boundary)
+    assert any(item.value is FormatterAssertionValue.HAS_OPEN_TOPOLOGY_BOUNDARY for item in open_coverage.required_assertions)
+
+    truncated_graph = replace(_singleton_graph(), unit_refs=(replace(_singleton_graph().unit_refs[0], local_unit=replace(_singleton_graph().unit_refs[0].local_unit, complete=False)),))
+    truncated = CanonicalNarrationPlanner().plan(truncated_graph, response_language="en")
+    truncated_coverage = _coverage_clause(truncated)
+    assert any(item.value is FormatterAssertionValue.TRUNCATED for item in truncated_coverage.required_assertions)
+
+
+def test_cycle_membership_uses_only_cycle_transitions():
+    graph = _cycle_plus_tail_graph()
+
+    membership = CycleMembershipExtractor().extract(graph)
+
+    assert membership.cycle_unit_ids == ("unit-a", "unit-b")
+    assert len(membership.cycle_transition_ids) == 2
+    assert all("unit-c" not in transition_id for transition_id in membership.cycle_transition_ids)
+
+
+def test_validation_rejects_unknown_placeholder_without_reading_prose_semantics():
+    plan = CanonicalNarrationPlanner().plan(_linear_graph(), response_language="en")
+    segment = EndToEndFormatterSegmentPlanner().segments(plan)[0]
+    clause_ref = segment.clause_refs[0]
+    raw = json.dumps(
+        {
+            "clauses": [
+                {
+                    "clauseRef": clause_ref,
+                    "referencedCanonicalRefs": ["unit:unknown"],
+                    "textTemplate": "Dowolny tekst {{ref:unit:unknown}}.",
+                },
+                *[
+                    {
+                        "clauseRef": ref,
+                        "referencedCanonicalRefs": [],
+                        "textTemplate": "Dowolny tekst bez odwolania.",
+                    }
+                    for ref in segment.clause_refs[1:]
+                ],
+            ]
+        }
+    )
+
+    with pytest.raises(EndToEndFormatterValidationError):
+        validate_provider_clauses(raw, plan, segment)
+
+
+def _coverage_clause(plan):
+    return next(clause for clause in plan.clauses if clause.semantic_operation is NarrationSemanticOperation.PRESENT_COVERAGE)
 
 
 def _plan(language: str):
@@ -387,14 +498,61 @@ def _branch_convergence_graph():
     return result.graphs[0]
 
 
-def _without_query_entries(graph):
-    return type(graph)(
-        stable_graph_id=graph.stable_graph_id,
-        unit_refs=graph.unit_refs,
-        query_entry_unit_ids=(),
-        topology_entry_unit_ids=graph.topology_entry_unit_ids,
-        proven_cross_source_transitions=graph.proven_cross_source_transitions,
-        open_boundaries=graph.open_boundaries,
-        coverage=graph.coverage,
-        diagnostics=graph.diagnostics,
+def _singleton_graph():
+    owner = node("Solo", source="source-a")
+    result = EndToEndFlowAssembler().assemble((unit("unit-solo", owner),), query_entry_unit_ids=("unit-solo",), boundary_resolution=None)
+    return result.graphs[0]
+
+
+def _local_transition_graph():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-a")
+    unit_a = unit("unit-a", owner_a, transitions=(edge("edge-a-b", owner_a.node_id, owner_b.node_id, source=owner_a.source_id),))
+    result = EndToEndFlowAssembler().assemble((unit_a,), query_entry_unit_ids=("unit-a",), boundary_resolution=None)
+    return result.graphs[0]
+
+
+def _topology_boundary_graph():
+    owner = node("A", source="source-a")
+    open_edge = edge("edge-open", owner.node_id, None, source=owner.source_id, status="UNRESOLVED")
+    local = unit("unit-a", owner)
+    local = replace(
+        local,
+        topology_boundaries=(open_edge,),
+        coverage=replace(local.coverage, topology_boundary_count=1),
     )
+    result = EndToEndFlowAssembler().assemble((local,), query_entry_unit_ids=("unit-a",), boundary_resolution=None)
+    return result.graphs[0]
+
+
+def _large_unit_graph():
+    owner = node("Large" + ("X" * 3000), source="source-a")
+    local = unit("unit-large", owner)
+    result = EndToEndFlowAssembler().assemble((local,), query_entry_unit_ids=("unit-large",), boundary_resolution=None)
+    return result.graphs[0]
+
+
+def _cycle_plus_tail_graph():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    owner_c = node("C", source="source-c")
+    req_ab = neutral_boundary("required-ab", owner_a, "REQUIRED", "ab")
+    prov_b = neutral_boundary("provided-b", owner_b, "PROVIDED", "ab")
+    req_ba = neutral_boundary("required-ba", owner_b, "REQUIRED", "ba")
+    prov_a = neutral_boundary("provided-a", owner_a, "PROVIDED", "ba")
+    req_bc = neutral_boundary("required-bc", owner_b, "REQUIRED", "bc")
+    prov_c = neutral_boundary("provided-c", owner_c, "PROVIDED", "bc")
+    unit_a = unit("unit-a", owner_a, boundaries=(req_ab, prov_a))
+    unit_b = unit("unit-b", owner_b, boundaries=(prov_b, req_ba, req_bc))
+    unit_c = unit("unit-c", owner_c, boundaries=(prov_c,))
+    resolution = combine_results(
+        proven(req_ab, prov_b, required_unit_ids=("unit-a",), target_unit_ids=("unit-b",), resolution_id="res-ab"),
+        proven(req_ba, prov_a, required_unit_ids=("unit-b",), target_unit_ids=("unit-a",), resolution_id="res-ba"),
+        proven(req_bc, prov_c, required_unit_ids=("unit-b",), target_unit_ids=("unit-c",), resolution_id="res-bc"),
+    )
+    result = EndToEndFlowAssembler().assemble((unit_a, unit_b, unit_c), query_entry_unit_ids=("unit-a",), boundary_resolution=resolution)
+    return result.graphs[0]
+
+
+def _without_query_entries(graph):
+    return replace(graph, query_entry_unit_ids=())

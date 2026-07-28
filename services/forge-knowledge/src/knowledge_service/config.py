@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple
+from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
 import yaml
@@ -13,6 +13,10 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
 DEFAULT_GENERATIVE_MODEL = "qwen2.5-coder:14b"
 DEFAULT_GENERATIVE_CONTEXT_TOKENS = 32768
 DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS = 180
+DEFAULT_FORMATTER_MAX_SERIALIZED_CLAUSE_CHARS = 12000
+DEFAULT_FORMATTER_MAX_SERIALIZED_SEGMENT_CHARS = 60000
+DEFAULT_FORMATTER_MAX_REPAIR_ATTEMPTS = 1
+DEFAULT_FORMATTER_MAX_CLAUSES_PER_SEGMENT = 24
 
 
 class LoggingSettings(BaseModel):
@@ -69,7 +73,7 @@ class GenerativeSettings(BaseModel):
 class AnalysisSettings(BaseModel):
     enabled: bool = True
     request_timeout_seconds: int = Field(default=DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS, ge=1)
-    ai_call_timeout_seconds: Optional[int] = Field(default=None, ge=1)
+    ai_call_timeout_seconds: int | None = Field(default=None, ge=1)
     per_file_timeout_seconds: int = Field(default=120, ge=1)
     stall_threshold_seconds: int = Field(default=300, ge=1)
     max_file_chars: int = Field(default=60000, ge=1)
@@ -120,16 +124,32 @@ class HumanQuerySettings(BaseModel):
     request_timeout_seconds: int = Field(default=DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS, ge=1)
 
 
+class FormatterSettings(BaseModel):
+    max_serialized_clause_chars: int = Field(default=DEFAULT_FORMATTER_MAX_SERIALIZED_CLAUSE_CHARS, ge=1024)
+    max_serialized_segment_chars: int = Field(default=DEFAULT_FORMATTER_MAX_SERIALIZED_SEGMENT_CHARS, ge=1024)
+    max_repair_attempts: int = Field(default=DEFAULT_FORMATTER_MAX_REPAIR_ATTEMPTS, ge=0)
+    max_clauses_per_segment: int = Field(default=DEFAULT_FORMATTER_MAX_CLAUSES_PER_SEGMENT, ge=1)
+
+    @root_validator
+    def segment_budget_must_cover_clause_budget(cls, values: dict[str, Any]) -> dict[str, Any]:
+        clause_budget = int(values.get("max_serialized_clause_chars") or DEFAULT_FORMATTER_MAX_SERIALIZED_CLAUSE_CHARS)
+        segment_budget = int(values.get("max_serialized_segment_chars") or DEFAULT_FORMATTER_MAX_SERIALIZED_SEGMENT_CHARS)
+        if segment_budget < clause_budget:
+            raise ValueError("query.formatter.max_serialized_segment_chars must be at least max_serialized_clause_chars")
+        return values
+
+
 class QueryAuditSettings(BaseModel):
     memory_max_records: int = Field(default=200, ge=0)
-    directory: Optional[Path] = None
+    directory: Path | None = None
     max_retained_files: int = Field(default=200, ge=0)
-    max_file_age_seconds: Optional[int] = Field(default=None, ge=1)
+    max_file_age_seconds: int | None = Field(default=None, ge=1)
 
 
 class QuerySettings(BaseModel):
     default_response_language: str = Field(default="en", min_length=2)
     human_query: HumanQuerySettings = Field(default_factory=HumanQuerySettings)
+    formatter: FormatterSettings = Field(default_factory=FormatterSettings)
     audit: QueryAuditSettings = Field(default_factory=QueryAuditSettings)
 
     @validator("default_response_language")
@@ -148,7 +168,7 @@ class ForgeSettings(BaseModel):
     home: Path
     config_dir: Path
     runtime_dir: Path
-    workspace_root: Optional[Path]
+    workspace_root: Path | None
     logging: LoggingSettings
     generative: GenerativeSettings = Field(default_factory=GenerativeSettings)
     query: QuerySettings = Field(default_factory=QuerySettings)
@@ -156,7 +176,7 @@ class ForgeSettings(BaseModel):
     services: ServicesSettings
 
     @root_validator
-    def ensure_runtime_dirs_are_absolute(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    def ensure_runtime_dirs_are_absolute(cls, values: dict[str, Any]) -> dict[str, Any]:
         for key in ("home", "config_dir", "runtime_dir"):
             path = values.get(key)
             if isinstance(path, Path) and not path.is_absolute():
@@ -184,10 +204,14 @@ class AppConfig(BaseModel):
     analysis_ai_call_timeout_seconds: int = DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS
     human_query_request_timeout_seconds: int = DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS
     query_default_response_language: str = "en"
+    query_formatter_max_serialized_clause_chars: int = DEFAULT_FORMATTER_MAX_SERIALIZED_CLAUSE_CHARS
+    query_formatter_max_serialized_segment_chars: int = DEFAULT_FORMATTER_MAX_SERIALIZED_SEGMENT_CHARS
+    query_formatter_max_repair_attempts: int = DEFAULT_FORMATTER_MAX_REPAIR_ATTEMPTS
+    query_formatter_max_clauses_per_segment: int = DEFAULT_FORMATTER_MAX_CLAUSES_PER_SEGMENT
     query_audit_memory_max_records: int = 200
-    query_audit_directory: Optional[Path] = None
+    query_audit_directory: Path | None = None
     query_audit_max_retained_files: int = 200
-    query_audit_max_file_age_seconds: Optional[int] = None
+    query_audit_max_file_age_seconds: int | None = None
     analysis_per_file_timeout_seconds: int = 120
     analysis_stall_threshold_seconds: int = 300
     analysis_context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS
@@ -221,7 +245,7 @@ class AppConfig(BaseModel):
     retention_keep_completed_jobs: int = 50
     logging: LoggingSettings = Field(default_factory=lambda: LoggingSettings(directory=forge_ai_home() / "var" / "logs"))
     runtime_dir: Path = Field(default_factory=lambda: forge_ai_home() / "var")
-    workspace_root: Optional[Path] = None
+    workspace_root: Path | None = None
     config_dir: Path = Field(default_factory=lambda: forge_ai_home() / "config")
 
     class Config:
@@ -251,7 +275,7 @@ class AppConfig(BaseModel):
         return str(value).rstrip("/")
 
     @classmethod
-    def from_forge_settings(cls, settings: ForgeSettings, module_dir: Optional[Path] = None) -> "AppConfig":
+    def from_forge_settings(cls, settings: ForgeSettings, module_dir: Path | None = None) -> AppConfig:
         knowledge = settings.services.knowledge
         generative = settings.generative
         analysis = knowledge.analysis
@@ -273,6 +297,10 @@ class AppConfig(BaseModel):
             analysis_ai_call_timeout_seconds=analysis.ai_call_timeout_seconds or analysis.request_timeout_seconds,
             human_query_request_timeout_seconds=settings.query.human_query.request_timeout_seconds,
             query_default_response_language=settings.query.default_response_language,
+            query_formatter_max_serialized_clause_chars=settings.query.formatter.max_serialized_clause_chars,
+            query_formatter_max_serialized_segment_chars=settings.query.formatter.max_serialized_segment_chars,
+            query_formatter_max_repair_attempts=settings.query.formatter.max_repair_attempts,
+            query_formatter_max_clauses_per_segment=settings.query.formatter.max_clauses_per_segment,
             query_audit_memory_max_records=settings.query.audit.memory_max_records,
             query_audit_directory=settings.query.audit.directory,
             query_audit_max_retained_files=settings.query.audit.max_retained_files,
@@ -315,12 +343,12 @@ class AppConfig(BaseModel):
         )
 
 
-def load_app_config(config_file: Optional[Path] = None, environ: Optional[Mapping[str, str]] = None) -> AppConfig:
+def load_app_config(config_file: Path | None = None, environ: Mapping[str, str] | None = None) -> AppConfig:
     settings = load_forge_settings(config_file=config_file, environ=environ)
     return AppConfig.from_forge_settings(settings)
 
 
-def load_forge_settings(config_file: Optional[Path] = None, environ: Optional[Mapping[str, str]] = None) -> ForgeSettings:
+def load_forge_settings(config_file: Path | None = None, environ: Mapping[str, str] | None = None) -> ForgeSettings:
     env = dict(os.environ if environ is None else environ)
     root = forge_ai_home(env=env)
     base_env = _default_env(root, env)
@@ -347,7 +375,7 @@ def knowledge_module_dir() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def forge_ai_home(environ: Optional[Mapping[str, str]] = None, env: Optional[Mapping[str, str]] = None) -> Path:
+def forge_ai_home(environ: Mapping[str, str] | None = None, env: Mapping[str, str] | None = None) -> Path:
     values = dict(os.environ if environ is None and env is None else (environ or env or {}))
     configured = values.get("FORGE_AI_HOME")
     if configured:
@@ -360,7 +388,7 @@ def forge_ai_home(environ: Optional[Mapping[str, str]] = None, env: Optional[Map
     return knowledge_module_dir().parents[1].resolve()
 
 
-def _select_config_file(root: Path, env: Mapping[str, str], explicit: Optional[Path]) -> Optional[Path]:
+def _select_config_file(root: Path, env: Mapping[str, str], explicit: Path | None) -> Path | None:
     if explicit is not None:
         return explicit.expanduser().resolve()
     configured = env.get("FORGE_CONFIG_FILE")
@@ -377,7 +405,7 @@ def _select_config_file(root: Path, env: Mapping[str, str], explicit: Optional[P
     return candidates[-1].resolve()
 
 
-def _default_env(root: Path, env: Mapping[str, str]) -> Dict[str, str]:
+def _default_env(root: Path, env: Mapping[str, str]) -> dict[str, str]:
     values = dict(env)
     values.setdefault("FORGE_AI_HOME", str(root))
     values.setdefault("FORGE_CONFIG_DIR", str(root / "config"))
@@ -403,17 +431,17 @@ def _path(value: str, env: Mapping[str, str]) -> Path:
     return (Path(env["FORGE_AI_HOME"]) / path).resolve()
 
 
-def _load_yaml_mapping(path: Path) -> Dict[str, Any]:
+def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
         raise ValueError(f"Forge config is invalid YAML: {path}: {exc}") from exc
     if not isinstance(data, dict):
-        raise ValueError(f"Forge config must contain a YAML mapping: {path}")
+        raise TypeError(f"Forge config must contain a YAML mapping: {path}")
     return data
 
 
-def _mapping_field(data: Mapping[str, Any], *names: str) -> Dict[str, Any]:
+def _mapping_field(data: Mapping[str, Any], *names: str) -> dict[str, Any]:
     for name in names:
         value = data.get(name)
         if isinstance(value, dict):
@@ -421,17 +449,18 @@ def _mapping_field(data: Mapping[str, Any], *names: str) -> Dict[str, Any]:
     return {}
 
 
-def _forge_ai_data(data: Mapping[str, Any]) -> Dict[str, Any]:
+def _forge_ai_data(data: Mapping[str, Any]) -> dict[str, Any]:
     return _mapping_field(_mapping_field(data, "forge"), "ai")
 
 
-def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]) -> Dict[str, Any]:
+def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]) -> dict[str, Any]:
     services = _mapping_field(forge_ai, "services")
     knowledge = _mapping_field(services, "knowledge")
     logging = _mapping_field(forge_ai, "logging")
     generative = _mapping_field(forge_ai, "generative")
     query = _mapping_field(forge_ai, "query")
     human_query = _mapping_field(query, "human-query", "human_query")
+    formatter = _mapping_field(query, "formatter")
     audit = _mapping_field(query, "audit")
     inventory = _mapping_field(knowledge, "inventory")
     storage = _mapping_field(knowledge, "storage")
@@ -472,6 +501,32 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     env,
                     DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS,
                 )
+            },
+            "formatter": {
+                "max_serialized_clause_chars": _int_config(
+                    formatter.get("max-serialized-clause-chars")
+                    or formatter.get("max_serialized_clause_chars"),
+                    env,
+                    DEFAULT_FORMATTER_MAX_SERIALIZED_CLAUSE_CHARS,
+                ),
+                "max_serialized_segment_chars": _int_config(
+                    formatter.get("max-serialized-segment-chars")
+                    or formatter.get("max_serialized_segment_chars"),
+                    env,
+                    DEFAULT_FORMATTER_MAX_SERIALIZED_SEGMENT_CHARS,
+                ),
+                "max_repair_attempts": _int_config(
+                    formatter.get("max-repair-attempts")
+                    or formatter.get("max_repair_attempts"),
+                    env,
+                    DEFAULT_FORMATTER_MAX_REPAIR_ATTEMPTS,
+                ),
+                "max_clauses_per_segment": _int_config(
+                    formatter.get("max-clauses-per-segment")
+                    or formatter.get("max_clauses_per_segment"),
+                    env,
+                    DEFAULT_FORMATTER_MAX_CLAUSES_PER_SEGMENT,
+                ),
             },
             "audit": {
                 "memory_max_records": int(audit.get("memory-max-records") or audit.get("memory_max_records") or 200),
@@ -575,9 +630,9 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
     }
 
 
-def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) -> None:
+def _apply_knowledge_env_overrides(raw: dict[str, Any], env: Mapping[str, str]) -> None:
     generative = raw["generative"]
-    generative_env_map: Dict[str, Tuple[str, Callable[[str], object]]] = {
+    generative_env_map: dict[str, tuple[str, Callable[[str], object]]] = {
         "FORGE_GENERATIVE_PROVIDER": ("provider", str),
         "FORGE_GENERATIVE_BASE_URL": ("base_url", str),
         "FORGE_GENERATIVE_MODEL": ("model", str),
@@ -590,6 +645,16 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
         raw["query"]["human_query"]["request_timeout_seconds"] = int(env["FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS"])
     if env.get("FORGE_QUERY_DEFAULT_RESPONSE_LANGUAGE"):
         raw["query"]["default_response_language"] = env["FORGE_QUERY_DEFAULT_RESPONSE_LANGUAGE"]
+    formatter = raw["query"]["formatter"]
+    formatter_env_map: dict[str, tuple[str, Callable[[str], object]]] = {
+        "FORGE_QUERY_FORMATTER_MAX_SERIALIZED_CLAUSE_CHARS": ("max_serialized_clause_chars", int),
+        "FORGE_QUERY_FORMATTER_MAX_SERIALIZED_SEGMENT_CHARS": ("max_serialized_segment_chars", int),
+        "FORGE_QUERY_FORMATTER_MAX_REPAIR_ATTEMPTS": ("max_repair_attempts", int),
+        "FORGE_QUERY_FORMATTER_MAX_CLAUSES_PER_SEGMENT": ("max_clauses_per_segment", int),
+    }
+    for name, (field, converter) in formatter_env_map.items():
+        if env.get(name):
+            formatter[field] = converter(env[name])
     if env.get("FORGE_QUERY_AUDIT_MEMORY_MAX_RECORDS"):
         raw["query"]["audit"]["memory_max_records"] = int(env["FORGE_QUERY_AUDIT_MEMORY_MAX_RECORDS"])
     if env.get("FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR"):
@@ -616,7 +681,7 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
         knowledge["inventory"]["auto_refresh_interval_seconds"] = int(env["KNOWLEDGE_INVENTORY_AUTO_REFRESH_INTERVAL_SECONDS"])
 
     analysis = knowledge["analysis"]
-    env_map: Dict[str, Tuple[str, Callable[[str], object]]] = {
+    env_map: dict[str, tuple[str, Callable[[str], object]]] = {
         "KNOWLEDGE_ANALYSIS_ENABLED": ("enabled", lambda value: value.lower() != "false"),
         "KNOWLEDGE_ANALYSIS_REQUEST_TIMEOUT_SECONDS": ("request_timeout_seconds", int),
         "KNOWLEDGE_ANALYSIS_AI_CALL_TIMEOUT_SECONDS": ("ai_call_timeout_seconds", int),
@@ -635,7 +700,7 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
         analysis["max_attempts_per_file"] = int(env["KNOWLEDGE_ANALYSIS_RETRY_ATTEMPTS"])
 
     semantic = knowledge["semantic"]
-    semantic_env_map: Dict[str, Tuple[str, Callable[[str], object]]] = {
+    semantic_env_map: dict[str, tuple[str, Callable[[str], object]]] = {
         "KNOWLEDGE_SEMANTIC_ENABLED": ("enabled", lambda value: value.lower() != "false"),
         "KNOWLEDGE_SEMANTIC_AUTO_BUILD_ENABLED": ("auto_build_enabled", lambda value: value.lower() != "false"),
         "KNOWLEDGE_SEMANTIC_AUTO_BUILD_INTERVAL_SECONDS": ("auto_build_interval_seconds", float),

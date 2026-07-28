@@ -34,14 +34,10 @@ from knowledge_service.context_service import ContextService
 from knowledge_service.embedding_provider import OllamaEmbeddingProvider
 from knowledge_service.end_to_end_projection import EndToEndProjectionBuilder
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.flow_formatter import (
-    EndToEndFormatterAllGraphsFailed,
-    EndToEndFormatterAnswerService,
-    EndToEndFormatterDeadlineExceeded,
-    EndToEndFormatterPromptRenderer,
-    EndToEndFormatterSegmentPlanner,
-    LocalOllamaEndToEndFormatterClient,
-)
+from knowledge_service.formatter_policy import FormatterPolicy
+from knowledge_service.formatter_protocol import EndToEndFormatterAllGraphsFailed, EndToEndFormatterDeadlineExceeded
+from knowledge_service.formatter_provider import EndToEndFormatterPromptRenderer, LocalOllamaEndToEndFormatterClient
+from knowledge_service.formatter_service import EndToEndFormatterAnswerService, EndToEndFormatterSegmentPlanner
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
@@ -743,7 +739,7 @@ def _knowledge_human_query_response(
                 correlation_id=correlation_id,
             )
         graph_assembly_duration_ms = fetch_duration_ms
-        answer_service, close_formatter = _flow_formatter_service(request, config)
+        answer_service, close_formatter = _end_to_end_formatter_service(request, config)
         try:
             terminal_stage = "END_TO_END_PRESENTATION_PLANNING"
             result = answer_service.answer(
@@ -1517,14 +1513,20 @@ def _query_interpretation_service(
     ), provider.close
 
 
-def _flow_formatter_service(
+def _end_to_end_formatter_service(
     request: Request,
     config: AppConfig,
 ) -> tuple[EndToEndFormatterAnswerService, Any | None]:
-    injected_provider = getattr(request.app.state, "final_flow_formatter_provider", None)
+    injected_provider = getattr(request.app.state, "end_to_end_formatter_provider", None)
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
-    segment_planner = EndToEndFormatterSegmentPlanner(context_tokens=config.analysis_context_tokens)
-    formatter_model = str(os.environ.get("FORGE_FLOW_FORMATTER_MODEL") or config.analysis_model)
+    formatter_policy = FormatterPolicy(
+        max_serialized_clause_chars=config.query_formatter_max_serialized_clause_chars,
+        max_serialized_segment_chars=config.query_formatter_max_serialized_segment_chars,
+        max_repair_attempts=config.query_formatter_max_repair_attempts,
+        max_clauses_per_segment=config.query_formatter_max_clauses_per_segment,
+    )
+    segment_planner = EndToEndFormatterSegmentPlanner(policy=formatter_policy)
+    formatter_model = str(os.environ.get("FORGE_END_TO_END_FORMATTER_MODEL") or config.analysis_model)
     if injected_provider is not None:
         return EndToEndFormatterAnswerService(
             injected_provider,
@@ -1538,7 +1540,6 @@ def _flow_formatter_service(
         config.analysis_base_url,
         formatter_model,
         config.analysis_ai_call_timeout_seconds,
-        config.analysis_context_tokens,
         renderer=EndToEndFormatterPromptRenderer(),
     )
     return EndToEndFormatterAnswerService(
