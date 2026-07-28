@@ -84,11 +84,41 @@ class NarrationStrategyRegistry:
         for context in contexts:
             for strategy in self.resolve(context):
                 clauses.extend(strategy.build(context))
-        return tuple(sorted(clauses, key=lambda item: item.ordering_key))
+        return tuple(clauses)
 
 
 class NarrationStrategyResolutionError(RuntimeError):
     pass
+
+
+class CanonicalDisplayValueConflictError(NarrationStrategyResolutionError):
+    pass
+
+
+class CanonicalDisplayValueCollector:
+    def __init__(self) -> None:
+        self._values: dict[str, str] = {}
+
+    def add(self, ref: object, display_value: object) -> CanonicalDisplayValueCollector:
+        ref_text = str(ref or "").strip()
+        if not ref_text:
+            return self
+        value = str(display_value or "").strip() or _canonical_ref_display(ref_text)
+        existing = self._values.get(ref_text)
+        if existing is not None and existing != value:
+            raise CanonicalDisplayValueConflictError(
+                f"Conflicting canonical display values for {ref_text!r}: {existing!r} != {value!r}"
+            )
+        self._values[ref_text] = value
+        return self
+
+    def add_all(self, pairs: Sequence[tuple[object, object]]) -> CanonicalDisplayValueCollector:
+        for ref, display_value in pairs:
+            self.add(ref, display_value)
+        return self
+
+    def build(self) -> dict[str, str]:
+        return dict(sorted(self._values.items()))
 
 
 class UnitNarrationStrategy:
@@ -127,151 +157,94 @@ class UnitNarrationStrategy:
         unit_ref = canonical_ref(CanonicalReferenceKind.UNIT, unit.unit_id)
         base_order = ("unit", unit.unit_id)
         display = _unit_display_values(unit)
-        clauses: list[CanonicalNarrationClause] = [
-            _clause(
-                clause_ref=canonical_ref(CanonicalReferenceKind.UNIT, unit.unit_id, "overview"),
-                clause_kind=NarrationClauseKind.UNIT_INTRODUCTION,
-                semantic_operation=NarrationSemanticOperation.PRESENT_UNIT,
-                subject_refs=(unit_ref,),
-                object_refs=(),
-                qualifier_refs=(canonical_ref(CanonicalReferenceKind.SOURCE, unit.source_id),),
-                canonical_fact_refs=(unit_ref,),
-                display_values=display,
-                ordering_key=(*base_order, "00-overview"),
-                assertions=(
-                    _assertion(
-                        unit_ref,
-                        "unit-status",
-                        predicate=FormatterAssertionPredicate.UNIT_STATUS,
-                        subject_ref=unit_ref,
-                        value=FormatterAssertionValue.UNIT_PRESENT,
-                    ),
+        overview = _clause(
+            clause_ref=canonical_ref(CanonicalReferenceKind.UNIT, unit.unit_id, "overview"),
+            clause_kind=NarrationClauseKind.UNIT_INTRODUCTION,
+            semantic_operation=NarrationSemanticOperation.PRESENT_UNIT,
+            subject_refs=(unit_ref,),
+            object_refs=(),
+            qualifier_refs=(canonical_ref(CanonicalReferenceKind.SOURCE, unit.source_id),),
+            canonical_fact_refs=(unit_ref,),
+            display_values=display,
+            ordering_key=(*base_order, "00-overview"),
+            assertions=(
+                _assertion(
+                    unit_ref,
+                    "unit-status",
+                    predicate=FormatterAssertionPredicate.UNIT_STATUS,
+                    subject_ref=unit_ref,
+                    value=FormatterAssertionValue.UNIT_PRESENT,
                 ),
             ),
-            _clause(
-                clause_ref=canonical_ref(CanonicalReferenceKind.COVERAGE, unit.unit_id),
-                clause_kind=NarrationClauseKind.UNIT_COVERAGE,
-                semantic_operation=NarrationSemanticOperation.PRESENT_COVERAGE,
-                subject_refs=(unit_ref,),
-                object_refs=(),
-                qualifier_refs=(),
-                canonical_fact_refs=(canonical_ref(CanonicalReferenceKind.COVERAGE, unit.unit_id),),
-                display_values=display,
-                ordering_key=(*base_order, "90-coverage"),
-                assertions=(
-                    _assertion(
-                        canonical_ref(CanonicalReferenceKind.COVERAGE, unit.unit_id),
-                        "local-execution-status",
-                        predicate=FormatterAssertionPredicate.LOCAL_EXECUTION_STATUS,
-                        subject_ref=unit_ref,
-                        value=_unit_execution_status(unit),
-                    ),
-                    _assertion(
-                        canonical_ref(CanonicalReferenceKind.COVERAGE, unit.unit_id),
-                        "coverage",
-                        predicate=FormatterAssertionPredicate.UNIT_STATUS,
-                        subject_ref=unit_ref,
-                        value=FormatterAssertionValue.COMPLETE if unit.complete else FormatterAssertionValue.TRUNCATED,
-                    ),
+        )
+        coverage = _clause(
+            clause_ref=canonical_ref(CanonicalReferenceKind.COVERAGE, unit.unit_id),
+            clause_kind=NarrationClauseKind.UNIT_COVERAGE,
+            semantic_operation=NarrationSemanticOperation.PRESENT_COVERAGE,
+            subject_refs=(unit_ref,),
+            object_refs=(),
+            qualifier_refs=(),
+            canonical_fact_refs=(canonical_ref(CanonicalReferenceKind.COVERAGE, unit.unit_id),),
+            display_values=display,
+            ordering_key=(*base_order, "90-coverage"),
+            assertions=(
+                _assertion(
+                    canonical_ref(CanonicalReferenceKind.COVERAGE, unit.unit_id),
+                    "local-execution-status",
+                    predicate=FormatterAssertionPredicate.LOCAL_EXECUTION_STATUS,
+                    subject_ref=unit_ref,
+                    value=_unit_execution_status(unit),
+                ),
+                _assertion(
+                    canonical_ref(CanonicalReferenceKind.COVERAGE, unit.unit_id),
+                    "coverage",
+                    predicate=FormatterAssertionPredicate.UNIT_STATUS,
+                    subject_ref=unit_ref,
+                    value=FormatterAssertionValue.COMPLETE if unit.complete else FormatterAssertionValue.TRUNCATED,
                 ),
             ),
-        ]
-        clauses.extend(
-            _collection_clauses(
-                unit.unit_id,
-                "10-roots",
-                NarrationClauseKind.UNIT_ROOTS,
-                NarrationSemanticOperation.PRESENT_UNIT_ROOTS,
-                _root_refs(unit),
-                display,
-                context.policy,
-                subject_refs=(unit_ref,),
-            )
         )
-        clauses.extend(
-            _collection_clauses(
-                unit.unit_id,
-                "20-anchors",
-                NarrationClauseKind.UNIT_ANCHORS,
-                NarrationSemanticOperation.PRESENT_QUERY_ANCHORS,
-                _anchor_refs(unit),
-                display,
-                context.policy,
-                subject_refs=(unit_ref,),
-            )
-        )
-        clauses.extend(
-            _collection_clauses(
-                unit.unit_id,
-                "30-execution-nodes",
-                NarrationClauseKind.UNIT_EXECUTION_NODES,
-                NarrationSemanticOperation.PRESENT_EXECUTION_NODES,
-                _node_refs(unit),
-                display,
-                context.policy,
-                subject_refs=(unit_ref,),
-            )
-        )
-        clauses.extend(
-            _collection_clauses(
-                unit.unit_id,
-                "40-local-transitions",
-                NarrationClauseKind.UNIT_LOCAL_TRANSITIONS,
-                NarrationSemanticOperation.EXECUTES_LOCAL_TRANSITION,
-                _edge_refs(unit),
-                display,
-                context.policy,
-                subject_refs=(unit_ref,),
-            )
-        )
-        clauses.extend(
-            _collection_clauses(
-                unit.unit_id,
+
+        collection_specs = (
+            ("10-roots", NarrationClauseKind.UNIT_ROOTS, NarrationSemanticOperation.PRESENT_UNIT_ROOTS, _root_refs(unit)),
+            ("20-anchors", NarrationClauseKind.UNIT_ANCHORS, NarrationSemanticOperation.PRESENT_QUERY_ANCHORS, _anchor_refs(unit)),
+            ("30-execution-nodes", NarrationClauseKind.UNIT_EXECUTION_NODES, NarrationSemanticOperation.PRESENT_EXECUTION_NODES, _node_refs(unit)),
+            ("40-local-transitions", NarrationClauseKind.UNIT_LOCAL_TRANSITIONS, NarrationSemanticOperation.EXECUTES_LOCAL_TRANSITION, _edge_refs(unit)),
+            (
                 "50-topology-boundaries",
                 NarrationClauseKind.UNIT_TOPOLOGY_BOUNDARIES,
                 NarrationSemanticOperation.PRESENT_TOPOLOGY_BOUNDARY,
                 _topology_boundary_refs(unit),
-                display,
-                context.policy,
-                subject_refs=(unit_ref,),
-            )
-        )
-        clauses.extend(
-            _collection_clauses(
-                unit.unit_id,
+            ),
+            (
                 "60-generic-boundaries",
                 NarrationClauseKind.UNIT_GENERIC_BOUNDARIES,
                 NarrationSemanticOperation.PRESENT_GENERIC_BOUNDARY,
                 _generic_boundary_refs(unit),
-                display,
-                context.policy,
-                subject_refs=(unit_ref,),
-            )
-        )
-        clauses.extend(
-            _collection_clauses(
-                unit.unit_id,
+            ),
+            (
                 "70-supporting-context",
                 NarrationClauseKind.UNIT_SUPPORTING_CONTEXT,
                 NarrationSemanticOperation.PRESENT_SUPPORTING_CONTEXT,
                 _context_refs(unit),
-                display,
-                context.policy,
-                subject_refs=(unit_ref,),
-            )
+            ),
+            ("80-evidence", NarrationClauseKind.UNIT_EVIDENCE, NarrationSemanticOperation.PRESENT_EVIDENCE, _evidence_refs(unit)),
         )
-        clauses.extend(
-            _collection_clauses(
-                unit.unit_id,
-                "80-evidence",
-                NarrationClauseKind.UNIT_EVIDENCE,
-                NarrationSemanticOperation.PRESENT_EVIDENCE,
-                _evidence_refs(unit),
-                display,
-                context.policy,
-                subject_refs=(unit_ref,),
+        clauses: list[CanonicalNarrationClause] = [overview]
+        for order_prefix, clause_kind, semantic_operation, refs in collection_specs:
+            clauses.extend(
+                _collection_clauses(
+                    unit.unit_id,
+                    order_prefix,
+                    clause_kind,
+                    semantic_operation,
+                    refs,
+                    display,
+                    context.policy,
+                    subject_refs=(unit_ref,),
+                )
             )
-        )
+        clauses.append(coverage)
         return tuple(clauses)
 
 
@@ -785,76 +758,97 @@ def _unit_execution_status(unit: Any) -> FormatterAssertionValue:
 
 
 def _unit_display_values(unit: Any) -> dict[str, str]:
-    values = {
-        canonical_ref(CanonicalReferenceKind.UNIT, unit.unit_id): _unit_display(unit),
-        canonical_ref(CanonicalReferenceKind.SOURCE, unit.source_id): unit.source_id,
-        canonical_ref(CanonicalReferenceKind.COVERAGE, unit.unit_id): "coverage",
-    }
-    for ref, node in zip(_root_refs(unit), (root.node for root in unit.roots)):
-        values[ref] = _node_display(node)
-    for ref, anchor in zip(_anchor_refs(unit), unit.anchors):
-        values[ref] = _node_display(anchor.expanded_seed)
-    for ref, node in zip(_node_refs(unit), unit.execution_nodes):
-        values[ref] = _node_display(node)
-    for ref, edge in zip(_edge_refs(unit), unit.execution_transitions):
-        values[ref] = _edge_display(edge)
-    for ref, edge in zip(_topology_boundary_refs(unit), unit.topology_boundaries):
-        values[ref] = _edge_display(edge)
-    for ref, boundary in zip(_generic_boundary_refs(unit), unit.generic_boundaries):
-        values[ref] = boundary.stable_key or boundary.boundary_id
-    for ref, node in zip(_context_refs(unit), unit.supporting_context):
-        values[ref] = _node_display(node)
-    for ref, evidence in zip(_evidence_refs(unit), unit.evidence):
-        values[ref] = evidence.evidence_id
-    return values
+    collector = CanonicalDisplayValueCollector()
+    collector.add(canonical_ref(CanonicalReferenceKind.UNIT, unit.unit_id), _unit_display(unit))
+    collector.add(canonical_ref(CanonicalReferenceKind.SOURCE, unit.source_id), unit.source_id)
+    collector.add(canonical_ref(CanonicalReferenceKind.COVERAGE, unit.unit_id), "coverage")
+    for root in unit.roots:
+        collector.add(_root_ref(root), _node_display(root.node))
+    for anchor in unit.anchors:
+        collector.add(_anchor_ref(anchor), _node_display(anchor.expanded_seed))
+    for node in unit.execution_nodes:
+        collector.add(_node_ref(node), _node_display(node))
+    for edge in unit.execution_transitions:
+        collector.add(_edge_ref(edge), _edge_display(edge))
+    for edge in unit.topology_boundaries:
+        collector.add(_topology_boundary_ref(edge), _edge_display(edge))
+    for boundary in unit.generic_boundaries:
+        collector.add(_generic_boundary_ref(boundary), getattr(boundary, "stable_key", None) or getattr(boundary, "boundary_id", None))
+    for node in unit.supporting_context:
+        collector.add(_context_ref(node), _node_display(node))
+    for evidence in unit.evidence:
+        collector.add(_evidence_ref(evidence), _evidence_display(evidence))
+    return collector.build()
+
+
+def _root_ref(root: Any) -> str:
+    return canonical_ref(CanonicalReferenceKind.ROOT, _node_identity(root.node))
+
+
+def _anchor_ref(anchor: Any) -> str:
+    return canonical_ref(
+        CanonicalReferenceKind.ANCHOR,
+        anchor.original_anchor.sourceId,
+        anchor.original_anchor.graphRevision or anchor.original_anchor.graphId or "",
+        anchor.original_anchor.stableKey or anchor.original_anchor.nodeId,
+        anchor.expanded_seed.node_id,
+    )
+
+
+def _node_ref(node: Any) -> str:
+    return canonical_ref(CanonicalReferenceKind.NODE, _node_identity(node))
+
+
+def _edge_ref(edge: Any) -> str:
+    return canonical_ref(CanonicalReferenceKind.EDGE, _edge_identity(edge))
+
+
+def _topology_boundary_ref(edge: Any) -> str:
+    return canonical_ref(CanonicalReferenceKind.TOPOLOGY_BOUNDARY, _edge_identity(edge))
+
+
+def _generic_boundary_ref(boundary: Any) -> str:
+    return canonical_ref(CanonicalReferenceKind.GENERIC_BOUNDARY, _identity_ref(boundary_identity(boundary)))
+
+
+def _context_ref(node: Any) -> str:
+    return canonical_ref(CanonicalReferenceKind.CONTEXT, _node_identity(node))
+
+
+def _evidence_ref(item: Any) -> str:
+    return canonical_ref(CanonicalReferenceKind.EVIDENCE, item.source_id, item.graph_revision or item.graph_id, item.evidence_id)
 
 
 def _root_refs(unit: Any) -> tuple[str, ...]:
-    return tuple(sorted(canonical_ref(CanonicalReferenceKind.ROOT, _node_identity(root.node)) for root in unit.roots))
+    return tuple(sorted(_root_ref(root) for root in unit.roots))
 
 
 def _anchor_refs(unit: Any) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            canonical_ref(
-                CanonicalReferenceKind.ANCHOR,
-                anchor.original_anchor.sourceId,
-                anchor.original_anchor.graphRevision or anchor.original_anchor.graphId or "",
-                anchor.original_anchor.stableKey or anchor.original_anchor.nodeId,
-                anchor.expanded_seed.node_id,
-            )
-            for anchor in unit.anchors
-        )
-    )
+    return tuple(sorted(_anchor_ref(anchor) for anchor in unit.anchors))
 
 
 def _node_refs(unit: Any) -> tuple[str, ...]:
-    return tuple(sorted(canonical_ref(CanonicalReferenceKind.NODE, _node_identity(node)) for node in unit.execution_nodes))
+    return tuple(sorted(_node_ref(node) for node in unit.execution_nodes))
 
 
 def _edge_refs(unit: Any) -> tuple[str, ...]:
-    return tuple(sorted(canonical_ref(CanonicalReferenceKind.EDGE, _edge_identity(edge)) for edge in unit.execution_transitions))
+    return tuple(sorted(_edge_ref(edge) for edge in unit.execution_transitions))
 
 
 def _topology_boundary_refs(unit: Any) -> tuple[str, ...]:
-    return tuple(sorted(canonical_ref(CanonicalReferenceKind.TOPOLOGY_BOUNDARY, _edge_identity(edge)) for edge in unit.topology_boundaries))
+    return tuple(sorted(_topology_boundary_ref(edge) for edge in unit.topology_boundaries))
 
 
 def _generic_boundary_refs(unit: Any) -> tuple[str, ...]:
-    return tuple(sorted(canonical_ref(CanonicalReferenceKind.GENERIC_BOUNDARY, _identity_ref(boundary_identity(boundary))) for boundary in unit.generic_boundaries))
+    return tuple(sorted(_generic_boundary_ref(boundary) for boundary in unit.generic_boundaries))
 
 
 def _context_refs(unit: Any) -> tuple[str, ...]:
-    return tuple(sorted(canonical_ref(CanonicalReferenceKind.CONTEXT, _node_identity(node)) for node in unit.supporting_context))
+    return tuple(sorted(_context_ref(node) for node in unit.supporting_context))
 
 
 def _evidence_refs(unit: Any) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            canonical_ref(CanonicalReferenceKind.EVIDENCE, item.source_id, item.graph_revision or item.graph_id, item.evidence_id)
-            for item in unit.evidence
-        )
-    )
+    return tuple(sorted(_evidence_ref(item) for item in unit.evidence))
 
 
 def _identity_ref(identity: Any) -> str:
@@ -871,9 +865,9 @@ def _edge_identity(edge: Any) -> str:
 
 def _unit_display(unit: Any) -> str:
     if unit.roots:
-        return _node_display(unit.roots[0].node)
+        return _node_display(min((root.node for root in unit.roots), key=_node_identity))
     if unit.execution_nodes:
-        return _node_display(unit.execution_nodes[0])
+        return _node_display(min(unit.execution_nodes, key=_node_identity))
     return unit.unit_id
 
 
@@ -902,6 +896,16 @@ def _edge_display(edge: Any) -> str:
         getattr(edge, "edge_id", None),
     )
     return next((str(value) for value in values if str(value or "").strip()), str(getattr(edge, "edge_id", "")))
+
+
+def _evidence_display(evidence: Any) -> str:
+    relative_path = str(getattr(evidence, "relative_path", None) or "").strip()
+    line_start = getattr(evidence, "line_start", None)
+    if relative_path and line_start is not None:
+        return f"{relative_path}:{line_start}"
+    if relative_path:
+        return relative_path
+    return str(getattr(evidence, "evidence_id", "") or "")
 
 
 def _chunk_clause_ref(unit_id: str, clause_kind: NarrationClauseKind, fact_refs: Sequence[str]) -> str:

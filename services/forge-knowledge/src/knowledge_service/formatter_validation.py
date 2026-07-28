@@ -92,7 +92,7 @@ def validate_combined_provider_clauses(
         errors.append(f"formatter response duplicated clause refs: {list(summary.duplicate_clause_refs)}")
     if summary.unknown_clause_refs:
         errors.append(f"formatter response returned unknown clause refs: {list(summary.unknown_clause_refs)}")
-    if summary.stage_count_contract_matched is False:
+    if summary.narration_contract_matched is False:
         errors.append("formatter response did not match the canonical clause contract")
     if errors:
         raise EndToEndFormatterValidationError(tuple(errors))
@@ -118,8 +118,8 @@ def formatter_validation_summary(
         omitted_fact_refs=(),
         duplicate_fact_refs=(),
         unowned_fact_refs=(),
-        stage_count_contract_matched=matched,
-        validated_formatter_clause_count=validated_count,
+        narration_contract_matched=matched,
+        validated_clause_count=validated_count,
         public_clause_count=len(expected_refs) if matched else 0,
     )
 
@@ -139,22 +139,22 @@ def narration_ownership_metrics(plans: Sequence[CanonicalNarrationPlan]) -> dict
                 owner_by_fact[str(fact_ref)].append(clause.clause_ref)
         duplicate_fact_count += sum(1 for owners in owner_by_fact.values() if len(owners) > 1)
     return {
-        "duplicateStageRefs": duplicate_clause_count,
-        "duplicateFactRefs": duplicate_fact_count,
+        "duplicateClauseCount": duplicate_clause_count,
+        "duplicateCanonicalFactCount": duplicate_fact_count,
         "unknownOwnedFactRefs": unknown_owned_count,
         "unknownContextFactRefs": 0,
-        "unownedFactRefs": 0,
+        "unownedCanonicalFactCount": 0,
     }
 
 
 def rollup_formatter_validation_summaries(summaries: Sequence[FormatterValidationSummary]) -> dict[str, Any]:
     return {
-        "missingStageRefs": sum(len(summary.missing_clause_refs) for summary in summaries),
-        "duplicateStageRefs": sum(len(summary.duplicate_clause_refs) for summary in summaries),
-        "unknownStageRefs": sum(len(summary.unknown_clause_refs) for summary in summaries),
+        "missingClauseCount": sum(len(summary.missing_clause_refs) for summary in summaries),
+        "duplicateClauseCount": sum(len(summary.duplicate_clause_refs) for summary in summaries),
+        "unknownClauseCount": sum(len(summary.unknown_clause_refs) for summary in summaries),
         "omittedOwnedFactRefs": sum(len(summary.omitted_fact_refs) for summary in summaries),
-        "duplicateFactRefs": sum(len(summary.duplicate_fact_refs) for summary in summaries),
-        "unownedFactRefs": sum(len(summary.unowned_fact_refs) for summary in summaries),
-        "validatedFormatterStepCount": sum(summary.validated_formatter_clause_count for summary in summaries),
-        "publicStepCount": sum(summary.public_clause_count for summary in summaries),
+        "duplicateCanonicalFactCount": sum(len(summary.duplicate_fact_refs) for summary in summaries),
+        "unownedCanonicalFactCount": sum(len(summary.unowned_fact_refs) for summary in summaries),
+        "validatedClauseCount": sum(summary.validated_clause_count for summary in summaries),
+        "publicClauseCount": sum(summary.public_clause_count for summary in summaries),
     }

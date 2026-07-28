@@ -10,6 +10,7 @@ from typing import Any, Mapping, Sequence
 from knowledge_service.answer_language import HumanAnswerTextValidator
 from knowledge_service.canonical_narration_contract import (
     CanonicalNarrationClause,
+    CanonicalNarrationMetrics,
     CanonicalNarrationPlan,
     NarrationClauseKind,
     NarrationSemanticOperation,
@@ -459,9 +460,8 @@ class EndToEndFormatterAnswerService:
             {
                 "graphId": plan.graph_id,
                 "responseLanguage": plan.response_language,
-                "stageCount": len(plan.clauses),
-                "clauseCount": len(plan.clauses),
-                "factCount": len(plan.canonical_fact_refs),
+                "narrationClauseCount": len(plan.clauses),
+                "canonicalFactCount": len(plan.canonical_fact_refs),
                 "assertionCount": sum(len(clause.required_assertions) for clause in plan.clauses),
                 "formatterProviderCallCount": provider_call_count,
                 "formatterRepairCallCount": repair_call_count,
@@ -485,103 +485,72 @@ class EndToEndFormatterAnswerService:
         segment_count: int,
         validation_summaries: Sequence[Any] = (),
     ) -> dict[str, Any]:
-        clause_count = sum(len(plan.clauses) for plan in plans)
+        clauses = tuple(clause for plan in plans for clause in plan.clauses)
+        clause_count = len(clauses)
         ownership = narration_ownership_metrics(plans)
         coverage = rollup_formatter_validation_summaries(validation_summaries)
-        missing_stage_refs = int(coverage.get("missingStageRefs") or 0)
-        duplicate_stage_refs = int(ownership.get("duplicateStageRefs") or 0) + int(coverage.get("duplicateStageRefs") or 0)
-        unowned_fact_refs = int(ownership.get("unownedFactRefs") or 0) + int(coverage.get("unownedFactRefs") or 0)
-        duplicate_fact_refs = int(ownership.get("duplicateFactRefs") or 0) + int(coverage.get("duplicateFactRefs") or 0)
-        public_step_count = int(coverage.get("publicStepCount") or 0) if answer_count else 0
-        validated_step_count = int(coverage.get("validatedFormatterStepCount") or 0) if answer_count else 0
+        missing_clause_count = int(coverage.get("missingClauseCount") or 0)
+        duplicate_clause_count = int(ownership.get("duplicateClauseCount") or 0) + int(coverage.get("duplicateClauseCount") or 0)
+        unknown_clause_count = int(coverage.get("unknownClauseCount") or 0)
+        unowned_fact_count = int(ownership.get("unownedCanonicalFactCount") or 0) + int(coverage.get("unownedCanonicalFactCount") or 0)
+        duplicate_fact_count = int(ownership.get("duplicateCanonicalFactCount") or 0) + int(coverage.get("duplicateCanonicalFactCount") or 0)
+        public_clause_count = int(coverage.get("publicClauseCount") or 0) if answer_count else 0
+        validated_clause_count = int(coverage.get("validatedClauseCount") or 0) if answer_count else 0
         contract_matched = (
-            int(answer_count) == len(plans)
-            and missing_stage_refs == 0
-            and duplicate_stage_refs == 0
-            and unowned_fact_refs == 0
-            and duplicate_fact_refs == 0
-            and validated_step_count == clause_count
+            bool(plans)
+            and int(answer_count) == len(plans)
+            and missing_clause_count == 0
+            and duplicate_clause_count == 0
+            and unknown_clause_count == 0
+            and unowned_fact_count == 0
+            and duplicate_fact_count == 0
+            and validated_clause_count == clause_count
         )
-        prompt_seed = json.dumps([[plan.graph_id, [clause.clause_ref for clause in plan.clauses]] for plan in plans], sort_keys=True)
-        return {
-            "selectedGraphCount": len(plans),
-            "presentationStageCount": clause_count,
-            "presentationClauseCount": clause_count,
-            "answerCount": int(answer_count),
-            "presentationPlanningDurationMs": round(planning_ms, 3),
-            "formatterPlanningDurationMs": round(planning_ms, 3),
-            "formatterDurationMs": round(formatter_duration_ms, 3),
-            "totalFormatterDurationMs": round(planning_ms + formatter_duration_ms, 3),
-            "textRenderingDurationMs": round(formatter_duration_ms, 3),
-            "stitchingDurationMs": 0.0,
-            "formatterProviderCallCount": int(provider_call_count),
-            "formatterRepairCallCount": int(repair_call_count),
-            "formatterOutputSplitCallCount": 0,
-            "formatterSegmentCount": int(segment_count),
-            "formatterSerializationCount": int(self.segment_planner.serialization_count),
-            "stageCountContractMatched": bool(contract_matched),
-            "stageCountContractExpected": clause_count,
-            "expectedPublicStageCount": clause_count,
-            "expectedPresentationStageCount": clause_count,
-            "validatedFormatterStepCount": validated_step_count,
-            "validatedFormatterClauseCount": validated_step_count,
-            "stitchedPublicStepCount": public_step_count,
-            "publicStepCount": public_step_count,
-            "publicClauseCount": public_step_count,
-            "provenTransitionCount": sum(
+        metrics = CanonicalNarrationMetrics(
+            selected_graph_count=len(plans),
+            answer_count=int(answer_count),
+            narration_clause_count=clause_count,
+            narration_clause_refs=tuple(clause.clause_ref for clause in clauses),
+            narration_clause_kinds=tuple(clause.clause_kind.value for clause in clauses),
+            narration_semantic_operations=tuple(clause.semantic_operation.value for clause in clauses),
+            canonical_fact_count=sum(len(plan.canonical_fact_ownership) for plan in plans),
+            canonical_fact_ownership=tuple(item for plan in plans for item in plan.canonical_fact_ownership),
+            duplicate_canonical_fact_count=duplicate_fact_count,
+            unowned_canonical_fact_count=unowned_fact_count,
+            missing_clause_count=missing_clause_count,
+            duplicate_clause_count=duplicate_clause_count,
+            unknown_clause_count=unknown_clause_count,
+            validated_clause_count=validated_clause_count,
+            public_clause_count=public_clause_count,
+            narration_contract_matched=bool(contract_matched),
+            proven_transition_clause_count=sum(
                 1
-                for plan in plans
-                for clause in plan.clauses
+                for clause in clauses
                 if clause.semantic_operation is NarrationSemanticOperation.CONTINUES_WITH_PROVEN_TARGET
             ),
-            "openAmbiguousBoundaryCount": sum(
+            ambiguous_boundary_clause_count=sum(
                 1
-                for plan in plans
-                for clause in plan.clauses
+                for clause in clauses
                 if clause.semantic_operation is NarrationSemanticOperation.HAS_AMBIGUOUS_CONTINUATION
             ),
-            "openUnresolvedBoundaryCount": sum(
+            unresolved_boundary_clause_count=sum(
                 1
-                for plan in plans
-                for clause in plan.clauses
+                for clause in clauses
                 if clause.semantic_operation is NarrationSemanticOperation.HAS_UNRESOLVED_CONTINUATION
             ),
-            "branchCount": sum(1 for plan in plans for clause in plan.clauses if clause.clause_kind is NarrationClauseKind.BRANCH),
-            "structuralStageCount": sum(
-                1
-                for plan in plans
-                for clause in plan.clauses
-                if clause.clause_kind
-                in {
-                    NarrationClauseKind.BRANCH,
-                    NarrationClauseKind.CONVERGENCE,
-                    NarrationClauseKind.CYCLE_REFERENCE,
-                    NarrationClauseKind.SHARED_UNIT_REFERENCE,
-                }
-            ),
-            "presentationStageRefs": [clause.clause_ref for plan in plans for clause in plan.clauses],
-            "presentationStages": [
-                {
-                    "stageRef": clause.clause_ref,
-                    "kind": clause.clause_kind.value,
-                    "semanticOperation": clause.semantic_operation.value,
-                    "ownedFactRefs": list(clause.canonical_fact_refs),
-                    "contextFactRefs": sorted({*clause.subject_refs, *clause.object_refs, *clause.qualifier_refs} - set(clause.canonical_fact_refs)),
-                }
-                for plan in plans
-                for clause in plan.clauses
-            ],
-            "deduplicatedFactCount": len({fact for plan in plans for fact in plan.canonical_fact_refs}),
-            "missingStageRefs": missing_stage_refs,
-            "duplicateStageRefs": duplicate_stage_refs,
-            "unownedFactRefs": unowned_fact_refs,
-            "duplicateFactRefs": duplicate_fact_refs,
-            "unknownStageRefs": int(coverage.get("unknownStageRefs") or 0),
-            "omittedOwnedFactRefs": int(coverage.get("omittedOwnedFactRefs") or 0),
-            "unknownOwnedFactRefs": int(ownership.get("unknownOwnedFactRefs") or 0),
-            "unknownContextFactRefs": int(ownership.get("unknownContextFactRefs") or 0),
-            "promptHash": _sha256(prompt_seed),
-        }
+            branch_clause_count=sum(1 for clause in clauses if clause.clause_kind is NarrationClauseKind.BRANCH),
+            convergence_clause_count=sum(1 for clause in clauses if clause.clause_kind is NarrationClauseKind.CONVERGENCE),
+            cycle_clause_count=sum(1 for clause in clauses if clause.clause_kind is NarrationClauseKind.CYCLE_REFERENCE),
+            shared_unit_clause_count=sum(1 for clause in clauses if clause.clause_kind is NarrationClauseKind.SHARED_UNIT_REFERENCE),
+            formatter_segment_count=int(segment_count),
+            formatter_serialization_count=int(self.segment_planner.serialization_count),
+            formatter_provider_call_count=int(provider_call_count),
+            formatter_repair_call_count=int(repair_call_count),
+            narration_planning_duration_ms=round(planning_ms, 3),
+            formatter_duration_ms=round(formatter_duration_ms, 3),
+            total_formatter_duration_ms=round(planning_ms + formatter_duration_ms, 3),
+        )
+        return metrics.to_audit_payload()
 
     def _check_cancelled(self, cancel_event: Any | None) -> None:
         if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():

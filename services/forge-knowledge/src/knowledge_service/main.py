@@ -24,6 +24,7 @@ from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedA
 from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.bootstrap import KnowledgeDependencies, build_dependencies, configure_logging
+from knowledge_service.canonical_narration_contract import CanonicalNarrationMetrics
 from knowledge_service.config import (
     AppConfig,
     ForgeSettings,
@@ -674,7 +675,6 @@ def _knowledge_human_query_response(
     deadline_at: float | None = None,
 ):
     config, deps = _state(request)
-    total_started = time.perf_counter()
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
     deadline_at = deadline_at if deadline_at is not None else time.monotonic() + request_deadline_seconds
     correlation_id = _request_correlation_id(request)
@@ -690,8 +690,6 @@ def _knowledge_human_query_response(
     interpretation_records = []
     answer_records = []
     pipeline_records = []
-    fetch_duration_ms = 0.0
-    graph_assembly_duration_ms = 0.0
     answer_service = None
     try:
         if is_forbidden_response_language(body.answerLanguage):
@@ -722,9 +720,7 @@ def _knowledge_human_query_response(
             if close_interpreter:
                 close_interpreter()
         terminal_stage = "RETRIEVAL"
-        retrieval_started = time.perf_counter()
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_graphs(body, plan=retrieval_plan)
-        fetch_duration_ms = round((time.perf_counter() - retrieval_started) * 1000, 3)
         selected_graphs = tuple(query_result.selected_graphs or ())
         terminal_stage = "END_TO_END_GRAPH_ASSEMBLY"
         if not selected_graphs:
@@ -738,10 +734,9 @@ def _knowledge_human_query_response(
                 terminal_error_message,
                 correlation_id=correlation_id,
             )
-        graph_assembly_duration_ms = fetch_duration_ms
         answer_service, close_formatter = _end_to_end_formatter_service(request, config)
         try:
-            terminal_stage = "END_TO_END_PRESENTATION_PLANNING"
+            terminal_stage = "CANONICAL_NARRATION_PLANNING"
             result = answer_service.answer(
                 body,
                 query_result,
@@ -754,9 +749,6 @@ def _knowledge_human_query_response(
             pipeline_records = [dict(record) for record in answer_service.pipeline_records]
             if close_formatter:
                 close_formatter()
-        if pipeline_records:
-            pipeline_records[0]["fetchDurationMs"] = fetch_duration_ms
-            pipeline_records[0]["endToEndAssemblyDurationMs"] = graph_assembly_duration_ms
         terminal_stage = "FINAL_FORMATTER"
         response = answer_service.to_response(result)
         terminal_status = 200
@@ -845,55 +837,8 @@ def _knowledge_human_query_response(
             correlation_id=correlation_id,
         )
     finally:
-        total_duration_ms = round((time.perf_counter() - total_started) * 1000, 3)
-        if pipeline_records:
-            pipeline_records[0]["totalDurationMs"] = total_duration_ms
-        elif selected_graphs:
-            pipeline_records = [{
-                "selectedGraphCount": len(selected_graphs),
-                "presentationStageCount": 0,
-                "answerCount": 0,
-                "fetchDurationMs": fetch_duration_ms,
-                "endToEndAssemblyDurationMs": graph_assembly_duration_ms,
-                "presentationPlanningDurationMs": 0.0,
-                "walkthroughPlanningDurationMs": 0.0,
-                "formatterPlanningDurationMs": 0.0,
-                "formatterDurationMs": 0.0,
-                "stitchingDurationMs": 0.0,
-                "textRenderingDurationMs": 0.0,
-                "totalDurationMs": total_duration_ms,
-                "formatterProviderCallCount": 0,
-                "formatterRepairCallCount": 0,
-                "formatterOutputSplitCallCount": 0,
-                "formatterSegmentCount": 0,
-                "formatterGroupCount": 0,
-                "selectedExecutableNodeCount": 0,
-                "selectedExecutableStageRefs": [],
-                "selectedExecutableSymbols": [],
-                "executablePublicStageCount": 0,
-                "missingExecutableStageRefs": 0,
-                "duplicateExecutableStageRefs": 0,
-                "standaloneOperationStageCount": 0,
-                "boundaryStageCount": 0,
-                "ownerlessBoundaryStageCount": 0,
-                "structuralStageCount": 0,
-                "expectedPublicStageCount": 0,
-                "validatedFormatterStepCount": 0,
-                "stitchedPublicStepCount": 0,
-                "publicStepCount": 0,
-                "executableOwnedBoundaryFactCount": 0,
-                "ownerlessBoundaryFactCount": 0,
-                "deduplicatedFactCount": 0,
-                "missingStageRefs": 0,
-                "duplicateStageRefs": 0,
-                "unownedFactRefs": 0,
-                "duplicateFactRefs": 0,
-                "formatterSerializationCount": 0,
-                "finalAnswerProviderCallCount": 0,
-                "groundingProviderCallCount": 0,
-                "analysisProviderCallCount": 0,
-                "toolContextFormatterCallCount": 0,
-            }]
+        if not pipeline_records and selected_graphs:
+            pipeline_records = [CanonicalNarrationMetrics.empty(selected_graph_count=len(selected_graphs)).to_audit_payload()]
         _record_human_query_terminal_audit(
             request,
             body,
@@ -1043,85 +988,20 @@ def _human_query_terminal_audit_record(
 ) -> dict[str, Any]:
     selected_graph_summaries = _selected_graph_audit_summaries(selected_graphs)
     graph_assembly_summary = _graph_assembly_terminal_payload(query_result, selected_graph_summaries)
-    walkthrough_metrics = _walkthrough_terminal_metrics(pipeline_records)
+    narration_metrics = _narration_terminal_metrics(pipeline_records)
     retrieval_summary = _retrieval_terminal_payload(query_result)
     query_interpreter = _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage, terminal_error_code)
-    query_interpreter_call_count = int(query_interpreter.get("providerCallCount") or 0)
     return {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "correlationId": correlation_id,
         "queryText": body.queryText,
         "answerLanguage": body.answerLanguage,
-        "intent": body.intent.value if hasattr(body.intent, "value") else str(body.intent),
-        "includeTests": bool(body.includeTests),
-        "maxFlows": int(body.maxFlows),
         "queryInterpreter": query_interpreter,
-        "queryInterpreterCallCount": query_interpreter_call_count,
         "retrieval": retrieval_summary,
-        "candidateCount": int(retrieval_summary.get("matchedNodeCount") or 0),
         "graphAssembly": graph_assembly_summary,
-        "selectedGraphCount": int(walkthrough_metrics.get("selectedGraphCount") or len(selected_graph_summaries)),
-        "discoveredGraphCount": graph_assembly_summary.get("discoveredGraphCount"),
-        "omittedGraphCount": graph_assembly_summary.get("omittedGraphCount"),
-        "presentationStageCount": int(walkthrough_metrics.get("presentationStageCount") or 0),
-        "branchCount": int(walkthrough_metrics.get("branchCount") or 0),
-        "answerCount": int(walkthrough_metrics.get("answerCount") or 0),
-        "fetchDurationMs": float(walkthrough_metrics.get("fetchDurationMs") or 0.0),
-        "endToEndAssemblyDurationMs": float(walkthrough_metrics.get("endToEndAssemblyDurationMs") or 0.0),
-        "presentationPlanningDurationMs": float(walkthrough_metrics.get("presentationPlanningDurationMs") or 0.0),
-        "textRenderingDurationMs": float(walkthrough_metrics.get("textRenderingDurationMs") or 0.0),
-        "formatterGroupCount": int(walkthrough_metrics.get("formatterGroupCount") or 0),
-        "selectedExecutableNodeCount": int(walkthrough_metrics.get("selectedExecutableNodeCount") or 0),
-        "selectedExecutableStageRefs": list(walkthrough_metrics.get("selectedExecutableStageRefs") or []),
-        "selectedExecutableSymbols": list(walkthrough_metrics.get("selectedExecutableSymbols") or []),
-        "selectedExecutableStages": list(walkthrough_metrics.get("selectedExecutableStages") or []),
-        "executablePublicStageCount": int(walkthrough_metrics.get("executablePublicStageCount") or 0),
-        "missingExecutableStageRefs": int(walkthrough_metrics.get("missingExecutableStageRefs") or 0),
-        "duplicateExecutableStageRefs": int(walkthrough_metrics.get("duplicateExecutableStageRefs") or 0),
-        "boundaryStageCount": int(walkthrough_metrics.get("boundaryStageCount") or 0),
-        "ownerlessBoundaryStageCount": int(walkthrough_metrics.get("ownerlessBoundaryStageCount") or 0),
-        "structuralStageCount": int(walkthrough_metrics.get("structuralStageCount") or 0),
-        "expectedPublicStageCount": int(walkthrough_metrics.get("expectedPublicStageCount") or 0),
-        "validatedFormatterStepCount": int(walkthrough_metrics.get("validatedFormatterStepCount") or 0),
-        "stitchedPublicStepCount": int(walkthrough_metrics.get("stitchedPublicStepCount") or 0),
-        "publicStepCount": int(walkthrough_metrics.get("publicStepCount") or 0),
-        "stageCountContractExpected": int(walkthrough_metrics.get("stageCountContractExpected") or 0),
-        "stageCountContractMatched": bool(walkthrough_metrics.get("stageCountContractMatched", False)),
-        "expectedPresentationStageCount": int(walkthrough_metrics.get("expectedPresentationStageCount") or 0),
-        "executableOwnedBoundaryFactCount": int(walkthrough_metrics.get("executableOwnedBoundaryFactCount") or 0),
-        "ownerlessBoundaryFactCount": int(walkthrough_metrics.get("ownerlessBoundaryFactCount") or 0),
-        "deduplicatedFactCount": int(walkthrough_metrics.get("deduplicatedFactCount") or 0),
-        "presentationStageRefs": list(walkthrough_metrics.get("presentationStageRefs") or []),
-        "presentationStages": list(walkthrough_metrics.get("presentationStages") or []),
-        "stageOwnershipRecords": list(walkthrough_metrics.get("stageOwnershipRecords") or []),
-        "stageOwnershipMap": dict(walkthrough_metrics.get("stageOwnershipMap") or {}),
-        "ownedFactRefsByStageRef": dict(walkthrough_metrics.get("ownedFactRefsByStageRef") or {}),
-        "factOwnerByFactRef": dict(walkthrough_metrics.get("factOwnerByFactRef") or {}),
-        "missingStageRefs": int(walkthrough_metrics.get("missingStageRefs") or 0),
-        "duplicateStageRefs": int(walkthrough_metrics.get("duplicateStageRefs") or 0),
-        "unownedFactRefs": int(walkthrough_metrics.get("unownedFactRefs") or 0),
-        "duplicateFactRefs": int(walkthrough_metrics.get("duplicateFactRefs") or 0),
-        "formatterSegmentCount": int(walkthrough_metrics.get("formatterSegmentCount") or 0),
-        "formatterSerializationCount": int(walkthrough_metrics.get("formatterSerializationCount") or 0),
-        "formatterPlanningDurationMs": float(walkthrough_metrics.get("formatterPlanningDurationMs") or 0.0),
-        "formatterDurationMs": float(walkthrough_metrics.get("formatterDurationMs") or 0.0),
-        "totalFormatterDurationMs": float(walkthrough_metrics.get("totalFormatterDurationMs") or 0.0),
-        "stitchingDurationMs": float(walkthrough_metrics.get("stitchingDurationMs") or 0.0),
-        "totalDurationMs": float(walkthrough_metrics.get("totalDurationMs") or 0.0),
-        "selectedSources": sorted({source for item in selected_graph_summaries for source in item.get("sources", [])}),
+        "narration": narration_metrics,
         "selectedGraphs": selected_graph_summaries,
-        "walkthrough": walkthrough_metrics,
-        "walkthroughPlans": pipeline_records,
         "formatterRecords": [_compact_provider_audit_record(dict(record)) for record in (answer_records or [])],
-        "providerCallCount": int(walkthrough_metrics.get("formatterProviderCallCount") or 0),
-        "repairCallCount": int(walkthrough_metrics.get("formatterRepairCallCount") or 0),
-        "finalAnswerProviderCallCount": int(walkthrough_metrics.get("finalAnswerProviderCallCount") or 0),
-        "formatterProviderCallCount": int(walkthrough_metrics.get("formatterProviderCallCount") or 0),
-        "formatterRepairCallCount": int(walkthrough_metrics.get("formatterRepairCallCount") or 0),
-        "formatterOutputSplitCallCount": int(walkthrough_metrics.get("formatterOutputSplitCallCount") or 0),
-        "groundingProviderCallCount": int(walkthrough_metrics.get("groundingProviderCallCount") or 0),
-        "analysisProviderCallCount": int(walkthrough_metrics.get("analysisProviderCallCount") or 0),
-        "toolContextFormatterCallCount": int(walkthrough_metrics.get("toolContextFormatterCallCount") or 0),
         "terminalHttpStatus": int(terminal_status),
         "terminalErrorCode": terminal_error_code,
         "terminalErrorMessage": terminal_error_message,
@@ -1142,8 +1022,10 @@ def _graph_assembly_terminal_payload(query_result, selected_graph_summaries: Seq
     }
 
 
-def _walkthrough_terminal_metrics(pipeline_records) -> dict[str, Any]:
+def _narration_terminal_metrics(pipeline_records) -> dict[str, Any]:
     records = [record for record in pipeline_records if isinstance(record, dict)]
+    if not records:
+        return CanonicalNarrationMetrics.empty().to_audit_payload()
 
     def total_int(key: str) -> int:
         return sum(int(record.get(key) or 0) for record in records)
@@ -1161,77 +1043,35 @@ def _walkthrough_terminal_metrics(pipeline_records) -> dict[str, Any]:
 
     return {
         "selectedGraphCount": total_int("selectedGraphCount"),
-        "walkthroughStepCount": total_int("presentationStageCount"),
-        "branchCount": total_int("branchCount"),
         "answerCount": total_int("answerCount"),
-        "fetchDurationMs": total_float("fetchDurationMs"),
-        "endToEndAssemblyDurationMs": total_float("endToEndAssemblyDurationMs"),
-        "presentationPlanningDurationMs": total_float("presentationPlanningDurationMs"),
-        "walkthroughPlanningDurationMs": total_float("presentationPlanningDurationMs"),
-        "textRenderingDurationMs": total_float("textRenderingDurationMs"),
-        "formatterGroupCount": total_int("formatterGroupCount"),
-        "selectedExecutableNodeCount": total_int("selectedExecutableNodeCount"),
-        "selectedExecutableStageRefs": concat_list("selectedExecutableStageRefs"),
-        "selectedExecutableSymbols": concat_list("selectedExecutableSymbols"),
-        "selectedExecutableStages": concat_list("selectedExecutableStages"),
-        "executablePublicStageCount": total_int("executablePublicStageCount"),
-        "missingExecutableStageRefs": total_int("missingExecutableStageRefs"),
-        "duplicateExecutableStageRefs": total_int("duplicateExecutableStageRefs"),
-        "boundaryStageCount": total_int("boundaryStageCount"),
-        "ownerlessBoundaryStageCount": total_int("ownerlessBoundaryStageCount"),
-        "structuralStageCount": total_int("structuralStageCount"),
-        "presentationStageCount": total_int("presentationStageCount"),
-        "expectedPublicStageCount": total_int("expectedPublicStageCount"),
-        "validatedFormatterStepCount": total_int("validatedFormatterStepCount"),
-        "stitchedPublicStepCount": total_int("stitchedPublicStepCount"),
-        "publicStepCount": total_int("publicStepCount"),
-        "stageCountContractExpected": total_int("stageCountContractExpected"),
-        "stageCountContractMatched": all(
-            bool(record.get("stageCountContractMatched", False))
-            for record in records
-        ),
-        "expectedPresentationStageCount": total_int("expectedPresentationStageCount"),
-        "executableOwnedBoundaryFactCount": total_int("executableOwnedBoundaryFactCount"),
-        "ownerlessBoundaryFactCount": total_int("ownerlessBoundaryFactCount"),
-        "deduplicatedFactCount": total_int("deduplicatedFactCount"),
-        "presentationStageRefs": concat_list("presentationStageRefs"),
-        "presentationStages": concat_list("presentationStages"),
-        "stageOwnershipRecords": concat_list("stageOwnershipRecords"),
-        "stageOwnershipMap": {
-            str(record.get("stageRef")): list(record.get("ownedFactRefs") or [])
-            for record in concat_list("stageOwnershipRecords")
-            if isinstance(record, dict) and record.get("stageRef")
-        },
-        "ownedFactRefsByStageRef": {
-            str(record.get("stageRef")): list(record.get("ownedFactRefs") or [])
-            for record in concat_list("stageOwnershipRecords")
-            if isinstance(record, dict) and record.get("stageRef")
-        },
-        "factOwnerByFactRef": {
-            str(fact_ref): str(record.get("stageRef"))
-            for record in concat_list("stageOwnershipRecords")
-            if isinstance(record, dict) and record.get("stageRef")
-            for fact_ref in (record.get("ownedFactRefs") or [])
-            if fact_ref
-        },
-        "missingStageRefs": total_int("missingStageRefs"),
-        "duplicateStageRefs": total_int("duplicateStageRefs"),
-        "unownedFactRefs": total_int("unownedFactRefs"),
-        "duplicateFactRefs": total_int("duplicateFactRefs"),
+        "narrationClauseCount": total_int("narrationClauseCount"),
+        "narrationClauseRefs": concat_list("narrationClauseRefs"),
+        "narrationClauseKinds": concat_list("narrationClauseKinds"),
+        "narrationSemanticOperations": concat_list("narrationSemanticOperations"),
+        "canonicalFactCount": total_int("canonicalFactCount"),
+        "canonicalFactOwnership": concat_list("canonicalFactOwnership"),
+        "duplicateCanonicalFactCount": total_int("duplicateCanonicalFactCount"),
+        "unownedCanonicalFactCount": total_int("unownedCanonicalFactCount"),
+        "missingClauseCount": total_int("missingClauseCount"),
+        "duplicateClauseCount": total_int("duplicateClauseCount"),
+        "unknownClauseCount": total_int("unknownClauseCount"),
+        "validatedClauseCount": total_int("validatedClauseCount"),
+        "publicClauseCount": total_int("publicClauseCount"),
+        "narrationContractMatched": all(bool(record.get("narrationContractMatched", False)) for record in records),
+        "provenTransitionClauseCount": total_int("provenTransitionClauseCount"),
+        "ambiguousBoundaryClauseCount": total_int("ambiguousBoundaryClauseCount"),
+        "unresolvedBoundaryClauseCount": total_int("unresolvedBoundaryClauseCount"),
+        "branchClauseCount": total_int("branchClauseCount"),
+        "convergenceClauseCount": total_int("convergenceClauseCount"),
+        "cycleClauseCount": total_int("cycleClauseCount"),
+        "sharedUnitClauseCount": total_int("sharedUnitClauseCount"),
         "formatterSegmentCount": total_int("formatterSegmentCount"),
         "formatterSerializationCount": total_int("formatterSerializationCount"),
-        "formatterPlanningDurationMs": total_float("formatterPlanningDurationMs"),
         "formatterDurationMs": total_float("formatterDurationMs"),
         "totalFormatterDurationMs": total_float("totalFormatterDurationMs"),
-        "stitchingDurationMs": total_float("stitchingDurationMs"),
-        "totalDurationMs": max((float(record.get("totalDurationMs") or 0.0) for record in records), default=0.0),
         "formatterProviderCallCount": total_int("formatterProviderCallCount"),
         "formatterRepairCallCount": total_int("formatterRepairCallCount"),
-        "formatterOutputSplitCallCount": total_int("formatterOutputSplitCallCount"),
-        "finalAnswerProviderCallCount": total_int("finalAnswerProviderCallCount"),
-        "groundingProviderCallCount": total_int("groundingProviderCallCount"),
-        "analysisProviderCallCount": total_int("analysisProviderCallCount"),
-        "toolContextFormatterCallCount": total_int("toolContextFormatterCallCount"),
+        "narrationPlanningDurationMs": total_float("narrationPlanningDurationMs"),
     }
 
 
@@ -1318,7 +1158,6 @@ def _compact_provider_audit_record(record: dict[str, Any]) -> dict[str, Any]:
         "responseLanguage",
         "segmentIndex",
         "segmentCount",
-        "groupCount",
         "renderedInputTokens",
         "reservedOutputTokens",
         "minimumValidOutputTokens",

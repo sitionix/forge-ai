@@ -7,10 +7,6 @@ from typing import Mapping
 from knowledge_service.knowledge_query_schema import KnowledgeGraphAnswerQueryEntry, KnowledgeQueryDiagnostic
 
 
-class PresentationStageKind(str, Enum):
-    CLAUSE = "CLAUSE"
-
-
 class NarrationClauseKind(str, Enum):
     UNIT_INTRODUCTION = "UNIT_INTRODUCTION"
     UNIT_ROOTS = "UNIT_ROOTS"
@@ -176,10 +172,85 @@ class FormatterValidationSummary:
     omitted_fact_refs: tuple[str, ...] = field(default_factory=tuple)
     duplicate_fact_refs: tuple[str, ...] = field(default_factory=tuple)
     unowned_fact_refs: tuple[str, ...] = field(default_factory=tuple)
-    validated_formatter_clause_count: int = 0
+    validated_clause_count: int = 0
     public_clause_count: int = 0
-    stage_count_contract_matched: bool = False
+    narration_contract_matched: bool = False
     errors: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class CanonicalNarrationMetrics:
+    selected_graph_count: int = 0
+    answer_count: int = 0
+    narration_clause_count: int = 0
+    narration_clause_refs: tuple[str, ...] = field(default_factory=tuple)
+    narration_clause_kinds: tuple[str, ...] = field(default_factory=tuple)
+    narration_semantic_operations: tuple[str, ...] = field(default_factory=tuple)
+    canonical_fact_count: int = 0
+    canonical_fact_ownership: tuple[CanonicalFactOwnership, ...] = field(default_factory=tuple)
+    duplicate_canonical_fact_count: int = 0
+    unowned_canonical_fact_count: int = 0
+    missing_clause_count: int = 0
+    duplicate_clause_count: int = 0
+    unknown_clause_count: int = 0
+    validated_clause_count: int = 0
+    public_clause_count: int = 0
+    narration_contract_matched: bool = False
+    proven_transition_clause_count: int = 0
+    ambiguous_boundary_clause_count: int = 0
+    unresolved_boundary_clause_count: int = 0
+    branch_clause_count: int = 0
+    convergence_clause_count: int = 0
+    cycle_clause_count: int = 0
+    shared_unit_clause_count: int = 0
+    formatter_segment_count: int = 0
+    formatter_serialization_count: int = 0
+    formatter_provider_call_count: int = 0
+    formatter_repair_call_count: int = 0
+    narration_planning_duration_ms: float = 0.0
+    formatter_duration_ms: float = 0.0
+    total_formatter_duration_ms: float = 0.0
+
+    @classmethod
+    def empty(cls, *, selected_graph_count: int = 0, answer_count: int = 0) -> CanonicalNarrationMetrics:
+        return cls(selected_graph_count=int(selected_graph_count), answer_count=int(answer_count))
+
+    def to_audit_payload(self) -> dict[str, object]:
+        return {
+            "selectedGraphCount": self.selected_graph_count,
+            "answerCount": self.answer_count,
+            "narrationClauseCount": self.narration_clause_count,
+            "narrationClauseRefs": list(self.narration_clause_refs),
+            "narrationClauseKinds": list(self.narration_clause_kinds),
+            "narrationSemanticOperations": list(self.narration_semantic_operations),
+            "canonicalFactCount": self.canonical_fact_count,
+            "canonicalFactOwnership": [
+                {"factRef": item.fact_ref, "ownerClauseRef": item.owner_clause_ref}
+                for item in self.canonical_fact_ownership
+            ],
+            "duplicateCanonicalFactCount": self.duplicate_canonical_fact_count,
+            "unownedCanonicalFactCount": self.unowned_canonical_fact_count,
+            "missingClauseCount": self.missing_clause_count,
+            "duplicateClauseCount": self.duplicate_clause_count,
+            "unknownClauseCount": self.unknown_clause_count,
+            "validatedClauseCount": self.validated_clause_count,
+            "publicClauseCount": self.public_clause_count,
+            "narrationContractMatched": self.narration_contract_matched,
+            "provenTransitionClauseCount": self.proven_transition_clause_count,
+            "ambiguousBoundaryClauseCount": self.ambiguous_boundary_clause_count,
+            "unresolvedBoundaryClauseCount": self.unresolved_boundary_clause_count,
+            "branchClauseCount": self.branch_clause_count,
+            "convergenceClauseCount": self.convergence_clause_count,
+            "cycleClauseCount": self.cycle_clause_count,
+            "sharedUnitClauseCount": self.shared_unit_clause_count,
+            "formatterSegmentCount": self.formatter_segment_count,
+            "formatterSerializationCount": self.formatter_serialization_count,
+            "formatterProviderCallCount": self.formatter_provider_call_count,
+            "formatterRepairCallCount": self.formatter_repair_call_count,
+            "narrationPlanningDurationMs": self.narration_planning_duration_ms,
+            "formatterDurationMs": self.formatter_duration_ms,
+            "totalFormatterDurationMs": self.total_formatter_duration_ms,
+        }
 
 
 def canonical_ref(kind: CanonicalReferenceKind, *parts: object) -> str:

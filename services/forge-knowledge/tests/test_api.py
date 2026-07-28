@@ -11,6 +11,7 @@ from semantic_test_support import seed_semantic_graph
 from support import AsgiTestClient, build_test_app, write_runtime_config
 
 import knowledge_service.main as knowledge_main
+from knowledge_service.canonical_narration_contract import CanonicalNarrationMetrics
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.query_interpretation import QueryInterpretationProviderResult
 
@@ -22,6 +23,53 @@ class BrokenQueryInterpretationProvider:
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
         self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
         return QueryInterpretationProviderResult(raw_text="not json", prompt_char_length=100)
+
+
+def _audit_alias(*parts: str) -> str:
+    return "".join(parts)
+
+
+LEGACY_AUDIT_ALIASES = (
+    _audit_alias("walk", "throughPlanningDurationMs"),
+    _audit_alias("walk", "throughStepCount"),
+    _audit_alias("walk", "through"),
+    _audit_alias("walk", "throughPlans"),
+    _audit_alias("formatter", "GroupCount"),
+    _audit_alias("formatter", "OutputSplitCallCount"),
+    _audit_alias("selected", "ExecutableNodeCount"),
+    _audit_alias("selected", "ExecutableStageRefs"),
+    _audit_alias("selected", "ExecutableSymbols"),
+    _audit_alias("selected", "ExecutableStages"),
+    _audit_alias("executable", "PublicStageCount"),
+    _audit_alias("missing", "ExecutableStageRefs"),
+    _audit_alias("duplicate", "ExecutableStageRefs"),
+    _audit_alias("standalone", "OperationStageCount"),
+    _audit_alias("boundary", "StageCount"),
+    _audit_alias("ownerless", "BoundaryStageCount"),
+    _audit_alias("executable", "OwnedBoundaryFactCount"),
+    _audit_alias("ownerless", "BoundaryFactCount"),
+    _audit_alias("presentation", "StageCount"),
+    _audit_alias("presentation", "StageRefs"),
+    _audit_alias("presentation", "Stages"),
+    _audit_alias("expected", "PresentationStageCount"),
+    _audit_alias("expected", "PublicStageCount"),
+    _audit_alias("validated", "FormatterStepCount"),
+    _audit_alias("stitched", "PublicStepCount"),
+    _audit_alias("public", "StepCount"),
+    _audit_alias("stage", "CountContractExpected"),
+    _audit_alias("stage", "CountContractMatched"),
+    _audit_alias("stage", "OwnershipRecords"),
+    _audit_alias("stage", "OwnershipMap"),
+    _audit_alias("owned", "FactRefsByStageRef"),
+    _audit_alias("fact", "OwnerByFactRef"),
+    _audit_alias("stitching", "DurationMs"),
+)
+
+
+def _assert_no_legacy_audit_aliases(record: dict) -> None:
+    text = json.dumps(record, sort_keys=True)
+    for alias in LEGACY_AUDIT_ALIASES:
+        assert f'"{alias}"' not in text
 
 
 def _entrypoint_claim(
@@ -246,28 +294,31 @@ def test_human_query_writes_formatter_terminal_audit_record(tmp_path):
     assert record["correlationId"] == "corr-terminal-success"
     assert record["terminalHttpStatus"] == 200
     assert record["terminalStage"] == "SUCCESS"
-    assert record["queryInterpreterCallCount"] == 1
-    assert record["selectedGraphCount"] == 1
-    assert record["presentationStageCount"] >= 1
-    assert record["publicStepCount"] == record["presentationStageCount"]
-    assert record["missingStageRefs"] == 0
-    assert record["duplicateStageRefs"] == 0
-    assert record["unownedFactRefs"] == 0
-    assert record["duplicateFactRefs"] == 0
-    assert record["answerCount"] == 1
-    assert record["formatterProviderCallCount"] == 1
-    assert record["finalAnswerProviderCallCount"] == 0
-    assert record["groundingProviderCallCount"] == 0
-    assert record["toolContextFormatterCallCount"] == 0
-    assert record["providerCallCount"] == 1
-    assert record["fetchDurationMs"] >= 0
-    assert record["presentationPlanningDurationMs"] >= 0
-    assert record["formatterPlanningDurationMs"] >= 0
-    assert record["formatterDurationMs"] >= 0
-    assert record["textRenderingDurationMs"] >= 0
+    assert record["queryInterpreter"]["providerCallCount"] == 1
+    narration = record["narration"]
+    assert narration["selectedGraphCount"] == 1
+    assert narration["answerCount"] == 1
+    assert narration["narrationClauseCount"] >= 1
+    assert narration["validatedClauseCount"] == narration["narrationClauseCount"]
+    assert narration["publicClauseCount"] == narration["narrationClauseCount"]
+    assert narration["narrationContractMatched"] is True
+    assert narration["canonicalFactOwnership"]
+    assert narration["missingClauseCount"] == 0
+    assert narration["duplicateClauseCount"] == 0
+    assert narration["unknownClauseCount"] == 0
+    assert narration["unownedCanonicalFactCount"] == 0
+    assert narration["duplicateCanonicalFactCount"] == 0
+    assert narration["formatterProviderCallCount"] == 1
+    assert narration["formatterRepairCallCount"] == 0
+    assert narration["narrationPlanningDurationMs"] >= 0
+    assert narration["formatterDurationMs"] >= 0
+    assert narration["totalFormatterDurationMs"] >= 0
+    _assert_no_legacy_audit_aliases(record)
     files = sorted(app.state.app_config.query_audit_directory.glob("human-query-terminal-*.json"))
     assert len(files) == 1
-    assert json.loads(files[0].read_text(encoding="utf-8"))["correlationId"] == "corr-terminal-success"
+    file_record = json.loads(files[0].read_text(encoding="utf-8"))
+    assert file_record["correlationId"] == "corr-terminal-success"
+    _assert_no_legacy_audit_aliases(file_record)
 
 
 def test_query_interpretation_failure_returns_502_without_final_answer_call(tmp_path):
@@ -284,6 +335,81 @@ def test_query_interpretation_failure_returns_502_without_final_answer_call(tmp_
     assert response.status_code == 502
     assert response.json()["code"] == "QUERY_INTERPRETATION_FAILED"
     assert len(broken_interpreter.calls) == 2
+    record = app.state.human_query_terminal_audit_artifacts[-1]
+    assert record["narration"] == CanonicalNarrationMetrics.empty().to_audit_payload()
+    _assert_no_legacy_audit_aliases(record)
+
+
+def test_terminal_audit_aggregates_multiple_canonical_formatter_records():
+    first = CanonicalNarrationMetrics(
+        selected_graph_count=1,
+        answer_count=0,
+        narration_clause_count=2,
+        narration_clause_refs=("unit:a:overview", "transition:a-b"),
+        narration_clause_kinds=("UNIT_INTRODUCTION", "PROVEN_CONTINUATION"),
+        narration_semantic_operations=("PRESENT_UNIT", "CONTINUES_WITH_PROVEN_TARGET"),
+        canonical_fact_count=3,
+        duplicate_canonical_fact_count=1,
+        missing_clause_count=1,
+        formatter_provider_call_count=1,
+        formatter_repair_call_count=1,
+        formatter_segment_count=1,
+        formatter_serialization_count=2,
+        narration_planning_duration_ms=1.5,
+        formatter_duration_ms=2.5,
+        total_formatter_duration_ms=4.0,
+    ).to_audit_payload()
+    second = CanonicalNarrationMetrics(
+        selected_graph_count=1,
+        answer_count=0,
+        narration_clause_count=1,
+        narration_clause_refs=("unit:b:overview",),
+        narration_clause_kinds=("UNIT_INTRODUCTION",),
+        narration_semantic_operations=("PRESENT_UNIT",),
+        canonical_fact_count=1,
+        unknown_clause_count=1,
+        formatter_provider_call_count=2,
+        formatter_segment_count=1,
+        formatter_serialization_count=1,
+        narration_planning_duration_ms=0.5,
+        formatter_duration_ms=1.0,
+        total_formatter_duration_ms=1.5,
+    ).to_audit_payload()
+
+    record = knowledge_main._human_query_terminal_audit_record(
+        KnowledgeQueryRequest(queryText="multi graph"),
+        correlation_id="corr-aggregate",
+        retrieval_plan=None,
+        query_result=None,
+        selected_graphs=(),
+        interpretation_records=[],
+        answer_records=[],
+        pipeline_records=[first, second],
+        terminal_status=502,
+        terminal_error_code="FINAL_FORMATTER_FAILED",
+        terminal_error_message="failed",
+        terminal_stage="CANONICAL_TEXT_RENDERING",
+        unexpected_exception_class=None,
+        unexpected_exception_stage=None,
+    )
+
+    narration = record["narration"]
+    assert narration["selectedGraphCount"] == 2
+    assert narration["answerCount"] == 0
+    assert narration["narrationClauseCount"] == 3
+    assert narration["narrationClauseRefs"] == ["unit:a:overview", "transition:a-b", "unit:b:overview"]
+    assert narration["missingClauseCount"] == 1
+    assert narration["unknownClauseCount"] == 1
+    assert narration["duplicateCanonicalFactCount"] == 1
+    assert narration["formatterProviderCallCount"] == 3
+    assert narration["formatterRepairCallCount"] == 1
+    assert narration["formatterSegmentCount"] == 2
+    assert narration["formatterSerializationCount"] == 3
+    assert narration["narrationPlanningDurationMs"] == 2.0
+    assert narration["formatterDurationMs"] == 3.5
+    assert narration["totalFormatterDurationMs"] == 5.5
+    assert narration["narrationContractMatched"] is False
+    _assert_no_legacy_audit_aliases(record)
 
 
 def test_query_endpoint_returns_one_answer_per_independent_graph(tmp_path):

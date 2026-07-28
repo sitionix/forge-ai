@@ -204,15 +204,15 @@ def test_human_terminal_audit_records_canonical_formatter_calls(tmp_path):
     assert response.status_code == 200
     record = app.state.human_query_terminal_audit_artifacts[-1]
     assert record["terminalStage"] == "SUCCESS"
-    assert record["queryInterpreterCallCount"] == 1
-    assert record["answerCount"] == 1
-    assert record["formatterProviderCallCount"] == 1
-    assert record["formatterRepairCallCount"] == 0
-    assert record["presentationStageCount"] >= 1
-    assert record["validatedFormatterStepCount"] == record["presentationStageCount"]
-    assert record["publicStepCount"] == record["presentationStageCount"]
-    assert record["finalAnswerProviderCallCount"] == 0
-    assert record["groundingProviderCallCount"] == 0
-    assert record["toolContextFormatterCallCount"] == 0
-    assert record["presentationPlanningDurationMs"] >= 0
-    assert record["textRenderingDurationMs"] >= 0
+    assert record["queryInterpreter"]["providerCallCount"] == 1
+    narration = record["narration"]
+    assert narration["answerCount"] == 1
+    assert narration["formatterProviderCallCount"] == 1
+    assert narration["formatterRepairCallCount"] == 0
+    assert narration["narrationClauseCount"] >= 1
+    assert narration["validatedClauseCount"] == narration["narrationClauseCount"]
+    assert narration["publicClauseCount"] == narration["narrationClauseCount"]
+    assert narration["narrationContractMatched"] is True
+    assert narration["canonicalFactOwnership"]
+    assert narration["narrationPlanningDurationMs"] >= 0
+    assert narration["formatterDurationMs"] >= 0

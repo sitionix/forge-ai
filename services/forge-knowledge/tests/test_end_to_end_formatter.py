@@ -10,13 +10,19 @@ from test_local_flow_unit_engine import edge, node
 
 from knowledge_service.boundary_resolution import BoundaryResolutionStatus
 from knowledge_service.canonical_narration_contract import (
+    CanonicalNarrationClause,
     FormatterAssertionPredicate,
     FormatterAssertionValue,
     NarrationClauseKind,
     NarrationSemanticOperation,
 )
 from knowledge_service.canonical_narration_planner import CanonicalNarrationPlanner
-from knowledge_service.canonical_narration_strategies import CycleMembershipExtractor
+from knowledge_service.canonical_narration_strategies import (
+    CycleMembershipExtractor,
+    NarrationContext,
+    NarrationContextKind,
+    NarrationStrategyRegistry,
+)
 from knowledge_service.end_to_end_flow import EndToEndFlowAssembler
 from knowledge_service.formatter_policy import FormatterPolicy
 from knowledge_service.formatter_protocol import EndToEndFormatterAllGraphsFailed, EndToEndFormatterValidationError
@@ -113,7 +119,7 @@ def test_formatter_calls_provider_and_validates_distinct_answer_languages():
 
         assert result.metrics["formatterProviderCallCount"] == 1
         assert result.metrics["formatterRepairCallCount"] == 0
-        assert result.metrics["validatedFormatterClauseCount"] == result.metrics["presentationClauseCount"]
+        assert result.metrics["validatedClauseCount"] == result.metrics["narrationClauseCount"]
         assert provider.calls[0]["input"]["responseLanguage"] == language
         texts[language] = result.answers[0].text
     assert len(set(texts.values())) == 5
@@ -266,6 +272,142 @@ def test_presentation_plan_contains_branch_convergence_and_shared_unit_clauses_w
         for clause in plan.clauses
         if clause.semantic_operation is NarrationSemanticOperation.PRESENT_UNIT and clause.clause_ref.startswith("unit:unit-d:")
     ] == ["unit:unit-d:overview"]
+
+
+def test_linear_clause_sequence_places_transition_between_units():
+    plan = CanonicalNarrationPlanner().plan(_linear_graph(), response_language="en")
+
+    assert _semantic_sequence(plan) == [
+        *_unit_sequence("unit-a"),
+        _continuation_sequence_item("unit-a", "unit-b"),
+        *_unit_sequence("unit-b"),
+    ]
+
+
+def test_branch_clause_sequence_places_branch_before_outbound_transitions():
+    plan = CanonicalNarrationPlanner().plan(_branch_graph(), response_language="en")
+
+    assert _semantic_sequence(plan) == [
+        *_unit_sequence("unit-a"),
+        _branch_sequence_item("unit-a", ("unit-b", "unit-c")),
+        _continuation_sequence_item("unit-a", "unit-b"),
+        _continuation_sequence_item("unit-a", "unit-c"),
+        *_unit_sequence("unit-b"),
+        *_unit_sequence("unit-c"),
+    ]
+
+
+def test_convergence_clause_sequence_is_attached_to_entering_target_unit():
+    plan = CanonicalNarrationPlanner().plan(_convergence_graph(), response_language="en")
+
+    assert _semantic_sequence(plan) == [
+        *_unit_sequence("unit-b"),
+        _continuation_sequence_item("unit-b", "unit-d"),
+        *_unit_sequence("unit-c"),
+        _continuation_sequence_item("unit-c", "unit-d"),
+        _convergence_sequence_item(("unit-b", "unit-c"), "unit-d"),
+        _shared_unit_sequence_item("unit-d"),
+        *_unit_sequence("unit-d"),
+    ]
+
+
+def test_branch_plus_convergence_clause_sequence_preserves_planner_order():
+    plan = CanonicalNarrationPlanner().plan(_branch_convergence_graph(), response_language="en")
+
+    assert _semantic_sequence(plan) == [
+        *_unit_sequence("unit-a"),
+        _branch_sequence_item("unit-a", ("unit-b", "unit-c")),
+        _continuation_sequence_item("unit-a", "unit-b"),
+        _continuation_sequence_item("unit-a", "unit-c"),
+        *_unit_sequence("unit-b"),
+        _continuation_sequence_item("unit-b", "unit-d"),
+        *_unit_sequence("unit-c"),
+        _continuation_sequence_item("unit-c", "unit-d"),
+        _convergence_sequence_item(("unit-b", "unit-c"), "unit-d"),
+        _shared_unit_sequence_item("unit-d"),
+        *_unit_sequence("unit-d"),
+    ]
+
+
+def test_cycle_plus_tail_clause_sequence_keeps_cycle_after_component_narration():
+    plan = CanonicalNarrationPlanner().plan(_cycle_plus_tail_graph(), response_language="en")
+
+    assert _semantic_sequence(plan) == [
+        *_unit_sequence("unit-a"),
+        _continuation_sequence_item("unit-a", "unit-b"),
+        *_unit_sequence("unit-b"),
+        _branch_sequence_item("unit-b", ("unit-a", "unit-c")),
+        _continuation_sequence_item("unit-b", "unit-c"),
+        _continuation_sequence_item("unit-b", "unit-a"),
+        *_unit_sequence("unit-c"),
+        _cycle_sequence_item(("unit-a", "unit-b")),
+    ]
+
+
+def test_open_ambiguous_boundary_clause_sequence_follows_unit_clauses():
+    plan = CanonicalNarrationPlanner().plan(_ambiguous_graph(), response_language="en")
+
+    assert _semantic_sequence(plan) == [
+        *_unit_sequence("unit-a"),
+        _open_boundary_sequence_item("unit-a", NarrationSemanticOperation.HAS_AMBIGUOUS_CONTINUATION),
+    ]
+
+
+def test_open_unresolved_boundary_clause_sequence_follows_unit_clauses():
+    plan = CanonicalNarrationPlanner().plan(_unresolved_graph(), response_language="en")
+
+    assert _semantic_sequence(plan) == [
+        *_unit_sequence("unit-a"),
+        _open_boundary_sequence_item("unit-a", NarrationSemanticOperation.HAS_UNRESOLVED_CONTINUATION),
+    ]
+
+
+def test_independent_graph_components_keep_component_local_clause_sequences():
+    graphs = _independent_graphs()
+
+    sequences = [_semantic_sequence(CanonicalNarrationPlanner().plan(graph, response_language="en")) for graph in graphs]
+
+    assert sequences == [
+        _unit_sequence("unit-b", has_generic=False),
+        _unit_sequence("unit-a", has_generic=False),
+    ]
+
+
+def test_reversed_canonical_inputs_produce_same_clause_sequence():
+    graph = _branch_convergence_graph()
+    reversed_graph = replace(
+        graph,
+        unit_refs=tuple(reversed(graph.unit_refs)),
+        proven_cross_source_transitions=tuple(reversed(graph.proven_cross_source_transitions)),
+        open_boundaries=tuple(reversed(graph.open_boundaries)),
+    )
+    open_graph = _mixed_open_boundary_graph()
+    reversed_open_graph = replace(open_graph, open_boundaries=tuple(reversed(open_graph.open_boundaries)))
+
+    planner = CanonicalNarrationPlanner()
+
+    assert _semantic_sequence(planner.plan(reversed_graph, response_language="en")) == _semantic_sequence(planner.plan(graph, response_language="en"))
+    assert _semantic_sequence(planner.plan(reversed_open_graph, response_language="en")) == _semantic_sequence(
+        planner.plan(open_graph, response_language="en")
+    )
+
+
+def test_strategy_registry_preserves_context_then_strategy_order_without_global_sort():
+    graph = _singleton_graph()
+    contexts = (
+        NarrationContext(context_kind=NarrationContextKind.UNIT, graph=graph, policy=FormatterPolicy(), source_unit_id="context-b"),
+        NarrationContext(context_kind=NarrationContextKind.UNIT, graph=graph, policy=FormatterPolicy(), source_unit_id="context-a"),
+    )
+    registry = NarrationStrategyRegistry((_SyntheticStrategy("late", "z-order"), _SyntheticStrategy("early", "a-order")))
+
+    clauses = registry.build_all(contexts)
+
+    assert [clause.clause_ref for clause in clauses] == [
+        "unit:context-b:late",
+        "unit:context-b:early",
+        "unit:context-a:late",
+        "unit:context-a:early",
+    ]
 
 
 def test_presentation_plan_owns_every_fact_once_and_structural_refs_are_context():
@@ -422,6 +564,171 @@ def _coverage_clause(plan):
     return next(clause for clause in plan.clauses if clause.semantic_operation is NarrationSemanticOperation.PRESENT_COVERAGE)
 
 
+def _semantic_sequence(plan) -> list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]]:
+    return [
+        (
+            _stable_clause_ref(clause),
+            clause.clause_kind.value,
+            clause.semantic_operation.value,
+            _unit_refs(clause.subject_refs),
+            _unit_refs(clause.object_refs),
+        )
+        for clause in plan.clauses
+    ]
+
+
+def _stable_clause_ref(clause) -> str:
+    subjects = _unit_refs(clause.subject_refs)
+    objects = _unit_refs(clause.object_refs)
+    if clause.clause_kind in _UNIT_CLAUSE_KINDS:
+        return f"{subjects[0]}:{clause.clause_kind.value}"
+    if clause.clause_kind is NarrationClauseKind.PROVEN_CONTINUATION:
+        return f"transition:{subjects[0]}->{objects[0]}"
+    if clause.clause_kind is NarrationClauseKind.BRANCH:
+        return f"branch:{subjects[0]}->{','.join(objects)}"
+    if clause.clause_kind is NarrationClauseKind.CONVERGENCE:
+        return f"convergence:{','.join(subjects)}->{objects[0]}"
+    if clause.clause_kind is NarrationClauseKind.SHARED_UNIT_REFERENCE:
+        return f"shared:{subjects[0]}"
+    if clause.clause_kind is NarrationClauseKind.OPEN_BOUNDARY:
+        return f"open:{clause.semantic_operation.value}:{','.join(subjects)}"
+    if clause.clause_kind is NarrationClauseKind.CYCLE_REFERENCE:
+        return f"cycle:{','.join(subjects)}"
+    return clause.clause_ref.split(":", 1)[0]
+
+
+def _unit_refs(refs) -> tuple[str, ...]:
+    return tuple(ref for ref in refs if ref.startswith("unit:"))
+
+
+_UNIT_CLAUSE_KINDS = {
+    NarrationClauseKind.UNIT_INTRODUCTION,
+    NarrationClauseKind.UNIT_ROOTS,
+    NarrationClauseKind.UNIT_ANCHORS,
+    NarrationClauseKind.UNIT_EXECUTION_NODES,
+    NarrationClauseKind.UNIT_LOCAL_TRANSITIONS,
+    NarrationClauseKind.UNIT_TOPOLOGY_BOUNDARIES,
+    NarrationClauseKind.UNIT_GENERIC_BOUNDARIES,
+    NarrationClauseKind.UNIT_SUPPORTING_CONTEXT,
+    NarrationClauseKind.UNIT_EVIDENCE,
+    NarrationClauseKind.UNIT_COVERAGE,
+}
+
+
+def _unit_sequence(unit_id: str, *, has_generic: bool = True) -> list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]]:
+    subject = (f"unit:{unit_id}",)
+    kinds = [
+        (NarrationClauseKind.UNIT_INTRODUCTION, NarrationSemanticOperation.PRESENT_UNIT),
+        (NarrationClauseKind.UNIT_ROOTS, NarrationSemanticOperation.PRESENT_UNIT_ROOTS),
+        (NarrationClauseKind.UNIT_EXECUTION_NODES, NarrationSemanticOperation.PRESENT_EXECUTION_NODES),
+    ]
+    if has_generic:
+        kinds.append((NarrationClauseKind.UNIT_GENERIC_BOUNDARIES, NarrationSemanticOperation.PRESENT_GENERIC_BOUNDARY))
+    kinds.extend(
+        [
+            (NarrationClauseKind.UNIT_EVIDENCE, NarrationSemanticOperation.PRESENT_EVIDENCE),
+            (NarrationClauseKind.UNIT_COVERAGE, NarrationSemanticOperation.PRESENT_COVERAGE),
+        ]
+    )
+    return [(f"{subject[0]}:{kind.value}", kind.value, operation.value, subject, ()) for kind, operation in kinds]
+
+
+def _continuation_sequence_item(source_unit_id: str, target_unit_id: str) -> tuple[str, str, str, tuple[str, ...], tuple[str, ...]]:
+    return (
+        f"transition:unit:{source_unit_id}->unit:{target_unit_id}",
+        NarrationClauseKind.PROVEN_CONTINUATION.value,
+        NarrationSemanticOperation.CONTINUES_WITH_PROVEN_TARGET.value,
+        (f"unit:{source_unit_id}",),
+        (f"unit:{target_unit_id}",),
+    )
+
+
+def _branch_sequence_item(source_unit_id: str, target_unit_ids: tuple[str, ...]) -> tuple[str, str, str, tuple[str, ...], tuple[str, ...]]:
+    targets = tuple(f"unit:{unit_id}" for unit_id in target_unit_ids)
+    return (
+        f"branch:unit:{source_unit_id}->{','.join(targets)}",
+        NarrationClauseKind.BRANCH.value,
+        NarrationSemanticOperation.BRANCHES_TO.value,
+        (f"unit:{source_unit_id}",),
+        targets,
+    )
+
+
+def _convergence_sequence_item(source_unit_ids: tuple[str, ...], target_unit_id: str) -> tuple[str, str, str, tuple[str, ...], tuple[str, ...]]:
+    sources = tuple(f"unit:{unit_id}" for unit_id in source_unit_ids)
+    target = f"unit:{target_unit_id}"
+    return (
+        f"convergence:{','.join(sources)}->{target}",
+        NarrationClauseKind.CONVERGENCE.value,
+        NarrationSemanticOperation.CONVERGES_AT.value,
+        sources,
+        (target,),
+    )
+
+
+def _shared_unit_sequence_item(unit_id: str) -> tuple[str, str, str, tuple[str, ...], tuple[str, ...]]:
+    return (
+        f"shared:unit:{unit_id}",
+        NarrationClauseKind.SHARED_UNIT_REFERENCE.value,
+        NarrationSemanticOperation.REFERENCES_SHARED_UNIT.value,
+        (f"unit:{unit_id}",),
+        (),
+    )
+
+
+def _cycle_sequence_item(unit_ids: tuple[str, ...]) -> tuple[str, str, str, tuple[str, ...], tuple[str, ...]]:
+    units = tuple(f"unit:{unit_id}" for unit_id in unit_ids)
+    return (
+        f"cycle:{','.join(units)}",
+        NarrationClauseKind.CYCLE_REFERENCE.value,
+        NarrationSemanticOperation.REFERENCES_CYCLE.value,
+        units,
+        (),
+    )
+
+
+def _open_boundary_sequence_item(unit_id: str, operation: NarrationSemanticOperation) -> tuple[str, str, str, tuple[str, ...], tuple[str, ...]]:
+    subject = (f"unit:{unit_id}",)
+    return (
+        f"open:{operation.value}:{','.join(subject)}",
+        NarrationClauseKind.OPEN_BOUNDARY.value,
+        operation.value,
+        subject,
+        (),
+    )
+
+
+class _SyntheticStrategy:
+    additive = True
+    owned_fact_kinds = ()
+    semantic_operations = ()
+
+    def __init__(self, label: str, ordering_prefix: str) -> None:
+        self.label = label
+        self.ordering_prefix = ordering_prefix
+
+    def supports(self, context: NarrationContext) -> bool:
+        return bool(context.source_unit_id)
+
+    def build(self, context: NarrationContext) -> tuple[CanonicalNarrationClause, ...]:
+        unit_ref = f"unit:{context.source_unit_id}"
+        clause_ref = f"{unit_ref}:{self.label}"
+        return (
+            CanonicalNarrationClause(
+                clause_ref=clause_ref,
+                clause_kind=NarrationClauseKind.UNIT_INTRODUCTION,
+                semantic_operation=NarrationSemanticOperation.PRESENT_UNIT,
+                subject_refs=(unit_ref,),
+                object_refs=(),
+                qualifier_refs=(),
+                canonical_fact_refs=(clause_ref,),
+                display_values={unit_ref: str(context.source_unit_id), clause_ref: self.label},
+                ordering_key=(self.ordering_prefix, str(context.source_unit_id)),
+                allowed_canonical_refs=(unit_ref, clause_ref),
+            ),
+        )
+
+
 def _plan(language: str):
     return type("Plan", (), {"response_language": language})()
 
@@ -496,6 +803,79 @@ def _branch_convergence_graph():
         boundary_resolution=resolution,
     )
     return result.graphs[0]
+
+
+def _branch_graph():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    owner_c = node("C", source="source-c")
+    req_ab = neutral_boundary("required-ab", owner_a, "REQUIRED", "ab")
+    req_ac = neutral_boundary("required-ac", owner_a, "REQUIRED", "ac")
+    prov_b = neutral_boundary("provided-b", owner_b, "PROVIDED", "ab")
+    prov_c = neutral_boundary("provided-c", owner_c, "PROVIDED", "ac")
+    unit_a = unit("unit-a", owner_a, boundaries=(req_ab, req_ac))
+    unit_b = unit("unit-b", owner_b, boundaries=(prov_b,))
+    unit_c = unit("unit-c", owner_c, boundaries=(prov_c,))
+    result = EndToEndFlowAssembler().assemble(
+        (unit_a, unit_b, unit_c),
+        query_entry_unit_ids=("unit-a",),
+        boundary_resolution=combine_results(
+            proven(req_ab, prov_b, required_unit_ids=("unit-a",), target_unit_ids=("unit-b",), resolution_id="res-ab"),
+            proven(req_ac, prov_c, required_unit_ids=("unit-a",), target_unit_ids=("unit-c",), resolution_id="res-ac"),
+        ),
+    )
+    return result.graphs[0]
+
+
+def _convergence_graph():
+    owner_b = node("B", source="source-b")
+    owner_c = node("C", source="source-c")
+    owner_d = node("D", source="source-d")
+    req_bd = neutral_boundary("required-bd", owner_b, "REQUIRED", "bd")
+    req_cd = neutral_boundary("required-cd", owner_c, "REQUIRED", "cd")
+    prov_d1 = neutral_boundary("provided-d1", owner_d, "PROVIDED", "bd")
+    prov_d2 = neutral_boundary("provided-d2", owner_d, "PROVIDED", "cd")
+    unit_b = unit("unit-b", owner_b, boundaries=(req_bd,))
+    unit_c = unit("unit-c", owner_c, boundaries=(req_cd,))
+    unit_d = unit("unit-d", owner_d, boundaries=(prov_d1, prov_d2))
+    result = EndToEndFlowAssembler().assemble(
+        (unit_b, unit_c, unit_d),
+        query_entry_unit_ids=("unit-b", "unit-c"),
+        boundary_resolution=combine_results(
+            proven(req_bd, prov_d1, required_unit_ids=("unit-b",), target_unit_ids=("unit-d",), resolution_id="res-bd"),
+            proven(req_cd, prov_d2, required_unit_ids=("unit-c",), target_unit_ids=("unit-d",), resolution_id="res-cd"),
+        ),
+    )
+    return result.graphs[0]
+
+
+def _mixed_open_boundary_graph():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-a")
+    req_a = neutral_boundary("required-a", owner_a, "REQUIRED", "a")
+    req_b = neutral_boundary("required-b", owner_a, "REQUIRED", "b")
+    candidate = neutral_boundary("provided-b", owner_b, "PROVIDED", "b")
+    unit_a = unit("unit-a", owner_a, boundaries=(req_b, req_a))
+    result = EndToEndFlowAssembler().assemble(
+        (unit_a,),
+        query_entry_unit_ids=("unit-a",),
+        boundary_resolution=combine_results(
+            open_result(req_b, BoundaryResolutionStatus.UNRESOLVED, ("unit-a",)),
+            open_result(req_a, BoundaryResolutionStatus.AMBIGUOUS, ("unit-a",), candidate),
+        ),
+    )
+    return result.graphs[0]
+
+
+def _independent_graphs():
+    owner_a = node("A", source="source-a")
+    owner_b = node("B", source="source-b")
+    result = EndToEndFlowAssembler().assemble(
+        (unit("unit-a", owner_a), unit("unit-b", owner_b)),
+        query_entry_unit_ids=("unit-a", "unit-b"),
+        boundary_resolution=None,
+    )
+    return result.graphs
 
 
 def _singleton_graph():
