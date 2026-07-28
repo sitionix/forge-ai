@@ -30,46 +30,13 @@ _MAX_UNIT_TRANSITIONS = 3000
 _MAX_UNIT_BOUNDARIES = 1000
 
 
-class EntrypointFlowOrigin(str, Enum):
+class LocalFlowRootOrigin(str, Enum):
     EXPLICIT_GRAPH_FACT = "EXPLICIT_GRAPH_FACT"
     INFERRED_ROOT = "INFERRED_ROOT"
 
 
 @dataclass(frozen=True)
-class EntrypointFlowKey:
-    source_id: str
-    graph_revision: str
-    entrypoint_node_id: str
-
-
-@dataclass(frozen=True)
-class EntrypointFlowAnchor:
-    node_id: str
-    label: str
-    score: float
-    match_reasons: tuple[str, ...]
-    distance: int
-    original_stable_key: str | None = None
-    original_node_kind: str | None = None
-    expanded_seed_node_id: str | None = None
-    expanded_seed_stable_key: str | None = None
-    anchor_to_seed_reasons: tuple[str, ...] = ()
-    query_provenance: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class EntrypointFlowCoverage:
-    node_count: int
-    transition_count: int
-    boundary_count: int
-    anchor_count: int
-    max_depth_reached: int
-    cycle_detected: bool = False
-    truncated: bool = False
-
-
-@dataclass(frozen=True)
-class EntrypointFlowSeedProvenance:
+class LocalFlowSeedProvenance:
     original_anchor: KnowledgeQueryMatchedNode
     expanded_seed: KnowledgeQueryMatchedNode
     anchor_to_seed_reasons: tuple[str, ...] = ()
@@ -78,7 +45,7 @@ class EntrypointFlowSeedProvenance:
 @dataclass(frozen=True)
 class LocalFlowRoot:
     node: FlowGraphNode
-    origin: EntrypointFlowOrigin
+    origin: LocalFlowRootOrigin
     distance_to_nearest_seed: int
 
 
@@ -123,36 +90,16 @@ class LocalFlowUnit:
 
 
 @dataclass(frozen=True)
-class EntrypointFlow:
-    key: EntrypointFlowKey
-    entrypoint: FlowGraphNode
-    origin: EntrypointFlowOrigin
-    anchors: tuple[EntrypointFlowAnchor, ...]
-    nodes: tuple[FlowGraphNode, ...]
-    transitions: tuple[FlowGraphEdge, ...]
-    boundary_transitions: tuple[FlowGraphEdge, ...]
-    evidence: tuple[FlowGraphEvidence, ...]
-    complete: bool
-    coverage: EntrypointFlowCoverage
-    diagnostics: tuple[KnowledgeQueryDiagnostic, ...]
-    relevance_score: float
-    local_unit_id: str | None = None
-    root_nodes: tuple[FlowGraphNode, ...] = ()
-    generic_boundaries: tuple[LocalBoundaryFact, ...] = ()
-
-
-@dataclass(frozen=True)
-class EntrypointFlowBuildResult:
-    flows: tuple[EntrypointFlow, ...]
+class LocalFlowBuildResult:
+    local_units: tuple[LocalFlowUnit, ...]
     diagnostics: list[KnowledgeQueryDiagnostic]
     truncated: bool
-    discovered_entrypoint_count: int = 0
+    discovered_root_count: int = 0
     stage_timings_ms: dict[str, float] | None = None
     traversal_stats: dict[str, int] | None = None
-    local_units: tuple[LocalFlowUnit, ...] = ()
 
 
-class EntrypointFlowGraphRepository(Protocol):
+class LocalFlowUnitGraphRepository(Protocol):
     def load_nodes(self, node_keys: set[FlowNodeKey], *, include_tests: bool) -> dict[FlowNodeKey, FlowGraphNode]: ...
 
     def load_incoming_calls(
@@ -176,14 +123,7 @@ class EntrypointFlowGraphRepository(Protocol):
         include_tests: bool,
     ) -> dict[FlowNodeKey, tuple[LocalBoundaryFact, ...]]: ...
 
-    def hydrate_evidence(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]: ...
-
-    def load_supporting_relations(
-        self,
-        node_keys: set[FlowNodeKey],
-        *,
-        include_tests: bool,
-    ) -> tuple[dict[FlowNodeKey, FlowGraphNode], tuple[FlowGraphEdge, ...]]: ...
+    def hydrate_local_units(self, units: Sequence[LocalFlowUnit]) -> tuple[LocalFlowUnit, ...]: ...
 
     def metrics(self) -> dict[str, int]: ...
 
@@ -215,10 +155,10 @@ class _ExploredSeed:
     missing_resolved_target: bool = False
 
 
-class EntrypointFlowEngine:
+class LocalFlowUnitEngine:
     def __init__(
         self,
-        repository: EntrypointFlowGraphRepository | None = None,
+        repository: LocalFlowUnitGraphRepository | None = None,
         boundary_classifier: FlowBoundaryClassifier | None = None,
         semantics: GraphRelationSemantics | None = None,
     ) -> None:
@@ -230,13 +170,11 @@ class EntrypointFlowEngine:
         self,
         anchors: Sequence[KnowledgeQueryMatchedNode],
         *,
-        max_flows: int,
         include_tests: bool,
-        anchor_seed_provenance: Sequence[EntrypointFlowSeedProvenance] = (),
-    ) -> EntrypointFlowBuildResult:
-        del max_flows
+        anchor_seed_provenance: Sequence[LocalFlowSeedProvenance] = (),
+    ) -> LocalFlowBuildResult:
         if self.repository is None:
-            raise RuntimeError("EntrypointFlowEngine requires an EntrypointFlowGraphRepository")
+            raise RuntimeError("LocalFlowUnitEngine requires a LocalFlowUnitGraphRepository")
 
         started_at = time.monotonic()
         specs = self._seed_specs(anchors, anchor_seed_provenance)
@@ -246,7 +184,7 @@ class EntrypointFlowEngine:
                 message="No traversal seeds were available for local flow exploration.",
                 severity="INFO",
             )
-            return EntrypointFlowBuildResult((), [diagnostic], False, stage_timings_ms={}, traversal_stats=self.repository.metrics())
+            return LocalFlowBuildResult((), [diagnostic], False, stage_timings_ms={}, traversal_stats=self.repository.metrics())
 
         seed_keys = {self._anchor_lookup_key(spec.expanded_seed) for spec in specs}
         original_keys = {self._anchor_lookup_key(spec.original_anchor) for spec in specs}
@@ -278,7 +216,7 @@ class EntrypointFlowEngine:
                 message="No selected traversal seeds were current in the source graph.",
                 severity="INFO",
             )
-            return EntrypointFlowBuildResult(
+            return LocalFlowBuildResult(
                 (),
                 [*diagnostics, diagnostic],
                 False,
@@ -293,12 +231,10 @@ class EntrypointFlowEngine:
         merge_started = time.monotonic()
         local_units = self._merge_seed_regions(explored, include_tests)
         merge_ms = (time.monotonic() - merge_started) * 1000
-        flows = self._project_local_units(local_units)
 
         hydration_started = time.monotonic()
-        flows = self.repository.hydrate_evidence(flows)
+        local_units = self.repository.hydrate_local_units(local_units)
         hydration_ms = (time.monotonic() - hydration_started) * 1000
-        local_units = self._hydrate_local_units_from_flows(local_units, flows)
 
         stats = dict(self.repository.metrics())
         stats.update(
@@ -306,15 +242,13 @@ class EntrypointFlowEngine:
                 "reverseFrontierRounds": sum(item.reverse_rounds for item in explored),
                 "downstreamFrontierRounds": sum(item.forward_rounds for item in explored),
                 "localUnitCount": len(local_units),
-                "returnedFlowCount": len(flows),
-                "discoveredEntrypointCount": sum(len(unit.roots) for unit in local_units),
+                "discoveredRootCount": sum(len(unit.roots) for unit in local_units),
             }
         )
-        return EntrypointFlowBuildResult(
-            flows=flows,
+        return LocalFlowBuildResult(
             diagnostics=diagnostics,
             truncated=any(unit.coverage.truncated for unit in local_units),
-            discovered_entrypoint_count=sum(len(unit.roots) for unit in local_units),
+            discovered_root_count=sum(len(unit.roots) for unit in local_units),
             stage_timings_ms={
                 "nodeResolution": round(load_ms, 3),
                 "localFlowExploration": round(exploration_ms, 3),
@@ -329,7 +263,7 @@ class EntrypointFlowEngine:
     def _seed_specs(
         self,
         anchors: Sequence[KnowledgeQueryMatchedNode],
-        provenance: Sequence[EntrypointFlowSeedProvenance],
+        provenance: Sequence[LocalFlowSeedProvenance],
     ) -> tuple[_SeedSpec, ...]:
         specs: list[_SeedSpec] = []
         if provenance:
@@ -423,7 +357,7 @@ class EntrypointFlowEngine:
                 if node is None:
                     continue
                 if self._is_explicit_executable_root(node):
-                    self._add_root(state, node, EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT, distance)
+                    self._add_root(state, node, LocalFlowRootOrigin.EXPLICIT_GRAPH_FACT, distance)
                     continue
                 eligible_edges = [
                     edge
@@ -431,7 +365,7 @@ class EntrypointFlowEngine:
                     if self._is_local_resolved_execution_edge(edge, state.seed_key[0]) and self._from_key(edge) in state.nodes
                 ]
                 if not eligible_edges:
-                    self._add_root(state, node, EntrypointFlowOrigin.INFERRED_ROOT, distance)
+                    self._add_root(state, node, LocalFlowRootOrigin.INFERRED_ROOT, distance)
                     continue
                 for edge in sorted(eligible_edges, key=self._edge_sort_key):
                     state.upstream_transitions.setdefault(self._edge_key(edge), edge)
@@ -446,7 +380,7 @@ class EntrypointFlowEngine:
             frontier = next_frontier
 
         if not state.roots:
-            self._add_root(state, state.seed_node, EntrypointFlowOrigin.INFERRED_ROOT, 0)
+            self._add_root(state, state.seed_node, LocalFlowRootOrigin.INFERRED_ROOT, 0)
             state.diagnostics.append(
                 KnowledgeQueryDiagnostic(
                     code="LOCAL_FLOW_ROOT_FALLBACK_TO_SEED",
@@ -546,8 +480,8 @@ class EntrypointFlowEngine:
                 if (
                     current is None
                     or root.distance_to_nearest_seed < current.distance_to_nearest_seed
-                    or current.origin is EntrypointFlowOrigin.INFERRED_ROOT
-                    and root.origin is EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT
+                    or current.origin is LocalFlowRootOrigin.INFERRED_ROOT
+                    and root.origin is LocalFlowRootOrigin.EXPLICIT_GRAPH_FACT
                 ):
                     root_by_key[root_key] = root
 
@@ -646,219 +580,12 @@ class EntrypointFlowEngine:
             diagnostics=self._dedupe_diagnostics(diagnostics),
         )
 
-    def _project_local_units(self, local_units: Sequence[LocalFlowUnit]) -> tuple[EntrypointFlow, ...]:
-        flows: list[EntrypointFlow] = []
-        for unit in sorted(local_units, key=self._local_unit_sort_key):
-            roots = unit.roots or ()
-            for root in roots:
-                flows.append(self._project_local_unit(unit, root))
-        return tuple(sorted(flows, key=self._flow_sort_key))
-
-    def _project_local_unit(self, unit: LocalFlowUnit, root: LocalFlowRoot) -> EntrypointFlow:
-        root_key = self._node_key(root.node)
-        reachable_node_keys, transitions = self._root_reachable_execution(unit, root_key)
-        retained_anchors = tuple(
-            sorted(
-                (anchor for anchor in unit.anchors if self._node_key(anchor.expanded_seed) in reachable_node_keys),
-                key=self._local_anchor_sort_key,
-            )
-        )
-        retained_supporting_context = self._root_projection_supporting_context(unit, retained_anchors, reachable_node_keys)
-        projected_node_keys = reachable_node_keys | {self._node_key(node) for node in retained_supporting_context}
-        node_map = self._node_map(
-            [
-                *(node for node in unit.execution_nodes if self._node_key(node) in reachable_node_keys),
-                *retained_supporting_context,
-            ]
-        )
-        nodes = tuple(
-            sorted(
-                node_map.values(),
-                key=lambda node: self._node_sort_key(node, root.node),
-            )
-        )
-        topology_boundaries = tuple(
-            sorted(
-                (edge for edge in unit.topology_boundaries if self._from_key(edge) in projected_node_keys),
-                key=self._edge_sort_key,
-            )
-        )
-        generic_boundaries = tuple(
-            sorted(
-                (boundary for boundary in unit.generic_boundaries if boundary.owner_key in projected_node_keys),
-                key=self._boundary_sort_key,
-            )
-        )
-        evidence = self._projection_evidence(
-            unit.evidence,
-            node_keys=projected_node_keys,
-            transitions=transitions,
-            topology_boundaries=topology_boundaries,
-            generic_boundaries=generic_boundaries,
-        )
-        diagnostics = list(unit.diagnostics)
-        if root.origin is EntrypointFlowOrigin.INFERRED_ROOT:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="ENTRYPOINT_FLOW_INFERRED_ROOT",
-                    message="No explicit execution root was reachable for this local unit projection; a topology root was used.",
-                    severity="INFO",
-                    sourceId=unit.source_id,
-                )
-            )
-        if len(unit.roots) > 1:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="ENTRYPOINT_FLOW_COMPATIBILITY_MULTI_ROOT_PROJECTION",
-                    message="A local flow unit has multiple roots; this legacy flow is one deterministic root projection.",
-                    severity="INFO",
-                    sourceId=unit.source_id,
-                    metadata={"localUnitId": unit.unit_id, "rootCount": len(unit.roots)},
-                )
-            )
-        if generic_boundaries:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="ENTRYPOINT_FLOW_GENERIC_BOUNDARY_FACTS_PRESENT",
-                    message="Generic boundary facts are retained on the internal local flow unit and are not projected as topology boundaries.",
-                    severity="INFO",
-                    sourceId=unit.source_id,
-                    metadata={"localUnitId": unit.unit_id, "genericBoundaryCount": len(generic_boundaries)},
-                )
-            )
-        anchors = tuple(
-            sorted(
-                (self._legacy_anchor(anchor) for anchor in retained_anchors),
-                key=lambda item: (-item.score, item.distance, item.node_id, item.expanded_seed_node_id or ""),
-            )
-        )
-        coverage = EntrypointFlowCoverage(
-            node_count=len(nodes),
-            transition_count=len(transitions),
-            boundary_count=len(topology_boundaries) + len(generic_boundaries),
-            anchor_count=len(anchors),
-            max_depth_reached=unit.coverage.max_depth_reached,
-            cycle_detected=unit.coverage.cycle_detected,
-            truncated=unit.coverage.truncated,
-        )
-        return EntrypointFlow(
-            key=EntrypointFlowKey(root_key[0], root_key[1], root_key[2]),
-            entrypoint=root.node,
-            origin=root.origin,
-            anchors=self._merge_anchors(anchors),
-            nodes=nodes,
-            transitions=transitions,
-            boundary_transitions=topology_boundaries,
-            evidence=evidence,
-            complete=unit.complete,
-            coverage=coverage,
-            diagnostics=self._dedupe_diagnostics(diagnostics),
-            relevance_score=self._relevance(root.origin, anchors),
-            local_unit_id=unit.unit_id,
-            root_nodes=(root.node,),
-            generic_boundaries=generic_boundaries,
-        )
-
-    def _root_reachable_execution(
-        self,
-        unit: LocalFlowUnit,
-        root_key: FlowNodeKey,
-    ) -> tuple[set[FlowNodeKey], tuple[FlowGraphEdge, ...]]:
-        unit_node_keys = {self._node_key(node) for node in unit.execution_nodes}
-        if root_key not in unit_node_keys:
-            return {root_key}, ()
-        outgoing: dict[FlowNodeKey, list[FlowGraphEdge]] = defaultdict(list)
-        for edge in unit.execution_transitions:
-            source_key = self._from_key(edge)
-            target_key = self._to_key(edge)
-            if source_key in unit_node_keys and target_key in unit_node_keys:
-                outgoing[source_key].append(edge)
-        for values in outgoing.values():
-            values.sort(key=self._edge_sort_key)
-
-        reachable: set[FlowNodeKey] = {root_key}
-        retained_edges: dict[FlowEdgeKey, FlowGraphEdge] = {}
-        expanded: set[FlowNodeKey] = set()
-        frontier: list[FlowNodeKey] = [root_key]
-        while frontier:
-            current = frontier.pop(0)
-            if current in expanded:
-                continue
-            expanded.add(current)
-            for edge in outgoing.get(current, ()):
-                target_key = self._to_key(edge)
-                if target_key is None:
-                    continue
-                retained_edges.setdefault(self._edge_key(edge), edge)
-                if target_key not in reachable:
-                    reachable.add(target_key)
-                    frontier.append(target_key)
-        return reachable, tuple(sorted(retained_edges.values(), key=self._edge_sort_key))
-
-    def _root_projection_supporting_context(
-        self,
-        unit: LocalFlowUnit,
-        retained_anchors: Sequence[LocalFlowAnchorProvenance],
-        reachable_node_keys: set[FlowNodeKey],
-    ) -> tuple[FlowGraphNode, ...]:
-        candidates = self._node_map(unit.supporting_context)
-        retained: dict[FlowNodeKey, FlowGraphNode] = {}
-        for anchor in retained_anchors:
-            original_key = self._anchor_lookup_key(anchor.original_anchor)
-            original_node = self._find_node_by_id(candidates, original_key)
-            if original_node is None:
-                continue
-            key = self._node_key(original_node)
-            if key not in reachable_node_keys:
-                retained[key] = original_node
-        return tuple(sorted(retained.values(), key=lambda node: self._node_sort_key(node, None)))
-
-    def _projection_evidence(
-        self,
-        evidence: Sequence[FlowGraphEvidence],
-        *,
-        node_keys: set[FlowNodeKey],
-        transitions: Sequence[FlowGraphEdge],
-        topology_boundaries: Sequence[FlowGraphEdge],
-        generic_boundaries: Sequence[LocalBoundaryFact],
-    ) -> tuple[FlowGraphEvidence, ...]:
-        node_source_ids = {(source_id, node_id) for source_id, _revision, node_id in node_keys}
-        edge_ids = {edge.edge_id for edge in (*transitions, *topology_boundaries)}
-        boundary_owner_nodes = {(boundary.source_id, boundary.owner_node_id) for boundary in generic_boundaries}
-        return dedupe_evidence(
-            [
-                item
-                for item in evidence
-                if item.edge_id in edge_ids
-                or item.node_id is not None
-                and (item.source_id, item.node_id) in node_source_ids
-                or str(item.owner_kind or "").upper() in {"BOUNDARY", "BOUNDARY_DESCRIPTOR"}
-                and item.owner_node_id is not None
-                and (item.owner_source_id or item.source_id, item.owner_node_id) in boundary_owner_nodes
-            ]
-        )
-
     def _load_unit_boundaries(self, node_keys: set[FlowNodeKey], include_tests: bool) -> tuple[LocalBoundaryFact, ...]:
         if not node_keys or not hasattr(self.repository, "load_boundaries"):
             return ()
         loaded = self.repository.load_boundaries(node_keys, include_tests=include_tests)
         facts = [fact for key in sorted(loaded) for fact in loaded[key]]
         return tuple(sorted(facts, key=self._boundary_sort_key))
-
-    def _hydrate_local_units_from_flows(
-        self,
-        units: Sequence[LocalFlowUnit],
-        flows: Sequence[EntrypointFlow],
-    ) -> tuple[LocalFlowUnit, ...]:
-        evidence_by_unit: dict[str, list[FlowGraphEvidence]] = defaultdict(list)
-        for flow in flows:
-            if flow.local_unit_id:
-                evidence_by_unit[flow.local_unit_id].extend(flow.evidence)
-        hydrated: list[LocalFlowUnit] = []
-        for unit in units:
-            evidence = dedupe_evidence([*unit.evidence, *evidence_by_unit.get(unit.unit_id, [])])
-            hydrated.append(replace(unit, evidence=evidence))
-        return tuple(hydrated)
 
     def _regions_overlap(self, left: _ExploredSeed, right: _ExploredSeed) -> bool:
         if left.seed_key == right.seed_key:
@@ -874,15 +601,15 @@ class EntrypointFlowEngine:
         shared_non_root_nodes = (set(left.nodes) & set(right.nodes)) - left_roots - right_roots
         return bool(shared_non_root_nodes)
 
-    def _add_root(self, state: _ExploredSeed, node: FlowGraphNode, origin: EntrypointFlowOrigin, distance: int) -> None:
+    def _add_root(self, state: _ExploredSeed, node: FlowGraphNode, origin: LocalFlowRootOrigin, distance: int) -> None:
         key = self._node_key(node)
         current = state.roots.get(key)
         root = LocalFlowRoot(node=node, origin=origin, distance_to_nearest_seed=distance)
         if (
             current is None
             or distance < current.distance_to_nearest_seed
-            or current.origin is EntrypointFlowOrigin.INFERRED_ROOT
-            and origin is EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT
+            or current.origin is LocalFlowRootOrigin.INFERRED_ROOT
+            and origin is LocalFlowRootOrigin.EXPLICIT_GRAPH_FACT
         ):
             state.roots[key] = root
         state.root_distance_by_seed[key] = min(state.root_distance_by_seed.get(key, distance), distance)
@@ -918,47 +645,6 @@ class EntrypointFlowEngine:
         if not state.truncated:
             state.diagnostics.append(KnowledgeQueryDiagnostic(code=code, message=message, severity="WARN", sourceId=state.seed_key[0]))
         state.truncated = True
-
-    def _legacy_anchor(self, anchor: LocalFlowAnchorProvenance) -> EntrypointFlowAnchor:
-        original = anchor.original_anchor
-        seed = anchor.expanded_seed
-        match_reasons = tuple(sorted(set(original.matchReasons or ())))
-        return EntrypointFlowAnchor(
-            node_id=original.nodeId,
-            label=original.label,
-            score=original.score,
-            match_reasons=match_reasons,
-            distance=anchor.distance_to_nearest_root,
-            original_stable_key=original.stableKey,
-            original_node_kind=original.nodeKind,
-            expanded_seed_node_id=seed.node_id,
-            expanded_seed_stable_key=seed.stable_key,
-            anchor_to_seed_reasons=anchor.anchor_to_seed_reasons,
-            query_provenance=anchor.query_provenance,
-        )
-
-    def _merge_anchors(self, anchors: Sequence[EntrypointFlowAnchor]) -> tuple[EntrypointFlowAnchor, ...]:
-        merged: dict[tuple[str, str | None, str | None], EntrypointFlowAnchor] = {}
-        for item in anchors:
-            key = (item.node_id, item.original_stable_key, item.expanded_seed_node_id)
-            current = merged.get(key)
-            if current is None:
-                merged[key] = item
-            else:
-                merged[key] = EntrypointFlowAnchor(
-                    node_id=item.node_id,
-                    label=current.label if current.score >= item.score else item.label,
-                    score=max(current.score, item.score),
-                    match_reasons=tuple(sorted(set(current.match_reasons) | set(item.match_reasons))),
-                    distance=min(current.distance, item.distance),
-                    original_stable_key=current.original_stable_key or item.original_stable_key,
-                    original_node_kind=current.original_node_kind or item.original_node_kind,
-                    expanded_seed_node_id=current.expanded_seed_node_id or item.expanded_seed_node_id,
-                    expanded_seed_stable_key=current.expanded_seed_stable_key or item.expanded_seed_stable_key,
-                    anchor_to_seed_reasons=tuple(sorted(set(current.anchor_to_seed_reasons) | set(item.anchor_to_seed_reasons))),
-                    query_provenance=tuple(sorted(set(current.query_provenance) | set(item.query_provenance))),
-                )
-        return tuple(sorted(merged.values(), key=lambda item: (-item.score, item.distance, item.node_id, item.expanded_seed_node_id or "")))
 
     def _merge_local_anchors(self, anchors: Sequence[LocalFlowAnchorProvenance]) -> tuple[LocalFlowAnchorProvenance, ...]:
         by_key: dict[tuple[str, str, str], LocalFlowAnchorProvenance] = {}
@@ -1017,11 +703,6 @@ class EntrypointFlowEngine:
         if target_key is None:
             return False
         return edge.source_id == source_id and target_key[0] == source_id
-
-    def _relevance(self, origin: EntrypointFlowOrigin, anchors: Sequence[EntrypointFlowAnchor]) -> float:
-        best = max((item.score for item in anchors), default=0.0)
-        shortest = min((item.distance for item in anchors), default=999)
-        return best + min(len(anchors), 10) * 0.01 + (0.02 if origin is EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT else 0.0) + 0.01 / (1 + shortest)
 
     def _dedupe_diagnostics(self, diagnostics: Sequence[KnowledgeQueryDiagnostic]) -> tuple[KnowledgeQueryDiagnostic, ...]:
         result: list[KnowledgeQueryDiagnostic] = []
@@ -1097,21 +778,12 @@ class EntrypointFlowEngine:
     def _seed_region_sort_key(self, region: _ExploredSeed) -> tuple[str, str, str]:
         return region.seed_key
 
-    def _flow_sort_key(self, flow: EntrypointFlow) -> tuple[float, str, str, str, str]:
-        return (
-            -float(flow.relevance_score or 0.0),
-            flow.local_unit_id or "",
-            flow.key.source_id,
-            flow.key.graph_revision,
-            flow.key.entrypoint_node_id,
-        )
-
     def _local_unit_sort_key(self, unit: LocalFlowUnit) -> tuple[str, str, str]:
         return (unit.source_id, unit.graph_revision, unit.unit_id)
 
     def _local_root_sort_key(self, root: LocalFlowRoot) -> tuple[int, int, str, str, str]:
         return (
-            0 if root.origin is EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT else 1,
+            0 if root.origin is LocalFlowRootOrigin.EXPLICIT_GRAPH_FACT else 1,
             root.distance_to_nearest_seed,
             root.node.source_id,
             root.node.graph_revision or root.node.graph_id,

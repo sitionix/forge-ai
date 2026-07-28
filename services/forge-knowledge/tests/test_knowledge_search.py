@@ -1,10 +1,3 @@
-from knowledge_service.entrypoint_flow_engine import (
-    EntrypointFlow,
-    EntrypointFlowCoverage,
-    EntrypointFlowKey,
-    EntrypointFlowOrigin,
-)
-from knowledge_service.flow_graph_contract import FlowGraphNode
 from knowledge_service.knowledge_query_service import (
     KnowledgeQueryPolicy,
     QuerySource,
@@ -131,38 +124,6 @@ class FakeSemanticProvider(CandidateProvider):
             for document in documents
             if document.node_id in self.node_ids
         ]
-
-
-def flow(label: str, *, qualified_name: str = "", route: str = "", summary: str = "") -> EntrypointFlow:
-    node = FlowGraphNode(
-        source_id="source-a",
-        graph_id="graph-a",
-        graph_revision="rev-a",
-        node_id=label,
-        stable_key=f"source-a|{qualified_name or label}",
-        node_kind="CALLABLE",
-        label=label,
-        qualified_name=qualified_name or label,
-        summary=summary,
-        entrypoint=True,
-        entrypoint_kind="HTTP_ENDPOINT",
-        entrypoint_http_method="POST",
-        entrypoint_route=route,
-    )
-    return EntrypointFlow(
-        key=EntrypointFlowKey("source-a", "rev-a", node.node_id),
-        entrypoint=node,
-        origin=EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT,
-        anchors=(),
-        nodes=(node,),
-        transitions=(),
-        boundary_transitions=(),
-        evidence=(),
-        complete=True,
-        coverage=EntrypointFlowCoverage(1, 0, 0, 0, 0),
-        diagnostics=(),
-        relevance_score=1.0,
-    )
 
 
 def test_query_normalization_tokenizes_code_shapes():

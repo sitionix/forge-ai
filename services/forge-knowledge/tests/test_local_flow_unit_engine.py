@@ -5,16 +5,16 @@ from dataclasses import replace
 from typing import Sequence
 
 from knowledge_service.boundary_contract import LocalBoundaryDescriptor, LocalBoundaryFact
-from knowledge_service.entrypoint_flow_engine import (
-    EntrypointFlow,
-    EntrypointFlowEngine,
-    EntrypointFlowOrigin,
-    EntrypointFlowSeedProvenance,
-)
 from knowledge_service.file_classification import FileClassifier
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
 from knowledge_service.knowledge_defaults import load_knowledge_defaults
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode
+from knowledge_service.local_flow_unit_engine import (
+    LocalFlowRootOrigin,
+    LocalFlowSeedProvenance,
+    LocalFlowUnit,
+    LocalFlowUnitEngine,
+)
 
 SOURCE = "source-neutral"
 OTHER_SOURCE = "source-other"
@@ -234,12 +234,12 @@ class FakeFlowRepository:
             result[item.owner_key].append(item)
         return {key: tuple(sorted(value, key=lambda fact: fact.boundary_id)) for key, value in result.items()}
 
-    def hydrate_evidence(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]:
-        self.calls["hydrate_evidence"] += 1
+    def hydrate_local_units(self, units: Sequence[LocalFlowUnit]) -> tuple[LocalFlowUnit, ...]:
+        self.calls["hydrate_local_units"] += 1
         hydrated = []
-        for flow in flows:
-            edge_ids = {item.edge_id for item in (*flow.transitions, *flow.boundary_transitions)}
-            node_ids = {item.node_id for item in flow.nodes}
+        for unit in units:
+            edge_ids = {item.edge_id for item in (*unit.execution_transitions, *unit.topology_boundaries)}
+            node_ids = {item.node_id for item in (*unit.execution_nodes, *unit.supporting_context)}
             selected = dedupe_evidence([item for item in self.evidence if item.edge_id in edge_ids or item.node_id in node_ids])
             evidence_by_edge = defaultdict(list)
             for item in selected:
@@ -247,10 +247,14 @@ class FakeFlowRepository:
                     evidence_by_edge[item.edge_id].append(item.evidence_id)
             hydrated.append(
                 replace(
-                    flow,
-                    transitions=tuple(replace(item, evidence_ids=tuple(evidence_by_edge.get(item.edge_id, []))) for item in flow.transitions),
-                    boundary_transitions=tuple(replace(item, evidence_ids=tuple(evidence_by_edge.get(item.edge_id, []))) for item in flow.boundary_transitions),
-                    evidence=dedupe_evidence([*flow.evidence, *selected]),
+                    unit,
+                    execution_transitions=tuple(
+                        replace(item, evidence_ids=tuple(evidence_by_edge.get(item.edge_id, []))) for item in unit.execution_transitions
+                    ),
+                    topology_boundaries=tuple(
+                        replace(item, evidence_ids=tuple(evidence_by_edge.get(item.edge_id, []))) for item in unit.topology_boundaries
+                    ),
+                    evidence=dedupe_evidence([*unit.evidence, *selected]),
                 )
             )
         return tuple(hydrated)
@@ -275,25 +279,16 @@ class FakeFlowRepository:
 
 def build(nodes, edges, anchors, *, include_tests=False, boundaries=(), evidence_items=None, provenance=()):
     repository = FakeFlowRepository(nodes, edges, boundaries=boundaries, evidence_items=evidence_items)
-    result = EntrypointFlowEngine(repository).build(
+    result = LocalFlowUnitEngine(repository).build(
         anchors,
-        max_flows=10,
         include_tests=include_tests,
         anchor_seed_provenance=provenance,
     )
     return result, repository
 
 
-def ids(flow):
-    return {item.node_id for item in flow.nodes}
-
-
 def unit_ids(unit):
     return {item.node_id for item in unit.execution_nodes}
-
-
-def transitions(flow):
-    return {(item.from_node_id, item.to_node_id) for item in flow.transitions}
 
 
 def unit_signature(unit):
@@ -336,10 +331,10 @@ def test_bidirectional_corridor_excludes_pre_anchor_sibling_and_retains_downstre
     }
     assert {(item.owner_node_id, item.role) for item in unit.generic_boundaries} == {("Root", "PROVIDED"), ("Repository", "REQUIRED")}
     assert unit.roots[0].node.node_id == "Root"
-    assert unit.roots[0].origin is EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT
+    assert unit.roots[0].origin is LocalFlowRootOrigin.EXPLICIT_GRAPH_FACT
 
 
-def test_two_roots_converging_on_one_anchor_are_one_local_unit_and_two_legacy_projections():
+def test_two_roots_converging_on_one_anchor_are_one_local_unit_with_two_roots():
     nodes = [node("RootA", entrypoint=True), node("RootB", entrypoint=True), node("Shared"), node("Anchor")]
     edges = [
         edge("a-shared", "RootA", "Shared"),
@@ -351,13 +346,9 @@ def test_two_roots_converging_on_one_anchor_are_one_local_unit_and_two_legacy_pr
 
     assert len(result.local_units) == 1
     assert {root.node.node_id for root in result.local_units[0].roots} == {"RootA", "RootB"}
-    assert len(result.flows) == 2
-    assert {flow.local_unit_id for flow in result.flows} == {result.local_units[0].unit_id}
-    assert {flow.entrypoint.node_id for flow in result.flows} == {"RootA", "RootB"}
-    assert all(any(item.code == "ENTRYPOINT_FLOW_COMPATIBILITY_MULTI_ROOT_PROJECTION" for item in flow.diagnostics) for flow in result.flows)
 
 
-def test_multi_root_compatibility_projection_is_root_specific_for_nodes_boundaries_evidence_and_families():
+def test_multi_root_local_unit_preserves_nodes_boundaries_evidence_and_cycles_once():
     root_a = node("RootA", entrypoint=True)
     root_b = node("RootB", entrypoint=True)
     shared = node("Shared")
@@ -395,37 +386,20 @@ def test_multi_root_compatibility_projection_is_root_specific_for_nodes_boundari
     )
 
     assert len(result.local_units) == 1
-    assert {root.node.node_id for root in result.local_units[0].roots} == {"RootA", "RootB"}
-    assert len(result.flows) == 2
-
-    flows = {flow.entrypoint.node_id: flow for flow in result.flows}
-    assert ids(flows["RootA"]) == {"RootA", "Shared", "Anchor", "Downstream"}
-    assert ids(flows["RootB"]) == {"RootB", "Shared", "Anchor", "Downstream"}
-    assert transitions(flows["RootA"]) == {
+    unit = result.local_units[0]
+    assert {root.node.node_id for root in unit.roots} == {"RootA", "RootB"}
+    assert unit_ids(unit) == {"RootA", "RootB", "Shared", "Anchor", "Downstream"}
+    assert {(item.from_node_id, item.to_node_id) for item in unit.execution_transitions} == {
         ("RootA", "Shared"),
-        ("Shared", "Anchor"),
-        ("Anchor", "Downstream"),
-        ("Anchor", "Shared"),
-    }
-    assert transitions(flows["RootB"]) == {
         ("RootB", "Shared"),
         ("Shared", "Anchor"),
         ("Anchor", "Downstream"),
         ("Anchor", "Shared"),
     }
-    assert {item.edge_id for item in flows["RootA"].boundary_transitions} == {"downstream-boundary"}
-    assert {item.edge_id for item in flows["RootB"].boundary_transitions} == {"downstream-boundary"}
-    assert {item.owner_node_id for item in flows["RootA"].generic_boundaries} == {"RootA", "Downstream"}
-    assert {item.owner_node_id for item in flows["RootB"].generic_boundaries} == {"RootB", "Downstream"}
-    assert "RootB" not in ids(flows["RootA"])
-    assert "RootA" not in ids(flows["RootB"])
-    assert "b-shared" not in {item.edge_id for item in flows["RootA"].transitions}
-    assert "a-shared" not in {item.edge_id for item in flows["RootB"].transitions}
-    assert "ev-b-shared" not in {item.evidence_id for item in flows["RootA"].evidence}
-    assert "ev-node-RootB" not in {item.evidence_id for item in flows["RootA"].evidence}
-    assert "ev-a-shared" not in {item.evidence_id for item in flows["RootB"].evidence}
-    assert "ev-node-RootA" not in {item.evidence_id for item in flows["RootB"].evidence}
-    assert all(flow.coverage.cycle_detected for flow in result.flows)
+    assert {item.edge_id for item in unit.topology_boundaries} == {"downstream-boundary"}
+    assert {item.owner_node_id for item in unit.generic_boundaries} == {"RootA", "RootB", "Downstream"}
+    assert {"ev-a-shared", "ev-b-shared", "ev-node-RootA", "ev-node-RootB"} <= {item.evidence_id for item in unit.evidence}
+    assert unit.coverage.cycle_detected is True
 
 
 def test_explicit_root_for_one_anchor_does_not_suppress_another_inferred_root():
@@ -436,8 +410,8 @@ def test_explicit_root_for_one_anchor_does_not_suppress_another_inferred_root():
 
     assert len(result.local_units) == 2
     roots_by_anchor = {unit.anchors[0].original_anchor.nodeId: [(root.node.node_id, root.origin) for root in unit.roots] for unit in result.local_units}
-    assert roots_by_anchor["AnchorA"] == [("Root", EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT)]
-    assert roots_by_anchor["Detached"] == [("Detached", EntrypointFlowOrigin.INFERRED_ROOT)]
+    assert roots_by_anchor["AnchorA"] == [("Root", LocalFlowRootOrigin.EXPLICIT_GRAPH_FACT)]
+    assert roots_by_anchor["Detached"] == [("Detached", LocalFlowRootOrigin.INFERRED_ROOT)]
 
 
 def test_overlapping_anchors_merge_but_independent_same_source_anchor_stays_separate_and_order_stable():
@@ -574,10 +548,10 @@ def test_original_type_file_field_and_callable_anchor_provenance_survives_seed_m
         edge("field-use", "Callable", "Field", edge_type="USES_FIELD"),
     ]
     provenance = (
-        EntrypointFlowSeedProvenance(anchor("Type", kind="TYPE"), anchor("Callable"), ("TYPE_DECLARED_CALLABLE",)),
-        EntrypointFlowSeedProvenance(anchor("File", kind="FILE"), anchor("Callable"), ("FILE_DECLARED_NODE",)),
-        EntrypointFlowSeedProvenance(anchor("Field", kind="FIELD"), anchor("Callable"), ("FIELD_USED_BY_CALLABLE",)),
-        EntrypointFlowSeedProvenance(anchor("Callable"), anchor("Callable"), ("ORIGINAL_MATCH",)),
+        LocalFlowSeedProvenance(anchor("Type", kind="TYPE"), anchor("Callable"), ("TYPE_DECLARED_CALLABLE",)),
+        LocalFlowSeedProvenance(anchor("File", kind="FILE"), anchor("Callable"), ("FILE_DECLARED_NODE",)),
+        LocalFlowSeedProvenance(anchor("Field", kind="FIELD"), anchor("Callable"), ("FIELD_USED_BY_CALLABLE",)),
+        LocalFlowSeedProvenance(anchor("Callable"), anchor("Callable"), ("ORIGINAL_MATCH",)),
     )
 
     result, _repo = build(nodes, edges, [anchor("Callable")], provenance=provenance)
@@ -625,7 +599,6 @@ def test_large_branching_graph_truncates_deterministically_and_fails_closed():
 
     assert first.local_units[0].coverage.truncated is True
     assert first.local_units[0].complete is False
-    assert first.flows[0].complete is False
     assert len(first.local_units[0].execution_nodes) <= 1500
     assert unit_signature(first.local_units[0]) == unit_signature(second.local_units[0])
 
@@ -651,12 +624,11 @@ def test_evidence_hydration_remains_batched_for_edges_nodes_and_boundaries():
     evidence_items = [evidence(call, 1), evidence(call, 2), node_evidence(root)]
 
     result, repo = build([root, child], [call], [anchor("Root")], boundaries=[required], evidence_items=evidence_items)
-    flow = result.flows[0]
+    unit = result.local_units[0]
 
-    assert repo.calls["hydrate_evidence"] == 1
-    assert {item.evidence_id for item in flow.evidence} == {"ev-root-child-1", "ev-root-child-2", "ev-node-Root", "ev-node-Child"}
-    assert flow.transitions[0].evidence_ids == ("ev-root-child-1", "ev-root-child-2")
-    assert {item.evidence_id for item in result.local_units[0].evidence} == {"ev-root-child-1", "ev-root-child-2", "ev-node-Root", "ev-node-Child"}
+    assert repo.calls["hydrate_local_units"] == 1
+    assert {item.evidence_id for item in unit.evidence} == {"ev-root-child-1", "ev-root-child-2", "ev-node-Root", "ev-node-Child"}
+    assert unit.execution_transitions[0].evidence_ids == ("ev-root-child-1", "ev-root-child-2")
 
 
 def test_configured_multimodule_test_source_root_is_persisted_as_test():

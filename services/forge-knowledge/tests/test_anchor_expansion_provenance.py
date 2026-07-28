@@ -4,7 +4,6 @@ from collections import defaultdict
 from typing import Sequence
 
 from knowledge_service.anchor_expansion_contract import AnchorExpansionBundle, AnchorExpansionEdge, AnchorExpansionNode
-from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphNode, FlowNodeKey
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode
 from knowledge_service.knowledge_query_service import (
@@ -13,6 +12,7 @@ from knowledge_service.knowledge_query_service import (
     KnowledgeQueryService,
     QuerySource,
 )
+from knowledge_service.local_flow_unit_engine import LocalFlowUnit, LocalFlowUnitEngine
 
 SOURCE = "source"
 GRAPH = "graph"
@@ -245,8 +245,8 @@ class FlowStore:
     def load_boundaries(self, node_keys: set[FlowNodeKey], *, include_tests: bool):
         return {}
 
-    def hydrate_evidence(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]:
-        return tuple(flows)
+    def hydrate_local_units(self, units: Sequence[LocalFlowUnit]) -> tuple[LocalFlowUnit, ...]:
+        return tuple(units)
 
     def metrics(self):
         return {}
@@ -278,13 +278,12 @@ def test_real_expansion_service_to_flow_engine_preserves_contextual_anchor_reaso
         ],
         [call("root-callable", "Root", "Callable")],
     )
-    first = EntrypointFlowEngine(repository).build(
+    first = LocalFlowUnitEngine(repository).build(
         first_expansion.flow_seed_nodes,
-        max_flows=10,
         include_tests=False,
         anchor_seed_provenance=flow_seed_provenance(first_expansion),
     )
-    second = EntrypointFlowEngine(
+    second = LocalFlowUnitEngine(
         FlowStore(
             [
                 graph_node("Root", entrypoint=True),
@@ -296,7 +295,6 @@ def test_real_expansion_service_to_flow_engine_preserves_contextual_anchor_reaso
         )
     ).build(
         second_expansion.flow_seed_nodes,
-        max_flows=10,
         include_tests=False,
         anchor_seed_provenance=flow_seed_provenance(second_expansion),
     )

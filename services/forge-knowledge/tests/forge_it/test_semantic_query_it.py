@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from semantic_test_support import seed_semantic_graph
 from support import build_test_app, write_runtime_config
 
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
@@ -9,8 +10,6 @@ from knowledge_service.knowledge_query_service import build_knowledge_query_serv
 from knowledge_service.overview_projection import read_overview
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_index import SemanticIndexStore
-from semantic_test_support import seed_semantic_graph
-
 
 pytestmark = pytest.mark.forge_it
 
@@ -25,7 +24,7 @@ def query_request(query_text):
     )
 
 
-def test_semantic_query_improves_human_retrieval_and_entrypoint_flows(tmp_path):
+def test_semantic_query_improves_human_retrieval_and_local_flow_units(tmp_path):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     assert app is not None
     seed_semantic_flow_fixture(app_config.store_path, refresh_overview=True)

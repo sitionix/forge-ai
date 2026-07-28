@@ -7,12 +7,13 @@ import time
 from types import SimpleNamespace
 
 import httpx
+from semantic_test_support import seed_semantic_graph
+from support import AsgiTestClient, build_test_app, write_runtime_config
 
 import knowledge_service.main as knowledge_main
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.query_interpretation import QueryInterpretationProviderResult
-from semantic_test_support import seed_semantic_graph
-from support import AsgiTestClient, build_test_app, write_runtime_config
+
 
 class BrokenQueryInterpretationProvider:
     def __init__(self):
@@ -196,7 +197,6 @@ def test_query_endpoint_returns_formatter_backed_human_answer(tmp_path):
     assert "GRAPH_V2" not in answer["text"]
     assert payload["diagnostics"] == []
     assert "status" not in payload
-    assert "flows" not in payload
 
 
 def test_query_tool_context_remains_technical_and_human_response_has_no_evidence(tmp_path):
@@ -255,11 +255,11 @@ def test_human_query_writes_formatter_terminal_audit_record(tmp_path):
     assert record["unownedFactRefs"] == 0
     assert record["duplicateFactRefs"] == 0
     assert record["answerCount"] == 1
-    assert record["formatterProviderCallCount"] == 0
+    assert record["formatterProviderCallCount"] == 1
     assert record["finalAnswerProviderCallCount"] == 0
     assert record["groundingProviderCallCount"] == 0
     assert record["toolContextFormatterCallCount"] == 0
-    assert record["providerCallCount"] == 0
+    assert record["providerCallCount"] == 1
     assert record["fetchDurationMs"] >= 0
     assert record["presentationPlanningDurationMs"] >= 0
     assert record["formatterPlanningDurationMs"] >= 0
@@ -316,7 +316,6 @@ def test_query_endpoint_returns_one_answer_per_independent_graph(tmp_path):
     assert len(payload["answers"]) == 1
     assert [entry["root"]["label"] for entry in payload["answers"][0]["queryEntries"]] == ["A.start"]
     assert payload["diagnostics"] == []
-    assert "flows" not in payload
 
 
 def test_query_endpoint_no_candidates_returns_404(tmp_path):

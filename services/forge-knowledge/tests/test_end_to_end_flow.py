@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from test_entrypoint_flow_engine import boundary, descriptor, edge, node, node_evidence
+from test_local_flow_unit_engine import boundary, descriptor, edge, node, node_evidence
 
 from knowledge_service.boundary_resolution import (
     BoundaryCandidateEvaluation,
@@ -26,8 +26,8 @@ from knowledge_service.end_to_end_flow import (
     EndToEndFlowAssembler,
     EndToEndFlowAssemblyLimits,
 )
-from knowledge_service.entrypoint_flow_engine import EntrypointFlowOrigin, LocalFlowCoverage, LocalFlowRoot, LocalFlowUnit
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphNode
+from knowledge_service.local_flow_unit_engine import LocalFlowCoverage, LocalFlowRoot, LocalFlowRootOrigin, LocalFlowUnit
 
 
 def unit(
@@ -43,7 +43,7 @@ def unit(
         unit_id=unit_id,
         source_id=owner.source_id,
         graph_revision=owner.graph_revision or owner.graph_id,
-        roots=(LocalFlowRoot(node=owner, origin=EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT, distance_to_nearest_seed=0),),
+        roots=(LocalFlowRoot(node=owner, origin=LocalFlowRootOrigin.EXPLICIT_GRAPH_FACT, distance_to_nearest_seed=0),),
         anchors=(),
         execution_nodes=(owner,),
         execution_transitions=transitions,

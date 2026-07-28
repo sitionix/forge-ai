@@ -5,12 +5,11 @@ import json
 
 import httpx
 import pytest
-
-from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
-from knowledge_service.knowledge_query_service import build_knowledge_query_service
 from semantic_test_support import seed_semantic_graph
 from support import build_test_app, write_runtime_config
 
+from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
+from knowledge_service.knowledge_query_service import build_knowledge_query_service
 
 pytestmark = pytest.mark.forge_it
 
@@ -85,7 +84,6 @@ def test_formatter_human_and_tool_context_project_same_persisted_flow(tmp_path):
     base_payload, human_payload, tool_payload = query_all_surfaces(app, "Entry.run")
 
     assert len(base_payload["graphs"]) == 1
-    assert "flows" not in base_payload
     assert human_payload["answerLanguage"] == "en"
     assert len(human_payload["answers"]) == 1
     answer = human_payload["answers"][0]
@@ -93,7 +91,6 @@ def test_formatter_human_and_tool_context_project_same_persisted_flow(tmp_path):
     assert answer["queryEntries"][0]["root"]["label"] == "Entry.run"
     assert "Entry.run" in answer["text"]
     assert human_payload["diagnostics"] == []
-    assert "flows" not in human_payload
     assert "excerpt" not in json.dumps(human_payload)
     tool_graph = tool_payload["graphs"][0]
     assert tool_graph["graphId"] == base_payload["graphs"][0]["graphId"]
@@ -160,7 +157,7 @@ def test_partial_unresolved_boundary_is_formatted_and_successful(tmp_path):
     assert "formatter" not in text.lower()
 
 
-def test_human_terminal_audit_records_zero_grounding_and_final_formatter_calls(tmp_path):
+def test_human_terminal_audit_records_canonical_formatter_calls(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_semantic_graph(
         app_config.store_path,
@@ -179,7 +176,11 @@ def test_human_terminal_audit_records_zero_grounding_and_final_formatter_calls(t
     assert record["terminalStage"] == "SUCCESS"
     assert record["queryInterpreterCallCount"] == 1
     assert record["answerCount"] == 1
-    assert record["formatterProviderCallCount"] == 0
+    assert record["formatterProviderCallCount"] == 1
+    assert record["formatterRepairCallCount"] == 0
+    assert record["presentationStageCount"] >= 1
+    assert record["validatedFormatterStepCount"] == record["presentationStageCount"]
+    assert record["publicStepCount"] == record["presentationStageCount"]
     assert record["finalAnswerProviderCallCount"] == 0
     assert record["groundingProviderCallCount"] == 0
     assert record["toolContextFormatterCallCount"] == 0

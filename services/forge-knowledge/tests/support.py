@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import sqlite3
 import asyncio
 import json
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import FastAPI
+from typing_extensions import Self
 
 from knowledge_service.analysis_service import AnalysisProvider
 from knowledge_service.bootstrap import KnowledgeDependencies, build_dependencies
@@ -22,9 +23,9 @@ from knowledge_service.query_interpretation import QueryInterpretationProviderRe
 class AsgiResponse:
     status_code: int
     body: bytes
-    headers: Dict[str, str]
+    headers: dict[str, str]
 
-    def json(self) -> Dict[str, Any]:
+    def json(self) -> dict[str, Any]:
         return json.loads(self.body.decode("utf-8") or "{}")
 
 
@@ -34,10 +35,10 @@ class AsgiTestClient:
     def __init__(self, app: FastAPI) -> None:
         self.app = app
         self._lifespan = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._previous_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._previous_loop: asyncio.AbstractEventLoop | None = None
 
-    def __enter__(self) -> "AsgiTestClient":
+    def __enter__(self) -> Self:
         try:
             self._previous_loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -57,12 +58,11 @@ class AsgiTestClient:
             self._loop = None
         asyncio.set_event_loop(self._previous_loop)
         self._previous_loop = None
-        return None
 
-    def get(self, path: str, headers: Optional[Dict[str, str]] = None) -> AsgiResponse:
+    def get(self, path: str, headers: dict[str, str] | None = None) -> AsgiResponse:
         return self._run(self._request("GET", path, None, headers or {}))
 
-    def post(self, path: str, json: Optional[Dict[str, Any]] = None, headers: Optional[Dict[str, str]] = None) -> AsgiResponse:
+    def post(self, path: str, json: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> AsgiResponse:
         return self._run(self._request("POST", path, json or {}, headers or {}))
 
     def _run(self, awaitable):
@@ -70,20 +70,20 @@ class AsgiTestClient:
             return self._loop.run_until_complete(awaitable)
         return asyncio.run(awaitable)
 
-    async def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]], headers: Dict[str, str]) -> AsgiResponse:
+    async def _request(self, method: str, path: str, payload: dict[str, Any] | None, headers: dict[str, str]) -> AsgiResponse:
         raw_path, _, query = path.partition("?")
         body = b"" if payload is None else json.dumps(payload).encode("utf-8")
-        messages: List[Dict[str, Any]] = []
+        messages: list[dict[str, Any]] = []
         received = False
 
-        async def receive() -> Dict[str, Any]:
+        async def receive() -> dict[str, Any]:
             nonlocal received
             if received:
                 return {"type": "http.disconnect"}
             received = True
             return {"type": "http.request", "body": body, "more_body": False}
 
-        async def send(message: Dict[str, Any]) -> None:
+        async def send(message: dict[str, Any]) -> None:
             messages.append(message)
 
         scope = {
@@ -117,9 +117,9 @@ class DeterministicAnalysisProvider:
 
     def analyze(
         self,
-        payload: Dict[str, object],
+        payload: dict[str, object],
         line_count: int,
-        repair_prompt: Optional[str] = None,
+        repair_prompt: str | None = None,
     ) -> GraphAnalysisResult:
         return GraphAnalysisResult(
             diagnostics=[
@@ -141,9 +141,9 @@ class FailingAnalysisProvider:
 
     def analyze(
         self,
-        payload: Dict[str, object],
+        payload: dict[str, object],
         line_count: int,
-        repair_prompt: Optional[str] = None,
+        repair_prompt: str | None = None,
     ) -> GraphAnalysisResult:
         raise KnowledgeError(
             "ANALYSIS_AI_TRANSPORT_ERROR",
@@ -159,7 +159,7 @@ class DeterministicQueryInterpretationProvider:
     model = "deterministic"
 
     def __init__(self) -> None:
-        self.calls: List[Dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
 
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
         self.calls.append(
@@ -192,24 +192,28 @@ class DeterministicFinalFlowFormatterProvider:
     model = "deterministic"
 
     def __init__(self) -> None:
-        self.calls: List[Dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
 
-    def complete(self, formatter_input, validation_errors=None, timeout_seconds=None):
+    def generate(self, formatter_input, *, deadline_at=None, cancel_event=None, validation_errors=()):
+        del deadline_at, cancel_event
         self.calls.append(
             {
                 "formatterInput": dict(formatter_input),
                 "validationErrors": list(validation_errors or []),
-                "timeoutSeconds": timeout_seconds,
             }
         )
         response_language = str(formatter_input.get("responseLanguage") or "en").lower()
-        sections = []
-        for section in formatter_input.get("sections", []):
-            steps = []
-            for stage in section.get("stages", []):
-                steps.append(_formatter_step(stage, response_language))
-            sections.append({"sectionRef": section.get("sectionRef"), "steps": steps})
-        return type("ProviderResult", (), {"raw_text": json.dumps({"sections": sections}, ensure_ascii=False), "prompt_char_length": 100, "truncated": False})()
+        steps = [_formatter_step(stage, response_language) for stage in formatter_input.get("stages", [])]
+        return type(
+            "ProviderResult",
+            (),
+            {
+                "raw_text": json.dumps({"steps": steps}, ensure_ascii=False),
+                "prompt_char_length": 100,
+                "prompt_hash": "deterministic-prompt-hash",
+                "duration_ms": 1.0,
+            },
+        )()
 
 
 def _strip_code_symbols(value: str) -> str:
@@ -219,10 +223,10 @@ def _strip_code_symbols(value: str) -> str:
     return result
 
 
-def _query_identifiers(value: str) -> List[str]:
+def _query_identifiers(value: str) -> list[str]:
     import re
 
-    identifiers: List[str] = []
+    identifiers: list[str] = []
     for match in re.finditer(r"\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\b", value):
         identifiers.append(match.group(0))
     return identifiers
@@ -236,19 +240,17 @@ def _flatten_formatter_groups(groups):
         yield from _flatten_formatter_groups(group.get("childGroups", []))
 
 
-def _formatter_step(stage: Dict[str, Any], language: str) -> Dict[str, Any]:
+def _formatter_step(stage: dict[str, Any], language: str) -> dict[str, Any]:
     certainty = str(stage.get("certainty") or "VERIFIED")
     return {
         "stageRef": stage.get("stageRef"),
-        "certainty": certainty,
-        "assertionSubject": str(stage.get("assertionSubject") or ""),
         "coveredFactRefs": list(stage.get("ownedFactRefs") or []),
         "text": _formatter_sentence(stage, certainty, language),
     }
 
 
-def _formatter_sentence(stage: Dict[str, Any], certainty: str, language: str) -> str:
-    identifiers: List[str] = []
+def _formatter_sentence(stage: dict[str, Any], certainty: str, language: str) -> str:
+    identifiers: list[str] = []
     for value in _formatter_identifiers(stage):
         if value not in identifiers:
             identifiers.append(value)
@@ -266,20 +268,27 @@ def _formatter_sentence(stage: Dict[str, Any], certainty: str, language: str) ->
     return f"This step describes the available flow{uncertainty}: {joined}."
 
 
-def _formatter_identifiers(group: Dict[str, Any]) -> List[str]:
-    values: List[str] = []
-    containers: List[Any] = [
-        group,
-        group.get("incoming"),
-        *list(group.get("typedOperations") or []),
-        *list(group.get("supportingFacts") or []),
-        *list(group.get("ownedSummaries") or []),
-        *list(group.get("ownedBoundaries") or []),
-    ]
-    for container in containers:
+def _formatter_identifiers(group: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    containers: list[Any] = [group, group.get("payload")]
+    seen = set()
+    while containers:
+        container = containers.pop(0)
+        if id(container) in seen:
+            continue
+        seen.add(id(container))
+        if isinstance(container, list):
+            containers.extend(container)
+            continue
         if not isinstance(container, dict):
             continue
+        containers.extend(value for value in container.values() if isinstance(value, (dict, list)))
         for key in (
+            "label",
+            "qualifiedName",
+            "unitId",
+            "sourceUnitId",
+            "targetUnitId",
             "symbol",
             "fromSymbol",
             "toSymbol",
@@ -426,7 +435,7 @@ forge:
 def build_test_app(
     config_file: Path,
     *,
-    provider: Optional[AnalysisProvider] = None,
+    provider: AnalysisProvider | None = None,
 ) -> tuple[FastAPI, ForgeSettings, AppConfig, KnowledgeDependencies]:
     env = {
         "FORGE_CONFIG_FILE": str(config_file),
@@ -447,6 +456,6 @@ def build_test_app(
     return app, settings, app_config, deps
 
 
-def sqlite_table_counts(db_path: Path, tables: List[str]) -> Dict[str, int]:
+def sqlite_table_counts(db_path: Path, tables: list[str]) -> dict[str, int]:
     with sqlite3.connect(db_path) as conn:
         return {table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]) for table in tables}

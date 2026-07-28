@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import replace
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Iterable, Sequence
 
 from knowledge_service.boundary_contract import LocalBoundaryDescriptor, LocalBoundaryFact
 from knowledge_service.boundary_resolution import (
@@ -17,11 +17,11 @@ from knowledge_service.boundary_resolution import (
     descriptor_fingerprint,
     descriptor_fingerprint_from_row,
 )
-from knowledge_service.entrypoint_flow_engine import EntrypointFlow
 from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
-from knowledge_service.graph_relation_semantics import EXECUTION_CONTINUATION, SUPPORTING_RELATION, graph_relation_semantics
+from knowledge_service.graph_relation_semantics import EXECUTION_CONTINUATION, graph_relation_semantics
+from knowledge_service.local_flow_unit_engine import LocalFlowUnit
 
 _SQLITE_BIND_CHUNK_SIZE = 800
 
@@ -61,10 +61,10 @@ def _source_fair_boundary_identity_limit(identities: Sequence[BoundaryIdentity],
     return tuple(sorted(retained))
 
 
-class EntrypointFlowGraphRepository:
+class LocalFlowUnitGraphRepository:
     def __init__(self, graph_store: Any) -> None:
         self.graph_store = graph_store
-        self._metrics: Dict[str, int] = defaultdict(int)
+        self._metrics: dict[str, int] = defaultdict(int)
         self._boundary_fact_source_cache: dict[str, bool] = {}
 
     def load_nodes(self, node_keys: set[FlowNodeKey], *, include_tests: bool) -> dict[FlowNodeKey, FlowGraphNode]:
@@ -129,16 +129,16 @@ class EntrypointFlowGraphRepository:
                         result[fact.owner_key].append(fact)
         return {key: tuple(sorted(values, key=self._boundary_sort_key)) for key, values in result.items()}
 
-    def hydrate_evidence(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]:
+    def hydrate_local_units(self, units: Sequence[LocalFlowUnit]) -> tuple[LocalFlowUnit, ...]:
         self.graph_store.init()
-        if not flows:
+        if not units:
             return ()
         edge_ids_by_source: dict[str, set[str]] = defaultdict(set)
         node_ids_by_source: dict[str, set[str]] = defaultdict(set)
-        for flow in flows:
-            for edge in (*flow.transitions, *flow.boundary_transitions, *tuple(getattr(flow, "supporting_transitions", ()) or ())):
+        for unit in units:
+            for edge in (*unit.execution_transitions, *unit.topology_boundaries):
                 edge_ids_by_source[edge.source_id].add(edge.edge_id)
-            for node in flow.nodes:
+            for node in (*unit.execution_nodes, *unit.supporting_context):
                 node_ids_by_source[node.source_id].add(node.node_id)
 
         edge_evidence_by_source: dict[str, list[FlowGraphEvidence]] = defaultdict(list)
@@ -158,13 +158,13 @@ class EntrypointFlowGraphRepository:
                     item for item in (self.graph_store._flow_graph_evidence_from_public_graph(row) for row in rows) if item is not None
                 )
 
-        hydrated: list[EntrypointFlow] = []
-        for flow in flows:
+        hydrated: list[LocalFlowUnit] = []
+        for unit in units:
             flow_edge_ids = {
                 edge.edge_id
-                for edge in (*flow.transitions, *flow.boundary_transitions, *tuple(getattr(flow, "supporting_transitions", ()) or ()))
+                for edge in (*unit.execution_transitions, *unit.topology_boundaries)
             }
-            flow_node_keys = {(node.source_id, node.node_id) for node in flow.nodes}
+            flow_node_keys = {(node.source_id, node.node_id) for node in (*unit.execution_nodes, *unit.supporting_context)}
             edge_evidence = [item for values in edge_evidence_by_source.values() for item in values if item.edge_id in flow_edge_ids]
             node_evidence = [
                 item
@@ -178,66 +178,18 @@ class EntrypointFlowGraphRepository:
                     edge_ids_by_edge[item.edge_id].append(item.evidence_id)
             evidence = dedupe_evidence(
                 [
-                    *flow.evidence,
+                    *unit.evidence,
                     *edge_evidence,
                     *node_evidence,
                 ]
             )
-            replacements: Dict[str, Any] = {
-                "transitions": tuple(self._edge_with_evidence(edge, edge_ids_by_edge) for edge in flow.transitions),
-                "boundary_transitions": tuple(self._edge_with_evidence(edge, edge_ids_by_edge) for edge in flow.boundary_transitions),
+            replacements: dict[str, Any] = {
+                "execution_transitions": tuple(self._edge_with_evidence(edge, edge_ids_by_edge) for edge in unit.execution_transitions),
+                "topology_boundaries": tuple(self._edge_with_evidence(edge, edge_ids_by_edge) for edge in unit.topology_boundaries),
                 "evidence": evidence,
             }
-            if hasattr(flow, "supporting_transitions"):
-                replacements["supporting_transitions"] = tuple(
-                    self._edge_with_evidence(edge, edge_ids_by_edge)
-                    for edge in tuple(getattr(flow, "supporting_transitions", ()) or ())
-                )
-            hydrated.append(replace(flow, **replacements))
+            hydrated.append(replace(unit, **replacements))
         return tuple(hydrated)
-
-    def load_supporting_relations(
-        self,
-        node_keys: set[FlowNodeKey],
-        *,
-        include_tests: bool,
-    ) -> tuple[dict[FlowNodeKey, FlowGraphNode], tuple[FlowGraphEdge, ...]]:
-        self.graph_store.init()
-        node_ids = sorted({node_id for _source_id, _revision, node_id in node_keys if node_id})
-        if not node_ids:
-            return {}, ()
-        supporting_edge_types = graph_relation_semantics().edge_types_with(SUPPORTING_RELATION)
-        if not supporting_edge_types:
-            return {}, ()
-        edges: dict[tuple[str, str], FlowGraphEdge] = {}
-        endpoint_keys: set[FlowNodeKey] = set(node_keys)
-        source_ids = sorted({source_id for source_id, _revision, _node_id in node_keys if source_id})
-        with self.graph_store._connect() as conn:
-            source_identity = self.graph_store._graph_identity_by_source(conn, source_ids)
-            for chunk in _chunks(node_ids):
-                rows = self._query_supporting_edges(conn, chunk, supporting_edge_types, include_tests)
-                self._metrics["supportingEdgeRowsLoaded"] += len(rows)
-                self.graph_store._attach_current_graph_identity(conn, rows)
-                edge_identity_by_source = self.graph_store._graph_identity_by_source(
-                    conn,
-                    sorted({str(row.get("sourceId") or "") for row in rows if row.get("sourceId")}),
-                )
-                for row in rows:
-                    edge = self.graph_store._flow_graph_edge_from_public_graph(row, {})
-                    if edge is None:
-                        continue
-                    edge_identity = edge_identity_by_source.get(edge.source_id) or {}
-                    if not self._matches_current_identity(edge, edge_identity):
-                        continue
-                    if edge.source_id in source_identity and not self._matches_current_identity(edge, source_identity.get(edge.source_id) or {}):
-                        continue
-                    edges[(edge.source_id, edge.edge_id)] = edge
-                    endpoint_keys.add(self._from_key(edge))
-                    to_key = self._to_key(edge)
-                    if to_key is not None:
-                        endpoint_keys.add(to_key)
-        nodes = self.load_nodes(endpoint_keys, include_tests=include_tests)
-        return nodes, tuple(sorted(edges.values(), key=self._edge_sort_key))
 
     def find_provided_boundary_candidates(
         self,
@@ -528,7 +480,7 @@ class EntrypointFlowGraphRepository:
                             result[key].append(edge)
         return {key: tuple(sorted(edges, key=self._edge_sort_key)) for key, edges in result.items()}
 
-    def _query_nodes(self, conn: Any, source_id: str, ids: list[str], include_tests: bool) -> List[Dict[str, Any]]:
+    def _query_nodes(self, conn: Any, source_id: str, ids: list[str], include_tests: bool) -> list[dict[str, Any]]:
         if not ids:
             return []
         self._metrics["sqlStatements"] += 1
@@ -626,7 +578,7 @@ class EntrypointFlowGraphRepository:
         include_tests: bool,
         direction: str,
         edge_types: Sequence[str],
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not ids or not edge_types:
             return []
         self._metrics["sqlStatements"] += 1
@@ -685,7 +637,7 @@ class EntrypointFlowGraphRepository:
             """,
             params,
         ).fetchall()
-        projected: List[Dict[str, Any]] = []
+        projected: list[dict[str, Any]] = []
         for row in rows:
             item = self.graph_store._graph_edge_projection(self.graph_store._row_dict(row))
             item["sourceId"] = row["source_id"]
@@ -703,7 +655,7 @@ class EntrypointFlowGraphRepository:
         current_status_params: Sequence[Any],
         edge_type_sql: str,
         edge_type_params: Sequence[Any],
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         placeholders = ",".join("?" for _ in ids)
         rows = conn.execute(
             f"""
@@ -753,66 +705,7 @@ class EntrypointFlowGraphRepository:
                 include_tests,
             ],
         ).fetchall()
-        projected: List[Dict[str, Any]] = []
-        for row in rows:
-            item = self.graph_store._graph_edge_projection(self.graph_store._row_dict(row))
-            item["sourceId"] = row["source_id"]
-            item["flowDomain"] = item.get("flowDomain") or row["effective_flow_domain"]
-            projected.append(item)
-        return projected
-
-    def _query_supporting_edges(
-        self,
-        conn: Any,
-        ids: Sequence[str],
-        edge_types: Sequence[str],
-        include_tests: bool,
-    ) -> List[Dict[str, Any]]:
-        if not ids or not edge_types:
-            return []
-        self._metrics["sqlStatements"] += 1
-        id_sql, id_params = sql_in_clause([str(item) for item in ids])
-        edge_type_sql, edge_type_params = sql_in_clause([str(item) for item in edge_types])
-        contract = graph_query_contract()
-        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
-        rows = conn.execute(
-            f"""
-            SELECT e.*,
-                   {self.graph_store._inventory_flow_domain_sql("e")} AS effective_flow_domain,
-                   fn.display_name AS from_display_name,
-                   fn.qualified_name AS from_qualified_name,
-                   fn.name AS from_name,
-                   tn.display_name AS to_display_name,
-                   tn.qualified_name AS to_qualified_name,
-                   tn.name AS to_name,
-                   tn.source_id AS to_source_id,
-                   COALESCE(NULLIF(target_state.graph_id, ''), tn.source_id || ':query-current-facts') AS to_graph_id,
-                   COALESCE(NULLIF(target_state.content_identity, ''), NULLIF(target_state.graph_id, ''), tn.source_id || ':query-current-facts') AS to_graph_revision
-            FROM analysis_graph_edges e
-            LEFT JOIN analysis_graph_nodes fn
-              ON fn.source_id = e.source_id
-             AND fn.id = e.from_node_id
-            LEFT JOIN analysis_graph_nodes tn
-              ON tn.source_id = COALESCE(e.to_source_id, e.source_id)
-             AND tn.id = e.to_node_id
-            LEFT JOIN analysis_graph_state target_state
-              ON target_state.source_id = tn.source_id
-            WHERE e.edge_type IN ({edge_type_sql})
-              AND e.status IN ({current_status_sql})
-              AND {self.graph_store._inventory_membership_graph_edge_clause("e")}
-              AND (e.from_node_id IN ({id_sql}) OR e.to_node_id IN ({id_sql}))
-              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("e")}, '') != 'TEST')
-            ORDER BY e.source_id, e.edge_type, e.from_node_id, e.to_node_id, e.id
-            """,
-            [
-                *edge_type_params,
-                *current_status_params,
-                *id_params,
-                *id_params,
-                include_tests,
-            ],
-        ).fetchall()
-        projected: List[Dict[str, Any]] = []
+        projected: list[dict[str, Any]] = []
         for row in rows:
             item = self.graph_store._graph_edge_projection(self.graph_store._row_dict(row))
             item["sourceId"] = row["source_id"]
@@ -1316,7 +1209,7 @@ class EntrypointFlowGraphRepository:
         source_id: str,
         ids: list[str],
         include_tests: bool,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not ids:
             return []
         self._metrics["sqlStatements"] += 1
@@ -1407,7 +1300,7 @@ class EntrypointFlowGraphRepository:
         source_ids: Sequence[str],
         methods: Sequence[str],
         include_tests: bool,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not source_ids or not methods:
             return []
         self._metrics["sqlStatements"] += 1
@@ -1711,7 +1604,7 @@ class EntrypointFlowGraphRepository:
         source_id: str,
         ids: list[str],
         include_tests: bool,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not ids:
             return []
         self._metrics["sqlStatements"] += 1
@@ -1817,8 +1710,8 @@ class EntrypointFlowGraphRepository:
             return {}
         return parsed if isinstance(parsed, dict) else {}
 
-    def _query_edge_evidence(self, conn: Any, source_id: str, edge_ids: Sequence[str]) -> List[Dict[str, Any]]:
-        result: List[Dict[str, Any]] = []
+    def _query_edge_evidence(self, conn: Any, source_id: str, edge_ids: Sequence[str]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
         if not edge_ids:
             return result
         contract = graph_query_contract()
@@ -1870,8 +1763,8 @@ class EntrypointFlowGraphRepository:
         conn: Any,
         source_id: str,
         node_ids: Sequence[str],
-    ) -> List[Dict[str, Any]]:
-        result: List[Dict[str, Any]] = []
+    ) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
         if not node_ids:
             return result
         contract = graph_query_contract()

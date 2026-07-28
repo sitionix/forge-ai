@@ -5,7 +5,7 @@ import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Mapping, Sequence, Tuple
 
 from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionBundle,
@@ -32,8 +32,6 @@ from knowledge_service.boundary_resolution import (
 from knowledge_service.end_to_end_flow import EndToEndFlowAssembler, EndToEndFlowAssemblyResult, EndToEndFlowDiagnostic
 from knowledge_service.end_to_end_projection import EndToEndProjectionBuilder
 from knowledge_service.end_to_end_selection import EndToEndGraphSelectionResult, EndToEndGraphSelector
-from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine, EntrypointFlowSeedProvenance, LocalFlowUnit
-from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryCoverage,
     KnowledgeQueryDiagnostic,
@@ -54,6 +52,8 @@ from knowledge_service.knowledge_search import (
     SearchDocument,
 )
 from knowledge_service.local_flow_selection import LocalFlowUnitSelectionResult, LocalFlowUnitSelector
+from knowledge_service.local_flow_unit_engine import LocalFlowSeedProvenance, LocalFlowUnit, LocalFlowUnitEngine
+from knowledge_service.local_flow_unit_store import LocalFlowUnitGraphRepository
 from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
@@ -71,8 +71,8 @@ class KnowledgeQueryPolicy:
     plan_candidate_min_score: float = 0.42
     exact_identifier_min_score: float = 0.75
     fallback_anchor_trigger_count: int = 3
-    plan_flow_min_relevance_score: float = 0.05
-    plan_flow_top_delta: float = 0.25
+    local_unit_min_relevance_score: float = 0.05
+    local_unit_top_delta: float = 0.25
 
 
 class CandidatePoolKind(str, Enum):
@@ -106,10 +106,10 @@ _MAX_BOUNDARY_TARGET_UNITS = 50
 
 @dataclass(frozen=True)
 class CandidateRetrievalResult:
-    pools: Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]]
-    all_candidates: List[KnowledgeQueryMatchedNode]
-    display_candidates: List[KnowledgeQueryMatchedNode]
-    diagnostics: List[KnowledgeQueryDiagnostic]
+    pools: dict[CandidatePoolKind, list[KnowledgeQueryMatchedNode]]
+    all_candidates: list[KnowledgeQueryMatchedNode]
+    display_candidates: list[KnowledgeQueryMatchedNode]
+    diagnostics: list[KnowledgeQueryDiagnostic]
     truncated: bool = False
 
 
@@ -157,11 +157,11 @@ class ExpandedAnchor:
 
 @dataclass(frozen=True)
 class AnchorExpansionResult:
-    original_candidates: List[KnowledgeQueryMatchedNode]
-    expanded_anchors: List[ExpandedAnchor]
-    flow_seed_nodes: List[KnowledgeQueryMatchedNode]
-    context_nodes: List[KnowledgeQueryMatchedNode]
-    diagnostics: List[KnowledgeQueryDiagnostic]
+    original_candidates: list[KnowledgeQueryMatchedNode]
+    expanded_anchors: list[ExpandedAnchor]
+    flow_seed_nodes: list[KnowledgeQueryMatchedNode]
+    context_nodes: list[KnowledgeQueryMatchedNode]
+    diagnostics: list[KnowledgeQueryDiagnostic]
     truncated: bool = False
 
 
@@ -232,7 +232,7 @@ class ContinuationAssemblyResult:
     initial_selected_local_unit_ids: tuple[str, ...]
     local_units: tuple[LocalFlowUnit, ...] = ()
     boundary_resolution: BoundaryResolutionResult | None = None
-    target_seed_provenance: tuple[EntrypointFlowSeedProvenance, ...] = ()
+    target_seed_provenance: tuple[LocalFlowSeedProvenance, ...] = ()
     diagnostics: tuple[KnowledgeQueryDiagnostic, ...] = ()
 
 
@@ -240,10 +240,10 @@ class SourceScopeResolver:
     def __init__(self, graph_store: Any) -> None:
         self.graph_store = graph_store
 
-    def resolve(self) -> tuple[List[QuerySource], List[KnowledgeQueryDiagnostic]]:
-        diagnostics: List[KnowledgeQueryDiagnostic] = []
+    def resolve(self) -> tuple[list[QuerySource], list[KnowledgeQueryDiagnostic]]:
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
         raw_sources = self.graph_store.query_current_graph_sources()
-        eligible: List[QuerySource] = []
+        eligible: list[QuerySource] = []
         for source in raw_sources:
             source_id = str(source.get("sourceId") or "")
             display_name = str(source.get("displayName") or source_id or "unknown")
@@ -654,11 +654,11 @@ class UnifiedAnchorSearcher:
             truncated=False,
         )
 
-    def _candidate_pools(self, candidates: Sequence[SearchCandidate]) -> Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]]:
-        grouped: Dict[CandidatePoolKind, List[SearchCandidate]] = defaultdict(list)
+    def _candidate_pools(self, candidates: Sequence[SearchCandidate]) -> dict[CandidatePoolKind, list[KnowledgeQueryMatchedNode]]:
+        grouped: dict[CandidatePoolKind, list[SearchCandidate]] = defaultdict(list)
         for candidate in candidates:
             grouped[self._candidate_pool_kind(candidate.provider, candidate.reason)].append(candidate)
-        pools: Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]] = {kind: [] for kind in CandidatePoolKind}
+        pools: dict[CandidatePoolKind, list[KnowledgeQueryMatchedNode]] = {kind: [] for kind in CandidatePoolKind}
         for kind, pool_candidates in grouped.items():
             pools[kind] = [self._matched_node(candidate) for candidate in self.candidate_merger.merge(pool_candidates)]
         return pools
@@ -696,7 +696,7 @@ class UnifiedAnchorSearcher:
             return CandidatePoolKind.FUZZY
         return CandidatePoolKind.EXACT
 
-    def _search_diagnostic(self, item: Dict[str, Any]) -> KnowledgeQueryDiagnostic:
+    def _search_diagnostic(self, item: dict[str, Any]) -> KnowledgeQueryDiagnostic:
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
         return KnowledgeQueryDiagnostic(
             code=str(item.get("code") or "SEARCH_DIAGNOSTIC"),
@@ -958,10 +958,10 @@ class UnifiedAnchorSearcher:
 
     def _hydrate_search_documents(
         self,
-        source_node_pairs: Sequence[Tuple[str, str]],
+        source_node_pairs: Sequence[tuple[str, str]],
         eligible_sources: Sequence[QuerySource],
         include_tests: bool,
-    ) -> List[SearchDocument]:
+    ) -> list[SearchDocument]:
         if not source_node_pairs or not hasattr(self.graph_store, "query_search_documents_by_node_ids"):
             return []
         expected_revision_by_source = {
@@ -969,8 +969,8 @@ class UnifiedAnchorSearcher:
             for source in eligible_sources
             if source.source_id and (source.graph_revision or source.graph_id)
         }
-        requested: List[Tuple[str, str]] = []
-        requested_keys: set[Tuple[str, str]] = set()
+        requested: list[tuple[str, str]] = []
+        requested_keys: set[tuple[str, str]] = set()
         for source_id, node_id in source_node_pairs:
             key = (str(source_id or ""), str(node_id or ""))
             if not key[0] or not key[1] or key[0] not in expected_revision_by_source:
@@ -982,7 +982,7 @@ class UnifiedAnchorSearcher:
         if not requested:
             return []
         raw_documents = self.graph_store.query_search_documents_by_node_ids(requested, len(requested))
-        documents: List[SearchDocument] = []
+        documents: list[SearchDocument] = []
         for raw_document in raw_documents:
             document = SearchDocument.from_graph_node(raw_document)
             if not include_tests and document.flow_domain.upper() == "TEST":
@@ -1016,9 +1016,9 @@ class _MutableExpandedAnchor:
 
 
 class _AnchorAccumulator:
-    def __init__(self, graph_id_by_source: Dict[str, str]) -> None:
+    def __init__(self, graph_id_by_source: dict[str, str]) -> None:
         self.graph_id_by_source = graph_id_by_source
-        self.items: Dict[AnchorNodeKey, _MutableExpandedAnchor] = {}
+        self.items: dict[AnchorNodeKey, _MutableExpandedAnchor] = {}
         self.original_keys: set[AnchorNodeKey] = set()
         self._next_order = 0
 
@@ -1089,8 +1089,8 @@ class _AnchorAccumulator:
             return None
         return (source_id, str(node.graphId or self.graph_id_by_source.get(source_id) or ""), node_id)
 
-    def anchors(self) -> List[ExpandedAnchor]:
-        anchors: List[ExpandedAnchor] = []
+    def anchors(self) -> list[ExpandedAnchor]:
+        anchors: list[ExpandedAnchor] = []
         for item in sorted(self.items.values(), key=lambda value: value.order):
             anchors.append(
                 ExpandedAnchor(
@@ -1162,13 +1162,13 @@ class AnchorExpansionService:
         if not original_candidates:
             return self._result(original_candidates, accumulator, [], truncated=False)
         if self.graph_store is None or not hasattr(self.graph_store, "query_anchor_expansion"):
-            return self._result(original_candidates, accumulator, [], truncated=False, legacy_flow_seed=True)
+            return self._result(original_candidates, accumulator, [], truncated=False, use_original_candidate_as_seed=True)
 
         try:
             bundle = self.graph_store.query_anchor_expansion(
                 self._source_node_pairs(original_candidates, graph_id_by_source, revision_by_source),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - anchor expansion is optional and must fail closed to original query seeds.
             return self._result(
                 original_candidates,
                 accumulator,
@@ -1180,13 +1180,13 @@ class AnchorExpansionService:
                     )
                 ],
                 truncated=False,
-                legacy_flow_seed=True,
+                use_original_candidate_as_seed=True,
             )
 
         graph_nodes = self._bundle_nodes(bundle)
         declares_out, declares_in, uses_field_in, overrides_by_contract = self._structural_edge_indexes(bundle)
         truncated = bool(bundle.truncated)
-        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
 
         def add_expanded(
             origin: KnowledgeQueryMatchedNode,
@@ -1233,7 +1233,7 @@ class AnchorExpansionService:
                         add_expanded(candidate, child, {AnchorRole.CONTEXT}, AnchorExpansionReason.TYPE_DECLARED_FIELD)
                 continue
             if kind == "FILE":
-                type_children: List[AnchorNodeKey] = []
+                type_children: list[AnchorNodeKey] = []
                 for child_key in declares_out.get(origin_key, []):
                     child = graph_nodes.get(child_key)
                     child_kind = self._node_kind(child.node_kind if child else "")
@@ -1282,19 +1282,19 @@ class AnchorExpansionService:
 
     def _result(
         self,
-        original_candidates: List[KnowledgeQueryMatchedNode],
+        original_candidates: list[KnowledgeQueryMatchedNode],
         accumulator: _AnchorAccumulator,
-        diagnostics: List[KnowledgeQueryDiagnostic],
+        diagnostics: list[KnowledgeQueryDiagnostic],
         *,
         truncated: bool,
-        legacy_flow_seed: bool = False,
+        use_original_candidate_as_seed: bool = False,
     ) -> AnchorExpansionResult:
         expanded_anchors = accumulator.anchors()
         flow_seed_nodes = [anchor.node for anchor in expanded_anchors if AnchorRole.FLOW_SEED in anchor.roles]
-        if legacy_flow_seed:
+        if use_original_candidate_as_seed:
             flow_seed_nodes = list(original_candidates)
         context_nodes = [anchor.node for anchor in expanded_anchors if AnchorRole.CONTEXT in anchor.roles]
-        if original_candidates and not flow_seed_nodes and not legacy_flow_seed:
+        if original_candidates and not flow_seed_nodes and not use_original_candidate_as_seed:
             diagnostics = [
                 *diagnostics,
                 KnowledgeQueryDiagnostic(
@@ -1315,10 +1315,10 @@ class AnchorExpansionService:
     def _source_node_pairs(
         self,
         candidates: Sequence[KnowledgeQueryMatchedNode],
-        graph_id_by_source: Dict[str, str],
-        revision_by_source: Dict[str, str],
-    ) -> List[AnchorExpansionRequest]:
-        requested: List[AnchorExpansionRequest] = []
+        graph_id_by_source: dict[str, str],
+        revision_by_source: dict[str, str],
+    ) -> list[AnchorExpansionRequest]:
+        requested: list[AnchorExpansionRequest] = []
         seen: set[AnchorNodeKey] = set()
         for candidate in candidates:
             source_id = str(candidate.sourceId or "")
@@ -1345,8 +1345,8 @@ class AnchorExpansionService:
             )
         return requested
 
-    def _bundle_nodes(self, bundle: AnchorExpansionBundle) -> Dict[AnchorNodeKey, AnchorExpansionNode]:
-        nodes: Dict[AnchorNodeKey, AnchorExpansionNode] = {}
+    def _bundle_nodes(self, bundle: AnchorExpansionBundle) -> dict[AnchorNodeKey, AnchorExpansionNode]:
+        nodes: dict[AnchorNodeKey, AnchorExpansionNode] = {}
         for node in bundle.nodes:
             key = self._node_key(node)
             if key is not None:
@@ -1357,15 +1357,15 @@ class AnchorExpansionService:
         self,
         bundle: AnchorExpansionBundle,
     ) -> tuple[
-        Dict[AnchorNodeKey, List[AnchorNodeKey]],
-        Dict[AnchorNodeKey, List[AnchorNodeKey]],
-        Dict[AnchorNodeKey, List[AnchorNodeKey]],
-        Dict[AnchorNodeKey, List[AnchorNodeKey]],
+        dict[AnchorNodeKey, list[AnchorNodeKey]],
+        dict[AnchorNodeKey, list[AnchorNodeKey]],
+        dict[AnchorNodeKey, list[AnchorNodeKey]],
+        dict[AnchorNodeKey, list[AnchorNodeKey]],
     ]:
-        declares_out: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
-        declares_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
-        uses_field_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
-        overrides_by_contract: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
+        declares_out: dict[AnchorNodeKey, list[AnchorNodeKey]] = defaultdict(list)
+        declares_in: dict[AnchorNodeKey, list[AnchorNodeKey]] = defaultdict(list)
+        uses_field_in: dict[AnchorNodeKey, list[AnchorNodeKey]] = defaultdict(list)
+        overrides_by_contract: dict[AnchorNodeKey, list[AnchorNodeKey]] = defaultdict(list)
         for edge in sorted(bundle.edges, key=self._edge_sort_key):
             edge_type = str(edge.edge_type or "").upper()
             from_key = self._edge_from_key(edge)
@@ -1384,10 +1384,10 @@ class AnchorExpansionService:
     def _parent_keys(
         self,
         node_key: AnchorNodeKey,
-        graph_nodes: Dict[AnchorNodeKey, AnchorExpansionNode],
-        declares_in: Dict[AnchorNodeKey, List[AnchorNodeKey]],
-    ) -> List[AnchorNodeKey]:
-        result: List[AnchorNodeKey] = []
+        graph_nodes: dict[AnchorNodeKey, AnchorExpansionNode],
+        declares_in: dict[AnchorNodeKey, list[AnchorNodeKey]],
+    ) -> list[AnchorNodeKey]:
+        result: list[AnchorNodeKey] = []
         seen: set[AnchorNodeKey] = set()
         for parent_key in declares_in.get(node_key, []):
             if parent_key not in seen:
@@ -1404,7 +1404,7 @@ class AnchorExpansionService:
     def _entrypoint_keys(
         self,
         bundle: AnchorExpansionBundle,
-        graph_nodes: Dict[AnchorNodeKey, AnchorExpansionNode],
+        graph_nodes: dict[AnchorNodeKey, AnchorExpansionNode],
     ) -> set[AnchorNodeKey]:
         keys: set[AnchorNodeKey] = set()
         for key, node in graph_nodes.items():
@@ -1484,20 +1484,20 @@ class KnowledgeQueryService:
         self,
         source_scope_resolver: SourceScopeResolver,
         anchor_searcher: UnifiedAnchorSearcher,
-        flow_repository: EntrypointFlowGraphRepository,
-        flow_engine: EntrypointFlowEngine | None = None,
+        flow_repository: LocalFlowUnitGraphRepository,
+        flow_engine: LocalFlowUnitEngine | None = None,
         policy: KnowledgeQueryPolicy | None = None,
         anchor_expander: AnchorExpansionService | None = None,
     ) -> None:
         self.source_scope_resolver = source_scope_resolver
         self.anchor_searcher = anchor_searcher
         self.flow_repository = flow_repository
-        self.flow_engine = flow_engine or EntrypointFlowEngine(flow_repository)
+        self.flow_engine = flow_engine or LocalFlowUnitEngine(flow_repository)
         self.policy = policy or KnowledgeQueryPolicy()
         self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_repository, "graph_store", None))
         self.local_unit_selector = LocalFlowUnitSelector(
-            min_relevance_score=self.policy.plan_flow_min_relevance_score,
-            top_delta=self.policy.plan_flow_top_delta,
+            min_relevance_score=self.policy.local_unit_min_relevance_score,
+            top_delta=self.policy.local_unit_top_delta,
         )
         self.boundary_resolver = GenericBoundaryResolver()
         self.end_to_end_assembler = EndToEndFlowAssembler()
@@ -1505,12 +1505,12 @@ class KnowledgeQueryService:
         self.graph_projector = EndToEndProjectionBuilder()
 
     def query(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryResponse:
-        return self.query_with_flows(request, plan=plan).response
+        return self.query_with_graphs(request, plan=plan).response
 
-    def query_with_flows(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryExecutionResult:
+    def query_with_graphs(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryExecutionResult:
         query_started = time.monotonic()
         repository_metrics_before = self._repository_metrics()
-        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
         eligible_sources, scope_diagnostics = self.source_scope_resolver.resolve()
         diagnostics.extend(scope_diagnostics)
         candidate_started = time.monotonic()
@@ -1549,7 +1549,6 @@ class KnowledgeQueryService:
         request_flow_limit = max(1, min(int(request.maxFlows or 10), 10))
         build_result = self.flow_engine.build(
             flow_seed_nodes,
-            max_flows=0,
             include_tests=bool(request.includeTests),
             anchor_seed_provenance=seed_provenance,
         )
@@ -1589,8 +1588,8 @@ class KnowledgeQueryService:
         request_traversal_stats.update(repository_metric_delta)
         diagnostics.extend(build_result.diagnostics)
         diagnostics.append(KnowledgeQueryDiagnostic(
-            code="ENTRYPOINT_FLOW_TIMINGS",
-            message="Entrypoint flow query stage timings.",
+            code="LOCAL_FLOW_UNIT_QUERY_TIMINGS",
+            message="Local-flow-unit query stage timings.",
             severity="INFO",
             metadata={
                 "candidateSearchMs": round(candidate_ms, 3),
@@ -1658,7 +1657,7 @@ class KnowledgeQueryService:
             selected_graphs=graph_selection.selected_graphs,
         )
 
-    def _flow_seed_provenance(self, anchor_result: AnchorExpansionResult) -> tuple[EntrypointFlowSeedProvenance, ...]:
+    def _flow_seed_provenance(self, anchor_result: AnchorExpansionResult) -> tuple[LocalFlowSeedProvenance, ...]:
         originals_by_identity: dict[tuple[str, str, str, str], KnowledgeQueryMatchedNode] = {}
         for candidate in anchor_result.original_candidates:
             originals_by_identity.setdefault(self._matched_anchor_identity(candidate), candidate)
@@ -1682,7 +1681,7 @@ class KnowledgeQueryService:
                 )
 
         specs = [
-            EntrypointFlowSeedProvenance(
+            LocalFlowSeedProvenance(
                 original_anchor=originals_by_identity[original_identity],
                 expanded_seed=seed_by_identity[expanded_identity],
                 anchor_to_seed_reasons=tuple(sorted(reasons)),
@@ -1695,14 +1694,14 @@ class KnowledgeQueryService:
             return tuple(sorted(specs, key=self._flow_seed_provenance_sort_key))
 
         seen: set[tuple[str, str, str, str, str]] = set()
-        fallback_specs: list[EntrypointFlowSeedProvenance] = []
+        fallback_specs: list[LocalFlowSeedProvenance] = []
         for seed in anchor_result.flow_seed_nodes:
             key = (seed.sourceId, seed.stableKey, seed.nodeId, seed.stableKey, seed.nodeId)
             if key in seen:
                 continue
             seen.add(key)
             fallback_specs.append(
-                EntrypointFlowSeedProvenance(
+                LocalFlowSeedProvenance(
                     original_anchor=seed,
                     expanded_seed=seed,
                     anchor_to_seed_reasons=("ORIGINAL_MATCH",),
@@ -1734,7 +1733,7 @@ class KnowledgeQueryService:
             item.expanded_seed_stable_key,
         )
 
-    def _flow_seed_provenance_sort_key(self, item: EntrypointFlowSeedProvenance) -> tuple[str, str, str, str, str]:
+    def _flow_seed_provenance_sort_key(self, item: LocalFlowSeedProvenance) -> tuple[str, str, str, str, str]:
         return (
             item.expanded_seed.sourceId,
             item.expanded_seed.graphRevision or item.expanded_seed.graphId or "",
@@ -1743,7 +1742,7 @@ class KnowledgeQueryService:
             item.original_anchor.nodeId,
         )
 
-    def _repository_metrics(self) -> Dict[str, int]:
+    def _repository_metrics(self) -> dict[str, int]:
         if not hasattr(self.flow_repository, "metrics"):
             return {}
         return {
@@ -1752,7 +1751,7 @@ class KnowledgeQueryService:
             if isinstance(value, int)
         }
 
-    def _repository_metric_delta(self, before: Mapping[str, int], after: Mapping[str, int]) -> Dict[str, int]:
+    def _repository_metric_delta(self, before: Mapping[str, int], after: Mapping[str, int]) -> dict[str, int]:
         return {
             key: max(0, int(after.get(key, 0)) - int(before.get(key, 0)))
             for key in sorted(set(before) | set(after))
@@ -2044,7 +2043,7 @@ class KnowledgeQueryService:
         if str(node.node_kind or "").strip().upper() == "CALLABLE":
             flow_seed_nodes = [anchor]
             seed_provenance = (
-                EntrypointFlowSeedProvenance(
+                LocalFlowSeedProvenance(
                     original_anchor=anchor,
                     expanded_seed=anchor,
                     anchor_to_seed_reasons=("GENERIC_BOUNDARY_PROVIDED_OWNER",),
@@ -2058,11 +2057,10 @@ class KnowledgeQueryService:
             return ContinuationAssemblyResult((), (), None, seed_provenance)
         build_result = self.flow_engine.build(
             flow_seed_nodes,
-            max_flows=0,
             include_tests=include_tests,
             anchor_seed_provenance=seed_provenance,
         )
-        if not build_result.flows:
+        if not build_result.local_units:
             return ContinuationAssemblyResult((), build_result.local_units, None, seed_provenance, tuple(build_result.diagnostics))
         return ContinuationAssemblyResult(
             (),
@@ -2364,7 +2362,7 @@ class KnowledgeQueryService:
 
     def _target_seed_identities(
         self,
-        seed_provenance: Sequence[EntrypointFlowSeedProvenance],
+        seed_provenance: Sequence[LocalFlowSeedProvenance],
     ) -> tuple[BoundaryTargetSeedIdentity, ...]:
         identities = {
             BoundaryTargetSeedIdentity(
@@ -2380,7 +2378,7 @@ class KnowledgeQueryService:
 
     def _target_seed_relations(
         self,
-        seed_provenance: Sequence[EntrypointFlowSeedProvenance],
+        seed_provenance: Sequence[LocalFlowSeedProvenance],
     ) -> tuple[BoundaryTargetSeedRelation, ...]:
         reasons_by_seed: dict[BoundaryTargetSeedIdentity, set[str]] = defaultdict(set)
         for item in seed_provenance:
@@ -2460,9 +2458,9 @@ class KnowledgeQueryService:
 
     def _matched_sources(
         self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], eligible_sources: Sequence[QuerySource]
-    ) -> List[KnowledgeQueryMatchedSource]:
+    ) -> list[KnowledgeQueryMatchedSource]:
         display_names = {source.source_id: source.display_name for source in eligible_sources}
-        scores: Dict[str, float] = {}
+        scores: dict[str, float] = {}
         for matched_node in matched_nodes:
             scores[matched_node.sourceId] = max(scores.get(matched_node.sourceId, 0.0), matched_node.score)
         return [
@@ -2501,7 +2499,7 @@ def build_knowledge_query_service(graph_store: Any, app_config: Any | None = Non
     return KnowledgeQueryService(
         source_scope_resolver=SourceScopeResolver(graph_store),
         anchor_searcher=UnifiedAnchorSearcher(graph_store, search_engine=search_engine),
-        flow_repository=EntrypointFlowGraphRepository(graph_store),
+        flow_repository=LocalFlowUnitGraphRepository(graph_store),
         anchor_expander=AnchorExpansionService(graph_store),
     )
 
@@ -2515,7 +2513,7 @@ def _semantic_candidate_provider(graph_store: Any, app_config: Any | None, embed
     try:
         from knowledge_service.embedding_provider import OllamaEmbeddingProvider
         from knowledge_service.semantic_search import SemanticCandidateProvider, SemanticSearchConfig
-    except Exception:
+    except Exception:  # noqa: BLE001 - semantic search is an optional provider; import/config failures disable it.
         return None
     provider = embedding_provider
     if provider is None:

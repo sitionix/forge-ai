@@ -1,7 +1,6 @@
-# ruff: noqa: E402
 
-import hashlib
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -12,8 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
-import pytest
 import httpx
+import pytest
 
 os.environ.setdefault("KNOWLEDGE_STORE_PATH", "/tmp/forge-ai-knowledge-test-main.sqlite")
 
@@ -26,18 +25,16 @@ from knowledge_service.analysis_graph_contract import GraphContractProvider, con
 from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
-from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.config import AppConfig
 from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine, EntrypointFlowOrigin
-from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
 from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
@@ -48,6 +45,8 @@ from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import build_knowledge_query_service
+from knowledge_service.local_flow_unit_engine import LocalFlowRootOrigin, LocalFlowUnitEngine
+from knowledge_service.local_flow_unit_store import LocalFlowUnitGraphRepository
 from knowledge_service.overview_projection import read_overview, refresh_overview_for_sources
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_index import SemanticIndexStore
@@ -1580,7 +1579,7 @@ def test_boundary_merge_identity_preserves_conflicts_types_evidence_and_order_st
     assert first_rows["descriptorEvidence"]
 
 
-def test_entrypoint_flow_repository_load_boundaries_preserves_generic_facts_and_currentness(tmp_path):
+def test_local_flow_unit_repository_load_boundaries_preserves_generic_facts_and_currentness(tmp_path):
     content = "class Handler { void run() { remote.create(); } }\n"
     relative_path = "src/main/java/example/ObjectHandler.java"
     inventory_store, _, _ = build_inventory(tmp_path, content=content)
@@ -1589,7 +1588,7 @@ def test_entrypoint_flow_repository_load_boundaries_preserves_generic_facts_and_
     store.replace_file_graph_analysis(1, graph_state_for_test(content, relative_path), graph)
     node_id = graph["nodes"][0]["id"]
     key = ("edge-gateway", "edge-gateway:query-current-facts", node_id)
-    repo = EntrypointFlowGraphRepository(store)
+    repo = LocalFlowUnitGraphRepository(store)
 
     loaded = repo.load_boundaries({key}, include_tests=False)
     assert len(loaded) == 1
@@ -1621,7 +1620,7 @@ def test_entrypoint_flow_repository_load_boundaries_preserves_generic_facts_and_
     test_store.replace_file_graph_analysis(1, graph_state_for_test(content, relative_path, flow_domain="TEST"), graph)
     with sqlite3.connect(test_store.db_path) as conn:
         conn.execute("UPDATE files SET flow_domain = 'TEST' WHERE source_id = 'edge-gateway'")
-    test_repo = EntrypointFlowGraphRepository(test_store)
+    test_repo = LocalFlowUnitGraphRepository(test_store)
 
     assert test_repo.load_boundaries({key}, include_tests=False) == {}
     loaded_tests = test_repo.load_boundaries({key}, include_tests=True)
@@ -3321,15 +3320,13 @@ public class SiteController {
         graphId=app_state["graph_id"],
         graphRevision=app_state["content_identity"],
     )
-    result = EntrypointFlowEngine(EntrypointFlowGraphRepository(store)).build([anchor], max_flows=10, include_tests=False)
+    result = LocalFlowUnitEngine(LocalFlowUnitGraphRepository(store)).build([anchor], include_tests=False)
 
-    assert len(result.flows) == 1
     assert len(result.local_units) == 1
     unit = result.local_units[0]
-    flow = result.flows[0]
-    assert flow.entrypoint.source_id == "app-afesox"
-    assert flow.entrypoint.qualified_name == "app.afesox.SiteUseCase.createSite"
-    assert flow.origin is EntrypointFlowOrigin.INFERRED_ROOT
+    assert unit.roots[0].node.source_id == "app-afesox"
+    assert unit.roots[0].node.qualified_name == "app.afesox.SiteUseCase.createSite"
+    assert unit.roots[0].origin is LocalFlowRootOrigin.INFERRED_ROOT
     assert {node.source_id for node in unit.execution_nodes} == {"app-afesox"}
     assert unit.execution_transitions == ()
     assert unit.topology_boundaries == ()
@@ -3586,7 +3583,7 @@ def wait_job(store, job_id):
 
 
 def test_non_localhost_ollama_base_url_rejected(tmp_path):
-    with pytest.raises(Exception):
+    with pytest.raises(KnowledgeError):
         OllamaAnalysisClient("http://example.com:11434", "model", 32768)
 
 

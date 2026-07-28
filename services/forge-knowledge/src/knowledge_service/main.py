@@ -14,7 +14,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Sequence
 
 import anyio
 from fastapi import FastAPI, Query, Request
@@ -31,6 +31,8 @@ from knowledge_service.config import (
 )
 from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
+from knowledge_service.embedding_provider import OllamaEmbeddingProvider
+from knowledge_service.end_to_end_projection import EndToEndProjectionBuilder
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.flow_formatter import (
     EndToEndFormatterAllGraphsFailed,
@@ -41,7 +43,6 @@ from knowledge_service.flow_formatter import (
     LocalOllamaEndToEndFormatterClient,
 )
 from knowledge_service.freshness_service import KnowledgeFreshnessService
-from knowledge_service.end_to_end_projection import EndToEndProjectionBuilder
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
@@ -74,21 +75,20 @@ from knowledge_service.query_interpretation import (
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_schema import SemanticIndexBuildRequest, SemanticIndexBuildResponse
 from knowledge_service.semantic_worker import SemanticBuildCoordinator, SemanticIndexBackgroundWorker
-from knowledge_service.embedding_provider import OllamaEmbeddingProvider
 from knowledge_service.service_catalog_provider import ServiceYamlCatalogProvider
 from knowledge_service.source_config import load_source_config
 from knowledge_service.storage_operations import StorageOperations
 
-app_config: Optional[AppConfig] = None
-store: Optional[InventoryStore] = None
-analysis_supervisor: Optional[AnalysisSupervisor] = None
+app_config: AppConfig | None = None
+store: InventoryStore | None = None
+analysis_supervisor: AnalysisSupervisor | None = None
 LOGGER = logging.getLogger(__name__)
 HUMAN_QUERY_TERMINAL_AUDIT_PREFIX = "human-query-terminal-"
 
 
 def create_app(
-    settings: Optional[ForgeSettings] = None,
-    dependencies: Optional[KnowledgeDependencies] = None,
+    settings: ForgeSettings | None = None,
+    dependencies: KnowledgeDependencies | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -163,11 +163,11 @@ def create_app(
         )
 
     @app.get("/health")
-    async def health() -> Dict[str, str]:
+    async def health() -> dict[str, str]:
         return {"status": "UP"}
 
     @app.get("/api/v1/knowledge/status")
-    async def status(request: Request, includeFreshness: bool = False) -> Dict[str, Any]:
+    async def status(request: Request, includeFreshness: bool = False) -> dict[str, Any]:
         config, deps = _state(request)
         source_config = load_source_config(config.local_config_path)
         inventory = deps.inventory_store.status()
@@ -175,7 +175,7 @@ def create_app(
         freshness = _unknown_freshness()
         if includeFreshness and source_config is not None and analysis.get("lastCompletedAt"):
             freshness = KnowledgeFreshnessService(source_config, deps.inventory_store).check()
-        base: Dict[str, Any] = {
+        base: dict[str, Any] = {
             "status": "UP",
             "module": "knowledge",
             "catalog": {"configured": source_config is not None, "type": source_config.catalog.type if source_config else None},
@@ -209,7 +209,7 @@ def create_app(
         return base
 
     @app.get("/api/v1/knowledge/sources")
-    async def sources(request: Request) -> Dict[str, Any]:
+    async def sources(request: Request) -> dict[str, Any]:
         config, _ = _state(request)
         source_config = load_source_config(config.local_config_path)
         if source_config is None:
@@ -222,7 +222,7 @@ def create_app(
         }
 
     @app.post("/api/v1/knowledge/inventory/build")
-    async def inventory_build(request: Request, body: InventoryBuildRequest) -> Dict[str, Any]:
+    async def inventory_build(request: Request, body: InventoryBuildRequest) -> dict[str, Any]:
         _, deps = _state(request)
         try:
             return await deps.inventory_refresh.build_async(body.sourceIds, body.groups)
@@ -232,24 +232,24 @@ def create_app(
             raise KnowledgeError("INVENTORY_BUILD_FAILED", "Inventory build failed") from exc
 
     @app.get("/api/v1/knowledge/inventory/status")
-    async def inventory_status(request: Request) -> Dict[str, Any]:
+    async def inventory_status(request: Request) -> dict[str, Any]:
         _, deps = _state(request)
         return deps.inventory_store.status()
 
     @app.get("/api/v1/knowledge/inventory/files")
     async def inventory_files(
         request: Request,
-        sourceId: Optional[str] = None,
-        pathContains: Optional[str] = None,
-        extension: Optional[str] = None,
+        sourceId: str | None = None,
+        pathContains: str | None = None,
+        extension: str | None = None,
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         _, deps = _state(request)
         return deps.inventory_store.files(sourceId, pathContains, extension, limit, offset)
 
     @app.post("/api/v1/knowledge/context")
-    async def context(request: Request, body: ContextRequest) -> Dict[str, Any]:
+    async def context(request: Request, body: ContextRequest) -> dict[str, Any]:
         _, deps = _state(request)
         if not body.query or not body.query.strip():
             raise KnowledgeError("CONTEXT_QUERY_INVALID", "Context query must not be empty")
@@ -371,7 +371,7 @@ def create_app(
         return SemanticIndexBuildResponse(**job)
 
     @app.post("/api/v1/knowledge/analysis/build")
-    async def analysis_build(request: Request, body: AnalysisBuildRequest) -> Dict[str, Any]:
+    async def analysis_build(request: Request, body: AnalysisBuildRequest) -> dict[str, Any]:
         _, deps = _state(request)
         try:
             return await deps.inventory_refresh.build_then(
@@ -385,7 +385,7 @@ def create_app(
             raise KnowledgeError("ANALYSIS_BUILD_FAILED", "Analysis build failed") from exc
 
     @app.post("/api/v1/knowledge/analysis/retry-failed")
-    async def analysis_retry_failed(request: Request, body: RetryFailedAnalysisRequest) -> Dict[str, Any]:
+    async def analysis_retry_failed(request: Request, body: RetryFailedAnalysisRequest) -> dict[str, Any]:
         _, deps = _state(request)
         try:
             return await deps.analysis_supervisor.retry_failed(body)
@@ -395,7 +395,7 @@ def create_app(
             raise KnowledgeError("RETRY_SELECTION_FAILED", "Retry failed selection could not be created") from exc
 
     @app.get("/api/v1/knowledge/analysis/jobs/{job_id}")
-    async def analysis_job(request: Request, job_id: str) -> Dict[str, Any]:
+    async def analysis_job(request: Request, job_id: str) -> dict[str, Any]:
         _, deps = _state(request)
         job = deps.analysis_store.job(job_id)
         if job is None:
@@ -403,12 +403,12 @@ def create_app(
         return job
 
     @app.post("/api/v1/knowledge/analysis/jobs/{job_id}/stop")
-    async def analysis_job_stop(request: Request, job_id: str) -> Dict[str, Any]:
+    async def analysis_job_stop(request: Request, job_id: str) -> dict[str, Any]:
         _, deps = _state(request)
         return await deps.analysis_supervisor.stop(job_id)
 
     @app.get("/api/v1/knowledge/analysis/status")
-    async def analysis_status(request: Request, includeFreshness: bool = False) -> Dict[str, Any]:
+    async def analysis_status(request: Request, includeFreshness: bool = False) -> dict[str, Any]:
         config, deps = _state(request)
         result = deps.analysis_store.status()
         result["currentFileProgress"] = _current_file_progress(deps)
@@ -420,12 +420,12 @@ def create_app(
         return result
 
     @app.get("/api/v1/knowledge/analysis/current-file-progress")
-    async def analysis_current_file_progress(request: Request) -> Dict[str, Any]:
+    async def analysis_current_file_progress(request: Request) -> dict[str, Any]:
         _, deps = _state(request)
         return _current_file_progress(deps)
 
     @app.get("/api/v1/knowledge/overview")
-    async def overview(request: Request) -> Dict[str, Any]:
+    async def overview(request: Request) -> dict[str, Any]:
         _, deps = _state(request)
         result = read_overview(deps.inventory_store.db_path)
         result["currentFileProgress"] = _current_file_progress(deps)
@@ -434,45 +434,45 @@ def create_app(
     @app.get("/api/v1/knowledge/analysis/files")
     async def analysis_files(
         request: Request,
-        sourceId: Optional[str] = None,
-        status: Optional[str] = None,
-        pathContains: Optional[str] = None,
+        sourceId: str | None = None,
+        status: str | None = None,
+        pathContains: str | None = None,
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         _, deps = _state(request)
         return deps.analysis_store.files(sourceId, status, pathContains, limit, offset)
 
     @app.get("/api/v1/knowledge/analysis/diagnostics")
     async def analysis_diagnostics(
         request: Request,
-        sourceId: Optional[str] = None,
+        sourceId: str | None = None,
         limit: int = Query(100, ge=1, le=500),
         offset: int = Query(0, ge=0),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         _, deps = _state(request)
         return deps.analysis_store.diagnostics(sourceId, limit, offset)
 
     @app.get("/api/v1/knowledge/analysis/graph/metadata")
     async def analysis_graph_metadata(
         request: Request,
-        sourceId: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        sourceId: str | None = None,
+    ) -> dict[str, Any]:
         _, deps = _state(request)
         return deps.analysis_store.graph_metadata(sourceId)
 
     @app.get("/api/v1/knowledge/analysis/graph/manifest")
     async def analysis_graph_manifest(
         request: Request,
-        sourceId: Optional[str] = None,
-        flowDomain: Optional[str] = None,
-        factOrigin: Optional[str] = None,
-        nodeKind: Optional[str] = None,
-        edgeType: Optional[str] = None,
+        sourceId: str | None = None,
+        flowDomain: str | None = None,
+        factOrigin: str | None = None,
+        nodeKind: str | None = None,
+        edgeType: str | None = None,
         includeExternal: str = "show",
         includeUnresolved: bool = True,
         includeIsolated: bool = True,
-        search: Optional[str] = None,
+        search: str | None = None,
     ) -> Response:
         _, deps = _state(request)
         manifest = deps.analysis_store.graph_manifest(
@@ -499,15 +499,15 @@ def create_app(
     @app.get("/api/v1/knowledge/analysis/graph/view")
     async def analysis_graph_view(
         request: Request,
-        sourceId: Optional[str] = None,
-        flowDomain: Optional[str] = None,
-        factOrigin: Optional[str] = None,
-        nodeKind: Optional[str] = None,
-        edgeType: Optional[str] = None,
+        sourceId: str | None = None,
+        flowDomain: str | None = None,
+        factOrigin: str | None = None,
+        nodeKind: str | None = None,
+        edgeType: str | None = None,
         includeExternal: str = "show",
         includeUnresolved: bool = True,
         includeIsolated: bool = True,
-        search: Optional[str] = None,
+        search: str | None = None,
         maxNodes: int = Query(80, ge=0, le=5000),
     ) -> JSONResponse:
         _, deps = _state(request)
@@ -530,16 +530,16 @@ def create_app(
     async def analysis_graph_nodes(
         request: Request,
         graphRevision: str,
-        cursor: Optional[str] = None,
+        cursor: str | None = None,
         pageSize: int = Query(500, ge=1, le=5000),
-        sourceId: Optional[str] = None,
-        flowDomain: Optional[str] = None,
-        factOrigin: Optional[str] = None,
-        nodeKind: Optional[str] = None,
+        sourceId: str | None = None,
+        flowDomain: str | None = None,
+        factOrigin: str | None = None,
+        nodeKind: str | None = None,
         includeExternal: str = "show",
         includeUnresolved: bool = True,
         includeIsolated: bool = True,
-        search: Optional[str] = None,
+        search: str | None = None,
     ) -> JSONResponse:
         _, deps = _state(request)
         page = deps.analysis_store.graph_nodes(
@@ -567,15 +567,15 @@ def create_app(
     async def analysis_graph_edges(
         request: Request,
         graphRevision: str,
-        cursor: Optional[str] = None,
+        cursor: str | None = None,
         pageSize: int = Query(1000, ge=1, le=5000),
-        sourceId: Optional[str] = None,
-        flowDomain: Optional[str] = None,
-        factOrigin: Optional[str] = None,
-        edgeType: Optional[str] = None,
+        sourceId: str | None = None,
+        flowDomain: str | None = None,
+        factOrigin: str | None = None,
+        edgeType: str | None = None,
         includeExternal: str = "show",
         includeUnresolved: bool = True,
-        search: Optional[str] = None,
+        search: str | None = None,
     ) -> JSONResponse:
         _, deps = _state(request)
         page = deps.analysis_store.graph_edges(
@@ -603,7 +603,7 @@ def create_app(
         request: Request,
         node_id: str,
         graphRevision: str,
-        sourceId: Optional[str] = None,
+        sourceId: str | None = None,
         includeEvidence: bool = False,
     ) -> JSONResponse:
         _, deps = _state(request)
@@ -621,7 +621,7 @@ def create_app(
         request: Request,
         edge_id: str,
         graphRevision: str,
-        sourceId: Optional[str] = None,
+        sourceId: str | None = None,
         includeEvidence: bool = False,
     ) -> JSONResponse:
         _, deps = _state(request)
@@ -639,15 +639,15 @@ def create_app(
 
 def _graph_view_response(
     analysis_store: AnalysisStore,
-    source_id: Optional[str],
-    flow_domain: Optional[str],
-    fact_origin: Optional[str],
-    node_kind: Optional[str],
-    edge_type: Optional[str],
+    source_id: str | None,
+    flow_domain: str | None,
+    fact_origin: str | None,
+    node_kind: str | None,
+    edge_type: str | None,
     include_external: str,
     include_unresolved: bool,
     include_isolated: bool,
-    search: Optional[str],
+    search: str | None,
     max_nodes: int,
 ) -> JSONResponse:
     view = analysis_store.graph_view(
@@ -727,7 +727,7 @@ def _knowledge_human_query_response(
                 close_interpreter()
         terminal_stage = "RETRIEVAL"
         retrieval_started = time.perf_counter()
-        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
+        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_graphs(body, plan=retrieval_plan)
         fetch_duration_ms = round((time.perf_counter() - retrieval_started) * 1000, 3)
         selected_graphs = tuple(query_result.selected_graphs or ())
         terminal_stage = "END_TO_END_GRAPH_ASSEMBLY"
@@ -934,7 +934,7 @@ def _knowledge_query_tool_context_response(
             _write_human_answer_audit_artifact(config, body, [], interpretation_service.audit_records)
             if close_interpreter:
                 close_interpreter()
-        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
+        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_graphs(body, plan=retrieval_plan)
         if not tuple(query_result.selected_graphs or ()):
             return _public_error_response(
                 404,
@@ -954,7 +954,7 @@ def _knowledge_query_tool_context_response(
             QUERY_INTERPRETATION_FAILED,
             "The local model could not interpret the query.",
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - public tool-context endpoint must return the controlled failure envelope.
         return _public_error_response(
             503,
             "KNOWLEDGE_QUERY_FAILED",
@@ -1044,7 +1044,7 @@ def _human_query_terminal_audit_record(
     terminal_stage: str,
     unexpected_exception_class: str | None,
     unexpected_exception_stage: str | None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     selected_graph_summaries = _selected_graph_audit_summaries(selected_graphs)
     graph_assembly_summary = _graph_assembly_terminal_payload(query_result, selected_graph_summaries)
     walkthrough_metrics = _walkthrough_terminal_metrics(pipeline_records)
@@ -1135,18 +1135,18 @@ def _human_query_terminal_audit_record(
     }
 
 
-def _graph_assembly_terminal_payload(query_result, selected_graph_summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+def _graph_assembly_terminal_payload(query_result, selected_graph_summaries: Sequence[dict[str, Any]]) -> dict[str, Any]:
     assembly = getattr(query_result, "end_to_end_assembly", None)
     selection = getattr(query_result, "graph_selection", None)
     return {
-        "discoveredGraphCount": int(len(getattr(assembly, "graphs", ()) or ())),
+        "discoveredGraphCount": len(getattr(assembly, "graphs", ()) or ()),
         "returnedGraphCount": len(selected_graph_summaries),
-        "omittedGraphCount": int(len(getattr(selection, "omitted_graph_ids", ()) or ())),
+        "omittedGraphCount": len(getattr(selection, "omitted_graph_ids", ()) or ()),
         "selectedGraphIds": [item.get("graphId") for item in selected_graph_summaries if item.get("graphId")],
     }
 
 
-def _walkthrough_terminal_metrics(pipeline_records) -> Dict[str, Any]:
+def _walkthrough_terminal_metrics(pipeline_records) -> dict[str, Any]:
     records = [record for record in pipeline_records if isinstance(record, dict)]
 
     def total_int(key: str) -> int:
@@ -1239,7 +1239,7 @@ def _walkthrough_terminal_metrics(pipeline_records) -> Dict[str, Any]:
     }
 
 
-def _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage: str, terminal_error_code: str | None) -> Dict[str, Any]:
+def _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage: str, terminal_error_code: str | None) -> dict[str, Any]:
     validation_errors = [
         str(error)
         for record in interpretation_records
@@ -1265,7 +1265,7 @@ def _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, 
     return payload
 
 
-def _retrieval_terminal_payload(query_result) -> Dict[str, Any]:
+def _retrieval_terminal_payload(query_result) -> dict[str, Any]:
     response = getattr(query_result, "response", None)
     coverage = getattr(response, "coverage", None)
     matched_sources = getattr(response, "matchedSources", []) or []
@@ -1284,8 +1284,8 @@ def _retrieval_terminal_payload(query_result) -> Dict[str, Any]:
     }
 
 
-def _selected_graph_audit_summaries(selected_graphs) -> list[Dict[str, Any]]:
-    summaries: list[Dict[str, Any]] = []
+def _selected_graph_audit_summaries(selected_graphs) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
     for graph in tuple(selected_graphs or ()):
         coverage = getattr(graph, "coverage", None)
         summaries.append(
@@ -1302,7 +1302,7 @@ def _selected_graph_audit_summaries(selected_graphs) -> list[Dict[str, Any]]:
     return summaries
 
 
-def _compact_provider_audit_record(record: Dict[str, Any]) -> Dict[str, Any]:
+def _compact_provider_audit_record(record: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "provider",
         "model",
@@ -1399,11 +1399,11 @@ def _write_human_answer_audit_artifact(
             max_retained_files=config.query_audit_max_retained_files,
             max_file_age_seconds=config.query_audit_max_file_age_seconds,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - audit artifact writes are best effort and must not affect responses.
         LOGGER.warning("human_answer_audit_write_failed", extra={"error": type(exc).__name__, "directory": directory})
 
 
-def _write_human_query_terminal_audit_artifact(config: AppConfig, record: Dict[str, Any]) -> None:
+def _write_human_query_terminal_audit_artifact(config: AppConfig, record: dict[str, Any]) -> None:
     configured_directory = config.query_audit_directory
     directory = str(configured_directory or os.environ.get("FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR") or "").strip()
     if not directory or int(config.query_audit_max_retained_files) <= 0:
@@ -1424,7 +1424,7 @@ def _write_human_query_terminal_audit_artifact(config: AppConfig, record: Dict[s
             max_file_age_seconds=config.query_audit_max_file_age_seconds,
             pattern=f"{HUMAN_QUERY_TERMINAL_AUDIT_PREFIX}*.json",
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - audit artifact writes are best effort and must not affect responses.
         LOGGER.warning("human_query_terminal_audit_write_failed", extra={"error": type(exc).__name__, "directory": directory})
 
 
@@ -1432,7 +1432,7 @@ def _cleanup_human_answer_audit_files(
     root: Path,
     *,
     max_retained_files: int,
-    max_file_age_seconds: Optional[int],
+    max_file_age_seconds: int | None,
     pattern: str = "human-answer-*.json",
 ) -> None:
     now = time.time()
@@ -1487,7 +1487,7 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
 def _query_interpretation_service(
     request: Request,
     config: AppConfig,
-) -> tuple[QueryInterpretationService, Optional[Any]]:
+) -> tuple[QueryInterpretationService, Any | None]:
     injected_provider = getattr(request.app.state, "query_interpretation_provider", None)
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
     default_response_language = getattr(config, "query_default_response_language", "en")
@@ -1520,7 +1520,7 @@ def _query_interpretation_service(
 def _flow_formatter_service(
     request: Request,
     config: AppConfig,
-) -> tuple[EndToEndFormatterAnswerService, Optional[Any]]:
+) -> tuple[EndToEndFormatterAnswerService, Any | None]:
     injected_provider = getattr(request.app.state, "final_flow_formatter_provider", None)
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
     segment_planner = EndToEndFormatterSegmentPlanner(context_tokens=config.analysis_context_tokens)
@@ -1555,7 +1555,7 @@ def _human_query_request_deadline_seconds(config: AppConfig) -> float:
     return max(0.001, float(config.human_query_request_timeout_seconds))
 
 
-def _current_file_progress(dependencies: KnowledgeDependencies) -> Dict[str, Any]:
+def _current_file_progress(dependencies: KnowledgeDependencies) -> dict[str, Any]:
     progress = getattr(dependencies.analysis_supervisor, "current_file_progress", None)
     if callable(progress):
         return progress()
@@ -1627,7 +1627,7 @@ def _run_semantic_build_job(jobs, coordinator: SemanticBuildCoordinator, job_id:
         jobs[job_id] = {**jobs[job_id], "status": "RUNNING"}
         result = coordinator.build_locked(source_ids, force=force, build_id=job_id).to_dict()
         jobs[job_id] = result
-    except Exception:
+    except Exception:  # noqa: BLE001 - async job workers persist controlled failure state instead of escaping.
         jobs[job_id] = {
             "jobId": job_id,
             "status": "FAILED",
@@ -1639,7 +1639,7 @@ def _run_semantic_build_job(jobs, coordinator: SemanticBuildCoordinator, job_id:
         coordinator.release()
 
 
-def _semantic_status(app: FastAPI, config: AppConfig) -> Dict[str, Any]:
+def _semantic_status(app: FastAPI, config: AppConfig) -> dict[str, Any]:
     worker = getattr(app.state, "semantic_worker", None)
     worker_status = worker.status() if isinstance(worker, SemanticIndexBackgroundWorker) else {}
     return {
@@ -1652,7 +1652,7 @@ def _semantic_status(app: FastAPI, config: AppConfig) -> Dict[str, Any]:
     }
 
 
-def _unknown_freshness() -> Dict[str, Any]:
+def _unknown_freshness() -> dict[str, Any]:
     return {
         "status": "UNKNOWN",
         "checkedAt": None,
@@ -1663,11 +1663,11 @@ def _unknown_freshness() -> Dict[str, Any]:
     }
 
 
-def _safe_error(request: Request, code: str, message: str) -> Dict[str, Any]:
+def _safe_error(request: Request, code: str, message: str) -> dict[str, Any]:
     metrics = current_route_metrics()
     correlation_id = metrics.correlation_id if metrics else sanitize_correlation_id(request.headers.get(CORRELATION_HEADER))
     route = metrics.route_key if metrics else None
-    payload: Dict[str, Any] = {"code": code, "message": message, "correlationId": correlation_id}
+    payload: dict[str, Any] = {"code": code, "message": message, "correlationId": correlation_id}
     if route:
         payload["route"] = route
     return payload

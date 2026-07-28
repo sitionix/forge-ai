@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from knowledge_service.entrypoint_flow_engine import LocalFlowUnit
+from knowledge_service.local_flow_unit_engine import LocalFlowUnit
 
 
 @dataclass(frozen=True)

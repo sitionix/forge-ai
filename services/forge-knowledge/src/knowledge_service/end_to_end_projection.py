@@ -3,9 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from typing import Any, Mapping, Sequence
 
-from knowledge_service.boundary_resolution import BoundaryIdentity, BoundaryOwnerIdentity, EvidenceReference
+from knowledge_service.boundary_resolution import BoundaryIdentity, BoundaryOwnerIdentity, EvidenceReference, descriptor_fingerprint
 from knowledge_service.end_to_end_flow import EndToEndFlowGraph
-from knowledge_service.entrypoint_flow_engine import LocalFlowUnit
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryDiagnostic,
@@ -18,6 +17,7 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryToolContextGraph,
     KnowledgeQueryToolContextResponse,
 )
+from knowledge_service.local_flow_unit_engine import LocalFlowUnit
 
 
 class EndToEndProjectionBuilder:
@@ -196,9 +196,8 @@ class EndToEndProjectionBuilder:
             "flowDomain": item.flow_domain,
             "descriptorFingerprintHashes": sorted(
                 {
-                    str(getattr(descriptor, "descriptor_id", "") or "")
+                    descriptor_fingerprint(descriptor).fingerprint_hash
                     for descriptor in item.descriptors
-                    if str(getattr(descriptor, "descriptor_id", "") or "")
                 }
             ),
             "evidenceRefs": [self.evidence(evidence) for evidence in item.evidence],

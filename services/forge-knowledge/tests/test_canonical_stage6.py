@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from test_local_flow_unit_engine import boundary, descriptor, node_evidence
+
+from knowledge_service.boundary_resolution import descriptor_fingerprint
 from knowledge_service.end_to_end_flow import EndToEndFlowCoverage, EndToEndFlowGraph, EndToEndUnitRef
 from knowledge_service.end_to_end_projection import EndToEndProjectionBuilder
 from knowledge_service.end_to_end_selection import EndToEndGraphSelector
-from knowledge_service.entrypoint_flow_engine import EntrypointFlowOrigin, LocalFlowAnchorProvenance, LocalFlowCoverage, LocalFlowRoot, LocalFlowUnit
 from knowledge_service.flow_graph_contract import FlowGraphNode
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode
 from knowledge_service.local_flow_selection import LocalFlowUnitSelector
+from knowledge_service.local_flow_unit_engine import LocalFlowAnchorProvenance, LocalFlowCoverage, LocalFlowRoot, LocalFlowRootOrigin, LocalFlowUnit
 
 
 def node(node_id: str, *, qualified_name: str | None = None, source: str = "source-a") -> FlowGraphNode:
@@ -50,7 +53,7 @@ def unit(unit_id: str, root_name: str, *, score: float = 0.9, source: str = "sou
         unit_id=unit_id,
         source_id=source,
         graph_revision="rev-a",
-        roots=(LocalFlowRoot(root, EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT, 0),),
+        roots=(LocalFlowRoot(root, LocalFlowRootOrigin.EXPLICIT_GRAPH_FACT, 0),),
         anchors=(anchor,),
         execution_nodes=(root,),
         execution_transitions=(),
@@ -132,11 +135,64 @@ def test_graph_selection_omits_whole_components_for_max_flows_deterministically(
     assert any(item["code"] == "END_TO_END_GRAPH_MAX_FLOWS_REACHED" for item in result.diagnostics)
 
 
-def test_projection_exposes_graphs_not_legacy_flows():
+def test_projection_exposes_canonical_graph_payload():
     local = unit("unit-a", "A")
     projected = EndToEndProjectionBuilder().graph(graph("graph-a", (local,), ("unit-a",)))
     payload = projected.dict()
 
     assert payload["graphId"] == "graph-a"
     assert payload["units"][0]["unitId"] == "unit-a"
-    assert "flows" not in payload
+
+
+def test_projection_uses_canonical_descriptor_fingerprint_hashes_not_descriptor_ids():
+    owner = node("Owner")
+    one = descriptor("descriptor-db-id-1", "operation.name", "checkout", evidence_items=(node_evidence(owner),))
+    two = descriptor("descriptor-db-id-2", "operation.version", 1, evidence_items=(node_evidence(owner),))
+    local = unit("unit-a", "Owner")
+    local = LocalFlowUnit(
+        **{
+            **local.__dict__,
+            "generic_boundaries": (boundary("required", owner, "REQUIRED", descriptors=(one, two)),),
+            "coverage": LocalFlowCoverage(1, 0, 1, 0, 1, 1, 0),
+        }
+    )
+
+    hashes = EndToEndProjectionBuilder().unit(local, query_selected=True, recursively_discovered=False).dict()["genericBoundaries"][0][
+        "descriptorFingerprintHashes"
+    ]
+
+    assert hashes == sorted({descriptor_fingerprint(one).fingerprint_hash, descriptor_fingerprint(two).fingerprint_hash})
+    assert all(len(value) == 64 for value in hashes)
+    assert "descriptor-db-id-1" not in hashes
+    assert "descriptor-db-id-2" not in hashes
+
+
+def test_projection_descriptor_fingerprints_are_descriptor_order_invariant():
+    owner = node("Owner")
+    one = descriptor("descriptor-db-id-1", "operation.name", "checkout", evidence_items=(node_evidence(owner),))
+    two = descriptor("descriptor-db-id-2", "operation.version", 1, evidence_items=(node_evidence(owner),))
+    base = unit("unit-a", "Owner")
+    forward = LocalFlowUnit(
+        **{
+            **base.__dict__,
+            "generic_boundaries": (boundary("required", owner, "REQUIRED", descriptors=(one, two)),),
+            "coverage": LocalFlowCoverage(1, 0, 1, 0, 1, 1, 0),
+        }
+    )
+    reverse = LocalFlowUnit(
+        **{
+            **base.__dict__,
+            "generic_boundaries": (boundary("required", owner, "REQUIRED", descriptors=(two, one)),),
+            "coverage": LocalFlowCoverage(1, 0, 1, 0, 1, 1, 0),
+        }
+    )
+
+    projector = EndToEndProjectionBuilder()
+    forward_hashes = projector.unit(forward, query_selected=True, recursively_discovered=False).dict()["genericBoundaries"][0][
+        "descriptorFingerprintHashes"
+    ]
+    reverse_hashes = projector.unit(reverse, query_selected=True, recursively_discovered=False).dict()["genericBoundaries"][0][
+        "descriptorFingerprintHashes"
+    ]
+
+    assert forward_hashes == reverse_hashes
