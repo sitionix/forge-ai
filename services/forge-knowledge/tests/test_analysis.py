@@ -654,6 +654,8 @@ def payload_top_level_shape():
         "_refToStableKey",
         "_stableKeyToRef",
         "_refToKind",
+        "_targetIndex",
+        "_targetCount",
     }
 
 
@@ -831,7 +833,122 @@ def _capturing_ollama_client(captured, response_factory):
 def _empty_target_response(llm_input):
     return {
         "claims": [],
+        "boundaries": [],
     }
+
+
+def _target_key(llm_input):
+    target = llm_input["targetAnchor"]
+    return target.get("kind"), target.get("name")
+
+
+def _captured_target_calls(captured, *, kind="FILE", name="ObjectHandler.java"):
+    result = []
+    for body in captured:
+        llm_input = _llm_input_from_prompt(body["prompt"])
+        if _target_key(llm_input) == (kind, name):
+            result.append({"body": body, "prompt": body["prompt"], "llmInput": llm_input})
+    return result
+
+
+def _is_feedback_prompt(prompt):
+    return "Target-anchor validation feedback retry." in prompt
+
+
+def _provider_request_events(store, job_id, *, relative_path="src/main/java/example/ObjectHandler.java"):
+    return [
+        event
+        for event in AnalysisStore(store.db_path).runtime_events(job_id=job_id, relative_path=relative_path, limit=1000)["events"]
+        if event["eventType"] == "PROVIDER_REQUEST"
+    ]
+
+
+def _provider_request_events_for_target(store, job_id, target_ref, *, relative_path="src/main/java/example/ObjectHandler.java"):
+    return [
+        event
+        for event in _provider_request_events(store, job_id, relative_path=relative_path)
+        if event["metadata"].get("targetRef") == target_ref
+    ]
+
+
+def _validation_errors_from_prompt(prompt):
+    marker = "Structured validationErrors:\n"
+    if marker not in prompt:
+        return []
+    raw = prompt.split(marker, 1)[1].split("\nReturn corrected JSON only.", 1)[0]
+    return json.loads(raw)
+
+
+def _previous_attempt_number_from_prompt(prompt):
+    marker = "Previous attempt number: "
+    if marker not in prompt:
+        return None
+    tail = prompt.split(marker, 1)[1]
+    return int(tail.split(".", 1)[0])
+
+
+def _invalid_inverted_response(summary="attempt one inverted"):
+    return {
+        "claims": [
+            {
+                "claimKind": "RESPONSIBILITY",
+                "summary": summary,
+                "evidence": [{"lineStart": 3, "lineEnd": 2}],
+            }
+        ],
+        "boundaries": [],
+    }
+
+
+def _invalid_boundary_response(summary="attempt two boundary"):
+    return {
+        "claims": [
+            {
+                "claimKind": "RESPONSIBILITY",
+                "summary": summary,
+                "evidence": [{"lineStart": 3, "lineEnd": 3}],
+            }
+        ],
+        "boundaries": [
+            {
+                "role": "PROVIDED",
+                "evidence": [{"lineStart": 3, "lineEnd": 3}],
+                "descriptors": [],
+            }
+        ],
+    }
+
+
+def _invalid_boundary_only_response(summary="attempt two boundary"):
+    return {
+        "claims": [],
+        "boundaries": [
+            {
+                "role": "PROVIDED",
+                "evidence": [{"lineStart": 1, "lineEnd": 1}],
+                "descriptors": [],
+            }
+        ],
+    }
+
+
+def _target_sequence_response(target_key, responses):
+    counts = {}
+
+    def response(llm_input):
+        key = _target_key(llm_input)
+        counts[key] = counts.get(key, 0) + 1
+        if key == target_key:
+            index = counts[key] - 1
+            if index < len(responses):
+                selected = responses[index]
+                if callable(selected):
+                    return selected(llm_input)
+                return selected
+        return _empty_target_response(llm_input)
+
+    response.counts = counts
+    return response
 
 
 def _nested_flow_response(llm_input):
@@ -3568,7 +3685,6 @@ def app_config_with_retries(tmp_path, retry_attempts):
         tmp_path / "knowledge-sources.yaml",
         tmp_path / "knowledge.sqlite",
         analysis_max_attempts_per_file=retry_attempts,
-        analysis_repair_attempts_per_file=max(0, retry_attempts - 1),
     )
 
 
@@ -4880,6 +4996,365 @@ def test_validation_feedback_retry_preserves_all_attempt_validation_errors(tmp_p
         for error in item.get("validationErrors", [])
     ]
     assert {item["code"] for item in validation_errors} >= {"EVIDENCE_RANGE_INVERTED", "EVIDENCE_RANGE_OUTSIDE_FILE"}
+
+
+def test_target_retry_with_one_configured_attempt_does_not_build_feedback(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [_invalid_inverted_response("single attempt invalid")],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 1))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    assert final["failedFiles"] == 1
+    assert len(file_calls) == 1
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert [event["metadata"]["attemptKind"] for event in request_events] == ["GENERATION"]
+    assert request_events[0]["metadata"]["configuredMaxAttempts"] == 1
+    assert request_events[0]["metadata"]["repairAttempt"] is False
+
+
+def test_target_retry_chains_validation_feedback_for_three_configured_attempts(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [
+            _invalid_inverted_response("attempt one inverted"),
+            _invalid_boundary_response("attempt two boundary"),
+            _empty_target_response,
+        ],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    type_calls = _captured_target_calls(captured, kind="TYPE", name="ObjectHandler")
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    attempt2_errors = _validation_errors_from_prompt(file_calls[1]["prompt"])
+    attempt3_errors = _validation_errors_from_prompt(file_calls[2]["prompt"])
+
+    assert final["failedFiles"] == 0
+    assert len(file_calls) == 3
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert _is_feedback_prompt(file_calls[1]["prompt"])
+    assert _is_feedback_prompt(file_calls[2]["prompt"])
+    assert _previous_attempt_number_from_prompt(file_calls[1]["prompt"]) == 1
+    assert _previous_attempt_number_from_prompt(file_calls[2]["prompt"]) == 2
+    assert "attempt one inverted" in file_calls[1]["prompt"]
+    assert "attempt two boundary" in file_calls[2]["prompt"]
+    assert "attempt one inverted" not in file_calls[2]["prompt"]
+    assert {item["code"] for item in attempt2_errors} == {"EVIDENCE_RANGE_INVERTED"}
+    assert {item["code"] for item in attempt3_errors} == {"BOUNDARY_DESCRIPTORS_MISSING"}
+    assert type_calls and not _is_feedback_prompt(type_calls[0]["prompt"])
+    assert [event["metadata"]["attemptKind"] for event in request_events] == [
+        "GENERATION",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+    ]
+    assert [event["metadata"].get("previousAttemptNumber") for event in request_events] == [None, 1, 2]
+    assert [event["metadata"]["previousFailureCodes"] for event in request_events[1:]] == [
+        ["EVIDENCE_RANGE_INVERTED"],
+        ["BOUNDARY_DESCRIPTORS_MISSING"],
+    ]
+    assert len({event["metadata"]["promptHash"] for event in request_events}) == 3
+
+
+def test_target_retry_chains_validation_feedback_for_five_configured_attempts(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    invalid_responses = [_invalid_inverted_response(f"attempt {index} invalid") for index in range(1, 5)]
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [*invalid_responses, _empty_target_response],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 5))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    assert final["failedFiles"] == 0
+    assert len(file_calls) == 5
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert all(_is_feedback_prompt(call["prompt"]) for call in file_calls[1:])
+    for index, call in enumerate(file_calls[1:], start=2):
+        assert _previous_attempt_number_from_prompt(call["prompt"]) == index - 1
+        assert f"attempt {index - 1} invalid" in call["prompt"]
+        if index > 2:
+            assert f"attempt {index - 2} invalid" not in call["prompt"]
+    assert [event["metadata"]["attemptKind"] for event in request_events] == [
+        "GENERATION",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+    ]
+    assert [event["metadata"].get("previousAttemptNumber") for event in request_events] == [None, 1, 2, 3, 4]
+    assert all(event["metadata"]["configuredMaxAttempts"] == 5 for event in request_events)
+
+
+def test_target_retry_uses_feedback_for_nine_of_ten_configured_attempts(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [_invalid_inverted_response(f"attempt {index} invalid") for index in range(1, 11)],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 10))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    assert final["failedFiles"] == 1
+    assert len(file_calls) == 10
+    assert sum(1 for call in file_calls if not _is_feedback_prompt(call["prompt"])) == 1
+    assert sum(1 for call in file_calls if _is_feedback_prompt(call["prompt"])) == 9
+    assert [_previous_attempt_number_from_prompt(call["prompt"]) for call in file_calls[1:]] == list(range(1, 10))
+    assert [event["metadata"]["attemptKind"] for event in request_events].count("GENERATION") == 1
+    assert [event["metadata"]["attemptKind"] for event in request_events].count("FEEDBACK_REPAIR") == 9
+    assert all(event["metadata"]["configuredMaxAttempts"] == 10 for event in request_events)
+
+
+def test_target_retry_forwards_all_structured_validation_errors(tmp_path):
+    content = """public class ObjectHandler {
+  public void create() {
+  }
+}
+"""
+    store, _, _ = build_inventory(tmp_path, content=content)
+    captured = []
+    counts = {}
+
+    def response(llm_input):
+        key = _target_key(llm_input)
+        counts[key] = counts.get(key, 0) + 1
+        if key == ("CALLABLE", "create") and counts[key] == 1:
+            return {
+                "claims": [
+                    {
+                        "claimKind": "RESPONSIBILITY",
+                        "summary": "multi-error callable response",
+                        "evidence": [
+                            {"lineStart": 3, "lineEnd": 2},
+                            {"lineStart": 3, "lineEnd": 3},
+                        ],
+                    }
+                ],
+                "boundaries": [
+                    {
+                        "role": "PROVIDED",
+                        "evidence": [{"lineStart": 2, "lineEnd": 2}],
+                        "descriptors": [],
+                    }
+                ],
+            }
+        return _empty_target_response(llm_input)
+
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    callable_calls = _captured_target_calls(captured, kind="CALLABLE", name="create")
+    request_events = _provider_request_events_for_target(store, started["jobId"], "M1")
+    errors = _validation_errors_from_prompt(callable_calls[1]["prompt"])
+    assert final["failedFiles"] == 0
+    assert len(callable_calls) == 2
+    assert {item["code"] for item in errors} >= {
+        "EVIDENCE_RANGE_INVERTED",
+        "EVIDENCE_NOT_MATERIAL",
+        "BOUNDARY_DESCRIPTORS_MISSING",
+    }
+    assert any(item.get("actual") == {"lineStart": 3, "lineEnd": 2} for item in errors)
+    assert any(item.get("actual", {}).get("lineClass") == "CLOSING_BRACE_ONLY" for item in errors)
+    assert request_events[1]["metadata"]["previousFailureCodes"] == [
+        "EVIDENCE_RANGE_INVERTED",
+        "EVIDENCE_NOT_MATERIAL",
+        "BOUNDARY_DESCRIPTORS_MISSING",
+    ]
+
+
+def test_target_retry_replaces_previous_failure_with_latest_validation_result(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [
+            _invalid_inverted_response("attempt one inverted"),
+            _invalid_boundary_response("attempt two boundary"),
+            _empty_target_response,
+        ],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    attempt2_errors = _validation_errors_from_prompt(file_calls[1]["prompt"])
+    attempt3_errors = _validation_errors_from_prompt(file_calls[2]["prompt"])
+    assert final["failedFiles"] == 0
+    assert {item["code"] for item in attempt2_errors} == {"EVIDENCE_RANGE_INVERTED"}
+    assert {item["code"] for item in attempt3_errors} == {"BOUNDARY_DESCRIPTORS_MISSING"}
+    assert "attempt two boundary" in file_calls[2]["prompt"]
+    assert "attempt one inverted" not in file_calls[2]["prompt"]
+
+
+def test_target_retry_feedback_state_is_isolated_between_targets(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [
+            _invalid_inverted_response("file target invalid"),
+            _empty_target_response,
+        ],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    type_events = _provider_request_events_for_target(store, started["jobId"], "T1")
+    callable_events = _provider_request_events_for_target(store, started["jobId"], "M1")
+    type_calls = _captured_target_calls(captured, kind="TYPE", name="ObjectHandler")
+    callable_calls = _captured_target_calls(captured, kind="CALLABLE", name="create")
+    assert final["failedFiles"] == 0
+    assert [event["attempt"] for event in file_events] == [1, 2]
+    assert [event["metadata"]["attemptKind"] for event in file_events] == ["GENERATION", "FEEDBACK_REPAIR"]
+    assert [event["attempt"] for event in type_events] == [1]
+    assert type_events[0]["metadata"]["attemptKind"] == "GENERATION"
+    assert "previousAttemptNumber" not in type_events[0]["metadata"]
+    assert type_calls and not _is_feedback_prompt(type_calls[0]["prompt"])
+    assert [event["attempt"] for event in callable_events] == [1]
+    assert callable_events[0]["metadata"]["attemptKind"] == "GENERATION"
+    assert "previousAttemptNumber" not in callable_events[0]["metadata"]
+    assert callable_calls and not _is_feedback_prompt(callable_calls[0]["prompt"])
+
+
+def test_provider_failure_without_response_retries_without_output_repair_prompt(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    counts = {}
+
+    def response(llm_input):
+        key = _target_key(llm_input)
+        counts[key] = counts.get(key, 0) + 1
+        if key == ("FILE", "ObjectHandler.java") and counts[key] == 1:
+            raise httpx.ConnectError("connection failed")
+        return _empty_target_response(llm_input)
+
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    assert final["failedFiles"] == 0
+    assert len(file_calls) == 2
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert not _is_feedback_prompt(file_calls[1]["prompt"])
+    assert "Previous invalid response:" not in file_calls[1]["prompt"]
+    assert [event["metadata"]["attemptKind"] for event in request_events] == ["GENERATION", "PROVIDER_RETRY"]
+    assert request_events[1]["metadata"]["previousFailureCodes"] == ["ANALYSIS_AI_TRANSPORT_ERROR"]
+    assert request_events[1]["metadata"]["repairAttempt"] is False
+
+
+def test_target_retry_terminal_exhaustion_reports_latest_attempt_failure(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [_invalid_inverted_response(f"attempt {index} invalid") for index in range(1, 6)],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 5))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+    failed_files = AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)["files"]
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    last_feedback_errors = _validation_errors_from_prompt(file_calls[4]["prompt"])
+    terminal = failed_files[0]
+    diagnostics = terminal["diagnostics"]
+    terminal_metadata = next(item["metadata"] for item in diagnostics if item["code"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED")
+
+    assert final["failedFiles"] == 1
+    assert len(file_calls) == 5
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert all(_is_feedback_prompt(call["prompt"]) for call in file_calls[1:])
+    assert "attempt 4 invalid" in file_calls[4]["prompt"]
+    assert {item["code"] for item in last_feedback_errors} == {"EVIDENCE_RANGE_INVERTED"}
+    assert [event["metadata"]["attemptKind"] for event in request_events] == [
+        "GENERATION",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+    ]
+    assert terminal["attemptCount"] == 5
+    assert terminal_metadata["attemptsPerformed"] == 5
+    assert terminal_metadata["lastAttemptKind"] == "FEEDBACK_REPAIR"
+    assert terminal_metadata["lastFailureCode"] == "ANALYSIS_AI_SCHEMA_INVALID"
+    assert terminal_metadata["targetRef"] == "F1"
+    assert [item["code"] for item in terminal_metadata["lastValidationErrors"]] == ["EVIDENCE_RANGE_INVERTED"]
+
+
+def test_feedback_prompt_uses_authoritative_response_contract_for_boundary_targets(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [
+            _invalid_boundary_response("boundary contract invalid"),
+            _empty_target_response,
+        ],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), client)["jobId"])
+    asyncio.run(client.aclose())
+
+    retry_prompt = _captured_target_calls(captured)[1]["prompt"]
+    assert final["failedFiles"] == 0
+    assert "Claims-only response shape" not in retry_prompt
+    assert "Authoritative target response shape" in retry_prompt
+    assert '"boundaries"' in retry_prompt
+    assert '"descriptors"' in retry_prompt
 
 
 def test_callsite_heavy_fluent_chain_prompt_does_not_include_raw_callsite_payload(tmp_path):

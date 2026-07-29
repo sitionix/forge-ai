@@ -382,7 +382,6 @@ forge:
           max-chunk-chars: 20000
           concurrency: 1
           max-attempts-per-file: 1
-          repair-attempts-per-file: 0
         semantic:
           enabled: true
           auto-build-enabled: {str(semantic_auto_build_enabled).lower()}

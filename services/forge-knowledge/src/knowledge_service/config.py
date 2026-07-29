@@ -82,7 +82,6 @@ class AnalysisSettings(BaseModel):
     queue_capacity: int = Field(default=4, ge=1)
     shutdown_grace_seconds: float = Field(default=5.0, ge=0.1)
     max_attempts_per_file: int = Field(default=3, ge=1)
-    repair_attempts_per_file: int = Field(default=1, ge=0)
 
 class SemanticSettings(BaseModel):
     enabled: bool = True
@@ -221,7 +220,6 @@ class AppConfig(BaseModel):
     analysis_queue_capacity: int = 4
     analysis_shutdown_grace_seconds: float = 5.0
     analysis_max_attempts_per_file: int = 3
-    analysis_repair_attempts_per_file: int = 1
     semantic_enabled: bool = True
     semantic_auto_build_enabled: bool = True
     semantic_auto_build_interval_seconds: float = 60.0
@@ -314,7 +312,6 @@ class AppConfig(BaseModel):
             analysis_queue_capacity=analysis.queue_capacity,
             analysis_shutdown_grace_seconds=analysis.shutdown_grace_seconds,
             analysis_max_attempts_per_file=analysis.max_attempts_per_file,
-            analysis_repair_attempts_per_file=analysis.repair_attempts_per_file,
             semantic_enabled=semantic.enabled,
             semantic_auto_build_enabled=semantic.auto_build_enabled,
             semantic_auto_build_interval_seconds=semantic.auto_build_interval_seconds,
@@ -590,7 +587,6 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     "queue_capacity": int(analysis.get("queue-capacity") or analysis.get("queue_capacity") or 4),
                     "shutdown_grace_seconds": float(analysis.get("shutdown-grace-seconds") or analysis.get("shutdown_grace_seconds") or 5.0),
                     "max_attempts_per_file": int(analysis.get("max-attempts-per-file") or analysis.get("max_attempts_per_file") or 3),
-                    "repair_attempts_per_file": int(analysis.get("repair-attempts-per-file") or analysis.get("repair_attempts_per_file") or 1),
                 },
                 "semantic": {
                     "enabled": _bool(semantic.get("enabled", True)),
@@ -691,7 +687,6 @@ def _apply_knowledge_env_overrides(raw: dict[str, Any], env: Mapping[str, str]) 
         "KNOWLEDGE_ANALYSIS_MAX_CHARS": ("max_chunk_chars", int),
         "KNOWLEDGE_ANALYSIS_CONCURRENCY": ("concurrency", int),
         "KNOWLEDGE_ANALYSIS_MAX_ATTEMPTS_PER_FILE": ("max_attempts_per_file", int),
-        "KNOWLEDGE_ANALYSIS_REPAIR_ATTEMPTS_PER_FILE": ("repair_attempts_per_file", int),
     }
     for name, (field, converter) in env_map.items():
         if env.get(name):

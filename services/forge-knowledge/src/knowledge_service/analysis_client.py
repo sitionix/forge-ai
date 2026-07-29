@@ -10,7 +10,7 @@ import httpx
 
 from knowledge_service.analysis_graph_contract import AnalysisGraphContract, GraphContractProvider
 from knowledge_service.analysis_policy import AnalysisPolicy
-from knowledge_service.analysis_runtime_events import emit_runtime_event, runtime_preview, text_hash, utc_now
+from knowledge_service.analysis_runtime_events import current_runtime_context, emit_runtime_event, runtime_preview, text_hash, utc_now
 from knowledge_service.config import DEFAULT_GENERATIVE_CONTEXT_TOKENS
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.errors import KnowledgeError
@@ -215,7 +215,8 @@ class OllamaAnalysisClient:
         return base_url
 
     def _request_metadata(self, payload: Dict[str, Any], prompt: str, repair_prompt: str | None) -> Dict[str, Any]:
-        return {
+        context = current_runtime_context()
+        metadata = {
             "provider": "ollama",
             "model": self.model,
             "requestTimeoutSeconds": self.timeout_seconds,
@@ -233,6 +234,16 @@ class OllamaAnalysisClient:
             "validationFeedbackRetry": repair_prompt is not None,
             "correctedResponseAttempt": repair_prompt is not None,
         }
+        if payload.get("_targetIndex") is not None:
+            metadata["targetIndex"] = payload.get("_targetIndex")
+        if payload.get("_targetCount") is not None:
+            metadata["targetCount"] = payload.get("_targetCount")
+        if context is not None:
+            metadata["attemptKind"] = context.attempt_kind
+            metadata["configuredMaxAttempts"] = context.configured_max_attempts
+            metadata["previousAttemptNumber"] = context.previous_attempt_number
+            metadata["previousFailureCodes"] = list(context.previous_failure_codes)
+        return {key: value for key, value in metadata.items() if value is not None}
 
     def _provider_response_metadata(self, raw: Dict[str, Any], response_text: str) -> Dict[str, Any]:
         preview = runtime_preview(response_text)

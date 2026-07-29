@@ -22,6 +22,10 @@ class AnalysisRuntimeContext:
     content_hash: Optional[str]
     attempt: int
     recorder: RuntimeEventRecorder
+    configured_max_attempts: Optional[int] = None
+    attempt_kind: Optional[str] = None
+    previous_attempt_number: Optional[int] = None
+    previous_failure_codes: tuple[str, ...] = ()
 
 
 _current_runtime_context: ContextVar[AnalysisRuntimeContext | None] = ContextVar(

@@ -6,6 +6,7 @@ import inspect
 import json
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol
 
@@ -39,6 +40,39 @@ class AnalysisProvider(Protocol):
     ) -> GraphAnalysisResult: ...
 
 
+ATTEMPT_KIND_GENERATION = "GENERATION"
+ATTEMPT_KIND_FEEDBACK_REPAIR = "FEEDBACK_REPAIR"
+ATTEMPT_KIND_PROVIDER_RETRY = "PROVIDER_RETRY"
+
+
+@dataclass(frozen=True)
+class TargetAttemptFailure:
+    attempt_number: int
+    attempt_kind: str
+    target_ref: Optional[str]
+    target_kind: Optional[str]
+    model_response: Optional[str]
+    response_preview: Optional[str]
+    failure_code: str
+    failure_message: str
+    validation_errors: List[Dict[str, Any]]
+    error_details: List[Dict[str, Any]]
+    validation_report: Optional[Dict[str, Any]]
+    response_truncated: Optional[bool]
+    retryable: bool
+    correctable_output_failure: bool
+    exception: KnowledgeError
+
+    @property
+    def failure_codes(self) -> List[str]:
+        codes = [
+            str(item.get("code") or item.get("errorType"))
+            for item in (self.validation_errors or self.error_details)
+            if item.get("code") or item.get("errorType")
+        ]
+        return codes or [self.failure_code]
+
+
 class AnalysisSupervisor:
     RETRYABLE_AI_CODES = {
         "ANALYSIS_AI_BAD_RESPONSE",
@@ -46,6 +80,12 @@ class AnalysisSupervisor:
         "ANALYSIS_AI_SCHEMA_INVALID",
         "ANALYSIS_AI_EMPTY_RESPONSE",
         "ANALYSIS_AI_TRANSPORT_ERROR",
+    }
+    CORRECTABLE_OUTPUT_AI_CODES = {
+        "ANALYSIS_AI_BAD_RESPONSE",
+        "ANALYSIS_AI_INVALID_JSON",
+        "ANALYSIS_AI_SCHEMA_INVALID",
+        "ANALYSIS_AI_EMPTY_RESPONSE",
     }
 
     def __init__(
@@ -629,21 +669,15 @@ class AnalysisSupervisor:
         row: Any = None,
     ):
         attempts = max(1, self.config.analysis_max_attempts_per_file)
-        validation_feedback_attempts = max(0, self.config.analysis_repair_attempts_per_file)
         diagnostics: List[Dict[str, Any]] = []
-        validation_feedback_used = 0
-        last_error: KnowledgeError | None = None
+        previous_failure: TargetAttemptFailure | None = None
         for attempt in range(1, attempts + 1):
+            attempt_kind = self._attempt_kind(previous_failure)
             validation_feedback_prompt = None
-            if (
-                last_error is not None
-                and last_error.code in {"ANALYSIS_AI_INVALID_JSON", "ANALYSIS_AI_SCHEMA_INVALID", "ANALYSIS_AI_EMPTY_RESPONSE", "ANALYSIS_AI_BAD_RESPONSE"}
-                and validation_feedback_used < validation_feedback_attempts
-            ):
-                validation_feedback_prompt = self._validation_feedback_prompt(payload, last_error, attempt, attempts)
-                validation_feedback_used += 1
+            if previous_failure is not None and previous_failure.correctable_output_failure:
+                validation_feedback_prompt = self._validation_feedback_prompt(payload, previous_failure, attempt, attempts)
             try:
-                context = self._runtime_context(job_id, row, payload, attempt)
+                context = self._runtime_context(job_id, row, payload, attempt, attempts, attempt_kind, previous_failure)
                 if context is None:
                     pending = analyzer.analyze(payload, line_count, validation_feedback_prompt)
                     result = await pending if inspect.isawaitable(pending) else pending
@@ -659,10 +693,14 @@ class AnalysisSupervisor:
                         "relativePath": payload.get("relativePath"),
                         "attempts": attempt,
                     }
-                    if last_error is not None:
+                    if previous_failure is not None:
                         retry_success["metadata"] = {
-                            "previousErrorSummary": self._error_summary(last_error),
-                            "previousErrorDetails": self._bounded_error_details(self._error_details(last_error))[:5],
+                            "previousAttemptNumber": previous_failure.attempt_number,
+                            "previousAttemptKind": previous_failure.attempt_kind,
+                            "previousFailureCode": previous_failure.failure_code,
+                            "previousFailureCodes": previous_failure.failure_codes,
+                            "previousErrorSummary": self._failure_summary(previous_failure),
+                            "previousErrorDetails": previous_failure.error_details[:5],
                         }
                     diagnostics.append(retry_success)
                 return (
@@ -683,26 +721,24 @@ class AnalysisSupervisor:
                     exc.details["raw_preview"] = self._raw_preview(exc.details.get("raw_preview"))
                 if exc.details.get("error_details") is not None:
                     exc.details["error_details"] = self._bounded_error_details(self._error_details(exc))
-                last_error = exc
+                current_failure = self._target_attempt_failure(payload, exc, attempt, attempt_kind)
+                exc.details.setdefault("attemptKind", attempt_kind)
+                exc.details.setdefault("configuredMaxAttempts", attempts)
+                exc.details.setdefault("targetRef", payload.get("targetRef"))
+                exc.details.setdefault("targetKind", payload.get("targetKind"))
+                exc.details.setdefault("targetIndex", payload.get("_targetIndex"))
+                exc.details.setdefault("targetCount", payload.get("_targetCount"))
+                exc.details["attemptsPerformed"] = attempt
+                exc.details["lastAttemptKind"] = current_failure.attempt_kind
+                exc.details["lastFailureCode"] = current_failure.failure_code
+                exc.details["lastValidationErrors"] = current_failure.validation_errors
                 if exc.code not in self.RETRYABLE_AI_CODES or attempt >= attempts:
                     if attempt >= attempts and exc.code in self.RETRYABLE_AI_CODES:
                         exc.details["max_attempts_exceeded"] = True
                     exc.details["diagnostics"] = [*diagnostics, self._attempt_diagnostic(payload, exc, attempt)]
                     raise
-                retry_diagnostic = {
-                    "code": exc.code,
-                    "message": f"{exc.message}; retrying analysis attempt {attempt + 1} of {attempts}.",
-                    "sourceId": payload.get("sourceId"),
-                    "relativePath": payload.get("relativePath"),
-                    "attempt": attempt,
-                    "rawPreview": exc.details.get("raw_preview"),
-                }
-                if payload.get("targetRef"):
-                    retry_diagnostic["targetRef"] = payload.get("targetRef")
-                metadata = self._error_metadata(exc)
-                if metadata:
-                    retry_diagnostic["metadata"] = metadata
-                diagnostics.append(retry_diagnostic)
+                diagnostics.append(self._retry_diagnostic(payload, exc, current_failure, attempt, attempts))
+                previous_failure = current_failure
         raise KnowledgeError("ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED", "AI analysis exceeded maximum attempts")
 
     def _runtime_context(
@@ -711,6 +747,9 @@ class AnalysisSupervisor:
         row: Any,
         payload: Dict[str, Any],
         attempt: int,
+        configured_max_attempts: int,
+        attempt_kind: str,
+        previous_failure: TargetAttemptFailure | None,
     ) -> Optional[AnalysisRuntimeContext]:
         if not job_id:
             return None
@@ -724,6 +763,10 @@ class AnalysisSupervisor:
             content_hash=str(payload.get("contentHash") or self._row_value(row, "content_hash") or "") or None,
             attempt=attempt,
             recorder=self._record_runtime_event,
+            configured_max_attempts=configured_max_attempts,
+            attempt_kind=attempt_kind,
+            previous_attempt_number=previous_failure.attempt_number if previous_failure is not None else None,
+            previous_failure_codes=tuple(previous_failure.failure_codes) if previous_failure is not None else (),
         )
 
     def _record_runtime_event(self, event: Any) -> None:
@@ -740,19 +783,113 @@ class AnalysisSupervisor:
         except (TypeError, ValueError):
             return None
 
-    def _validation_feedback_prompt(self, payload: Dict[str, Any], last_error: KnowledgeError, attempt: int, attempts: int) -> str:
-        details = self._bounded_error_details(self._error_details(last_error))
-        validation_errors = details or [
+    def _attempt_kind(self, previous_failure: TargetAttemptFailure | None) -> str:
+        if previous_failure is None:
+            return ATTEMPT_KIND_GENERATION
+        if previous_failure.correctable_output_failure:
+            return ATTEMPT_KIND_FEEDBACK_REPAIR
+        return ATTEMPT_KIND_PROVIDER_RETRY
+
+    def _target_attempt_failure(
+        self,
+        payload: Dict[str, Any],
+        exc: KnowledgeError,
+        attempt: int,
+        attempt_kind: str,
+    ) -> TargetAttemptFailure:
+        details = self._bounded_error_details(self._error_details(exc))
+        validation_report = (getattr(exc, "details", {}) or {}).get("validation_report") or (getattr(exc, "details", {}) or {}).get("validationReport")
+        validation_errors: List[Dict[str, Any]] = []
+        if isinstance(validation_report, dict) and isinstance(validation_report.get("validationErrors"), list):
+            validation_errors = self._bounded_error_details([dict(item) for item in validation_report.get("validationErrors", []) if isinstance(item, dict)])
+        if not validation_errors:
+            validation_errors = details
+        raw_preview = self._raw_preview((getattr(exc, "details", {}) or {}).get("raw_preview"))
+        response_truncated = self._response_truncated(validation_errors)
+        return TargetAttemptFailure(
+            attempt_number=attempt,
+            attempt_kind=attempt_kind,
+            target_ref=str(payload.get("targetRef") or "") or None,
+            target_kind=str(payload.get("targetKind") or "") or None,
+            model_response=raw_preview,
+            response_preview=raw_preview,
+            failure_code=exc.code,
+            failure_message=exc.message,
+            validation_errors=validation_errors,
+            error_details=details,
+            validation_report=dict(validation_report) if isinstance(validation_report, dict) else None,
+            response_truncated=response_truncated,
+            retryable=exc.code in self.RETRYABLE_AI_CODES,
+            correctable_output_failure=exc.code in self.CORRECTABLE_OUTPUT_AI_CODES,
+            exception=exc,
+        )
+
+    def _response_truncated(self, details: List[Dict[str, Any]]) -> Optional[bool]:
+        for detail in details:
+            if detail.get("responseTruncated") is not None:
+                return bool(detail.get("responseTruncated"))
+        return None
+
+    def _retry_diagnostic(
+        self,
+        payload: Dict[str, Any],
+        exc: KnowledgeError,
+        failure: TargetAttemptFailure,
+        attempt: int,
+        attempts: int,
+    ) -> Dict[str, Any]:
+        diagnostic = {
+            "code": exc.code,
+            "message": f"{exc.message}; retrying analysis attempt {attempt + 1} of {attempts}.",
+            "sourceId": payload.get("sourceId"),
+            "relativePath": payload.get("relativePath"),
+            "attempt": attempt,
+            "attemptKind": failure.attempt_kind,
+            "configuredMaxAttempts": attempts,
+            "rawPreview": exc.details.get("raw_preview"),
+        }
+        if payload.get("targetRef"):
+            diagnostic["targetRef"] = payload.get("targetRef")
+        if payload.get("_targetIndex") is not None:
+            diagnostic["targetIndex"] = payload.get("_targetIndex")
+        if payload.get("_targetCount") is not None:
+            diagnostic["targetCount"] = payload.get("_targetCount")
+        metadata = self._error_metadata(exc)
+        metadata.update(
             {
-                "code": getattr(last_error, "code", "ANALYSIS_AI_RESPONSE_INVALID"),
+                "attemptKind": failure.attempt_kind,
+                "configuredMaxAttempts": attempts,
+                "attemptsPerformed": attempt,
+                "lastAttemptKind": failure.attempt_kind,
+                "lastFailureCode": failure.failure_code,
+                "lastValidationErrors": failure.validation_errors,
+                "retryable": failure.retryable,
+                "correctableOutputFailure": failure.correctable_output_failure,
+            }
+        )
+        if metadata:
+            diagnostic["metadata"] = metadata
+        return diagnostic
+
+    def _validation_feedback_prompt(self, payload: Dict[str, Any], previous_failure: TargetAttemptFailure | KnowledgeError, attempt: int, attempts: int) -> str:
+        if isinstance(previous_failure, KnowledgeError):
+            previous_failure = self._target_attempt_failure(payload, previous_failure, max(1, attempt - 1), ATTEMPT_KIND_GENERATION)
+        validation_errors = self._bounded_error_details(previous_failure.validation_errors or previous_failure.error_details)
+        validation_errors = validation_errors or [
+            {
+                "code": previous_failure.failure_code,
                 "jsonPath": "$",
-                "message": getattr(last_error, "message", str(last_error)),
+                "message": previous_failure.failure_message,
                 "expected": "valid target-anchor JSON response",
             }
         ]
         json_parse_only = bool(validation_errors) and all(str(item.get("code") or item.get("errorType")) == "JSON_PARSE_ERROR" for item in validation_errors)
+        target_context = self._target_feedback_context(payload)
         lines = [
             f"Validation feedback retry attempt {attempt} of {attempts}.",
+            f"Previous attempt number: {previous_failure.attempt_number}.",
+            "Current target:",
+            self._json_for_prompt(target_context, limit=2000),
             "Structured validationErrors:",
             self._json_for_prompt(validation_errors, limit=6000),
         ]
@@ -769,17 +906,29 @@ class AnalysisSupervisor:
                 [
                     "Return corrected JSON only.",
                     "Fix only the listed validation errors.",
+                    "Correct the previous response and preserve already valid information where possible.",
                     "If a claim cannot be supported with valid evidence, remove that claim.",
+                    "Do not invent facts outside the current target.",
                     "Do not add unrelated fields.",
                 ]
             )
-        preview = self._error_preview(last_error)
+        preview = previous_failure.response_preview
         if preview:
             lines.extend(["Previous invalid response:", preview])
         return "\n".join(lines)
 
-    def _repair_prompt(self, payload: Dict[str, Any], last_error: KnowledgeError, attempt: int, attempts: int) -> str:
-        return self._validation_feedback_prompt(payload, last_error, attempt, attempts)
+    def _target_feedback_context(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        llm_input = payload.get("llmInput")
+        target_anchor = llm_input.get("targetAnchor") if isinstance(llm_input, dict) else {}
+        return {
+            "targetRef": payload.get("targetRef"),
+            "targetKind": payload.get("targetKind"),
+            "targetName": target_anchor.get("name") if isinstance(target_anchor, dict) else None,
+            "targetLineStart": target_anchor.get("lineStart") if isinstance(target_anchor, dict) else None,
+            "targetLineEnd": target_anchor.get("lineEnd") if isinstance(target_anchor, dict) else None,
+            "targetIndex": payload.get("_targetIndex"),
+            "targetCount": payload.get("_targetCount"),
+        }
 
     def _format_error_detail(self, detail: Dict[str, Any]) -> str:
         error_code = str(detail.get("code") or detail.get("errorType") or "ERROR")
@@ -868,6 +1017,15 @@ class AnalysisSupervisor:
             return self._raw_preview(summary) or summary
         return f"{getattr(exc, 'code', 'ANALYSIS_FILE_FAILED')}: {getattr(exc, 'message', str(exc))}"
 
+    def _failure_summary(self, failure: TargetAttemptFailure) -> str:
+        details = failure.error_details or failure.validation_errors
+        if details:
+            summary = "; ".join(self._format_error_detail(detail) for detail in details[:3])
+            if len(details) > 3:
+                summary = f"{summary}; and {len(details) - 3} more error(s)"
+            return self._raw_preview(summary) or summary
+        return f"{failure.failure_code}: {failure.failure_message}"
+
     def _error_metadata(self, exc: Exception) -> Dict[str, Any]:
         details = self._bounded_error_details(self._error_details(exc))
         exc_details = getattr(exc, "details", {}) or {}
@@ -907,6 +1065,14 @@ class AnalysisSupervisor:
                 "targetRange",
                 "evidenceRange",
                 "responseHash",
+                "attemptKind",
+                "configuredMaxAttempts",
+                "attemptsPerformed",
+                "lastAttemptKind",
+                "lastFailureCode",
+                "lastValidationErrors",
+                "targetIndex",
+                "targetCount",
             ):
                 if first.get(key) is not None:
                     metadata[key] = first.get(key)
@@ -915,6 +1081,20 @@ class AnalysisSupervisor:
         raw_preview = self._raw_preview((getattr(exc, "details", {}) or {}).get("raw_preview"))
         if raw_preview:
             metadata.setdefault("rawPreview", raw_preview)
+        for key in (
+            "attemptKind",
+            "configuredMaxAttempts",
+            "attemptsPerformed",
+            "lastAttemptKind",
+            "lastFailureCode",
+            "lastValidationErrors",
+            "targetRef",
+            "targetKind",
+            "targetIndex",
+            "targetCount",
+        ):
+            if exc_details.get(key) is not None:
+                metadata[key] = exc_details.get(key)
         return metadata
 
     def _file_diagnostics_from_graph(self, graph_result: GraphAnalysisResult) -> List[Dict[str, Any]]:
@@ -1034,6 +1214,10 @@ class AnalysisSupervisor:
         }
         if payload.get("targetRef"):
             diagnostic["targetRef"] = payload.get("targetRef")
+        if payload.get("_targetIndex") is not None:
+            diagnostic["targetIndex"] = payload.get("_targetIndex")
+        if payload.get("_targetCount") is not None:
+            diagnostic["targetCount"] = payload.get("_targetCount")
         raw_preview = self._raw_preview(exc.details.get("raw_preview"))
         if raw_preview:
             diagnostic["rawPreview"] = raw_preview
