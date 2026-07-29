@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import time
-import urllib.parse
 from pathlib import Path
 from typing import Any, Dict
 
@@ -12,26 +10,35 @@ from knowledge_service.analysis_graph_contract import AnalysisGraphContract, Gra
 from knowledge_service.analysis_policy import AnalysisPolicy
 from knowledge_service.analysis_runtime_events import current_runtime_context, emit_runtime_event, runtime_preview, text_hash, utc_now
 from knowledge_service.config import DEFAULT_GENERATIVE_CONTEXT_TOKENS
-from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.errors import KnowledgeError
+from knowledge_service.generative_runtime import (
+    AsyncGenerativeProvider,
+    GenerativeProviderEmptyResponse,
+    GenerativeProviderProtocolError,
+    GenerativeProviderTimeout,
+    GenerativeProviderTransportError,
+    GenerativeRequest,
+    OllamaGenerativeProvider,
+    ResponseMode,
+)
+from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.target_enrichment import TargetPromptRenderer, TargetResponseParserValidator, is_target_enrichment_payload
 
 
-class OllamaAnalysisClient:
+class ProviderBackedAnalysisClient:
     name = "ai-file-analyzer"
     version = "1"
 
     def __init__(
         self,
-        base_url: str,
+        provider: AsyncGenerativeProvider,
         model: str,
         timeout_seconds: int,
         context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS,
-        http_client: httpx.AsyncClient | None = None,
         policy: AnalysisPolicy | None = None,
         policy_path: str | Path | None = None,
     ):
-        self.base_url = self._require_localhost(base_url.rstrip("/"))
+        self.provider = provider
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.context_tokens = int(context_tokens)
@@ -40,7 +47,6 @@ class OllamaAnalysisClient:
         self.contract_provider = GraphContractProvider(policy=policy, policy_path=policy_path)
         self.target_prompt_renderer = TargetPromptRenderer(policy=self.contract_provider.policy)
         self.target_parser = TargetResponseParserValidator()
-        self._client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
     async def analyze(self, payload: Dict[str, Any], line_count: int, repair_prompt: str | None = None) -> GraphAnalysisResult:
         contract = self.contract_provider.resolve_payload(payload)
@@ -56,24 +62,18 @@ class OllamaAnalysisClient:
             started_at=request_started_at,
             metadata=request_metadata,
         )
-        response_body = ""
         try:
-            response = await self._client.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": "json",
-                    "options": {
-                        "num_ctx": self.context_tokens,
-                    },
-                },
+            provider_response = await self.provider.generate_async(
+                GenerativeRequest(
+                    prompt=prompt,
+                    model_id=self.model,
+                    response_mode=ResponseMode.JSON_OBJECT,
+                    timeout_seconds=self.timeout_seconds,
+                    context_tokens=self.context_tokens,
+                    metadata=request_metadata,
+                )
             )
-            response_body = response.text
-            response.raise_for_status()
-            raw = response.json()
-        except httpx.TimeoutException as exc:
+        except GenerativeProviderTimeout as exc:
             self._emit_failed_response(
                 request_metadata,
                 request_started_at,
@@ -82,61 +82,55 @@ class OllamaAnalysisClient:
                 "AI analyzer request timed out",
             )
             raise KnowledgeError("ANALYSIS_AI_TIMEOUT", "AI analyzer request timed out") from exc
-        except httpx.HTTPStatusError as exc:
+        except GenerativeProviderTransportError as exc:
+            message = "AI analyzer transport error"
+            if exc.status_code is not None:
+                message = f"AI analyzer HTTP error {exc.status_code}"
             self._emit_failed_response(
                 request_metadata,
                 request_started_at,
                 request_started,
                 "ANALYSIS_AI_TRANSPORT_ERROR",
-                f"AI analyzer HTTP error {exc.response.status_code}",
-                response_text=exc.response.text,
+                message,
+                response_text=exc.response_text,
             )
             raise KnowledgeError(
                 "ANALYSIS_AI_TRANSPORT_ERROR",
-                f"AI analyzer HTTP error {exc.response.status_code}",
-                raw_preview=exc.response.text,
+                message,
+                raw_preview=exc.response_text,
             ) from exc
-        except httpx.HTTPError as exc:
-            self._emit_failed_response(
-                request_metadata,
-                request_started_at,
-                request_started,
-                "ANALYSIS_AI_TRANSPORT_ERROR",
-                "AI analyzer transport error",
-            )
-            raise KnowledgeError("ANALYSIS_AI_TRANSPORT_ERROR", "AI analyzer transport error") from exc
-        except (json.JSONDecodeError, ValueError) as exc:
+        except GenerativeProviderProtocolError as exc:
+            if isinstance(exc, GenerativeProviderEmptyResponse):
+                self._emit_failed_response(
+                    request_metadata,
+                    request_started_at,
+                    request_started,
+                    "ANALYSIS_AI_EMPTY_RESPONSE",
+                    "AI analyzer returned no response text",
+                )
+                raise KnowledgeError("ANALYSIS_AI_EMPTY_RESPONSE", "AI analyzer returned no response text", raw_preview="") from exc
             self._emit_failed_response(
                 request_metadata,
                 request_started_at,
                 request_started,
                 "ANALYSIS_AI_TRANSPORT_ERROR",
                 "AI analyzer returned invalid Ollama envelope JSON",
-                response_text=response_body,
+                response_text=exc.response_text,
             )
             raise KnowledgeError(
                 "ANALYSIS_AI_TRANSPORT_ERROR",
                 "AI analyzer returned invalid Ollama envelope JSON",
-                raw_preview=response_body,
+                raw_preview=exc.response_text,
             ) from exc
-        response_text = raw.get("response")
-        if not isinstance(response_text, str):
-            self._emit_failed_response(
-                {**request_metadata, **self._provider_response_metadata(raw, "")},
-                request_started_at,
-                request_started,
-                "ANALYSIS_AI_EMPTY_RESPONSE",
-                "AI analyzer returned no response text",
-            )
-            raise KnowledgeError("ANALYSIS_AI_EMPTY_RESPONSE", "AI analyzer returned no response text", raw_preview="")
-        response_metadata = {**request_metadata, **self._provider_response_metadata(raw, response_text)}
+        response_text = provider_response.raw_text
+        response_metadata = {**request_metadata, **self._provider_response_metadata(provider_response)}
         emit_runtime_event(
             stage="LLM_RESPONSE",
             event_type="PROVIDER_RESPONSE",
             status="COMPLETED",
             started_at=request_started_at,
             completed_at=utc_now(),
-            duration_ms=self._duration_ms(request_started),
+            duration_ms=provider_response.duration_ms,
             metadata=response_metadata,
         )
         if not is_target_enrichment_payload(payload):
@@ -166,7 +160,7 @@ class OllamaAnalysisClient:
         )
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        return None
 
     def _prompt(
         self,
@@ -213,16 +207,10 @@ class OllamaAnalysisClient:
                 renderedPromptChars=rendered_prompt_chars,
             )
 
-    def _require_localhost(self, base_url: str) -> str:
-        parsed = urllib.parse.urlparse(base_url)
-        if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
-            raise KnowledgeError("ANALYSIS_BASE_URL_INVALID", "Analysis AI base URL must be localhost")
-        return base_url
-
     def _request_metadata(self, payload: Dict[str, Any], prompt: str, repair_prompt: str | None) -> Dict[str, Any]:
         context = current_runtime_context()
         metadata = {
-            "provider": "ollama",
+            "provider": getattr(self.provider, "provider_id", None),
             "model": self.model,
             "requestTimeoutSeconds": self.timeout_seconds,
             "contextTokens": self.context_tokens,
@@ -254,26 +242,17 @@ class OllamaAnalysisClient:
             metadata["previousResponseLength"] = context.previous_response_length
         return {key: value for key, value in metadata.items() if value is not None}
 
-    def _provider_response_metadata(self, raw: Dict[str, Any], response_text: str) -> Dict[str, Any]:
+    def _provider_response_metadata(self, response: Any) -> Dict[str, Any]:
+        response_text = str(getattr(response, "raw_text", "") or "")
         preview = runtime_preview(response_text)
-        provider_metadata_keys = (
-            "done",
-            "done_reason",
-            "total_duration",
-            "load_duration",
-            "prompt_eval_count",
-            "prompt_eval_duration",
-            "eval_count",
-            "eval_duration",
-        )
         return {
             "responseCharLength": preview["charLength"],
             "responsePreviewHead": preview["head"],
             "responsePreviewTail": preview["tail"],
             "responseTruncated": preview["truncated"],
             "maxPreviewChars": preview["maxPreviewChars"],
-            "responseHash": text_hash(response_text),
-            "providerResponseMetadata": {key: raw.get(key) for key in provider_metadata_keys if key in raw},
+            "responseHash": getattr(response, "response_hash", text_hash(response_text)),
+            "providerResponseMetadata": dict(getattr(response, "provider_metadata", {}) or {}),
         }
 
     def _emit_failed_response(
@@ -361,3 +340,45 @@ class OllamaAnalysisClient:
 
     def _duration_ms(self, started: float) -> int:
         return max(0, int((time.perf_counter() - started) * 1000))
+
+
+class OllamaAnalysisClient(ProviderBackedAnalysisClient):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout_seconds: int,
+        context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+        http_client: httpx.AsyncClient | None = None,
+        policy: AnalysisPolicy | None = None,
+        policy_path: str | Path | None = None,
+    ):
+        try:
+            self._ollama_provider = OllamaGenerativeProvider(
+                base_url,
+                timeout_seconds=timeout_seconds,
+                async_client=http_client,
+            )
+            self._ollama_provider._owns_async_client = True
+        except ValueError as exc:
+            raise KnowledgeError("ANALYSIS_BASE_URL_INVALID", "Analysis AI base URL must be localhost") from exc
+        super().__init__(
+            self._ollama_provider,
+            model,
+            timeout_seconds,
+            context_tokens,
+            policy=policy,
+            policy_path=policy_path,
+        )
+
+    @property
+    def _client(self) -> httpx.AsyncClient:
+        return self._ollama_provider._require_async_client()
+
+    @_client.setter
+    def _client(self, value: httpx.AsyncClient) -> None:
+        self._ollama_provider._async_client = value
+        self._ollama_provider._owns_async_client = True
+
+    async def aclose(self) -> None:
+        await self._ollama_provider.aclose()
