@@ -1,5 +1,13 @@
+from knowledge_service.knowledge_query_service import (
+    KnowledgeQueryPolicy,
+    QuerySource,
+    RetrievalScope,
+    SourceDiverseAnchorSelector,
+    UnifiedAnchorSearcher,
+)
 from knowledge_service.knowledge_search import (
     CandidateMerger,
+    CandidateProvider,
     DeterministicCodeSearchEngine,
     MergedCandidate,
     QueryNormalizer,
@@ -8,14 +16,6 @@ from knowledge_service.knowledge_search import (
     SearchDocument,
     SearchQueryProfile,
 )
-from knowledge_service.entrypoint_flow_engine import (
-    EntrypointFlow,
-    EntrypointFlowCoverage,
-    EntrypointFlowKey,
-    EntrypointFlowOrigin,
-)
-from knowledge_service.flow_graph_contract import FlowGraphNode
-from knowledge_service.knowledge_query_service import KnowledgeQueryPolicy, KnowledgeQueryService, UnifiedAnchorSearcher
 from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
@@ -37,36 +37,93 @@ def doc(node_id, name, *, source_id="source-a", node_kind="CALLABLE", qualified_
     )
 
 
-def flow(label: str, *, qualified_name: str = "", route: str = "", summary: str = "") -> EntrypointFlow:
-    node = FlowGraphNode(
-        source_id="source-a",
-        graph_id="graph-a",
-        graph_revision="rev-a",
-        node_id=label,
-        stable_key=f"source-a|{qualified_name or label}",
-        node_kind="CALLABLE",
-        label=label,
-        qualified_name=qualified_name or label,
-        summary=summary,
-        entrypoint=True,
-        entrypoint_kind="HTTP_ENDPOINT",
-        entrypoint_http_method="POST",
-        entrypoint_route=route,
+def raw_doc(
+    node_id,
+    name,
+    *,
+    source_id="source-a",
+    node_kind="CALLABLE",
+    qualified_name="",
+    relative_path="",
+    summary="",
+    flow_domain="CODE",
+):
+    return {
+        "id": node_id,
+        "sourceId": source_id,
+        "nodeKind": node_kind,
+        "name": name,
+        "label": name,
+        "stableKey": f"{source_id}|{relative_path or name}|{node_kind}",
+        "qualifiedName": qualified_name or name,
+        "relativePath": relative_path or f"src/{name}.java",
+        "summary": summary,
+        "flowDomain": flow_domain,
+        "confidence": 0.95,
+        "degree": 1,
+        "graphId": f"{source_id}:graph",
+        "graphRevision": f"{source_id}:rev",
+    }
+
+
+def query_source(source_id: str, node_count: int = 1) -> QuerySource:
+    return QuerySource(
+        source_id=source_id,
+        display_name=source_id,
+        graph_id=f"{source_id}:graph",
+        graph_revision=f"{source_id}:rev",
+        node_count=node_count,
+        edge_count=0,
     )
-    return EntrypointFlow(
-        key=EntrypointFlowKey("source-a", "rev-a", node.node_id),
-        entrypoint=node,
-        origin=EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT,
-        anchors=(),
-        nodes=(node,),
-        transitions=(),
-        boundary_transitions=(),
-        evidence=(),
-        complete=True,
-        coverage=EntrypointFlowCoverage(1, 0, 0, 0, 0),
-        diagnostics=(),
-        relevance_score=1.0,
-    )
+
+
+class SourceAwareSearchStore:
+    def __init__(self, documents_by_source):
+        self.documents_by_source = {
+            source_id: sorted(documents, key=lambda item: (str(item.get("label") or ""), str(item.get("id") or "")))
+            for source_id, documents in documents_by_source.items()
+        }
+        self.count_queries = []
+        self.document_queries = []
+
+    def query_search_document_counts(self, source_ids, include_tests=True):
+        self.count_queries.append((tuple(source_ids), include_tests))
+        return {
+            source_id: len(
+                [
+                    item
+                    for item in self.documents_by_source.get(source_id, [])
+                    if include_tests or str(item.get("flowDomain") or "").upper() != "TEST"
+                ]
+            )
+            for source_id in source_ids
+        }
+
+    def query_search_documents(self, source_ids, limit, include_tests=True):
+        self.document_queries.append((tuple(source_ids), limit, include_tests))
+        rows = []
+        for source_id in source_ids:
+            source_rows = [
+                item
+                for item in self.documents_by_source.get(source_id, [])
+                if include_tests or str(item.get("flowDomain") or "").upper() != "TEST"
+            ]
+            rows.extend(source_rows[:limit])
+        return rows
+
+
+class FakeSemanticProvider(CandidateProvider):
+    name = "SEMANTIC"
+
+    def __init__(self, node_ids):
+        self.node_ids = set(node_ids)
+
+    def search(self, query, documents, config):
+        return [
+            self._candidate(document, "SEMANTIC_VECTOR_SIMILARITY", 0.82, "HIGH", 52)
+            for document in documents
+            if document.node_id in self.node_ids
+        ]
 
 
 def test_query_normalization_tokenizes_code_shapes():
@@ -153,181 +210,537 @@ def test_ranker_merges_duplicate_candidates_and_preserves_reasons():
     assert {"ExactCandidateProvider", "LexicalCandidateProvider"} <= set(merged[0].providers)
 
 
-def test_retrieval_plan_filter_keeps_grounded_candidates_within_policy_score_window():
-    searcher = UnifiedAnchorSearcher(graph_store=object())
-    top = doc("top", "ReadController.read", summary="reads a record")
-    nearby = doc("nearby", "ReadService.fetch", summary="fetches the same record")
+def test_query_provenance_does_not_create_synthetic_provider_agreement():
+    document = doc("lexical", "CreateUserFlow", summary="create user")
+    candidate = SearchCandidate(
+        document,
+        "LexicalCandidateProvider",
+        "LEXICAL_TOKEN_OVERLAP",
+        0.7,
+        "MEDIUM",
+        42,
+        metadata={
+            "queryReason": "ORIGINAL_QUERY",
+            "queryInput": "create user",
+            "retrievalPhase": "PRIMARY",
+            "queryMarkerReason": "QUERY_ORIGINAL",
+        },
+    )
+
+    merged = CandidateMerger().merge([candidate])
+
+    assert merged[0].providers == ["LexicalCandidateProvider"]
+    assert {"LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"} <= set(merged[0].reasons)
+    assert merged[0].query_inputs == ["create user"]
+    assert merged[0].contributions == [
+        {
+            "provider": "LexicalCandidateProvider",
+            "reason": "LEXICAL_TOKEN_OVERLAP",
+            "score": 0.7,
+            "sourceId": "source-a",
+            "graphRevision": None,
+            "queryReason": "ORIGINAL_QUERY",
+            "queryInput": "create user",
+            "retrievalPhase": "PRIMARY",
+            "queryMarkerReason": "QUERY_ORIGINAL",
+        }
+    ]
+
+
+def test_provider_agreement_counts_only_unique_real_providers():
+    document = doc("shared", "CreateUserFlow", summary="create user")
+    lexical_original = SearchCandidate(
+        document,
+        "LexicalCandidateProvider",
+        "LEXICAL_TOKEN_OVERLAP",
+        0.7,
+        "MEDIUM",
+        42,
+        metadata={"queryReason": "ORIGINAL_QUERY", "queryInput": "create user", "queryMarkerReason": "QUERY_ORIGINAL"},
+    )
+    lexical_normalized = SearchCandidate(
+        document,
+        "LexicalCandidateProvider",
+        "LEXICAL_TOKEN_OVERLAP",
+        0.7,
+        "MEDIUM",
+        42,
+        metadata={"queryReason": "NORMALIZED_QUERY", "queryInput": "register user", "queryMarkerReason": "QUERY_NORMALIZED"},
+    )
+    semantic = SearchCandidate(document, "SEMANTIC", "SEMANTIC_VECTOR_SIMILARITY", 0.82, "HIGH", 52)
+
+    lexical_only = CandidateMerger().merge([lexical_original, lexical_normalized, lexical_original])[0]
+    lexical_and_semantic = CandidateMerger().merge([lexical_original, semantic])[0]
+
+    assert lexical_only.providers == ["LexicalCandidateProvider"]
+    assert set(lexical_only.query_inputs) == {"create user", "register user"}
+    assert len(lexical_only.contributions) == 2
+    assert lexical_and_semantic.providers == ["LexicalCandidateProvider", "SEMANTIC"]
+    assert lexical_and_semantic.score > lexical_only.score
+
+
+def test_provider_limit_preserves_source_diverse_semantic_candidates():
+    engine = DeterministicCodeSearchEngine(providers=[FakeSemanticProvider({"a-1", "a-2", "a-3", "b-1"})])
+    documents = [
+        doc("a-1", "A1", source_id="source-a"),
+        doc("a-2", "A2", source_id="source-a"),
+        doc("a-3", "A3", source_id="source-a"),
+        doc("b-1", "B1", source_id="source-b"),
+    ]
+
+    result = engine.search("semantic", documents, SearchConfig(max_candidates_per_provider=3)).raw_candidates
+
+    assert len(result) == 3
+    assert "source-b" in {candidate.document.source_id for candidate in result}
+    assert sum(1 for candidate in result if candidate.document.source_id == "source-a") == 2
+
+
+def test_source_diverse_selector_rejects_expansion_only_candidates():
+    selector = SourceDiverseAnchorSelector()
+    top = doc("top", "UserRegistrationController.create", summary="creates a user account")
+    additive = doc("additive", "UserRegistrationService.create", summary="creates a user record")
+    agent_project = doc("agent-project", "AgentProjectController.addAgentToProject", summary="adds an agent to a project")
     distant = doc("distant", "UnrelatedWorker.run", summary="background maintenance")
-    plan = QueryRetrievalPlan(
-        original_query="how is a record read",
-        normalized_query="how is a record read",
-        search_queries=("record read flow",),
-        code_identifiers=(),
-        concepts=("record read",),
-        effective_intent="FLOW_EXPLANATION",
-        detected_language="en",
-        response_language="en",
-    )
     candidates = [
-        MergedCandidate(top, 0.70, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"]),
-        MergedCandidate(nearby, 0.56, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_EXPANSION"], ["LexicalCandidateProvider"]),
-        MergedCandidate(distant, 0.40, "LOW", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_EXPANSION"], ["LexicalCandidateProvider"]),
+        MergedCandidate(top, 0.70, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"], ["PRIMARY"], ["створити юзера"]),
+        MergedCandidate(
+            additive,
+            0.68,
+            "MEDIUM",
+            42,
+            ["LEXICAL_TOKEN_OVERLAP", "QUERY_NORMALIZED", "QUERY_EXPANSION"],
+            ["LexicalCandidateProvider"],
+            ["PRIMARY"],
+            ["create user", "AgentProjectController.addAgentToProject"],
+        ),
+        MergedCandidate(
+            agent_project,
+            0.99,
+            "HIGH",
+            8,
+            ["QUALIFIED_NAME_EXACT", "QUERY_EXPANSION"],
+            ["QualifiedNameCandidateProvider"],
+            ["PRIMARY"],
+            ["AgentProjectController.addAgentToProject"],
+        ),
+        MergedCandidate(distant, 0.40, "LOW", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_EXPANSION"], ["LexicalCandidateProvider"], ["PRIMARY"], ["noise"]),
     ]
 
-    filtered = searcher._filter_plan_candidates(candidates, plan, KnowledgeQueryPolicy(plan_candidate_min_score=0.42, plan_candidate_top_delta=0.18))
+    selected = selector.select(candidates, KnowledgeQueryPolicy(plan_candidate_min_score=0.42))
 
-    assert [candidate.document.node_id for candidate in filtered] == ["top", "nearby"]
+    assert [candidate.document.node_id for candidate in selected] == ["top", "additive"]
 
 
-def test_retrieval_plan_filter_prefers_exact_code_identifier_matches():
-    searcher = UnifiedAnchorSearcher(graph_store=object())
+def test_exact_identifier_candidate_is_not_exclusive_to_its_source():
+    selector = SourceDiverseAnchorSelector()
     exact = doc("site", "SiteController.createSite", qualified_name="example.SiteController.createSite")
-    controller_type = doc("site-controller", "SiteController", node_kind="TYPE", qualified_name="example.SiteController")
-    broad = doc("site-overview", "SiteController.getSiteOverview", qualified_name="example.SiteController.getSiteOverview")
-    plan = QueryRetrievalPlan(
-        original_query="як працює SiteController.createSite",
-        normalized_query="як працює SiteController.createSite",
-        search_queries=("SiteController execution flow",),
-        code_identifiers=("SiteController.createSite",),
-        concepts=("site controller",),
-        effective_intent="FLOW_EXPLANATION",
-        detected_language="uk",
-        response_language="uk",
+    semantic = doc(
+        "site-worker",
+        "SiteProvisioningWorker.run",
+        source_id="source-b",
+        qualified_name="example.SiteProvisioningWorker.run",
+        summary="provisions site creation resources",
     )
     candidates = [
-        MergedCandidate(exact, 0.99, "HIGH", 8, ["QUALIFIED_NAME_SUFFIX", "QUERY_EXACT_IDENTIFIER"], ["QualifiedNameCandidateProvider"]),
-        MergedCandidate(controller_type, 0.98, "HIGH", 10, ["EXACT_NAME", "QUERY_EXACT_IDENTIFIER"], ["ExactCandidateProvider"]),
-        MergedCandidate(broad, 0.91, "HIGH", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_EXPANSION"], ["LexicalCandidateProvider"]),
+        MergedCandidate(
+            exact,
+            0.99,
+            "HIGH",
+            8,
+            ["QUALIFIED_NAME_SUFFIX", "QUERY_EXACT_IDENTIFIER"],
+            ["QualifiedNameCandidateProvider"],
+            ["PRIMARY"],
+            ["SiteController.createSite"],
+        ),
+        MergedCandidate(
+            semantic,
+            0.82,
+            "HIGH",
+            52,
+            ["SEMANTIC_VECTOR_SIMILARITY", "QUERY_ORIGINAL"],
+            ["SEMANTIC"],
+            ["PRIMARY"],
+            ["як працює SiteController.createSite"],
+        ),
     ]
 
-    filtered = searcher._filter_plan_candidates(candidates, plan, KnowledgeQueryPolicy())
+    selected = selector.select(candidates, KnowledgeQueryPolicy())
 
-    assert [candidate.document.node_id for candidate in filtered] == ["site"]
+    assert [candidate.document.node_id for candidate in selected] == ["site", "site-worker"]
 
 
-def test_flow_retrieval_plan_filter_uses_scores_without_subject_vocabulary():
-    searcher = UnifiedAnchorSearcher(graph_store=object())
+def test_source_diverse_selector_uses_scores_without_callable_preference():
+    selector = SourceDiverseAnchorSelector()
     callable_match = doc("callable", "PaymentListener.handle", qualified_name="example.PaymentListener.handle", summary="handles payment")
     type_context = doc("type", "PaymentListener", node_kind="TYPE", qualified_name="example.PaymentListener", summary="payment listener")
+    candidates = [
+        MergedCandidate(type_context, 0.64, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"], ["PRIMARY"], ["how is payment handled"]),
+        MergedCandidate(callable_match, 0.62, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"], ["PRIMARY"], ["how is payment handled"]),
+    ]
+
+    selected = selector.select(candidates, KnowledgeQueryPolicy())
+
+    assert [candidate.document.node_id for candidate in selected] == ["type", "callable"]
+
+
+def test_source_aware_loading_prevents_large_source_starvation_and_is_order_independent():
+    large_source = [
+        raw_doc(f"noise-{index:04d}", f"Noise{index:04d}", source_id="large-source", summary="maintenance background")
+        for index in range(5005)
+    ]
+    documents_by_source = {
+        "large-source": large_source,
+        "registration-source": [
+            raw_doc(
+                "register",
+                "RegisterUser.start",
+                source_id="registration-source",
+                summary="register user account creation",
+            )
+        ],
+        "login-source": [
+            raw_doc("login", "LoginUser.start", source_id="login-source", summary="login user session")
+        ],
+    }
+
+    def run(source_order):
+        store = SourceAwareSearchStore(documents_by_source)
+        sources = [query_source(source_id, len(documents_by_source[source_id])) for source_id in source_order]
+        result = UnifiedAnchorSearcher(store).search(
+            "register user login",
+            sources,
+            KnowledgeQueryPolicy(max_search_documents=30, max_selected_anchors=5),
+        )
+        return result, store
+
+    forward, forward_store = run(["large-source", "registration-source", "login-source"])
+    reversed_result, _reversed_store = run(["login-source", "registration-source", "large-source"])
+
+    assert [node.nodeId for node in forward.all_candidates] == [node.nodeId for node in reversed_result.all_candidates]
+    assert {"register", "login"} <= {node.nodeId for node in forward.all_candidates}
+    inspected_sources = {query[0][0] for query in forward_store.document_queries}
+    assert inspected_sources == {"large-source", "registration-source", "login-source"}
+    large_limit = next(limit for source_ids, limit, _include_tests in forward_store.document_queries if source_ids == ("large-source",))
+    assert large_limit < 30
+    assert len(forward_store.document_queries) == 3
+    diagnostic = next(item for item in forward.diagnostics if item.code == "SOURCE_DIVERSE_RETRIEVAL_DIAGNOSTICS")
+    assert diagnostic.metadata["documentsInspectedBySource"]["registration-source"] == 1
+    assert diagnostic.metadata["documentsInspectedBySource"]["login-source"] == 1
+    assert diagnostic.metadata["sourcesStarved"] == []
+
+
+def test_exact_anchor_does_not_suppress_semantic_anchor_from_other_source():
+    store = SourceAwareSearchStore(
+        {
+            "source-a": [
+                raw_doc(
+                    "create-site",
+                    "CreateSite",
+                    source_id="source-a",
+                    qualified_name="example.SiteController.createSite",
+                )
+            ],
+            "source-b": [
+                raw_doc(
+                    "semantic-site",
+                    "SiteProvisioningWorker.run",
+                    source_id="source-b",
+                    summary="semantic site provisioning workflow",
+                )
+            ],
+        }
+    )
+    engine = DeterministicCodeSearchEngine(extra_broad_providers=[FakeSemanticProvider({"semantic-site"})])
+    result = UnifiedAnchorSearcher(store, search_engine=engine).search(
+        "CreateSite",
+        [query_source("source-a"), query_source("source-b")],
+        KnowledgeQueryPolicy(max_selected_anchors=5),
+    )
+
+    assert [node.nodeId for node in result.all_candidates] == ["create-site", "semantic-site"]
+    assert result.all_candidates[0].sourceId == "source-a"
+    assert result.all_candidates[1].sourceId == "source-b"
+
+
+def test_two_independent_anchors_from_same_source_survive_within_budget():
+    store = SourceAwareSearchStore(
+        {
+            "source-a": [
+                raw_doc("authorize", "PaymentAuthorize.start", summary="payment authorize"),
+                raw_doc("capture", "PaymentCapture.start", summary="payment capture"),
+            ]
+        }
+    )
+
+    result = UnifiedAnchorSearcher(store).search(
+        "payment authorize capture",
+        [query_source("source-a", 2)],
+        KnowledgeQueryPolicy(max_selected_anchors=5),
+    )
+
+    assert {node.nodeId for node in result.all_candidates} == {"authorize", "capture"}
+
+
+def test_weak_unrelated_sources_are_not_forced_into_selection():
+    selector = SourceDiverseAnchorSelector()
+    strong = MergedCandidate(
+        doc("strong", "Registration.start", source_id="source-a"),
+        0.82,
+        "HIGH",
+        42,
+        ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"],
+        ["LexicalCandidateProvider"],
+        ["PRIMARY"],
+        ["registration"],
+    )
+    weak = MergedCandidate(
+        doc("weak", "Unrelated.run", source_id="source-b"),
+        0.24,
+        "LOW",
+        42,
+        ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"],
+        ["LexicalCandidateProvider"],
+        ["PRIMARY"],
+        ["registration"],
+    )
+
+    selected = selector.select([strong, weak], KnowledgeQueryPolicy())
+
+    assert [candidate.document.node_id for candidate in selected] == ["strong"]
+
+
+def test_identically_named_nodes_in_different_sources_remain_distinct():
+    left = doc("left", "SharedHandler.handle", source_id="source-a")
+    right = doc("right", "SharedHandler.handle", source_id="source-b")
+
+    merged = CandidateMerger().merge(
+        [
+            SearchCandidate(left, "ExactCandidateProvider", "EXACT_NAME", 0.98, "HIGH", 10),
+            SearchCandidate(right, "ExactCandidateProvider", "EXACT_NAME", 0.98, "HIGH", 10),
+        ]
+    )
+
+    assert {(candidate.document.source_id, candidate.document.node_id) for candidate in merged} == {
+        ("source-a", "left"),
+        ("source-b", "right"),
+    }
+
+
+def test_multiple_query_plan_inputs_can_contribute_anchors():
+    store = SourceAwareSearchStore(
+        {
+            "source-a": [
+                raw_doc("create", "CreateUserFlow", summary="create user"),
+                raw_doc("register", "RegisterAccountFlow", summary="register account"),
+            ]
+        }
+    )
     plan = QueryRetrievalPlan(
-        original_query="how is payment handled",
-        normalized_query="how is payment handled",
-        search_queries=("payment handling flow",),
+        original_query="CreateUserFlow",
+        normalized_query="RegisterAccountFlow",
+        search_queries=(),
         code_identifiers=(),
-        concepts=("payment handling",),
+        concepts=("user",),
         effective_intent="FLOW_EXPLANATION",
         detected_language="en",
         response_language="en",
     )
+
+    result = UnifiedAnchorSearcher(store).search_plan(
+        plan,
+        [query_source("source-a", 2)],
+        KnowledgeQueryPolicy(max_selected_anchors=5),
+    )
+
+    assert {node.nodeId for node in result.all_candidates} == {"create", "register"}
+
+
+def test_search_query_is_additive_and_cannot_invent_anchor():
+    store = SourceAwareSearchStore(
+        {
+            "source-a": [
+                raw_doc(
+                    "agent-project",
+                    "AgentProjectController.addAgentToProject",
+                    summary="adds an agent to a project",
+                )
+            ]
+        }
+    )
+    plan = QueryRetrievalPlan(
+        original_query="create user",
+        normalized_query="create user",
+        search_queries=("AgentProjectController.addAgentToProject",),
+        code_identifiers=(),
+        concepts=("user",),
+        effective_intent="FLOW_EXPLANATION",
+        detected_language="en",
+        response_language="en",
+    )
+
+    result = UnifiedAnchorSearcher(store).search_plan(
+        plan,
+        [query_source("source-a")],
+        KnowledgeQueryPolicy(max_selected_anchors=5),
+    )
+
+    assert result.all_candidates == []
+
+
+def test_code_identifier_input_must_be_exact_substring_of_user_query():
+    store = SourceAwareSearchStore(
+        {
+            "source-a": [
+                raw_doc("site", "SiteController.createSite", qualified_name="example.SiteController.createSite")
+            ]
+        }
+    )
+    invalid_plan = QueryRetrievalPlan(
+        original_query="unrelated words",
+        normalized_query="unrelated words",
+        search_queries=(),
+        code_identifiers=("SiteController.createSite",),
+        concepts=(),
+        effective_intent="FLOW_EXPLANATION",
+        detected_language="en",
+        response_language="en",
+    )
+    valid_plan = QueryRetrievalPlan(
+        original_query="explain SiteController.createSite",
+        normalized_query="explain SiteController.createSite",
+        search_queries=(),
+        code_identifiers=("SiteController.createSite",),
+        concepts=(),
+        effective_intent="FLOW_EXPLANATION",
+        detected_language="en",
+        response_language="en",
+    )
+    searcher = UnifiedAnchorSearcher(store)
+
+    invalid = searcher.search_plan(invalid_plan, [query_source("source-a")], KnowledgeQueryPolicy())
+    valid = searcher.search_plan(valid_plan, [query_source("source-a")], KnowledgeQueryPolicy())
+
+    assert invalid.all_candidates == []
+    assert [node.nodeId for node in valid.all_candidates] == ["site"]
+
+
+def test_generic_names_are_not_rejected_by_suffix_or_domain_patterns():
+    selector = SourceDiverseAnchorSelector()
+    names = [
+        "PaymentDTO",
+        "PaymentDelegate",
+        "PaymentController",
+        "PaymentClient",
+        "PaymentKafkaHandler",
+        "PaymentSchedule",
+    ]
     candidates = [
-        MergedCandidate(type_context, 0.64, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"]),
-        MergedCandidate(callable_match, 0.62, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"]),
+        MergedCandidate(
+            doc(name, name),
+            0.86,
+            "HIGH",
+            42,
+            ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"],
+            ["LexicalCandidateProvider"],
+            ["PRIMARY"],
+            ["payment"],
+        )
+        for name in names
     ]
 
-    filtered = searcher._filter_plan_candidates(candidates, plan, KnowledgeQueryPolicy())
+    selected = selector.select(candidates, KnowledgeQueryPolicy(max_selected_anchors=10))
 
-    assert [candidate.document.node_id for candidate in filtered] == ["type", "callable"]
-
-
-def test_exact_downstream_identifier_selects_containing_flow():
-    service = KnowledgeQueryService(
-        source_scope_resolver=object(),
-        anchor_searcher=UnifiedAnchorSearcher(graph_store=object()),
-        flow_repository=object(),
-        anchor_expander=object(),
-    )
-    root = flow("PaymentController.readPayment", qualified_name="example.PaymentController.readPayment")
-    downstream = FlowGraphNode(
-        source_id="source-a",
-        graph_id="graph-a",
-        graph_revision="rev-a",
-        node_id="repository-node",
-        stable_key="source-a|repository-node",
-        node_kind="CALLABLE",
-        label="PaymentRepository.findById",
-        qualified_name="example.PaymentRepository.findById",
-    )
-    containing = root.__class__(
-        key=root.key,
-        entrypoint=root.entrypoint,
-        origin=root.origin,
-        anchors=root.anchors,
-        nodes=(root.entrypoint, downstream),
-        transitions=root.transitions,
-        boundary_transitions=root.boundary_transitions,
-        evidence=root.evidence,
-        complete=root.complete,
-        coverage=root.coverage,
-        diagnostics=root.diagnostics,
-        relevance_score=root.relevance_score,
-    )
-    unrelated = flow("InvoiceController.readInvoice", qualified_name="example.InvoiceController.readInvoice")
-
-    filtered = service._filter_flows_by_code_identifiers((containing, unrelated), ("PaymentRepository.findById",))
-
-    assert [item.entrypoint.label for item in filtered] == ["PaymentController.readPayment"]
+    assert {candidate.document.node_id for candidate in selected} == set(names)
 
 
-def test_exact_identifier_filter_does_not_use_substring_matches():
-    service = KnowledgeQueryService(
-        source_scope_resolver=object(),
-        anchor_searcher=UnifiedAnchorSearcher(graph_store=object()),
-        flow_repository=object(),
-        anchor_expander=object(),
+def test_supported_graph_node_kinds_can_all_be_selected_when_relevant():
+    selector = SourceDiverseAnchorSelector()
+    kinds = ["FILE", "TYPE", "CALLABLE", "FIELD", "CONTRACT_DECLARATION", "CLAIM"]
+    candidates = [
+        MergedCandidate(
+            doc(kind.lower(), f"Relevant{kind}", node_kind=kind),
+            0.84,
+            "HIGH",
+            42,
+            ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"],
+            ["LexicalCandidateProvider"],
+            ["PRIMARY"],
+            ["relevant"],
+        )
+        for kind in kinds
+    ]
+
+    selected = selector.select(candidates, KnowledgeQueryPolicy(max_selected_anchors=10))
+
+    assert {candidate.document.node_kind for candidate in selected} == set(kinds)
+
+
+def test_internal_fallback_scope_runs_only_after_primary_is_insufficient_and_preserves_primary():
+    store = SourceAwareSearchStore(
+        {
+            "primary-source": [raw_doc("primary", "PrimaryFlow.start", source_id="primary-source", summary="primary flow")],
+            "fallback-source": [raw_doc("fallback", "FallbackFlow.start", source_id="fallback-source", summary="fallback flow")],
+        }
     )
-    settings = flow("UserController.readSettings", qualified_name="example.UserController.readSettings")
-    settings_node = FlowGraphNode(
-        source_id="source-a",
-        graph_id="graph-a",
-        graph_revision="rev-a",
-        node_id="settings-node",
-        stable_key="source-a|settings-node",
-        node_kind="CALLABLE",
-        label="User.getSettings",
-        qualified_name="example.User.getSettings",
-    )
-    containing_settings = settings.__class__(
-        key=settings.key,
-        entrypoint=settings.entrypoint,
-        origin=settings.origin,
-        anchors=settings.anchors,
-        nodes=(settings.entrypoint, settings_node),
-        transitions=settings.transitions,
-        boundary_transitions=settings.boundary_transitions,
-        evidence=settings.evidence,
-        complete=settings.complete,
-        coverage=settings.coverage,
-        diagnostics=settings.diagnostics,
-        relevance_score=settings.relevance_score,
-    )
-    save_flow = flow("AccountController.updateAccount", qualified_name="example.AccountController.updateAccount")
-    save_node = FlowGraphNode(
-        source_id="source-a",
-        graph_id="graph-a",
-        graph_revision="rev-a",
-        node_id="save-node",
-        stable_key="source-a|save-node",
-        node_kind="CALLABLE",
-        label="AccountRepository.saveAccount",
-        qualified_name="example.AccountRepository.saveAccount",
-    )
-    containing_save = save_flow.__class__(
-        key=save_flow.key,
-        entrypoint=save_flow.entrypoint,
-        origin=save_flow.origin,
-        anchors=save_flow.anchors,
-        nodes=(save_flow.entrypoint, save_node),
-        transitions=save_flow.transitions,
-        boundary_transitions=save_flow.boundary_transitions,
-        evidence=save_flow.evidence,
-        complete=save_flow.complete,
-        coverage=save_flow.coverage,
-        diagnostics=save_flow.diagnostics,
-        relevance_score=save_flow.relevance_score,
+    scope = RetrievalScope(
+        primary_sources=(query_source("primary-source"),),
+        fallback_sources=(query_source("fallback-source"),),
     )
 
-    assert service._filter_flows_by_code_identifiers((containing_settings,), ("User.get",)) == ()
-    assert service._filter_flows_by_code_identifiers((containing_save,), ("save",)) == ()
+    result = UnifiedAnchorSearcher(store).search_scope(
+        (("ORIGINAL_QUERY", "flow"),),
+        scope,
+        KnowledgeQueryPolicy(fallback_anchor_trigger_count=2, max_selected_anchors=5),
+    )
+
+    assert [node.nodeId for node in result.all_candidates] == ["primary", "fallback"]
+    diagnostic = next(item for item in result.diagnostics if item.code == "SOURCE_DIVERSE_RETRIEVAL_DIAGNOSTICS")
+    assert diagnostic.metadata["eligiblePrimarySourceCount"] == 1
+    assert diagnostic.metadata["eligibleFallbackSourceCount"] == 1
+    assert diagnostic.metadata["fallbackCandidateCount"] > 0
+
+
+def test_include_tests_filters_documents_before_candidate_selection():
+    store = SourceAwareSearchStore(
+        {
+            "source-a": [
+                raw_doc("code", "PaymentFlow.start", summary="payment flow", flow_domain="CODE"),
+                raw_doc("test", "PaymentFlowTest.start", summary="payment flow", flow_domain="TEST"),
+            ]
+        }
+    )
+
+    result = UnifiedAnchorSearcher(store).search(
+        "payment flow",
+        [query_source("source-a", 2)],
+        KnowledgeQueryPolicy(max_selected_anchors=5),
+        include_tests=False,
+    )
+
+    assert [node.nodeId for node in result.all_candidates] == ["code"]
+    assert store.count_queries == [(("source-a",), False)]
+    assert store.document_queries == [(("source-a",), 1, False)]
+
+
+def test_preview_limit_does_not_reduce_internal_anchor_set():
+    store = SourceAwareSearchStore(
+        {
+            "source-a": [
+                raw_doc("first", "FirstPaymentFlow.start", summary="payment flow"),
+                raw_doc("second", "SecondPaymentFlow.start", summary="payment flow"),
+            ]
+        }
+    )
+
+    result = UnifiedAnchorSearcher(store).search(
+        "payment flow",
+        [query_source("source-a", 2)],
+        KnowledgeQueryPolicy(max_selected_anchors=5, max_display_candidates=1),
+    )
+
+    assert len(result.all_candidates) == 2
+    assert len(result.display_candidates) == 1
+    assert any(item.code == "MATCHED_NODE_PREVIEW_LIMITED" for item in result.diagnostics)
 
 
 def test_fuzzy_matcher_finds_transposed_and_missing_character_identifiers():

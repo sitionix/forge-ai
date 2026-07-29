@@ -23,14 +23,12 @@ class ForgeAiHumanQueryConfigurationContractTest {
         final InfrastructureProxyProperties infrastructureProperties = bindRootInfrastructureProperties(Map.of());
 
         assertThat(properties.getRequestTimeoutSeconds()).isEqualTo(180);
-        assertThat(infrastructureProperties.getProxy().knowledgeHumanQueryReadTimeout(properties.requestTimeout()))
-                .isEqualTo(Duration.ofSeconds(185));
-        assertThat(infrastructureProperties.getProxy().jarvisQueryReadTimeout(properties.requestTimeout()))
-                .isEqualTo(Duration.ofSeconds(190));
+        assertThat(infrastructureProperties.getProxy().humanQueryReadTimeout(properties.requestTimeout()))
+                .isEqualTo(Duration.ofSeconds(180));
     }
 
     @Test
-    void sharedEnvironmentOverrideBindsHumanQueryTimeoutAndNexusTransportGrace() {
+    void sharedEnvironmentOverrideBindsHumanQueryTimeout() {
         final ForgeAiHumanQueryProperties humanQueryProperties = bindRootHumanQueryProperties(Map.of(
                 "FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS",
                 "73"
@@ -47,15 +45,15 @@ class ForgeAiHumanQueryConfigurationContractTest {
 
         assertThat(humanQueryProperties.getRequestTimeoutSeconds()).isEqualTo(73);
         assertThat(registry.require("knowledge.query").readTimeout())
-                .isEqualTo(Duration.ofSeconds(78));
+                .isEqualTo(Duration.ofSeconds(73));
         assertThat(registry.require("knowledge.query.tool-context").readTimeout())
-                .isEqualTo(Duration.ofSeconds(78));
+                .isEqualTo(Duration.ofSeconds(73));
         assertThat(registry.require("jarvis.query").readTimeout())
-                .isEqualTo(Duration.ofSeconds(83));
+                .isEqualTo(Duration.ofSeconds(73));
     }
 
     @Test
-    void durationDeadlineCanBindForDeterministicTimeoutHierarchyTests() {
+    void durationDeadlineCanBindForDeterministicTimeoutTests() {
         final StandardEnvironment environment = new StandardEnvironment();
         environment.getPropertySources().addFirst(new MapPropertySource("test-overrides", Map.of(
                 "forge.ai.query.human-query.request-timeout",
@@ -65,8 +63,6 @@ class ForgeAiHumanQueryConfigurationContractTest {
                 .bind("forge.ai.query.human-query", ForgeAiHumanQueryProperties.class)
                 .orElseThrow(() -> new IllegalStateException("Failed to bind test human query settings"));
         final InfrastructureProxyProperties infrastructureProperties = new InfrastructureProxyProperties();
-        infrastructureProperties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofMillis(50));
-        infrastructureProperties.getProxy().setJarvisQueryTransportGrace(Duration.ofMillis(50));
 
         final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(
                 infrastructureProperties,
@@ -74,9 +70,9 @@ class ForgeAiHumanQueryConfigurationContractTest {
         );
 
         assertThat(registry.require("knowledge.query").readTimeout())
-                .isEqualTo(Duration.ofMillis(150));
+                .isEqualTo(Duration.ofMillis(100));
         assertThat(registry.require("jarvis.query").readTimeout())
-                .isEqualTo(Duration.ofMillis(200));
+                .isEqualTo(Duration.ofMillis(100));
     }
 
     private static ForgeAiHumanQueryProperties bindRootHumanQueryProperties(

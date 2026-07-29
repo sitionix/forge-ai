@@ -2,9 +2,24 @@
   "answerLanguage": "uk",
   "answers": [
     {
-      "source": "source-a",
-      "entrypoint": "JarvisGateway",
-      "text": "Сайт створюється через JarvisGateway, який делегує роботу внутрішнім компонентам."
+      "graphId": "graph-jarvis-gateway",
+      "sources": [
+        "source-a"
+      ],
+      "queryEntries": [
+        {
+          "unitId": "unit-jarvis-gateway",
+          "sourceId": "source-a",
+          "root": {
+            "nodeId": "jarvis-gateway",
+            "qualifiedName": "JarvisGateway",
+            "label": "JarvisGateway"
+          }
+        }
+      ],
+      "text": "Сайт створюється через JarvisGateway, який делегує роботу внутрішнім компонентам.",
+      "complete": true,
+      "diagnostics": []
     }
   ],
   "diagnostics": []

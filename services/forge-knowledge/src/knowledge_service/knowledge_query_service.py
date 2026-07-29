@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import uuid
 import time
-from collections import defaultdict
+import uuid
+from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Mapping, Sequence, Tuple
 
 from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionBundle,
@@ -13,15 +13,25 @@ from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionNode,
     AnchorExpansionRequest,
 )
-from knowledge_service.knowledge_search import (
-    CandidateMerger,
-    DeterministicCodeSearchEngine,
-    MergedCandidate,
-    QueryNormalizer,
-    SearchConfig,
-    SearchCandidate,
-    SearchDocument,
+from knowledge_service.boundary_contract import LocalBoundaryFact
+from knowledge_service.boundary_resolution import (
+    BOUNDARY_ROLE_REQUIRED,
+    BoundaryCandidateLoadLimits,
+    BoundaryOwnerIdentity,
+    BoundaryResolutionDiagnostic,
+    BoundaryResolutionResult,
+    BoundaryResolutionTruncationState,
+    BoundaryResolverMetrics,
+    BoundaryTargetMaterialization,
+    BoundaryTargetMaterializationStatus,
+    BoundaryTargetSeedIdentity,
+    BoundaryTargetSeedRelation,
+    GenericBoundaryResolver,
+    boundary_identity,
 )
+from knowledge_service.end_to_end_flow import EndToEndFlowAssembler, EndToEndFlowAssemblyResult, EndToEndFlowDiagnostic
+from knowledge_service.end_to_end_projection import EndToEndProjectionBuilder
+from knowledge_service.end_to_end_selection import EndToEndGraphSelectionResult, EndToEndGraphSelector
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryCoverage,
     KnowledgeQueryDiagnostic,
@@ -32,14 +42,26 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryResponse,
     KnowledgeQueryStatus,
 )
+from knowledge_service.knowledge_search import (
+    CandidateMerger,
+    DeterministicCodeSearchEngine,
+    MergedCandidate,
+    QueryNormalizer,
+    SearchCandidate,
+    SearchConfig,
+    SearchDocument,
+)
+from knowledge_service.local_flow_selection import LocalFlowUnitSelectionResult, LocalFlowUnitSelector
+from knowledge_service.local_flow_unit_engine import LocalFlowSeedProvenance, LocalFlowUnit, LocalFlowUnitEngine
+from knowledge_service.local_flow_unit_store import LocalFlowUnitGraphRepository
 from knowledge_service.query_interpretation import QueryRetrievalPlan
-from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
-from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
+
 
 @dataclass(frozen=True)
 class KnowledgeQueryPolicy:
     max_search_documents: int = 5000
     max_candidates_per_provider: int = 100
+    max_selected_anchors: int = 12
     max_display_candidates: int = 20
     min_lexical_score: float = 0.28
     min_fuzzy_score: float = 0.58
@@ -47,11 +69,10 @@ class KnowledgeQueryPolicy:
     enable_fuzzy_search: bool = True
     enable_search_diagnostics: bool = True
     plan_candidate_min_score: float = 0.42
-    plan_candidate_top_delta: float = 0.18
     exact_identifier_min_score: float = 0.75
-    exact_identifier_top_delta: float = 0.12
-    plan_flow_min_relevance_score: float = 0.05
-    plan_flow_top_delta: float = 0.25
+    fallback_anchor_trigger_count: int = 3
+    local_unit_min_relevance_score: float = 0.05
+    local_unit_top_delta: float = 0.25
 
 
 class CandidatePoolKind(str, Enum):
@@ -61,6 +82,11 @@ class CandidatePoolKind(str, Enum):
     LEXICAL = "LEXICAL"
     FUZZY = "FUZZY"
     SEMANTIC = "SEMANTIC"
+
+
+class RetrievalPhase(str, Enum):
+    PRIMARY = "PRIMARY"
+    FALLBACK = "FALLBACK"
 
 
 _PRECISE_IDENTIFIER_REASONS = {
@@ -74,13 +100,24 @@ _PRECISE_IDENTIFIER_REASONS = {
     "PATH_MATCH",
 }
 
+@dataclass(frozen=True)
+class BoundaryContinuationPolicy:
+    max_boundary_resolution_rounds: int = 8
+    max_boundary_target_units: int = 50
+
+    def __post_init__(self) -> None:
+        if self.max_boundary_resolution_rounds < 1:
+            raise ValueError("max_boundary_resolution_rounds must be at least 1")
+        if self.max_boundary_target_units < 1:
+            raise ValueError("max_boundary_target_units must be at least 1")
+
 
 @dataclass(frozen=True)
 class CandidateRetrievalResult:
-    pools: Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]]
-    all_candidates: List[KnowledgeQueryMatchedNode]
-    display_candidates: List[KnowledgeQueryMatchedNode]
-    diagnostics: List[KnowledgeQueryDiagnostic]
+    pools: dict[CandidatePoolKind, list[KnowledgeQueryMatchedNode]]
+    all_candidates: list[KnowledgeQueryMatchedNode]
+    display_candidates: list[KnowledgeQueryMatchedNode]
+    diagnostics: list[KnowledgeQueryDiagnostic]
     truncated: bool = False
 
 
@@ -104,21 +141,35 @@ class AnchorExpansionReason(str, Enum):
 
 
 @dataclass(frozen=True)
+class AnchorSeedExpansion:
+    original_source_id: str
+    original_graph_revision: str
+    original_node_id: str
+    original_stable_key: str
+    expanded_seed_source_id: str
+    expanded_seed_graph_revision: str
+    expanded_seed_node_id: str
+    expanded_seed_stable_key: str
+    reason: AnchorExpansionReason
+
+
+@dataclass(frozen=True)
 class ExpandedAnchor:
     node: KnowledgeQueryMatchedNode
     roles: tuple[AnchorRole, ...]
     reasons: tuple[AnchorExpansionReason, ...]
     originNodeIds: tuple[str, ...]
     score: float
+    seedExpansions: tuple[AnchorSeedExpansion, ...] = ()
 
 
 @dataclass(frozen=True)
 class AnchorExpansionResult:
-    original_candidates: List[KnowledgeQueryMatchedNode]
-    expanded_anchors: List[ExpandedAnchor]
-    flow_seed_nodes: List[KnowledgeQueryMatchedNode]
-    context_nodes: List[KnowledgeQueryMatchedNode]
-    diagnostics: List[KnowledgeQueryDiagnostic]
+    original_candidates: list[KnowledgeQueryMatchedNode]
+    expanded_anchors: list[ExpandedAnchor]
+    flow_seed_nodes: list[KnowledgeQueryMatchedNode]
+    context_nodes: list[KnowledgeQueryMatchedNode]
+    diagnostics: list[KnowledgeQueryDiagnostic]
     truncated: bool = False
 
 
@@ -130,22 +181,76 @@ class QuerySource:
     graph_revision: str
     node_count: int
     edge_count: int
+    graph_status: str | None = None
+
+
+@dataclass(frozen=True)
+class RetrievalScope:
+    primary_sources: tuple[QuerySource, ...]
+    fallback_sources: tuple[QuerySource, ...] = ()
+
+    @classmethod
+    def primary(cls, sources: Sequence[QuerySource]) -> RetrievalScope:
+        return cls(primary_sources=tuple(sources), fallback_sources=())
+
+
+@dataclass(frozen=True)
+class SourceDocumentLoadStats:
+    phase: RetrievalPhase
+    source_id: str
+    eligible_document_count: int
+    allocated_document_count: int
+    inspected_document_count: int
+    truncated_document_count: int
+    starved: bool = False
+
+
+@dataclass(frozen=True)
+class SourceDocumentLoadResult:
+    documents: list[SearchDocument]
+    stats: tuple[SourceDocumentLoadStats, ...]
+    truncated: bool = False
+
+
+@dataclass(frozen=True)
+class PhaseRetrievalOutput:
+    phase: RetrievalPhase
+    raw_candidates: list[SearchCandidate]
+    merged_candidates: list[MergedCandidate]
+    diagnostics: list[KnowledgeQueryDiagnostic]
+    document_stats: tuple[SourceDocumentLoadStats, ...]
+    document_truncated: bool = False
+    candidate_limit_reached: bool = False
 
 
 @dataclass(frozen=True)
 class KnowledgeQueryExecutionResult:
     response: KnowledgeQueryResponse
-    flows: tuple[EntrypointFlow, ...] = ()
+    local_unit_selection: LocalFlowUnitSelectionResult | None = None
+    local_units: tuple[LocalFlowUnit, ...] = ()
+    boundary_resolution: BoundaryResolutionResult | None = None
+    end_to_end_assembly: EndToEndFlowAssemblyResult | None = None
+    graph_selection: EndToEndGraphSelectionResult | None = None
+    selected_graphs: tuple[Any, ...] = ()
+
+
+@dataclass(frozen=True)
+class ContinuationAssemblyResult:
+    initial_selected_local_unit_ids: tuple[str, ...]
+    local_units: tuple[LocalFlowUnit, ...] = ()
+    boundary_resolution: BoundaryResolutionResult | None = None
+    target_seed_provenance: tuple[LocalFlowSeedProvenance, ...] = ()
+    diagnostics: tuple[KnowledgeQueryDiagnostic, ...] = ()
 
 
 class SourceScopeResolver:
     def __init__(self, graph_store: Any) -> None:
         self.graph_store = graph_store
 
-    def resolve(self) -> tuple[List[QuerySource], List[KnowledgeQueryDiagnostic]]:
-        diagnostics: List[KnowledgeQueryDiagnostic] = []
+    def resolve(self) -> tuple[list[QuerySource], list[KnowledgeQueryDiagnostic]]:
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
         raw_sources = self.graph_store.query_current_graph_sources()
-        eligible: List[QuerySource] = []
+        eligible: list[QuerySource] = []
         for source in raw_sources:
             source_id = str(source.get("sourceId") or "")
             display_name = str(source.get("displayName") or source_id or "unknown")
@@ -153,6 +258,7 @@ class SourceScopeResolver:
             graph_revision = str(source.get("graphRevision") or source.get("graph_revision") or graph_id)
             node_count = int(source.get("nodeCount") or 0)
             edge_count = int(source.get("edgeCount") or 0)
+            graph_status = str(source.get("graphStatus") or "").strip() or None
             if not source_id:
                 continue
             if not graph_id:
@@ -183,8 +289,19 @@ class SourceScopeResolver:
                     graph_revision=graph_revision,
                     node_count=node_count,
                     edge_count=edge_count,
+                    graph_status=graph_status,
                 )
             )
+            if graph_status and graph_status != "READY":
+                diagnostics.append(
+                    KnowledgeQueryDiagnostic(
+                        code="PARTIAL_SOURCE_GRAPH_STATE",
+                        message="Source graph state is not READY, but current eligible facts remain queryable.",
+                        severity="INFO",
+                        sourceId=source_id,
+                        metadata={"graphStatus": graph_status},
+                    )
+                )
         if not raw_sources:
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
@@ -204,12 +321,150 @@ class SourceScopeResolver:
         return eligible, diagnostics
 
 
+class SourceDiverseAnchorSelector:
+    """Deterministic quality-first selection with marginal diversity scoring."""
+
+    def select(
+        self,
+        candidates: Sequence[MergedCandidate],
+        policy: KnowledgeQueryPolicy,
+        *,
+        preserve_candidates: Sequence[MergedCandidate] = (),
+    ) -> list[MergedCandidate]:
+        budget = max(1, int(policy.max_selected_anchors or 1))
+        eligible = self.usable_candidates(candidates, policy)
+        if not eligible:
+            return []
+
+        by_key = {self._candidate_key(candidate): candidate for candidate in eligible}
+        preserved_keys = [self._candidate_key(candidate) for candidate in preserve_candidates if self._candidate_key(candidate) in by_key]
+        selected: list[MergedCandidate] = []
+        selected_keys: set[tuple[str, str, str]] = set()
+        source_counts: Counter[str] = Counter()
+        selected_query_inputs: set[str] = set()
+
+        for key in preserved_keys:
+            if key in selected_keys or len(selected) >= budget:
+                continue
+            candidate = by_key[key]
+            self._append_selected(candidate, selected, selected_keys, source_counts, selected_query_inputs)
+
+        while len(selected) < budget:
+            remaining = [candidate for candidate in eligible if self._candidate_key(candidate) not in selected_keys]
+            if not remaining:
+                break
+            scored = [
+                (
+                    self._marginal_quality(candidate, source_counts, selected_query_inputs),
+                    self._quality(candidate),
+                    candidate,
+                )
+                for candidate in remaining
+            ]
+            scored.sort(key=lambda item: (-round(item[0], 6), -round(item[1], 6), self._candidate_sort_key(item[2])))
+            best_marginal, _quality, best = scored[0]
+            if best_marginal < max(0.0, policy.plan_candidate_min_score - 0.12):
+                break
+            self._append_selected(best, selected, selected_keys, source_counts, selected_query_inputs)
+        return selected
+
+    def usable_candidates(self, candidates: Sequence[MergedCandidate], policy: KnowledgeQueryPolicy) -> list[MergedCandidate]:
+        usable = [
+            candidate
+            for candidate in candidates
+            if not self._is_expansion_only_candidate(candidate)
+            and self._quality(candidate) >= self._minimum_quality(candidate, policy)
+        ]
+        return sorted(usable, key=lambda candidate: (-round(self._quality(candidate), 6), self._candidate_sort_key(candidate)))
+
+    def _append_selected(
+        self,
+        candidate: MergedCandidate,
+        selected: list[MergedCandidate],
+        selected_keys: set[tuple[str, str, str]],
+        source_counts: Counter[str],
+        selected_query_inputs: set[str],
+    ) -> None:
+        selected.append(candidate)
+        selected_keys.add(self._candidate_key(candidate))
+        source_counts[candidate.document.source_id] += 1
+        selected_query_inputs.update(candidate.query_inputs)
+
+    def _minimum_quality(self, candidate: MergedCandidate, policy: KnowledgeQueryPolicy) -> float:
+        if self._is_precise_identifier_candidate(candidate):
+            return min(policy.exact_identifier_min_score, 0.72)
+        return max(0.0, float(policy.plan_candidate_min_score or 0.0))
+
+    def _marginal_quality(
+        self,
+        candidate: MergedCandidate,
+        source_counts: Counter[str],
+        selected_query_inputs: set[str],
+    ) -> float:
+        quality = self._quality(candidate)
+        quality -= min(0.14, 0.045 * source_counts[candidate.document.source_id])
+        if set(candidate.query_inputs).difference(selected_query_inputs):
+            quality += 0.015
+        if RetrievalPhase.FALLBACK.value in candidate.retrieval_phases and RetrievalPhase.PRIMARY.value not in candidate.retrieval_phases:
+            quality -= 0.015
+        return quality
+
+    def _quality(self, candidate: MergedCandidate) -> float:
+        # Anchor quality combines bounded, independent components: merged
+        # provider score, exactness, unique real providers, unique query inputs,
+        # and confidence. Query variants never count as provider agreement.
+        score = float(candidate.score or 0.0)
+        if self._is_precise_identifier_candidate(candidate):
+            score += 0.055
+        elif any(reason.startswith("EXACT") and reason != "EXACT_KIND" for reason in candidate.reasons):
+            score += 0.035
+        score += min(0.04, 0.01 * max(0, len(set(candidate.providers)) - 1))
+        score += min(0.025, 0.006 * max(0, len(set(candidate.query_inputs)) - 1))
+        if str(candidate.confidence or "").upper() == "HIGH":
+            score += 0.01
+        return min(1.2, score)
+
+    def _is_expansion_only_candidate(self, candidate: MergedCandidate) -> bool:
+        reasons = set(candidate.reasons)
+        if "QUERY_EXPANSION" not in reasons:
+            return False
+        return not reasons.intersection({"QUERY_ORIGINAL", "QUERY_NORMALIZED", "QUERY_EXACT_IDENTIFIER"})
+
+    def _is_precise_identifier_candidate(self, candidate: MergedCandidate) -> bool:
+        reasons = set(candidate.reasons)
+        if "QUERY_EXACT_IDENTIFIER" not in reasons:
+            return False
+        return any((reason.startswith("EXACT") and reason != "EXACT_KIND") or reason in _PRECISE_IDENTIFIER_REASONS for reason in reasons)
+
+    def _candidate_key(self, candidate: MergedCandidate) -> tuple[str, str, str]:
+        return (
+            candidate.document.source_id,
+            candidate.document.graph_revision or candidate.document.graph_id or "",
+            candidate.document.node_id,
+        )
+
+    def _candidate_sort_key(self, candidate: MergedCandidate) -> tuple[str, str, str, str, str]:
+        return (
+            candidate.document.source_id,
+            candidate.document.graph_revision or candidate.document.graph_id or "",
+            candidate.document.node_kind,
+            (candidate.document.label or candidate.document.name or "").lower(),
+            candidate.document.node_id,
+        )
+
+
 class UnifiedAnchorSearcher:
-    def __init__(self, graph_store: Any, search_engine: DeterministicCodeSearchEngine | None = None) -> None:
+    def __init__(
+        self,
+        graph_store: Any,
+        search_engine: DeterministicCodeSearchEngine | None = None,
+        selector: SourceDiverseAnchorSelector | None = None,
+    ) -> None:
         self.graph_store = graph_store
         self.search_engine = search_engine or DeterministicCodeSearchEngine()
         self.normalizer = QueryNormalizer()
         self.candidate_merger = CandidateMerger()
+        self.selector = selector or SourceDiverseAnchorSelector()
 
     def search(
         self,
@@ -218,59 +473,11 @@ class UnifiedAnchorSearcher:
         policy: KnowledgeQueryPolicy,
         include_tests: bool = False,
     ) -> CandidateRetrievalResult:
-        search_query = self.normalizer.normalize(query)
-        if not search_query.tokens or not eligible_sources:
-            return self._empty_result()
-        raw_documents, document_truncated = self._load_search_documents(search_query.tokens, eligible_sources, policy)
-        if not include_tests:
-            raw_documents = [item for item in raw_documents if str(item.get("flowDomain") or "").upper() != "TEST"]
-        documents = [SearchDocument.from_graph_node(candidate) for candidate in raw_documents if candidate.get("sourceId") or candidate.get("source_id")]
-        result = self.search_engine.search(query, documents, self._search_config(policy, eligible_sources, include_tests))
-        raw_candidates = list(getattr(result, "raw_candidates", []) or [])
-        pools = self._candidate_pools(raw_candidates)
-        all_candidates = self._all_candidates(raw_candidates)
-        if not all_candidates:
-            all_candidates = [self._matched_node(candidate) for candidate in result.candidates]
-            pools = self._fallback_candidate_pools(result.candidates)
-        display_limit = max(1, int(policy.max_display_candidates or 1))
-        display_candidates = all_candidates[:display_limit]
-        truncated = document_truncated or bool(getattr(result, "candidate_limit_reached", False))
-        diagnostics: List[KnowledgeQueryDiagnostic] = [self._search_diagnostic(item) for item in result.diagnostics]
-        if policy.enable_search_diagnostics and truncated:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="SEARCH_CANDIDATE_LIMIT_REACHED",
-                    message="Search reached an internal candidate safety limit before ranking completed.",
-                    severity="INFO",
-                    metadata={
-                        "maxSearchDocuments": policy.max_search_documents,
-                        "maxCandidatesPerProvider": policy.max_candidates_per_provider,
-                    },
-                )
-            )
-        if policy.enable_search_diagnostics and documents and not all_candidates:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="SEARCH_MATCHES_BELOW_THRESHOLD",
-                    message="Search inspected current graph facts, but deterministic matches did not clear ranking thresholds.",
-                    severity="INFO",
-                )
-            )
-        if policy.enable_search_diagnostics and len(display_candidates) < len(all_candidates):
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="MATCHED_NODE_PREVIEW_LIMITED",
-                    message="Matched node preview is limited for response size; graph processing used the full candidate set.",
-                    severity="INFO",
-                    metadata={"displayed": len(display_candidates), "internalCandidates": len(all_candidates)},
-                )
-            )
-        return CandidateRetrievalResult(
-            pools=pools,
-            all_candidates=all_candidates,
-            display_candidates=display_candidates,
-            diagnostics=diagnostics,
-            truncated=truncated,
+        return self.search_scope(
+            (("ORIGINAL_QUERY", query),),
+            RetrievalScope.primary(eligible_sources),
+            policy,
+            include_tests=include_tests,
         )
 
     def search_plan(
@@ -279,51 +486,63 @@ class UnifiedAnchorSearcher:
         eligible_sources: Sequence[QuerySource],
         policy: KnowledgeQueryPolicy,
         include_tests: bool = False,
+        scope: RetrievalScope | None = None,
     ) -> CandidateRetrievalResult:
-        query_inputs = plan.query_inputs()
-        combined_tokens = self.normalizer.normalize(" ".join(value for _, value in query_inputs)).tokens
-        if not combined_tokens or not eligible_sources:
-            return self._empty_result()
-        raw_documents, document_truncated = self._load_search_documents(combined_tokens, eligible_sources, policy)
-        if not include_tests:
-            raw_documents = [item for item in raw_documents if str(item.get("flowDomain") or "").upper() != "TEST"]
-        documents = [SearchDocument.from_graph_node(candidate) for candidate in raw_documents if candidate.get("sourceId") or candidate.get("source_id")]
-        config = self._search_config(policy, eligible_sources, include_tests)
-        raw_candidates: List[SearchCandidate] = []
-        diagnostics: List[KnowledgeQueryDiagnostic] = []
-        candidate_limit_reached = False
-        for query_reason, query_value in query_inputs:
-            result = self.search_engine.search(query_value, documents, config)
-            candidate_limit_reached = candidate_limit_reached or bool(getattr(result, "candidate_limit_reached", False))
-            for item in result.diagnostics:
-                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-                diagnostics.append(self._search_diagnostic({**item, "metadata": {**metadata, "queryReason": query_reason}}))
-            raw_candidates.extend(self._annotated_candidates(getattr(result, "raw_candidates", []) or [], query_reason))
+        return self.search_scope(
+            self._plan_query_inputs(plan),
+            scope or RetrievalScope.primary(eligible_sources),
+            policy,
+            include_tests=include_tests,
+        )
 
-        pools = self._candidate_pools(raw_candidates)
-        merged_candidates = self.candidate_merger.merge(raw_candidates) if raw_candidates else []
-        merged_candidates = self._filter_plan_candidates(merged_candidates, plan, policy)
-        all_candidates = [self._matched_node(candidate) for candidate in merged_candidates]
+    def search_scope(
+        self,
+        query_inputs: Sequence[tuple[str, str]],
+        scope: RetrievalScope,
+        policy: KnowledgeQueryPolicy,
+        *,
+        include_tests: bool = False,
+    ) -> CandidateRetrievalResult:
+        query_inputs = tuple((str(reason or ""), str(value or "")) for reason, value in query_inputs if str(value or "").strip())
+        combined_tokens = self.normalizer.normalize(" ".join(value for _reason, value in query_inputs)).tokens
+        if not combined_tokens or not scope.primary_sources:
+            return self._empty_result()
+
+        primary = self._run_phase(RetrievalPhase.PRIMARY, scope.primary_sources, query_inputs, combined_tokens, policy, include_tests)
+        outputs = [primary]
+        selected_primary = self.selector.select(primary.merged_candidates, policy)
+        all_raw_candidates = list(primary.raw_candidates)
+        final_merged_candidates = list(primary.merged_candidates)
+
+        if scope.fallback_sources and len(selected_primary) < max(1, int(policy.fallback_anchor_trigger_count or 1)):
+            fallback = self._run_phase(RetrievalPhase.FALLBACK, scope.fallback_sources, query_inputs, combined_tokens, policy, include_tests)
+            outputs.append(fallback)
+            all_raw_candidates.extend(fallback.raw_candidates)
+            final_merged_candidates = self.candidate_merger.merge(all_raw_candidates) if all_raw_candidates else []
+            selected_candidates = self.selector.select(final_merged_candidates, policy, preserve_candidates=selected_primary)
+        else:
+            selected_candidates = selected_primary
+
         display_limit = max(1, int(policy.max_display_candidates or 1))
+        all_candidates = [self._matched_node(candidate) for candidate in selected_candidates]
         display_candidates = all_candidates[:display_limit]
-        truncated = document_truncated or candidate_limit_reached
-        if policy.enable_search_diagnostics and truncated:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="SEARCH_CANDIDATE_LIMIT_REACHED",
-                    message="Search reached an internal candidate safety limit before ranking completed.",
-                    severity="INFO",
-                    metadata={
-                        "maxSearchDocuments": policy.max_search_documents,
-                        "maxCandidatesPerProvider": policy.max_candidates_per_provider,
-                    },
-                )
-            )
-        if policy.enable_search_diagnostics and documents and not all_candidates:
+        usable_count = len(self.selector.usable_candidates(final_merged_candidates, policy))
+        candidate_budget_reached = usable_count > len(selected_candidates) and len(selected_candidates) >= max(1, int(policy.max_selected_anchors or 1))
+        truncated = any(output.document_truncated or output.candidate_limit_reached for output in outputs) or candidate_budget_reached
+        diagnostics = self._collect_diagnostics(
+            outputs,
+            scope,
+            final_merged_candidates,
+            selected_candidates,
+            usable_count,
+            candidate_budget_reached,
+            policy,
+        )
+        if policy.enable_search_diagnostics and any(output.document_stats for output in outputs) and not all_candidates:
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
                     code="SEARCH_MATCHES_BELOW_THRESHOLD",
-                    message="Search inspected current graph facts, but deterministic matches did not clear ranking thresholds.",
+                    message="Search inspected current graph facts, but matches did not clear source-diverse anchor thresholds.",
                     severity="INFO",
                 )
             )
@@ -337,59 +556,74 @@ class UnifiedAnchorSearcher:
                 )
             )
         return CandidateRetrievalResult(
-            pools=pools,
+            pools=self._candidate_pools(all_raw_candidates),
             all_candidates=all_candidates,
             display_candidates=display_candidates,
             diagnostics=diagnostics,
             truncated=truncated,
         )
 
-    def _filter_plan_candidates(
+    def _run_phase(
         self,
-        candidates: Sequence[MergedCandidate],
-        plan: QueryRetrievalPlan,
+        phase: RetrievalPhase,
+        sources: Sequence[QuerySource],
+        query_inputs: Sequence[tuple[str, str]],
+        combined_tokens: Sequence[str],
         policy: KnowledgeQueryPolicy,
-    ) -> List[MergedCandidate]:
-        ranked = list(candidates)
-        if not ranked:
-            return []
-        if plan.code_identifiers:
-            exact_identifier = [
-                candidate
-                for candidate in ranked
-                if self._is_precise_identifier_candidate(candidate)
-            ]
-            if exact_identifier:
-                callable_exact = [candidate for candidate in exact_identifier if self._node_kind(candidate.document.node_kind) == "CALLABLE"]
-                if callable_exact:
-                    exact_identifier = callable_exact
-                top_exact = max(candidate.score for candidate in exact_identifier)
-                threshold = max(policy.exact_identifier_min_score, top_exact - policy.exact_identifier_top_delta)
-                return [candidate for candidate in exact_identifier if candidate.score >= threshold] or exact_identifier
-
-        top_score = max(candidate.score for candidate in ranked)
-        threshold = max(policy.plan_candidate_min_score, top_score - policy.plan_candidate_top_delta)
-        return [
-            candidate
-            for candidate in ranked
-            if candidate.score >= threshold
-        ]
-
-    def _is_precise_identifier_candidate(self, candidate: MergedCandidate) -> bool:
-        reasons = set(candidate.reasons)
-        if "QUERY_EXACT_IDENTIFIER" not in reasons:
-            return False
-        return any(
-            (reason.startswith("EXACT") and reason != "EXACT_KIND")
-            or reason in _PRECISE_IDENTIFIER_REASONS
-            for reason in reasons
+        include_tests: bool,
+    ) -> PhaseRetrievalOutput:
+        loaded = self._load_search_documents(combined_tokens, sources, policy, include_tests, phase)
+        config = self._search_config(policy, sources, include_tests)
+        raw_candidates: list[SearchCandidate] = []
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
+        candidate_limit_reached = False
+        for query_reason, query_value in query_inputs:
+            result = self.search_engine.search(query_value, loaded.documents, config)
+            candidate_limit_reached = candidate_limit_reached or bool(getattr(result, "candidate_limit_reached", False))
+            for item in result.diagnostics:
+                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+                diagnostics.append(
+                    self._search_diagnostic(
+                        {
+                            **item,
+                            "metadata": {
+                                **metadata,
+                                "queryReason": query_reason,
+                                "queryInput": query_value,
+                                "retrievalPhase": phase.value,
+                            },
+                        }
+                    )
+                )
+            raw_candidates.extend(self._annotated_candidates(getattr(result, "raw_candidates", []) or [], query_reason, query_value, phase))
+        merged = self.candidate_merger.merge(raw_candidates) if raw_candidates else []
+        return PhaseRetrievalOutput(
+            phase=phase,
+            raw_candidates=raw_candidates,
+            merged_candidates=merged,
+            diagnostics=diagnostics,
+            document_stats=loaded.stats,
+            document_truncated=loaded.truncated,
+            candidate_limit_reached=candidate_limit_reached,
         )
 
-    def _node_kind(self, value: str) -> str:
-        return str(value or "").upper()
+    def _plan_query_inputs(self, plan: QueryRetrievalPlan) -> tuple[tuple[str, str], ...]:
+        original_query = str(plan.original_query or "")
+        inputs: list[tuple[str, str]] = []
+        for query_reason, query_value in plan.query_inputs():
+            if query_reason == "CODE_IDENTIFIER" and str(query_value or "") not in original_query:
+                continue
+            inputs.append((query_reason, query_value))
+        return tuple(inputs)
 
-    def _annotated_candidates(self, candidates: Sequence[SearchCandidate], query_reason: str) -> List[SearchCandidate]:
-        result: List[SearchCandidate] = []
+    def _annotated_candidates(
+        self,
+        candidates: Sequence[SearchCandidate],
+        query_reason: str,
+        query_input: str,
+        phase: RetrievalPhase,
+    ) -> list[SearchCandidate]:
+        result: list[SearchCandidate] = []
         marker_reason = {
             "ORIGINAL_QUERY": "QUERY_ORIGINAL",
             "NORMALIZED_QUERY": "QUERY_NORMALIZED",
@@ -406,18 +640,16 @@ class UnifiedAnchorSearcher:
         for candidate in candidates:
             adjusted_score = min(1.0, float(candidate.score) + score_bonus)
             adjusted_priority = max(1, int(candidate.priority) + priority_bonus)
-            adjusted = replace(candidate, score=adjusted_score, priority=adjusted_priority)
+            metadata = {
+                **dict(candidate.metadata or {}),
+                "queryReason": query_reason,
+                "queryInput": query_input,
+                "retrievalPhase": phase.value,
+                "providerScore": round(float(candidate.score), 6),
+                "queryMarkerReason": marker_reason,
+            }
+            adjusted = replace(candidate, score=adjusted_score, priority=adjusted_priority, metadata=metadata)
             result.append(adjusted)
-            result.append(
-                SearchCandidate(
-                    document=candidate.document,
-                    provider="QueryPlanCandidateProvider",
-                    reason=marker_reason,
-                    score=adjusted_score,
-                    confidence=candidate.confidence,
-                    priority=adjusted_priority,
-                )
-            )
         return result
 
     def _empty_result(self) -> CandidateRetrievalResult:
@@ -429,37 +661,17 @@ class UnifiedAnchorSearcher:
             truncated=False,
         )
 
-    def _candidate_pools(self, candidates: Sequence[SearchCandidate]) -> Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]]:
-        grouped: Dict[CandidatePoolKind, List[SearchCandidate]] = defaultdict(list)
+    def _candidate_pools(self, candidates: Sequence[SearchCandidate]) -> dict[CandidatePoolKind, list[KnowledgeQueryMatchedNode]]:
+        grouped: dict[CandidatePoolKind, list[SearchCandidate]] = defaultdict(list)
         for candidate in candidates:
             grouped[self._candidate_pool_kind(candidate.provider, candidate.reason)].append(candidate)
-        pools: Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]] = {kind: [] for kind in CandidatePoolKind}
+        pools: dict[CandidatePoolKind, list[KnowledgeQueryMatchedNode]] = {kind: [] for kind in CandidatePoolKind}
         for kind, pool_candidates in grouped.items():
             pools[kind] = [self._matched_node(candidate) for candidate in self.candidate_merger.merge(pool_candidates)]
         return pools
 
-    def _all_candidates(self, candidates: Sequence[SearchCandidate]) -> List[KnowledgeQueryMatchedNode]:
-        return [self._matched_node(candidate) for candidate in self.candidate_merger.merge(candidates)] if candidates else []
-
-    def _fallback_candidate_pools(self, candidates: Sequence[MergedCandidate]) -> Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]]:
-        pools: Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]] = {kind: [] for kind in CandidatePoolKind}
-        for candidate in candidates:
-            matched_node = self._matched_node(candidate)
-            for kind in self._candidate_pool_kinds(candidate):
-                pools[kind].append(matched_node)
-        return pools
-
     def _matched_node(self, candidate: MergedCandidate) -> KnowledgeQueryMatchedNode:
         return KnowledgeQueryMatchedNode(**candidate.document.to_matched_node_dict(candidate.score, candidate.reasons))
-
-    def _candidate_pool_kinds(self, candidate: MergedCandidate) -> List[CandidatePoolKind]:
-        kinds: set[CandidatePoolKind] = set()
-        for provider in candidate.providers:
-            kinds.add(self._candidate_pool_kind(provider, ""))
-        for reason in candidate.reasons:
-            kinds.add(self._candidate_pool_kind("", reason))
-        ordered = {kind: index for index, kind in enumerate(CandidatePoolKind)}
-        return sorted(kinds or {CandidatePoolKind.EXACT}, key=lambda kind: ordered[kind])
 
     def _candidate_pool_kind(self, provider: str, reason: str) -> CandidatePoolKind:
         provider_name = str(provider or "")
@@ -491,7 +703,7 @@ class UnifiedAnchorSearcher:
             return CandidatePoolKind.FUZZY
         return CandidatePoolKind.EXACT
 
-    def _search_diagnostic(self, item: Dict[str, Any]) -> KnowledgeQueryDiagnostic:
+    def _search_diagnostic(self, item: dict[str, Any]) -> KnowledgeQueryDiagnostic:
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
         return KnowledgeQueryDiagnostic(
             code=str(item.get("code") or "SEARCH_DIAGNOSTIC"),
@@ -501,22 +713,240 @@ class UnifiedAnchorSearcher:
             metadata=dict(metadata),
         )
 
+    def _collect_diagnostics(
+        self,
+        outputs: Sequence[PhaseRetrievalOutput],
+        scope: RetrievalScope,
+        merged_candidates: Sequence[MergedCandidate],
+        selected_candidates: Sequence[MergedCandidate],
+        usable_candidate_count: int,
+        candidate_budget_reached: bool,
+        policy: KnowledgeQueryPolicy,
+    ) -> list[KnowledgeQueryDiagnostic]:
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
+        for output in outputs:
+            diagnostics.extend(output.diagnostics)
+        if not policy.enable_search_diagnostics:
+            return diagnostics
+        any_limit_reached = any(output.document_truncated or output.candidate_limit_reached for output in outputs) or candidate_budget_reached
+        if any_limit_reached:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="SEARCH_CANDIDATE_LIMIT_REACHED",
+                    message="Search reached a bounded retrieval limit before all candidates could be retained.",
+                    severity="INFO",
+                    metadata={
+                        "maxSearchDocuments": policy.max_search_documents,
+                        "maxCandidatesPerProvider": policy.max_candidates_per_provider,
+                        "maxSelectedAnchors": policy.max_selected_anchors,
+                    },
+                )
+            )
+        diagnostics.append(
+            KnowledgeQueryDiagnostic(
+                code="SOURCE_DIVERSE_RETRIEVAL_DIAGNOSTICS",
+                message="Source-diverse anchor retrieval diagnostics.",
+                severity="INFO",
+                metadata=self._retrieval_diagnostic_metadata(
+                    outputs,
+                    scope,
+                    merged_candidates,
+                    selected_candidates,
+                    usable_candidate_count,
+                    candidate_budget_reached,
+                ),
+            )
+        )
+        return diagnostics
+
+    def _retrieval_diagnostic_metadata(
+        self,
+        outputs: Sequence[PhaseRetrievalOutput],
+        scope: RetrievalScope,
+        merged_candidates: Sequence[MergedCandidate],
+        selected_candidates: Sequence[MergedCandidate],
+        usable_candidate_count: int,
+        candidate_budget_reached: bool,
+    ) -> dict[str, Any]:
+        document_stats = [stats for output in outputs for stats in output.document_stats]
+        raw_by_provider_source: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        primary_raw_count = 0
+        fallback_raw_count = 0
+        for output in outputs:
+            for candidate in output.raw_candidates:
+                raw_by_provider_source[candidate.provider][candidate.document.source_id] += 1
+            if output.phase == RetrievalPhase.PRIMARY:
+                primary_raw_count += len(output.raw_candidates)
+            elif output.phase == RetrievalPhase.FALLBACK:
+                fallback_raw_count += len(output.raw_candidates)
+        merged_by_source = Counter(candidate.document.source_id for candidate in merged_candidates)
+        selected_by_source = Counter(candidate.document.source_id for candidate in selected_candidates)
+        documents_by_source = {
+            stats.source_id: {
+                "phase": stats.phase.value,
+                "eligible": stats.eligible_document_count,
+                "allocated": stats.allocated_document_count,
+                "inspected": stats.inspected_document_count,
+                "truncated": stats.truncated_document_count,
+                "starved": stats.starved,
+            }
+            for stats in sorted(document_stats, key=lambda item: (item.phase.value, item.source_id))
+        }
+        return {
+            "eligiblePrimarySourceCount": len(scope.primary_sources),
+            "eligibleFallbackSourceCount": len(scope.fallback_sources),
+            "documentsInspectedBySource": {source_id: value["inspected"] for source_id, value in documents_by_source.items()},
+            "documentsTruncatedBySource": {
+                source_id: value["truncated"]
+                for source_id, value in documents_by_source.items()
+                if int(value["truncated"] or 0) > 0
+            },
+            "documentStatsBySource": documents_by_source,
+            "rawCandidatesByProviderAndSource": {
+                provider: dict(sorted(source_counts.items()))
+                for provider, source_counts in sorted(raw_by_provider_source.items())
+            },
+            "mergedCandidatesBySource": dict(sorted(merged_by_source.items())),
+            "selectedAnchorsBySource": dict(sorted(selected_by_source.items())),
+            "primaryCandidateCount": primary_raw_count,
+            "fallbackCandidateCount": fallback_raw_count,
+            "usableCandidateCount": usable_candidate_count,
+            "candidateBudgetReached": candidate_budget_reached,
+            "sourcesStarved": sorted(stats.source_id for stats in document_stats if stats.starved),
+        }
+
     def _load_search_documents(
         self,
         tokens: Sequence[str],
         eligible_sources: Sequence[QuerySource],
         policy: KnowledgeQueryPolicy,
-    ) -> tuple[List[Dict[str, Any]], bool]:
-        source_ids = [source.source_id for source in eligible_sources]
-        requested_limit = max(1, int(policy.max_search_documents or 1)) + 1
+        include_tests: bool,
+        phase: RetrievalPhase,
+    ) -> SourceDocumentLoadResult:
+        source_ids = [source.source_id for source in eligible_sources if source.source_id]
+        if not source_ids:
+            return SourceDocumentLoadResult(documents=[], stats=(), truncated=False)
+        total_limit = max(1, int(policy.max_search_documents or 1))
+        counts = self._search_document_counts(source_ids, eligible_sources, include_tests)
+        allocations = self._allocate_source_document_limits(counts, total_limit)
+        expected_revision_by_source = {
+            source.source_id: source.graph_revision or source.graph_id
+            for source in eligible_sources
+            if source.source_id and (source.graph_revision or source.graph_id)
+        }
+        documents: list[SearchDocument] = []
+        stats: list[SourceDocumentLoadStats] = []
+        for source in sorted(eligible_sources, key=lambda item: (counts.get(item.source_id, 0), item.source_id)):
+            source_id = source.source_id
+            eligible_count = max(0, int(counts.get(source_id, 0)))
+            allocation = max(0, int(allocations.get(source_id, 0)))
+            raw_documents = self._query_search_documents(source_id, tokens, allocation, include_tests) if allocation > 0 else []
+            source_documents: list[SearchDocument] = []
+            for raw_document in raw_documents:
+                if not raw_document.get("sourceId") and not raw_document.get("source_id"):
+                    continue
+                document = SearchDocument.from_graph_node(raw_document)
+                if not include_tests and document.flow_domain.upper() == "TEST":
+                    continue
+                expected_revision = expected_revision_by_source.get(document.source_id)
+                actual_revision = document.graph_revision or document.graph_id
+                if expected_revision and actual_revision and actual_revision != expected_revision:
+                    continue
+                source_documents.append(document)
+            documents.extend(source_documents)
+            inspected = len(source_documents)
+            truncated_count = max(0, eligible_count - inspected)
+            stats.append(
+                SourceDocumentLoadStats(
+                    phase=phase,
+                    source_id=source_id,
+                    eligible_document_count=eligible_count,
+                    allocated_document_count=allocation,
+                    inspected_document_count=inspected,
+                    truncated_document_count=truncated_count,
+                    starved=allocation <= 0 and eligible_count > 0,
+                )
+            )
+        documents.sort(key=lambda item: (item.source_id, item.node_kind, (item.label or item.name or "").lower(), item.node_id))
+        return SourceDocumentLoadResult(
+            documents=documents,
+            stats=tuple(stats),
+            truncated=any(item.truncated_document_count > 0 or item.starved for item in stats),
+        )
+
+    def _search_document_counts(
+        self,
+        source_ids: Sequence[str],
+        eligible_sources: Sequence[QuerySource],
+        include_tests: bool,
+    ) -> dict[str, int]:
+        if hasattr(self.graph_store, "query_search_document_counts"):
+            try:
+                raw_counts = self.graph_store.query_search_document_counts(list(source_ids), include_tests=include_tests)
+            except TypeError:
+                raw_counts = self.graph_store.query_search_document_counts(list(source_ids))
+            return {str(source_id): max(0, int(raw_counts.get(source_id, 0))) for source_id in source_ids}
+        return {
+            source.source_id: max(0, int(source.node_count or 0))
+            for source in eligible_sources
+            if source.source_id in set(source_ids)
+        }
+
+    def _allocate_source_document_limits(self, counts: Mapping[str, int], total_limit: int) -> dict[str, int]:
+        positive_counts = {str(source_id): max(0, int(count or 0)) for source_id, count in counts.items() if int(count or 0) > 0}
+        allocations = {str(source_id): 0 for source_id in counts}
+        if not positive_counts:
+            return allocations
+        remaining_budget = min(max(1, int(total_limit or 1)), sum(positive_counts.values()))
+        active = set(positive_counts)
+        while active and remaining_budget > 0:
+            share = max(1, remaining_budget // len(active))
+            progressed = False
+            for source_id in sorted(active, key=lambda value: (positive_counts[value] - allocations[value], value)):
+                need = positive_counts[source_id] - allocations[source_id]
+                amount = min(share, need, remaining_budget)
+                if amount <= 0:
+                    continue
+                allocations[source_id] += amount
+                remaining_budget -= amount
+                progressed = True
+                if remaining_budget <= 0:
+                    break
+            active = {source_id for source_id in active if allocations[source_id] < positive_counts[source_id]}
+            if not progressed:
+                break
+        while active and remaining_budget > 0:
+            for source_id in sorted(active, key=lambda value: (-(positive_counts[value] - allocations[value]), value)):
+                if remaining_budget <= 0:
+                    break
+                if allocations[source_id] >= positive_counts[source_id]:
+                    continue
+                allocations[source_id] += 1
+                remaining_budget -= 1
+            active = {source_id for source_id in active if allocations[source_id] < positive_counts[source_id]}
+        return allocations
+
+    def _query_search_documents(
+        self,
+        source_id: str,
+        tokens: Sequence[str],
+        allocation: int,
+        include_tests: bool,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(0, int(allocation or 0))
+        if safe_limit <= 0:
+            return []
         if hasattr(self.graph_store, "query_search_documents"):
-            raw_documents = list(self.graph_store.query_search_documents(source_ids, requested_limit))
-        else:
-            raw_documents = list(self.graph_store.query_anchor_candidates(list(tokens), source_ids, requested_limit))
-        truncated = len(raw_documents) > policy.max_search_documents
-        if truncated:
-            raw_documents = raw_documents[: policy.max_search_documents]
-        return raw_documents, truncated
+            try:
+                return list(self.graph_store.query_search_documents([source_id], safe_limit, include_tests=include_tests))
+            except TypeError:
+                return list(self.graph_store.query_search_documents([source_id], safe_limit))
+        if hasattr(self.graph_store, "query_anchor_candidates"):
+            try:
+                return list(self.graph_store.query_anchor_candidates(list(tokens), [source_id], safe_limit, include_tests=include_tests))
+            except TypeError:
+                return list(self.graph_store.query_anchor_candidates(list(tokens), [source_id], safe_limit))
+        return []
 
     def _search_config(self, policy: KnowledgeQueryPolicy, eligible_sources: Sequence[QuerySource], include_tests: bool) -> SearchConfig:
         return SearchConfig(
@@ -535,10 +965,10 @@ class UnifiedAnchorSearcher:
 
     def _hydrate_search_documents(
         self,
-        source_node_pairs: Sequence[Tuple[str, str]],
+        source_node_pairs: Sequence[tuple[str, str]],
         eligible_sources: Sequence[QuerySource],
         include_tests: bool,
-    ) -> List[SearchDocument]:
+    ) -> list[SearchDocument]:
         if not source_node_pairs or not hasattr(self.graph_store, "query_search_documents_by_node_ids"):
             return []
         expected_revision_by_source = {
@@ -546,8 +976,8 @@ class UnifiedAnchorSearcher:
             for source in eligible_sources
             if source.source_id and (source.graph_revision or source.graph_id)
         }
-        requested: List[Tuple[str, str]] = []
-        requested_keys: set[Tuple[str, str]] = set()
+        requested: list[tuple[str, str]] = []
+        requested_keys: set[tuple[str, str]] = set()
         for source_id, node_id in source_node_pairs:
             key = (str(source_id or ""), str(node_id or ""))
             if not key[0] or not key[1] or key[0] not in expected_revision_by_source:
@@ -559,7 +989,7 @@ class UnifiedAnchorSearcher:
         if not requested:
             return []
         raw_documents = self.graph_store.query_search_documents_by_node_ids(requested, len(requested))
-        documents: List[SearchDocument] = []
+        documents: list[SearchDocument] = []
         for raw_document in raw_documents:
             document = SearchDocument.from_graph_node(raw_document)
             if not include_tests and document.flow_domain.upper() == "TEST":
@@ -587,14 +1017,15 @@ class _MutableExpandedAnchor:
     roles: set[AnchorRole]
     reasons: set[AnchorExpansionReason]
     origin_node_ids: set[str]
+    seed_expansions: set[AnchorSeedExpansion]
     score: float
     order: int
 
 
 class _AnchorAccumulator:
-    def __init__(self, graph_id_by_source: Dict[str, str]) -> None:
+    def __init__(self, graph_id_by_source: dict[str, str]) -> None:
         self.graph_id_by_source = graph_id_by_source
-        self.items: Dict[AnchorNodeKey, _MutableExpandedAnchor] = {}
+        self.items: dict[AnchorNodeKey, _MutableExpandedAnchor] = {}
         self.original_keys: set[AnchorNodeKey] = set()
         self._next_order = 0
 
@@ -607,10 +1038,12 @@ class _AnchorAccumulator:
         score: float,
         *,
         original: bool = False,
+        origin_anchor: KnowledgeQueryMatchedNode | None = None,
     ) -> tuple[AnchorNodeKey | None, bool]:
         key = self.node_key(node)
         if key is None:
             return None, False
+        seed_expansions = self._seed_expansions(origin_anchor, node, reasons)
         existing = self.items.get(key)
         if existing is None:
             self.items[key] = _MutableExpandedAnchor(
@@ -618,6 +1051,7 @@ class _AnchorAccumulator:
                 roles=set(roles),
                 reasons=set(reasons),
                 origin_node_ids={origin_node_id} if origin_node_id else set(),
+                seed_expansions=set(seed_expansions),
                 score=float(score),
                 order=self._next_order,
             )
@@ -628,6 +1062,7 @@ class _AnchorAccumulator:
 
         existing.roles.update(roles)
         existing.reasons.update(reasons)
+        existing.seed_expansions.update(seed_expansions)
         if origin_node_id:
             existing.origin_node_ids.add(origin_node_id)
         if original:
@@ -661,19 +1096,58 @@ class _AnchorAccumulator:
             return None
         return (source_id, str(node.graphId or self.graph_id_by_source.get(source_id) or ""), node_id)
 
-    def anchors(self) -> List[ExpandedAnchor]:
-        anchors: List[ExpandedAnchor] = []
+    def anchors(self) -> list[ExpandedAnchor]:
+        anchors: list[ExpandedAnchor] = []
         for item in sorted(self.items.values(), key=lambda value: value.order):
             anchors.append(
                 ExpandedAnchor(
                     node=item.node,
                     roles=tuple(sorted(item.roles, key=lambda role: _ANCHOR_ROLE_ORDER[role])),
                     reasons=tuple(sorted(item.reasons, key=lambda reason: _ANCHOR_REASON_ORDER[reason])),
-                    originNodeIds=tuple(sorted(item.origin_node_ids)),
+                    originNodeIds=tuple(sorted({record.original_node_id for record in item.seed_expansions} or item.origin_node_ids)),
                     score=item.score,
+                    seedExpansions=tuple(sorted(item.seed_expansions, key=self._seed_expansion_sort_key)),
                 )
             )
         return anchors
+
+    def _seed_expansions(
+        self,
+        origin_anchor: KnowledgeQueryMatchedNode | None,
+        expanded_seed: KnowledgeQueryMatchedNode,
+        reasons: set[AnchorExpansionReason],
+    ) -> tuple[AnchorSeedExpansion, ...]:
+        if origin_anchor is None:
+            return ()
+        records = []
+        for reason in reasons:
+            records.append(
+                AnchorSeedExpansion(
+                    original_source_id=str(origin_anchor.sourceId or ""),
+                    original_graph_revision=str(origin_anchor.graphRevision or origin_anchor.graphId or ""),
+                    original_node_id=str(origin_anchor.nodeId or ""),
+                    original_stable_key=str(origin_anchor.stableKey or origin_anchor.nodeId or ""),
+                    expanded_seed_source_id=str(expanded_seed.sourceId or ""),
+                    expanded_seed_graph_revision=str(expanded_seed.graphRevision or expanded_seed.graphId or ""),
+                    expanded_seed_node_id=str(expanded_seed.nodeId or ""),
+                    expanded_seed_stable_key=str(expanded_seed.stableKey or expanded_seed.nodeId or ""),
+                    reason=reason,
+                )
+            )
+        return tuple(sorted(set(records), key=self._seed_expansion_sort_key))
+
+    def _seed_expansion_sort_key(self, item: AnchorSeedExpansion) -> tuple[str, str, str, str, str, str, str, str, int]:
+        return (
+            item.expanded_seed_source_id,
+            item.expanded_seed_graph_revision,
+            item.expanded_seed_stable_key,
+            item.expanded_seed_node_id,
+            item.original_source_id,
+            item.original_graph_revision,
+            item.original_stable_key,
+            item.original_node_id,
+            _ANCHOR_REASON_ORDER[item.reason],
+        )
 
 
 class AnchorExpansionService:
@@ -695,13 +1169,13 @@ class AnchorExpansionService:
         if not original_candidates:
             return self._result(original_candidates, accumulator, [], truncated=False)
         if self.graph_store is None or not hasattr(self.graph_store, "query_anchor_expansion"):
-            return self._result(original_candidates, accumulator, [], truncated=False, legacy_flow_seed=True)
+            return self._result(original_candidates, accumulator, [], truncated=False, use_original_candidate_as_seed=True)
 
         try:
             bundle = self.graph_store.query_anchor_expansion(
                 self._source_node_pairs(original_candidates, graph_id_by_source, revision_by_source),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - anchor expansion is optional and must fail closed to original query seeds.
             return self._result(
                 original_candidates,
                 accumulator,
@@ -713,13 +1187,13 @@ class AnchorExpansionService:
                     )
                 ],
                 truncated=False,
-                legacy_flow_seed=True,
+                use_original_candidate_as_seed=True,
             )
 
         graph_nodes = self._bundle_nodes(bundle)
         declares_out, declares_in, uses_field_in, overrides_by_contract = self._structural_edge_indexes(bundle)
         truncated = bool(bundle.truncated)
-        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
 
         def add_expanded(
             origin: KnowledgeQueryMatchedNode,
@@ -734,7 +1208,7 @@ class AnchorExpansionService:
             origin_key = accumulator.node_key(origin)
             if node_key is None or origin_key is None:
                 return
-            accumulator.add_anchor(node, roles, {reason}, origin.nodeId, node.score)
+            accumulator.add_anchor(node, roles, {reason}, origin.nodeId, node.score, origin_anchor=origin)
 
         for candidate in original_candidates:
             origin_key = accumulator.node_key(candidate)
@@ -766,7 +1240,7 @@ class AnchorExpansionService:
                         add_expanded(candidate, child, {AnchorRole.CONTEXT}, AnchorExpansionReason.TYPE_DECLARED_FIELD)
                 continue
             if kind == "FILE":
-                type_children: List[AnchorNodeKey] = []
+                type_children: list[AnchorNodeKey] = []
                 for child_key in declares_out.get(origin_key, []):
                     child = graph_nodes.get(child_key)
                     child_kind = self._node_kind(child.node_kind if child else "")
@@ -810,23 +1284,24 @@ class AnchorExpansionService:
             candidate.nodeId,
             candidate.score,
             original=True,
+            origin_anchor=candidate,
         )
 
     def _result(
         self,
-        original_candidates: List[KnowledgeQueryMatchedNode],
+        original_candidates: list[KnowledgeQueryMatchedNode],
         accumulator: _AnchorAccumulator,
-        diagnostics: List[KnowledgeQueryDiagnostic],
+        diagnostics: list[KnowledgeQueryDiagnostic],
         *,
         truncated: bool,
-        legacy_flow_seed: bool = False,
+        use_original_candidate_as_seed: bool = False,
     ) -> AnchorExpansionResult:
         expanded_anchors = accumulator.anchors()
         flow_seed_nodes = [anchor.node for anchor in expanded_anchors if AnchorRole.FLOW_SEED in anchor.roles]
-        if legacy_flow_seed:
+        if use_original_candidate_as_seed:
             flow_seed_nodes = list(original_candidates)
         context_nodes = [anchor.node for anchor in expanded_anchors if AnchorRole.CONTEXT in anchor.roles]
-        if original_candidates and not flow_seed_nodes and not legacy_flow_seed:
+        if original_candidates and not flow_seed_nodes and not use_original_candidate_as_seed:
             diagnostics = [
                 *diagnostics,
                 KnowledgeQueryDiagnostic(
@@ -847,10 +1322,10 @@ class AnchorExpansionService:
     def _source_node_pairs(
         self,
         candidates: Sequence[KnowledgeQueryMatchedNode],
-        graph_id_by_source: Dict[str, str],
-        revision_by_source: Dict[str, str],
-    ) -> List[AnchorExpansionRequest]:
-        requested: List[AnchorExpansionRequest] = []
+        graph_id_by_source: dict[str, str],
+        revision_by_source: dict[str, str],
+    ) -> list[AnchorExpansionRequest]:
+        requested: list[AnchorExpansionRequest] = []
         seen: set[AnchorNodeKey] = set()
         for candidate in candidates:
             source_id = str(candidate.sourceId or "")
@@ -877,8 +1352,8 @@ class AnchorExpansionService:
             )
         return requested
 
-    def _bundle_nodes(self, bundle: AnchorExpansionBundle) -> Dict[AnchorNodeKey, AnchorExpansionNode]:
-        nodes: Dict[AnchorNodeKey, AnchorExpansionNode] = {}
+    def _bundle_nodes(self, bundle: AnchorExpansionBundle) -> dict[AnchorNodeKey, AnchorExpansionNode]:
+        nodes: dict[AnchorNodeKey, AnchorExpansionNode] = {}
         for node in bundle.nodes:
             key = self._node_key(node)
             if key is not None:
@@ -889,15 +1364,15 @@ class AnchorExpansionService:
         self,
         bundle: AnchorExpansionBundle,
     ) -> tuple[
-        Dict[AnchorNodeKey, List[AnchorNodeKey]],
-        Dict[AnchorNodeKey, List[AnchorNodeKey]],
-        Dict[AnchorNodeKey, List[AnchorNodeKey]],
-        Dict[AnchorNodeKey, List[AnchorNodeKey]],
+        dict[AnchorNodeKey, list[AnchorNodeKey]],
+        dict[AnchorNodeKey, list[AnchorNodeKey]],
+        dict[AnchorNodeKey, list[AnchorNodeKey]],
+        dict[AnchorNodeKey, list[AnchorNodeKey]],
     ]:
-        declares_out: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
-        declares_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
-        uses_field_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
-        overrides_by_contract: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
+        declares_out: dict[AnchorNodeKey, list[AnchorNodeKey]] = defaultdict(list)
+        declares_in: dict[AnchorNodeKey, list[AnchorNodeKey]] = defaultdict(list)
+        uses_field_in: dict[AnchorNodeKey, list[AnchorNodeKey]] = defaultdict(list)
+        overrides_by_contract: dict[AnchorNodeKey, list[AnchorNodeKey]] = defaultdict(list)
         for edge in sorted(bundle.edges, key=self._edge_sort_key):
             edge_type = str(edge.edge_type or "").upper()
             from_key = self._edge_from_key(edge)
@@ -916,10 +1391,10 @@ class AnchorExpansionService:
     def _parent_keys(
         self,
         node_key: AnchorNodeKey,
-        graph_nodes: Dict[AnchorNodeKey, AnchorExpansionNode],
-        declares_in: Dict[AnchorNodeKey, List[AnchorNodeKey]],
-    ) -> List[AnchorNodeKey]:
-        result: List[AnchorNodeKey] = []
+        graph_nodes: dict[AnchorNodeKey, AnchorExpansionNode],
+        declares_in: dict[AnchorNodeKey, list[AnchorNodeKey]],
+    ) -> list[AnchorNodeKey]:
+        result: list[AnchorNodeKey] = []
         seen: set[AnchorNodeKey] = set()
         for parent_key in declares_in.get(node_key, []):
             if parent_key not in seen:
@@ -936,7 +1411,7 @@ class AnchorExpansionService:
     def _entrypoint_keys(
         self,
         bundle: AnchorExpansionBundle,
-        graph_nodes: Dict[AnchorNodeKey, AnchorExpansionNode],
+        graph_nodes: dict[AnchorNodeKey, AnchorExpansionNode],
     ) -> set[AnchorNodeKey]:
         keys: set[AnchorNodeKey] = set()
         for key, node in graph_nodes.items():
@@ -1010,29 +1485,41 @@ class AnchorExpansionService:
     def _node_kind(self, value: str) -> str:
         return str(value or "").upper()
 
+
 class KnowledgeQueryService:
     def __init__(
         self,
         source_scope_resolver: SourceScopeResolver,
         anchor_searcher: UnifiedAnchorSearcher,
-        flow_repository: EntrypointFlowGraphRepository,
-        flow_engine: EntrypointFlowEngine | None = None,
+        flow_repository: LocalFlowUnitGraphRepository,
+        flow_engine: LocalFlowUnitEngine | None = None,
         policy: KnowledgeQueryPolicy | None = None,
         anchor_expander: AnchorExpansionService | None = None,
+        continuation_policy: BoundaryContinuationPolicy | None = None,
     ) -> None:
         self.source_scope_resolver = source_scope_resolver
         self.anchor_searcher = anchor_searcher
         self.flow_repository = flow_repository
-        self.flow_engine = flow_engine or EntrypointFlowEngine(flow_repository)
+        self.flow_engine = flow_engine or LocalFlowUnitEngine(flow_repository)
         self.policy = policy or KnowledgeQueryPolicy()
+        self.continuation_policy = continuation_policy or BoundaryContinuationPolicy()
         self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_repository, "graph_store", None))
+        self.local_unit_selector = LocalFlowUnitSelector(
+            min_relevance_score=self.policy.local_unit_min_relevance_score,
+            top_delta=self.policy.local_unit_top_delta,
+        )
+        self.boundary_resolver = GenericBoundaryResolver()
+        self.end_to_end_assembler = EndToEndFlowAssembler()
+        self.graph_selector = EndToEndGraphSelector()
+        self.graph_projector = EndToEndProjectionBuilder()
 
     def query(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryResponse:
-        return self.query_with_flows(request, plan=plan).response
+        return self.query_with_graphs(request, plan=plan).response
 
-    def query_with_flows(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryExecutionResult:
+    def query_with_graphs(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryExecutionResult:
         query_started = time.monotonic()
-        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        repository_metrics_before = self._repository_metrics()
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
         eligible_sources, scope_diagnostics = self.source_scope_resolver.resolve()
         diagnostics.extend(scope_diagnostics)
         candidate_started = time.monotonic()
@@ -1067,27 +1554,68 @@ class KnowledgeQueryService:
         anchor_result = self.anchor_expander.expand(matched_nodes, eligible_sources, self.policy)
         diagnostics.extend(anchor_result.diagnostics)
         flow_seed_nodes = anchor_result.flow_seed_nodes
+        seed_provenance = self._flow_seed_provenance(anchor_result)
         request_flow_limit = max(1, min(int(request.maxFlows or 10), 10))
         build_result = self.flow_engine.build(
             flow_seed_nodes,
-            max_flows=request_flow_limit,
+            include_tests=bool(request.includeTests),
+            anchor_seed_provenance=seed_provenance,
+        )
+        selection_started = time.monotonic()
+        local_unit_selection = self.local_unit_selector.select(
+            build_result.local_units,
+            code_identifiers=tuple(plan.code_identifiers if plan is not None else ()),
+        )
+        selection_ms = (time.monotonic() - selection_started) * 1000
+        continuation_result = self._assemble_generic_boundary_continuations(
+            local_unit_selection.selected_units,
+            eligible_sources,
             include_tests=bool(request.includeTests),
         )
-        flows = build_result.flows
-        public_flows = build_result.public_flows
-        if plan is not None:
-            flows = self._select_plan_flows(flows, plan)
-            public_flows = self.flow_engine.public_flows(flows)
+        resolver_incomplete = self._boundary_resolution_incomplete(continuation_result.boundary_resolution)
+        assembly_started = time.monotonic()
+        end_to_end_assembly = self.end_to_end_assembler.assemble(
+            continuation_result.local_units,
+            query_entry_unit_ids=continuation_result.initial_selected_local_unit_ids,
+            boundary_resolution=continuation_result.boundary_resolution,
+            resolver_truncated=resolver_incomplete,
+        )
+        assembly_ms = (time.monotonic() - assembly_started) * 1000
+        graph_selection = self.graph_selector.select(
+            end_to_end_assembly.graphs,
+            score_by_unit_id=local_unit_selection.score_by_unit_id,
+            selected_initial_unit_ids=local_unit_selection.selected_unit_ids,
+            max_graphs=request_flow_limit,
+        )
+        public_graphs = self.graph_projector.graphs(graph_selection.selected_graphs)
+        diagnostics.extend(continuation_result.diagnostics)
+        diagnostics.extend(self._end_to_end_assembly_diagnostic(item) for item in end_to_end_assembly.diagnostics)
+        diagnostics.extend(self._selection_diagnostic(item) for item in local_unit_selection.diagnostics)
+        diagnostics.extend(self._selection_diagnostic(item) for item in graph_selection.diagnostics)
+        repository_metric_delta = self._repository_metric_delta(repository_metrics_before, self._repository_metrics())
+        request_traversal_stats = dict(build_result.traversal_stats or {})
+        request_traversal_stats.update(repository_metric_delta)
         diagnostics.extend(build_result.diagnostics)
         diagnostics.append(KnowledgeQueryDiagnostic(
-            code="ENTRYPOINT_FLOW_TIMINGS",
-            message="Entrypoint flow query stage timings.",
+            code="LOCAL_FLOW_UNIT_QUERY_TIMINGS",
+            message="Local-flow-unit query stage timings.",
             severity="INFO",
             metadata={
                 "candidateSearchMs": round(candidate_ms, 3),
+                "localUnitSelectionDurationMs": round(selection_ms, 3),
                 **(build_result.stage_timings_ms or {}),
+                "boundaryResolutionDurationMs": self._boundary_resolution_duration_ms(continuation_result.boundary_resolution),
+                "endToEndAssemblyDurationMs": round(assembly_ms, 3),
                 "totalMs": round((time.monotonic() - query_started) * 1000, 3),
-                **(build_result.traversal_stats or {}),
+                **request_traversal_stats,
+                "selectedLocalUnitCount": len(local_unit_selection.selected_unit_ids),
+                "rejectedLocalUnitCount": len(local_unit_selection.rejected_unit_ids),
+                "discoveredGraphCount": len(end_to_end_assembly.graphs),
+                "selectedGraphCount": len(graph_selection.selected_graphs),
+                "omittedGraphCount": len(graph_selection.omitted_graph_ids),
+                "provenTransitionCount": sum(graph.coverage.proven_cross_source_transition_count for graph in graph_selection.selected_graphs),
+                "openAmbiguousBoundaryCount": sum(graph.coverage.open_ambiguous_boundary_count for graph in graph_selection.selected_graphs),
+                "openUnresolvedBoundaryCount": sum(graph.coverage.open_unresolved_boundary_count for graph in graph_selection.selected_graphs),
             },
         ))
         matched_sources = self._matched_sources(matched_nodes, eligible_sources)
@@ -1108,117 +1636,840 @@ class KnowledgeQueryService:
                 intent=effective_intent,
                 matchedSources=matched_sources,
                 matchedNodes=[self._matched_node_preview(item) for item in display_matched_nodes],
-                flows=public_flows,
+                graphs=public_graphs,
                 coverage=KnowledgeQueryCoverage(
                     searchedSourceCount=len(eligible_sources),
                     matchedSourceCount=len(matched_sources),
                     matchedNodeCount=len(matched_nodes),
-                    flowCount=len(public_flows),
-                    nodeCount=sum(flow.coverage.node_count for flow in flows),
-                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in flows),
-                    evidenceCount=sum(len(flow.evidence) for flow in flows),
-                    truncated=candidate_result.truncated or anchor_result.truncated or build_result.truncated,
-                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or build_result.truncated,
+                    discoveredGraphCount=len(end_to_end_assembly.graphs),
+                    returnedGraphCount=len(graph_selection.selected_graphs),
+                    omittedGraphCount=len(graph_selection.omitted_graph_ids),
+                    maxFlows=request_flow_limit,
+                    selectedLocalUnitCount=len(local_unit_selection.selected_unit_ids),
+                    localUnitCount=len(continuation_result.local_units),
+                    nodeCount=sum(graph.coverage.local_node_count for graph in graph_selection.selected_graphs),
+                    edgeCount=sum(graph.coverage.local_execution_transition_count + graph.coverage.proven_cross_source_transition_count for graph in graph_selection.selected_graphs),
+                    evidenceCount=sum(len(ref.local_unit.evidence) for graph in graph_selection.selected_graphs for ref in graph.unit_refs),
+                    provenTransitionCount=sum(graph.coverage.proven_cross_source_transition_count for graph in graph_selection.selected_graphs),
+                    openAmbiguousBoundaryCount=sum(graph.coverage.open_ambiguous_boundary_count for graph in graph_selection.selected_graphs),
+                    openUnresolvedBoundaryCount=sum(graph.coverage.open_unresolved_boundary_count for graph in graph_selection.selected_graphs),
+                    truncated=candidate_result.truncated or anchor_result.truncated or graph_selection.truncated or resolver_incomplete or end_to_end_assembly.truncated,
+                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or graph_selection.truncated or resolver_incomplete or end_to_end_assembly.truncated,
                 ),
                 diagnostics=diagnostics,
             ),
-            flows=flows,
+            local_unit_selection=local_unit_selection,
+            local_units=continuation_result.local_units,
+            boundary_resolution=continuation_result.boundary_resolution,
+            end_to_end_assembly=end_to_end_assembly,
+            graph_selection=graph_selection,
+            selected_graphs=graph_selection.selected_graphs,
         )
 
-    def _select_plan_flows(
-        self,
-        flows: Sequence[EntrypointFlow],
-        plan: QueryRetrievalPlan,
-    ) -> tuple[EntrypointFlow, ...]:
-        if not flows:
-            return ()
-        exact = self._filter_flows_by_code_identifiers(flows, plan.code_identifiers)
-        if plan.code_identifiers:
-            return exact
-        return self._rank_flows_by_grounded_relevance(flows)
+    def _flow_seed_provenance(self, anchor_result: AnchorExpansionResult) -> tuple[LocalFlowSeedProvenance, ...]:
+        originals_by_identity: dict[tuple[str, str, str, str], KnowledgeQueryMatchedNode] = {}
+        for candidate in anchor_result.original_candidates:
+            originals_by_identity.setdefault(self._matched_anchor_identity(candidate), candidate)
 
-    def _filter_flows_by_code_identifiers(
-        self,
-        flows: Sequence[EntrypointFlow],
-        identifiers: Sequence[str],
-    ) -> tuple[EntrypointFlow, ...]:
-        exact_identifiers = [identifier for identifier in identifiers if str(identifier or "").strip()]
-        if not exact_identifiers:
-            return ()
-        result: List[EntrypointFlow] = []
-        for flow in flows:
-            if any(self._flow_matches_identifier(flow, identifier) for identifier in exact_identifiers):
-                result.append(flow)
-        return tuple(result)
-
-    def _flow_matches_identifier(self, flow: EntrypointFlow, identifier: str) -> bool:
-        normalized = str(identifier or "").strip()
-        if not normalized:
-            return False
-        for candidate in self._flow_identifier_candidates(flow):
-            if candidate == normalized:
-                return True
-            if self._has_symbol_suffix(candidate, normalized):
-                return True
-        return False
-
-    def _has_symbol_suffix(self, candidate: str, identifier: str) -> bool:
-        if len(candidate) <= len(identifier) or not candidate.endswith(identifier):
-            return False
-        delimiter_index = len(candidate) - len(identifier) - 1
-        return delimiter_index >= 0 and candidate[delimiter_index] in {".", "#", ":", "/", "$"}
-
-    def _flow_identifier_candidates(self, flow: EntrypointFlow) -> set[str]:
-        candidates: set[str] = set()
-        for node in flow.nodes:
-            candidates.update(
-                str(value or "").strip()
-                for value in (
-                    node.label,
-                    node.qualified_name,
-                    node.entrypoint_route,
-                    node.entrypoint_topic,
-                    node.entrypoint_interface_method,
+        reasons_by_pair: dict[tuple[tuple[str, str, str, str], tuple[str, str, str, str]], set[str]] = defaultdict(set)
+        seed_by_identity: dict[tuple[str, str, str, str], KnowledgeQueryMatchedNode] = {}
+        for expanded in anchor_result.expanded_anchors:
+            if AnchorRole.FLOW_SEED not in expanded.roles:
+                continue
+            seed_identity = self._matched_anchor_identity(expanded.node)
+            seed_by_identity.setdefault(seed_identity, expanded.node)
+            for expansion in expanded.seedExpansions:
+                original_identity = self._seed_expansion_original_identity(expansion)
+                expanded_identity = self._seed_expansion_seed_identity(expansion)
+                if expanded_identity != seed_identity:
+                    continue
+                if original_identity not in originals_by_identity:
+                    continue
+                reasons_by_pair[(original_identity, expanded_identity)].add(
+                    str(expansion.reason.value if isinstance(expansion.reason, AnchorExpansionReason) else expansion.reason)
                 )
-                if str(value or "").strip()
-            )
-        for anchor in flow.anchors:
-            candidates.update(
-                str(value or "").strip()
-                for value in (anchor.label,)
-                if str(value or "").strip()
-            )
-        return candidates
 
-    def _rank_flows_by_grounded_relevance(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]:
-        scored = [
-            (max(float(flow.relevance_score or 0.0), self._aggregate_anchor_score(flow)), flow)
-            for flow in flows
+        specs = [
+            LocalFlowSeedProvenance(
+                original_anchor=originals_by_identity[original_identity],
+                expanded_seed=seed_by_identity[expanded_identity],
+                anchor_to_seed_reasons=tuple(sorted(reasons)),
+            )
+            for (original_identity, expanded_identity), reasons in sorted(reasons_by_pair.items())
+            if original_identity in originals_by_identity and expanded_identity in seed_by_identity and reasons
         ]
-        if not scored:
-            return ()
-        top_score = max(score for score, _flow in scored)
-        threshold = max(self.policy.plan_flow_min_relevance_score, top_score - self.policy.plan_flow_top_delta)
-        selected = [
-            flow
-            for score, flow in sorted(scored, key=lambda item: (-item[0], item[1].key.source_id, item[1].key.entrypoint_node_id))
-            if score >= threshold
-        ]
-        return tuple(selected)
 
-    def _aggregate_anchor_score(self, flow: EntrypointFlow) -> float:
-        if not flow.anchors:
+        if specs:
+            return tuple(sorted(specs, key=self._flow_seed_provenance_sort_key))
+
+        seen: set[tuple[str, str, str, str, str]] = set()
+        fallback_specs: list[LocalFlowSeedProvenance] = []
+        for seed in anchor_result.flow_seed_nodes:
+            key = (seed.sourceId, seed.stableKey, seed.nodeId, seed.stableKey, seed.nodeId)
+            if key in seen:
+                continue
+            seen.add(key)
+            fallback_specs.append(
+                LocalFlowSeedProvenance(
+                    original_anchor=seed,
+                    expanded_seed=seed,
+                    anchor_to_seed_reasons=("ORIGINAL_MATCH",),
+                )
+            )
+        return tuple(sorted(fallback_specs, key=self._flow_seed_provenance_sort_key))
+
+    def _matched_anchor_identity(self, item: KnowledgeQueryMatchedNode) -> tuple[str, str, str, str]:
+        return (
+            str(item.sourceId or ""),
+            str(item.graphRevision or item.graphId or ""),
+            str(item.nodeId or ""),
+            str(item.stableKey or item.nodeId or ""),
+        )
+
+    def _seed_expansion_original_identity(self, item: AnchorSeedExpansion) -> tuple[str, str, str, str]:
+        return (
+            item.original_source_id,
+            item.original_graph_revision,
+            item.original_node_id,
+            item.original_stable_key,
+        )
+
+    def _seed_expansion_seed_identity(self, item: AnchorSeedExpansion) -> tuple[str, str, str, str]:
+        return (
+            item.expanded_seed_source_id,
+            item.expanded_seed_graph_revision,
+            item.expanded_seed_node_id,
+            item.expanded_seed_stable_key,
+        )
+
+    def _flow_seed_provenance_sort_key(self, item: LocalFlowSeedProvenance) -> tuple[str, str, str, str, str]:
+        return (
+            item.expanded_seed.sourceId,
+            item.expanded_seed.graphRevision or item.expanded_seed.graphId or "",
+            item.expanded_seed.stableKey,
+            item.original_anchor.stableKey,
+            item.original_anchor.nodeId,
+        )
+
+    def _repository_metrics(self) -> dict[str, int]:
+        if not hasattr(self.flow_repository, "metrics"):
+            return {}
+        return {
+            str(key): int(value)
+            for key, value in (self.flow_repository.metrics() or {}).items()
+            if isinstance(value, int)
+        }
+
+    def _repository_metric_delta(self, before: Mapping[str, int], after: Mapping[str, int]) -> dict[str, int]:
+        return {
+            key: max(0, int(after.get(key, 0)) - int(before.get(key, 0)))
+            for key in sorted(set(before) | set(after))
+        }
+
+    def _assemble_generic_boundary_continuations(
+        self,
+        initial_local_units: Sequence[LocalFlowUnit],
+        eligible_sources: Sequence[QuerySource],
+        *,
+        include_tests: bool,
+    ) -> ContinuationAssemblyResult:
+        active_units = tuple(sorted({unit.unit_id: unit for unit in initial_local_units or ()}.values(), key=lambda item: item.unit_id))
+        local_units_by_id: dict[str, LocalFlowUnit] = {unit.unit_id: unit for unit in active_units}
+        initial_selected_local_unit_ids = tuple(sorted(local_units_by_id))
+        if not active_units or not hasattr(self.flow_repository, "find_provided_boundary_candidates"):
+            return ContinuationAssemblyResult(
+                initial_selected_local_unit_ids,
+                tuple(sorted(local_units_by_id.values(), key=lambda item: item.unit_id)),
+                None,
+            )
+
+        diagnostics: list[BoundaryResolutionDiagnostic] = []
+        all_resolutions: list[Any] = []
+        all_proven_links: list[Any] = []
+        all_ambiguous: list[Any] = []
+        target_materializations: list[BoundaryTargetMaterialization] = []
+        unresolved: set[Any] = set()
+        truncated_required_identities: set[Any] = set()
+        discovered_owners: dict[BoundaryOwnerIdentity, BoundaryOwnerIdentity] = {}
+        materialized_by_owner: dict[tuple[str, str, str], BoundaryTargetMaterialization] = {}
+        visited_required: set[Any] = set()
+        visited_owners: set[tuple[str, str, str]] = set()
+        visited_units: set[str] = set(local_units_by_id)
+        initial_active_unit_ids = set(local_units_by_id)
+        pending_units: tuple[LocalFlowUnit, ...] = tuple(sorted(active_units, key=lambda item: item.unit_id))
+        eligible_source_ids = [source.source_id for source in eligible_sources]
+        round_count = 0
+        cycle_count = 0
+        resolver_limit_reached = False
+        resolver_limit_required_identities: set[Any] = set()
+        target_units_considered = 0
+        target_units_materialized = 0
+        target_units_omitted = 0
+        partial_target_materialization_count = 0
+
+        while pending_units:
+            round_count += 1
+            if round_count > self.continuation_policy.max_boundary_resolution_rounds:
+                resolver_limit_reached = True
+                resolver_limit_required_identities.update(
+                    boundary_identity(boundary)
+                    for boundary in self._required_boundaries(self._units_with_unvisited_required_boundaries(pending_units, visited_required))
+                )
+                diagnostics.append(
+                    BoundaryResolutionDiagnostic(
+                        code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
+                        message="Generic boundary resolution reached the internal round limit.",
+                        severity="WARN",
+                        metadata={"roundLimit": self.continuation_policy.max_boundary_resolution_rounds},
+                    )
+                )
+                break
+            round_units = self._units_with_unvisited_required_boundaries(pending_units, visited_required)
+            required_boundaries = self._required_boundaries(round_units)
+            if not required_boundaries:
+                break
+            for boundary in required_boundaries:
+                visited_required.add(boundary_identity(boundary))
+            candidate_load = self.flow_repository.find_provided_boundary_candidates(
+                required_boundaries,
+                eligible_source_ids=eligible_source_ids,
+                include_tests=include_tests,
+                internal_limits=BoundaryCandidateLoadLimits(),
+            )
+            truncated_required_identities.update(candidate_load.truncated_required_identities)
+            round_result = self.boundary_resolver.resolve(round_units, candidate_load)
+            all_resolutions.extend(round_result.resolutions)
+            all_proven_links.extend(round_result.proven_links)
+            all_ambiguous.extend(round_result.ambiguous_links)
+            unresolved.update(round_result.unresolved_boundaries)
+            diagnostics.extend(round_result.diagnostics)
+            next_units: list[LocalFlowUnit] = []
+            for link in round_result.proven_links:
+                owner_key = (link.target_owner.source_id, link.target_owner.graph_revision, link.target_owner.owner_node_id)
+                discovered_owners.setdefault(link.target_owner, link.target_owner)
+                if owner_key in visited_owners:
+                    cycle_count += 1
+                    diagnostics.append(
+                        BoundaryResolutionDiagnostic(
+                            code="BOUNDARY_RESOLUTION_CYCLE_DETECTED",
+                            message="Generic boundary resolution cycle detected; owner was not materialized again.",
+                            severity="INFO",
+                            source_id=link.target_owner.source_id,
+                            metadata={"targetOwner": self._target_owner_metadata(link.target_owner)},
+                        )
+                    )
+                    existing = materialized_by_owner.get(owner_key)
+                    if existing is not None:
+                        target_materializations.append(
+                            self._boundary_target_materialization(
+                                link,
+                                target_local_unit_ids=existing.target_local_unit_ids,
+                                omitted_target_local_unit_ids=existing.omitted_target_local_unit_ids,
+                                seed_identities=existing.expanded_target_seed_identities,
+                                seed_relations=existing.owner_to_seed_reasons,
+                                status=existing.materialization_status,
+                                diagnostics=(
+                                    BoundaryResolutionDiagnostic(
+                                        code="BOUNDARY_RESOLUTION_CYCLE_DETECTED",
+                                        message="Generic boundary resolution cycle reused an existing target materialization.",
+                                        severity="INFO",
+                                        source_id=link.target_owner.source_id,
+                                        metadata={"targetOwner": self._target_owner_metadata(link.target_owner)},
+                                    ),
+                                ),
+                            )
+                        )
+                    continue
+                visited_owners.add(owner_key)
+                target_result = self._materialize_boundary_target_owner(
+                    link.target_owner,
+                    eligible_sources,
+                    include_tests=include_tests,
+                )
+                seed_identities = self._target_seed_identities(target_result.target_seed_provenance)
+                seed_relations = self._target_seed_relations(target_result.target_seed_provenance)
+                candidate_target_units = tuple(sorted(target_result.local_units, key=lambda item: item.unit_id))
+                target_units_considered += len(candidate_target_units)
+                if not target_result.local_units:
+                    target_diagnostic = BoundaryResolutionDiagnostic(
+                        code="BOUNDARY_TARGET_UNIT_NOT_MATERIALIZED",
+                        message="A proven boundary target owner could not be materialized as a local unit.",
+                        severity="WARN",
+                        source_id=link.target_owner.source_id,
+                        metadata={"targetOwner": self._target_owner_metadata(link.target_owner)},
+                    )
+                    diagnostics.append(
+                        target_diagnostic
+                    )
+                    target_materializations.append(
+                        self._boundary_target_materialization(
+                            link,
+                            target_local_unit_ids=(),
+                            omitted_target_local_unit_ids=(),
+                            seed_identities=seed_identities,
+                            seed_relations=seed_relations,
+                            status=BoundaryTargetMaterializationStatus.NOT_MATERIALIZED,
+                            diagnostics=(*self._continuation_boundary_diagnostics(target_result.diagnostics), target_diagnostic),
+                        )
+                    )
+                    continue
+                retained_target_unit_ids: list[str] = []
+                omitted_target_unit_ids: list[str] = []
+                target_limit_diagnosed = False
+                for unit in candidate_target_units:
+                    if unit.unit_id in visited_units:
+                        retained_target_unit_ids.append(unit.unit_id)
+                        cycle_count += 1
+                        diagnostics.append(
+                            BoundaryResolutionDiagnostic(
+                                code="BOUNDARY_RESOLUTION_CYCLE_DETECTED",
+                                message="Generic boundary resolution cycle detected; local unit was not materialized again.",
+                                severity="INFO",
+                                source_id=unit.source_id,
+                                metadata={"targetUnitId": unit.unit_id},
+                            )
+                        )
+                        continue
+                    if target_units_materialized >= self.continuation_policy.max_boundary_target_units:
+                        resolver_limit_reached = True
+                        omitted_target_unit_ids.append(unit.unit_id)
+                        target_units_omitted += 1
+                        if not target_limit_diagnosed:
+                            target_limit_diagnosed = True
+                            diagnostics.append(
+                                BoundaryResolutionDiagnostic(
+                                    code="BOUNDARY_RESOLUTION_LIMIT_REACHED",
+                                    message="Generic boundary resolution reached the internal target-unit limit.",
+                                    severity="WARN",
+                                    metadata={"targetUnitLimit": self.continuation_policy.max_boundary_target_units},
+                                )
+                            )
+                        continue
+                    visited_units.add(unit.unit_id)
+                    local_units_by_id[unit.unit_id] = unit
+                    next_units.append(unit)
+                    retained_target_unit_ids.append(unit.unit_id)
+                    target_units_materialized += 1
+                if omitted_target_unit_ids:
+                    partial_target_materialization_count += 1
+                materialization_status = (
+                    BoundaryTargetMaterializationStatus.PARTIAL
+                    if omitted_target_unit_ids
+                    else BoundaryTargetMaterializationStatus.MATERIALIZED
+                )
+                materialization = self._boundary_target_materialization(
+                    link,
+                    target_local_unit_ids=retained_target_unit_ids,
+                    omitted_target_local_unit_ids=omitted_target_unit_ids,
+                    seed_identities=seed_identities,
+                    seed_relations=seed_relations,
+                    status=materialization_status,
+                    diagnostics=(
+                        *self._continuation_boundary_diagnostics(target_result.diagnostics),
+                        *(
+                            (
+                                BoundaryResolutionDiagnostic(
+                                    code="BOUNDARY_TARGET_MATERIALIZATION_PARTIAL",
+                                    message="Boundary target materialization retained only the target local units accepted before the target-unit limit.",
+                                    severity="WARN",
+                                    source_id=link.target_owner.source_id,
+                                    metadata={
+                                        "targetUnitsConsidered": len(candidate_target_units),
+                                        "targetUnitsRetained": len(retained_target_unit_ids),
+                                        "targetUnitsOmitted": len(omitted_target_unit_ids),
+                                        "omittedTargetLocalUnitIds": tuple(sorted(omitted_target_unit_ids)),
+                                    },
+                                ),
+                            )
+                            if omitted_target_unit_ids
+                            else ()
+                        ),
+                    ),
+                )
+                target_materializations.append(materialization)
+                materialized_by_owner.setdefault(owner_key, materialization)
+            if resolver_limit_reached:
+                resolver_limit_required_identities.update(
+                    boundary_identity(boundary)
+                    for boundary in self._required_boundaries(self._units_with_unvisited_required_boundaries(next_units, visited_required))
+                )
+                break
+            pending_units = tuple(sorted(next_units, key=lambda item: item.unit_id))
+
+        boundary_result = self._combined_boundary_resolution_result(
+            all_resolutions,
+            all_proven_links,
+            all_ambiguous,
+            unresolved,
+            truncated_required_identities,
+            discovered_owners,
+            tuple(sorted((unit for unit in local_units_by_id.values() if unit.unit_id not in initial_active_unit_ids), key=lambda item: item.unit_id)),
+            diagnostics,
+            round_count,
+            cycle_count,
+            resolver_limit_reached,
+            resolver_limit_required_identities,
+            target_units_considered,
+            target_units_materialized,
+            target_units_omitted,
+            partial_target_materialization_count,
+            target_materializations,
+        )
+        public_diagnostics = tuple(self._boundary_resolution_diagnostic(item) for item in boundary_result.diagnostics)
+        return ContinuationAssemblyResult(
+            initial_selected_local_unit_ids,
+            tuple(sorted(local_units_by_id.values(), key=lambda item: item.unit_id)),
+            boundary_result,
+            diagnostics=public_diagnostics,
+        )
+
+    def _materialize_boundary_target_owner(
+        self,
+        owner: BoundaryOwnerIdentity,
+        eligible_sources: Sequence[QuerySource],
+        *,
+        include_tests: bool,
+    ) -> ContinuationAssemblyResult:
+        node_key = (owner.source_id, owner.graph_revision, owner.owner_node_id)
+        loaded = self.flow_repository.load_nodes({node_key}, include_tests=include_tests) if hasattr(self.flow_repository, "load_nodes") else {}
+        node = next((item for key, item in loaded.items() if key[0] == owner.source_id and key[2] == owner.owner_node_id), None)
+        if node is None:
+            return ContinuationAssemblyResult((), (), None)
+        anchor = KnowledgeQueryMatchedNode(
+            sourceId=node.source_id,
+            nodeId=node.node_id,
+            stableKey=node.stable_key or node.node_id,
+            nodeKind=node.node_kind,
+            label=node.label,
+            score=1.0,
+            matchReasons=["GENERIC_BOUNDARY_RESOLUTION"],
+            graphId=node.graph_id,
+            graphRevision=node.graph_revision or node.graph_id,
+            relativePath=node.relative_path,
+            qualifiedName=node.qualified_name,
+            flowDomain=node.flow_domain,
+        )
+        if str(node.node_kind or "").strip().upper() == "CALLABLE":
+            flow_seed_nodes = [anchor]
+            seed_provenance = (
+                LocalFlowSeedProvenance(
+                    original_anchor=anchor,
+                    expanded_seed=anchor,
+                    anchor_to_seed_reasons=("GENERIC_BOUNDARY_PROVIDED_OWNER",),
+                ),
+            )
+        else:
+            expansion = self.anchor_expander.expand([anchor], eligible_sources, self.policy)
+            flow_seed_nodes = [seed for seed in expansion.flow_seed_nodes if self._matched_node_is_executable(seed)]
+            seed_provenance = self._flow_seed_provenance(expansion)
+        if not flow_seed_nodes:
+            return ContinuationAssemblyResult((), (), None, seed_provenance)
+        build_result = self.flow_engine.build(
+            flow_seed_nodes,
+            include_tests=include_tests,
+            anchor_seed_provenance=seed_provenance,
+        )
+        if not build_result.local_units:
+            return ContinuationAssemblyResult((), build_result.local_units, None, seed_provenance, tuple(build_result.diagnostics))
+        return ContinuationAssemblyResult(
+            (),
+            build_result.local_units,
+            None,
+            seed_provenance,
+            tuple(build_result.diagnostics),
+        )
+
+    def _units_with_unvisited_required_boundaries(
+        self,
+        units: Sequence[LocalFlowUnit],
+        visited_required: set[Any],
+    ) -> tuple[LocalFlowUnit, ...]:
+        result: list[LocalFlowUnit] = []
+        for unit in units:
+            retained = tuple(
+                boundary
+                for boundary in unit.generic_boundaries
+                if str(boundary.role or "").strip().upper() == BOUNDARY_ROLE_REQUIRED
+                and boundary_identity(boundary) not in visited_required
+            )
+            if retained:
+                result.append(replace(unit, generic_boundaries=retained))
+        return tuple(sorted(result, key=lambda item: item.unit_id))
+
+    def _required_boundaries(self, units: Sequence[LocalFlowUnit]) -> tuple[LocalBoundaryFact, ...]:
+        by_identity: dict[Any, LocalBoundaryFact] = {}
+        for unit in units:
+            for boundary in unit.generic_boundaries:
+                if str(boundary.role or "").strip().upper() == BOUNDARY_ROLE_REQUIRED:
+                    by_identity.setdefault(boundary_identity(boundary), boundary)
+        return tuple(by_identity[key] for key in sorted(by_identity))
+
+    def _matched_node_is_executable(self, node: KnowledgeQueryMatchedNode) -> bool:
+        return str(node.nodeKind or "").strip().upper() == "CALLABLE"
+
+    def _empty_boundary_resolution_result(
+        self,
+        diagnostics: Sequence[BoundaryResolutionDiagnostic],
+        *,
+        active_unit_provenance_missing: bool = False,
+        active_unit_ids: Sequence[str] = (),
+    ) -> BoundaryResolutionResult:
+        metrics = BoundaryResolverMetrics()
+        aggregate = BoundaryResolutionDiagnostic(
+            code="GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS",
+            message="Generic boundary resolution diagnostics.",
+            severity="INFO",
+            metadata={
+                "requiredBoundaryCount": 0,
+                "eligibleProvidedBoundaryCount": 0,
+                "providedCandidatesBySource": {},
+                "descriptorFingerprintsQueried": 0,
+                "candidatePairsEvaluated": 0,
+                "PROVENCount": 0,
+                "AMBIGUOUSCount": 0,
+                "UNRESOLVEDCount": 0,
+                "candidateSetsTruncated": 0,
+                "conflictCount": 0,
+                "evidenceInsufficientCount": 0,
+                "targetOwnersDiscovered": 0,
+                "targetUnitsConsidered": 0,
+                "targetUnitsMaterialized": 0,
+                "targetUnitsOmitted": 0,
+                "partialTargetMaterializationCount": 0,
+                "resolutionRounds": 0,
+                "resolutionCyclesDetected": 0,
+                "resolverSQLStatements": 0,
+                "candidateDescriptorRowsScanned": 0,
+                "candidateDescriptorRowsMatchedExactly": 0,
+                "candidateDescriptorRowBudget": 0,
+                "candidateDescriptorScanTruncated": False,
+                "candidateSourcesInspected": 0,
+                "candidateSourcesTruncated": 0,
+                "candidatePagesLoaded": 0,
+                "requiredCandidateSetsIncomplete": 0,
+            },
+        )
+        return BoundaryResolutionResult(
+            resolutions=(),
+            proven_links=(),
+            ambiguous_links=(),
+            unresolved_boundaries=(),
+            discovered_provided_owners=(),
+            diagnostics=(*tuple(diagnostics), aggregate),
+            truncation=BoundaryResolutionTruncationState(
+                active_unit_provenance_missing=active_unit_provenance_missing,
+                active_unit_ids=tuple(sorted({str(item or "") for item in active_unit_ids if str(item or "")})),
+            ),
+            metrics=metrics,
+        )
+
+    def _boundary_resolution_incomplete(self, boundary_result: BoundaryResolutionResult | None) -> bool:
+        if boundary_result is None:
+            return False
+        truncation = boundary_result.truncation
+        return (
+            truncation.candidate_sets_truncated > 0
+            or truncation.resolver_limit_reached
+            or truncation.recursion_limit_reached
+            or truncation.candidate_descriptor_scan_truncated
+            or truncation.active_unit_provenance_missing
+        )
+
+    def _combined_boundary_resolution_result(
+        self,
+        resolutions: Sequence[Any],
+        proven_links: Sequence[Any],
+        ambiguous_links: Sequence[Any],
+        unresolved_boundaries: set[Any],
+        truncated_required_identities: set[Any],
+        discovered_owners: Mapping[BoundaryOwnerIdentity, BoundaryOwnerIdentity],
+        discovered_local_units: Sequence[LocalFlowUnit],
+        diagnostics: Sequence[BoundaryResolutionDiagnostic],
+        round_count: int,
+        cycle_count: int,
+        resolver_limit_reached: bool,
+        resolver_limit_required_identities: set[Any],
+        target_units_considered: int,
+        target_units_materialized: int,
+        target_units_omitted: int,
+        partial_target_materialization_count: int,
+        target_materializations: Sequence[BoundaryTargetMaterialization],
+    ) -> BoundaryResolutionResult:
+        proven = tuple(sorted(proven_links, key=lambda item: item.resolution_id))
+        ambiguous = tuple(sorted(ambiguous_links, key=lambda item: item.resolution_id))
+        unresolved = tuple(sorted(unresolved_boundaries))
+        candidates_by_source: dict[str, int] = defaultdict(int)
+        for item in diagnostics:
+            if item.code != "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS":
+                continue
+            for source_id, count in dict(item.metadata.get("providedCandidatesBySource") or {}).items():
+                candidates_by_source[str(source_id)] += int(count or 0)
+        metrics = BoundaryResolverMetrics(
+            required_boundary_count=len(resolutions),
+            eligible_provided_boundary_count=max(
+                (
+                    int(item.metadata.get("eligibleProvidedBoundaryCount") or 0)
+                    for item in diagnostics
+                    if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+                ),
+                default=0,
+            ),
+            provided_candidates_by_source=dict(sorted(candidates_by_source.items())),
+            descriptor_fingerprints_queried=sum(
+                int(item.metadata.get("descriptorFingerprintsQueried") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_pairs_evaluated=sum(len(item.evaluated_candidates) for item in resolutions),
+            proven_count=len(proven),
+            ambiguous_count=len(ambiguous),
+            unresolved_count=len(unresolved),
+            candidate_sets_truncated=len(truncated_required_identities),
+            conflict_count=sum(
+                1
+                for resolution in resolutions
+                for candidate in resolution.evaluated_candidates
+                if candidate.conflicting_descriptors
+            ),
+            evidence_insufficient_count=sum(
+                1
+                for resolution in resolutions
+                for candidate in resolution.evaluated_candidates
+                if "BOUNDARY_EVIDENCE_INSUFFICIENT" in candidate.rejection_reasons
+            ),
+            target_owners_discovered=len(discovered_owners),
+            target_units_considered=target_units_considered,
+            target_units_materialized=target_units_materialized,
+            target_units_omitted=target_units_omitted,
+            partial_target_materialization_count=partial_target_materialization_count,
+            resolution_rounds=round_count,
+            resolution_cycles_detected=cycle_count,
+            resolver_sql_statements=sum(
+                int(item.metadata.get("resolverSQLStatements") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_descriptor_rows_scanned=sum(
+                int(item.metadata.get("candidateDescriptorRowsScanned") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_descriptor_rows_matched_exactly=sum(
+                int(item.metadata.get("candidateDescriptorRowsMatchedExactly") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_descriptor_row_budget=max(
+                (
+                    int(item.metadata.get("candidateDescriptorRowBudget") or 0)
+                    for item in diagnostics
+                    if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+                ),
+                default=0,
+            ),
+            candidate_descriptor_scan_truncated=any(
+                bool(item.metadata.get("candidateDescriptorScanTruncated"))
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_sources_inspected=sum(
+                int(item.metadata.get("candidateSourcesInspected") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_sources_truncated=sum(
+                int(item.metadata.get("candidateSourcesTruncated") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            candidate_pages_loaded=sum(
+                int(item.metadata.get("candidatePagesLoaded") or 0)
+                for item in diagnostics
+                if item.code == "GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS"
+            ),
+            required_candidate_sets_incomplete=len(truncated_required_identities),
+        )
+        aggregate = BoundaryResolutionDiagnostic(
+            code="GENERIC_BOUNDARY_RESOLUTION_DIAGNOSTICS",
+            message="Generic boundary resolution diagnostics.",
+            severity="INFO",
+            metadata={
+                "requiredBoundaryCount": metrics.required_boundary_count,
+                "eligibleProvidedBoundaryCount": metrics.eligible_provided_boundary_count,
+                "providedCandidatesBySource": metrics.provided_candidates_by_source,
+                "descriptorFingerprintsQueried": metrics.descriptor_fingerprints_queried,
+                "candidatePairsEvaluated": metrics.candidate_pairs_evaluated,
+                "PROVENCount": metrics.proven_count,
+                "AMBIGUOUSCount": metrics.ambiguous_count,
+                "UNRESOLVEDCount": metrics.unresolved_count,
+                "candidateSetsTruncated": metrics.candidate_sets_truncated,
+                "conflictCount": metrics.conflict_count,
+                "evidenceInsufficientCount": metrics.evidence_insufficient_count,
+                "targetOwnersDiscovered": metrics.target_owners_discovered,
+                "targetUnitsConsidered": metrics.target_units_considered,
+                "targetUnitsMaterialized": metrics.target_units_materialized,
+                "targetUnitsOmitted": metrics.target_units_omitted,
+                "partialTargetMaterializationCount": metrics.partial_target_materialization_count,
+                "resolutionRounds": metrics.resolution_rounds,
+                "resolutionCyclesDetected": metrics.resolution_cycles_detected,
+                "resolverSQLStatements": metrics.resolver_sql_statements,
+                "candidateDescriptorRowsScanned": metrics.candidate_descriptor_rows_scanned,
+                "candidateDescriptorRowsMatchedExactly": metrics.candidate_descriptor_rows_matched_exactly,
+                "candidateDescriptorRowBudget": metrics.candidate_descriptor_row_budget,
+                "candidateDescriptorScanTruncated": metrics.candidate_descriptor_scan_truncated,
+                "candidateSourcesInspected": metrics.candidate_sources_inspected,
+                "candidateSourcesTruncated": metrics.candidate_sources_truncated,
+                "candidatePagesLoaded": metrics.candidate_pages_loaded,
+                "requiredCandidateSetsIncomplete": metrics.required_candidate_sets_incomplete,
+            },
+        )
+        return BoundaryResolutionResult(
+            resolutions=tuple(sorted(resolutions, key=lambda item: item.resolution_id)),
+            proven_links=proven,
+            ambiguous_links=ambiguous,
+            unresolved_boundaries=unresolved,
+            discovered_provided_owners=tuple(sorted(discovered_owners.values(), key=lambda item: (item.source_id, item.graph_revision, item.owner_node_id))),
+            discovered_local_units=tuple(sorted(discovered_local_units, key=lambda item: item.unit_id)),
+            target_materializations=tuple(sorted(target_materializations, key=lambda item: (item.resolution_id, item.selected_provided_boundary_identity, item.target_owner_identity))),
+            diagnostics=(*tuple(diagnostics), aggregate),
+            truncation=BoundaryResolutionTruncationState(
+                candidate_sets_truncated=metrics.candidate_sets_truncated,
+                resolver_limit_reached=resolver_limit_reached,
+                recursion_limit_reached=round_count > self.continuation_policy.max_boundary_resolution_rounds,
+                candidate_descriptor_scan_truncated=metrics.candidate_descriptor_scan_truncated,
+                truncated_required_identities=tuple(sorted(truncated_required_identities)),
+                descriptor_scan_truncated_required_identities=tuple(sorted(truncated_required_identities))
+                if metrics.candidate_descriptor_scan_truncated
+                else (),
+                resolver_limit_required_identities=tuple(sorted(resolver_limit_required_identities)),
+            ),
+            metrics=metrics,
+        )
+
+    def _boundary_target_materialization(
+        self,
+        link: Any,
+        *,
+        target_local_unit_ids: Sequence[str],
+        omitted_target_local_unit_ids: Sequence[str] = (),
+        seed_identities: Sequence[BoundaryTargetSeedIdentity],
+        seed_relations: Sequence[BoundaryTargetSeedRelation],
+        status: BoundaryTargetMaterializationStatus,
+        diagnostics: Sequence[BoundaryResolutionDiagnostic],
+    ) -> BoundaryTargetMaterialization:
+        return BoundaryTargetMaterialization(
+            resolution_id=link.resolution_id,
+            selected_provided_boundary_identity=link.provided_boundary_identity,
+            target_owner_identity=link.target_owner,
+            target_local_unit_ids=tuple(sorted({str(item or "") for item in target_local_unit_ids if str(item or "")})),
+            expanded_target_seed_identities=tuple(sorted(set(seed_identities))),
+            owner_to_seed_reasons=tuple(sorted(set(seed_relations))),
+            materialization_status=status,
+            diagnostics=tuple(sorted(diagnostics, key=lambda item: (item.code, item.source_id or "", item.message))),
+            omitted_target_local_unit_ids=tuple(sorted({str(item or "") for item in omitted_target_local_unit_ids if str(item or "")})),
+        )
+
+    def _target_seed_identities(
+        self,
+        seed_provenance: Sequence[LocalFlowSeedProvenance],
+    ) -> tuple[BoundaryTargetSeedIdentity, ...]:
+        identities = {
+            BoundaryTargetSeedIdentity(
+                source_id=str(item.expanded_seed.sourceId or ""),
+                graph_revision=str(item.expanded_seed.graphRevision or item.expanded_seed.graphId or ""),
+                node_id=str(item.expanded_seed.nodeId or ""),
+                stable_key=str(item.expanded_seed.stableKey or item.expanded_seed.nodeId or ""),
+            )
+            for item in seed_provenance
+            if str(item.expanded_seed.nodeId or "")
+        }
+        return tuple(sorted(identities))
+
+    def _target_seed_relations(
+        self,
+        seed_provenance: Sequence[LocalFlowSeedProvenance],
+    ) -> tuple[BoundaryTargetSeedRelation, ...]:
+        reasons_by_seed: dict[BoundaryTargetSeedIdentity, set[str]] = defaultdict(set)
+        for item in seed_provenance:
+            seed = BoundaryTargetSeedIdentity(
+                source_id=str(item.expanded_seed.sourceId or ""),
+                graph_revision=str(item.expanded_seed.graphRevision or item.expanded_seed.graphId or ""),
+                node_id=str(item.expanded_seed.nodeId or ""),
+                stable_key=str(item.expanded_seed.stableKey or item.expanded_seed.nodeId or ""),
+            )
+            if not seed.node_id:
+                continue
+            reasons_by_seed[seed].update(str(reason or "") for reason in item.anchor_to_seed_reasons if str(reason or ""))
+        return tuple(
+            sorted(
+                (
+                    BoundaryTargetSeedRelation(seed_identity=seed, reasons=tuple(sorted(reasons)))
+                    for seed, reasons in reasons_by_seed.items()
+                )
+            )
+        )
+
+    def _continuation_boundary_diagnostics(
+        self,
+        diagnostics: Sequence[KnowledgeQueryDiagnostic],
+    ) -> tuple[BoundaryResolutionDiagnostic, ...]:
+        return tuple(
+            BoundaryResolutionDiagnostic(
+                code=item.code,
+                message=item.message,
+                severity=item.severity,
+                source_id=item.sourceId,
+                metadata=dict(item.metadata or {}),
+            )
+            for item in diagnostics
+        )
+
+    def _boundary_resolution_diagnostic(self, item: BoundaryResolutionDiagnostic) -> KnowledgeQueryDiagnostic:
+        return KnowledgeQueryDiagnostic(
+            code=item.code,
+            message=item.message,
+            severity=item.severity,
+            sourceId=item.source_id,
+            metadata=dict(item.metadata or {}),
+        )
+
+    def _end_to_end_assembly_diagnostic(self, item: EndToEndFlowDiagnostic) -> KnowledgeQueryDiagnostic:
+        return KnowledgeQueryDiagnostic(
+            code=item.code,
+            message=item.message,
+            severity=item.severity,
+            sourceId=item.source_id,
+            metadata=dict(item.metadata or {}),
+        )
+
+    def _selection_diagnostic(self, item: Mapping[str, Any]) -> KnowledgeQueryDiagnostic:
+        metadata = dict(item)
+        code = str(metadata.pop("code", "END_TO_END_GRAPH_SELECTION_DIAGNOSTICS"))
+        return KnowledgeQueryDiagnostic(
+            code=code,
+            message="Canonical flow graph selection diagnostics.",
+            severity="INFO",
+            metadata=metadata,
+        )
+
+    def _boundary_resolution_duration_ms(self, boundary_result: BoundaryResolutionResult | None) -> float:
+        if boundary_result is None:
             return 0.0
-        best = max(float(anchor.score or 0.0) for anchor in flow.anchors)
-        support = min(len(flow.anchors), 10) * 0.01
-        proximity = 0.01 / (1 + min(anchor.distance for anchor in flow.anchors))
-        return best + support + proximity
+        return 0.0
+
+    def _target_owner_metadata(self, owner: BoundaryOwnerIdentity) -> dict[str, Any]:
+        return {
+            "sourceId": owner.source_id,
+            "graphRevision": owner.graph_revision,
+            "ownerNodeId": owner.owner_node_id,
+            "boundaryKey": owner.boundary_identity.boundary_key,
+        }
 
     def _matched_sources(
         self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], eligible_sources: Sequence[QuerySource]
-    ) -> List[KnowledgeQueryMatchedSource]:
+    ) -> list[KnowledgeQueryMatchedSource]:
         display_names = {source.source_id: source.display_name for source in eligible_sources}
-        scores: Dict[str, float] = {}
+        scores: dict[str, float] = {}
         for matched_node in matched_nodes:
             scores[matched_node.sourceId] = max(scores.get(matched_node.sourceId, 0.0), matched_node.score)
         return [
@@ -1257,7 +2508,7 @@ def build_knowledge_query_service(graph_store: Any, app_config: Any | None = Non
     return KnowledgeQueryService(
         source_scope_resolver=SourceScopeResolver(graph_store),
         anchor_searcher=UnifiedAnchorSearcher(graph_store, search_engine=search_engine),
-        flow_repository=EntrypointFlowGraphRepository(graph_store),
+        flow_repository=LocalFlowUnitGraphRepository(graph_store),
         anchor_expander=AnchorExpansionService(graph_store),
     )
 
@@ -1271,7 +2522,7 @@ def _semantic_candidate_provider(graph_store: Any, app_config: Any | None, embed
     try:
         from knowledge_service.embedding_provider import OllamaEmbeddingProvider
         from knowledge_service.semantic_search import SemanticCandidateProvider, SemanticSearchConfig
-    except Exception:
+    except Exception:  # noqa: BLE001 - semantic search is an optional provider; import/config failures disable it.
         return None
     provider = embedding_provider
     if provider is None:

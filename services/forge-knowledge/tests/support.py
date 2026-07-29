@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import sqlite3
 import asyncio
 import json
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import FastAPI
+from typing_extensions import Self
 
 from knowledge_service.analysis_service import AnalysisProvider
 from knowledge_service.bootstrap import KnowledgeDependencies, build_dependencies
@@ -22,9 +23,9 @@ from knowledge_service.query_interpretation import QueryInterpretationProviderRe
 class AsgiResponse:
     status_code: int
     body: bytes
-    headers: Dict[str, str]
+    headers: dict[str, str]
 
-    def json(self) -> Dict[str, Any]:
+    def json(self) -> dict[str, Any]:
         return json.loads(self.body.decode("utf-8") or "{}")
 
 
@@ -34,10 +35,10 @@ class AsgiTestClient:
     def __init__(self, app: FastAPI) -> None:
         self.app = app
         self._lifespan = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._previous_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._previous_loop: asyncio.AbstractEventLoop | None = None
 
-    def __enter__(self) -> "AsgiTestClient":
+    def __enter__(self) -> Self:
         try:
             self._previous_loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -57,12 +58,11 @@ class AsgiTestClient:
             self._loop = None
         asyncio.set_event_loop(self._previous_loop)
         self._previous_loop = None
-        return None
 
-    def get(self, path: str, headers: Optional[Dict[str, str]] = None) -> AsgiResponse:
+    def get(self, path: str, headers: dict[str, str] | None = None) -> AsgiResponse:
         return self._run(self._request("GET", path, None, headers or {}))
 
-    def post(self, path: str, json: Optional[Dict[str, Any]] = None, headers: Optional[Dict[str, str]] = None) -> AsgiResponse:
+    def post(self, path: str, json: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> AsgiResponse:
         return self._run(self._request("POST", path, json or {}, headers or {}))
 
     def _run(self, awaitable):
@@ -70,20 +70,20 @@ class AsgiTestClient:
             return self._loop.run_until_complete(awaitable)
         return asyncio.run(awaitable)
 
-    async def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]], headers: Dict[str, str]) -> AsgiResponse:
+    async def _request(self, method: str, path: str, payload: dict[str, Any] | None, headers: dict[str, str]) -> AsgiResponse:
         raw_path, _, query = path.partition("?")
         body = b"" if payload is None else json.dumps(payload).encode("utf-8")
-        messages: List[Dict[str, Any]] = []
+        messages: list[dict[str, Any]] = []
         received = False
 
-        async def receive() -> Dict[str, Any]:
+        async def receive() -> dict[str, Any]:
             nonlocal received
             if received:
                 return {"type": "http.disconnect"}
             received = True
             return {"type": "http.request", "body": body, "more_body": False}
 
-        async def send(message: Dict[str, Any]) -> None:
+        async def send(message: dict[str, Any]) -> None:
             messages.append(message)
 
         scope = {
@@ -117,9 +117,9 @@ class DeterministicAnalysisProvider:
 
     def analyze(
         self,
-        payload: Dict[str, object],
+        payload: dict[str, object],
         line_count: int,
-        repair_prompt: Optional[str] = None,
+        repair_prompt: str | None = None,
     ) -> GraphAnalysisResult:
         return GraphAnalysisResult(
             diagnostics=[
@@ -141,9 +141,9 @@ class FailingAnalysisProvider:
 
     def analyze(
         self,
-        payload: Dict[str, object],
+        payload: dict[str, object],
         line_count: int,
-        repair_prompt: Optional[str] = None,
+        repair_prompt: str | None = None,
     ) -> GraphAnalysisResult:
         raise KnowledgeError(
             "ANALYSIS_AI_TRANSPORT_ERROR",
@@ -159,7 +159,7 @@ class DeterministicQueryInterpretationProvider:
     model = "deterministic"
 
     def __init__(self) -> None:
-        self.calls: List[Dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
 
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
         self.calls.append(
@@ -187,6 +187,35 @@ class DeterministicQueryInterpretationProvider:
         return QueryInterpretationProviderResult(raw_text=json.dumps(payload), prompt_char_length=100)
 
 
+class DeterministicFinalFlowFormatterProvider:
+    name = "deterministic-final-flow-formatter"
+    model = "deterministic"
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def generate(self, formatter_input, *, deadline_at=None, cancel_event=None, validation_errors=()):
+        del deadline_at, cancel_event
+        self.calls.append(
+            {
+                "formatterInput": dict(formatter_input),
+                "validationErrors": list(validation_errors or []),
+            }
+        )
+        response_language = str(formatter_input.get("responseLanguage") or "en").lower()
+        clauses = [_formatter_clause(clause, response_language) for clause in formatter_input.get("clauses", [])]
+        return type(
+            "ProviderResult",
+            (),
+            {
+                "raw_text": json.dumps({"clauses": clauses}, ensure_ascii=False),
+                "prompt_char_length": 100,
+                "prompt_hash": "deterministic-prompt-hash",
+                "duration_ms": 1.0,
+            },
+        )()
+
+
 def _strip_code_symbols(value: str) -> str:
     result = value
     for identifier in _query_identifiers(value):
@@ -194,18 +223,58 @@ def _strip_code_symbols(value: str) -> str:
     return result
 
 
-def _query_identifiers(value: str) -> List[str]:
+def _query_identifiers(value: str) -> list[str]:
     import re
 
-    identifiers: List[str] = []
+    identifiers: list[str] = []
     for match in re.finditer(r"\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\b", value):
         identifiers.append(match.group(0))
     return identifiers
 
 
+def _formatter_clause(clause: dict[str, Any], language: str) -> dict[str, Any]:
+    referenced = _formatter_references(clause)
+    return {
+        "clauseRef": clause.get("clauseRef"),
+        "referencedCanonicalRefs": referenced,
+        "textTemplate": _formatter_sentence(clause, referenced, language),
+    }
+
+
+def _formatter_sentence(clause: dict[str, Any], referenced: list[str], language: str) -> str:
+    joined = ", ".join(f"{{{{ref:{item}}}}}" for item in referenced) if referenced else str(clause.get("clauseKind") or "clause")
+    if language == "uk":
+        return f"Цей пункт описує канонічні факти: {joined}."
+    if language == "de":
+        return f"Dieser Satz beschreibt kanonische Fakten: {joined}."
+    if language == "fr":
+        return f"Cette phrase décrit les faits canoniques: {joined}."
+    if language == "pl":
+        return f"To zdanie opisuje fakty kanoniczne: {joined}."
+    return f"This clause describes canonical facts: {joined}."
+
+
+def _formatter_references(clause: dict[str, Any]) -> list[str]:
+    allowed = set(clause.get("allowedCanonicalRefs") or [])
+    preferred: list[str] = []
+    candidates = [ref for ref in allowed if isinstance(ref, str)]
+    for prefix in ("unit:", "topology-boundary:", "edge:", "root:", "node:", "transition:", "open-boundary:", "branch:", "convergence:", "cycle:", "shared-unit:"):
+        for ref in candidates:
+            if ref.startswith(prefix) and ref not in preferred:
+                preferred.append(ref)
+    for ref in candidates:
+        if ref not in preferred:
+            preferred.append(ref)
+    if preferred:
+        return sorted(preferred[:2])
+    return []
+
+
 def write_runtime_config(
     tmp_path: Path,
     *,
+    analysis_enabled: bool = True,
+    startup_maintenance_enabled: bool = True,
     max_file_size_bytes: int = 500000,
     semantic_auto_build_enabled: bool = False,
     semantic_auto_build_interval_seconds: float = 60.0,
@@ -284,6 +353,7 @@ forge:
     config-dir: "{config_dir}"
     runtime-dir: "{runtime_dir}"
     workspace-root: "{workspace}"
+    startup-maintenance-enabled: {str(startup_maintenance_enabled).lower()}
     logging:
       level: INFO
       console-enabled: false
@@ -306,13 +376,12 @@ forge:
           auto-refresh-enabled: false
           auto-refresh-interval-seconds: 60
         analysis:
-          enabled: true
+          enabled: {str(analysis_enabled).lower()}
           request-timeout-seconds: 5
           max-file-chars: 60000
           max-chunk-chars: 20000
           concurrency: 1
           max-attempts-per-file: 1
-          repair-attempts-per-file: 0
         semantic:
           enabled: true
           auto-build-enabled: {str(semantic_auto_build_enabled).lower()}
@@ -328,7 +397,7 @@ forge:
 def build_test_app(
     config_file: Path,
     *,
-    provider: Optional[AnalysisProvider] = None,
+    provider: AnalysisProvider | None = None,
 ) -> tuple[FastAPI, ForgeSettings, AppConfig, KnowledgeDependencies]:
     env = {
         "FORGE_CONFIG_FILE": str(config_file),
@@ -345,9 +414,10 @@ def build_test_app(
     )
     app = create_app(settings=settings, dependencies=deps)
     app.state.query_interpretation_provider = DeterministicQueryInterpretationProvider()
+    app.state.end_to_end_formatter_provider = DeterministicFinalFlowFormatterProvider()
     return app, settings, app_config, deps
 
 
-def sqlite_table_counts(db_path: Path, tables: List[str]) -> Dict[str, int]:
+def sqlite_table_counts(db_path: Path, tables: list[str]) -> dict[str, int]:
     with sqlite3.connect(db_path) as conn:
         return {table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]) for table in tables}

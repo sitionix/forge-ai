@@ -87,137 +87,6 @@
         "title": "ContextRequest",
         "type": "object"
       },
-      "FlowToolEvidence": {
-        "properties": {
-          "excerpt": {
-            "title": "Excerpt",
-            "type": "string"
-          },
-          "lineEnd": {
-            "title": "Lineend",
-            "type": "integer"
-          },
-          "lineStart": {
-            "title": "Linestart",
-            "type": "integer"
-          },
-          "path": {
-            "title": "Path",
-            "type": "string"
-          }
-        },
-        "title": "FlowToolEvidence",
-        "type": "object"
-      },
-      "FlowToolTree": {
-        "properties": {
-          "entrypoint": {
-            "$ref": "#/components/schemas/FlowToolTreeItem"
-          },
-          "source": {
-            "title": "Source",
-            "type": "string"
-          }
-        },
-        "required": [
-          "source",
-          "entrypoint"
-        ],
-        "title": "FlowToolTree",
-        "type": "object"
-      },
-      "FlowToolTreeItem": {
-        "properties": {
-          "children": {
-            "items": {
-              "$ref": "#/components/schemas/FlowToolTreeItem"
-            },
-            "title": "Children",
-            "type": "array"
-          },
-          "cycle": {
-            "title": "Cycle",
-            "type": "boolean"
-          },
-          "description": {
-            "title": "Description",
-            "type": "string"
-          },
-          "evidence": {
-            "items": {
-              "$ref": "#/components/schemas/FlowToolEvidence"
-            },
-            "title": "Evidence",
-            "type": "array"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "lineEnd": {
-            "title": "Lineend",
-            "type": "integer"
-          },
-          "lineStart": {
-            "title": "Linestart",
-            "type": "integer"
-          },
-          "path": {
-            "title": "Path",
-            "type": "string"
-          },
-          "shared": {
-            "title": "Shared",
-            "type": "boolean"
-          },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
-          },
-          "trigger": {
-            "$ref": "#/components/schemas/FlowToolTrigger"
-          }
-        },
-        "required": [
-          "symbol",
-          "kind"
-        ],
-        "title": "FlowToolTreeItem",
-        "type": "object"
-      },
-      "FlowToolTrigger": {
-        "properties": {
-          "interfaceMethod": {
-            "title": "Interfacemethod",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "method": {
-            "title": "Method",
-            "type": "string"
-          },
-          "route": {
-            "title": "Route",
-            "type": "string"
-          },
-          "schedule": {
-            "title": "Schedule",
-            "type": "string"
-          },
-          "topic": {
-            "title": "Topic",
-            "type": "string"
-          }
-        },
-        "required": [
-          "kind"
-        ],
-        "title": "FlowToolTrigger",
-        "type": "object"
-      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -256,15 +125,37 @@
         "title": "InventoryBuildRequest",
         "type": "object"
       },
-      "KnowledgeFlowAnswer": {
+      "KnowledgeGraphAnswer": {
         "properties": {
-          "entrypoint": {
-            "title": "Entrypoint",
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "graphId": {
+            "title": "Graphid",
             "type": "string"
           },
-          "source": {
-            "title": "Source",
-            "type": "string"
+          "queryEntries": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeGraphAnswerQueryEntry"
+            },
+            "title": "Queryentries",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
           },
           "text": {
             "title": "Text",
@@ -272,11 +163,32 @@
           }
         },
         "required": [
-          "source",
-          "entrypoint",
+          "graphId",
           "text"
         ],
-        "title": "KnowledgeFlowAnswer",
+        "title": "KnowledgeGraphAnswer",
+        "type": "object"
+      },
+      "KnowledgeGraphAnswerQueryEntry": {
+        "properties": {
+          "root": {
+            "title": "Root",
+            "type": "object"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "unitId": {
+            "title": "Unitid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceId"
+        ],
+        "title": "KnowledgeGraphAnswerQueryEntry",
         "type": "object"
       },
       "KnowledgeHumanQueryResponse": {
@@ -287,7 +199,7 @@
           },
           "answers": {
             "items": {
-              "$ref": "#/components/schemas/KnowledgeFlowAnswer"
+              "$ref": "#/components/schemas/KnowledgeGraphAnswer"
             },
             "title": "Answers",
             "type": "array"
@@ -335,6 +247,366 @@
           "message"
         ],
         "title": "KnowledgeQueryDiagnostic",
+        "type": "object"
+      },
+      "KnowledgeQueryGraphCoverage": {
+        "properties": {
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "cycleCount": {
+            "default": 0,
+            "title": "Cyclecount",
+            "type": "integer"
+          },
+          "localExecutionTransitionCount": {
+            "default": 0,
+            "title": "Localexecutiontransitioncount",
+            "type": "integer"
+          },
+          "localNodeCount": {
+            "default": 0,
+            "title": "Localnodecount",
+            "type": "integer"
+          },
+          "missingUnitMappingCount": {
+            "default": 0,
+            "title": "Missingunitmappingcount",
+            "type": "integer"
+          },
+          "openAmbiguousBoundaryCount": {
+            "default": 0,
+            "title": "Openambiguousboundarycount",
+            "type": "integer"
+          },
+          "openUnresolvedBoundaryCount": {
+            "default": 0,
+            "title": "Openunresolvedboundarycount",
+            "type": "integer"
+          },
+          "orphanResolutionCount": {
+            "default": 0,
+            "title": "Orphanresolutioncount",
+            "type": "integer"
+          },
+          "provenCrossSourceTransitionCount": {
+            "default": 0,
+            "title": "Provencrosssourcetransitioncount",
+            "type": "integer"
+          },
+          "queryEntryUnitCount": {
+            "default": 0,
+            "title": "Queryentryunitcount",
+            "type": "integer"
+          },
+          "sourceCount": {
+            "default": 0,
+            "title": "Sourcecount",
+            "type": "integer"
+          },
+          "topologyEntryUnitCount": {
+            "default": 0,
+            "title": "Topologyentryunitcount",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "unitCount": {
+            "default": 0,
+            "title": "Unitcount",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeQueryGraphCoverage",
+        "type": "object"
+      },
+      "KnowledgeQueryGraphOpenBoundary": {
+        "properties": {
+          "descriptorFingerprintHashes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Descriptorfingerprinthashes",
+            "type": "array"
+          },
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "rejectionReasonCodes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rejectionreasoncodes",
+            "type": "array"
+          },
+          "requiredBoundary": {
+            "title": "Requiredboundary",
+            "type": "object"
+          },
+          "sourceUnitIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourceunitids",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "viableCandidateBoundaries": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Viablecandidateboundaries",
+            "type": "array"
+          },
+          "viableCandidateOwners": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Viablecandidateowners",
+            "type": "array"
+          }
+        },
+        "required": [
+          "requiredBoundary",
+          "status"
+        ],
+        "title": "KnowledgeQueryGraphOpenBoundary",
+        "type": "object"
+      },
+      "KnowledgeQueryGraphTransition": {
+        "properties": {
+          "evidenceRefs": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "kind": {
+            "default": "PROVEN_BOUNDARY_CONTINUATION",
+            "title": "Kind",
+            "type": "string"
+          },
+          "providedBoundary": {
+            "title": "Providedboundary",
+            "type": "object"
+          },
+          "provingDescriptorFingerprintHashes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Provingdescriptorfingerprinthashes",
+            "type": "array"
+          },
+          "requiredBoundary": {
+            "title": "Requiredboundary",
+            "type": "object"
+          },
+          "resolutionId": {
+            "title": "Resolutionid",
+            "type": "string"
+          },
+          "sourceUnitId": {
+            "title": "Sourceunitid",
+            "type": "string"
+          },
+          "targetSeeds": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Targetseeds",
+            "type": "array"
+          },
+          "targetUnitId": {
+            "title": "Targetunitid",
+            "type": "string"
+          },
+          "transitionId": {
+            "title": "Transitionid",
+            "type": "string"
+          },
+          "verificationStatus": {
+            "default": "PROVEN",
+            "title": "Verificationstatus",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transitionId",
+          "resolutionId",
+          "sourceUnitId",
+          "targetUnitId",
+          "requiredBoundary",
+          "providedBoundary"
+        ],
+        "title": "KnowledgeQueryGraphTransition",
+        "type": "object"
+      },
+      "KnowledgeQueryGraphUnit": {
+        "properties": {
+          "anchors": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Anchors",
+            "type": "array"
+          },
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/KnowledgeQueryGraphUnitCoverage"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "genericBoundaries": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Genericboundaries",
+            "type": "array"
+          },
+          "graphRevision": {
+            "title": "Graphrevision",
+            "type": "string"
+          },
+          "localTransitions": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Localtransitions",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "querySelectedInitial": {
+            "default": false,
+            "title": "Queryselectedinitial",
+            "type": "boolean"
+          },
+          "recursivelyDiscovered": {
+            "default": false,
+            "title": "Recursivelydiscovered",
+            "type": "boolean"
+          },
+          "roots": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Roots",
+            "type": "array"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "supportingContext": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Supportingcontext",
+            "type": "array"
+          },
+          "topologyBoundaries": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Topologyboundaries",
+            "type": "array"
+          },
+          "unitId": {
+            "title": "Unitid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceId",
+          "graphRevision"
+        ],
+        "title": "KnowledgeQueryGraphUnit",
+        "type": "object"
+      },
+      "KnowledgeQueryGraphUnitCoverage": {
+        "properties": {
+          "anchorCount": {
+            "default": 0,
+            "title": "Anchorcount",
+            "type": "integer"
+          },
+          "cycleDetected": {
+            "default": false,
+            "title": "Cycledetected",
+            "type": "boolean"
+          },
+          "genericBoundaryCount": {
+            "default": 0,
+            "title": "Genericboundarycount",
+            "type": "integer"
+          },
+          "maxDepthReached": {
+            "default": 0,
+            "title": "Maxdepthreached",
+            "type": "integer"
+          },
+          "nodeCount": {
+            "default": 0,
+            "title": "Nodecount",
+            "type": "integer"
+          },
+          "rootCount": {
+            "default": 0,
+            "title": "Rootcount",
+            "type": "integer"
+          },
+          "topologyBoundaryCount": {
+            "default": 0,
+            "title": "Topologyboundarycount",
+            "type": "integer"
+          },
+          "transitionCount": {
+            "default": 0,
+            "title": "Transitioncount",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "KnowledgeQueryGraphUnitCoverage",
         "type": "object"
       },
       "KnowledgeQueryIntent": {
@@ -385,6 +657,69 @@
         "title": "KnowledgeQueryRequest",
         "type": "object"
       },
+      "KnowledgeQueryToolContextGraph": {
+        "properties": {
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/KnowledgeQueryGraphCoverage"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "graphId": {
+            "title": "Graphid",
+            "type": "string"
+          },
+          "openBoundaries": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryGraphOpenBoundary"
+            },
+            "title": "Openboundaries",
+            "type": "array"
+          },
+          "provenTransitions": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryGraphTransition"
+            },
+            "title": "Proventransitions",
+            "type": "array"
+          },
+          "queryEntryUnitIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Queryentryunitids",
+            "type": "array"
+          },
+          "topologyEntryUnitIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topologyentryunitids",
+            "type": "array"
+          },
+          "units": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryGraphUnit"
+            },
+            "title": "Units",
+            "type": "array"
+          }
+        },
+        "required": [
+          "graphId"
+        ],
+        "title": "KnowledgeQueryToolContextGraph",
+        "type": "object"
+      },
       "KnowledgeQueryToolContextResponse": {
         "properties": {
           "diagnostics": {
@@ -394,16 +729,16 @@
             "title": "Diagnostics",
             "type": "array"
           },
+          "graphs": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryToolContextGraph"
+            },
+            "title": "Graphs",
+            "type": "array"
+          },
           "queryText": {
             "title": "Querytext",
             "type": "string"
-          },
-          "trees": {
-            "items": {
-              "$ref": "#/components/schemas/FlowToolTree"
-            },
-            "title": "Trees",
-            "type": "array"
           }
         },
         "required": [

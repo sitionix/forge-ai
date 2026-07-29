@@ -155,17 +155,46 @@ def human_answer_bundle(
     *,
     text: str = "JarvisGateway handles the request.",
     answer_language: str = "uk",
-    answers: Optional[List[Dict[str, str]]] = None,
+    answers: Optional[List[Dict[str, Any]]] = None,
     sources: Optional[List[Dict[str, str]]] = None,
-    diagnostics: Optional[List[Dict[str, str]]] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     if answers is None:
         source_items = sources if sources is not None else [{"source": "forge-ai", "entrypoint": "JarvisGateway"}]
-        answers = [{**item, "text": text} for item in source_items]
+        answers = [_graph_answer(item["source"], item["entrypoint"], text, index=index) for index, item in enumerate(source_items, start=1)]
+    else:
+        answers = [
+            _graph_answer(item["source"], item["entrypoint"], item["text"], index=index)
+            if "graphId" not in item and "source" in item and "entrypoint" in item
+            else item
+            for index, item in enumerate(answers, start=1)
+        ]
     return {
         "answerLanguage": answer_language,
         "answers": answers,
         "diagnostics": diagnostics or [],
+    }
+
+
+def _graph_answer(source_id: str, entrypoint: str, text: str, *, index: int) -> Dict[str, Any]:
+    unit_id = f"{source_id}:unit:{entrypoint}"
+    graph_id = f"graph-{index}"
+    return {
+        "graphId": graph_id,
+        "sources": [source_id],
+        "queryEntries": [
+            {
+                "unitId": unit_id,
+                "sourceId": source_id,
+                "root": {
+                    "qualifiedName": entrypoint,
+                    "label": entrypoint,
+                },
+            }
+        ],
+        "text": text,
+        "complete": True,
+        "diagnostics": [],
     }
 
 
@@ -264,7 +293,6 @@ forge:
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120
-          human-query-transport-grace-seconds: 5
         actions-file: "{jarvis_dir / "allowed-actions.yaml"}"
         system-prompt-path: "{jarvis_dir / "system-prompt.md"}"
 """.lstrip(),

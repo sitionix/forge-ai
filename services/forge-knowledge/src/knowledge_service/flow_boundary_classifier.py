@@ -9,6 +9,7 @@ from knowledge_service.graph_query_contract import graph_query_contract
 
 class FlowBoundaryKind(str, Enum):
     CURRENT_TARGET_NODE_MISSING = "CURRENT_TARGET_NODE_MISSING"
+    CROSS_SOURCE_TARGET = "CROSS_SOURCE_TARGET"
     EXTERNAL = "EXTERNAL"
     UNRESOLVED = "UNRESOLVED"
 
@@ -29,6 +30,12 @@ class FlowBoundaryClassifier:
             return FlowBoundaryProjection(
                 kind=FlowBoundaryKind.CURRENT_TARGET_NODE_MISSING,
                 target=target,
+                resolution_status=resolution_status,
+            )
+        if boundary_reason == FlowBoundaryKind.CROSS_SOURCE_TARGET.value:
+            return FlowBoundaryProjection(
+                kind=FlowBoundaryKind.CROSS_SOURCE_TARGET,
+                target=target or edge.to_node_id,
                 resolution_status=resolution_status,
             )
         if self._is_external(edge):

@@ -53,11 +53,7 @@ def test_perf_jar_02_query_records_knowledge_timing_and_returns_human_answer(tmp
         timing = _parse_server_timing(sample.response.headers["server-timing"])
         assert timing["knowledge"] > 0
         assert timing["ollama"] == 0
-        assert body == {
-            "answerLanguage": "uk",
-            "answers": [{"source": "forge-ai", "entrypoint": "JarvisGateway", "text": "JarvisGateway handles the request."}],
-            "diagnostics": [],
-        }
+        assert body == human_answer_bundle(text="JarvisGateway handles the request.")
         assert "status" not in body
         assert "matchedNodes" not in body
         assert "flows" not in body
@@ -71,7 +67,7 @@ def test_perf_jar_02_query_records_knowledge_timing_and_returns_human_answer(tmp
 
 def test_perf_jar_03_command_executor_caps_output_and_times_out_process_group(tmp_path):
     output_executor = ActionExecutor(
-        _registry(tmp_path, ["bash", "-lc", "yes jarvis | head -n 1000"]),
+        _registry(tmp_path, ["bash", "-c", "yes jarvis | head -n 1000"]),
         timeout_seconds=5,
         max_output_bytes=64,
         max_concurrency=2,
@@ -82,7 +78,7 @@ def test_perf_jar_03_command_executor_caps_output_and_times_out_process_group(tm
     assert len(result.output.encode("utf-8")) <= 96
 
     timeout_executor = ActionExecutor(
-        _registry(tmp_path, ["bash", "-lc", "sleep 5"]),
+        _registry(tmp_path, ["bash", "-c", "sleep 5"]),
         timeout_seconds=1,
         max_output_bytes=1024,
     )
@@ -99,7 +95,7 @@ actions:
     description: Slow deterministic command
     targets:
       run:
-        command: ["bash", "-lc", "sleep 0.2; printf done"]
+        command: ["bash", "-c", "sleep 0.2; printf done"]
 """.lstrip(),
         encoding="utf-8",
     )

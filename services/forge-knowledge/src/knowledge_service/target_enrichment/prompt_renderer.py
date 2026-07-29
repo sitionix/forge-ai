@@ -141,7 +141,7 @@ class TargetPromptRenderer:
             [
                 "Target-anchor validation feedback retry.",
                 "Use the same target-anchor input JSON below.",
-                "Claims-only response shape:",
+                "Authoritative target response shape:",
                 "```json",
                 self._response_shape_text(prompt_id),
                 "```",

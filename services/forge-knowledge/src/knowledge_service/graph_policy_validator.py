@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 from knowledge_service.analysis_graph_contract import AnalysisGraphContract, ResolutionStatusContract
 from knowledge_service.analysis_policy import AnalysisPolicy, ExtractorDefinition
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
+from knowledge_service.graph_schema import BoundaryFact, GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 
 
 EXTRACTOR_OUTPUT_INVALID = "ANALYSIS_EXTRACTOR_OUTPUT_INVALID"
@@ -164,6 +164,7 @@ class GraphPolicyValidator:
         self._validate_nodes(graph_result.nodes, contract, line_count, stage, extractor, nodes_by_id, result_node_ids, issues)
         self._validate_edges(graph_result.edges, contract, line_count, stage, extractor, nodes_by_id, issues)
         self._validate_claims(graph_result.claims, contract, line_count, stage, extractor, nodes_by_id, issues)
+        self._validate_boundaries(graph_result.boundaries, line_count, stage, nodes_by_id, issues)
         self._validate_diagnostics(graph_result.diagnostics, stage, issues)
         return issues
 
@@ -412,6 +413,116 @@ class GraphPolicyValidator:
                     f"{path}.evidence[{evidence_index}].metadata",
                     issues,
                 )
+
+    def _validate_boundaries(
+        self,
+        boundaries: list[BoundaryFact],
+        line_count: int,
+        stage: str,
+        nodes_by_id: Mapping[str, GraphNode],
+        issues: list[GraphPolicyValidationIssue],
+    ) -> None:
+        for index, boundary in enumerate(boundaries):
+            path = f"$.boundaries[{index}]"
+            entity_id = boundary.localId or None
+            self._require_non_empty(boundary.localId, "boundary", entity_id, "localId", stage, path, issues)
+            self._require_non_empty(boundary.nodeLocalId, "boundary", entity_id, "nodeLocalId", stage, f"{path}.nodeLocalId", issues)
+            if boundary.nodeLocalId not in nodes_by_id:
+                issues.append(
+                    GraphPolicyValidationIssue(
+                        message="Boundary fact references an unknown nodeLocalId.",
+                        stage=stage,
+                        entity_type="boundary",
+                        entity_id=entity_id,
+                        field="nodeLocalId",
+                        actual=boundary.nodeLocalId,
+                        allowed_values=sorted(nodes_by_id.keys()),
+                        path=f"{path}.nodeLocalId",
+                    )
+                )
+            if boundary.role not in {"PROVIDED", "REQUIRED"}:
+                issues.append(
+                    GraphPolicyValidationIssue(
+                        message="Boundary role must be PROVIDED or REQUIRED.",
+                        stage=stage,
+                        entity_type="boundary",
+                        entity_id=entity_id,
+                        field="role",
+                        actual=boundary.role,
+                        allowed_values=["PROVIDED", "REQUIRED"],
+                        path=f"{path}.role",
+                    )
+                )
+            if not boundary.evidence:
+                issues.append(
+                    GraphPolicyValidationIssue(
+                        message="Boundary evidence is required.",
+                        stage=stage,
+                        entity_type="boundary",
+                        entity_id=entity_id,
+                        field="evidence",
+                        path=f"{path}.evidence",
+                    )
+                )
+            for evidence_index, evidence in enumerate(boundary.evidence):
+                self._validate_evidence_range(
+                    evidence,
+                    line_count,
+                    "boundary",
+                    entity_id,
+                    "evidence",
+                    stage,
+                    f"{path}.evidence[{evidence_index}]",
+                    issues,
+                )
+            if not boundary.descriptors:
+                issues.append(
+                    GraphPolicyValidationIssue(
+                        message="Boundary descriptors are required.",
+                        stage=stage,
+                        entity_type="boundary",
+                        entity_id=entity_id,
+                        field="descriptors",
+                        path=f"{path}.descriptors",
+                    )
+                )
+            for descriptor_index, descriptor in enumerate(boundary.descriptors):
+                descriptor_path = f"{path}.descriptors[{descriptor_index}]"
+                self._require_non_empty(descriptor.path, "boundaryDescriptor", entity_id, "path", stage, f"{descriptor_path}.path", issues)
+                if descriptor.value is None:
+                    issues.append(
+                        GraphPolicyValidationIssue(
+                            message="Boundary descriptor value is required.",
+                            stage=stage,
+                            entity_type="boundaryDescriptor",
+                            entity_id=entity_id,
+                            field="value",
+                            path=f"{descriptor_path}.value",
+                        )
+                    )
+                descriptor_evidence = descriptor.evidence or boundary.evidence
+                if not descriptor_evidence:
+                    issues.append(
+                        GraphPolicyValidationIssue(
+                            message="Boundary descriptor evidence is required.",
+                            stage=stage,
+                            entity_type="boundaryDescriptor",
+                            entity_id=entity_id,
+                            field="evidence",
+                            path=f"{descriptor_path}.evidence",
+                        )
+                    )
+                for evidence_index, evidence in enumerate(descriptor.evidence):
+                    self._validate_evidence_range(
+                        evidence,
+                        line_count,
+                        "boundaryDescriptor",
+                        entity_id,
+                        "evidence",
+                        stage,
+                        f"{descriptor_path}.evidence[{evidence_index}]",
+                        issues,
+                    )
 
     def _validate_diagnostics(self, diagnostics: Iterable[Mapping[str, Any]], stage: str, issues: List[GraphPolicyValidationIssue]) -> None:
         for index, diagnostic in enumerate(diagnostics or []):

@@ -10,7 +10,7 @@ import httpx
 
 from knowledge_service.analysis_graph_contract import AnalysisGraphContract, GraphContractProvider
 from knowledge_service.analysis_policy import AnalysisPolicy
-from knowledge_service.analysis_runtime_events import emit_runtime_event, runtime_preview, text_hash, utc_now
+from knowledge_service.analysis_runtime_events import current_runtime_context, emit_runtime_event, runtime_preview, text_hash, utc_now
 from knowledge_service.config import DEFAULT_GENERATIVE_CONTEXT_TOKENS
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.errors import KnowledgeError
@@ -151,10 +151,15 @@ class OllamaAnalysisClient:
         if isinstance(parsed, GraphAnalysisResult):
             return parsed
         self._emit_parse_failure(parsed, response_text, response_metadata)
+        raw_preview = getattr(parsed, "raw_preview", "")
+        raw_preview_length = len(str(raw_preview))
         raise KnowledgeError(
             parsed.code,
             parsed.message,
-            raw_preview=parsed.raw_preview,
+            raw_preview=raw_preview,
+            raw_response_length=len(response_text),
+            raw_preview_length=raw_preview_length,
+            raw_preview_truncated=len(response_text) > raw_preview_length,
             error_details=parsed.error_details,
             validation_report=parsed.validation_report,
             validationErrors=parsed.error_details,
@@ -215,7 +220,8 @@ class OllamaAnalysisClient:
         return base_url
 
     def _request_metadata(self, payload: Dict[str, Any], prompt: str, repair_prompt: str | None) -> Dict[str, Any]:
-        return {
+        context = current_runtime_context()
+        metadata = {
             "provider": "ollama",
             "model": self.model,
             "requestTimeoutSeconds": self.timeout_seconds,
@@ -233,6 +239,20 @@ class OllamaAnalysisClient:
             "validationFeedbackRetry": repair_prompt is not None,
             "correctedResponseAttempt": repair_prompt is not None,
         }
+        if payload.get("_targetIndex") is not None:
+            metadata["targetIndex"] = payload.get("_targetIndex")
+        if payload.get("_targetCount") is not None:
+            metadata["targetCount"] = payload.get("_targetCount")
+        if context is not None:
+            metadata["attemptKind"] = context.attempt_kind
+            metadata["configuredMaxAttempts"] = context.configured_max_attempts
+            metadata["previousAttemptNumber"] = context.previous_attempt_number
+            metadata["previousFailureCodes"] = list(context.previous_failure_codes)
+            metadata["previousResponseAvailable"] = context.previous_response_available
+            metadata["previousResponsePreviewTruncated"] = context.previous_response_preview_truncated
+            metadata["previousResponsePreviewLength"] = context.previous_response_preview_length
+            metadata["previousResponseLength"] = context.previous_response_length
+        return {key: value for key, value in metadata.items() if value is not None}
 
     def _provider_response_metadata(self, raw: Dict[str, Any], response_text: str) -> Dict[str, Any]:
         preview = runtime_preview(response_text)

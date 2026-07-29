@@ -89,11 +89,7 @@ def test_status_actions_command_and_query_success_paths(tmp_path):
     assert knowledge.paths == ["/api/v1/knowledge/query"]
     assert model.prompts == []
     assert model.health_calls == 0
-    assert query == {
-        "answerLanguage": "uk",
-        "answers": [{"source": "forge-ai", "entrypoint": "JarvisGateway", "text": "JarvisGateway handles the request."}],
-        "diagnostics": [],
-    }
+    assert query == human_answer_bundle()
     assert "status" not in query
     assert "matchedNodes" not in query
     assert "flows" not in query
@@ -119,29 +115,22 @@ def test_human_query_query_uses_dedicated_knowledge_contract(tmp_path):
     ]
     assert knowledge.paths == ["/api/v1/knowledge/query"]
     assert model.prompts == []
-    assert body == {
-        "answerLanguage": "uk",
-        "answers": [
-            {
-                "source": "stsssox",
-                "entrypoint": "SiteController.createSite",
-                "text": "Сайт створюється через контролер і use case.",
-            }
-        ],
-        "diagnostics": [],
-    }
+    assert body == human_answer_bundle(
+        text="Сайт створюється через контролер і use case.",
+        sources=[{"source": "stsssox", "entrypoint": "SiteController.createSite"}],
+    )
     assert "status" not in body
     assert "flows" not in body
     assert "flowExplanations" not in body
 
 
-def test_human_query_generation_failure_uses_public_error(tmp_path):
+def test_query_interpretation_failure_uses_public_error(tmp_path):
     knowledge = FakeKnowledgeClient(
         error=KnowledgeUpstreamResponseError(
             502,
             {
-                "code": "HUMAN_ANSWER_GENERATION_FAILED",
-                "message": "The local model could not produce any grounded flow answers.",
+                "code": "QUERY_INTERPRETATION_FAILED",
+                "message": "The local model could not interpret the query.",
             },
         )
     )
@@ -152,8 +141,8 @@ def test_human_query_generation_failure_uses_public_error(tmp_path):
 
     assert response.status_code == 502
     assert response.json() == {
-        "code": "HUMAN_ANSWER_GENERATION_FAILED",
-        "message": "The local model could not produce any grounded flow answers.",
+        "code": "QUERY_INTERPRETATION_FAILED",
+        "message": "The local model could not interpret the query.",
     }
 
 

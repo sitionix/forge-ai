@@ -29,6 +29,7 @@ class FlowGraphNode:
     entrypoint_topic: str | None = None
     entrypoint_schedule: str | None = None
     entrypoint_interface_method: str | None = None
+    execution_role: str | None = None
     flow_domain: str | None = None
 
 
@@ -47,6 +48,7 @@ class FlowGraphEdge:
     to_graph_revision: str | None = None
     external: bool = False
     unresolved_target: dict[str, object] | None = None
+    metadata: dict[str, object] | None = None
     evidence_ids: tuple[str, ...] = ()
     flow_domain: str | None = None
     boundary_reason: str | None = None
@@ -64,22 +66,43 @@ class FlowGraphEvidence:
     line_start: int | None
     line_end: int | None
     text: str | None
+    owner_kind: str | None = None
+    owner_source_id: str | None = None
+    owner_node_id: str | None = None
+    owner_edge_id: str | None = None
 
 
 @dataclass(frozen=True)
 class FlowGraphEvidenceKey:
     source_id: str
     evidence_id: str
-    node_id: str | None = None
-    edge_id: str | None = None
+    owner_kind: str | None = None
+    owner_source_id: str | None = None
+    owner_node_id: str | None = None
+    owner_edge_id: str | None = None
 
 
 def evidence_key(item: FlowGraphEvidence) -> FlowGraphEvidenceKey:
+    owner_kind = item.owner_kind
+    owner_source_id = item.owner_source_id
+    owner_node_id = item.owner_node_id
+    owner_edge_id = item.owner_edge_id
+    if owner_kind is None:
+        if item.edge_id:
+            owner_kind = "EDGE"
+            owner_edge_id = item.edge_id
+            owner_source_id = item.owner_source_id or item.source_id
+        elif item.node_id:
+            owner_kind = "NODE"
+            owner_node_id = item.node_id
+            owner_source_id = item.owner_source_id or item.source_id
     return FlowGraphEvidenceKey(
         source_id=item.source_id,
         evidence_id=item.evidence_id,
-        node_id=item.node_id,
-        edge_id=item.edge_id,
+        owner_kind=owner_kind,
+        owner_source_id=owner_source_id,
+        owner_node_id=owner_node_id,
+        owner_edge_id=owner_edge_id,
     )
 
 
@@ -90,5 +113,12 @@ def dedupe_evidence(items: Sequence[FlowGraphEvidence]) -> tuple[FlowGraphEviden
     return tuple(by_key[key] for key in sorted(by_key, key=_evidence_key_sort))
 
 
-def _evidence_key_sort(key: FlowGraphEvidenceKey) -> tuple[str, str, str, str]:
-    return (key.source_id, key.evidence_id, key.node_id or "", key.edge_id or "")
+def _evidence_key_sort(key: FlowGraphEvidenceKey) -> tuple[str, str, str, str, str, str]:
+    return (
+        key.source_id,
+        key.evidence_id,
+        key.owner_kind or "",
+        key.owner_source_id or "",
+        key.owner_node_id or "",
+        key.owner_edge_id or "",
+    )

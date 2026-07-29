@@ -19,6 +19,7 @@ class GraphQueryContract:
     origins: Mapping[str, object]
     evidence_kinds: Mapping[str, object]
     resolution_statuses: Mapping[str, object]
+    edge_relation_semantics: Mapping[str, tuple[str, ...]]
     semantic_node_kinds: tuple[str, ...]
     semantic_edge_types: tuple[str, ...]
     semantic_claim_kinds: tuple[str, ...]
@@ -33,6 +34,10 @@ class GraphQueryContract:
             origins=policy.graph.origins,
             evidence_kinds=policy.graph.evidence_kinds,
             resolution_statuses=policy.graph.resolution_statuses,
+            edge_relation_semantics={
+                kind: tuple(definition.relation_semantics)
+                for kind, definition in policy.graph.edges.items()
+            },
             semantic_node_kinds=tuple(policy.semantic.indexed_node_kinds),
             semantic_edge_types=tuple(policy.semantic.indexed_edge_types),
             semantic_claim_kinds=tuple(policy.semantic.indexed_claim_kinds),

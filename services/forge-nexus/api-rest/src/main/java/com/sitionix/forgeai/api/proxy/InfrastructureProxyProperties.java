@@ -117,13 +117,8 @@ public class InfrastructureProxyProperties {
     }
 
     public static class ProxyProperties {
-        private static final Duration DEFAULT_KNOWLEDGE_HUMAN_QUERY_TRANSPORT_GRACE = Duration.ofSeconds(5);
-        private static final Duration DEFAULT_JARVIS_QUERY_TRANSPORT_GRACE = Duration.ofSeconds(5);
-
         private int maxRequestBodyBytes = 1024 * 1024;
         private int maxResponseBodyBytes = 5 * 1024 * 1024;
-        private Duration knowledgeHumanQueryTransportGrace = DEFAULT_KNOWLEDGE_HUMAN_QUERY_TRANSPORT_GRACE;
-        private Duration jarvisQueryTransportGrace = DEFAULT_JARVIS_QUERY_TRANSPORT_GRACE;
 
         public int getMaxRequestBodyBytes() {
             return this.maxRequestBodyBytes;
@@ -141,53 +136,14 @@ public class InfrastructureProxyProperties {
             this.maxResponseBodyBytes = maxResponseBodyBytes;
         }
 
-        public Duration getKnowledgeHumanQueryTransportGrace() {
-            return this.knowledgeHumanQueryTransportGrace;
-        }
-
-        public void setKnowledgeHumanQueryTransportGrace(final Duration knowledgeHumanQueryTransportGrace) {
-            this.knowledgeHumanQueryTransportGrace = knowledgeHumanQueryTransportGrace;
-        }
-
-        public Duration getJarvisQueryTransportGrace() {
-            return this.jarvisQueryTransportGrace;
-        }
-
-        public void setJarvisQueryTransportGrace(final Duration jarvisQueryTransportGrace) {
-            this.jarvisQueryTransportGrace = jarvisQueryTransportGrace;
-        }
-
-        Duration knowledgeHumanQueryReadTimeout(final Duration requestDeadline) {
+        Duration humanQueryReadTimeout(final Duration requestDeadline) {
             if (requestDeadline == null) {
                 throw new IllegalArgumentException("Human query request deadline is required");
             }
-            final Duration grace = this.knowledgeHumanQueryTransportGrace == null
-                    ? DEFAULT_KNOWLEDGE_HUMAN_QUERY_TRANSPORT_GRACE
-                    : this.knowledgeHumanQueryTransportGrace;
-            return requestDeadline.plus(grace);
-        }
-
-        Duration jarvisQueryReadTimeout(final Duration requestDeadline) {
-            final Duration jarvisKnowledgeTimeout = this.knowledgeHumanQueryReadTimeout(requestDeadline);
-            final Duration grace = this.jarvisQueryTransportGrace == null
-                    ? DEFAULT_JARVIS_QUERY_TRANSPORT_GRACE
-                    : this.jarvisQueryTransportGrace;
-            return jarvisKnowledgeTimeout.plus(grace);
-        }
-
-        void validateHumanQueryTimeoutHierarchy(final Duration requestDeadline) {
-            final Duration jarvisKnowledgeTimeout = this.knowledgeHumanQueryReadTimeout(requestDeadline);
-            final Duration nexusJarvisTimeout = this.jarvisQueryReadTimeout(requestDeadline);
-            if (jarvisKnowledgeTimeout.compareTo(requestDeadline) <= 0) {
-                throw new IllegalStateException(
-                        "Jarvis Knowledge human query transport timeout must exceed the Knowledge deadline"
-                );
+            if (requestDeadline.compareTo(Duration.ZERO) <= 0) {
+                throw new IllegalArgumentException("Human query request deadline must be positive");
             }
-            if (nexusJarvisTimeout.compareTo(jarvisKnowledgeTimeout) <= 0) {
-                throw new IllegalStateException(
-                        "Nexus Jarvis query transport timeout must exceed the Jarvis Knowledge transport timeout"
-                );
-            }
+            return requestDeadline;
         }
     }
 }

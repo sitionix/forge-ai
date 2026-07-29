@@ -3,7 +3,8 @@ import { JarvisQueryView } from './jarvis-query-view.js';
 import { RequestCoordinator } from './request-coordinator.js';
 
 const DEFAULT_QUERY_CONFIG = {
-  jarvisQueryIncludeTests: false
+  jarvisQueryIncludeTests: false,
+  jarvisQueryMaxFlows: null
 };
 
 export class JarvisPage {
@@ -122,7 +123,8 @@ export class JarvisPage {
     const queryInput = this.document.getElementById('jarvisQueryText');
     const query = queryInput?.value?.trim() || '';
     if (!query) {
-      setError('jarvisQueryError', new Error('Question is required.'), this.document);
+      const pendingMessageId = this.queryView.appendPendingAssistant();
+      this.queryView.replaceWithSafeError(pendingMessageId, this.safeQueryErrorPresentation());
       return null;
     }
     const payload = this.queryPayload(query);
@@ -134,13 +136,12 @@ export class JarvisPage {
       if (!result.applied || this.disposed) {
         return null;
       }
-      setError('jarvisQueryError', null, this.document);
       this.queryView.replaceWithResponse(pendingMessageId, result.value);
       return result.value;
     } catch (error) {
       if (!this.disposed) {
-        this.queryView.replaceWithError(pendingMessageId, error);
-        renderRequestError('jarvisQueryError', error, { endpoint: '/jarvis/query', title: 'Jarvis query failed' }, this.document);
+        const safePresentation = this.safeQueryErrorPresentation();
+        this.queryView.replaceWithSafeError(pendingMessageId, safePresentation);
       }
       return null;
     } finally {
@@ -151,10 +152,22 @@ export class JarvisPage {
   }
 
   queryPayload(queryText) {
-    return {
+    const payload = {
       queryText,
       intent: 'AUTO',
       includeTests: Boolean(this.runtimeConfig.jarvisQueryIncludeTests)
+    };
+    const maxFlows = Number(this.runtimeConfig.jarvisQueryMaxFlows);
+    if (Number.isInteger(maxFlows) && maxFlows > 0) {
+      payload.maxFlows = maxFlows;
+    }
+    return payload;
+  }
+
+  safeQueryErrorPresentation() {
+    return {
+      title: 'Request failed',
+      message: 'The request could not be completed. Please try again.'
     };
   }
 
@@ -251,7 +264,7 @@ export class JarvisPage {
     button.disabled = busy;
     button.textContent = busy ? 'Sending...' : 'Send';
     if (loading) {
-      loading.textContent = 'Analyzing the current graph and preparing an answer...';
+      loading.textContent = 'Preparing an answer...';
     }
     loading?.classList.toggle('hidden', !busy);
   }

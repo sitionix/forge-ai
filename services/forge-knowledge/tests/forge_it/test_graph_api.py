@@ -49,10 +49,26 @@ def test_it_graph_01_fresh_database_schema_is_current_state_only(tmp_path):
     objects = sqlite_objects(app_config.store_path)
 
     assert not any(name.startswith("graph_") for name in objects)
-    assert {"analysis_graph_state", "analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_claim_evidence", "analysis_graph_edge_evidence"}.issubset(objects)
-    for table in ("analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_claims", "analysis_graph_evidence"):
+    assert {
+        "analysis_graph_state",
+        "analysis_graph_nodes",
+        "analysis_graph_edges",
+        "analysis_graph_boundaries",
+        "analysis_graph_boundary_descriptors",
+        "analysis_graph_boundary_descriptor_index",
+        "analysis_graph_claim_evidence",
+        "analysis_graph_edge_evidence",
+        "analysis_graph_boundary_evidence",
+        "analysis_graph_boundary_descriptor_evidence",
+    }.issubset(objects)
+    for table in ("analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_claims", "analysis_graph_evidence", "analysis_graph_boundaries"):
         columns = table_columns(app_config.store_path, table)
         assert {"id", "source_id"}.issubset(columns)
+    boundary_columns = table_columns(app_config.store_path, "analysis_graph_boundaries")
+    descriptor_index_columns = table_columns(app_config.store_path, "analysis_graph_boundary_descriptor_index")
+    assert {"role", "descriptor_json", "metadata_json"}.issubset(boundary_columns)
+    assert {"boundary_id", "descriptor_path", "value_type", "normalized_scalar_value"}.issubset(descriptor_index_columns)
+    assert not (boundary_columns & {"method", "route", "topic", "schedule", "client_class", "controller_class", "service_name"})
     assert "parameter_count" in table_columns(app_config.store_path, "analysis_graph_nodes")
     assert "argument_count" in table_columns(app_config.store_path, "analysis_graph_edges")
     assert "metadata_json" not in table_columns(app_config.store_path, "analysis_graph_nodes")
@@ -66,10 +82,19 @@ def test_it_graph_01_fresh_database_schema_is_current_state_only(tmp_path):
     assert fk_delete_rule(app_config.store_path, "analysis_graph_claims", "analysis_graph_nodes", "node_id") == "CASCADE"
     assert fk_delete_rule(app_config.store_path, "analysis_graph_edges", "analysis_graph_nodes", "from_node_id") == "CASCADE"
     assert fk_delete_rule(app_config.store_path, "analysis_graph_edges", "analysis_graph_nodes", "to_node_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_boundaries", "analysis_files", "analysis_file_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_boundaries", "analysis_graph_nodes", "node_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_boundary_descriptors", "analysis_graph_boundaries", "boundary_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_boundary_descriptor_index", "analysis_graph_boundary_descriptors", "descriptor_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_boundary_descriptor_index", "analysis_graph_boundaries", "boundary_id") == "CASCADE"
     assert fk_delete_rule(app_config.store_path, "analysis_graph_claim_evidence", "analysis_graph_claims", "claim_id") == "CASCADE"
     assert fk_delete_rule(app_config.store_path, "analysis_graph_claim_evidence", "analysis_graph_evidence", "evidence_id") == "CASCADE"
     assert fk_delete_rule(app_config.store_path, "analysis_graph_edge_evidence", "analysis_graph_edges", "edge_id") == "CASCADE"
     assert fk_delete_rule(app_config.store_path, "analysis_graph_edge_evidence", "analysis_graph_evidence", "evidence_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_boundary_evidence", "analysis_graph_boundaries", "boundary_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_boundary_evidence", "analysis_graph_evidence", "evidence_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_boundary_descriptor_evidence", "analysis_graph_boundary_descriptors", "descriptor_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_boundary_descriptor_evidence", "analysis_graph_evidence", "evidence_id") == "CASCADE"
     assert fk_delete_rule(app_config.store_path, "semantic_vectors", "semantic_documents", "document_id") == "CASCADE"
 
 

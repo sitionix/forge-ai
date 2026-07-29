@@ -328,6 +328,19 @@ def _semantic_percent_for_overview_conn(conn: sqlite3.Connection, row: sqlite3.R
         return 0.0
     if not all(_table_exists(conn, table) for table in ("files", "analysis_files", "analysis_graph_nodes", "semantic_documents", "semantic_vectors")):
         return 0.0
+    source_semantic_exists = conn.execute(
+        """
+        SELECT 1
+        FROM semantic_documents d
+        JOIN semantic_vectors v
+          ON v.document_id = d.document_id
+        WHERE d.source_id = ?
+        LIMIT 1
+        """,
+        (source_id,),
+    ).fetchone()
+    if source_semantic_exists is None:
+        return 0.0
     graph = SemanticIndexStore.current_graph_info_conn(conn, source_id)
     if not graph.graph_id or not graph.graph_revision:
         return 0.0

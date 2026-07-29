@@ -47,8 +47,10 @@ def build_dependencies(
             keep_completed_jobs=config.retention_keep_completed_jobs,
         ),
     )
-    storage_operations.startup_maintenance()
-    analysis_store.mark_interrupted_jobs()
+    if config.startup_maintenance_enabled:
+        storage_operations.startup_maintenance()
+        if config.analysis_enabled:
+            analysis_store.mark_interrupted_jobs()
     inventory_refresh = InventoryRefreshService(config, inventory_store)
     inventory_scheduler = AsyncInventoryScheduler(inventory_refresh, config)
     logger = logging.getLogger("knowledge_service.analysis")

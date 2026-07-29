@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from knowledge_service.entrypoint_kinds import EntrypointExecutionKind, EntrypointKind, entrypoint_kind_for_annotation
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
+from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.structural_model import (
@@ -113,6 +113,7 @@ class StaticGraphMaterializer:
         nodes: List[GraphNode] = []
         edges: List[GraphEdge] = []
         claims: List[GraphClaim] = []
+        boundaries: list[BoundaryFact] = []
         diagnostics: List[Dict[str, Any]] = []
         file_local_id = result.file_stable_key
         callables_by_id = {item.local_id: item for item in result.callables}
@@ -274,9 +275,13 @@ class StaticGraphMaterializer:
             )
             owner_annotations = self._type_annotations(result, item.owner_type_local_id)
             claims.extend(self._entrypoint_claims(result, item.local_id, item.annotations, owner_annotations))
+            boundaries.extend(self._entrypoint_boundaries(result, item.local_id, item.annotations, owner_annotations))
             main_claim = self._main_entrypoint_claim(result, item.local_id, item, owner_annotations)
             if main_claim:
                 claims.append(main_claim)
+                main_boundary = self._main_entrypoint_boundary(result, item.local_id, item, owner_annotations)
+                if main_boundary:
+                    boundaries.append(main_boundary)
         for item in result.fields:
             nodes.append(
                 GraphNode(
@@ -371,6 +376,7 @@ class StaticGraphMaterializer:
                 )
             )
             claims.extend(self._call_boundary_claims(result, callsite))
+            boundaries.extend(self._call_required_boundaries(result, callsite, call_metadata, edge_resolution_status, unresolved))
             self._collect_field_usage(result, callsite, callables_by_id, fields_by_id, fields_by_owner, field_usages)
         for (caller_local_id, field_local_id), usage in field_usages.items():
             evidence = usage["evidence"]
@@ -413,7 +419,7 @@ class StaticGraphMaterializer:
                     "flowDomain": result.file.flow_domain,
                 }
             )
-        return GraphAnalysisResult(nodes=nodes, edges=edges, claims=claims, diagnostics=diagnostics)
+        return GraphAnalysisResult(nodes=nodes, edges=edges, claims=claims, boundaries=boundaries, diagnostics=diagnostics)
 
     def _collect_field_usage(
         self,
@@ -601,6 +607,48 @@ class StaticGraphMaterializer:
             )
         return claims
 
+    def _entrypoint_boundaries(
+        self, result: StructuralParseResult, target_local_id: str, annotations: list[StructuralAnnotation], owner_annotations: list[StructuralAnnotation]
+    ) -> list[BoundaryFact]:
+        boundaries: list[BoundaryFact] = []
+        owner_route = self._route_from_annotations(owner_annotations)
+        interface_method = self._interface_method_name(result, target_local_id)
+        execution_kind = EntrypointExecutionKind.CONTRACT_DECLARATION.value if interface_method else EntrypointExecutionKind.EXECUTABLE.value
+        for annotation in annotations:
+            simple = annotation.name.rsplit(".", 1)[-1]
+            if simple not in self.ENTRYPOINT_ANNOTATIONS:
+                continue
+            route = self._join_routes(owner_route, self._annotation_route(annotation))
+            http_method = self._http_method_from_annotation(simple, annotation)
+            evidence = self._evidence(annotation.line_start, annotation.line_end, f"@{simple}", {"evidenceKind": "BOUNDARY"})
+            descriptors = self._provided_boundary_descriptors(
+                annotation,
+                simple,
+                execution_kind,
+                http_method,
+                route,
+                interface_method,
+                evidence,
+            )
+            boundaries.append(
+                BoundaryFact(
+                    localId=self._stable_key(result, "BOUNDARY", "PROVIDED", target_local_id, simple, str(annotation.line_start)),
+                    nodeLocalId=target_local_id,
+                    role="PROVIDED",
+                    descriptors=descriptors,
+                    evidence=[evidence],
+                    origin="STATIC",
+                    confidence=1.0,
+                    flowDomain=result.file.flow_domain,
+                    metadata=self._metadata(
+                        result,
+                        "BOUNDARY",
+                        self._stable_key(result, "BOUNDARY", "PROVIDED", target_local_id, simple, str(annotation.line_start)),
+                    ),
+                )
+            )
+        return boundaries
+
     def _interface_method_name(self, result: StructuralParseResult, target_local_id: str) -> Optional[str]:
         target = next((item for item in result.callables if item.local_id == target_local_id), None)
         if target is None or not target.owner_type_local_id:
@@ -639,8 +687,137 @@ class StaticGraphMaterializer:
             metadata=metadata,
         )
 
+    def _main_entrypoint_boundary(
+        self, result: StructuralParseResult, target_local_id: str, callable_item, owner_annotations: list[StructuralAnnotation]
+    ) -> BoundaryFact | None:
+        owner_annotation_names = {annotation.name.rsplit(".", 1)[-1] for annotation in owner_annotations}
+        if callable_item.name != "main" or "String[]" not in ",".join(callable_item.parameters):
+            return None
+        if "SpringBootApplication" not in owner_annotation_names and callable_item.visibility != "PUBLIC":
+            return None
+        evidence = self._evidence(callable_item.line_start, callable_item.line_end, callable_item.signature, {"evidenceKind": "BOUNDARY"})
+        local_id = self._stable_key(result, "BOUNDARY", "PROVIDED", target_local_id, "MAIN", str(callable_item.line_start))
+        return BoundaryFact(
+            localId=local_id,
+            nodeLocalId=target_local_id,
+            role="PROVIDED",
+            descriptors=[
+                self._descriptor("provided.kind", EntrypointKind.BOOTSTRAP.value, evidence=evidence),
+                self._descriptor("provided.executionKind", EntrypointExecutionKind.EXECUTABLE.value, evidence=evidence),
+                self._descriptor("callable.name", callable_item.name, evidence=evidence),
+                self._descriptor("callable.signature", callable_item.signature, evidence=evidence),
+            ],
+            evidence=[evidence],
+            origin="STATIC",
+            confidence=1.0 if "SpringBootApplication" in owner_annotation_names else 0.7,
+            flowDomain=result.file.flow_domain,
+            metadata=self._metadata(result, "BOUNDARY", local_id),
+        )
+
     def _call_boundary_claims(self, result: StructuralParseResult, callsite: StructuralCallsite) -> List[GraphClaim]:
         return []
+
+    def _call_required_boundaries(
+        self,
+        result: StructuralParseResult,
+        callsite: StructuralCallsite,
+        call_metadata: dict[str, Any],
+        edge_resolution_status: str,
+        unresolved: dict[str, Any] | None,
+    ) -> list[BoundaryFact]:
+        status = str(edge_resolution_status or "").upper()
+        if status == "RESOLVED":
+            return []
+        if not self._material_required_call_boundary(call_metadata, status):
+            return []
+        evidence = self._evidence(callsite.line_start, callsite.line_end, callsite.raw_text, {"evidenceKind": "BOUNDARY"})
+        descriptors = [
+            self._descriptor("call.method", callsite.method_name, evidence=evidence, confidence=0.82),
+            self._descriptor("call.kind", call_metadata.get("callKind"), evidence=evidence, confidence=0.82),
+            self._descriptor("call.resolutionStatus", status, evidence=evidence, confidence=0.82),
+            self._descriptor("call.argumentCount", callsite.argument_count, evidence=evidence, confidence=0.82),
+            self._descriptor("call.targetCategory", call_metadata.get("callTargetCategory"), evidence=evidence, confidence=0.72),
+            self._descriptor("call.receiver", call_metadata.get("receiverText") or callsite.receiver_text, evidence=evidence, confidence=0.82),
+            self._descriptor("call.receiverTypeHint", call_metadata.get("receiverTypeHint") or callsite.receiver_type_hint, evidence=evidence, confidence=0.72),
+            self._descriptor("call.targetTypeHint", call_metadata.get("targetTypeHint") or callsite.target_type_text, evidence=evidence, confidence=0.72),
+            self._descriptor("call.visibility", call_metadata.get("sliceDefaultVisibility"), evidence=evidence, confidence=0.72),
+        ]
+        for key, path in (
+            ("transportKind", "transport.kind"),
+            ("connectorKind", "connector.kind"),
+            ("httpMethod", "http.method"),
+            ("method", "operation.method"),
+            ("route", "operation.route"),
+            ("routeTemplate", "operation.routeTemplate"),
+            ("operationIdentity", "operation.identity"),
+            ("interfaceIdentity", "interface.identity"),
+            ("interfaceMethod", "interface.method"),
+            ("requestContractIdentity", "contract.request"),
+            ("responseContractIdentity", "contract.response"),
+            ("targetServiceIdentity", "target.serviceIdentity"),
+            ("targetEntrypoint", "target.entrypoint"),
+        ):
+            descriptors.append(self._descriptor(path, call_metadata.get(key), evidence=evidence, confidence=0.82))
+        if unresolved:
+            descriptors.append(self._descriptor("unresolvedTarget", unresolved, evidence=evidence, confidence=0.72))
+            for key in sorted(unresolved):
+                descriptors.append(self._descriptor(f"unresolvedTarget.{key}", unresolved.get(key), evidence=evidence, confidence=0.72))
+        descriptors = [item for item in descriptors if item is not None]
+        if not descriptors:
+            return []
+        local_id = self._stable_key(result, "BOUNDARY", "REQUIRED", callsite.local_id)
+        return [
+            BoundaryFact(
+                localId=local_id,
+                nodeLocalId=callsite.caller_callable_local_id,
+                role="REQUIRED",
+                descriptors=descriptors,
+                evidence=[evidence],
+                origin="STATIC",
+                confidence=0.72 if status in {"UNRESOLVED", "MULTIPLE_CANDIDATES"} else 0.82,
+                flowDomain=result.file.flow_domain,
+                metadata=self._metadata(result, "BOUNDARY", local_id),
+            )
+        ]
+
+    def _material_required_call_boundary(self, metadata: dict[str, Any], status: str) -> bool:
+        category = str(metadata.get("callTargetCategory") or "").upper()
+        if status in {"EXTERNAL_TARGET", "DYNAMIC_TARGET", "INTERFACE_TARGET"}:
+            return category not in {"EXTERNAL_JDK", "EXTERNAL_FRAMEWORK"}
+        if status in {"UNRESOLVED", "MULTIPLE_CANDIDATES", "AMBIGUOUS"}:
+            return str(metadata.get("sliceDefaultVisibility") or "").upper() in {"SHOW", "SHOW_AS_UNCERTAINTY"}
+        return False
+
+    def _provided_boundary_descriptors(
+        self,
+        annotation: StructuralAnnotation,
+        annotation_name: str,
+        execution_kind: str,
+        http_method: str | None,
+        route: str | None,
+        interface_method: str | None,
+        evidence: GraphEvidenceRef,
+    ) -> list[BoundaryDescriptor]:
+        descriptors: list[BoundaryDescriptor | None] = [
+            self._descriptor("annotation.name", annotation_name, evidence=evidence),
+            self._descriptor("annotation.qualifiedName", annotation.name, evidence=evidence),
+            self._descriptor("provided.kind", self._entrypoint_kind(annotation_name), evidence=evidence),
+            self._descriptor("provided.executionKind", execution_kind, evidence=evidence),
+            self._descriptor("annotation.argumentsRaw", annotation.arguments_raw, evidence=evidence),
+            self._descriptor("source.annotationLine", annotation.line_start, evidence=evidence),
+            self._descriptor("interface.method", interface_method, evidence=evidence),
+        ]
+        if http_method:
+            descriptors.append(self._descriptor("http.method", http_method, evidence=evidence))
+        if self._entrypoint_kind(annotation_name) == EntrypointKind.HTTP.value and route:
+            descriptors.append(self._descriptor("http.route", route, evidence=evidence))
+        if annotation_name == "KafkaListener":
+            descriptors.append(self._descriptor("messaging.topic", self._annotation_route(annotation), evidence=evidence))
+        if annotation_name == "Scheduled":
+            descriptors.append(self._descriptor("schedule.expression", annotation.arguments_raw, evidence=evidence))
+        if annotation_name == "ExceptionHandler":
+            descriptors.append(self._descriptor("exception.type", self._annotation_first_identifier(annotation), evidence=evidence))
+        return [item for item in descriptors if item is not None]
 
     def _field_config_claims(self, result: StructuralParseResult, target_local_id: str, annotations: List[StructuralAnnotation]) -> List[GraphClaim]:
         claims: List[GraphClaim] = []
@@ -759,6 +936,26 @@ class StaticGraphMaterializer:
             lineEnd=line_end,
             text=text,
             metadata=metadata or {},
+        )
+
+    def _descriptor(
+        self,
+        path: str,
+        value: Any,
+        *,
+        evidence: GraphEvidenceRef,
+        confidence: float = 1.0,
+    ) -> BoundaryDescriptor | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return BoundaryDescriptor(
+            path=path,
+            value=value,
+            origin="STATIC",
+            confidence=confidence,
+            evidence=[evidence],
         )
 
     def _stable_key(self, result: StructuralParseResult, *parts: str) -> str:

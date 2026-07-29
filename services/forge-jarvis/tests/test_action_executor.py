@@ -9,7 +9,7 @@ from jarvis_agent.intent_schema import Intent
 
 
 def registry(tmp_path: Path, command: Optional[List[str]] = None) -> ActionRegistry:
-    command = command or ["bash", "-lc", "printf 'jarvis-ok'"]
+    command = command or ["bash", "-c", "printf 'jarvis-ok'"]
     yaml_path = tmp_path / "allowed-actions.yaml"
     yaml_path.write_text(
         """
@@ -62,7 +62,7 @@ def test_model_generated_shell_command_intent_is_not_executed(tmp_path) -> None:
 
 def test_output_is_capped_before_full_collection(tmp_path) -> None:
     executor = ActionExecutor(
-        registry(tmp_path, ["bash", "-lc", "yes jarvis | head -n 1000"]),
+        registry(tmp_path, ["bash", "-c", "yes jarvis | head -n 1000"]),
         max_output_bytes=64,
     )
 
@@ -75,7 +75,7 @@ def test_output_is_capped_before_full_collection(tmp_path) -> None:
 
 def test_timeout_terminates_command(tmp_path) -> None:
     executor = ActionExecutor(
-        registry(tmp_path, ["bash", "-lc", "sleep 5"]),
+        registry(tmp_path, ["bash", "-c", "sleep 5"]),
         timeout_seconds=1,
     )
 

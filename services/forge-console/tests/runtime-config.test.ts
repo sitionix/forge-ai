@@ -19,13 +19,16 @@ describe('runtime config', () => {
     expect(config.statusPollIntervalMs).toBe(25000);
     expect(config.apiMode).toBe('same-origin');
     expect(config.jarvisQueryIncludeTests).toBe(false);
+    expect(config.jarvisQueryMaxFlows).toBeNull();
   });
 
   it('normalizes Jarvis human query defaults', () => {
     const config = runtimeConfigFromWindow({
-      jarvisQueryIncludeTests: true
+      jarvisQueryIncludeTests: true,
+      jarvisQueryMaxFlows: 3
     });
 
     expect(config.jarvisQueryIncludeTests).toBe(true);
+    expect(config.jarvisQueryMaxFlows).toBe(3);
   });
 });

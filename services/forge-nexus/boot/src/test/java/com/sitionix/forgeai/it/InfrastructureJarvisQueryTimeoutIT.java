@@ -18,13 +18,11 @@ import static org.hamcrest.Matchers.not;
         "forge.ai.infrastructure.knowledge.base-url=${forge-it.wiremock.base-url}",
         "forge.ai.infrastructure.jarvis.base-url=${forge-it.wiremock.base-url}",
         "forge.ai.infrastructure.jarvis.read-timeout=120ms",
-        "forge.ai.query.human-query.request-timeout=100ms",
-        "forge.ai.infrastructure.proxy.knowledge-human-query-transport-grace=50ms",
-        "forge.ai.infrastructure.proxy.jarvis-query-transport-grace=150ms",
+        "forge.ai.query.human-query.request-timeout=1s",
         "forge.ai.infrastructure.proxy.max-response-body-bytes=6500"
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
-class InfrastructureJarvisQueryTimeoutHierarchyIT extends AbstractForgeAiIT {
+class InfrastructureJarvisQueryTimeoutIT extends AbstractForgeAiIT {
 
     @Autowired
     private ProxyTestManager testManager;
@@ -33,7 +31,7 @@ class InfrastructureJarvisQueryTimeoutHierarchyIT extends AbstractForgeAiIT {
     private InfrastructureProxyAsyncMockMvc proxyMockMvc;
 
     @Test
-    void itJarvisQueryWaitsPastNormalServiceTimeoutForHumanFlowResponse() {
+    void itJarvisQueryUsesConfiguredHumanQueryTimeoutForDeterministicResponse() {
         this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery())
                 .applyDefault(context -> context
@@ -45,7 +43,7 @@ class InfrastructureJarvisQueryTimeoutHierarchyIT extends AbstractForgeAiIT {
                 .create();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
-                .header("X-Correlation-Id", "corr-jarvis-timeout-hierarchy")
+                .header("X-Correlation-Id", "corr-jarvis-query-timeout")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").doesNotExist())

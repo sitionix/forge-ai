@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, ClassVar, Iterable, Mapping, Optional
 
 from knowledge_service.analysis_graph_contract import AnalysisGraphContract
 from knowledge_service.analysis_parse_failure import GraphAnalysisParseFailure
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEvidenceRef
+from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphClaim, GraphEvidenceRef
 
 
 class TargetResponseParserValidator:
-    _TOP_LEVEL_FIELDS = {"claims"}
-    _CLAIM_FIELDS = {"claimKind", "summary", "evidence"}
-    _EVIDENCE_FIELDS = {"lineStart", "lineEnd"}
-    _OLD_CONTRACT_FIELDS = {
+    _TOP_LEVEL_FIELDS: ClassVar[set[str]] = {"claims", "boundaries"}
+    _CLAIM_FIELDS: ClassVar[set[str]] = {"claimKind", "summary", "evidence"}
+    _BOUNDARY_FIELDS: ClassVar[set[str]] = {"role", "descriptors", "evidence", "confidence"}
+    _DESCRIPTOR_FIELDS: ClassVar[set[str]] = {"path", "value", "confidence", "evidence"}
+    _EVIDENCE_FIELDS: ClassVar[set[str]] = {"lineStart", "lineEnd"}
+    _OLD_CONTRACT_FIELDS: ClassVar[set[str]] = {
         "schemaVersion",
         "localId",
         "targetRef",
@@ -29,7 +31,7 @@ class TargetResponseParserValidator:
     _DEFAULT_CONFIDENCE = 0.8
     _MAX_SUMMARY_CHARS = 600
     _MAX_EVIDENCE_TEXT_CHARS = 2000
-    _CLOSING_BRACE_LINES = {"}", "};", ");", ")"}
+    _CLOSING_BRACE_LINES: ClassVar[set[str]] = {"}", "};", ");", ")"}
 
     def parse(
         self,
@@ -119,7 +121,7 @@ class TargetResponseParserValidator:
                 self._validation_error(
                     "CLAIMS_MISSING",
                     "$.claims",
-                    "claims is required.",
+                    "claims is required when boundaries is not present.",
                     actual=None,
                     expected="claims array",
                     missing_required_field="claims",
@@ -141,9 +143,33 @@ class TargetResponseParserValidator:
                 claims = []
             else:
                 claims = claims_value
+        boundaries_value = parsed.get("boundaries")
+        if boundaries_value is None:
+            boundaries: list[Any] = []
+        elif not isinstance(boundaries_value, list):
+            details.append(
+                self._validation_error(
+                    "BOUNDARIES_NOT_ARRAY",
+                    "$.boundaries",
+                    "boundaries must be an array.",
+                    actual=boundaries_value,
+                    expected="array",
+                )
+            )
+            boundaries = []
+        else:
+            boundaries = boundaries_value
+        if "claims" not in parsed and boundaries:
+            details = [
+                detail
+                for detail in details
+                if not (detail.get("code") == "CLAIMS_MISSING" and detail.get("jsonPath") == "$.claims")
+            ]
 
         for index, item in enumerate(claims):
             self._validate_claim(item, index, contract, line_count, content_by_line, target_range, details)
+        for index, item in enumerate(boundaries):
+            self._validate_boundary(item, index, line_count, content_by_line, target_range, details)
 
         if details:
             return self._failure(raw, details, target_ref, target_kind, target_name, target_range)
@@ -210,6 +236,103 @@ class TargetResponseParserValidator:
                 )
             )
         self._evidence_list(item.get("evidence"), f"{path}.evidence", line_count, str(claim_kind or ""), content_by_line, target_range, details)
+
+    def _validate_boundary(
+        self,
+        item: Any,
+        index: int,
+        line_count: int,
+        content_by_line: Mapping[int, str],
+        target_range: Mapping[str, Any],
+        details: list[dict[str, Any]],
+    ) -> None:
+        path = f"$.boundaries[{index}]"
+        if not isinstance(item, dict):
+            details.append(
+                self._validation_error(
+                    "BOUNDARY_NOT_OBJECT",
+                    path,
+                    "boundary must be an object.",
+                    actual=type(item).__name__,
+                    expected="object",
+                )
+            )
+            return
+        self._validate_object_fields(item, path, self._BOUNDARY_FIELDS, details)
+        role = self._required_string(item, path, "role", details)
+        if role and str(role).strip().upper() not in {"PROVIDED", "REQUIRED"}:
+            details.append(
+                self._validation_error(
+                    "BOUNDARY_ROLE_INVALID",
+                    f"{path}.role",
+                    "boundary role must be PROVIDED or REQUIRED.",
+                    actual=role,
+                    expected="PROVIDED or REQUIRED",
+                )
+            )
+        self._optional_confidence(item.get("confidence"), f"{path}.confidence", details)
+        boundary_evidence = item.get("evidence")
+        self._evidence_list(boundary_evidence, f"{path}.evidence", line_count, "BOUNDARY", content_by_line, target_range, details)
+        descriptors = item.get("descriptors")
+        if not isinstance(descriptors, list) or not descriptors:
+            details.append(
+                self._validation_error(
+                    "BOUNDARY_DESCRIPTORS_MISSING",
+                    f"{path}.descriptors",
+                    "boundary descriptors must be a non-empty array.",
+                    actual=descriptors,
+                    expected="non-empty descriptor array",
+                )
+            )
+            return
+        for descriptor_index, descriptor in enumerate(descriptors):
+            self._validate_boundary_descriptor(
+                descriptor,
+                f"{path}.descriptors[{descriptor_index}]",
+                line_count,
+                content_by_line,
+                target_range,
+                details,
+            )
+
+    def _validate_boundary_descriptor(
+        self,
+        item: Any,
+        path: str,
+        line_count: int,
+        content_by_line: Mapping[int, str],
+        target_range: Mapping[str, Any],
+        details: list[dict[str, Any]],
+    ) -> None:
+        if not isinstance(item, dict):
+            details.append(
+                self._validation_error(
+                    "BOUNDARY_DESCRIPTOR_NOT_OBJECT",
+                    path,
+                    "boundary descriptor must be an object.",
+                    actual=type(item).__name__,
+                    expected="object",
+                )
+            )
+            return
+        self._validate_object_fields(item, path, self._DESCRIPTOR_FIELDS, details)
+        self._required_string(item, path, "path", details)
+        if "value" not in item or item.get("value") is None:
+            details.append(
+                self._validation_error(
+                    "BOUNDARY_DESCRIPTOR_VALUE_MISSING",
+                    f"{path}.value",
+                    "descriptor value is required and must not be null.",
+                    actual=item.get("value"),
+                    expected="JSON-compatible non-null value",
+                    missing_required_field="value",
+                )
+            )
+        else:
+            self._json_compatible(item.get("value"), f"{path}.value", details)
+        self._optional_confidence(item.get("confidence"), f"{path}.confidence", details)
+        if item.get("evidence") is not None:
+            self._evidence_list(item.get("evidence"), f"{path}.evidence", line_count, "BOUNDARY", content_by_line, target_range, details)
 
     def _evidence_list(
         self,
@@ -424,7 +547,34 @@ class TargetResponseParserValidator:
                     metadata={"factOrigin": "LLM"},
                 )
             )
-        return GraphAnalysisResult(nodes=[], edges=[], claims=claims, diagnostics=[])
+        boundaries: list[BoundaryFact] = []
+        for index, item in enumerate(parsed.get("boundaries") or [], start=1):
+            evidence = self._evidence_refs(item.get("evidence") or [], content_by_line)
+            descriptors: list[BoundaryDescriptor] = []
+            for descriptor_index, descriptor in enumerate(item.get("descriptors") or [], start=1):
+                descriptor_evidence = self._evidence_refs(descriptor.get("evidence") or [], content_by_line) or evidence
+                descriptors.append(
+                    BoundaryDescriptor(
+                        path=str(descriptor["path"]),
+                        value=descriptor["value"],
+                        origin="LLM",
+                        confidence=descriptor.get("confidence"),
+                        evidence=descriptor_evidence,
+                    )
+                )
+            boundaries.append(
+                BoundaryFact(
+                    localId=f"llm-boundary-{target_ref}-{index}",
+                    nodeLocalId=target_stable_key,
+                    role=str(item["role"]),
+                    descriptors=descriptors,
+                    evidence=evidence,
+                    origin="LLM",
+                    confidence=float(item.get("confidence") if item.get("confidence") is not None else self._DEFAULT_CONFIDENCE),
+                    metadata={"factOrigin": "LLM"},
+                )
+            )
+        return GraphAnalysisResult(nodes=[], edges=[], claims=claims, boundaries=boundaries, diagnostics=[])
 
     def _evidence_refs(self, value: Iterable[Any], content_by_line: Mapping[int, str]) -> list[GraphEvidenceRef]:
         refs: list[GraphEvidenceRef] = []
@@ -509,7 +659,7 @@ class TargetResponseParserValidator:
                 self._validation_error(
                     code,
                     f"{path}.{field_name}",
-                    "Unknown or removed field is not allowed by the target-anchor claims-only response contract.",
+                    "Unknown or removed field is not allowed by the target-anchor response contract.",
                     actual=field_name,
                     expected="no extra fields",
                     field=field_name,
@@ -518,7 +668,13 @@ class TargetResponseParserValidator:
 
     def _required_string(self, item: Mapping[str, Any], path: str, field_name: str, details: list[dict[str, Any]]) -> Optional[str]:
         value = item.get(field_name)
-        missing_code = "CLAIM_KIND_MISSING" if field_name == "claimKind" else "SUMMARY_MISSING"
+        missing_code_by_field = {
+            "claimKind": "CLAIM_KIND_MISSING",
+            "summary": "SUMMARY_MISSING",
+            "role": "BOUNDARY_ROLE_MISSING",
+            "path": "BOUNDARY_DESCRIPTOR_PATH_MISSING",
+        }
+        missing_code = missing_code_by_field.get(field_name, "REQUIRED_FIELD_MISSING")
         if value is None:
             details.append(
                 self._validation_error(
@@ -543,6 +699,34 @@ class TargetResponseParserValidator:
             )
             return None
         return value
+
+    def _optional_confidence(self, value: Any, path: str, details: list[dict[str, Any]]) -> None:
+        if value is None:
+            return
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0 or value > 1:
+            details.append(
+                self._validation_error(
+                    "CONFIDENCE_INVALID",
+                    path,
+                    "confidence must be a number between 0 and 1.",
+                    actual=value,
+                    expected="0 <= confidence <= 1",
+                )
+            )
+
+    def _json_compatible(self, value: Any, path: str, details: list[dict[str, Any]]) -> None:
+        try:
+            json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            details.append(
+                self._validation_error(
+                    "BOUNDARY_DESCRIPTOR_VALUE_INVALID",
+                    path,
+                    "descriptor value must be JSON-compatible.",
+                    actual=type(value).__name__,
+                    expected="JSON-compatible value",
+                )
+            )
 
     def _required_int(self, item: Mapping[str, Any], path: str, field_name: str, details: list[dict[str, Any]]) -> Optional[int]:
         value = item.get(field_name)
