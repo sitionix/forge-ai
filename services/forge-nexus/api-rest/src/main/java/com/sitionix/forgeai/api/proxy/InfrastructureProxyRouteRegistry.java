@@ -18,11 +18,7 @@ public class InfrastructureProxyRouteRegistry {
                                             final ForgeAiHumanQueryProperties humanQueryProperties) {
         final Map<String, InfrastructureProxyRoute> registered = new LinkedHashMap<>();
         final Duration humanQueryDeadline = humanQueryProperties.requestTimeout();
-        properties.getProxy().validateHumanQueryTimeoutHierarchy(humanQueryDeadline);
-        final var explanationReadTimeout = properties.getProxy()
-                .knowledgeHumanQueryReadTimeout(humanQueryDeadline);
-        final var jarvisQueryReadTimeout = properties.getProxy()
-                .jarvisQueryReadTimeout(humanQueryDeadline);
+        final var humanQueryReadTimeout = properties.getProxy().humanQueryReadTimeout(humanQueryDeadline);
         this.knowledge(registered, "knowledge.status", HttpMethod.GET, "/api/v1/knowledge/status", false);
         this.knowledge(registered, "knowledge.sources", HttpMethod.GET, "/api/v1/knowledge/sources", false);
         this.knowledge(registered, "knowledge.overview", HttpMethod.GET, "/api/v1/knowledge/overview", false);
@@ -35,7 +31,7 @@ public class InfrastructureProxyRouteRegistry {
                 HttpMethod.POST,
                 "/api/v1/knowledge/query",
                 true,
-                explanationReadTimeout
+                humanQueryReadTimeout
         );
         this.knowledge(
                 registered,
@@ -43,7 +39,7 @@ public class InfrastructureProxyRouteRegistry {
                 HttpMethod.POST,
                 "/api/v1/knowledge/query/tool-context",
                 true,
-                explanationReadTimeout
+                humanQueryReadTimeout
         );
         this.knowledge(registered, "knowledge.analysis.build", HttpMethod.POST, "/api/v1/knowledge/analysis/build", true);
         this.knowledge(registered, "knowledge.analysis.retry-failed", HttpMethod.POST, "/api/v1/knowledge/analysis/retry-failed", true);
@@ -69,7 +65,7 @@ public class InfrastructureProxyRouteRegistry {
         this.jarvis(registered, "jarvis.status", HttpMethod.GET, "/api/v1/jarvis/status", false);
         this.jarvis(registered, "jarvis.actions", HttpMethod.GET, "/api/v1/jarvis/actions", false);
         this.jarvis(registered, "jarvis.command", HttpMethod.POST, "/api/v1/jarvis/command", true);
-        this.jarvis(registered, "jarvis.query", HttpMethod.POST, "/api/v1/jarvis/query", true, jarvisQueryReadTimeout, true);
+        this.jarvis(registered, "jarvis.query", HttpMethod.POST, "/api/v1/jarvis/query", true, humanQueryReadTimeout, true);
         this.routes = Map.copyOf(registered);
     }
 

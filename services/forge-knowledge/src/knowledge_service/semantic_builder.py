@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Sequence
 
 from knowledge_service.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
@@ -21,7 +21,6 @@ from knowledge_service.semantic_index import (
     SemanticIndexStore,
     ensure_semantic_index_schema,
 )
-
 
 SEMANTIC_DOCUMENT_TYPE = "NODE_CONTEXT"
 
@@ -56,7 +55,7 @@ class SemanticDocument:
 class SemanticSourceBuildResult:
     source_id: str
     status: str
-    graph_revision: Optional[str]
+    graph_revision: str | None
     total_node_count: int
     indexed_node_count: int
     diagnostics: list[dict[str, Any]] = field(default_factory=list)
@@ -91,7 +90,7 @@ class SemanticBuildRunResult:
 
 
 class SemanticBuildError(Exception):
-    def __init__(self, code: str, message: str, *, diagnostics: Optional[list[dict[str, Any]]] = None) -> None:
+    def __init__(self, code: str, message: str, *, diagnostics: list[dict[str, Any]] | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
@@ -107,7 +106,7 @@ class SemanticDocumentBuilder:
         conn: sqlite3.Connection,
         source_id: str,
         *,
-        graph_info: Optional[SemanticGraphInfo] = None,
+        graph_info: SemanticGraphInfo | None = None,
     ) -> list[SemanticDocument]:
         graph = graph_info or SemanticIndexStore.current_graph_info_conn(conn, source_id)
         if not graph.graph_id or not graph.graph_revision:
@@ -336,7 +335,7 @@ class SemanticIndexBuilder:
         self.config = config or SemanticBuildConfig(embedding_model=embedding_provider.model)
         self.document_builder = document_builder or SemanticDocumentBuilder(self.config)
 
-    def build(self, source_ids: Optional[Sequence[str]] = None, *, force: bool = False, build_id: Optional[str] = None) -> SemanticBuildRunResult:
+    def build(self, source_ids: Sequence[str] | None = None, *, force: bool = False, build_id: str | None = None) -> SemanticBuildRunResult:
         build_id = build_id or f"semantic-build-{uuid.uuid4()}"
         if not self.config.enabled:
             diagnostic = {"code": "SEMANTIC_DISABLED", "message": "Semantic indexing is disabled.", "severity": "INFO"}
@@ -378,18 +377,18 @@ class SemanticIndexBuilder:
         try:
             vectors = self._embed_documents(source_id, graph, documents, build_id)
             dimension = self._validate_dimensions(vectors)
-            self._replace_documents_and_vectors(source_id, graph.graph_id or graph.graph_revision or "", documents, vectors, dimension)
+            self._replace_documents_and_vectors(source_id, documents, vectors, dimension)
             self._mark_ready(source_id, graph, total, len(vectors), dimension, build_id)
             return SemanticSourceBuildResult(source_id, "READY", graph.graph_revision, total, len(vectors))
         except SemanticBuildError as exc:
             return self._mark_failed(source_id, graph, build_id, exc.message, exc.diagnostics)
         except EmbeddingProviderError as exc:
             return self._mark_failed(source_id, graph, build_id, exc.message, [exc.diagnostic()])
-        except Exception:
+        except Exception:  # noqa: BLE001 - per-source builds fail closed and let other sources continue.
             diagnostic = {"code": "SEMANTIC_BUILD_FAILED", "message": "Semantic index build failed.", "severity": "WARN"}
             return self._mark_failed(source_id, graph, build_id, "Semantic index build failed.", [diagnostic])
 
-    def _select_source_ids(self, source_ids: Optional[Sequence[str]], *, force: bool) -> list[str]:
+    def _select_source_ids(self, source_ids: Sequence[str] | None, *, force: bool) -> list[str]:
         explicit = sorted({str(source_id) for source_id in (source_ids or []) if str(source_id)})
         if explicit:
             return explicit
@@ -444,7 +443,7 @@ class SemanticIndexBuilder:
         return vectors
 
     def _validate_dimensions(self, vectors: Sequence[Sequence[float]]) -> int:
-        dimension: Optional[int] = None
+        dimension: int | None = None
         for vector in vectors:
             if not vector:
                 raise SemanticBuildError(
@@ -473,7 +472,6 @@ class SemanticIndexBuilder:
     def _replace_documents_and_vectors(
         self,
         source_id: str,
-        graph_id: str,
         documents: Sequence[SemanticDocument],
         vectors: Sequence[Sequence[float]],
         dimension: int,
@@ -482,12 +480,17 @@ class SemanticIndexBuilder:
         with self._connect() as conn:
             conn.execute(
                 """
+                DELETE FROM semantic_vectors
+                WHERE source_id = ?
+                """,
+                (source_id,),
+            )
+            conn.execute(
+                """
                 DELETE FROM semantic_documents
                 WHERE source_id = ?
-                  AND graph_id = ?
-                  AND builder_version = ?
                 """,
-                (source_id, graph_id, self.config.builder_version),
+                (source_id,),
             )
             for document, vector in zip(documents, vectors):
                 conn.execute(

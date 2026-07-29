@@ -324,9 +324,9 @@ public class InfrastructureProxyTransport {
             if (!root.isObject()) {
                 return false;
             }
-            final String code = root.path("code").asText("");
-            final String message = root.path("message").asText("");
-            return !message.isBlank() && this.isControlledHumanQueryErrorCode(code);
+        final String code = root.path("code").asText("");
+        final String message = root.path("message").asText("");
+        return !message.isBlank() && this.isControlledHumanQueryErrorCode(code);
         } catch (final IOException exception) {
             return false;
         }
@@ -334,10 +334,7 @@ public class InfrastructureProxyTransport {
 
     private boolean isControlledHumanQueryErrorCode(final String code) {
         return switch (code) {
-            case "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
-                    "HUMAN_ANSWER_GENERATION_FAILED",
-                    "HUMAN_ANSWER_DEADLINE_EXCEEDED",
-                    "HUMAN_QUERY_TIMEOUT",
+            case "HUMAN_QUERY_TIMEOUT",
                     "QUERY_INTERPRETATION_FAILED",
                     "QUERY_INTERPRETATION_DEADLINE_EXCEEDED",
                     "QUERY_PLANNING_TIMEOUT",

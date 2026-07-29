@@ -11,14 +11,14 @@ import pytest
 
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
-from knowledge_service.analysis_service import AnalysisSupervisor
-from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
+from knowledge_service.analysis_parse_failure import GraphAnalysisParseFailure
 from knowledge_service.analysis_policy import PromptDefinition
 from knowledge_service.analysis_policy_loader import load_analysis_policy
+from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
+from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.analysis_parse_failure import GraphAnalysisParseFailure
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphEdge, GraphEvidenceRef, GraphNode
+from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.target_enrichment import (
     BEGIN_INPUT_MARKER,
     END_INPUT_MARKER,
@@ -31,7 +31,6 @@ from knowledge_service.target_enrichment import (
     TargetPromptRenderer,
     TargetResponseParserValidator,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = REPO_ROOT / "config" / "knowledge" / "analysis-policy.yaml"
@@ -82,7 +81,7 @@ def test_llm_input_projection_includes_minimal_contract_and_excludes_internal_pa
     assert payload["targetRef"] == target.ref
     assert "RESPONSIBILITY" in llm_input["allowedValues"]["claimKind"]
     assert set(llm_input["allowedValues"]) == {"claimKind"}
-    assert set(llm_input["responseShape"]) == {"claims"}
+    assert set(llm_input["responseShape"]) == {"claims", "boundaries"}
     assert any(item["kind"] == "FIELD" and item["role"] == "context" for item in llm_input["contextAnchors"])
     for forbidden in (
         "anchorRegistry",
@@ -128,7 +127,7 @@ def test_target_prompt_renderer_loads_policy_template_and_response_shape():
     assert rendered_input["requestKind"] == TARGET_REQUEST_KIND
     assert rendered_input["file"]["contentLines"]
     response_shape = renderer.response_shape(payload=payload)
-    assert set(response_shape) == {"claims"}
+    assert set(response_shape) == {"claims", "boundaries"}
     assert not _contains_key(response_shape, "schemaVersion")
     assert not _contains_key(response_shape, "edgeType")
     assert not _contains_key(response_shape, "toRef")
@@ -171,7 +170,7 @@ def test_target_prompt_renderer_uses_format_specific_prompt_and_shared_response_
 
     assert payload["analysisPolicy"]["promptId"] == prompt_id
     assert prompt_text in prompt
-    assert set(renderer.response_shape(payload=payload)) == {"claims"}
+    assert set(renderer.response_shape(payload=payload)) == {"claims", "boundaries"}
     assert payload["llmInput"]["responseShape"] == renderer.response_shape(payload=payload)
 
 
@@ -417,6 +416,180 @@ def test_target_response_validator_accepts_minimal_claim_and_injects_backend_fie
     assert parsed.claims[0].metadata["factOrigin"] == "LLM"
 
 
+def test_target_response_validator_accepts_generic_boundary_descriptors():
+    payload, contract = _target_payload()
+    response = {
+        "claims": [],
+        "boundaries": [
+            {
+                "role": "REQUIRED",
+                "confidence": 0.74,
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
+                "descriptors": [
+                    {"path": "call.method", "value": "helper", "confidence": 0.74},
+                    {"path": "payload.shape", "value": {"kind": "object", "required": ["id"]}},
+                ],
+            }
+        ],
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisResult)
+    assert parsed.claims == []
+    assert len(parsed.boundaries) == 1
+    boundary = parsed.boundaries[0]
+    assert boundary.nodeLocalId == "svc|src/Foo.java|CALLABLE|Foo.call()"
+    assert boundary.localId == "llm-boundary-M1-1"
+    assert boundary.role == "REQUIRED"
+    assert boundary.origin == "LLM"
+    assert boundary.confidence == 0.74
+    assert {descriptor.path for descriptor in boundary.descriptors} == {"call.method", "payload.shape"}
+    assert {descriptor.origin for descriptor in boundary.descriptors} == {"LLM"}
+    assert boundary.descriptors[0].valueType == "STRING"
+    assert boundary.descriptors[1].valueType == "OBJECT"
+    assert boundary.descriptors[1].value == {"kind": "object", "required": ["id"]}
+    assert boundary.descriptors[0].evidence[0].text == "  void call() { helper(); }"
+
+
+def test_target_response_validator_rejects_backend_owned_boundary_fields():
+    payload, contract = _target_payload()
+    response = {
+        "claims": [],
+        "boundaries": [
+            {
+                "role": "REQUIRED",
+                "status": "TRUSTED",
+                "flowDomain": "WORKFLOW",
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
+                "descriptors": [
+                    {
+                        "path": "call.enabled",
+                        "value": True,
+                        "valueType": "STRING",
+                        "origin": "STATIC",
+                    },
+                ],
+            }
+        ],
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    paths = {detail.get("jsonPath") for detail in parsed.error_details}
+    assert {
+        "$.boundaries[0].status",
+        "$.boundaries[0].flowDomain",
+        "$.boundaries[0].descriptors[0].valueType",
+        "$.boundaries[0].descriptors[0].origin",
+    }.issubset(paths)
+
+
+def test_file_enrichment_merger_merges_boundaries_by_identity_and_dedupes_descriptors():
+    evidence_a = GraphEvidenceRef(lineStart=2, lineEnd=2, text="call();")
+    evidence_b = GraphEvidenceRef(lineStart=3, lineEnd=3, text="payload();")
+    first = GraphAnalysisResult(
+        boundaries=[
+            BoundaryFact(
+                localId="first",
+                identity="boundary:shared",
+                nodeLocalId="node",
+                role="REQUIRED",
+                origin="LLM",
+                confidence=0.95,
+                status="CANDIDATE",
+                flowDomain="TEST",
+                metadata={
+                    "boundaryIdentity": "boundary:shared",
+                    "status": "CANDIDATE",
+                    "rejectionReason": "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER",
+                    "lifecycleSource": "BACKEND_VALIDATION",
+                    "nonAuthoritative": "ignored",
+                },
+                evidence=[evidence_a],
+                descriptors=[
+                    BoundaryDescriptor(path="call.method", value="send", origin="LLM", evidence=[evidence_a]),
+                    BoundaryDescriptor(path="call.method", value="send", origin="LLM", evidence=[evidence_a]),
+                ],
+            )
+        ]
+    )
+    second = GraphAnalysisResult(
+        boundaries=[
+            BoundaryFact(
+                localId="second",
+                identity="boundary:shared",
+                nodeLocalId="node",
+                role="REQUIRED",
+                origin="STATIC",
+                confidence=0.91,
+                status="TRUSTED",
+                flowDomain="WORKFLOW",
+                metadata={"boundaryIdentity": "boundary:shared", "parser": "static"},
+                evidence=[evidence_b],
+                descriptors=[
+                    BoundaryDescriptor(path="payload.kind", value="event", origin="STATIC", evidence=[evidence_b]),
+                ],
+            )
+        ]
+    )
+
+    merged = FileEnrichmentMerger().merge([first, second])
+    reversed_merged = FileEnrichmentMerger().merge([second, first])
+
+    def snapshot(result):
+        boundary = result.boundaries[0]
+        return {
+            "origin": boundary.origin,
+            "status": boundary.status,
+            "flowDomain": boundary.flowDomain,
+            "confidence": boundary.confidence,
+            "metadata": boundary.metadata,
+            "evidence": [(item.lineStart, item.lineEnd, item.text) for item in boundary.evidence],
+            "descriptors": [
+                (descriptor.path, descriptor.value, descriptor.origin, [(item.lineStart, item.lineEnd, item.text) for item in descriptor.evidence])
+                for descriptor in boundary.descriptors
+            ],
+        }
+
+    assert len(merged.boundaries) == 1
+    assert snapshot(merged) == snapshot(reversed_merged)
+    boundary = merged.boundaries[0]
+    assert boundary.origin == "STATIC"
+    assert boundary.status == "CANDIDATE"
+    assert boundary.flowDomain is None
+    assert boundary.metadata["rejectionReason"] == "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+    assert boundary.metadata["originContributors"] == ["LLM", "STATIC"]
+    assert "nonAuthoritative" not in boundary.metadata
+    assert {(item.lineStart, item.lineEnd) for item in boundary.evidence} == {(2, 2), (3, 3)}
+    assert [(descriptor.path, descriptor.value, descriptor.origin) for descriptor in boundary.descriptors] == [
+        ("call.method", "send", "LLM"),
+        ("payload.kind", "event", "STATIC"),
+    ]
+
+
+def test_target_response_validator_rejects_malformed_boundary_descriptor():
+    payload, contract = _target_payload()
+    response = {
+        "claims": [],
+        "boundaries": [
+            {
+                "role": "REQUIRED",
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
+                "descriptors": [
+                    {"path": "call.method", "value": None},
+                ],
+            }
+        ],
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    assert any(detail.get("code") == "BOUNDARY_DESCRIPTOR_VALUE_MISSING" for detail in parsed.error_details)
+
+
 def test_target_response_validator_rejects_callable_evidence_outside_target_range():
     payload, contract = _target_payload()
     response = _valid_target_response()
@@ -621,7 +794,7 @@ def test_validation_feedback_prompt_for_old_fields_includes_only_observed_field_
                 "code": "SEMANTIC_EDGES_RETURNED",
                 "errorType": "SEMANTIC_EDGES_RETURNED",
                 "jsonPath": "$.semanticEdges",
-                "message": "Unknown or removed field is not allowed by the target-anchor claims-only response contract.",
+                "message": "Unknown or removed field is not allowed by the target-anchor response contract.",
                 "actual": "semanticEdges",
                 "expected": "no extra fields",
             },
@@ -629,7 +802,7 @@ def test_validation_feedback_prompt_for_old_fields_includes_only_observed_field_
                 "code": "OLD_CONTRACT_FIELD_RETURNED",
                 "errorType": "OLD_CONTRACT_FIELD_RETURNED",
                 "jsonPath": "$.claims[0].confidence",
-                "message": "Unknown or removed field is not allowed by the target-anchor claims-only response contract.",
+                "message": "Unknown or removed field is not allowed by the target-anchor response contract.",
                 "actual": "confidence",
                 "expected": "no extra fields",
             }
@@ -756,7 +929,7 @@ def test_validation_feedback_prompt_for_json_parse_error_contains_no_evidence_ru
     assert "JSON_PARSE_ERROR" in prompt
     assert "line 1 column 2" in prompt
     assert "Output must be one valid JSON object." in prompt
-    assert "Corrected response must match the claims-only response shape." in prompt
+    assert "Corrected response must match the target-anchor response shape." in prompt
     assert "Fix only the listed validation errors." not in prompt
     assert "EVIDENCE_RANGE" not in prompt
     assert "material code lines" not in prompt

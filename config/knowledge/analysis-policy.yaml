@@ -77,11 +77,13 @@ analysis:
         from: [CALLABLE]
         to: [CALLABLE]
         semanticEligible: true
+        relationSemantics: [executionContinuation, familyTraversal]
       OVERRIDES:
         description: Callable source implements or overrides another callable declared by a parent type or interface.
         from: [CALLABLE]
         to: [CALLABLE]
         semanticEligible: false
+        relationSemantics: [supportingRelation]
       USES_FIELD:
         description: Callable source reads from, invokes through, or otherwise uses a declared field in its body.
         from: [CALLABLE]
@@ -92,11 +94,13 @@ analysis:
         from: [TYPE]
         to: [TYPE]
         semanticEligible: false
+        relationSemantics: [supportingRelation]
       EXTENDS:
         description: Type source extends a class or interface type.
         from: [TYPE]
         to: [TYPE]
         semanticEligible: false
+        relationSemantics: [supportingRelation]
       CONFIGURES:
         description: Source anchor configures a module, data object, resource, or configuration target.
         from: [FILE, CONFIG, MODULE]

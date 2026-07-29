@@ -96,9 +96,8 @@ class GraphStateRepository:
             SELECT source_id, graph_id, content_identity
             FROM analysis_graph_state
             WHERE source_id IN ({placeholders})
-              AND status = ?
             """,
-            [*source_ids, GRAPH_STATE_READY],
+            [*source_ids],
         ).fetchall()
         return {
             str(row["source_id"]): {

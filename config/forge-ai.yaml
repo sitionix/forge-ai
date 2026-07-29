@@ -53,7 +53,6 @@ forge:
           max-chunk-chars: 20000
           concurrency: 1
           max-attempts-per-file: 3
-          repair-attempts-per-file: 1
         semantic:
           auto-build-interval-seconds: 60
       jarvis:

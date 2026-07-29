@@ -9,6 +9,7 @@ export interface OperatorRuntimeConfig {
   activeJobPollIntervalMs: number;
   graphPollIntervalMs: number;
   jarvisQueryIncludeTests: boolean;
+  jarvisQueryMaxFlows: number | null;
 }
 
 declare global {
@@ -25,7 +26,8 @@ export const defaultRuntimeConfig: OperatorRuntimeConfig = {
   statusPollIntervalMs: 15000,
   activeJobPollIntervalMs: 1500,
   graphPollIntervalMs: 30000,
-  jarvisQueryIncludeTests: false
+  jarvisQueryIncludeTests: false,
+  jarvisQueryMaxFlows: null
 };
 
 export function contextPathFromLocation(pathname: string = window.location.pathname): string {
@@ -59,7 +61,8 @@ function normalizeRuntimeConfig(config: OperatorRuntimeConfig): OperatorRuntimeC
     statusPollIntervalMs: positiveInteger(config.statusPollIntervalMs, defaultRuntimeConfig.statusPollIntervalMs),
     activeJobPollIntervalMs: positiveInteger(config.activeJobPollIntervalMs, defaultRuntimeConfig.activeJobPollIntervalMs),
     graphPollIntervalMs: positiveInteger(config.graphPollIntervalMs, defaultRuntimeConfig.graphPollIntervalMs),
-    jarvisQueryIncludeTests: Boolean(config.jarvisQueryIncludeTests)
+    jarvisQueryIncludeTests: Boolean(config.jarvisQueryIncludeTests),
+    jarvisQueryMaxFlows: optionalPositiveInteger(config.jarvisQueryMaxFlows)
   };
 }
 
@@ -71,4 +74,8 @@ function normalizeBasePath(value: string): string {
 
 function positiveInteger(value: number, fallback: number): number {
   return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function optionalPositiveInteger(value: number | null | undefined): number | null {
+  return Number.isInteger(value) && Number(value) > 0 ? Number(value) : null;
 }

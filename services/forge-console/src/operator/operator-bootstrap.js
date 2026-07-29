@@ -17,6 +17,7 @@ export function bootstrapOperatorConsole(options = {}) {
     activeJobPollIntervalMs: 2000,
     graphPollIntervalMs: 30000,
     jarvisQueryIncludeTests: false,
+    jarvisQueryMaxFlows: null,
     ...(windowRef.FORGE_OPERATOR_RUNTIME_CONFIG || {}),
     ...(options.runtimeConfig || {})
   };

@@ -1,7 +1,6 @@
-# ruff: noqa: E402
 
-import hashlib
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -12,8 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
-import pytest
 import httpx
+import pytest
 
 os.environ.setdefault("KNOWLEDGE_STORE_PATH", "/tmp/forge-ai-knowledge-test-main.sqlite")
 
@@ -25,22 +24,21 @@ from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
 from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
+from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
 from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
-from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.config import AppConfig
 from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
-from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
+from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.graph_state_repository import GRAPH_STATE_FAILED, GraphStateRepository
 from knowledge_service.inventory_builder import InventoryBuilder
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
@@ -48,6 +46,8 @@ from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import build_knowledge_query_service
+from knowledge_service.local_flow_unit_engine import LocalFlowRootOrigin, LocalFlowUnitEngine
+from knowledge_service.local_flow_unit_store import LocalFlowUnitGraphRepository
 from knowledge_service.overview_projection import read_overview, refresh_overview_for_sources
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_index import SemanticIndexStore
@@ -437,6 +437,49 @@ def materialize_graph_for_test(
     return GraphAnalysisEngine().materialize(row, "job-1", "test-analyzer", "1", result, content.splitlines())
 
 
+def test_graph_analysis_preserves_typed_http_operation_edge_metadata():
+    graph = materialize_graph_for_test(
+        GraphAnalysisResult(
+            nodes=[
+                GraphNode(localId="caller", nodeKind="CALLABLE", name="Caller.run", lineStart=1, lineEnd=1, confidence=1.0),
+                GraphNode(localId="target", nodeKind="CALLABLE", name="Target.run", lineStart=1, lineEnd=1, confidence=1.0),
+            ],
+            edges=[
+                GraphEdge(
+                    localId="caller-target",
+                    fromNodeLocalId="caller",
+                    toNodeLocalId="target",
+                    edgeType="CALLS",
+                    resolutionStatus="RESOLVED",
+                    confidence=1.0,
+                    evidence=[GraphEvidenceRef(lineStart=1, lineEnd=1, text="http call")],
+                    metadata={
+                        "transportKind": "HTTP",
+                        "httpMethod": "POST",
+                        "routeTemplate": "/api/v1/registrations",
+                        "operationIdentity": "HTTP POST /api/v1/registrations",
+                        "interfaceIdentity": "AuthRegistrationApi.register",
+                        "requestContractIdentity": "RegistrationRequest",
+                        "responseContractIdentity": "RegistrationResponse",
+                        "targetServiceIdentity": "auth-service",
+                    },
+                )
+            ],
+        ),
+        content="class Caller {}\n",
+    )
+
+    metadata = graph["edges"][0]["metadata"]
+    assert metadata["transportKind"] == "HTTP"
+    assert metadata["httpMethod"] == "POST"
+    assert metadata["routeTemplate"] == "/api/v1/registrations"
+    assert metadata["operationIdentity"] == "HTTP POST /api/v1/registrations"
+    assert metadata["interfaceIdentity"] == "AuthRegistrationApi.register"
+    assert metadata["requestContractIdentity"] == "RegistrationRequest"
+    assert metadata["responseContractIdentity"] == "RegistrationResponse"
+    assert metadata["targetServiceIdentity"] == "auth-service"
+
+
 def _static_java_graph_result_for_test(content: str, file_id: int, relative_path: str, source_id: str = "edge-gateway"):
     file_metadata = StructuralFileMetadata(
         source_id=source_id,
@@ -479,7 +522,12 @@ def _materialize_static_plus_enrichment_for_test(
     )
 
 
-def graph_state_for_test(content=None, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java", source_id="edge-gateway"):
+def graph_state_for_test(
+    content=None,
+    relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java",
+    source_id="edge-gateway",
+    flow_domain="CODE",
+):
     content = content or "class EmailVerificationLinkClientImpl {}\n"
     return {
         "source_id": source_id,
@@ -487,7 +535,7 @@ def graph_state_for_test(content=None, relative_path="src/main/java/example/Emai
         "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
         "analyzer_name": "test-analyzer",
         "analyzer_version": "1",
-        "flow_domain": "CODE",
+        "flow_domain": flow_domain,
         "status": "ANALYZED",
         "analyzed_at": "now",
         "diagnostics": [],
@@ -607,6 +655,8 @@ def payload_top_level_shape():
         "_refToStableKey",
         "_stableKeyToRef",
         "_refToKind",
+        "_targetIndex",
+        "_targetCount",
     }
 
 
@@ -784,7 +834,122 @@ def _capturing_ollama_client(captured, response_factory):
 def _empty_target_response(llm_input):
     return {
         "claims": [],
+        "boundaries": [],
     }
+
+
+def _target_key(llm_input):
+    target = llm_input["targetAnchor"]
+    return target.get("kind"), target.get("name")
+
+
+def _captured_target_calls(captured, *, kind="FILE", name="ObjectHandler.java"):
+    result = []
+    for body in captured:
+        llm_input = _llm_input_from_prompt(body["prompt"])
+        if _target_key(llm_input) == (kind, name):
+            result.append({"body": body, "prompt": body["prompt"], "llmInput": llm_input})
+    return result
+
+
+def _is_feedback_prompt(prompt):
+    return "Target-anchor validation feedback retry." in prompt
+
+
+def _provider_request_events(store, job_id, *, relative_path="src/main/java/example/ObjectHandler.java"):
+    return [
+        event
+        for event in AnalysisStore(store.db_path).runtime_events(job_id=job_id, relative_path=relative_path, limit=1000)["events"]
+        if event["eventType"] == "PROVIDER_REQUEST"
+    ]
+
+
+def _provider_request_events_for_target(store, job_id, target_ref, *, relative_path="src/main/java/example/ObjectHandler.java"):
+    return [
+        event
+        for event in _provider_request_events(store, job_id, relative_path=relative_path)
+        if event["metadata"].get("targetRef") == target_ref
+    ]
+
+
+def _validation_errors_from_prompt(prompt):
+    marker = "Structured validationErrors:\n"
+    if marker not in prompt:
+        return []
+    raw = prompt.split(marker, 1)[1].split("\nReturn corrected JSON only.", 1)[0]
+    return json.loads(raw)
+
+
+def _previous_attempt_number_from_prompt(prompt):
+    marker = "Previous attempt number: "
+    if marker not in prompt:
+        return None
+    tail = prompt.split(marker, 1)[1]
+    return int(tail.split(".", 1)[0])
+
+
+def _invalid_inverted_response(summary="attempt one inverted"):
+    return {
+        "claims": [
+            {
+                "claimKind": "RESPONSIBILITY",
+                "summary": summary,
+                "evidence": [{"lineStart": 3, "lineEnd": 2}],
+            }
+        ],
+        "boundaries": [],
+    }
+
+
+def _invalid_boundary_response(summary="attempt two boundary"):
+    return {
+        "claims": [
+            {
+                "claimKind": "RESPONSIBILITY",
+                "summary": summary,
+                "evidence": [{"lineStart": 3, "lineEnd": 3}],
+            }
+        ],
+        "boundaries": [
+            {
+                "role": "PROVIDED",
+                "evidence": [{"lineStart": 3, "lineEnd": 3}],
+                "descriptors": [],
+            }
+        ],
+    }
+
+
+def _invalid_boundary_only_response(summary="attempt two boundary"):
+    return {
+        "claims": [],
+        "boundaries": [
+            {
+                "role": "PROVIDED",
+                "evidence": [{"lineStart": 1, "lineEnd": 1}],
+                "descriptors": [],
+            }
+        ],
+    }
+
+
+def _target_sequence_response(target_key, responses):
+    counts = {}
+
+    def response(llm_input):
+        key = _target_key(llm_input)
+        counts[key] = counts.get(key, 0) + 1
+        if key == target_key:
+            index = counts[key] - 1
+            if index < len(responses):
+                selected = responses[index]
+                if callable(selected):
+                    return selected(llm_input)
+                return selected
+        return _empty_target_response(llm_input)
+
+    response.counts = counts
+    return response
 
 
 def _nested_flow_response(llm_input):
@@ -1111,6 +1276,704 @@ def test_graph_materialization_generates_unique_evidence_ids_for_shared_ranges()
     assert len(edge_ids) == len(set(edge_ids))
     assert len(claim_ids) == len(set(claim_ids))
     assert len(graph["evidence"]) == 5
+
+
+def boundary_graph_result_for_test(*, flow_domain="CODE"):
+    evidence = GraphEvidenceRef(lineStart=1, lineEnd=1, text="void run() { remote.create(); }", metadata={"evidenceKind": "BOUNDARY"})
+    return GraphAnalysisResult(
+        nodes=[
+            GraphNode(
+                localId="handler",
+                nodeKind="CALLABLE",
+                name="Handler.run",
+                qualifiedName="example.Handler.run",
+                lineStart=1,
+                lineEnd=1,
+                confidence=1.0,
+                metadata={"factOrigin": "STATIC", "flowDomain": flow_domain},
+            )
+        ],
+        boundaries=[
+            BoundaryFact(
+                localId="boundary-shared",
+                nodeLocalId="handler",
+                role="REQUIRED",
+                origin="STATIC",
+                confidence=0.91,
+                flowDomain=flow_domain,
+                evidence=[evidence],
+                descriptors=[
+                    BoundaryDescriptor(path="custom.scalar", value=" Alpha ", origin="STATIC", confidence=0.91, evidence=[evidence]),
+                    BoundaryDescriptor(path="custom.list", value=["one", 2], origin="STATIC", confidence=0.91, evidence=[evidence]),
+                    BoundaryDescriptor(
+                        path="custom.object",
+                        value={"flag": True, "nested": {"id": "A-1"}},
+                        origin="STATIC",
+                        confidence=0.91,
+                        evidence=[evidence],
+                    ),
+                    BoundaryDescriptor(path="custom.boolean", value=True, origin="STATIC", confidence=0.91, evidence=[evidence]),
+                    BoundaryDescriptor(path="operation.name", value="first", origin="STATIC", confidence=0.91, evidence=[evidence]),
+                ],
+            ),
+            BoundaryFact(
+                localId="boundary-shared",
+                nodeLocalId="handler",
+                role="REQUIRED",
+                origin="LLM",
+                confidence=0.77,
+                flowDomain=flow_domain,
+                evidence=[evidence],
+                descriptors=[
+                    BoundaryDescriptor(path="operation.name", value="second", origin="LLM", confidence=0.77, evidence=[evidence]),
+                    BoundaryDescriptor(path="arbitrary.deep.key", value="kept", origin="LLM", confidence=0.77, evidence=[evidence]),
+                ],
+            ),
+        ],
+    )
+
+
+def test_boundary_facts_persist_arbitrary_descriptors_without_transport_columns(tmp_path):
+    content = "class Handler { void run() { remote.create(); } }\n"
+    graph = materialize_graph_for_test(boundary_graph_result_for_test(), content=content)
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+
+    store.replace_file_graph_analysis(1, graph_state_for_test(content), graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        boundary_columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_graph_boundaries)").fetchall()}
+        descriptor_columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_graph_boundary_descriptors)").fetchall()}
+        boundary = conn.execute("SELECT * FROM analysis_graph_boundaries").fetchone()
+        descriptors = conn.execute(
+            """
+            SELECT descriptor_path, value_type, value_json, origin
+            FROM analysis_graph_boundary_descriptors
+            ORDER BY descriptor_path, origin, value_json
+            """
+        ).fetchall()
+        index_rows = conn.execute(
+            """
+            SELECT descriptor_path, value_type, normalized_scalar_value
+            FROM analysis_graph_boundary_descriptor_index
+            ORDER BY descriptor_path, normalized_scalar_value
+            """
+        ).fetchall()
+        evidence_count = conn.execute("SELECT COUNT(*) FROM analysis_graph_boundary_evidence").fetchone()[0]
+        descriptor_evidence_count = conn.execute("SELECT COUNT(*) FROM analysis_graph_boundary_descriptor_evidence").fetchone()[0]
+
+    forbidden_columns = {"method", "route", "topic", "schedule", "service_name", "client_class", "controller_class"}
+    assert not (boundary_columns & forbidden_columns)
+    assert not (descriptor_columns & forbidden_columns)
+    assert boundary is not None
+    envelope = json.loads(boundary["descriptor_json"])
+    assert len(envelope) == 7
+    assert json.loads(next(row["value_json"] for row in descriptors if row["descriptor_path"] == "custom.list")) == ["one", 2]
+    assert json.loads(next(row["value_json"] for row in descriptors if row["descriptor_path"] == "custom.object")) == {
+        "flag": True,
+        "nested": {"id": "A-1"},
+    }
+    assert {json.loads(row["value_json"]) for row in descriptors if row["descriptor_path"] == "operation.name"} == {"first", "second"}
+    assert {(row["descriptor_path"], row["origin"]) for row in descriptors if row["descriptor_path"] == "operation.name"} == {
+        ("operation.name", "STATIC"),
+        ("operation.name", "LLM"),
+    }
+    assert ("arbitrary.deep.key", "STRING", "kept") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in index_rows
+    }
+    assert ("custom.boolean", "BOOLEAN", "true") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in index_rows
+    }
+    assert ("custom.list[0]", "STRING", "one") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in index_rows
+    }
+    assert ("custom.object.nested.id", "STRING", "a-1") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in index_rows
+    }
+    assert evidence_count == 2
+    assert descriptor_evidence_count >= len(descriptors)
+
+
+def test_llm_boundary_lifecycle_fields_are_backend_authoritative(tmp_path):
+    content = "class Handler { void run() { remote.create(); } }\n"
+    evidence = GraphEvidenceRef(lineStart=1, lineEnd=1, text="void run() { remote.create(); }")
+    static_graph = GraphAnalysisResult(
+        nodes=[
+            GraphNode(
+                localId="handler",
+                nodeKind="CALLABLE",
+                name="Handler.run",
+                lineStart=1,
+                lineEnd=1,
+                confidence=1.0,
+                metadata={"factOrigin": "STATIC", "flowDomain": "WORKFLOW"},
+            )
+        ]
+    )
+    enrichment = GraphAnalysisResult(
+        boundaries=[
+            BoundaryFact(
+                localId="llm-forged",
+                nodeLocalId="handler",
+                role="REQUIRED",
+                origin="DERIVED",
+                confidence=0.2,
+                status="TRUSTED",
+                flowDomain="TEST",
+                metadata={"factOrigin": "STATIC", "status": "TRUSTED", "flowDomain": "TEST"},
+                evidence=[evidence],
+                descriptors=[
+                    BoundaryDescriptor(
+                        path="call.enabled",
+                        value=True,
+                        valueType="STRING",
+                        origin="STATIC",
+                        confidence=0.2,
+                        evidence=[evidence],
+                    )
+                ],
+            )
+        ]
+    )
+    merged = AnchorAwareGraphValidator().merge(static_graph, enrichment, len(content.splitlines()))
+    graph = materialize_graph_for_test(merged, content=content)
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(1, graph_state_for_test(content, flow_domain="WORKFLOW"), graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        boundary = conn.execute("SELECT fact_origin, status, flow_domain, metadata_json FROM analysis_graph_boundaries").fetchone()
+        descriptor = conn.execute("SELECT origin, value_type, value_json FROM analysis_graph_boundary_descriptors").fetchone()
+        envelope = json.loads(boundary["metadata_json"])
+
+    assert boundary["fact_origin"] == "LLM"
+    assert boundary["status"] == "CANDIDATE"
+    assert boundary["flow_domain"] == "WORKFLOW"
+    assert envelope["boundaryIdentity"].startswith("LLM_BOUNDARY:")
+    assert descriptor["origin"] == "LLM"
+    assert descriptor["value_type"] == "BOOLEAN"
+    assert json.loads(descriptor["value_json"]) is True
+
+
+def test_high_confidence_rejected_llm_boundary_persists_candidate(tmp_path):
+    content = "class Handler { void run() { remote.create(); } }\n// outside owner\n"
+    outside_owner = GraphEvidenceRef(lineStart=2, lineEnd=2, text="// outside owner")
+    static_graph = GraphAnalysisResult(
+        nodes=[
+            GraphNode(
+                localId="handler",
+                nodeKind="CALLABLE",
+                name="Handler.run",
+                lineStart=1,
+                lineEnd=1,
+                confidence=1.0,
+                metadata={"factOrigin": "STATIC", "flowDomain": "WORKFLOW"},
+            )
+        ]
+    )
+    enrichment = GraphAnalysisResult(
+        boundaries=[
+            BoundaryFact(
+                localId="llm-rejected",
+                nodeLocalId="handler",
+                role="REQUIRED",
+                origin="LLM",
+                confidence=0.95,
+                evidence=[outside_owner],
+                descriptors=[
+                    BoundaryDescriptor(path="call.method", value="create", origin="LLM", confidence=0.95, evidence=[outside_owner]),
+                ],
+            )
+        ]
+    )
+    merged = AnchorAwareGraphValidator().merge(static_graph, enrichment, len(content.splitlines()))
+    graph = materialize_graph_for_test(merged, content=content)
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(1, graph_state_for_test(content, flow_domain="WORKFLOW"), graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        boundary = conn.execute(
+            "SELECT status, rejection_reason, fact_origin, flow_domain, metadata_json FROM analysis_graph_boundaries"
+        ).fetchone()
+        descriptor = conn.execute("SELECT origin, status FROM analysis_graph_boundary_descriptors").fetchone()
+
+    assert boundary["status"] == "CANDIDATE"
+    assert boundary["rejection_reason"] == "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+    assert boundary["fact_origin"] == "LLM"
+    assert boundary["flow_domain"] == "WORKFLOW"
+    metadata = json.loads(boundary["metadata_json"])
+    assert metadata["lifecycleContributions"][0]["rejectionReason"] == "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+    assert descriptor["origin"] == "LLM"
+    assert descriptor["status"] == "CANDIDATE"
+
+
+def test_boundary_merge_identity_preserves_conflicts_types_evidence_and_order_stability(tmp_path):
+    content = "void first() { remote.create(); }\nvoid second() { // llm evidence }\nvoid third() { other.create(); }"
+    first_evidence = GraphEvidenceRef(lineStart=1, lineEnd=1, text="void first() { remote.create(); }")
+    second_evidence = GraphEvidenceRef(lineStart=2, lineEnd=2, text="void second() { // llm evidence }")
+    third_evidence = GraphEvidenceRef(lineStart=3, lineEnd=3, text="void third() { other.create(); }")
+
+    def result(boundaries):
+        return GraphAnalysisResult(
+            nodes=[
+                GraphNode(
+                    localId="handler",
+                    nodeKind="CALLABLE",
+                    name="Handler.run",
+                    lineStart=1,
+                    lineEnd=3,
+                    confidence=1.0,
+                    metadata={"factOrigin": "STATIC", "flowDomain": "WORKFLOW"},
+                )
+            ],
+            boundaries=boundaries,
+        )
+
+    static_boundary = BoundaryFact(
+        localId="static-a",
+        identity="boundary:a",
+        nodeLocalId="handler",
+        role="REQUIRED",
+        origin="STATIC",
+        confidence=0.91,
+        evidence=[first_evidence],
+        descriptors=[
+            BoundaryDescriptor(path="operation.name", value="first", origin="STATIC", confidence=0.91, evidence=[first_evidence]),
+            BoundaryDescriptor(path="operation.name", value="first", origin="STATIC", confidence=0.91, evidence=[first_evidence]),
+            BoundaryDescriptor(path="custom.boolean", value=True, valueType="STRING", origin="STATIC", confidence=0.91, evidence=[first_evidence]),
+            BoundaryDescriptor(path="custom.number", value=7, origin="STATIC", confidence=0.91, evidence=[first_evidence]),
+            BoundaryDescriptor(
+                path="custom.object",
+                value={"enabled": False, "nested": {"id": "A-1"}},
+                origin="STATIC",
+                confidence=0.91,
+                evidence=[first_evidence],
+            ),
+            BoundaryDescriptor(path="custom.list", value=["one", 2], origin="STATIC", confidence=0.91, evidence=[first_evidence]),
+        ],
+    )
+    llm_boundary = BoundaryFact(
+        localId="llm-a",
+        identity="boundary:a",
+        nodeLocalId="handler",
+        role="REQUIRED",
+        origin="LLM",
+        confidence=0.95,
+        status="CANDIDATE",
+        metadata={
+            "boundaryIdentity": "boundary:a",
+            "lifecycleSource": "BACKEND_VALIDATION",
+            "status": "CANDIDATE",
+            "rejectionReason": "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER",
+            "flowDomain": "TEST",
+            "nonAuthoritative": "ignored",
+        },
+        evidence=[second_evidence],
+        descriptors=[
+            BoundaryDescriptor(path="operation.name", value="second", origin="LLM", confidence=0.95, evidence=[second_evidence]),
+            BoundaryDescriptor(path="payload.kind", value="event", origin="LLM", confidence=0.95, evidence=[second_evidence]),
+            BoundaryDescriptor(path="payload.kind", value="event", origin="LLM", confidence=0.95, evidence=[second_evidence]),
+        ],
+    )
+    independent_boundary = BoundaryFact(
+        localId="static-b",
+        identity="boundary:b",
+        nodeLocalId="handler",
+        role="REQUIRED",
+        origin="STATIC",
+        confidence=0.91,
+        evidence=[third_evidence],
+        descriptors=[
+            BoundaryDescriptor(path="operation.name", value="third", origin="STATIC", confidence=0.91, evidence=[third_evidence]),
+        ],
+    )
+    first_graph = materialize_graph_for_test(result([static_boundary, llm_boundary, independent_boundary]), content=content)
+    second_graph = materialize_graph_for_test(result([llm_boundary, static_boundary, independent_boundary]), content=content)
+
+    def persisted_rows(db_path):
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            return {
+                "boundaries": [
+                    dict(row)
+                    for row in conn.execute(
+                        """
+                        SELECT id, stable_key, role, confidence, status, rejection_reason,
+                               fact_origin, flow_domain, metadata_json, descriptor_json
+                        FROM analysis_graph_boundaries
+                        ORDER BY id
+                        """
+                    )
+                ],
+                "descriptors": [
+                    dict(row)
+                    for row in conn.execute(
+                        """
+                        SELECT boundary_id, descriptor_path, value_type, value_json, origin, status
+                        FROM analysis_graph_boundary_descriptors
+                        ORDER BY boundary_id, descriptor_path, origin, value_json
+                        """
+                    )
+                ],
+                "index": [
+                    dict(row)
+                    for row in conn.execute(
+                        """
+                        SELECT descriptor_path, value_type, normalized_scalar_value
+                        FROM analysis_graph_boundary_descriptor_index
+                        ORDER BY descriptor_path, value_type, normalized_scalar_value
+                        """
+                    )
+                ],
+                "boundaryEvidence": [
+                    dict(row)
+                    for row in conn.execute("SELECT boundary_id, evidence_id FROM analysis_graph_boundary_evidence ORDER BY boundary_id, evidence_id")
+                ],
+                "descriptorEvidence": [
+                    dict(row)
+                    for row in conn.execute(
+                        "SELECT descriptor_id, evidence_id FROM analysis_graph_boundary_descriptor_evidence ORDER BY descriptor_id, evidence_id"
+                    )
+                ],
+            }
+
+    first_store = AnalysisStore(tmp_path / "first.sqlite")
+    second_store = AnalysisStore(tmp_path / "second.sqlite")
+    first_store.init()
+    second_store.init()
+    first_store.replace_file_graph_analysis(1, graph_state_for_test(content, flow_domain="WORKFLOW"), first_graph)
+    first_store.replace_file_graph_analysis(1, graph_state_for_test(content, flow_domain="WORKFLOW"), first_graph)
+    second_store.replace_file_graph_analysis(1, graph_state_for_test(content, flow_domain="WORKFLOW"), second_graph)
+    first_rows = persisted_rows(first_store.db_path)
+    second_rows = persisted_rows(second_store.db_path)
+
+    assert first_rows == second_rows
+    assert len(first_rows["boundaries"]) == 2
+    assert {row["stable_key"] for row in first_rows["boundaries"]} == {"boundary:a", "boundary:b"}
+    merged_boundary = next(row for row in first_rows["boundaries"] if row["stable_key"] == "boundary:a")
+    assert merged_boundary["fact_origin"] == "STATIC"
+    assert merged_boundary["status"] == "CANDIDATE"
+    assert merged_boundary["rejection_reason"] == "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+    assert merged_boundary["flow_domain"] == "WORKFLOW"
+    merged_metadata = json.loads(merged_boundary["metadata_json"])
+    assert merged_metadata["originContributors"] == ["LLM", "STATIC"]
+    assert "nonAuthoritative" not in merged_metadata
+    assert any(
+        contribution.get("rejectionReason") == "ANALYSIS_GRAPH_BOUNDARY_EVIDENCE_OUTSIDE_OWNER"
+        for contribution in merged_metadata["lifecycleContributions"]
+    )
+    merged_boundary_id = next(row["id"] for row in first_rows["boundaries"] if row["stable_key"] == "boundary:a")
+    merged_descriptors = [row for row in first_rows["descriptors"] if row["boundary_id"] == merged_boundary_id]
+    assert len(merged_descriptors) == 7
+    assert {json.loads(row["value_json"]) for row in merged_descriptors if row["descriptor_path"] == "operation.name"} == {"first", "second"}
+    assert {(row["descriptor_path"], row["origin"]) for row in merged_descriptors if row["descriptor_path"] == "operation.name"} == {
+        ("operation.name", "STATIC"),
+        ("operation.name", "LLM"),
+    }
+    assert {row["status"] for row in merged_descriptors if row["origin"] == "LLM"} == {"CANDIDATE"}
+    assert {row["status"] for row in merged_descriptors if row["origin"] == "STATIC"} == {"TRUSTED"}
+    envelope = json.loads(merged_boundary["descriptor_json"])
+    assert {(item["path"], item["origin"], item["valueType"]) for item in envelope if item["path"] == "operation.name"} == {
+        ("operation.name", "LLM", "STRING"),
+        ("operation.name", "STATIC", "STRING"),
+    }
+    assert ("custom.boolean", "BOOLEAN", "true") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in first_rows["index"]
+    }
+    assert ("custom.number", "NUMBER", "7") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in first_rows["index"]
+    }
+    assert ("custom.object.enabled", "BOOLEAN", "false") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in first_rows["index"]
+    }
+    assert ("custom.list[1]", "NUMBER", "2") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in first_rows["index"]
+    }
+    assert first_rows["boundaryEvidence"]
+    assert first_rows["descriptorEvidence"]
+
+
+def test_local_flow_unit_repository_load_boundaries_preserves_generic_facts_and_currentness(tmp_path):
+    content = "class Handler { void run() { remote.create(); } }\n"
+    relative_path = "src/main/java/example/ObjectHandler.java"
+    inventory_store, _, _ = build_inventory(tmp_path, content=content)
+    graph = materialize_graph_for_test(boundary_graph_result_for_test(), content=content, relative_path=relative_path)
+    store = AnalysisStore(inventory_store.db_path)
+    store.replace_file_graph_analysis(1, graph_state_for_test(content, relative_path), graph)
+    node_id = graph["nodes"][0]["id"]
+    key = ("edge-gateway", "edge-gateway:query-current-facts", node_id)
+    repo = LocalFlowUnitGraphRepository(store)
+
+    loaded = repo.load_boundaries({key}, include_tests=False)
+    assert len(loaded) == 1
+    current_key, facts = next(iter(loaded.items()))
+
+    assert len(facts) == 1
+    assert current_key[0] == key[0]
+    assert current_key[2] == key[2]
+    assert {fact.role for fact in facts} == {"REQUIRED"}
+    assert {fact.provenance for fact in facts} == {"STATIC"}
+    descriptor_values = {
+        (descriptor.path, json.dumps(descriptor.value, sort_keys=True))
+        for fact in facts
+        for descriptor in fact.descriptors
+    }
+    assert ("custom.object", json.dumps({"flag": True, "nested": {"id": "A-1"}}, sort_keys=True)) in descriptor_values
+    assert ("operation.name", json.dumps("first")) in descriptor_values
+    assert ("operation.name", json.dumps("second")) in descriptor_values
+    assert all(fact.evidence for fact in facts)
+    assert all(descriptor.evidence for fact in facts for descriptor in fact.descriptors)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("UPDATE files SET content_hash = 'changed' WHERE source_id = 'edge-gateway'")
+
+    assert repo.load_boundaries({key}, include_tests=False) == {}
+
+    test_inventory_store, _, _ = build_inventory(tmp_path / "test-domain", content=content)
+    test_store = AnalysisStore(test_inventory_store.db_path)
+    test_store.replace_file_graph_analysis(1, graph_state_for_test(content, relative_path, flow_domain="TEST"), graph)
+    with sqlite3.connect(test_store.db_path) as conn:
+        conn.execute("UPDATE files SET flow_domain = 'TEST' WHERE source_id = 'edge-gateway'")
+    test_repo = LocalFlowUnitGraphRepository(test_store)
+
+    assert test_repo.load_boundaries({key}, include_tests=False) == {}
+    loaded_tests = test_repo.load_boundaries({key}, include_tests=True)
+    assert len(next(iter(loaded_tests.values()))) == 1
+
+
+def test_representative_static_analysis_persists_temporary_boundary_flow_sides(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    cases = [
+        (
+            "registration-bff",
+            1,
+            "src/main/java/example/RegistrationBff.java",
+            """
+class RegistrationBff {
+  private final AuthGateway auth;
+  void createUser(Object request) {
+    auth.createUser(request);
+  }
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "auth-registration",
+            2,
+            "src/main/java/example/RegistrationController.java",
+            """
+import org.springframework.web.bind.annotation.PostMapping;
+
+class RegistrationController {
+  @PostMapping("/registrations")
+  void createUser(Object request) {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "login-bff",
+            3,
+            "src/main/java/example/LoginBff.java",
+            """
+class LoginBff {
+  private final AuthGateway auth;
+  void login(Object request) {
+    auth.login(request);
+  }
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "auth-login",
+            4,
+            "src/main/java/example/LoginController.java",
+            """
+import org.springframework.web.bind.annotation.PostMapping;
+
+class LoginController {
+  @PostMapping("/login")
+  void login(Object request) {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "refresh-bff",
+            5,
+            "src/main/java/example/RefreshBff.java",
+            """
+class RefreshBff {
+  private final AuthGateway auth;
+  void refreshAccessToken(Object request) {
+    auth.refreshAccessToken(request);
+  }
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "auth-refresh",
+            6,
+            "src/main/java/example/RefreshController.java",
+            """
+import org.springframework.web.bind.annotation.PostMapping;
+
+class RefreshController {
+  @PostMapping("/token/refresh")
+  void refreshAccessToken(Object request) {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "site-bff",
+            7,
+            "src/main/java/example/SiteBff.java",
+            """
+class SiteBff {
+  private final SiteGateway sites;
+  void createSite(Object request) {
+    sites.createSite(request);
+  }
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "site-service",
+            8,
+            "src/main/java/example/SiteController.java",
+            """
+import org.springframework.web.bind.annotation.PostMapping;
+
+class SiteController {
+  @PostMapping("/sites")
+  void createSite(Object request) {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "event-producer",
+            9,
+            "src/main/java/example/UserEventProducer.java",
+            """
+class UserEventProducer {
+  private final EventGateway events;
+  void publishUserCreated(Object event) {
+    events.publish(event);
+  }
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "event-consumer",
+            10,
+            "src/main/java/example/UserEventListener.java",
+            """
+import org.springframework.kafka.annotation.KafkaListener;
+
+class UserEventListener {
+  @KafkaListener(topics = "users.created")
+  void consume(String payload) {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "scheduled-worker",
+            11,
+            "src/main/java/example/ScheduledWorker.java",
+            """
+import org.springframework.scheduling.annotation.Scheduled;
+
+class ScheduledWorker {
+  @Scheduled(fixedDelayString = "${jobs.refresh-ms}")
+  void runJob() {}
+}
+""".strip()
+            + "\n",
+        ),
+        (
+            "health-service",
+            12,
+            "src/main/java/example/HealthController.java",
+            """
+import org.springframework.web.bind.annotation.GetMapping;
+
+class HealthController {
+  @GetMapping("/health")
+  String health() {
+    return "ok";
+  }
+}
+""".strip()
+            + "\n",
+        ),
+    ]
+
+    for source_id, file_id, relative_path, content in cases:
+        graph = _materialize_static_java_for_test(content, file_id, relative_path, source_id)
+        store.replace_file_graph_analysis(file_id, graph_state_for_test(content, relative_path, source_id), graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        boundary_rows = conn.execute("SELECT id, source_id, role FROM analysis_graph_boundaries ORDER BY source_id, id").fetchall()
+        descriptor_rows = conn.execute(
+            """
+            SELECT boundary_id, descriptor_path, value_json
+            FROM analysis_graph_boundary_descriptors
+            ORDER BY boundary_id, descriptor_path
+            """
+        ).fetchall()
+        boundary_evidence_count = conn.execute(
+            "SELECT COUNT(DISTINCT boundary_id) FROM analysis_graph_boundary_evidence"
+        ).fetchone()[0]
+        descriptor_evidence_count = conn.execute(
+            "SELECT COUNT(DISTINCT descriptor_id) FROM analysis_graph_boundary_descriptor_evidence"
+        ).fetchone()[0]
+
+    descriptors_by_boundary = {}
+    for row in descriptor_rows:
+        descriptors_by_boundary.setdefault(row["boundary_id"], {})[row["descriptor_path"]] = json.loads(row["value_json"])
+
+    def has_boundary(source_id, role, expected):
+        return any(
+            row["source_id"] == source_id
+            and row["role"] == role
+            and all(descriptors_by_boundary.get(row["id"], {}).get(path) == value for path, value in expected.items())
+            for row in boundary_rows
+        )
+
+    assert has_boundary("registration-bff", "REQUIRED", {"call.method": "createUser", "call.receiverTypeHint": "AuthGateway"})
+    assert has_boundary("auth-registration", "PROVIDED", {"http.method": "POST", "http.route": "/registrations"})
+    assert has_boundary("login-bff", "REQUIRED", {"call.method": "login", "call.receiverTypeHint": "AuthGateway"})
+    assert has_boundary("auth-login", "PROVIDED", {"http.method": "POST", "http.route": "/login"})
+    assert has_boundary("refresh-bff", "REQUIRED", {"call.method": "refreshAccessToken", "call.receiverTypeHint": "AuthGateway"})
+    assert has_boundary("auth-refresh", "PROVIDED", {"http.method": "POST", "http.route": "/token/refresh"})
+    assert has_boundary("site-bff", "REQUIRED", {"call.method": "createSite", "call.receiverTypeHint": "SiteGateway"})
+    assert has_boundary("site-service", "PROVIDED", {"http.method": "POST", "http.route": "/sites"})
+    assert has_boundary("event-producer", "REQUIRED", {"call.method": "publish", "call.receiverTypeHint": "EventGateway"})
+    assert has_boundary("event-consumer", "PROVIDED", {"messaging.topic": "users.created"})
+    assert has_boundary("scheduled-worker", "PROVIDED", {"provided.kind": "SCHEDULED"})
+    assert has_boundary("health-service", "PROVIDED", {"http.method": "GET", "http.route": "/health"})
+    assert boundary_evidence_count == len(boundary_rows)
+    assert descriptor_evidence_count == len(descriptor_rows)
+    assert all(
+        "http.route" not in descriptors
+        for row in boundary_rows
+        if row["source_id"] == "scheduled-worker"
+        for descriptors in [descriptors_by_boundary[row["id"]]]
+    )
 
 
 def test_graph_store_accepts_shared_evidence_ranges_and_replaces_file_twice(tmp_path):
@@ -2186,6 +3049,7 @@ class TaskWorkflow {
         ),
     )
     store.finalize_source_graph("task-service")
+    store.finalize_source_graph("task-service")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -2226,6 +3090,56 @@ class TaskWorkflow {
             ORDER BY node.signature
             """
         ).fetchall()
+        inherited_boundaries = conn.execute(
+            """
+            SELECT boundary.id AS boundary_id, boundary.status, boundary.fact_origin,
+                   boundary.descriptor_json, descriptor.id AS descriptor_id,
+                   descriptor.origin AS descriptor_origin, descriptor.descriptor_path,
+                   descriptor.value_type, descriptor.value_json
+            FROM analysis_graph_boundaries boundary
+            JOIN analysis_graph_nodes node ON node.id = boundary.node_id
+            JOIN analysis_graph_boundary_descriptors descriptor ON descriptor.boundary_id = boundary.id
+            WHERE boundary.source_id = 'task-service'
+              AND node.qualified_name = 'service.impl.TaskController.handle'
+              AND boundary.status = 'DERIVED'
+            ORDER BY descriptor.descriptor_path
+            """
+        ).fetchall()
+        inherited_indexes = conn.execute(
+            """
+            SELECT idx.descriptor_path, idx.value_type, idx.normalized_scalar_value
+            FROM analysis_graph_boundary_descriptor_index idx
+            JOIN analysis_graph_boundaries boundary ON boundary.id = idx.boundary_id
+            JOIN analysis_graph_nodes node ON node.id = boundary.node_id
+            WHERE boundary.source_id = 'task-service'
+              AND node.qualified_name = 'service.impl.TaskController.handle'
+              AND boundary.status = 'DERIVED'
+            ORDER BY idx.descriptor_path, idx.value_type, idx.normalized_scalar_value
+            """
+        ).fetchall()
+        inherited_boundary_evidence_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM analysis_graph_boundary_evidence evidence
+            JOIN analysis_graph_boundaries boundary ON boundary.id = evidence.boundary_id
+            JOIN analysis_graph_nodes node ON node.id = boundary.node_id
+            WHERE boundary.source_id = 'task-service'
+              AND node.qualified_name = 'service.impl.TaskController.handle'
+              AND boundary.status = 'DERIVED'
+            """
+        ).fetchone()[0]
+        inherited_descriptor_evidence_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM analysis_graph_boundary_descriptor_evidence evidence
+            JOIN analysis_graph_boundary_descriptors descriptor ON descriptor.id = evidence.descriptor_id
+            JOIN analysis_graph_boundaries boundary ON boundary.id = descriptor.boundary_id
+            JOIN analysis_graph_nodes node ON node.id = boundary.node_id
+            WHERE boundary.source_id = 'task-service'
+              AND node.qualified_name = 'service.impl.TaskController.handle'
+              AND boundary.status = 'DERIVED'
+            """
+        ).fetchone()[0]
         dispatch_edge = conn.execute(
             """
             SELECT caller.qualified_name AS caller_method,
@@ -2271,6 +3185,41 @@ class TaskWorkflow {
     assert inherited_claims[0]["entrypoint_route"] == "/tasks/handle"
     assert inherited_claims[0]["entrypoint_interface_method"] == "generated.api.TaskApi.handle"
     assert inherited_claims[0]["entrypoint_execution_kind"] == "EXECUTABLE"
+    assert inherited_boundaries
+    assert len({row["boundary_id"] for row in inherited_boundaries}) == 1
+    assert len({(row["descriptor_path"], row["value_json"]) for row in inherited_boundaries}) == len(inherited_boundaries)
+    assert {row["status"] for row in inherited_boundaries} == {"DERIVED"}
+    assert {row["fact_origin"] for row in inherited_boundaries} == {"DERIVED"}
+    assert {row["descriptor_origin"] for row in inherited_boundaries} == {"DERIVED"}
+    def inferred_value_type(value):
+        if value is None:
+            return "NULL"
+        if isinstance(value, bool):
+            return "BOOLEAN"
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return "NUMBER"
+        if isinstance(value, str):
+            return "STRING"
+        if isinstance(value, list):
+            return "LIST"
+        return "OBJECT"
+
+    assert all(row["value_type"] == inferred_value_type(json.loads(row["value_json"])) for row in inherited_boundaries)
+    descriptor_envelope = json.loads(inherited_boundaries[0]["descriptor_json"])
+    assert descriptor_envelope
+    assert {item["origin"] for item in descriptor_envelope} == {"DERIVED"}
+    assert all(item["valueType"] == inferred_value_type(item["value"]) for item in descriptor_envelope)
+    inherited_boundary_descriptors = {row["descriptor_path"]: json.loads(row["value_json"]) for row in inherited_boundaries}
+    assert inherited_boundary_descriptors["http.method"] == "POST"
+    assert inherited_boundary_descriptors["http.route"] == "/tasks/handle"
+    assert ("http.method", "STRING", "post") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in inherited_indexes
+    }
+    assert ("http.route", "STRING", "/tasks/handle") in {
+        (row["descriptor_path"], row["value_type"], row["normalized_scalar_value"]) for row in inherited_indexes
+    }
+    assert inherited_boundary_evidence_count > 0
+    assert inherited_descriptor_evidence_count >= len(inherited_boundaries)
     assert interface_claim is not None
     assert interface_claim["entrypoint_execution_kind"] == "CONTRACT_DECLARATION"
     assert dispatch_edge is not None
@@ -2371,7 +3320,7 @@ public class SiteController implements SiteApi {
     assert inherited_claim["entrypoint_execution_kind"] == "EXECUTABLE"
 
 
-def test_cross_source_incoming_traversal_reaches_service_entrypoint_from_app_anchor(tmp_path):
+def test_cross_source_incoming_edge_is_not_traversed_by_local_flow_explorer(tmp_path):
     app_source = """package app.afesox;
 
 public class SiteUseCase {
@@ -2489,19 +3438,16 @@ public class SiteController {
         graphId=app_state["graph_id"],
         graphRevision=app_state["content_identity"],
     )
-    result = EntrypointFlowEngine(EntrypointFlowGraphRepository(store)).build([anchor], max_flows=10, include_tests=False)
+    result = LocalFlowUnitEngine(LocalFlowUnitGraphRepository(store)).build([anchor], include_tests=False)
 
-    assert len(result.flows) == 1
-    flow = result.flows[0]
-    assert flow.entrypoint.source_id == "site-service"
-    assert flow.entrypoint.qualified_name == "service.api.SiteController.create"
-    assert any(node.source_id == "app-afesox" and node.qualified_name == "app.afesox.SiteUseCase.createSite" for node in flow.nodes)
-    assert any(
-        edge.source_id == "site-service"
-        and edge.from_node_id == flow.entrypoint.node_id
-        and edge.to_source_id == "app-afesox"
-        for edge in flow.transitions
-    )
+    assert len(result.local_units) == 1
+    unit = result.local_units[0]
+    assert unit.roots[0].node.source_id == "app-afesox"
+    assert unit.roots[0].node.qualified_name == "app.afesox.SiteUseCase.createSite"
+    assert unit.roots[0].origin is LocalFlowRootOrigin.INFERRED_ROOT
+    assert {node.source_id for node in unit.execution_nodes} == {"app-afesox"}
+    assert unit.execution_transitions == ()
+    assert unit.topology_boundaries == ()
     with sqlite3.connect(store.db_path) as conn:
         plan_rows = conn.execute(
             """
@@ -2740,7 +3686,6 @@ def app_config_with_retries(tmp_path, retry_attempts):
         tmp_path / "knowledge-sources.yaml",
         tmp_path / "knowledge.sqlite",
         analysis_max_attempts_per_file=retry_attempts,
-        analysis_repair_attempts_per_file=max(0, retry_attempts - 1),
     )
 
 
@@ -2755,7 +3700,7 @@ def wait_job(store, job_id):
 
 
 def test_non_localhost_ollama_base_url_rejected(tmp_path):
-    with pytest.raises(Exception):
+    with pytest.raises(KnowledgeError):
         OllamaAnalysisClient("http://example.com:11434", "model", 32768)
 
 
@@ -4052,6 +4997,531 @@ def test_validation_feedback_retry_preserves_all_attempt_validation_errors(tmp_p
         for error in item.get("validationErrors", [])
     ]
     assert {item["code"] for item in validation_errors} >= {"EVIDENCE_RANGE_INVERTED", "EVIDENCE_RANGE_OUTSIDE_FILE"}
+
+
+def test_target_retry_with_one_configured_attempt_does_not_build_feedback(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [_invalid_inverted_response("single attempt invalid")],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 1))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    assert final["failedFiles"] == 1
+    assert len(file_calls) == 1
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert [event["metadata"]["attemptKind"] for event in request_events] == ["GENERATION"]
+    assert request_events[0]["metadata"]["configuredMaxAttempts"] == 1
+    assert request_events[0]["metadata"]["repairAttempt"] is False
+
+
+def test_feedback_prompt_marks_complete_previous_response_without_truncation(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    invalid_response = _invalid_inverted_response("complete short invalid response")
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [invalid_response, _empty_target_response],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    expected_response = json.dumps(invalid_response)
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    retry_prompt = file_calls[1]["prompt"]
+    retry_metadata = request_events[1]["metadata"]
+
+    assert final["failedFiles"] == 0
+    assert "Previous invalid response:\n" in retry_prompt
+    assert "Previous invalid response preview:" not in retry_prompt
+    assert "truncated for prompt safety" not in retry_prompt
+    assert expected_response in retry_prompt
+    assert retry_metadata["previousResponseAvailable"] is True
+    assert retry_metadata["previousResponsePreviewTruncated"] is False
+    assert retry_metadata["previousResponsePreviewLength"] == len(expected_response)
+    assert retry_metadata["previousResponseLength"] == len(expected_response)
+
+
+def test_feedback_prompt_marks_locally_truncated_previous_response_preview(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    omitted_tail_marker = "TAIL_MARKER_AFTER_LOCAL_PREVIEW_LIMIT"
+    long_summary = (
+        "locally truncated invalid response "
+        + ("x" * (MAX_RAW_PREVIEW_CHARS + 256))
+        + omitted_tail_marker
+    )
+    invalid_response = _invalid_inverted_response(long_summary)
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [invalid_response, _empty_target_response],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    expected_response = json.dumps(invalid_response)
+    assert len(expected_response) > MAX_RAW_PREVIEW_CHARS
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    retry_prompt = file_calls[1]["prompt"]
+    retry_metadata = request_events[1]["metadata"]
+
+    assert final["failedFiles"] == 0
+    assert "Previous invalid response preview:\n" in retry_prompt
+    assert "The previous response was truncated for prompt safety." in retry_prompt
+    assert "Use the validation errors and the available preview to produce a complete corrected response." in retry_prompt
+    assert expected_response[:MAX_RAW_PREVIEW_CHARS] in retry_prompt
+    assert omitted_tail_marker not in retry_prompt
+    assert retry_metadata["previousResponseAvailable"] is True
+    assert retry_metadata["previousResponsePreviewTruncated"] is True
+    assert retry_metadata["previousResponsePreviewLength"] == MAX_RAW_PREVIEW_CHARS
+    assert retry_metadata["previousResponseLength"] == len(expected_response)
+    assert "previousProviderResponseTruncated" not in retry_metadata
+
+
+def test_target_retry_chains_validation_feedback_for_three_configured_attempts(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [
+            _invalid_inverted_response("attempt one inverted"),
+            _invalid_boundary_response("attempt two boundary"),
+            _empty_target_response,
+        ],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    type_calls = _captured_target_calls(captured, kind="TYPE", name="ObjectHandler")
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    attempt2_errors = _validation_errors_from_prompt(file_calls[1]["prompt"])
+    attempt3_errors = _validation_errors_from_prompt(file_calls[2]["prompt"])
+
+    assert final["failedFiles"] == 0
+    assert len(file_calls) == 3
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert _is_feedback_prompt(file_calls[1]["prompt"])
+    assert _is_feedback_prompt(file_calls[2]["prompt"])
+    assert _previous_attempt_number_from_prompt(file_calls[1]["prompt"]) == 1
+    assert _previous_attempt_number_from_prompt(file_calls[2]["prompt"]) == 2
+    assert "attempt one inverted" in file_calls[1]["prompt"]
+    assert "attempt two boundary" in file_calls[2]["prompt"]
+    assert "attempt one inverted" not in file_calls[2]["prompt"]
+    assert {item["code"] for item in attempt2_errors} == {"EVIDENCE_RANGE_INVERTED"}
+    assert {item["code"] for item in attempt3_errors} == {"BOUNDARY_DESCRIPTORS_MISSING"}
+    assert type_calls and not _is_feedback_prompt(type_calls[0]["prompt"])
+    assert [event["metadata"]["attemptKind"] for event in request_events] == [
+        "GENERATION",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+    ]
+    assert [event["metadata"].get("previousAttemptNumber") for event in request_events] == [None, 1, 2]
+    assert [event["metadata"]["previousFailureCodes"] for event in request_events[1:]] == [
+        ["EVIDENCE_RANGE_INVERTED"],
+        ["BOUNDARY_DESCRIPTORS_MISSING"],
+    ]
+    assert len({event["metadata"]["promptHash"] for event in request_events}) == 3
+
+
+def test_validation_then_transport_failure_next_attempt_is_provider_retry(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    invalid_response = _invalid_inverted_response("attempt one validation failure")
+
+    def transport_failure(_llm_input):
+        raise httpx.ConnectError("connection failed")
+
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [invalid_response, transport_failure, _empty_target_response],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    attempt2_errors = _validation_errors_from_prompt(file_calls[1]["prompt"])
+
+    assert final["failedFiles"] == 0
+    assert len(file_calls) == 3
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert _is_feedback_prompt(file_calls[1]["prompt"])
+    assert not _is_feedback_prompt(file_calls[2]["prompt"])
+    assert "attempt one validation failure" in file_calls[1]["prompt"]
+    assert {item["code"] for item in attempt2_errors} == {"EVIDENCE_RANGE_INVERTED"}
+    assert "Previous invalid response:" not in file_calls[2]["prompt"]
+    assert "Structured validationErrors:" not in file_calls[2]["prompt"]
+    assert [event["metadata"]["attemptKind"] for event in request_events] == [
+        "GENERATION",
+        "FEEDBACK_REPAIR",
+        "PROVIDER_RETRY",
+    ]
+    assert [event["metadata"].get("previousAttemptNumber") for event in request_events] == [None, 1, 2]
+    assert request_events[2]["metadata"]["previousFailureCodes"] == ["ANALYSIS_AI_TRANSPORT_ERROR"]
+    assert request_events[2]["metadata"]["previousResponseAvailable"] is False
+    assert request_events[2]["metadata"]["repairAttempt"] is False
+    assert {event["metadata"]["targetRef"] for event in request_events} == {"F1"}
+    assert request_events[2]["metadata"]["promptHash"] == request_events[0]["metadata"]["promptHash"]
+
+
+def test_transport_then_validation_failure_next_attempt_is_feedback_repair(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    invalid_response = _invalid_inverted_response("attempt two validation failure")
+
+    def transport_failure(_llm_input):
+        raise httpx.ConnectError("connection failed")
+
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [transport_failure, invalid_response, _empty_target_response],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    attempt3_errors = _validation_errors_from_prompt(file_calls[2]["prompt"])
+
+    assert final["failedFiles"] == 0
+    assert len(file_calls) == 3
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert not _is_feedback_prompt(file_calls[1]["prompt"])
+    assert _is_feedback_prompt(file_calls[2]["prompt"])
+    assert "Previous invalid response:" not in file_calls[1]["prompt"]
+    assert "attempt two validation failure" in file_calls[2]["prompt"]
+    assert "connection failed" not in file_calls[2]["prompt"]
+    assert {item["code"] for item in attempt3_errors} == {"EVIDENCE_RANGE_INVERTED"}
+    assert [event["metadata"]["attemptKind"] for event in request_events] == [
+        "GENERATION",
+        "PROVIDER_RETRY",
+        "FEEDBACK_REPAIR",
+    ]
+    assert [event["metadata"].get("previousAttemptNumber") for event in request_events] == [None, 1, 2]
+    assert request_events[1]["metadata"]["previousFailureCodes"] == ["ANALYSIS_AI_TRANSPORT_ERROR"]
+    assert request_events[1]["metadata"]["previousResponseAvailable"] is False
+    assert request_events[2]["metadata"]["previousFailureCodes"] == ["EVIDENCE_RANGE_INVERTED"]
+    assert request_events[2]["metadata"]["previousResponseAvailable"] is True
+    assert request_events[2]["metadata"]["repairAttempt"] is True
+    assert {event["metadata"]["targetRef"] for event in request_events} == {"F1"}
+    assert request_events[1]["metadata"]["promptHash"] == request_events[0]["metadata"]["promptHash"]
+    assert request_events[2]["metadata"]["promptHash"] != request_events[1]["metadata"]["promptHash"]
+
+
+def test_target_retry_chains_validation_feedback_for_five_configured_attempts(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    invalid_responses = [_invalid_inverted_response(f"attempt {index} invalid") for index in range(1, 5)]
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [*invalid_responses, _empty_target_response],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 5))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    assert final["failedFiles"] == 0
+    assert len(file_calls) == 5
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert all(_is_feedback_prompt(call["prompt"]) for call in file_calls[1:])
+    for index, call in enumerate(file_calls[1:], start=2):
+        assert _previous_attempt_number_from_prompt(call["prompt"]) == index - 1
+        assert f"attempt {index - 1} invalid" in call["prompt"]
+        if index > 2:
+            assert f"attempt {index - 2} invalid" not in call["prompt"]
+    assert [event["metadata"]["attemptKind"] for event in request_events] == [
+        "GENERATION",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+    ]
+    assert [event["metadata"].get("previousAttemptNumber") for event in request_events] == [None, 1, 2, 3, 4]
+    assert all(event["metadata"]["configuredMaxAttempts"] == 5 for event in request_events)
+
+
+def test_target_retry_uses_feedback_for_nine_of_ten_configured_attempts(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [_invalid_inverted_response(f"attempt {index} invalid") for index in range(1, 11)],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 10))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    assert final["failedFiles"] == 1
+    assert len(file_calls) == 10
+    assert sum(1 for call in file_calls if not _is_feedback_prompt(call["prompt"])) == 1
+    assert sum(1 for call in file_calls if _is_feedback_prompt(call["prompt"])) == 9
+    assert [_previous_attempt_number_from_prompt(call["prompt"]) for call in file_calls[1:]] == list(range(1, 10))
+    assert [event["metadata"]["attemptKind"] for event in request_events].count("GENERATION") == 1
+    assert [event["metadata"]["attemptKind"] for event in request_events].count("FEEDBACK_REPAIR") == 9
+    assert all(event["metadata"]["configuredMaxAttempts"] == 10 for event in request_events)
+
+
+def test_target_retry_forwards_all_structured_validation_errors(tmp_path):
+    content = """public class ObjectHandler {
+  public void create() {
+  }
+}
+"""
+    store, _, _ = build_inventory(tmp_path, content=content)
+    captured = []
+    counts = {}
+
+    def response(llm_input):
+        key = _target_key(llm_input)
+        counts[key] = counts.get(key, 0) + 1
+        if key == ("CALLABLE", "create") and counts[key] == 1:
+            return {
+                "claims": [
+                    {
+                        "claimKind": "RESPONSIBILITY",
+                        "summary": "multi-error callable response",
+                        "evidence": [
+                            {"lineStart": 3, "lineEnd": 2},
+                            {"lineStart": 3, "lineEnd": 3},
+                        ],
+                    }
+                ],
+                "boundaries": [
+                    {
+                        "role": "PROVIDED",
+                        "evidence": [{"lineStart": 2, "lineEnd": 2}],
+                        "descriptors": [],
+                    }
+                ],
+            }
+        return _empty_target_response(llm_input)
+
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    callable_calls = _captured_target_calls(captured, kind="CALLABLE", name="create")
+    request_events = _provider_request_events_for_target(store, started["jobId"], "M1")
+    errors = _validation_errors_from_prompt(callable_calls[1]["prompt"])
+    assert final["failedFiles"] == 0
+    assert len(callable_calls) == 2
+    assert {item["code"] for item in errors} >= {
+        "EVIDENCE_RANGE_INVERTED",
+        "EVIDENCE_NOT_MATERIAL",
+        "BOUNDARY_DESCRIPTORS_MISSING",
+    }
+    assert any(item.get("actual") == {"lineStart": 3, "lineEnd": 2} for item in errors)
+    assert any(item.get("actual", {}).get("lineClass") == "CLOSING_BRACE_ONLY" for item in errors)
+    assert request_events[1]["metadata"]["previousFailureCodes"] == [
+        "EVIDENCE_RANGE_INVERTED",
+        "EVIDENCE_NOT_MATERIAL",
+        "BOUNDARY_DESCRIPTORS_MISSING",
+    ]
+
+
+def test_target_retry_replaces_previous_failure_with_latest_validation_result(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [
+            _invalid_inverted_response("attempt one inverted"),
+            _invalid_boundary_response("attempt two boundary"),
+            _empty_target_response,
+        ],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    attempt2_errors = _validation_errors_from_prompt(file_calls[1]["prompt"])
+    attempt3_errors = _validation_errors_from_prompt(file_calls[2]["prompt"])
+    assert final["failedFiles"] == 0
+    assert {item["code"] for item in attempt2_errors} == {"EVIDENCE_RANGE_INVERTED"}
+    assert {item["code"] for item in attempt3_errors} == {"BOUNDARY_DESCRIPTORS_MISSING"}
+    assert "attempt two boundary" in file_calls[2]["prompt"]
+    assert "attempt one inverted" not in file_calls[2]["prompt"]
+
+
+def test_target_retry_feedback_state_is_isolated_between_targets(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [
+            _invalid_inverted_response("file target invalid"),
+            _empty_target_response,
+        ],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    type_events = _provider_request_events_for_target(store, started["jobId"], "T1")
+    callable_events = _provider_request_events_for_target(store, started["jobId"], "M1")
+    type_calls = _captured_target_calls(captured, kind="TYPE", name="ObjectHandler")
+    callable_calls = _captured_target_calls(captured, kind="CALLABLE", name="create")
+    assert final["failedFiles"] == 0
+    assert [event["attempt"] for event in file_events] == [1, 2]
+    assert [event["metadata"]["attemptKind"] for event in file_events] == ["GENERATION", "FEEDBACK_REPAIR"]
+    assert [event["attempt"] for event in type_events] == [1]
+    assert type_events[0]["metadata"]["attemptKind"] == "GENERATION"
+    assert "previousAttemptNumber" not in type_events[0]["metadata"]
+    assert type_calls and not _is_feedback_prompt(type_calls[0]["prompt"])
+    assert [event["attempt"] for event in callable_events] == [1]
+    assert callable_events[0]["metadata"]["attemptKind"] == "GENERATION"
+    assert "previousAttemptNumber" not in callable_events[0]["metadata"]
+    assert callable_calls and not _is_feedback_prompt(callable_calls[0]["prompt"])
+
+
+def test_provider_failure_without_response_retries_without_output_repair_prompt(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    counts = {}
+
+    def response(llm_input):
+        key = _target_key(llm_input)
+        counts[key] = counts.get(key, 0) + 1
+        if key == ("FILE", "ObjectHandler.java") and counts[key] == 1:
+            raise httpx.ConnectError("connection failed")
+        return _empty_target_response(llm_input)
+
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    assert final["failedFiles"] == 0
+    assert len(file_calls) == 2
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert not _is_feedback_prompt(file_calls[1]["prompt"])
+    assert "Previous invalid response:" not in file_calls[1]["prompt"]
+    assert [event["metadata"]["attemptKind"] for event in request_events] == ["GENERATION", "PROVIDER_RETRY"]
+    assert request_events[1]["metadata"]["previousFailureCodes"] == ["ANALYSIS_AI_TRANSPORT_ERROR"]
+    assert request_events[1]["metadata"]["repairAttempt"] is False
+
+
+def test_target_retry_terminal_exhaustion_reports_latest_attempt_failure(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [_invalid_inverted_response(f"attempt {index} invalid") for index in range(1, 6)],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 5))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+    failed_files = AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)["files"]
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    last_feedback_errors = _validation_errors_from_prompt(file_calls[4]["prompt"])
+    terminal = failed_files[0]
+    diagnostics = terminal["diagnostics"]
+    terminal_metadata = next(item["metadata"] for item in diagnostics if item["code"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED")
+
+    assert final["failedFiles"] == 1
+    assert len(file_calls) == 5
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert all(_is_feedback_prompt(call["prompt"]) for call in file_calls[1:])
+    assert "attempt 4 invalid" in file_calls[4]["prompt"]
+    assert {item["code"] for item in last_feedback_errors} == {"EVIDENCE_RANGE_INVERTED"}
+    assert [event["metadata"]["attemptKind"] for event in request_events] == [
+        "GENERATION",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+        "FEEDBACK_REPAIR",
+    ]
+    assert terminal["attemptCount"] == 5
+    assert terminal_metadata["attemptsPerformed"] == 5
+    assert terminal_metadata["lastAttemptKind"] == "FEEDBACK_REPAIR"
+    assert terminal_metadata["lastFailureCode"] == "ANALYSIS_AI_SCHEMA_INVALID"
+    assert terminal_metadata["targetRef"] == "F1"
+    assert [item["code"] for item in terminal_metadata["lastValidationErrors"]] == ["EVIDENCE_RANGE_INVERTED"]
+
+
+def test_feedback_prompt_uses_authoritative_response_contract_for_boundary_targets(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [
+            _invalid_boundary_response("boundary contract invalid"),
+            _empty_target_response,
+        ],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), client)["jobId"])
+    asyncio.run(client.aclose())
+
+    retry_prompt = _captured_target_calls(captured)[1]["prompt"]
+    assert final["failedFiles"] == 0
+    assert "Claims-only response shape" not in retry_prompt
+    assert "Authoritative target response shape" in retry_prompt
+    assert '"boundaries"' in retry_prompt
+    assert '"descriptors"' in retry_prompt
 
 
 def test_callsite_heavy_fluent_chain_prompt_does_not_include_raw_callsite_payload(tmp_path):

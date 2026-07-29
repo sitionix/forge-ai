@@ -33,16 +33,8 @@ public final class InfrastructureProxyQuery {
         return QueryParams.create().add("case", "server-error");
     }
 
-    public static QueryParams humanContextBudgetCase() {
-        return QueryParams.create().add("case", "human-context-budget");
-    }
-
     public static QueryParams humanTimeoutCase() {
         return QueryParams.create().add("case", "human-timeout");
-    }
-
-    public static QueryParams humanGenerationFailedCase() {
-        return QueryParams.create().add("case", "human-generation-failed");
     }
 
     public static QueryParams graphRevisionA() {
@@ -172,16 +164,8 @@ public final class InfrastructureProxyQuery {
         return WireMockQueryParams.create().add("case", "server-error");
     }
 
-    public static WireMockQueryParams upstreamHumanContextBudgetCase() {
-        return WireMockQueryParams.create().add("case", "human-context-budget");
-    }
-
     public static WireMockQueryParams upstreamHumanTimeoutCase() {
         return WireMockQueryParams.create().add("case", "human-timeout");
-    }
-
-    public static WireMockQueryParams upstreamHumanGenerationFailedCase() {
-        return WireMockQueryParams.create().add("case", "human-generation-failed");
     }
 
     public static WireMockQueryParams upstreamGraphRevisionA() {

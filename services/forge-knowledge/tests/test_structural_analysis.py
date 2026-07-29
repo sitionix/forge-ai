@@ -349,6 +349,11 @@ def test_static_graph_materializer_creates_static_nodes_edges_evidence_and_entry
     assert mapper_usage.resolutionStatus == "RESOLVED"
     assert mapper_usage.metadata["factOrigin"] == "STATIC"
     assert [item.lineStart for item in mapper_usage.evidence] == [19]
+    provided_boundary = next(boundary for boundary in graph.boundaries if boundary.role == "PROVIDED")
+    descriptor_values = {descriptor.path: descriptor.value for descriptor in provided_boundary.descriptors}
+    assert descriptor_values["http.method"] == "GET"
+    assert descriptor_values["http.route"] == "/tickets/{id}"
+    assert descriptor_values["annotation.name"] == "GetMapping"
 
 
 def test_static_graph_materializer_does_not_create_trusted_behavior_claims_from_names():
@@ -812,6 +817,80 @@ class PaymentListener {
 
     assert entrypoint.metadata["entrypointKind"] == "KAFKA"
     assert entrypoint.metadata["topic"] == "payments.created"
+    boundary = next(item for item in graph.boundaries if item.role == "PROVIDED")
+    descriptors = {descriptor.path: descriptor.value for descriptor in boundary.descriptors}
+    assert descriptors["messaging.topic"] == "payments.created"
+    assert descriptors["annotation.name"] == "KafkaListener"
+
+
+def test_static_graph_materializer_emits_generic_boundaries_for_required_calls_schedules_and_health():
+    text = """package example;
+
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.web.bind.annotation.GetMapping;
+
+class JobRunner {
+  private final RemoteGateway gateway;
+
+  @Scheduled(cron = "0 0 * * * *")
+  void runJob() {
+    gateway.create("payload");
+  }
+}
+
+class HealthController {
+  @GetMapping("/health")
+  String health() {
+    return "ok";
+  }
+}
+
+interface RemoteGateway {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+
+    provided = [boundary for boundary in graph.boundaries if boundary.role == "PROVIDED"]
+    required = [boundary for boundary in graph.boundaries if boundary.role == "REQUIRED"]
+    provided_descriptors = [{descriptor.path: descriptor.value for descriptor in boundary.descriptors} for boundary in provided]
+    required_descriptors = [{descriptor.path: descriptor.value for descriptor in boundary.descriptors} for boundary in required]
+
+    scheduled = next(item for item in provided_descriptors if item.get("provided.kind") == "SCHEDULED")
+    assert scheduled["schedule.expression"] == '(cron = "0 0 * * * *")'
+    assert "http.route" not in scheduled
+    assert any(item.get("http.method") == "GET" and item.get("http.route") == "/health" for item in provided_descriptors)
+    assert any(item.get("call.method") == "create" and item.get("call.receiverTypeHint") == "RemoteGateway" for item in required_descriptors)
+    assert all(boundary.evidence for boundary in graph.boundaries)
+    assert all(descriptor.evidence for boundary in graph.boundaries for descriptor in boundary.descriptors)
+
+
+def test_static_graph_materializer_emits_event_consumer_and_producer_boundaries_from_source_evidence():
+    text = """package example;
+
+import org.springframework.kafka.annotation.KafkaListener;
+
+class Events {
+  private final EventGateway gateway;
+
+  @KafkaListener(topics = "payments.created")
+  void consume(String payload) {}
+
+  void publish(String payload) {
+    gateway.send(payload);
+  }
+}
+
+interface EventGateway {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+
+    consumer = next(boundary for boundary in graph.boundaries if boundary.role == "PROVIDED")
+    producer = next(boundary for boundary in graph.boundaries if boundary.role == "REQUIRED")
+    consumer_descriptors = {descriptor.path: descriptor.value for descriptor in consumer.descriptors}
+    producer_descriptors = {descriptor.path: descriptor.value for descriptor in producer.descriptors}
+
+    assert consumer_descriptors["messaging.topic"] == "payments.created"
+    assert producer_descriptors["call.method"] == "send"
+    assert producer_descriptors["call.receiverTypeHint"] == "EventGateway"
 
 
 def test_anchor_validator_accepts_callable_claim_only_when_evidence_overlaps_method():

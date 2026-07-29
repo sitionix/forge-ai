@@ -55,6 +55,16 @@ export function renderRequestError(id, error, options = {}, documentRef = docume
     element.innerHTML = '';
     return;
   }
+  if (options.safe) {
+    const severity = options.transient ? 'Warning' : 'Error';
+    element.classList.remove('hidden');
+    element.innerHTML = `
+      <strong>${escapeHtml(severity)}: ${escapeHtml(options.title || 'Request failed')}</strong>
+      <div>${escapeHtml(options.message || 'The request could not be completed. Please try again.')}</div>
+      ${options.retry ? '<button class="button small" type="button" data-knowledge-retry>Retry now</button>' : ''}
+    `;
+    return;
+  }
   const endpoint = error.endpoint || options.endpoint || '-';
   const reason = [error.code, error.message && error.message !== error.code ? error.message : null]
     .filter(Boolean)

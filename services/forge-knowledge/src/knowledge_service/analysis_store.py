@@ -120,6 +120,7 @@ class AnalysisStore:
             self._create_graph_evidence_schema(conn)
             self._create_graph_claim_schema(conn)
             self._create_graph_edge_schema(conn)
+            self._create_graph_boundary_schema(conn)
             self._create_graph_evidence_link_schema(conn)
             self._create_graph_diagnostics_schema(conn)
             self._create_runtime_event_schema(conn)
@@ -227,6 +228,15 @@ class AnalysisStore:
                 "resolution_status",
                 "argument_count",
                 "metadata_json",
+            },
+            "analysis_graph_boundaries": {
+                "id",
+                "source_id",
+                "analysis_file_id",
+                "file_id",
+                "node_id",
+                "role",
+                "descriptor_json",
             },
             "analysis_graph_diagnostics": {"id", "source_id", "message", "severity", "metadata_json"},
         }
@@ -444,6 +454,7 @@ class AnalysisStore:
                 content_hash TEXT NOT NULL,
                 from_node_id TEXT NOT NULL,
                 to_node_id TEXT,
+                to_source_id TEXT,
                 edge_type TEXT NOT NULL,
                 resolution_status TEXT NOT NULL,
                 argument_count INTEGER,
@@ -458,6 +469,80 @@ class AnalysisStore:
                 FOREIGN KEY(analysis_file_id) REFERENCES analysis_files(file_id) ON DELETE CASCADE,
                 FOREIGN KEY(from_node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE,
                 FOREIGN KEY(to_node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE
+            )
+        """)
+        self._ensure_column(conn, "analysis_graph_edges", "to_source_id", "TEXT")
+
+    def _create_graph_boundary_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_boundaries (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                inventory_file_id INTEGER NOT NULL,
+                analysis_file_id INTEGER NOT NULL,
+                file_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                stable_key TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                status TEXT NOT NULL,
+                rejection_reason TEXT,
+                descriptor_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                fact_origin TEXT,
+                flow_domain TEXT,
+                FOREIGN KEY(analysis_file_id) REFERENCES analysis_files(file_id) ON DELETE CASCADE,
+                FOREIGN KEY(node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_boundary_descriptors (
+                id TEXT PRIMARY KEY,
+                boundary_id TEXT NOT NULL,
+                descriptor_path TEXT NOT NULL,
+                value_type TEXT NOT NULL,
+                value_json TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                confidence REAL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(boundary_id) REFERENCES analysis_graph_boundaries(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_boundary_descriptor_index (
+                descriptor_id TEXT NOT NULL,
+                boundary_id TEXT NOT NULL,
+                descriptor_path TEXT NOT NULL,
+                value_type TEXT NOT NULL,
+                normalized_scalar_value TEXT NOT NULL,
+                PRIMARY KEY (descriptor_id, descriptor_path, normalized_scalar_value),
+                FOREIGN KEY(descriptor_id) REFERENCES analysis_graph_boundary_descriptors(id) ON DELETE CASCADE,
+                FOREIGN KEY(boundary_id) REFERENCES analysis_graph_boundaries(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_boundary_evidence (
+                boundary_id TEXT NOT NULL,
+                evidence_id TEXT NOT NULL,
+                PRIMARY KEY (boundary_id, evidence_id),
+                FOREIGN KEY(boundary_id) REFERENCES analysis_graph_boundaries(id) ON DELETE CASCADE,
+                FOREIGN KEY(evidence_id) REFERENCES analysis_graph_evidence(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_boundary_descriptor_evidence (
+                descriptor_id TEXT NOT NULL,
+                evidence_id TEXT NOT NULL,
+                PRIMARY KEY (descriptor_id, evidence_id),
+                FOREIGN KEY(descriptor_id) REFERENCES analysis_graph_boundary_descriptors(id) ON DELETE CASCADE,
+                FOREIGN KEY(evidence_id) REFERENCES analysis_graph_evidence(id) ON DELETE CASCADE
             )
         """)
 
@@ -478,6 +563,25 @@ class AnalysisStore:
                 PRIMARY KEY (edge_id, evidence_id),
                 FOREIGN KEY(edge_id) REFERENCES analysis_graph_edges(id) ON DELETE CASCADE,
                 FOREIGN KEY(evidence_id) REFERENCES analysis_graph_evidence(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_owner_evidence (
+                owner_kind TEXT NOT NULL,
+                owner_source_id TEXT NOT NULL,
+                owner_node_id TEXT NOT NULL DEFAULT '',
+                owner_edge_id TEXT NOT NULL DEFAULT '',
+                evidence_source_id TEXT NOT NULL,
+                evidence_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (
+                    owner_kind,
+                    owner_source_id,
+                    owner_node_id,
+                    owner_edge_id,
+                    evidence_source_id,
+                    evidence_id
+                )
             )
         """)
 
@@ -557,6 +661,8 @@ class AnalysisStore:
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_nodes ON analysis_graph_edges(from_node_id, to_node_id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_calls_outgoing ON analysis_graph_edges(source_id, edge_type, status, from_node_id, id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_calls_incoming ON analysis_graph_edges(source_id, edge_type, status, to_node_id, id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_target_source_node ON analysis_graph_edges(to_source_id, to_node_id, status, edge_type, id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_from ON analysis_graph_edges(source_id, from_node_id, status, edge_type, id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_incoming_lookup ON analysis_graph_edges(edge_type, status, to_node_id, id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_flow_created ON analysis_graph_edges(source_id, flow_domain, created_at)",
             ),
@@ -565,6 +671,30 @@ class AnalysisStore:
             ),
             "analysis_graph_edge_evidence": (
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edge_evidence_evidence ON analysis_graph_edge_evidence(evidence_id)",
+            ),
+            "analysis_graph_boundaries": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundaries_source_node ON analysis_graph_boundaries(source_id, node_id, role, status)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundaries_file ON analysis_graph_boundaries(analysis_file_id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundaries_source_flow_created ON analysis_graph_boundaries(source_id, flow_domain, created_at)",
+            ),
+            "analysis_graph_boundary_descriptors": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_descriptors_boundary ON analysis_graph_boundary_descriptors(boundary_id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_descriptors_path ON analysis_graph_boundary_descriptors(descriptor_path, value_type)",
+            ),
+            "analysis_graph_boundary_descriptor_index": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_descriptor_index_lookup ON analysis_graph_boundary_descriptor_index(descriptor_path, value_type, normalized_scalar_value)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_descriptor_index_boundary ON analysis_graph_boundary_descriptor_index(boundary_id)",
+            ),
+            "analysis_graph_boundary_evidence": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_evidence_evidence ON analysis_graph_boundary_evidence(evidence_id)",
+            ),
+            "analysis_graph_boundary_descriptor_evidence": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_boundary_descriptor_evidence_evidence ON analysis_graph_boundary_descriptor_evidence(evidence_id)",
+            ),
+            "analysis_graph_owner_evidence": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_owner_evidence_owner_edge ON analysis_graph_owner_evidence(owner_kind, owner_source_id, owner_edge_id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_owner_evidence_owner_node ON analysis_graph_owner_evidence(owner_kind, owner_source_id, owner_node_id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_owner_evidence_evidence ON analysis_graph_owner_evidence(evidence_source_id, evidence_id)",
             ),
             "analysis_graph_diagnostics": (
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_diagnostics_source_code ON analysis_graph_diagnostics(source_id, severity, code)",
@@ -593,6 +723,8 @@ class AnalysisStore:
         self._reconcile_graph_diagnostics_schema(conn)
         self._reconcile_orphan_job_files(conn)
         self._reconcile_graph_runtime_inventory_membership(conn)
+        self._reconcile_explicit_edge_target_sources(conn)
+        self._reconcile_owner_aware_evidence_links(conn)
         ensure_semantic_index_schema(conn)
         SemanticIndexStore.reconcile_missing_states_conn(conn)
         ensure_overview_schema(conn)
@@ -634,6 +766,50 @@ class AnalysisStore:
               )
         """,
             (diagnostic,),
+        )
+
+    def _reconcile_explicit_edge_target_sources(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            UPDATE analysis_graph_edges
+            SET to_source_id = source_id
+            WHERE to_node_id IS NOT NULL
+              AND (to_source_id IS NULL OR to_source_id = '')
+            """
+        )
+
+    def _reconcile_owner_aware_evidence_links(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_owner_evidence(
+                owner_kind, owner_source_id, owner_node_id, owner_edge_id, evidence_source_id, evidence_id
+            )
+            SELECT 'EDGE',
+                   edge.source_id,
+                   '',
+                   edge.id,
+                   ev.source_id,
+                   ev.id
+            FROM analysis_graph_edge_evidence link
+            JOIN analysis_graph_edges edge ON edge.id = link.edge_id
+            JOIN analysis_graph_evidence ev ON ev.id = link.evidence_id
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_owner_evidence(
+                owner_kind, owner_source_id, owner_node_id, owner_edge_id, evidence_source_id, evidence_id
+            )
+            SELECT 'NODE',
+                   claim.source_id,
+                   claim.node_id,
+                   '',
+                   ev.source_id,
+                   ev.id
+            FROM analysis_graph_claim_evidence link
+            JOIN analysis_graph_claims claim ON claim.id = link.claim_id
+            JOIN analysis_graph_evidence ev ON ev.id = link.evidence_id
+            """
         )
 
     def create_job(self, job: Dict[str, Any]) -> None:
@@ -1334,9 +1510,12 @@ class AnalysisStore:
         self._insert_graph_evidence(conn, file_id, state, graph, created_at)
         self._insert_graph_claims(conn, graph, created_at)
         self._insert_graph_edges(conn, file_id, state, graph, created_at)
+        self._insert_graph_boundaries(conn, file_id, state, graph, created_at)
         self._insert_graph_diagnostics(conn, file_id, state, graph, created_at)
         self._insert_claim_evidence_links(conn, graph)
         self._insert_edge_evidence_links(conn, graph)
+        self._insert_boundary_evidence_links(conn, graph)
+        self._insert_boundary_descriptor_evidence_links(conn, graph)
         self._mark_source_graph_dirty_conn(conn, str(state["source_id"]), created_at)
 
     def finalize_source_graph(self, source_id: str) -> None:
@@ -1529,10 +1708,10 @@ class AnalysisStore:
                     """
                     INSERT INTO analysis_graph_edges(
                         id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                        from_node_id, to_node_id, edge_type, resolution_status, confidence,
+                        from_node_id, to_node_id, to_source_id, edge_type, resolution_status, confidence,
                         argument_count, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         edge["id"],
@@ -1545,6 +1724,7 @@ class AnalysisStore:
                         state["content_hash"],
                         edge["from_node_id"],
                         edge.get("to_node_id"),
+                        edge.get("to_source_id") or (edge["source_id"] if edge.get("to_node_id") else None),
                         edge["edge_type"],
                         edge["resolution_status"],
                         edge["confidence"],
@@ -1560,6 +1740,89 @@ class AnalysisStore:
                 )
 
         self._run_graph_store_step("analysis_graph_edges", "insert_edges", insert)
+
+    def _insert_graph_boundaries(
+        self,
+        conn: sqlite3.Connection,
+        file_id: int,
+        state: dict[str, Any],
+        graph: dict[str, list[dict[str, Any]]],
+        created_at: str,
+    ) -> None:
+        def insert() -> None:
+            for boundary in graph.get("boundaries") or []:
+                boundary_file_id = int(boundary.get("analysis_file_id") or boundary.get("inventory_file_id") or file_id)
+                conn.execute(
+                    """
+                    INSERT INTO analysis_graph_boundaries(
+                        id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                        stable_key, node_id, role, confidence, status, rejection_reason, descriptor_json,
+                        metadata_json, created_at, updated_at, fact_origin, flow_domain
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        boundary["id"],
+                        boundary["job_id"],
+                        boundary["source_id"],
+                        boundary.get("inventory_file_id") or boundary_file_id,
+                        boundary.get("analysis_file_id") or boundary_file_id,
+                        boundary_file_id,
+                        state["relative_path"],
+                        state["content_hash"],
+                        boundary["stable_key"],
+                        boundary["node_id"],
+                        boundary["role"],
+                        boundary["confidence"],
+                        boundary["status"],
+                        boundary.get("rejection_reason"),
+                        json.dumps(boundary.get("descriptor_json") or [], ensure_ascii=False, sort_keys=True, default=str),
+                        json.dumps(boundary.get("metadata") or {}, ensure_ascii=False, sort_keys=True, default=str),
+                        created_at,
+                        created_at,
+                        boundary.get("fact_origin"),
+                        boundary.get("flow_domain"),
+                    ),
+                )
+            for descriptor in graph.get("boundary_descriptors") or []:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO analysis_graph_boundary_descriptors(
+                        id, boundary_id, descriptor_path, value_type, value_json, origin, confidence, status, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        descriptor["id"],
+                        descriptor["boundary_id"],
+                        descriptor["descriptor_path"],
+                        descriptor["value_type"],
+                        descriptor["value_json"],
+                        descriptor["origin"],
+                        descriptor.get("confidence"),
+                        descriptor["status"],
+                        created_at,
+                        created_at,
+                    ),
+                )
+            for index_row in graph.get("boundary_descriptor_index") or []:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO analysis_graph_boundary_descriptor_index(
+                        descriptor_id, boundary_id, descriptor_path, value_type, normalized_scalar_value
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        index_row["descriptor_id"],
+                        index_row["boundary_id"],
+                        index_row["descriptor_path"],
+                        index_row["value_type"],
+                        index_row["normalized_scalar_value"],
+                    ),
+                )
+
+        self._run_graph_store_step("analysis_graph_boundaries", "insert_boundaries", insert)
 
     def _insert_graph_diagnostics(
         self,
@@ -1617,6 +1880,14 @@ class AnalysisStore:
                         """,
                         (claim["id"], evidence_id),
                     )
+                    self._insert_owner_evidence_link(
+                        conn,
+                        owner_kind="NODE",
+                        owner_source_id=str(claim["source_id"]),
+                        owner_node_id=str(claim["node_id"]),
+                        owner_edge_id="",
+                        evidence_id=str(evidence_id),
+                    )
 
         self._run_graph_store_step("analysis_graph_claim_evidence", "insert_claim_evidence_links", insert)
 
@@ -1631,8 +1902,92 @@ class AnalysisStore:
                         """,
                         (edge["id"], evidence_id),
                     )
+                    self._insert_owner_evidence_link(
+                        conn,
+                        owner_kind="EDGE",
+                        owner_source_id=str(edge["source_id"]),
+                        owner_node_id="",
+                        owner_edge_id=str(edge["id"]),
+                        evidence_id=str(evidence_id),
+                    )
 
         self._run_graph_store_step("analysis_graph_edge_evidence", "insert_edge_evidence_links", insert)
+
+    def _insert_boundary_evidence_links(self, conn: sqlite3.Connection, graph: dict[str, list[dict[str, Any]]]) -> None:
+        def insert() -> None:
+            for link in graph.get("boundary_evidence_links") or []:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO analysis_graph_boundary_evidence(boundary_id, evidence_id)
+                    VALUES (?, ?)
+                    """,
+                    (link["boundary_id"], link["evidence_id"]),
+                )
+
+        self._run_graph_store_step("analysis_graph_boundary_evidence", "insert_boundary_evidence_links", insert)
+
+    def _insert_boundary_descriptor_evidence_links(self, conn: sqlite3.Connection, graph: dict[str, list[dict[str, Any]]]) -> None:
+        def insert() -> None:
+            for link in graph.get("boundary_descriptor_evidence_links") or []:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO analysis_graph_boundary_descriptor_evidence(descriptor_id, evidence_id)
+                    VALUES (?, ?)
+                    """,
+                    (link["descriptor_id"], link["evidence_id"]),
+                )
+
+        self._run_graph_store_step("analysis_graph_boundary_descriptor_evidence", "insert_boundary_descriptor_evidence_links", insert)
+
+    def _insert_owner_evidence_link(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        owner_kind: str,
+        owner_source_id: str,
+        owner_node_id: str,
+        owner_edge_id: str,
+        evidence_id: str,
+        evidence_source_id: str | None = None,
+    ) -> bool:
+        if evidence_source_id:
+            row = conn.execute(
+                """
+                SELECT source_id
+                FROM analysis_graph_evidence
+                WHERE source_id = ?
+                  AND id = ?
+                """,
+                (evidence_source_id, evidence_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT source_id
+                FROM analysis_graph_evidence
+                WHERE id = ?
+                """,
+                (evidence_id,),
+            ).fetchone()
+        if row is None:
+            return False
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_owner_evidence(
+                owner_kind, owner_source_id, owner_node_id, owner_edge_id, evidence_source_id, evidence_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                owner_kind,
+                owner_source_id,
+                owner_node_id or "",
+                owner_edge_id or "",
+                str(row["source_id"]),
+                evidence_id,
+            ),
+        )
+        return cursor.rowcount > 0
 
     def mark_file(self, file_id: int, state: Dict[str, Any]) -> None:
         self.init()
@@ -1750,33 +2105,53 @@ class AnalysisStore:
 
     def query_current_graph_sources(self) -> List[Dict[str, Any]]:
         self.init()
+        current_status_sql, current_status_params = sql_in_clause(graph_query_contract().statuses_for_current_graph())
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             rows = conn.execute(
-                """
+                f"""
                 WITH known_sources AS (
                     SELECT source_id
                     FROM sources
                     UNION
                     SELECT source_id
                     FROM analysis_graph_state
-                    WHERE status = 'READY'
                     UNION
                     SELECT source_id
                     FROM analysis_graph_nodes
+                    WHERE {self._inventory_membership_graph_node_clause("analysis_graph_nodes")}
+                ),
+                current_node_count AS (
+                    SELECT n.source_id, COUNT(*) AS node_count
+                    FROM analysis_graph_nodes n
+                    WHERE n.status IN ({current_status_sql})
+                      AND {self._inventory_membership_graph_node_clause("n")}
+                    GROUP BY n.source_id
+                ),
+                current_edge_count AS (
+                    SELECT e.source_id, COUNT(*) AS edge_count
+                    FROM analysis_graph_edges e
+                    WHERE e.status IN ({current_status_sql})
+                      AND {self._inventory_membership_graph_edge_clause("e")}
+                    GROUP BY e.source_id
                 )
                 SELECT known_sources.source_id,
                        COALESCE(sources.display_name, known_sources.source_id) AS display_name,
-                       state.graph_id,
-                       state.content_identity,
-                       COALESCE(state.node_count, 0) AS node_count,
-                       COALESCE(state.edge_count, 0) AS edge_count
+                       COALESCE(NULLIF(state.graph_id, ''), known_sources.source_id || ':query-current-facts') AS graph_id,
+                       COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), known_sources.source_id || ':query-current-facts') AS content_identity,
+                       COALESCE(current_node_count.node_count, 0) AS node_count,
+                       COALESCE(current_edge_count.edge_count, 0) AS edge_count,
+                       state.status AS graph_status
                 FROM known_sources
                 LEFT JOIN sources ON sources.source_id = known_sources.source_id
                 LEFT JOIN analysis_graph_state state
                   ON state.source_id = known_sources.source_id
-                 AND state.status = 'READY'
+                LEFT JOIN current_node_count
+                  ON current_node_count.source_id = known_sources.source_id
+                LEFT JOIN current_edge_count
+                  ON current_edge_count.source_id = known_sources.source_id
                 ORDER BY known_sources.source_id
-                """
+                """,
+                [*current_status_params, *current_status_params],
             ).fetchall()
         return [
             {
@@ -1786,11 +2161,36 @@ class AnalysisStore:
                 "graphRevision": row["content_identity"],
                 "nodeCount": int(row["node_count"] or 0),
                 "edgeCount": int(row["edge_count"] or 0),
+                "graphStatus": row["graph_status"],
             }
             for row in rows
         ]
 
-    def query_search_documents(self, source_ids: List[str], limit: int) -> List[Dict[str, Any]]:
+    def query_search_document_counts(self, source_ids: list[str], include_tests: bool = True) -> dict[str, int]:
+        self.init()
+        if not source_ids:
+            return {}
+        source_placeholders = ",".join("?" for _ in source_ids)
+        current_status_sql, current_status_params = sql_in_clause(graph_query_contract().statuses_for_current_graph())
+        flow_domain_sql = self._inventory_flow_domain_sql("n")
+        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT n.source_id, COUNT(*) AS document_count
+                FROM analysis_graph_nodes n
+                WHERE n.source_id IN ({source_placeholders})
+                  AND n.status IN ({current_status_sql})
+                  AND {self._inventory_membership_graph_node_clause("n")}
+                  AND (? OR UPPER(COALESCE(({flow_domain_sql}), '')) != 'TEST')
+                GROUP BY n.source_id
+                """,
+                [*source_ids, *current_status_params, 1 if include_tests else 0],
+            ).fetchall()
+        counts = {str(source_id): 0 for source_id in source_ids if str(source_id or "")}
+        counts.update({str(row["source_id"]): int(row["document_count"] or 0) for row in rows})
+        return counts
+
+    def query_search_documents(self, source_ids: list[str], limit: int, include_tests: bool = True) -> list[dict[str, Any]]:
         self.init()
         if not source_ids:
             return []
@@ -1799,6 +2199,7 @@ class AnalysisStore:
         contract = graph_query_contract()
         claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_responsibility_summary())
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        flow_domain_sql = self._inventory_flow_domain_sql("n")
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             rows = conn.execute(
                 f"""
@@ -1877,7 +2278,9 @@ class AnalysisStore:
                   ON external_target.source_id = n.source_id
                  AND external_target.node_id = n.id
                 WHERE n.source_id IN ({source_placeholders})
+                  AND n.status IN ({entry_status_sql})
                   AND {self._inventory_membership_graph_node_clause("n")}
+                  AND (? OR UPPER(COALESCE(({flow_domain_sql}), '')) != 'TEST')
                 ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
                 """,
@@ -1891,6 +2294,8 @@ class AnalysisStore:
                     ENTRYPOINT_EXECUTION_EXECUTABLE,
                     contract.external_target_status,
                     *source_ids,
+                    *entry_status_params,
+                    1 if include_tests else 0,
                     safe_limit,
                 ],
             ).fetchall()
@@ -2020,6 +2425,7 @@ class AnalysisStore:
                   ON external_target.source_id = n.source_id
                  AND external_target.node_id = n.id
                 WHERE ({' OR '.join(pair_clauses)})
+                  AND n.status IN ({entry_status_sql})
                   AND {self._inventory_membership_graph_node_clause("n")}
                 ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
@@ -2033,6 +2439,7 @@ class AnalysisStore:
                     *entry_status_params,
                     contract.external_target_status,
                     *pair_params,
+                    *entry_status_params,
                     safe_limit,
                 ],
             ).fetchall()
@@ -2056,7 +2463,7 @@ class AnalysisStore:
             documents.append(projected)
         return documents
 
-    def query_anchor_candidates(self, tokens: List[str], source_ids: List[str], limit: int) -> List[Dict[str, Any]]:
+    def query_anchor_candidates(self, tokens: list[str], source_ids: list[str], limit: int, include_tests: bool = True) -> list[dict[str, Any]]:
         self.init()
         if not tokens or not source_ids:
             return []
@@ -2065,6 +2472,7 @@ class AnalysisStore:
         contract = graph_query_contract()
         claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_responsibility_summary())
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        flow_domain_sql = self._inventory_flow_domain_sql("n")
         token_clauses: List[str] = []
         token_params: List[Any] = []
         for token in tokens[:12]:
@@ -2162,6 +2570,7 @@ class AnalysisStore:
                  AND external_target.node_id = n.id
                 WHERE n.source_id IN ({source_placeholders})
                   AND {self._inventory_membership_graph_node_clause("n")}
+                  AND (? OR UPPER(COALESCE(({flow_domain_sql}), '')) != 'TEST')
                   AND ({" OR ".join(token_clauses)})
                 ORDER BY n.confidence DESC, graph_degree DESC, n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
@@ -2174,6 +2583,7 @@ class AnalysisStore:
                     *entry_status_params,
                     contract.external_target_status,
                     *source_ids,
+                    1 if include_tests else 0,
                     *token_params,
                     safe_limit,
                 ],
@@ -2245,7 +2655,7 @@ class AnalysisStore:
                                tn.name AS to_name
                         FROM analysis_graph_edges e
                         LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
                         WHERE e.source_id = ?
                           AND e.edge_type IN (?, ?)
                           AND e.status IN ({current_status_sql})
@@ -2289,6 +2699,7 @@ class AnalysisStore:
                         FROM analysis_graph_edges e
                         JOIN analysis_graph_nodes tn
                           ON tn.source_id = ?
+                         AND COALESCE(e.to_source_id, e.source_id) = tn.source_id
                          AND tn.id = e.to_node_id
                          AND tn.status IN ({current_status_sql})
                          AND {self._inventory_membership_graph_node_clause("tn")}
@@ -2347,7 +2758,7 @@ class AnalysisStore:
                                tn.name AS to_name
                         FROM analysis_graph_edges e
                         LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
                         WHERE e.source_id = ?
                           AND e.edge_type = ?
                           AND e.status IN ({current_status_sql})
@@ -2414,6 +2825,7 @@ class AnalysisStore:
             entrypoint_topic=str(item.get("entrypointTopic")) if item.get("entrypointTopic") else None,
             entrypoint_schedule=str(item.get("entrypointSchedule")) if item.get("entrypointSchedule") else None,
             entrypoint_interface_method=str(item.get("entrypointInterfaceMethod")) if item.get("entrypointInterfaceMethod") else None,
+            execution_role=str(item.get("executionRole")) if item.get("executionRole") else None,
             flow_domain=str(item.get("flowDomain")) if item.get("flowDomain") else None,
         )
 
@@ -2438,6 +2850,7 @@ class AnalysisStore:
             to_graph_revision=str(item.get("toGraphRevision")) if item.get("toGraphRevision") else None,
             external=bool(item.get("external")) or str(item.get("resolutionStatus") or "").upper() == graph_query_contract().external_target_status,
             unresolved_target=item.get("unresolvedTarget") if isinstance(item.get("unresolvedTarget"), dict) else None,
+            metadata=dict(item.get("metadata")) if isinstance(item.get("metadata"), dict) else None,
             evidence_ids=tuple(evidence_ids_by_edge.get(edge_id) or ()),
             flow_domain=str(item.get("flowDomain")) if item.get("flowDomain") else None,
         )
@@ -2459,6 +2872,10 @@ class AnalysisStore:
             line_start=int(item.get("lineStart")) if item.get("lineStart") is not None else None,
             line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
             text=str(item.get("excerpt")) if item.get("excerpt") else None,
+            owner_kind=str(item.get("ownerKind")) if item.get("ownerKind") else None,
+            owner_source_id=str(item.get("ownerSourceId")) if item.get("ownerSourceId") else None,
+            owner_node_id=str(item.get("ownerNodeId")) if item.get("ownerNodeId") else None,
+            owner_edge_id=str(item.get("ownerEdgeId")) if item.get("ownerEdgeId") else None,
         )
 
     def _attach_current_graph_identity(self, conn: sqlite3.Connection, items: List[Dict[str, Any]]) -> None:
@@ -2588,6 +3005,7 @@ class AnalysisStore:
     def _linked_evidence_projection(self, rows: List[sqlite3.Row]) -> List[Dict[str, Any]]:
         result = []
         for row in rows:
+            keys = set(row.keys())
             item = {
                 "id": row["id"],
                 "sourceId": row["source_id"],
@@ -2604,6 +3022,14 @@ class AnalysisStore:
                 item["edgeId"] = row["edge_id"]
             if row["node_id"]:
                 item["nodeId"] = row["node_id"]
+            if "owner_kind" in keys and row["owner_kind"]:
+                item["ownerKind"] = row["owner_kind"]
+            if "owner_source_id" in keys and row["owner_source_id"]:
+                item["ownerSourceId"] = row["owner_source_id"]
+            if "owner_node_id" in keys and row["owner_node_id"]:
+                item["ownerNodeId"] = row["owner_node_id"]
+            if "owner_edge_id" in keys and row["owner_edge_id"]:
+                item["ownerEdgeId"] = row["owner_edge_id"]
             result.append(item)
         return result
 
@@ -2968,7 +3394,7 @@ class AnalysisStore:
                        tn.name AS to_name
                 FROM analysis_graph_edges e
                 LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
                 WHERE {where}
                 ORDER BY e.id
                 LIMIT ?
@@ -3097,7 +3523,7 @@ class AnalysisStore:
                        tn.name AS to_name
                 FROM analysis_graph_edges e
                 LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
                 WHERE e.source_id = ?
                   AND e.id = ?
                 """,
@@ -3183,6 +3609,7 @@ class AnalysisStore:
             WHERE af_current.source_id = {alias}.source_id
               AND af_current.relative_path = {alias}.relative_path
               AND af_current.content_hash = {alias}.content_hash
+              AND af_current.status IN ('ANALYZED', 'ANALYZED_WITH_DIAGNOSTICS', 'PARTIAL')
         )
         AND EXISTS (
             SELECT 1
@@ -3216,6 +3643,7 @@ class AnalysisStore:
             WHERE af_current.source_id = {alias}.source_id
               AND af_current.relative_path = {alias}.relative_path
               AND af_current.content_hash = {alias}.content_hash
+              AND af_current.status IN ('ANALYZED', 'ANALYZED_WITH_DIAGNOSTICS', 'PARTIAL')
         )
         AND EXISTS (
             SELECT 1
@@ -3494,7 +3922,7 @@ class AnalysisStore:
                    tn.name AS to_name
             FROM analysis_graph_edges e
             LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-            LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+            LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
             WHERE {edge_where}
               AND e.from_node_id IN ({placeholders})
               AND e.to_node_id IN ({placeholders})
@@ -3676,7 +4104,7 @@ class AnalysisStore:
                        COUNT(*) OVER() AS total_count
                 FROM analysis_graph_edges e
                 JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
                 LEFT JOIN analysis_graph_edge_evidence link ON link.edge_id = e.id
                 LEFT JOIN analysis_graph_evidence ev ON ev.source_id = e.source_id AND ev.id = link.evidence_id
                 LEFT JOIN analysis_files ev_af ON ev_af.file_id = ev.analysis_file_id
@@ -3801,6 +4229,7 @@ class AnalysisStore:
             "entrypointTopic": row.get("entrypoint_topic"),
             "entrypointSchedule": row.get("entrypoint_schedule"),
             "entrypointInterfaceMethod": row.get("entrypoint_interface_method"),
+            "executionRole": row.get("entrypoint_execution_kind") or row.get("contract_entrypoint_execution_kind"),
         }
 
     def _anchor_expansion_node_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -3906,7 +4335,24 @@ class AnalysisStore:
                 in {
                     "callKind",
                     "callTargetCategory",
+                    "directionRole",
                     "methodName",
+                    "connectorKind",
+                    "transportKind",
+                    "httpMethod",
+                    "method",
+                    "route",
+                    "routeTemplate",
+                    "operationIdentity",
+                    "interfaceIdentity",
+                    "interfaceMethod",
+                    "targetInterfaceMethod",
+                    "targetEntrypoint",
+                    "targetSource",
+                    "requestContractIdentity",
+                    "responseContractIdentity",
+                    "targetServiceIdentity",
+                    "transportConnector",
                     "receiverText",
                     "receiverTypeHint",
                     "resolutionReason",
@@ -4163,7 +4609,14 @@ class AnalysisStore:
         return normalized.upper() if uppercase else normalized
 
     def _graph_identity_by_source(self, conn: sqlite3.Connection, source_ids: List[str]) -> Dict[str, Dict[str, Optional[str]]]:
-        return GraphStateRepository(self).identity_by_source(conn, source_ids)
+        identity = GraphStateRepository(self).identity_by_source(conn, source_ids)
+        for source_id in source_ids:
+            source_key = str(source_id or "")
+            if not source_key or source_key in identity:
+                continue
+            fallback = f"{source_key}:query-current-facts"
+            identity[source_key] = {"graphId": fallback, "graphRevision": fallback}
+        return identity
 
     def _reconcile_graph_runtime_inventory_membership(self, conn: sqlite3.Connection) -> None:
         if not self._table_exists(conn, "analysis_graph_nodes"):
@@ -4177,6 +4630,8 @@ class AnalysisStore:
                 SELECT source_id FROM analysis_graph_edges WHERE source_id IS NOT NULL
                 UNION
                 SELECT source_id FROM analysis_graph_claims WHERE source_id IS NOT NULL
+                UNION
+                SELECT source_id FROM analysis_graph_boundaries WHERE source_id IS NOT NULL
                 UNION
                 SELECT source_id FROM analysis_graph_evidence WHERE source_id IS NOT NULL
                 UNION
@@ -4293,7 +4748,7 @@ class AnalysisStore:
             placeholders = ",".join("?" for _ in batch)
             self._delete_semantic_documents_for_nodes(conn, batch)
             conn.execute(f"DELETE FROM analysis_graph_nodes WHERE id IN ({placeholders})", batch)
-        for table in ("analysis_graph_edges", "analysis_graph_evidence", "analysis_graph_diagnostics"):
+        for table in ("analysis_graph_edges", "analysis_graph_boundaries", "analysis_graph_evidence", "analysis_graph_diagnostics"):
             if not self._table_exists(conn, table):
                 continue
             rows = conn.execute(
@@ -4392,9 +4847,27 @@ class AnalysisStore:
                 UNION
                 SELECT source_id FROM analysis_graph_evidence WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?
                 UNION
+                SELECT source_id FROM analysis_graph_boundaries WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?
+                UNION
                 SELECT source_id FROM analysis_graph_diagnostics WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?
                 """,
-                (file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id),
+                (
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                    file_id,
+                ),
             ).fetchall()
             if row["source_id"]
         }
@@ -4408,6 +4881,10 @@ class AnalysisStore:
         )
         conn.execute(
             "DELETE FROM analysis_graph_evidence WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?",
+            (file_id, file_id, file_id),
+        )
+        conn.execute(
+            "DELETE FROM analysis_graph_boundaries WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?",
             (file_id, file_id, file_id),
         )
         conn.execute(
@@ -4428,7 +4905,8 @@ class AnalysisStore:
                        target.qualified_name AS target_qualified_name
                 FROM analysis_graph_edges e
                 JOIN analysis_graph_nodes target
-                  ON target.id = e.to_node_id
+                  ON target.source_id = COALESCE(e.to_source_id, e.source_id)
+                 AND target.id = e.to_node_id
                 WHERE e.to_node_id IN ({placeholders})
                   AND COALESCE(e.analysis_file_id, e.inventory_file_id, e.file_id) != ?
                 """,
@@ -4452,6 +4930,7 @@ class AnalysisStore:
                     """
                     UPDATE analysis_graph_edges
                     SET to_node_id = NULL,
+                        to_source_id = NULL,
                         resolution_status = ?,
                         unresolved_target_json = ?,
                         metadata_json = ?
@@ -4632,9 +5111,25 @@ class AnalysisStore:
                 "callKind",
                 "callTargetCategory",
                 "candidateCount",
+                "directionRole",
                 "interfaceDispatchCloneOf",
+                "interfaceIdentity",
                 "interfaceMethod",
                 "methodName",
+                "connectorKind",
+                "transportKind",
+                "httpMethod",
+                "method",
+                "route",
+                "routeTemplate",
+                "operationIdentity",
+                "requestContractIdentity",
+                "responseContractIdentity",
+                "targetEntrypoint",
+                "targetInterfaceMethod",
+                "targetServiceIdentity",
+                "targetSource",
+                "transportConnector",
                 "overrideReason",
                 "relationKind",
                 "receiverText",

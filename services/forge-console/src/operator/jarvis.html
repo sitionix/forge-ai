@@ -71,7 +71,7 @@
       <div class="panel-head compact">
         <div>
           <h2>Graph Knowledge Query</h2>
-          <p>Questions are sent through Forge AI to Jarvis for graph-backed flow explanations.</p>
+          <p>Questions are sent through Forge AI to Jarvis for flow explanations.</p>
         </div>
       </div>
       <form id="jarvisQueryForm" class="jarvis-query-form">
@@ -83,12 +83,8 @@
           <button id="sendJarvisQuery" type="submit" class="button">Send</button>
         </div>
       </form>
-      <div class="notice-box jarvis-security-notice">Scope: Auto / all analyzed sources.</div>
-      <div id="jarvisQueryLoading" class="notice-box hidden">Analyzing the current graph and preparing an answer...</div>
-      <div id="jarvisQueryError" class="error-box hidden"></div>
+      <div id="jarvisQueryLoading" class="notice-box hidden">Preparing an answer...</div>
       <div id="jarvisQueryResult" class="jarvis-query-result hidden"></div>
-      <div id="jarvisQueryDiagnostics" class="jarvis-query-diagnostics hidden"></div>
-      <div id="jarvisQueryRaw" class="jarvis-query-raw hidden"></div>
     </section>
   </main>
 

@@ -112,6 +112,7 @@ class GraphEdgeDefinition:
     to_kinds: List[str]
     semantic_eligible: bool
     description: str = ""
+    relation_semantics: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

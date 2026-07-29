@@ -13,7 +13,6 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
 DEFAULT_GENERATIVE_MODEL = "qwen2.5-coder:14b"
 DEFAULT_GENERATIVE_CONTEXT_TOKENS = 32768
 DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS = 180
-DEFAULT_HUMAN_QUERY_TRANSPORT_GRACE_SECONDS = 5
 
 
 class LoggingSettings(BaseModel):
@@ -66,7 +65,6 @@ class QuerySettings(BaseModel):
 
 class JarvisKnowledgeSettings(BaseModel):
     request_timeout_seconds: float = Field(default=120, gt=0)
-    human_query_transport_grace_seconds: float = Field(default=DEFAULT_HUMAN_QUERY_TRANSPORT_GRACE_SECONDS, gt=0)
 
 
 class JarvisSettings(BaseModel):
@@ -145,10 +143,6 @@ class AppConfig(BaseModel):
         env = dict(os.environ if environ is None else environ)
         jarvis = settings.services.jarvis
         flow_deadline_seconds = settings.query.human_query.request_timeout_seconds
-        flow_transport_timeout_seconds = _human_query_transport_timeout_seconds(
-            flow_deadline_seconds,
-            jarvis.knowledge.human_query_transport_grace_seconds,
-        )
         _require_file(jarvis.actions_file, "Jarvis actions file")
         _require_file(jarvis.system_prompt_path, "Jarvis system prompt")
         log_file = Path(env.get("JARVIS_LOG_FILE") or settings.logging.directory / "jarvis-agent.log").resolve()
@@ -167,7 +161,7 @@ class AppConfig(BaseModel):
             knowledge=KnowledgeConfig(
                 base_url=str(jarvis.knowledge_base_url).rstrip("/"),
                 request_timeout_seconds=jarvis.knowledge.request_timeout_seconds,
-                human_query_request_timeout_seconds=flow_transport_timeout_seconds,
+                human_query_request_timeout_seconds=flow_deadline_seconds,
             ),
             system_prompt=jarvis.system_prompt_path.read_text(encoding="utf-8"),
             allowed_actions_path=jarvis.actions_file,
@@ -351,19 +345,6 @@ def _jarvis_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]
                     "request_timeout_seconds": float(
                         _expand(str(_field_value(knowledge, "request-timeout-seconds", "request_timeout_seconds", default=120)), env)
                     ),
-                    "human_query_transport_grace_seconds": float(
-                        _expand(
-                            str(
-                                _field_value(
-                                    knowledge,
-                                    "human-query-transport-grace-seconds",
-                                    "human_query_transport_grace_seconds",
-                                    default=DEFAULT_HUMAN_QUERY_TRANSPORT_GRACE_SECONDS,
-                                )
-                            ),
-                            env,
-                        )
-                    ),
                 },
                 "actions_file": _path(str(jarvis.get("actions-file") or jarvis.get("actions_file") or prompt_base / "allowed-actions.yaml"), env),
                 "system_prompt_path": _path(str(jarvis.get("system-prompt-path") or jarvis.get("system_prompt_path") or prompt_base / "system-prompt.md"), env),
@@ -401,17 +382,6 @@ def _apply_jarvis_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) -> 
         jarvis["knowledge"]["request_timeout_seconds"] = float(env["JARVIS_KNOWLEDGE_REQUEST_TIMEOUT_SECONDS"])
     if env.get("FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS"):
         raw["query"]["human_query"]["request_timeout_seconds"] = float(env["FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS"])
-    if env.get("JARVIS_KNOWLEDGE_HUMAN_QUERY_TRANSPORT_GRACE_SECONDS"):
-        jarvis["knowledge"]["human_query_transport_grace_seconds"] = float(
-            env["JARVIS_KNOWLEDGE_HUMAN_QUERY_TRANSPORT_GRACE_SECONDS"]
-        )
-
-
-def _human_query_transport_timeout_seconds(deadline_seconds: float, grace_seconds: float) -> float:
-    timeout_seconds = deadline_seconds + grace_seconds
-    if timeout_seconds <= deadline_seconds:
-        raise ValueError("Jarvis Knowledge human query transport timeout must exceed the Knowledge deadline")
-    return timeout_seconds
 
 
 def _require_file(path: Path, label: str) -> None:

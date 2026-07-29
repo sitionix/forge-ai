@@ -46,7 +46,7 @@ export class JarvisQueryView {
     panel.insertAdjacentHTML('beforeend', `
       <article class="jarvis-chat-message jarvis-chat-assistant" data-jarvis-message="${escapeHtml(id)}">
         <div class="jarvis-chat-role">Jarvis</div>
-        <div class="jarvis-chat-bubble jarvis-chat-pending">Analyzing the current graph and preparing an answer...</div>
+        <div class="jarvis-chat-bubble jarvis-chat-pending">Preparing an answer...</div>
       </article>
     `);
     return id;
@@ -61,26 +61,30 @@ export class JarvisQueryView {
       <div class="jarvis-chat-role">Jarvis</div>
       <div class="jarvis-chat-bubble">
         ${this.renderAnswers(response?.answers)}
-        ${this.renderDiagnostics(response?.diagnostics)}
       </div>
     `;
   }
 
   replaceWithError(messageIdValue, error) {
+    this.replaceWithSafeError(messageIdValue, {
+      title: 'Request failed',
+      message: 'The request could not be completed. Please try again.'
+    });
+  }
+
+  replaceWithSafeError(messageIdValue, safePresentation) {
     const element = this.message(messageIdValue);
     if (!element) {
       return;
     }
-    const reason = [error?.code, error?.message && error.message !== error.code ? error.message : null]
-      .filter(Boolean)
-      .join(': ') || 'REQUEST_FAILED';
-    const status = error?.status ? ` (${error.status})` : '';
+    const title = text(safePresentation?.title, 'Request failed');
+    const message = text(safePresentation?.message, 'The request could not be completed. Please try again.');
     element.innerHTML = `
       <div class="jarvis-chat-role">Jarvis</div>
       <div class="jarvis-chat-bubble">
         <article class="jarvis-error-card">
-          <strong>${escapeHtml(error?.title || 'Jarvis query failed')}</strong>
-          <p>${escapeHtml(reason)}${escapeHtml(status)}</p>
+          <strong>${escapeHtml(title)}</strong>
+          <p>${escapeHtml(message)}</p>
         </article>
       </div>
     `;
@@ -92,27 +96,24 @@ export class JarvisQueryView {
       return '<p>No answer was returned.</p>';
     }
     return items.map((item) => `
-      <article class="jarvis-answer-card">
-        <strong>${escapeHtml(text(item.entrypoint, 'Entrypoint'))}</strong>
+      <section class="jarvis-answer">
+        ${this.shouldRenderAnswerTitle(item) ? `<strong>${escapeHtml(this.answerTitle(item))}</strong>` : ''}
         <p class="jarvis-answer-text">${escapeHtml(text(item.text))}</p>
-        <footer class="jarvis-answer-sources" aria-label="Answer source">
-          <span>${escapeHtml(text(item.source, 'source'))}${item.entrypoint ? ` · ${escapeHtml(text(item.entrypoint))}` : ''}</span>
-        </footer>
-      </article>
+      </section>
     `).join('');
   }
 
-  renderDiagnostics(diagnostics) {
-    const items = list(diagnostics)
-      .filter((item) => item?.message || item?.code);
-    if (!items.length) {
-      return '';
+  shouldRenderAnswerTitle(item) {
+    const title = this.answerTitle(item);
+    if (!title) {
+      return false;
     }
-    return `
-      <aside class="jarvis-answer-warning">
-        ${items.map((item) => `<p>${escapeHtml(text(item.message || item.code))}</p>`).join('')}
-      </aside>
-    `;
+    return !text(item?.text).includes(title);
+  }
+
+  answerTitle(item) {
+    const entry = list(item?.queryEntries)[0] || {};
+    return text(entry?.root?.qualifiedName || entry?.root?.label || item?.graphId);
   }
 
   panel() {

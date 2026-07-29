@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import sqlite3
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+
+from semantic_test_support import seed_semantic_graph
 
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.embedding_provider import EmbeddingProviderError, FakeDeterministicEmbeddingProvider
@@ -13,7 +16,6 @@ from knowledge_service.semantic_index import (
     SemanticIndexStatusView,
     SemanticIndexStore,
 )
-from semantic_test_support import seed_semantic_graph
 
 
 class FailingEmbeddingProvider:
@@ -50,7 +52,7 @@ def _current_graph_revision(conn: sqlite3.Connection, source_id: str) -> str:
     return SemanticIndexStore.compute_graph_revision_conn(conn, source_id)
 
 
-def _current_semantic_integrity_counts(conn: sqlite3.Connection, source_id: str) -> Dict[str, int]:
+def _current_semantic_integrity_counts(conn: sqlite3.Connection, source_id: str) -> dict[str, int]:
     computed_revision = _current_graph_revision(conn, source_id)
     return {
         "current_state_identity_missing_with_facts": int(
@@ -115,8 +117,8 @@ def _current_semantic_integrity_counts(conn: sqlite3.Connection, source_id: str)
 def _seed_inventory_membership_lifecycle(
     db_path: Path,
     *,
-    inventory_relative_path: Optional[str],
-    inventory_content_hash: Optional[str],
+    inventory_relative_path: str | None,
+    inventory_content_hash: str | None,
     analysis_relative_path: str = "x.java",
     analysis_content_hash: str = "h1",
 ) -> None:
@@ -281,7 +283,7 @@ def _seed_inventory_membership_lifecycle(
         )
 
 
-def _lifecycle_counts(conn: sqlite3.Connection) -> Dict[str, int]:
+def _lifecycle_counts(conn: sqlite3.Connection) -> dict[str, int]:
     return {
         "analysis_files": int(conn.execute("SELECT COUNT(*) FROM analysis_files WHERE source_id = 'A'").fetchone()[0]),
         "nodes": int(conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'A'").fetchone()[0]),
@@ -1240,13 +1242,112 @@ def test_semantic_index_builder_idempotent_rebuild_replaces_current_docs(tmp_pat
         assert conn.execute("SELECT COUNT(*) FROM semantic_vectors").fetchone()[0] == 1
 
 
+def test_semantic_index_builder_force_rebuild_removes_all_stale_rows_for_source(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_semantic_graph(db_path)
+    builder = SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=8), config=SemanticBuildConfig())
+    builder.build(["semantic-source"], force=True)
+    with sqlite3.connect(db_path) as conn:
+        _insert_semantic_index_row(
+            conn,
+            source_id="semantic-source",
+            document_id="semantic-source:stale-doc",
+            graph_id="stale-graph",
+            builder_version=SEMANTIC_BUILDER_VERSION - 1,
+            embedding_model="stale-model",
+        )
+        _insert_semantic_index_row(
+            conn,
+            source_id="other-source",
+            document_id="other-source:stale-doc",
+            graph_id="other-stale-graph",
+            builder_version=SEMANTIC_BUILDER_VERSION - 1,
+            embedding_model="stale-model",
+        )
+
+    builder.build(["semantic-source"], force=True)
+    state = SemanticIndexStore(db_path).status_for_source("semantic-source")
+
+    with sqlite3.connect(db_path) as conn:
+        document_rows = conn.execute(
+            """
+            SELECT DISTINCT graph_id, builder_version
+            FROM semantic_documents
+            WHERE source_id = ?
+            ORDER BY graph_id, builder_version
+            """,
+            ("semantic-source",),
+        ).fetchall()
+        vector_rows = conn.execute(
+            """
+            SELECT DISTINCT graph_id, embedding_model
+            FROM semantic_vectors
+            WHERE source_id = ?
+            ORDER BY graph_id, embedding_model
+            """,
+            ("semantic-source",),
+        ).fetchall()
+        stale_source_rows = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM semantic_documents WHERE source_id = ? AND graph_id = 'stale-graph') AS documents,
+              (SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ? AND graph_id = 'stale-graph') AS vectors
+            """,
+            ("semantic-source", "semantic-source"),
+        ).fetchone()
+        other_source_rows = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM semantic_documents WHERE source_id = ?) AS documents,
+              (SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ?) AS vectors
+            """,
+            ("other-source", "other-source"),
+        ).fetchone()
+
+    assert document_rows == [(state.graph_revision, SEMANTIC_BUILDER_VERSION)]
+    assert vector_rows == [(state.graph_revision, "fake-deterministic-embedding")]
+    assert stale_source_rows == (0, 0)
+    assert other_source_rows == (1, 1)
+
+
+def _insert_semantic_index_row(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    document_id: str,
+    graph_id: str,
+    builder_version: int,
+    embedding_model: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO semantic_documents(
+            document_id, source_id, node_id, node_kind, document_type, graph_id, builder_version,
+            text_hash, text, claim_ids_payload, evidence_ids_payload, status, created_at, updated_at
+        )
+        VALUES (?, ?, ?, 'CALLABLE', 'NODE', ?, ?, 'stale-hash', 'stale text', '[]', '[]', 'READY', 'now', 'now')
+        """,
+        (document_id, source_id, f"{source_id}:node", graph_id, builder_version),
+    )
+    conn.execute(
+        """
+        INSERT INTO semantic_vectors(
+            document_id, source_id, node_id, graph_id, embedding_model, embedding_dimension,
+            vector_json, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, 8, '[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]', 'now', 'now')
+        """,
+        (document_id, source_id, f"{source_id}:node", graph_id, embedding_model),
+    )
+
+
 def _overview_progress_fixture(
     tmp_path,
     *,
     inventory_total: int,
     facts_available: int,
     indexed_facts: int,
-    semantic_node_count: Optional[int] = None,
+    semantic_node_count: int | None = None,
     active: bool = False,
 ):
     db_path = tmp_path / "knowledge.sqlite"
@@ -1401,7 +1502,7 @@ def _overview_progress_fixture(
     return read_overview(db_path)
 
 
-def _semantic_counts(conn: sqlite3.Connection) -> Tuple[int, int]:
+def _semantic_counts(conn: sqlite3.Connection) -> tuple[int, int]:
     documents = conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = 'semantic-source'").fetchone()[0]
     vectors = conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = 'semantic-source'").fetchone()[0]
     return int(documents), int(vectors)

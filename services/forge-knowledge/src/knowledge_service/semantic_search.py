@@ -6,12 +6,12 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Sequence
 
 from knowledge_service.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 from knowledge_service.knowledge_search import CandidateProvider, SearchCandidate, SearchConfig, SearchDocument, SearchQuery
 from knowledge_service.observability import observed_connect
-from knowledge_service.semantic_index import SQLITE_SEMANTIC_BUSY_TIMEOUT_MS, SemanticIndexStatus, SemanticIndexStore, ensure_semantic_index_schema
+from knowledge_service.semantic_index import SQLITE_SEMANTIC_BUSY_TIMEOUT_MS, SemanticIndexStatus, SemanticIndexStore
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,21 @@ class SemanticVectorSearchResult:
     scanned_count: int = 0
 
 
+@dataclass(frozen=True)
+class SemanticAcceptanceClassification:
+    semantic_execution_state: str
+    data_sufficiency_classification: str
+
+
+@dataclass(frozen=True)
+class _VectorLoadResult:
+    rows: list[sqlite3.Row]
+    eligible_by_source: dict[str, int]
+    scanned_by_source: dict[str, int]
+    truncated_by_source: dict[str, int]
+    starved_sources: list[str]
+
+
 class SemanticVectorStore:
     def __init__(self, db_path: Path, *, config: SemanticSearchConfig | None = None) -> None:
         self.db_path = db_path
@@ -55,20 +70,25 @@ class SemanticVectorStore:
         if not query_vector or not source_revisions:
             return SemanticVectorSearchResult(matches=[], diagnostics=diagnostics)
         max_vectors = max(1, int(self.config.max_search_vectors or 1))
-        rows = self._load_vector_rows(source_revisions, embedding_model, max_vectors + 1)
-        if len(rows) > max_vectors:
-            rows = rows[:max_vectors]
+        load_result = self._load_vector_rows(source_revisions, embedding_model, max_vectors)
+        if load_result.truncated_by_source or load_result.starved_sources:
             diagnostics.append(
                 {
                     "code": "SEMANTIC_VECTOR_LIMIT_REACHED",
                     "message": "Semantic vector scan reached the configured safety limit.",
                     "severity": "INFO",
-                    "metadata": {"maxSearchVectors": max_vectors},
+                    "metadata": {
+                        "maxSearchVectors": max_vectors,
+                        "vectorsEligibleBySource": load_result.eligible_by_source,
+                        "vectorsScannedBySource": load_result.scanned_by_source,
+                        "vectorsTruncatedBySource": load_result.truncated_by_source,
+                        "sourcesStarved": load_result.starved_sources,
+                    },
                 }
             )
         matches: list[SemanticVectorMatch] = []
         mismatch_sources: set[str] = set()
-        for row in rows:
+        for row in load_result.rows:
             vector = _parse_vector(row["vector_json"])
             if not vector:
                 continue
@@ -102,21 +122,44 @@ class SemanticVectorStore:
                     document_type=str(row["document_type"] or ""),
                 )
             )
-        matches.sort(key=lambda match: (-round(match.similarity, 8), match.source_id, match.node_id, match.document_id))
-        return SemanticVectorSearchResult(matches=matches[: max(1, self.config.semantic_top_k)], diagnostics=diagnostics, scanned_count=len(rows))
+        matches.sort(key=_semantic_match_sort_key)
+        top_k = max(1, int(self.config.semantic_top_k or 1))
+        selected_matches = _select_source_diverse_semantic_matches(matches, top_k)
+        above_threshold_by_source = _count_matches_by_source(matches)
+        selected_by_source = _count_matches_by_source(selected_matches)
+        budget_reached = len(matches) > len(selected_matches) and len(selected_matches) >= top_k
+        diagnostics.append(
+            {
+                "code": "SEMANTIC_SOURCE_DIVERSE_DIAGNOSTICS",
+                "message": "Semantic vector retrieval used source-diverse bounded selection.",
+                "severity": "INFO",
+                "metadata": {
+                    "semanticTopK": top_k,
+                    "maxSearchVectors": max_vectors,
+                    "vectorsEligibleBySource": load_result.eligible_by_source,
+                    "vectorsScannedBySource": load_result.scanned_by_source,
+                    "vectorsTruncatedBySource": load_result.truncated_by_source,
+                    "semanticMatchesAboveThresholdBySource": above_threshold_by_source,
+                    "semanticMatchesSelectedBySource": selected_by_source,
+                    "semanticResultBudgetReached": budget_reached,
+                    "sourcesStarved": load_result.starved_sources,
+                },
+            }
+        )
+        return SemanticVectorSearchResult(matches=selected_matches, diagnostics=diagnostics, scanned_count=len(load_result.rows))
 
-    def _load_vector_rows(self, source_revisions: Mapping[str, str], embedding_model: str, limit: int) -> list[sqlite3.Row]:
+    def _load_vector_rows(self, source_revisions: Mapping[str, str], embedding_model: str, limit: int) -> _VectorLoadResult:
         clauses: list[str] = []
         params: list[Any] = []
         for source_id, graph_revision in sorted(source_revisions.items()):
             clauses.append("(v.source_id = ? AND v.graph_id = ?)")
             params.extend([source_id, graph_revision])
         if not clauses:
-            return []
+            return _VectorLoadResult(rows=[], eligible_by_source={}, scanned_by_source={}, truncated_by_source={}, starved_sources=[])
         with self._connect() as conn:
-            return conn.execute(
+            count_rows = conn.execute(
                 f"""
-                SELECT v.document_id, v.source_id, v.node_id, v.graph_id, v.embedding_dimension, v.vector_json, d.document_type
+                SELECT v.source_id, COUNT(*) AS row_count
                 FROM semantic_vectors v
                 JOIN semantic_documents d
                   ON d.document_id = v.document_id
@@ -126,19 +169,178 @@ class SemanticVectorStore:
                 WHERE v.embedding_model = ?
                   AND d.status = 'READY'
                   AND ({' OR '.join(clauses)})
-                ORDER BY v.source_id, v.node_id, v.document_id
-                LIMIT ?
+                GROUP BY v.source_id
                 """,
-                [embedding_model, *params, max(1, int(limit or 1))],
+                [embedding_model, *params],
             ).fetchall()
+            counts = {str(source_id): 0 for source_id in source_revisions}
+            counts.update({str(row["source_id"]): int(row["row_count"] or 0) for row in count_rows})
+            source_limits = _allocate_source_limits(counts, max(1, int(limit or 1)))
+            rows: list[sqlite3.Row] = []
+            scanned_by_source: dict[str, int] = {str(source_id): 0 for source_id in source_revisions}
+            truncated_by_source: dict[str, int] = {}
+            for source_id, graph_revision in sorted(source_revisions.items()):
+                source_limit = int(source_limits.get(source_id, 0))
+                if source_limit <= 0:
+                    if counts.get(source_id, 0) > 0:
+                        truncated_by_source[source_id] = counts[source_id]
+                    continue
+                source_rows = conn.execute(
+                    """
+                    SELECT v.document_id, v.source_id, v.node_id, v.graph_id, v.embedding_dimension, v.vector_json, d.document_type
+                    FROM semantic_vectors v
+                    JOIN semantic_documents d
+                      ON d.document_id = v.document_id
+                     AND d.source_id = v.source_id
+                     AND d.node_id = v.node_id
+                     AND d.graph_id = v.graph_id
+                    WHERE v.embedding_model = ?
+                      AND d.status = 'READY'
+                      AND v.source_id = ?
+                      AND v.graph_id = ?
+                    ORDER BY v.source_id, v.node_id, v.document_id
+                    LIMIT ?
+                    """,
+                    [embedding_model, source_id, graph_revision, source_limit],
+                ).fetchall()
+                rows.extend(source_rows)
+                scanned_by_source[source_id] = len(source_rows)
+                truncated = max(0, int(counts.get(source_id, 0)) - len(source_rows))
+                if truncated:
+                    truncated_by_source[source_id] = truncated
+            starved_sources = sorted(source_id for source_id, eligible in counts.items() if eligible > 0 and source_limits.get(source_id, 0) <= 0)
+            return _VectorLoadResult(
+                rows=rows,
+                eligible_by_source=dict(sorted(counts.items())),
+                scanned_by_source=dict(sorted(scanned_by_source.items())),
+                truncated_by_source=dict(sorted(truncated_by_source.items())),
+                starved_sources=starved_sources,
+            )
 
     def _connect(self) -> sqlite3.Connection:
         conn = observed_connect(self.db_path, timeout=SQLITE_SEMANTIC_BUSY_TIMEOUT_MS / 1000.0)
         conn.execute(f"PRAGMA busy_timeout = {SQLITE_SEMANTIC_BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
-        ensure_semantic_index_schema(conn)
         return conn
+
+
+def _allocate_source_limits(counts: Mapping[str, int], total_limit: int) -> dict[str, int]:
+    positive_counts = {str(source_id): max(0, int(count or 0)) for source_id, count in counts.items() if int(count or 0) > 0}
+    if not positive_counts:
+        return {str(source_id): 0 for source_id in counts}
+    total_limit = max(1, int(total_limit or 1))
+    allocations = {source_id: 0 for source_id in positive_counts}
+    remaining_budget = min(total_limit, sum(positive_counts.values()))
+    active = set(positive_counts)
+    while active and remaining_budget > 0:
+        share = max(1, remaining_budget // len(active))
+        progressed = False
+        for source_id in sorted(active, key=lambda value: (positive_counts[value] - allocations[value], value)):
+            need = positive_counts[source_id] - allocations[source_id]
+            if need <= 0:
+                continue
+            amount = min(share, need, remaining_budget)
+            if amount <= 0:
+                continue
+            allocations[source_id] += amount
+            remaining_budget -= amount
+            progressed = True
+            if remaining_budget <= 0:
+                break
+        active = {source_id for source_id in active if allocations[source_id] < positive_counts[source_id]}
+        if not progressed:
+            break
+    while active and remaining_budget > 0:
+        for source_id in sorted(active, key=lambda value: (-(positive_counts[value] - allocations[value]), value)):
+            if remaining_budget <= 0:
+                break
+            if allocations[source_id] >= positive_counts[source_id]:
+                continue
+            allocations[source_id] += 1
+            remaining_budget -= 1
+        active = {source_id for source_id in active if allocations[source_id] < positive_counts[source_id]}
+    return {str(source_id): int(allocations.get(str(source_id), 0)) for source_id in counts}
+
+
+def _select_source_diverse_semantic_matches(matches: Sequence[SemanticVectorMatch], limit: int) -> list[SemanticVectorMatch]:
+    """Select semantic hits by raw similarity with a modest repeat-source penalty.
+
+    Similarity remains the main signal. The repeat-source penalty only breaks a
+    global top-K monopoly when another source has a materially comparable hit.
+    Source IDs are used only for accounting and deterministic tie-breaking.
+    """
+
+    limit = max(1, int(limit or 1))
+    remaining = sorted(matches, key=_semantic_match_sort_key)
+    selected: list[SemanticVectorMatch] = []
+    selected_keys: set[tuple[str, str, str]] = set()
+    source_counts: dict[str, int] = {}
+    while remaining and len(selected) < limit:
+        scored: list[tuple[float, float, SemanticVectorMatch]] = []
+        for match in remaining:
+            key = _semantic_match_identity(match)
+            if key in selected_keys:
+                continue
+            repeat_count = source_counts.get(match.source_id, 0)
+            marginal = float(match.similarity) - min(0.075, 0.025 * repeat_count)
+            scored.append((marginal, float(match.similarity), match))
+        if not scored:
+            break
+        scored.sort(key=lambda item: (-round(item[0], 8), -round(item[1], 8), item[2].source_id, item[2].node_id, item[2].document_id))
+        _marginal, _similarity, best = scored[0]
+        selected.append(best)
+        selected_keys.add(_semantic_match_identity(best))
+        source_counts[best.source_id] = source_counts.get(best.source_id, 0) + 1
+        remaining = [match for match in remaining if _semantic_match_identity(match) not in selected_keys]
+    return selected
+
+
+def _semantic_match_identity(match: SemanticVectorMatch) -> tuple[str, str, str]:
+    return (match.source_id, match.node_id, match.document_id)
+
+
+def _semantic_match_sort_key(match: SemanticVectorMatch) -> tuple[float, str, str, str]:
+    return (-round(float(match.similarity), 8), match.source_id, match.node_id, match.document_id)
+
+
+def _count_matches_by_source(matches: Sequence[SemanticVectorMatch]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for match in matches:
+        counts[match.source_id] = counts.get(match.source_id, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def classify_semantic_acceptance(
+    diagnostics: Sequence[Mapping[str, Any]],
+    *,
+    deterministic_evidence_inspected: bool,
+    deterministic_selected_count: int = 0,
+    semantic_selected_count: int = 0,
+) -> SemanticAcceptanceClassification:
+    codes = {str(item.get("code") or "") for item in diagnostics}
+    if "SEMANTIC_PROVIDER_UNAVAILABLE" in codes:
+        return SemanticAcceptanceClassification("SEMANTIC_PROVIDER_UNAVAILABLE", "CANNOT_CLASSIFY_PERSISTED_DATA_SUFFICIENCY")
+    if "SEMANTIC_INDEX_STALE" in codes:
+        return SemanticAcceptanceClassification("SEMANTIC_INDEX_STALE", "CANNOT_CLASSIFY_PERSISTED_DATA_SUFFICIENCY")
+    if "SEMANTIC_INDEX_NOT_READY" in codes or "SEMANTIC_INDEX_FAILED" in codes:
+        return SemanticAcceptanceClassification("SEMANTIC_INDEX_NOT_READY", "CANNOT_CLASSIFY_PERSISTED_DATA_SUFFICIENCY")
+    semantic_executed = semantic_selected_count > 0 or "SEMANTIC_SOURCE_DIVERSE_DIAGNOSTICS" in codes or "SEMANTIC_NO_CANDIDATES" in codes
+    if "SEMANTIC_NO_CANDIDATES" in codes:
+        execution_state = "SEMANTIC_NO_MATCH_ABOVE_THRESHOLD"
+    elif semantic_executed:
+        execution_state = "SEMANTIC_EXECUTED"
+    else:
+        execution_state = "SEMANTIC_PROVIDER_UNAVAILABLE"
+    if deterministic_selected_count > 0 or semantic_selected_count > 0:
+        data_state = execution_state
+    elif deterministic_evidence_inspected and semantic_executed:
+        data_state = "PERSISTED_DATA_INSUFFICIENT_PROVEN"
+    elif deterministic_evidence_inspected:
+        data_state = "DETERMINISTIC_MATCH_INSUFFICIENT"
+    else:
+        data_state = "CANNOT_CLASSIFY_PERSISTED_DATA_SUFFICIENCY"
+    return SemanticAcceptanceClassification(execution_state, data_state)
 
 
 class SemanticCandidateProvider(CandidateProvider):
@@ -150,7 +352,7 @@ class SemanticCandidateProvider(CandidateProvider):
         embedding_provider: EmbeddingProvider,
         *,
         config: SemanticSearchConfig | None = None,
-        vector_store: Optional[SemanticVectorStore] = None,
+        vector_store: SemanticVectorStore | None = None,
     ) -> None:
         self.db_path = db_path
         self.embedding_provider = embedding_provider
@@ -415,7 +617,6 @@ class SemanticCandidateProvider(CandidateProvider):
         conn.execute(f"PRAGMA busy_timeout = {SQLITE_SEMANTIC_BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
-        ensure_semantic_index_schema(conn)
         return conn
 
     def _timed_out(self, started_at: float) -> bool:

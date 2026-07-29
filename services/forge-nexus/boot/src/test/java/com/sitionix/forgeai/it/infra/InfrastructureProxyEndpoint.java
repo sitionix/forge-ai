@@ -259,19 +259,9 @@ public final class InfrastructureProxyEndpoint {
                 "responseProxyErrorJarvisQueryServerError.json");
     }
 
-    public static Endpoint<Object, Object> nexusJarvisQueryContextBudget() {
-        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.SERVICE_UNAVAILABLE,
-                "responseProxyJarvisQueryContextBudget.json");
-    }
-
     public static Endpoint<Object, Object> nexusJarvisQueryHumanTimeout() {
         return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.GATEWAY_TIMEOUT,
                 "responseProxyJarvisQueryHumanTimeout.json");
-    }
-
-    public static Endpoint<Object, Object> nexusJarvisQueryGenerationFailed() {
-        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.BAD_GATEWAY,
-                "responseProxyJarvisQueryGenerationFailed.json");
     }
 
     public static Endpoint<Object, Object> nexusJarvisQueryTimeout() {
@@ -501,19 +491,9 @@ public final class InfrastructureProxyEndpoint {
         return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.INTERNAL_SERVER_ERROR, "responseProxyUpstreamServerError.json");
     }
 
-    public static Endpoint<Object, Object> upstreamJarvisQueryContextBudget() {
-        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.SERVICE_UNAVAILABLE,
-                "responseProxyJarvisQueryContextBudget.json");
-    }
-
     public static Endpoint<Object, Object> upstreamJarvisQueryHumanTimeout() {
         return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.GATEWAY_TIMEOUT,
                 "responseProxyJarvisQueryHumanTimeout.json");
-    }
-
-    public static Endpoint<Object, Object> upstreamJarvisQueryGenerationFailed() {
-        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.BAD_GATEWAY,
-                "responseProxyJarvisQueryGenerationFailed.json");
     }
 
     public static Endpoint<Object, Object> upstreamJarvisQueryTimeout() {

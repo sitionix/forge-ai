@@ -436,13 +436,15 @@ class AnalyzerRuntime:
                 self.target_progress_tracker.set_total_targets(job_id, source_id, relative_path, len(plan.targets))
             target_results: List[GraphAnalysisResult] = []
             target_attempt_states: List[Dict[str, Any]] = []
-            for target in plan.targets:
+            for target_index, target in enumerate(plan.targets, start=1):
                 target_payload = self.target_input_builder.build(
                     context=context,
                     registry=plan.registry,
                     target=target,
                     budget_chars=budget_chars,
                 )
+                target_payload["_targetIndex"] = target_index
+                target_payload["_targetCount"] = len(plan.targets)
                 self.target_prompt_renderer.ensure_within_budget(target_payload, budget_chars, contract=context.graph_contract)
                 result, target_retry_diagnostics, target_attempt_state = await analyze_with_retry(analyzer, target_payload, context.line_count)
                 retry_diagnostics.extend(target_retry_diagnostics)
