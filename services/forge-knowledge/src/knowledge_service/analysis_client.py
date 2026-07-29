@@ -151,10 +151,15 @@ class OllamaAnalysisClient:
         if isinstance(parsed, GraphAnalysisResult):
             return parsed
         self._emit_parse_failure(parsed, response_text, response_metadata)
+        raw_preview = getattr(parsed, "raw_preview", "")
+        raw_preview_length = len(str(raw_preview))
         raise KnowledgeError(
             parsed.code,
             parsed.message,
-            raw_preview=parsed.raw_preview,
+            raw_preview=raw_preview,
+            raw_response_length=len(response_text),
+            raw_preview_length=raw_preview_length,
+            raw_preview_truncated=len(response_text) > raw_preview_length,
             error_details=parsed.error_details,
             validation_report=parsed.validation_report,
             validationErrors=parsed.error_details,
@@ -243,6 +248,10 @@ class OllamaAnalysisClient:
             metadata["configuredMaxAttempts"] = context.configured_max_attempts
             metadata["previousAttemptNumber"] = context.previous_attempt_number
             metadata["previousFailureCodes"] = list(context.previous_failure_codes)
+            metadata["previousResponseAvailable"] = context.previous_response_available
+            metadata["previousResponsePreviewTruncated"] = context.previous_response_preview_truncated
+            metadata["previousResponsePreviewLength"] = context.previous_response_preview_length
+            metadata["previousResponseLength"] = context.previous_response_length
         return {key: value for key, value in metadata.items() if value is not None}
 
     def _provider_response_metadata(self, raw: Dict[str, Any], response_text: str) -> Dict[str, Any]:

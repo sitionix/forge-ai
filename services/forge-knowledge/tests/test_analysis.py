@@ -24,6 +24,7 @@ from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
 from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
+from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
 from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_service import AnalysisSupervisor
@@ -5022,6 +5023,79 @@ def test_target_retry_with_one_configured_attempt_does_not_build_feedback(tmp_pa
     assert request_events[0]["metadata"]["repairAttempt"] is False
 
 
+def test_feedback_prompt_marks_complete_previous_response_without_truncation(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    invalid_response = _invalid_inverted_response("complete short invalid response")
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [invalid_response, _empty_target_response],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    expected_response = json.dumps(invalid_response)
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    retry_prompt = file_calls[1]["prompt"]
+    retry_metadata = request_events[1]["metadata"]
+
+    assert final["failedFiles"] == 0
+    assert "Previous invalid response:\n" in retry_prompt
+    assert "Previous invalid response preview:" not in retry_prompt
+    assert "truncated for prompt safety" not in retry_prompt
+    assert expected_response in retry_prompt
+    assert retry_metadata["previousResponseAvailable"] is True
+    assert retry_metadata["previousResponsePreviewTruncated"] is False
+    assert retry_metadata["previousResponsePreviewLength"] == len(expected_response)
+    assert retry_metadata["previousResponseLength"] == len(expected_response)
+
+
+def test_feedback_prompt_marks_locally_truncated_previous_response_preview(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    omitted_tail_marker = "TAIL_MARKER_AFTER_LOCAL_PREVIEW_LIMIT"
+    long_summary = (
+        "locally truncated invalid response "
+        + ("x" * (MAX_RAW_PREVIEW_CHARS + 256))
+        + omitted_tail_marker
+    )
+    invalid_response = _invalid_inverted_response(long_summary)
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [invalid_response, _empty_target_response],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    expected_response = json.dumps(invalid_response)
+    assert len(expected_response) > MAX_RAW_PREVIEW_CHARS
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    retry_prompt = file_calls[1]["prompt"]
+    retry_metadata = request_events[1]["metadata"]
+
+    assert final["failedFiles"] == 0
+    assert "Previous invalid response preview:\n" in retry_prompt
+    assert "The previous response was truncated for prompt safety." in retry_prompt
+    assert "Use the validation errors and the available preview to produce a complete corrected response." in retry_prompt
+    assert expected_response[:MAX_RAW_PREVIEW_CHARS] in retry_prompt
+    assert omitted_tail_marker not in retry_prompt
+    assert retry_metadata["previousResponseAvailable"] is True
+    assert retry_metadata["previousResponsePreviewTruncated"] is True
+    assert retry_metadata["previousResponsePreviewLength"] == MAX_RAW_PREVIEW_CHARS
+    assert retry_metadata["previousResponseLength"] == len(expected_response)
+    assert "previousProviderResponseTruncated" not in retry_metadata
+
+
 def test_target_retry_chains_validation_feedback_for_three_configured_attempts(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     captured = []
@@ -5070,6 +5144,99 @@ def test_target_retry_chains_validation_feedback_for_three_configured_attempts(t
         ["BOUNDARY_DESCRIPTORS_MISSING"],
     ]
     assert len({event["metadata"]["promptHash"] for event in request_events}) == 3
+
+
+def test_validation_then_transport_failure_next_attempt_is_provider_retry(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    invalid_response = _invalid_inverted_response("attempt one validation failure")
+
+    def transport_failure(_llm_input):
+        raise httpx.ConnectError("connection failed")
+
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [invalid_response, transport_failure, _empty_target_response],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    attempt2_errors = _validation_errors_from_prompt(file_calls[1]["prompt"])
+
+    assert final["failedFiles"] == 0
+    assert len(file_calls) == 3
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert _is_feedback_prompt(file_calls[1]["prompt"])
+    assert not _is_feedback_prompt(file_calls[2]["prompt"])
+    assert "attempt one validation failure" in file_calls[1]["prompt"]
+    assert {item["code"] for item in attempt2_errors} == {"EVIDENCE_RANGE_INVERTED"}
+    assert "Previous invalid response:" not in file_calls[2]["prompt"]
+    assert "Structured validationErrors:" not in file_calls[2]["prompt"]
+    assert [event["metadata"]["attemptKind"] for event in request_events] == [
+        "GENERATION",
+        "FEEDBACK_REPAIR",
+        "PROVIDER_RETRY",
+    ]
+    assert [event["metadata"].get("previousAttemptNumber") for event in request_events] == [None, 1, 2]
+    assert request_events[2]["metadata"]["previousFailureCodes"] == ["ANALYSIS_AI_TRANSPORT_ERROR"]
+    assert request_events[2]["metadata"]["previousResponseAvailable"] is False
+    assert request_events[2]["metadata"]["repairAttempt"] is False
+    assert {event["metadata"]["targetRef"] for event in request_events} == {"F1"}
+    assert request_events[2]["metadata"]["promptHash"] == request_events[0]["metadata"]["promptHash"]
+
+
+def test_transport_then_validation_failure_next_attempt_is_feedback_repair(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    invalid_response = _invalid_inverted_response("attempt two validation failure")
+
+    def transport_failure(_llm_input):
+        raise httpx.ConnectError("connection failed")
+
+    response = _target_sequence_response(
+        ("FILE", "ObjectHandler.java"),
+        [transport_failure, invalid_response, _empty_target_response],
+    )
+    client = _capturing_ollama_client(captured, response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
+
+    started = runner.start(AnalysisBuildRequest(), client)
+    final = wait_job(store, started["jobId"])
+    asyncio.run(client.aclose())
+
+    file_calls = _captured_target_calls(captured)
+    request_events = _provider_request_events_for_target(store, started["jobId"], "F1")
+    attempt3_errors = _validation_errors_from_prompt(file_calls[2]["prompt"])
+
+    assert final["failedFiles"] == 0
+    assert len(file_calls) == 3
+    assert not _is_feedback_prompt(file_calls[0]["prompt"])
+    assert not _is_feedback_prompt(file_calls[1]["prompt"])
+    assert _is_feedback_prompt(file_calls[2]["prompt"])
+    assert "Previous invalid response:" not in file_calls[1]["prompt"]
+    assert "attempt two validation failure" in file_calls[2]["prompt"]
+    assert "connection failed" not in file_calls[2]["prompt"]
+    assert {item["code"] for item in attempt3_errors} == {"EVIDENCE_RANGE_INVERTED"}
+    assert [event["metadata"]["attemptKind"] for event in request_events] == [
+        "GENERATION",
+        "PROVIDER_RETRY",
+        "FEEDBACK_REPAIR",
+    ]
+    assert [event["metadata"].get("previousAttemptNumber") for event in request_events] == [None, 1, 2]
+    assert request_events[1]["metadata"]["previousFailureCodes"] == ["ANALYSIS_AI_TRANSPORT_ERROR"]
+    assert request_events[1]["metadata"]["previousResponseAvailable"] is False
+    assert request_events[2]["metadata"]["previousFailureCodes"] == ["EVIDENCE_RANGE_INVERTED"]
+    assert request_events[2]["metadata"]["previousResponseAvailable"] is True
+    assert request_events[2]["metadata"]["repairAttempt"] is True
+    assert {event["metadata"]["targetRef"] for event in request_events} == {"F1"}
+    assert request_events[1]["metadata"]["promptHash"] == request_events[0]["metadata"]["promptHash"]
+    assert request_events[2]["metadata"]["promptHash"] != request_events[1]["metadata"]["promptHash"]
 
 
 def test_target_retry_chains_validation_feedback_for_five_configured_attempts(tmp_path):

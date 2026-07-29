@@ -59,6 +59,9 @@ class TargetAttemptFailure:
     error_details: List[Dict[str, Any]]
     validation_report: Optional[Dict[str, Any]]
     response_truncated: Optional[bool]
+    response_preview_truncated: bool
+    response_preview_length: int
+    response_length: Optional[int]
     retryable: bool
     correctable_output_failure: bool
     exception: KnowledgeError
@@ -718,7 +721,15 @@ class AnalysisSupervisor:
                 exc.details.setdefault("attempt", attempt)
                 exc.details.setdefault("last_attempt_at", self._now())
                 if exc.details.get("raw_preview") is not None:
-                    exc.details["raw_preview"] = self._raw_preview(exc.details.get("raw_preview"))
+                    raw_preview_value = exc.details.get("raw_preview")
+                    bounded_preview = self._raw_preview(raw_preview_value)
+                    exc.details.setdefault("raw_response_length", len(str(raw_preview_value)))
+                    exc.details.setdefault("raw_preview_length", len(bounded_preview or ""))
+                    exc.details.setdefault(
+                        "raw_preview_truncated",
+                        len(str(raw_preview_value)) > len(bounded_preview or ""),
+                    )
+                    exc.details["raw_preview"] = bounded_preview
                 if exc.details.get("error_details") is not None:
                     exc.details["error_details"] = self._bounded_error_details(self._error_details(exc))
                 current_failure = self._target_attempt_failure(payload, exc, attempt, attempt_kind)
@@ -767,6 +778,14 @@ class AnalysisSupervisor:
             attempt_kind=attempt_kind,
             previous_attempt_number=previous_failure.attempt_number if previous_failure is not None else None,
             previous_failure_codes=tuple(previous_failure.failure_codes) if previous_failure is not None else (),
+            previous_response_available=bool(
+                previous_failure
+                and previous_failure.correctable_output_failure
+                and previous_failure.response_preview
+            ),
+            previous_response_preview_truncated=previous_failure.response_preview_truncated if previous_failure is not None else None,
+            previous_response_preview_length=previous_failure.response_preview_length if previous_failure is not None else None,
+            previous_response_length=previous_failure.response_length if previous_failure is not None else None,
         )
 
     def _record_runtime_event(self, event: Any) -> None:
@@ -804,7 +823,23 @@ class AnalysisSupervisor:
             validation_errors = self._bounded_error_details([dict(item) for item in validation_report.get("validationErrors", []) if isinstance(item, dict)])
         if not validation_errors:
             validation_errors = details
-        raw_preview = self._raw_preview((getattr(exc, "details", {}) or {}).get("raw_preview"))
+        exc_details = getattr(exc, "details", {}) or {}
+        raw_preview = self._raw_preview(exc_details.get("raw_preview"))
+        response_length = self._optional_int(
+            exc_details.get("raw_response_length")
+            if exc_details.get("raw_response_length") is not None
+            else exc_details.get("rawResponseLength")
+        )
+        response_preview_length = self._optional_int(
+            exc_details.get("raw_preview_length")
+            if exc_details.get("raw_preview_length") is not None
+            else exc_details.get("rawPreviewLength")
+        )
+        if raw_preview is not None:
+            response_preview_length = len(raw_preview)
+        response_preview_truncated = self._detail_bool(exc_details, "raw_preview_truncated", "rawPreviewTruncated")
+        if response_preview_truncated is None:
+            response_preview_truncated = bool(response_length is not None and raw_preview is not None and response_length > len(raw_preview))
         response_truncated = self._response_truncated(validation_errors)
         return TargetAttemptFailure(
             attempt_number=attempt,
@@ -819,6 +854,9 @@ class AnalysisSupervisor:
             error_details=details,
             validation_report=dict(validation_report) if isinstance(validation_report, dict) else None,
             response_truncated=response_truncated,
+            response_preview_truncated=bool(response_preview_truncated),
+            response_preview_length=response_preview_length or 0,
+            response_length=response_length,
             retryable=exc.code in self.RETRYABLE_AI_CODES,
             correctable_output_failure=exc.code in self.CORRECTABLE_OUTPUT_AI_CODES,
             exception=exc,
@@ -914,7 +952,18 @@ class AnalysisSupervisor:
             )
         preview = previous_failure.response_preview
         if preview:
-            lines.extend(["Previous invalid response:", preview])
+            if previous_failure.response_preview_truncated:
+                lines.extend(
+                    [
+                        "Previous invalid response preview:",
+                        preview,
+                        "",
+                        "The previous response was truncated for prompt safety.",
+                        "Use the validation errors and the available preview to produce a complete corrected response.",
+                    ]
+                )
+            else:
+                lines.extend(["Previous invalid response:", preview])
         return "\n".join(lines)
 
     def _target_feedback_context(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -990,6 +1039,12 @@ class AnalysisSupervisor:
         if isinstance(raw_details, dict):
             raw_details = [raw_details]
         return [dict(item) for item in raw_details if isinstance(item, dict)]
+
+    def _detail_bool(self, details: Dict[str, Any], *keys: str) -> Optional[bool]:
+        for key in keys:
+            if key in details and details[key] is not None:
+                return bool(details[key])
+        return None
 
     def _bounded_error_details(self, details: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         bounded: List[Dict[str, Any]] = []
