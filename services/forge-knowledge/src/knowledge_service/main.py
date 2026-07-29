@@ -37,7 +37,11 @@ from knowledge_service.end_to_end_projection import EndToEndProjectionBuilder
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.formatter_policy import FormatterPolicy
 from knowledge_service.formatter_protocol import EndToEndFormatterAllGraphsFailed, EndToEndFormatterDeadlineExceeded
-from knowledge_service.formatter_provider import EndToEndFormatterPromptRenderer, LocalOllamaEndToEndFormatterClient
+from knowledge_service.formatter_provider import (
+    EndToEndFormatterPromptRenderer,
+    LocalOllamaEndToEndFormatterClient,
+    ProviderBackedEndToEndFormatterClient,
+)
 from knowledge_service.formatter_service import EndToEndFormatterAnswerService, EndToEndFormatterSegmentPlanner
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
@@ -61,6 +65,7 @@ from knowledge_service.overview_projection import read_overview
 from knowledge_service.query_interpretation import (
     QUERY_INTERPRETATION_FAILED,
     LocalOllamaQueryInterpretationClient,
+    ProviderBackedQueryInterpretationClient,
     QueryInterpretationFailed,
     QueryInterpretationPromptRenderer,
     QueryInterpretationService,
@@ -109,6 +114,7 @@ def create_app(
             await deps.inventory_scheduler.stop()
             if app_config.analysis_enabled:
                 await deps.analysis_supervisor.shutdown()
+            await deps.aclose()
 
     app = FastAPI(title="Knowledge Service", version="0.1.0", lifespan=lifespan)
     app.state.semantic_build_jobs = {}
@@ -712,7 +718,7 @@ def _knowledge_human_query_response(
                 terminal_error_message,
                 correlation_id=correlation_id,
             )
-        interpretation_service, close_interpreter = _query_interpretation_service(request, config)
+        interpretation_service, close_interpreter = _query_interpretation_service(request, config, deps)
         try:
             retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
         finally:
@@ -734,7 +740,7 @@ def _knowledge_human_query_response(
                 terminal_error_message,
                 correlation_id=correlation_id,
             )
-        answer_service, close_formatter = _end_to_end_formatter_service(request, config)
+        answer_service, close_formatter = _end_to_end_formatter_service(request, config, deps)
         try:
             terminal_stage = "CANONICAL_NARRATION_PLANNING"
             result = answer_service.answer(
@@ -867,7 +873,7 @@ def _knowledge_query_tool_context_response(
         return _forbidden_response_language_response()
     try:
         deadline_at = time.monotonic() + _human_query_request_deadline_seconds(config)
-        interpretation_service, close_interpreter = _query_interpretation_service(request, config)
+        interpretation_service, close_interpreter = _query_interpretation_service(request, config, deps)
         try:
             retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
         finally:
@@ -1315,6 +1321,8 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
             inventory_refresh=refresh,
             inventory_scheduler=scheduler,
             storage_operations=StorageOperations(store.db_path),
+            generative_registry=None,
+            generative_provider=None,
         )
     raise RuntimeError("Knowledge app dependencies are not initialized")
 
@@ -1322,6 +1330,7 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
 def _query_interpretation_service(
     request: Request,
     config: AppConfig,
+    dependencies: KnowledgeDependencies,
 ) -> tuple[QueryInterpretationService, Any | None]:
     injected_provider = getattr(request.app.state, "query_interpretation_provider", None)
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
@@ -1335,13 +1344,24 @@ def _query_interpretation_service(
             provider_model=config.analysis_model,
             audit_max_records=config.query_audit_memory_max_records,
         ), None
-    provider = LocalOllamaQueryInterpretationClient(
-        config.analysis_base_url,
-        config.analysis_model,
-        config.analysis_ai_call_timeout_seconds,
-        config.analysis_context_tokens,
-        renderer=QueryInterpretationPromptRenderer(),
-    )
+    if dependencies.generative_provider is not None:
+        provider = ProviderBackedQueryInterpretationClient(
+            dependencies.generative_provider,
+            config.analysis_model,
+            config.analysis_ai_call_timeout_seconds,
+            config.analysis_context_tokens,
+            renderer=QueryInterpretationPromptRenderer(),
+        )
+        close_provider = None
+    else:
+        provider = LocalOllamaQueryInterpretationClient(
+            config.analysis_base_url,
+            config.analysis_model,
+            config.analysis_ai_call_timeout_seconds,
+            config.analysis_context_tokens,
+            renderer=QueryInterpretationPromptRenderer(),
+        )
+        close_provider = provider.close
     return QueryInterpretationService(
         provider,
         default_response_language=default_response_language,
@@ -1349,12 +1369,13 @@ def _query_interpretation_service(
         provider_name=config.analysis_provider,
         provider_model=config.analysis_model,
         audit_max_records=config.query_audit_memory_max_records,
-    ), provider.close
+    ), close_provider
 
 
 def _end_to_end_formatter_service(
     request: Request,
     config: AppConfig,
+    dependencies: KnowledgeDependencies,
 ) -> tuple[EndToEndFormatterAnswerService, Any | None]:
     injected_provider = getattr(request.app.state, "end_to_end_formatter_provider", None)
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
@@ -1375,12 +1396,22 @@ def _end_to_end_formatter_service(
             provider_model=formatter_model,
             audit_max_records=config.query_audit_memory_max_records,
         ), None
-    provider = LocalOllamaEndToEndFormatterClient(
-        config.analysis_base_url,
-        formatter_model,
-        config.analysis_ai_call_timeout_seconds,
-        renderer=EndToEndFormatterPromptRenderer(),
-    )
+    if dependencies.generative_provider is not None:
+        provider = ProviderBackedEndToEndFormatterClient(
+            dependencies.generative_provider,
+            formatter_model,
+            config.analysis_ai_call_timeout_seconds,
+            renderer=EndToEndFormatterPromptRenderer(),
+        )
+        close_provider = None
+    else:
+        provider = LocalOllamaEndToEndFormatterClient(
+            config.analysis_base_url,
+            formatter_model,
+            config.analysis_ai_call_timeout_seconds,
+            renderer=EndToEndFormatterPromptRenderer(),
+        )
+        close_provider = provider.close
     return EndToEndFormatterAnswerService(
         provider,
         segment_planner=segment_planner,
@@ -1388,7 +1419,7 @@ def _end_to_end_formatter_service(
         provider_name=config.analysis_provider,
         provider_model=formatter_model,
         audit_max_records=config.query_audit_memory_max_records,
-    ), provider.close
+    ), close_provider
 
 
 def _human_query_request_deadline_seconds(config: AppConfig) -> float:

@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
-from typing import Optional
+from typing import Any, Optional
 
-from knowledge_service.analysis_client import OllamaAnalysisClient
+from knowledge_service.analysis_client import ProviderBackedAnalysisClient
 from knowledge_service.analysis_service import AnalysisProvider, AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.config import AppConfig, ForgeSettings
+from knowledge_service.generative_runtime import GenerativeProviderRegistry, OllamaGenerativeProvider
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
@@ -27,6 +28,12 @@ class KnowledgeDependencies:
     inventory_refresh: InventoryRefreshService
     inventory_scheduler: AsyncInventoryScheduler
     storage_operations: StorageOperations
+    generative_registry: Optional[GenerativeProviderRegistry] = None
+    generative_provider: Any | None = None
+
+    async def aclose(self) -> None:
+        if self.generative_registry is not None:
+            await self.generative_registry.aclose()
 
 
 def build_dependencies(
@@ -51,6 +58,14 @@ def build_dependencies(
         storage_operations.startup_maintenance()
         if config.analysis_enabled:
             analysis_store.mark_interrupted_jobs()
+    generative_registry, generative_provider = build_generative_runtime(config)
+    if analysis_provider is None:
+        analysis_provider = ProviderBackedAnalysisClient(
+            generative_provider,
+            config.analysis_model,
+            min(config.analysis_ai_call_timeout_seconds, config.analysis_per_file_timeout_seconds),
+            config.analysis_context_tokens,
+        )
     inventory_refresh = InventoryRefreshService(config, inventory_store)
     inventory_scheduler = AsyncInventoryScheduler(inventory_refresh, config)
     logger = logging.getLogger("knowledge_service.analysis")
@@ -70,7 +85,19 @@ def build_dependencies(
         inventory_refresh=inventory_refresh,
         inventory_scheduler=inventory_scheduler,
         storage_operations=storage_operations,
+        generative_registry=generative_registry,
+        generative_provider=generative_provider,
     )
+
+
+def build_generative_runtime(config: AppConfig) -> tuple[GenerativeProviderRegistry, Any]:
+    provider = OllamaGenerativeProvider(
+        config.analysis_base_url,
+        timeout_seconds=config.analysis_ai_call_timeout_seconds,
+    )
+    registry = GenerativeProviderRegistry()
+    registry.register(provider)
+    return registry, registry.resolve(config.analysis_provider)
 
 
 def configure_logging(settings: ForgeSettings) -> None:
@@ -101,4 +128,4 @@ def analyzer_identity(dependencies: KnowledgeDependencies) -> tuple[str, str]:
     provider = dependencies.analysis_provider
     if provider is not None:
         return provider.name, provider.version
-    return OllamaAnalysisClient.name, OllamaAnalysisClient.version
+    return ProviderBackedAnalysisClient.name, ProviderBackedAnalysisClient.version

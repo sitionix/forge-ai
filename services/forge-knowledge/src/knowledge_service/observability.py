@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import gc
 import re
 import sqlite3
 import time
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 CORRELATION_HEADER = "X-Correlation-Id"
@@ -60,7 +62,15 @@ class ObservedConnection(sqlite3.Connection):
 
 
 def observed_connect(path: Any, *, timeout: float) -> sqlite3.Connection:
-    return sqlite3.connect(path, timeout=timeout, factory=ObservedConnection)
+    if path not in {":memory:", ""}:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+    try:
+        return sqlite3.connect(path, timeout=timeout, factory=ObservedConnection)
+    except sqlite3.OperationalError as exc:
+        if "unable to open database file" not in str(exc):
+            raise
+        gc.collect()
+        return sqlite3.connect(path, timeout=timeout, factory=ObservedConnection)
 
 
 def sanitize_correlation_id(value: Optional[str]) -> str:
