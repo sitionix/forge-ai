@@ -115,7 +115,10 @@ def test_ollama_success_persists_llm_request_and_response_diagnostics(tmp_path):
         }
     )
 
-    _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    try:
+        _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    finally:
+        asyncio.run(client.aclose())
 
     events = store.runtime_events(job_id=JOB_ID, relative_path=RELATIVE_PATH)["events"]
     assert [event["stage"] for event in events] == ["LLM_REQUEST", "LLM_RESPONSE"]
@@ -146,8 +149,11 @@ def test_ollama_timeout_persists_failed_runtime_diagnostic(tmp_path):
     client = OllamaAnalysisClient("http://127.0.0.1:11434", "diagnostic-model", 9, 32768)
     client._client = FakeAsyncClient(httpx.TimeoutException("timed out"))  # type: ignore[assignment]
 
-    with pytest.raises(KnowledgeError) as exc:
-        _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    try:
+        with pytest.raises(KnowledgeError) as exc:
+            _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    finally:
+        asyncio.run(client.aclose())
 
     assert exc.value.code == "ANALYSIS_AI_TIMEOUT"
     events = store.runtime_events(job_id=JOB_ID, relative_path=RELATIVE_PATH)["events"]
@@ -165,8 +171,11 @@ def test_parser_failure_persists_response_and_parse_diagnostics(tmp_path):
     store = _runtime_store(tmp_path)
     client = _client_with_response({"response": "{", "done": True, "done_reason": "length"})
 
-    with pytest.raises(KnowledgeError) as exc:
-        _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    try:
+        with pytest.raises(KnowledgeError) as exc:
+            _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    finally:
+        asyncio.run(client.aclose())
 
     assert exc.value.code == "ANALYSIS_AI_INVALID_JSON"
     events = store.runtime_events(job_id=JOB_ID, relative_path=RELATIVE_PATH)["events"]
@@ -202,8 +211,11 @@ def test_parser_failure_persists_structured_validation_report(tmp_path):
     )
     client = _client_with_response({"response": invalid_json, "done": True})
 
-    with pytest.raises(KnowledgeError) as exc:
-        _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    try:
+        with pytest.raises(KnowledgeError) as exc:
+            _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    finally:
+        asyncio.run(client.aclose())
 
     assert exc.value.code == "ANALYSIS_AI_SCHEMA_INVALID"
     assert exc.value.details["validation_report"]["validationErrors"][0]["code"] == "EVIDENCE_RANGE_OUTSIDE_FILE"
@@ -229,8 +241,11 @@ def test_long_response_preview_is_bounded(tmp_path):
     long_response = _valid_enrichment_json() + ("x" * 5000)
     client = _client_with_response({"response": long_response, "done": True})
 
-    with pytest.raises(KnowledgeError) as exc:
-        _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    try:
+        with pytest.raises(KnowledgeError) as exc:
+            _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    finally:
+        asyncio.run(client.aclose())
 
     assert exc.value.code == "ANALYSIS_AI_INVALID_JSON"
     events = store.runtime_events(job_id=JOB_ID, relative_path=RELATIVE_PATH)["events"]

@@ -19,6 +19,15 @@ from knowledge_service.main import create_app
 from knowledge_service.query_interpretation import QueryInterpretationProviderResult
 
 
+_BUILT_TEST_DEPENDENCIES: list[KnowledgeDependencies] = []
+
+
+def drain_built_test_dependencies() -> list[KnowledgeDependencies]:
+    dependencies = list(_BUILT_TEST_DEPENDENCIES)
+    _BUILT_TEST_DEPENDENCIES.clear()
+    return dependencies
+
+
 @dataclass(frozen=True)
 class AsgiResponse:
     status_code: int
@@ -412,6 +421,7 @@ def build_test_app(
         app_config,
         analysis_provider=provider or DeterministicAnalysisProvider(),
     )
+    _BUILT_TEST_DEPENDENCIES.append(deps)
     app = create_app(settings=settings, dependencies=deps)
     app.state.query_interpretation_provider = DeterministicQueryInterpretationProvider()
     app.state.end_to_end_formatter_provider = DeterministicFinalFlowFormatterProvider()

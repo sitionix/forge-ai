@@ -126,8 +126,11 @@ def test_ollama_analysis_compatibility_wrapper_preserves_protocol_error_code():
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
-    with pytest.raises(KnowledgeError) as exc:
-        asyncio.run(client.analyze(_analysis_payload(), 1))
+    try:
+        with pytest.raises(KnowledgeError) as exc:
+            asyncio.run(client.analyze(_analysis_payload(), 1))
+    finally:
+        asyncio.run(client.aclose())
 
     assert exc.value.code == "ANALYSIS_AI_TRANSPORT_ERROR"
     assert "Ollama" not in exc.value.message

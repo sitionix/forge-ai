@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -8,10 +9,17 @@ from types import SimpleNamespace
 
 import httpx
 from semantic_test_support import seed_semantic_graph
-from support import AsgiTestClient, build_test_app, write_runtime_config
+from support import (
+    AsgiTestClient,
+    DeterministicFinalFlowFormatterProvider,
+    DeterministicQueryInterpretationProvider,
+    build_test_app,
+    write_runtime_config,
+)
 
 import knowledge_service.main as knowledge_main
 from knowledge_service.canonical_narration_contract import CanonicalNarrationMetrics
+from knowledge_service.generative_runtime import GenerativeRequest, GenerativeResponse
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.query_interpretation import QueryInterpretationProviderResult
 
@@ -23,6 +31,58 @@ class BrokenQueryInterpretationProvider:
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
         self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
         return QueryInterpretationProviderResult(raw_text="not json", prompt_char_length=100)
+
+
+class RoutingFakeGenerativeProvider:
+    provider_id = "fake-generative"
+    provider_version = "test"
+
+    def __init__(self) -> None:
+        self.requests: list[GenerativeRequest] = []
+        self.query_provider = DeterministicQueryInterpretationProvider()
+        self.formatter_provider = DeterministicFinalFlowFormatterProvider()
+
+    def generate(self, request: GenerativeRequest) -> GenerativeResponse:
+        self.requests.append(request)
+        if "BEGIN_QUERY_INTERPRETATION_INPUT_JSON" in request.prompt:
+            raw_text = self.query_provider.complete(_extract_prompt_json(request.prompt, "QUERY_INTERPRETATION_INPUT")).raw_text
+        elif "BEGIN_CANONICAL_FORMATTER_INPUT_JSON" in request.prompt:
+            raw_text = self.formatter_provider.generate(
+                _extract_prompt_json(request.prompt, "CANONICAL_FORMATTER_INPUT"),
+                deadline_at=9999999999.0,
+                cancel_event=None,
+            ).raw_text
+        else:
+            raise AssertionError("unexpected generative prompt")
+        return GenerativeResponse(
+            raw_text=raw_text,
+            provider_id=self.provider_id,
+            provider_version=self.provider_version,
+            model_id=request.model_id,
+            duration_ms=1.0,
+            prompt_char_length=len(request.prompt),
+            prompt_hash=hashlib.sha256(request.prompt.encode("utf-8")).hexdigest(),
+            response_char_length=len(raw_text),
+            response_hash=hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
+            provider_metadata={"done": True},
+        )
+
+    def close(self) -> None:
+        return None
+
+
+def _extract_prompt_json(prompt: str, marker: str) -> dict:
+    start = f"BEGIN_{marker}_JSON"
+    end = f"END_{marker}_JSON"
+    payload = prompt.split(start, 1)[1].split(end, 1)[0].strip()
+    return json.loads(payload)
+
+
+def _remove_injected_query_formatter_providers(app, *, query: bool = False, formatter: bool = False) -> None:
+    if query and hasattr(app.state, "query_interpretation_provider"):
+        del app.state.query_interpretation_provider
+    if formatter and hasattr(app.state, "end_to_end_formatter_provider"):
+        del app.state.end_to_end_formatter_provider
 
 
 def _audit_alias(*parts: str) -> str:
@@ -268,6 +328,94 @@ def test_query_tool_context_remains_technical_and_human_response_has_no_evidence
     assert "excerpt-ev-node-query" in json.dumps(tool_payload)
     assert "excerpt-ev-node-query" not in json.dumps(human_payload)
     assert "tree" not in json.dumps(human_payload)
+
+
+def test_query_runtime_uses_dependencies_generative_provider(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    _remove_injected_query_formatter_providers(app, query=True)
+    generative_provider = RoutingFakeGenerativeProvider()
+    object.__setattr__(deps, "generative_provider", generative_provider)
+    _seed_a_start_flow(app_config)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            return await _await_with_wakeup(client.post("/api/v1/knowledge/query/tool-context", json={"queryText": "A.start"}))
+
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 200
+    assert len(generative_provider.query_provider.calls) == 1
+    assert any("BEGIN_QUERY_INTERPRETATION_INPUT_JSON" in request.prompt for request in generative_provider.requests)
+
+
+def test_formatter_runtime_uses_dependencies_generative_provider(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    _remove_injected_query_formatter_providers(app, formatter=True)
+    generative_provider = RoutingFakeGenerativeProvider()
+    object.__setattr__(deps, "generative_provider", generative_provider)
+    _seed_a_start_flow(app_config)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            return await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 200
+    assert len(generative_provider.formatter_provider.calls) >= 1
+    assert any("BEGIN_CANONICAL_FORMATTER_INPUT_JSON" in request.prompt for request in generative_provider.requests)
+
+
+def test_missing_generative_provider_fails_query_without_local_ollama_fallback(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    _remove_injected_query_formatter_providers(app, query=True)
+    object.__setattr__(deps, "generative_provider", None)
+    _seed_a_start_flow(app_config)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            return await _await_with_wakeup(client.post("/api/v1/knowledge/query/tool-context", json={"queryText": "A.start"}))
+
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "GENERATIVE_PROVIDER_UNAVAILABLE"
+    assert response.json()["message"] == "Knowledge generative provider is not configured"
+    assert not hasattr(knowledge_main, "LocalOllamaQueryInterpretationClient")
+
+
+def test_missing_generative_provider_fails_formatter_without_local_ollama_fallback(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    _remove_injected_query_formatter_providers(app, formatter=True)
+    object.__setattr__(deps, "generative_provider", None)
+    _seed_a_start_flow(app_config)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            return await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "GENERATIVE_PROVIDER_UNAVAILABLE"
+    assert response.json()["message"] == "Knowledge generative provider is not configured"
+    assert not hasattr(knowledge_main, "LocalOllamaEndToEndFormatterClient")
+
+
+def test_existing_app_state_injected_query_and_formatter_providers_still_work(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    object.__setattr__(deps, "generative_provider", None)
+    _seed_a_start_flow(app_config)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            return await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 200
+    assert len(app.state.query_interpretation_provider.calls) == 1
+    assert len(app.state.end_to_end_formatter_provider.calls) >= 1
 
 
 def test_human_query_writes_formatter_terminal_audit_record(tmp_path):

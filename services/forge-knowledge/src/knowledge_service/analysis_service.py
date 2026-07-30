@@ -320,23 +320,9 @@ class AnalysisSupervisor:
             except asyncio.CancelledError:
                 self._mark_job_stopped(job_id)
             finally:
-                await self._close_transient_provider(analyzer)
                 self._running.pop(job_id, None)
                 if self._queue is not None:
                     self._queue.task_done()
-
-    async def _close_transient_provider(self, provider: AnalysisProvider) -> None:
-        if provider is self.analysis_provider:
-            return
-        close = getattr(provider, "aclose", None)
-        if close is not None:
-            result = close()
-            if inspect.isawaitable(result):
-                await result
-            return
-        sync_close = getattr(provider, "close", None)
-        if sync_close is not None:
-            sync_close()
 
     async def _run(
         self,
