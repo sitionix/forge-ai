@@ -28,10 +28,10 @@ class InventoryStore:
     def init(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         init_key = str(self.db_path.resolve())
-        if init_key in InventoryStore._initialized_paths and self.db_path.exists():
+        if init_key in InventoryStore._initialized_paths:
             return
         with InventoryStore._init_lock:
-            if init_key in InventoryStore._initialized_paths and self.db_path.exists():
+            if init_key in InventoryStore._initialized_paths:
                 return
             with self._connect() as conn:
                 conn.execute("PRAGMA journal_mode=WAL")

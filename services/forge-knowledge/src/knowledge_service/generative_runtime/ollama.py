@@ -130,35 +130,19 @@ class OllamaGenerativeProvider:
 
     def _post_sync(self, request: GenerativeRequest, timeout: float) -> httpx.Response:
         client = self._require_sync_client()
-        try:
-            return client.post(
-                f"{self.base_url}/api/generate",
-                json=self._request_envelope(request),
-                timeout=httpx.Timeout(timeout, connect=min(5.0, timeout)),
-            )
-        except TypeError as exc:
-            if "timeout" not in str(exc):
-                raise
-            return client.post(
-                f"{self.base_url}/api/generate",
-                json=self._request_envelope(request),
-            )
+        return client.post(
+            f"{self.base_url}/api/generate",
+            json=self._request_envelope(request),
+            timeout=httpx.Timeout(timeout, connect=min(5.0, timeout)),
+        )
 
     async def _post_async(self, request: GenerativeRequest, timeout: float) -> httpx.Response:
         client = self._require_async_client()
-        try:
-            return await client.post(
-                f"{self.base_url}/api/generate",
-                json=self._request_envelope(request),
-                timeout=httpx.Timeout(timeout, connect=min(5.0, timeout)),
-            )
-        except TypeError as exc:
-            if "timeout" not in str(exc):
-                raise
-            return await client.post(
-                f"{self.base_url}/api/generate",
-                json=self._request_envelope(request),
-            )
+        return await client.post(
+            f"{self.base_url}/api/generate",
+            json=self._request_envelope(request),
+            timeout=httpx.Timeout(timeout, connect=min(5.0, timeout)),
+        )
 
     def _require_sync_client(self) -> httpx.Client:
         if self._sync_client is None:
@@ -173,9 +157,11 @@ class OllamaGenerativeProvider:
     def _normalize_response(self, request: GenerativeRequest, payload: Any, started: float) -> GenerativeResponse:
         if not isinstance(payload, Mapping):
             raise GenerativeProviderProtocolError("ollama envelope root must be an object", provider_id=self.provider_id)
-        raw_text = payload.get("response")
-        if not isinstance(raw_text, str) or not raw_text.strip():
+        if "response" not in payload:
             raise GenerativeProviderEmptyResponse("ollama returned no response text", provider_id=self.provider_id)
+        raw_text = payload.get("response")
+        if not isinstance(raw_text, str):
+            raise GenerativeProviderProtocolError("ollama response field must be a string", provider_id=self.provider_id)
         return GenerativeResponse(
             raw_text=raw_text,
             provider_id=self.provider_id,

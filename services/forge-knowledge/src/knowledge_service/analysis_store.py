@@ -99,10 +99,10 @@ class AnalysisStore:
     def init(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         init_key = str(self.db_path.resolve())
-        if init_key in AnalysisStore._initialized_paths and self.db_path.exists():
+        if init_key in AnalysisStore._initialized_paths:
             return
         with AnalysisStore._init_lock:
-            if init_key in AnalysisStore._initialized_paths and self.db_path.exists():
+            if init_key in AnalysisStore._initialized_paths:
                 return
             self._init_schema()
             AnalysisStore._initialized_paths.add(init_key)

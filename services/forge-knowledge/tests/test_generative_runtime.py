@@ -53,6 +53,40 @@ class FakeProvider:
         self.aclosed = True
 
 
+class SingleCallSyncClient:
+    def __init__(self, response: httpx.Response | Exception) -> None:
+        self.response = response
+        self.calls = []
+
+    def post(self, url: str, *, json, timeout):
+        self.calls.append({"url": url, "json": json, "timeout": timeout})
+        if isinstance(self.response, Exception):
+            raise self.response
+        if getattr(self.response, "_request", None) is None:
+            self.response._request = httpx.Request("POST", url)
+        return self.response
+
+    def close(self) -> None:
+        return None
+
+
+class SingleCallAsyncClient:
+    def __init__(self, response: httpx.Response | Exception) -> None:
+        self.response = response
+        self.calls = []
+
+    async def post(self, url: str, *, json, timeout):
+        self.calls.append({"url": url, "json": json, "timeout": timeout})
+        if isinstance(self.response, Exception):
+            raise self.response
+        if getattr(self.response, "_request", None) is None:
+            self.response._request = httpx.Request("POST", url)
+        return self.response
+
+    async def aclose(self) -> None:
+        return None
+
+
 def test_registry_registers_resolves_rejects_unknown_and_duplicate():
     registry = GenerativeProviderRegistry()
     provider = FakeProvider()
@@ -174,6 +208,32 @@ def test_ollama_omits_optional_options_when_absent():
     assert "options" not in captured[0]
 
 
+def test_ollama_returns_normal_response_for_blank_string_response():
+    provider = OllamaGenerativeProvider(
+        "http://localhost:11434",
+        timeout_seconds=10,
+        sync_client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"response": ""}))),
+    )
+
+    response = provider.generate(GenerativeRequest(prompt="x", model_id="m"))
+
+    assert response.raw_text == ""
+    assert response.response_char_length == 0
+
+
+def test_ollama_returns_normal_response_for_whitespace_response():
+    provider = OllamaGenerativeProvider(
+        "http://localhost:11434",
+        timeout_seconds=10,
+        sync_client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"response": "   "}))),
+    )
+
+    response = provider.generate(GenerativeRequest(prompt="x", model_id="m"))
+
+    assert response.raw_text == "   "
+    assert response.response_char_length == 3
+
+
 def test_ollama_async_generation_uses_same_envelope_rules():
     captured = []
 
@@ -200,6 +260,38 @@ def test_ollama_async_generation_uses_same_envelope_rules():
 
     assert response.raw_text == "{}"
     assert captured[0]["options"] == {"num_ctx": 2048}
+
+
+def test_ollama_sync_generation_posts_once_with_calculated_timeout():
+    client = SingleCallSyncClient(httpx.Response(200, json={"response": "{}"}))
+    provider = OllamaGenerativeProvider("http://localhost:11434", timeout_seconds=10, sync_client=client)  # type: ignore[arg-type]
+
+    provider.generate(GenerativeRequest(prompt="x", model_id="m", timeout_seconds=3))
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["timeout"].read == 3
+    assert client.calls[0]["timeout"].connect == 3
+
+
+def test_ollama_async_generation_posts_once_with_calculated_timeout():
+    client = SingleCallAsyncClient(httpx.Response(200, json={"response": "{}"}))
+    provider = OllamaGenerativeProvider("http://localhost:11434", timeout_seconds=10, async_client=client)  # type: ignore[arg-type]
+
+    asyncio.run(provider.generate_async(GenerativeRequest(prompt="x", model_id="m", timeout_seconds=4)))
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["timeout"].read == 4
+    assert client.calls[0]["timeout"].connect == 4
+
+
+def test_ollama_type_error_from_client_is_not_retried():
+    client = SingleCallSyncClient(TypeError("client exploded before request serialization completed"))
+    provider = OllamaGenerativeProvider("http://localhost:11434", timeout_seconds=10, sync_client=client)  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError):
+        provider.generate(GenerativeRequest(prompt="x", model_id="m", timeout_seconds=3))
+
+    assert len(client.calls) == 1
 
 
 def test_ollama_failure_classification_and_localhost_validation():
@@ -235,6 +327,22 @@ def test_ollama_failure_classification_and_localhost_validation():
     with pytest.raises(GenerativeProviderEmptyResponse):
         provider.generate(GenerativeRequest(prompt="x", model_id="m"))
 
+    provider = OllamaGenerativeProvider(
+        "http://localhost:11434",
+        timeout_seconds=10,
+        sync_client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"response": None}))),
+    )
+    with pytest.raises(GenerativeProviderProtocolError):
+        provider.generate(GenerativeRequest(prompt="x", model_id="m"))
+
+    provider = OllamaGenerativeProvider(
+        "http://localhost:11434",
+        timeout_seconds=10,
+        sync_client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"response": 123}))),
+    )
+    with pytest.raises(GenerativeProviderProtocolError):
+        provider.generate(GenerativeRequest(prompt="x", model_id="m"))
+
     def transport_failure(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("no route", request=request)
 
@@ -256,3 +364,9 @@ def test_ollama_failure_classification_and_localhost_validation():
     )
     with pytest.raises(GenerativeProviderTimeout):
         provider.generate(GenerativeRequest(prompt="x", model_id="m"))
+
+    timeout_client = SingleCallSyncClient(httpx.ReadTimeout("timeout"))
+    provider = OllamaGenerativeProvider("http://localhost:11434", timeout_seconds=10, sync_client=timeout_client)  # type: ignore[arg-type]
+    with pytest.raises(GenerativeProviderTimeout):
+        provider.generate(GenerativeRequest(prompt="x", model_id="m"))
+    assert len(timeout_client.calls) == 1

@@ -114,16 +114,27 @@ class ProviderBackedAnalysisClient:
                 request_started_at,
                 request_started,
                 "ANALYSIS_AI_TRANSPORT_ERROR",
-                "AI analyzer returned invalid Ollama envelope JSON",
+                "AI analyzer provider returned an invalid response envelope",
                 response_text=exc.response_text,
             )
             raise KnowledgeError(
                 "ANALYSIS_AI_TRANSPORT_ERROR",
-                "AI analyzer returned invalid Ollama envelope JSON",
+                "AI analyzer provider returned an invalid response envelope",
                 raw_preview=exc.response_text,
+                **self._provider_error_details(exc),
             ) from exc
         response_text = provider_response.raw_text
         response_metadata = {**request_metadata, **self._provider_response_metadata(provider_response)}
+        if not response_text.strip():
+            self._emit_failed_response(
+                response_metadata,
+                request_started_at,
+                request_started,
+                "ANALYSIS_AI_EMPTY_RESPONSE",
+                "AI analyzer returned no response text",
+                response_text=response_text,
+            )
+            raise KnowledgeError("ANALYSIS_AI_EMPTY_RESPONSE", "AI analyzer returned no response text", raw_preview=response_text)
         emit_runtime_event(
             stage="LLM_RESPONSE",
             event_type="PROVIDER_RESPONSE",
@@ -255,6 +266,14 @@ class ProviderBackedAnalysisClient:
             "providerResponseMetadata": dict(getattr(response, "provider_metadata", {}) or {}),
         }
 
+    def _provider_error_details(self, exc: GenerativeProviderProtocolError) -> Dict[str, Any]:
+        return {
+            "providerId": getattr(exc, "provider_id", None) or getattr(self.provider, "provider_id", None),
+            "providerVersion": getattr(self.provider, "provider_version", None),
+            "modelId": self.model,
+            "providerErrorClass": exc.__class__.__name__,
+        }
+
     def _emit_failed_response(
         self,
         metadata: Dict[str, Any],
@@ -274,6 +293,7 @@ class ProviderBackedAnalysisClient:
                     "responsePreviewTail": preview["tail"],
                     "responseTruncated": preview["truncated"],
                     "maxPreviewChars": preview["maxPreviewChars"],
+                    "responseHash": text_hash(response_text),
                 }
             )
         emit_runtime_event(

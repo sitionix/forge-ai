@@ -44,8 +44,8 @@ class FakeAsyncClient:
         self.outcome = outcome
         self.requests: list[Dict[str, Any]] = []
 
-    async def post(self, url: str, json: Dict[str, Any]) -> FakeOllamaResponse:
-        self.requests.append({"url": url, "json": json})
+    async def post(self, url: str, *, json: Dict[str, Any], timeout: Any) -> FakeOllamaResponse:
+        self.requests.append({"url": url, "json": json, "timeout": timeout})
         if isinstance(self.outcome, Exception):
             raise self.outcome
         return self.outcome
