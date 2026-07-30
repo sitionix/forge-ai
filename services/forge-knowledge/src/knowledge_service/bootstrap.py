@@ -5,6 +5,13 @@ from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from typing import Any, Optional
 
+from knowledge_service.ai_runtime_discovery import (
+    AiRuntimeDiscoveryRegistry,
+    AiRuntimeDiscoveryService,
+    CodexAiRuntimeOptionsSource,
+    CodexAppServerClient,
+    OllamaAiRuntimeOptionsSource,
+)
 from knowledge_service.analysis_client import ProviderBackedAnalysisClient
 from knowledge_service.analysis_service import AnalysisProvider, AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
@@ -28,10 +35,13 @@ class KnowledgeDependencies:
     inventory_refresh: InventoryRefreshService
     inventory_scheduler: AsyncInventoryScheduler
     storage_operations: StorageOperations
+    ai_runtime_discovery: AiRuntimeDiscoveryService | None = None
     generative_registry: Optional[GenerativeProviderRegistry] = None
     generative_provider: Any | None = None
 
     async def aclose(self) -> None:
+        if self.ai_runtime_discovery is not None:
+            await self.ai_runtime_discovery.aclose()
         if self.generative_registry is not None:
             await self.generative_registry.aclose()
 
@@ -85,6 +95,7 @@ def build_dependencies(
         inventory_refresh=inventory_refresh,
         inventory_scheduler=inventory_scheduler,
         storage_operations=storage_operations,
+        ai_runtime_discovery=build_ai_runtime_discovery(config),
         generative_registry=generative_registry,
         generative_provider=generative_provider,
     )
@@ -98,6 +109,27 @@ def build_generative_runtime(config: AppConfig) -> tuple[GenerativeProviderRegis
     registry = GenerativeProviderRegistry()
     registry.register(provider)
     return registry, registry.resolve(config.analysis_provider)
+
+
+def build_ai_runtime_discovery(config: AppConfig) -> AiRuntimeDiscoveryService:
+    timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), 5.0)
+    registry = AiRuntimeDiscoveryRegistry()
+    registry.register(
+        OllamaAiRuntimeOptionsSource(
+            config.analysis_base_url,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    registry.register(
+        CodexAiRuntimeOptionsSource(
+            CodexAppServerClient(
+                client_name="forge-knowledge",
+                client_version="0.1.0",
+                request_timeout_seconds=timeout_seconds,
+            )
+        )
+    )
+    return AiRuntimeDiscoveryService(registry, provider_timeout_seconds=timeout_seconds + 1.0)
 
 
 def configure_logging(settings: ForgeSettings) -> None:

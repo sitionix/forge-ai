@@ -20,3 +20,4 @@ fi
 
 "${SCRIPT_DIR}/jarvis/stop.sh"
 "${SCRIPT_DIR}/knowledge/stop.sh"
+"${SCRIPT_DIR}/ollama/stop-owned.sh"

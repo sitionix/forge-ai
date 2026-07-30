@@ -52,3 +52,35 @@ def test_knowledge_query_request_schema_is_query_plan_v2() -> None:
         "AUTO",
         "FLOW_EXPLANATION",
     ]
+
+
+def test_ai_runtime_openapi_schema_is_typed() -> None:
+    spec = normalized_openapi(create_app())
+    operation = spec["paths"]["/api/v1/knowledge/ai-runtime"]["get"]
+    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+
+    assert response_schema == {"$ref": "#/components/schemas/AiRuntimeOptionsResponse"}
+    schemas = spec["components"]["schemas"]
+    root = schemas["AiRuntimeOptionsResponse"]
+    provider = schemas["AiRuntimeProviderResponse"]
+    model = schemas["AiRuntimeModelResponse"]
+    effort = schemas["AiRuntimeEffortResponse"]
+
+    assert root["required"] == ["providers"]
+    assert root["properties"]["providers"]["type"] == "array"
+    assert root["properties"]["providers"]["items"] == {"$ref": "#/components/schemas/AiRuntimeProviderResponse"}
+
+    assert set(provider["required"]) == {"providerId", "displayName", "status", "models"}
+    assert provider["properties"]["status"] == {"$ref": "#/components/schemas/AiRuntimeProviderStatus"}
+    assert provider["properties"]["models"]["type"] == "array"
+    assert provider["properties"]["version"]["type"] == "string"
+    assert "message" not in provider["properties"]
+    assert schemas["AiRuntimeProviderStatus"]["enum"] == ["READY", "DEGRADED", "UNAVAILABLE"]
+
+    assert set(model["required"]) == {"modelId", "displayName"}
+    assert model["properties"]["efforts"]["type"] == "array"
+    assert model["properties"]["efforts"]["items"] == {"$ref": "#/components/schemas/AiRuntimeEffortResponse"}
+    assert model["properties"]["description"]["type"] == "string"
+    assert model["properties"]["modifiedAt"]["type"] == "string"
+
+    assert set(effort["required"]) == {"effortId", "description"}

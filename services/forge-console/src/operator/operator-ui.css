@@ -319,6 +319,12 @@ body.sidebar-collapsed .sidebar-link {
   font-size: 11px;
 }
 
+.button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .panel {
   position: relative;
   overflow: hidden;
@@ -1214,6 +1220,138 @@ body.sidebar-collapsed .sidebar-link {
   color: var(--ink);
 }
 
+.ai-runtime-dialog {
+  width: min(1180px, calc(100vw - 44px));
+  max-height: min(820px, calc(100vh - 44px));
+}
+
+.ai-runtime-dialog .dialog-head p {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.ai-runtime-modal-body {
+  position: relative;
+  max-height: min(620px, calc(100vh - 210px));
+  overflow: auto;
+  padding: 22px;
+  background: rgba(255, 252, 235, 0.72);
+}
+
+.ai-runtime-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.ai-runtime-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ai-runtime-section h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ai-runtime-options {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ai-runtime-option {
+  appearance: none;
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 252, 235, 0.78);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  padding: 16px;
+  text-align: left;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+
+.ai-runtime-option:hover {
+  transform: translateY(-1px);
+  border-color: rgba(246, 184, 75, 0.72);
+  background: #fff8de;
+  box-shadow: 0 12px 28px rgba(27, 36, 31, 0.1);
+}
+
+.ai-runtime-option.selected {
+  border-color: rgba(246, 184, 75, 0.9);
+  background: rgba(246, 184, 75, 0.18);
+}
+
+.ai-runtime-option:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.ai-runtime-option:disabled:hover {
+  transform: none;
+  border-color: rgba(27, 36, 31, 0.12);
+  background: rgba(255, 252, 235, 0.78);
+  box-shadow: none;
+}
+
+.ai-runtime-option strong,
+.ai-runtime-option span,
+.ai-runtime-option small,
+.ai-runtime-option em {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ai-runtime-option strong {
+  font-size: 14px;
+}
+
+.ai-runtime-option span,
+.ai-runtime-option small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ai-runtime-option em {
+  color: #5f704e;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ai-runtime-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  padding: 18px 22px;
+  border-top: 1px solid rgba(27, 36, 31, 0.12);
+}
+
+.ai-runtime-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .notice-box {
   margin: 0 0 16px;
   padding: 16px 18px;
@@ -1224,8 +1362,7 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .jarvis-status-grid,
-.jarvis-grid,
-.jarvis-actions-list {
+.jarvis-grid {
   position: relative;
   display: grid;
   gap: 14px;
@@ -1233,13 +1370,25 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .jarvis-status-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .jarvis-grid {
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   align-items: start;
   padding: 18px 0 0;
+}
+
+.jarvis-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.runtime-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
 }
 
 .jarvis-command-form {
@@ -3491,6 +3640,16 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 
   .jarvis-chat-user .jarvis-chat-bubble {
     max-width: none;
+  }
+
+  .runtime-panel-actions,
+  .ai-runtime-modal-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ai-runtime-modal-footer .form-actions {
+    width: 100%;
   }
 
   .service-options {

@@ -193,6 +193,22 @@ run_nexus_tests() {
   return "${exit_code}"
 }
 
+run_portable_startup_tests() {
+  local log="${REPORT_DIR}/portable-startup.log"
+  local exit_code
+  local summary
+
+  set +e
+  "${ROOT_DIR}/scripts/test-portable-startup.sh" 2>&1 | tee "${log}"
+  exit_code="${PIPESTATUS[0]}"
+  set -e
+
+  summary="$(sed -n 's/^Portable startup shell tests: PASS \([0-9][0-9]*\/[0-9][0-9]*\)$/\1/p' "${log}" | tail -n 1)"
+  LAST_TEST_COUNT="${summary:-0/0}"
+  return "${exit_code}"
+}
+
+run_test "portable-startup-shell" run_portable_startup_tests
 run_test "forge-knowledge" run_knowledge_tests
 run_test "forge-jarvis" run_jarvis_tests
 run_test "forge-console" run_console_tests

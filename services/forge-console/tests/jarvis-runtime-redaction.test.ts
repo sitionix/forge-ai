@@ -7,10 +7,10 @@ function jarvisDom() {
     <body data-page="jarvis">
       <button id="refreshJarvis" type="button">Refresh</button>
       <span id="jarvisUpdated">loading</span>
+      <button id="editAiRuntime" type="button">Edit</button>
       <div id="jarvisStatusCards"></div>
       <div id="jarvisStatusError" class="hidden"></div>
-      <div id="jarvisActions"></div>
-      <div id="jarvisActionsError" class="hidden"></div>
+      <div id="aiRuntimeError" class="hidden"></div>
       <form id="jarvisCommandForm">
         <input id="jarvisCommandText" type="text">
         <button id="executeJarvisCommand" type="submit">Execute</button>
@@ -23,6 +23,14 @@ function jarvisDom() {
       </form>
       <div id="jarvisQueryLoading" class="hidden"></div>
       <section id="jarvisQueryResult" class="hidden"></section>
+      <dialog id="aiRuntimeDialog">
+        <button id="closeAiRuntimeDialog" type="button">×</button>
+        <button id="cancelAiRuntimeDialog" type="button">Cancel</button>
+        <div id="aiRuntimeModalError" class="hidden"></div>
+        <div id="aiRuntimeProviderOptions"></div>
+        <div id="aiRuntimeModelOptions"></div>
+        <section id="aiRuntimeEffortSection" class="hidden"><div id="aiRuntimeEffortOptions"></div></section>
+      </dialog>
     </body>`, { url: 'http://127.0.0.1/operator/jarvis.html' });
 }
 
@@ -60,7 +68,7 @@ function graphAnswer(sourceId: string, entrypoint: string, text: string) {
 }
 
 function getResponse(path: string) {
-  return Promise.resolve(path === '/jarvis/status' ? { status: 'READY', actions: { count: 0 } } : { actions: [] });
+  return Promise.resolve(path === '/jarvis/status' ? { status: 'READY', actions: { count: 0 } } : { providers: [] });
 }
 
 describe('Jarvis runtime rendering', () => {
@@ -88,7 +96,7 @@ describe('Jarvis runtime rendering', () => {
     expect(text).not.toContain('["bash"');
     expect(text).not.toContain('sleep 0.2');
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('explain'), expect.any(Object));
-    expect(http.get.mock.calls.map(([path]) => path)).toEqual(['/jarvis/status', '/jarvis/actions']);
+    expect(http.get.mock.calls.map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime']);
     page.dispose();
   });
 

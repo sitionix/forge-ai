@@ -1,6 +1,121 @@
 {
   "components": {
     "schemas": {
+      "AiRuntimeEffortResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "effortId": {
+            "title": "Effortid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "effortId",
+          "description"
+        ],
+        "title": "AiRuntimeEffortResponse",
+        "type": "object"
+      },
+      "AiRuntimeModelResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "efforts": {
+            "items": {
+              "$ref": "#/components/schemas/AiRuntimeEffortResponse"
+            },
+            "title": "Efforts",
+            "type": "array"
+          },
+          "modelId": {
+            "title": "Modelid",
+            "type": "string"
+          },
+          "modifiedAt": {
+            "title": "Modifiedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "modelId",
+          "displayName"
+        ],
+        "title": "AiRuntimeModelResponse",
+        "type": "object"
+      },
+      "AiRuntimeOptionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/AiRuntimeProviderResponse"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "title": "AiRuntimeOptionsResponse",
+        "type": "object"
+      },
+      "AiRuntimeProviderResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/AiRuntimeModelResponse"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "providerId": {
+            "title": "Providerid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AiRuntimeProviderStatus"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "displayName",
+          "status",
+          "models"
+        ],
+        "title": "AiRuntimeProviderResponse",
+        "type": "object"
+      },
+      "AiRuntimeProviderStatus": {
+        "description": "An enumeration.",
+        "enum": [
+          "READY",
+          "DEGRADED",
+          "UNAVAILABLE"
+        ],
+        "title": "AiRuntimeProviderStatus",
+        "type": "string"
+      },
       "AnalysisBuildRequest": {
         "additionalProperties": false,
         "properties": {
@@ -870,6 +985,24 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/knowledge/ai-runtime": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiRuntimeOptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
     "/api/v1/knowledge/analysis/build": {
       "post": {
         "parameters": [],

@@ -11,6 +11,6 @@ python3 -m venv "${JARVIS_ROOT}/.venv"
 "${JARVIS_ROOT}/.venv/bin/python3" -m pip install --upgrade pip
 "${JARVIS_ROOT}/.venv/bin/python3" -m pip install -e "${JARVIS_ROOT}[test]"
 
-mkdir -p "${FORGE_RUNTIME_DIR}/jarvis/logs" "${FORGE_RUNTIME_DIR}/jarvis/data/ollama"
+mkdir -p "${FORGE_RUNTIME_DIR}/jarvis/logs"
 
 echo "Jarvis bootstrap complete."
