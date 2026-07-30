@@ -4,7 +4,6 @@ import hashlib
 import json
 import re
 import time
-import urllib.parse
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Mapping, Sequence
@@ -15,6 +14,7 @@ from knowledge_service.config import (
     DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS,
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
 )
+from knowledge_service.generative_runtime import GenerativeProvider, GenerativeRequest, OllamaGenerativeProvider, ResponseMode
 from knowledge_service.knowledge_query_schema import KnowledgeQueryIntent, KnowledgeQueryRequest
 from knowledge_service.language_policy import (
     is_forbidden_response_language,
@@ -416,24 +416,24 @@ class QueryInterpretationService:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-class LocalOllamaQueryInterpretationClient:
+class ProviderBackedQueryInterpretationClient:
     def __init__(
         self,
-        base_url: str,
+        provider: GenerativeProvider,
         model: str,
         timeout_seconds: int,
         context_tokens: int,
-        http_client: httpx.Client | None = None,
         renderer: QueryInterpretationPromptRenderer | None = None,
     ) -> None:
-        self.base_url = self._require_localhost(base_url.rstrip("/"))
+        self.provider = provider
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.context_tokens = int(context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS)
         if self.context_tokens < 1024:
             raise ValueError("Query interpretation context_tokens must be at least 1024")
         self.renderer = renderer or QueryInterpretationPromptRenderer()
-        self._client = http_client or httpx.Client(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
+        self.provider_id = str(getattr(provider, "provider_id", provider.__class__.__name__))
+        self.name = self.provider_id
 
     def complete(
         self,
@@ -443,35 +443,50 @@ class LocalOllamaQueryInterpretationClient:
     ) -> QueryInterpretationProviderResult:
         prompt = self.renderer.render(llm_input, validation_errors)
         call_timeout = self._call_timeout(timeout_seconds)
-        response = self._client.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-                "options": {"num_ctx": self.context_tokens},
-            },
-            timeout=httpx.Timeout(call_timeout, connect=min(5.0, call_timeout)),
+        response = self.provider.generate(
+            GenerativeRequest(
+                prompt=prompt,
+                model_id=self.model,
+                response_mode=ResponseMode.JSON_OBJECT,
+                timeout_seconds=call_timeout,
+                context_tokens=self.context_tokens,
+            )
         )
-        response.raise_for_status()
-        raw = response.json()
-        response_text = raw.get("response")
-        if not isinstance(response_text, str):
-            raise ValueError("Ollama returned no response text")
-        return QueryInterpretationProviderResult(raw_text=response_text, prompt_char_length=len(prompt))
+        return QueryInterpretationProviderResult(raw_text=response.raw_text, prompt_char_length=response.prompt_char_length)
 
     def close(self) -> None:
-        self._client.close()
-
-    def _require_localhost(self, base_url: str) -> str:
-        parsed = urllib.parse.urlparse(base_url)
-        if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
-            raise ValueError("Query interpretation LLM base URL must point to localhost")
-        return base_url
+        return None
 
     def _call_timeout(self, timeout_seconds: float | None) -> float:
         configured = max(0.001, float(self.timeout_seconds or 0.001))
         if timeout_seconds is None:
             return configured
         return max(0.001, min(configured, float(timeout_seconds)))
+
+
+class LocalOllamaQueryInterpretationClient(ProviderBackedQueryInterpretationClient):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout_seconds: int,
+        context_tokens: int,
+        http_client: httpx.Client | None = None,
+        renderer: QueryInterpretationPromptRenderer | None = None,
+    ) -> None:
+        self._ollama_provider = OllamaGenerativeProvider(
+            base_url,
+            timeout_seconds=timeout_seconds,
+            sync_client=http_client,
+        )
+        self._ollama_provider._owns_sync_client = True
+        super().__init__(
+            self._ollama_provider,
+            model,
+            timeout_seconds,
+            context_tokens,
+            renderer=renderer,
+        )
+
+    def close(self) -> None:
+        self._ollama_provider.close()

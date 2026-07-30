@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol
 
 from knowledge_service.analysis_graph_contract import GraphContractProvider
-from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
 from knowledge_service.analysis_runtime_events import AnalysisRuntimeContext, analysis_runtime_context
 from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
@@ -202,13 +201,9 @@ class AnalysisSupervisor:
             analyzer = (
                 client
                 or self.analysis_provider
-                or OllamaAnalysisClient(
-                    self.config.analysis_base_url,
-                    self.config.analysis_model,
-                    min(self.config.analysis_ai_call_timeout_seconds, self.config.analysis_per_file_timeout_seconds),
-                    self.config.analysis_context_tokens,
-                )
             )
+            if analyzer is None:
+                raise KnowledgeError("ANALYSIS_PROVIDER_UNAVAILABLE", "Knowledge analysis provider is not configured")
             self._queue.put_nowait((job_id, request, analyzer, selected_rows, selection, job_files_precreated))
             analysis_state = self.analysis_store.current_analysis_state(request.sourceIds or None)
         response: Dict[str, Any] = {"jobId": job_id, "selection": selection, "status": "QUEUED", "message": "Knowledge analysis job queued"}
