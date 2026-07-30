@@ -20,6 +20,7 @@ import anyio
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from knowledge_service.ai_runtime_discovery import AiRuntimeOptionsResponse
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.bootstrap import KnowledgeDependencies, build_dependencies, configure_logging
@@ -125,6 +126,8 @@ def create_app(
             status = 200
         elif exc.code.endswith("_NOT_FOUND") or exc.code == "SERVICE_CATALOG_NOT_FOUND":
             status = 404
+        elif exc.code == "AI_RUNTIME_DISCOVERY_UNAVAILABLE":
+            status = 503
         elif exc.code in {
             "GRAPH_CURSOR_SOURCE_MISMATCH",
             "GRAPH_CURSOR_RESOURCE_MISMATCH",
@@ -215,6 +218,17 @@ def create_app(
             "sources": [source.public_dict() for source in result.sources],
             "diagnostics": [diag.__dict__ for diag in result.diagnostics],
         }
+
+    @app.get(
+        "/api/v1/knowledge/ai-runtime",
+        response_model=AiRuntimeOptionsResponse,
+        response_model_exclude_none=True,
+    )
+    async def ai_runtime(request: Request) -> AiRuntimeOptionsResponse:
+        _, deps = _state(request)
+        if deps.ai_runtime_discovery is None:
+            raise KnowledgeError("AI_RUNTIME_DISCOVERY_UNAVAILABLE", "AI runtime discovery is unavailable")
+        return AiRuntimeOptionsResponse.parse_obj(await deps.ai_runtime_discovery.discover())
 
     @app.post("/api/v1/knowledge/inventory/build")
     async def inventory_build(request: Request, body: InventoryBuildRequest) -> dict[str, Any]:

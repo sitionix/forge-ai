@@ -58,10 +58,10 @@ function jarvisHtml() {
   return baseHtml('jarvis', `
     <button id="refreshJarvis" type="button">Refresh</button>
     <span id="jarvisUpdated">loading</span>
+    <button id="editAiRuntime" type="button">Edit</button>
     <div id="jarvisStatusCards"></div>
     <div id="jarvisStatusError" class="hidden"></div>
-    <div id="jarvisActions"></div>
-    <div id="jarvisActionsError" class="hidden"></div>
+    <div id="aiRuntimeError" class="hidden"></div>
     <form id="jarvisCommandForm">
       <input id="jarvisCommandText" type="text">
       <button id="executeJarvisCommand" type="submit">Execute</button>
@@ -74,6 +74,14 @@ function jarvisHtml() {
     </form>
     <div id="jarvisQueryLoading" class="hidden"></div>
     <section id="jarvisQueryResult" class="hidden"></section>
+    <dialog id="aiRuntimeDialog">
+      <button id="closeAiRuntimeDialog" type="button">×</button>
+      <button id="cancelAiRuntimeDialog" type="button">Cancel</button>
+      <div id="aiRuntimeModalError" class="hidden"></div>
+      <div id="aiRuntimeProviderOptions"></div>
+      <div id="aiRuntimeModelOptions"></div>
+      <section id="aiRuntimeEffortSection" class="hidden"><div id="aiRuntimeEffortOptions"></div></section>
+    </dialog>
   `);
 }
 
@@ -168,25 +176,25 @@ describe('Operator Console modular request ownership', () => {
 
     const jarvis = jarvisHtml();
     const jarvisHttp = {
-      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { actions: [] })),
+      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { providers: [] })),
       post: vi.fn()
     };
     bootstrapOperatorConsole({ document: jarvis.window.document, window: jarvis.window, http: jarvisHttp });
     await flushAsync();
     expect((jarvis.window.__forgeMountedOperatorPage as any).constructor.name).toBe('JarvisPage');
-    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/jarvis/actions']);
+    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime']);
   });
 
   it('UI-IT-02 sends only restored Jarvis init requests from the chat page', async () => {
     const dom = jarvisHtml();
     const http = {
-      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { actions: [] })),
+      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { providers: [] })),
       post: vi.fn()
     };
     const page = new JarvisPage({ document: dom.window.document, http });
     page.mount();
     await flushAsync();
-    expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/jarvis/actions']);
+    expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime']);
 
     page.dispose();
     const second = new JarvisPage({ document: dom.window.document, http });
@@ -194,9 +202,9 @@ describe('Operator Console modular request ownership', () => {
     await flushAsync();
     expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual([
       '/jarvis/status',
-      '/jarvis/actions',
+      '/knowledge/ai-runtime',
       '/jarvis/status',
-      '/jarvis/actions'
+      '/knowledge/ai-runtime'
     ]);
   });
 
@@ -204,7 +212,7 @@ describe('Operator Console modular request ownership', () => {
     const dom = jarvisHtml();
     const slow = deferred<unknown>();
     const http = {
-      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { actions: [] })),
+      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { providers: [] })),
       post: vi.fn(() => slow.promise)
     };
     const page = new JarvisPage({ document: dom.window.document, http });
@@ -243,7 +251,7 @@ describe('Operator Console modular request ownership', () => {
     const pending = deferred<unknown>();
     let querySignal: AbortSignal | undefined;
     const http = {
-      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { actions: [] })),
+      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { providers: [] })),
       post: vi.fn((_path: string, _body: unknown, options: { signal?: AbortSignal }) => {
         querySignal = options.signal;
         return pending.promise;

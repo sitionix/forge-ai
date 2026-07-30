@@ -27,6 +27,7 @@ PUBLIC_ENDPOINTS = {
     ("GET", "/health"),
     ("GET", "/api/v1/knowledge/status"),
     ("GET", "/api/v1/knowledge/sources"),
+    ("GET", "/api/v1/knowledge/ai-runtime"),
     ("POST", "/api/v1/knowledge/inventory/build"),
     ("GET", "/api/v1/knowledge/inventory/status"),
     ("GET", "/api/v1/knowledge/inventory/files"),

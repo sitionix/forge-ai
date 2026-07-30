@@ -71,10 +71,10 @@ function jarvisBody() {
   return `
     <button id="refreshJarvis" type="button">Refresh</button>
     <span id="jarvisUpdated">loading</span>
+    <button id="editAiRuntime" type="button">Edit</button>
     <div id="jarvisStatusCards"></div>
     <div id="jarvisStatusError" class="hidden"></div>
-    <div id="jarvisActions"></div>
-    <div id="jarvisActionsError" class="hidden"></div>
+    <div id="aiRuntimeError" class="hidden"></div>
     <form id="jarvisCommandForm">
       <input id="jarvisCommandText" type="text">
       <button id="executeJarvisCommand" type="submit">Execute</button>
@@ -87,6 +87,14 @@ function jarvisBody() {
     </form>
     <div id="jarvisQueryLoading" class="hidden"></div>
     <section id="jarvisQueryResult" class="hidden"></section>
+    <dialog id="aiRuntimeDialog">
+      <button id="closeAiRuntimeDialog" type="button">×</button>
+      <button id="cancelAiRuntimeDialog" type="button">Cancel</button>
+      <div id="aiRuntimeModalError" class="hidden"></div>
+      <div id="aiRuntimeProviderOptions"></div>
+      <div id="aiRuntimeModelOptions"></div>
+      <section id="aiRuntimeEffortSection" class="hidden"><div id="aiRuntimeEffortOptions"></div></section>
+    </dialog>
   `;
 }
 
@@ -191,6 +199,7 @@ describe('Operator legacy boundary', () => {
       'knowledge-overview-page.js',
       'knowledge-graph-page.js',
       'knowledge-graph-client.js',
+      'ai-runtime-view.js',
       'jarvis-page.js'
     ];
     for (const file of files) {
@@ -203,12 +212,12 @@ describe('Operator legacy boundary', () => {
     const jarvis = inScopeDom('jarvis', jarvisBody());
     await runLegacy(jarvis);
     const jarvisHttp = {
-      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { actions: [] })),
+      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { providers: [] })),
       post: vi.fn()
     };
     bootstrapOperatorConsole({ document: jarvis.window.document, window: jarvis.window, http: jarvisHttp });
     await flushAsync();
-    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/jarvis/actions']);
+    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime']);
 
     const overview = inScopeDom('knowledge', overviewBody());
     await runLegacy(overview);
@@ -242,8 +251,12 @@ describe('Operator legacy boundary', () => {
     expect(jarvis).toContain('jarvisStatusCards');
     expect(jarvis).toContain('jarvisUpdated');
     expect(jarvis).toContain('jarvisStatusError');
-    expect(jarvis).toContain('jarvisActions');
-    expect(jarvis).toContain('jarvisActionsError');
+    expect(jarvis).toContain('editAiRuntime');
+    expect(jarvis).toContain('aiRuntimeDialog');
+    expect(jarvis).toContain('aiRuntimeProviderOptions');
+    expect(jarvis).not.toContain('jarvisActions');
+    expect(jarvis).not.toContain('jarvisActionsError');
+    expect(jarvis).not.toContain('Allowlisted Actions');
     expect(jarvis).toContain('jarvisCommandForm');
     expect(jarvis).toContain('jarvisCommandText');
     expect(jarvis).toContain('executeJarvisCommand');

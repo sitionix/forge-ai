@@ -18,6 +18,15 @@ from support import (
 )
 
 import knowledge_service.main as knowledge_main
+from knowledge_service.ai_runtime_discovery import (
+    READY,
+    UNAVAILABLE,
+    AiRuntimeDiscoveryRegistry,
+    AiRuntimeDiscoveryService,
+    AiRuntimeEffortOption,
+    AiRuntimeModelOption,
+    AiRuntimeProviderOptions,
+)
 from knowledge_service.canonical_narration_contract import CanonicalNarrationMetrics
 from knowledge_service.generative_runtime import GenerativeRequest, GenerativeResponse
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
@@ -31,6 +40,16 @@ class BrokenQueryInterpretationProvider:
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
         self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
         return QueryInterpretationProviderResult(raw_text="not json", prompt_char_length=100)
+
+
+class StaticAiRuntimeSource:
+    def __init__(self, result: AiRuntimeProviderOptions) -> None:
+        self.provider_id = result.provider_id
+        self.display_name = result.display_name
+        self._result = result
+
+    async def discover(self) -> AiRuntimeProviderOptions:
+        return self._result
 
 
 class RoutingFakeGenerativeProvider:
@@ -130,6 +149,46 @@ def _assert_no_legacy_audit_aliases(record: dict) -> None:
     text = json.dumps(record, sort_keys=True)
     for alias in LEGACY_AUDIT_ALIASES:
         assert f'"{alias}"' not in text
+
+
+def _assert_forbidden_ai_runtime_fields_absent(payload) -> None:
+    forbidden = {
+        "schemaVersion",
+        "currentSelection",
+        "activeSelection",
+        "actions",
+        "applyEnabled",
+        "profiles",
+        "capabilities",
+        "metadata",
+        "message",
+        "usage",
+        "limits",
+        "rateLimits",
+        "authentication",
+        "account",
+        "isDefault",
+        "serviceTiers",
+        "speedTiers",
+        "runningModels",
+        "loadedModels",
+        "VRAM",
+        "sizeBytes",
+        "parameterSize",
+        "quantization",
+        "family",
+        "modelContextLimit",
+        "configuredContextTokens",
+        "embeddingLength",
+        "digest",
+    }
+    if isinstance(payload, dict):
+        assert forbidden.isdisjoint(payload.keys())
+        for value in payload.values():
+            _assert_forbidden_ai_runtime_fields_absent(value)
+    elif isinstance(payload, list):
+        for value in payload:
+            _assert_forbidden_ai_runtime_fields_absent(value)
 
 
 def _entrypoint_claim(
@@ -254,6 +313,162 @@ def test_missing_config_sources_response(tmp_path):
 
     assert payload["sources"] == []
     assert payload["message"] == "No local knowledge-sources.yaml configured"
+
+
+def test_ai_runtime_endpoint_returns_minimal_dynamic_provider_contract(tmp_path):
+    app, _, _, deps = build_test_app(write_runtime_config(tmp_path))
+    service = AiRuntimeDiscoveryService(
+        AiRuntimeDiscoveryRegistry(
+            [
+                StaticAiRuntimeSource(
+                    AiRuntimeProviderOptions(
+                        provider_id="ollama",
+                        display_name="Ollama",
+                        status=READY,
+                        version="0.30.6",
+                        models=(
+                            AiRuntimeModelOption(
+                                model_id="qwen2.5-coder:14b",
+                                display_name="qwen2.5-coder:14b",
+                                modified_at="2026-06-14T11:24:58.816615534+03:00",
+                            ),
+                        ),
+                    )
+                ),
+                StaticAiRuntimeSource(
+                    AiRuntimeProviderOptions(
+                        provider_id="codex",
+                        display_name="Codex",
+                        status=READY,
+                        version="0.146.0",
+                        models=(
+                            AiRuntimeModelOption(
+                                model_id="gpt-5.6-sol",
+                                display_name="GPT-5.6-Sol",
+                                description="Latest frontier agentic coding model.",
+                                efforts=(
+                                    AiRuntimeEffortOption(
+                                        effort_id="low",
+                                        description="Fast responses with lighter reasoning",
+                                    ),
+                                ),
+                            ),
+                        ),
+                    )
+                ),
+            ]
+        )
+    )
+    object.__setattr__(deps, "ai_runtime_discovery", service)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await client.get("/api/v1/knowledge/ai-runtime")
+            return response.status_code, response.json()
+
+    status_code, payload = asyncio.run(exercise())
+
+    assert status_code == 200
+    assert payload == {
+        "providers": [
+            {
+                "providerId": "ollama",
+                "displayName": "Ollama",
+                "status": "READY",
+                "models": [
+                    {
+                        "modelId": "qwen2.5-coder:14b",
+                        "displayName": "qwen2.5-coder:14b",
+                        "modifiedAt": "2026-06-14T11:24:58.816615534+03:00",
+                    }
+                ],
+                "version": "0.30.6",
+            },
+            {
+                "providerId": "codex",
+                "displayName": "Codex",
+                "status": "READY",
+                "models": [
+                    {
+                        "modelId": "gpt-5.6-sol",
+                        "displayName": "GPT-5.6-Sol",
+                        "description": "Latest frontier agentic coding model.",
+                        "efforts": [{"effortId": "low", "description": "Fast responses with lighter reasoning"}],
+                    }
+                ],
+                "version": "0.146.0",
+            },
+        ]
+    }
+    _assert_forbidden_ai_runtime_fields_absent(payload)
+
+
+def test_ai_runtime_endpoint_returns_200_with_both_registered_providers_unavailable(tmp_path):
+    app, _, _, deps = build_test_app(write_runtime_config(tmp_path))
+    service = AiRuntimeDiscoveryService(
+        AiRuntimeDiscoveryRegistry(
+            [
+                StaticAiRuntimeSource(
+                    AiRuntimeProviderOptions(
+                        provider_id="ollama",
+                        display_name="Ollama",
+                        status=UNAVAILABLE,
+                    )
+                ),
+                StaticAiRuntimeSource(
+                    AiRuntimeProviderOptions(
+                        provider_id="codex",
+                        display_name="Codex",
+                        status=UNAVAILABLE,
+                    )
+                ),
+            ]
+        )
+    )
+    object.__setattr__(deps, "ai_runtime_discovery", service)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await client.get("/api/v1/knowledge/ai-runtime")
+            return response.status_code, response.json()
+
+    status_code, payload = asyncio.run(exercise())
+
+    assert status_code == 200
+    assert payload == {
+        "providers": [
+            {
+                "providerId": "ollama",
+                "displayName": "Ollama",
+                "status": "UNAVAILABLE",
+                "models": [],
+            },
+            {
+                "providerId": "codex",
+                "displayName": "Codex",
+                "status": "UNAVAILABLE",
+                "models": [],
+            },
+        ]
+    }
+    _assert_forbidden_ai_runtime_fields_absent(payload)
+
+
+def test_ai_runtime_endpoint_missing_discovery_service_returns_503_safe_error(tmp_path):
+    app, _, _, deps = build_test_app(write_runtime_config(tmp_path))
+    object.__setattr__(deps, "ai_runtime_discovery", None)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await client.get("/api/v1/knowledge/ai-runtime")
+            return response.status_code, response.json()
+
+    status_code, payload = asyncio.run(exercise())
+
+    assert status_code == 503
+    assert payload["code"] == "AI_RUNTIME_DISCOVERY_UNAVAILABLE"
+    assert payload["message"] == "AI runtime discovery is unavailable"
+    assert "correlationId" in payload
 
 
 def test_explicit_forbidden_answer_language_returns_controlled_422(tmp_path):

@@ -32,6 +32,15 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
     }
 
     @Test
+    void aiRuntimeDelegatesToGenericProxyRoute() {
+        this.stub();
+
+        this.controller.aiRuntime(this.headers, this.request);
+
+        verify(this.transport).forward("knowledge.ai-runtime", Map.of(), null, this.headers, this.request);
+    }
+
+    @Test
     void analysisBuildDelegatesRawBodyToGenericProxyRoute() {
         this.stub();
         final byte[] body = "{\"sourceIds\":[\"svc\"]}".getBytes(StandardCharsets.UTF_8);

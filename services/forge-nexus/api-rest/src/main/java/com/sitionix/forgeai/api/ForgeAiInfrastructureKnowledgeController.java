@@ -32,6 +32,12 @@ public class ForgeAiInfrastructureKnowledgeController {
         return this.proxy("knowledge.sources", Map.of(), null, headers, request);
     }
 
+    @GetMapping("/api/v1/infrastructure/knowledge/ai-runtime")
+    public CompletableFuture<ResponseEntity<byte[]>> aiRuntime(@RequestHeader final HttpHeaders headers,
+                                                               final HttpServletRequest request) {
+        return this.proxy("knowledge.ai-runtime", Map.of(), null, headers, request);
+    }
+
     @GetMapping("/api/v1/infrastructure/knowledge/overview")
     public CompletableFuture<ResponseEntity<byte[]>> overview(@RequestHeader final HttpHeaders headers,
                                                               final HttpServletRequest request) {

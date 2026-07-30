@@ -8,7 +8,7 @@ knowledge_url := "http://127.0.0.1:7081"
 jarvis_url := "http://127.0.0.1:7071"
 sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 
-start: _app-stop _jarvis-stop _knowledge-stop _mongo-start _sqlite-start _console-build _knowledge-start _jarvis-start _app-start _console-live-check
+start: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _mongo-start _sqlite-start _ollama-start _console-build _knowledge-start _jarvis-start _app-start _console-live-check
     @echo "Forge AI stack is up:"
     @echo "  app:       {{app_url}}"
     @echo "  knowledge: {{knowledge_url}}"
@@ -16,7 +16,7 @@ start: _app-stop _jarvis-stop _knowledge-stop _mongo-start _sqlite-start _consol
     @echo "  mongo:     mongodb://localhost:27019/forge_ai"
     @echo "  sqlite:    {{sqlite_path}}"
 
-stop: _app-stop _jarvis-stop _knowledge-stop _mongo-stop
+stop: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _mongo-stop
     @echo "Forge AI stack stopped."
 
 status:
@@ -54,6 +54,12 @@ _jarvis-start:
 _jarvis-stop:
     @scripts/jarvis/stop.sh
 
+_ollama-start:
+    @scripts/ollama/start-optional.sh
+
+_ollama-stop:
+    @scripts/ollama/stop-owned.sh
+
 _console-build:
     @echo "Building Forge Console static assets..."
     @npm --prefix "{{root}}/services/forge-console" run build
@@ -61,6 +67,7 @@ _console-build:
 _app-start:
     #!/usr/bin/env bash
     set -euo pipefail
+    source "{{root}}/scripts/lib/process.sh"
     mkdir -p "{{root}}/var/logs"
     if [[ -f "{{app_pid}}" ]] && kill -0 "$(cat "{{app_pid}}")" >/dev/null 2>&1; then
         echo "Stopping Forge AI app pid $(cat "{{app_pid}}")"
@@ -94,20 +101,16 @@ _app-start:
     fi
     mvn -pl services/forge-nexus/boot -am -DskipTests package
     : > "{{app_log}}"
-    (
-        cd "{{root}}"
-        setsid -f env \
-            WORKSPACE_ROOT="{{root}}/.." \
-            MONGODB_URI="mongodb://localhost:27019/forge_ai" \
-            java -jar services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar \
-            --spring.docker.compose.enabled=false \
-            >> "{{app_log}}" 2>&1
-    )
+    forge_start_background \
+        "{{app_pid}}" \
+        "{{app_log}}" \
+        "{{root}}" \
+        env \
+        WORKSPACE_ROOT="{{root}}/.." \
+        MONGODB_URI="mongodb://localhost:27019/forge_ai" \
+        java -jar services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar \
+        --spring.docker.compose.enabled=false
     sleep 1
-    app_port_pid="$(lsof -t -iTCP:9099 -sTCP:LISTEN 2>/dev/null || true)"
-    if [[ -n "${app_port_pid}" ]]; then
-        echo "${app_port_pid}" > "{{app_pid}}"
-    fi
     if [[ -f "{{app_pid}}" ]]; then
         echo "Forge AI app pid $(cat "{{app_pid}}"), log {{app_log}}"
     else
@@ -115,10 +118,6 @@ _app-start:
     fi
     for i in {1..40}; do
         if curl -fsS "{{app_url}}/actuator/health" >/dev/null 2>&1; then
-            app_port_pid="$(lsof -t -iTCP:9099 -sTCP:LISTEN 2>/dev/null || true)"
-            if [[ -n "${app_port_pid}" ]]; then
-                echo "${app_port_pid}" > "{{app_pid}}"
-            fi
             echo "Forge AI app is UP at {{app_url}}"
             exit 0
         fi
@@ -131,16 +130,23 @@ _app-start:
 _console-live-check:
     #!/usr/bin/env bash
     set -euo pipefail
+    source "{{root}}/scripts/lib/portable.sh"
+    describe_file() {
+        local path="$1"
+        local hash
+        hash="$(forge_sha256 "${path}" 2>/dev/null || printf '%s' unavailable)"
+        printf '%s %s bytes %s' "${path}" "$(forge_file_size "${path}")" "${hash}"
+    }
     live_file="$(mktemp)"
     curl --retry 10 --retry-delay 1 --retry-connrefused -fsS "{{app_url}}/operator/operator-ui.js" > "${live_file}"
     built_file="{{root}}/services/forge-console/dist/operator/operator-ui.js"
     if ! cmp -s "${built_file}" "${live_file}"; then
         echo "Live operator-ui.js does not match built Console asset."
-        echo "Built: ${built_file} $(wc -c < "${built_file}") bytes $(sha256sum "${built_file}" | awk '{print $1}')"
-        echo "Live:  ${live_file} $(wc -c < "${live_file}") bytes $(sha256sum "${live_file}" | awk '{print $1}')"
+        echo "Built: $(describe_file "${built_file}")"
+        echo "Live:  $(describe_file "${live_file}")"
         exit 1
     fi
-    echo "Console live operator-ui.js matches built asset ($(wc -c < "${built_file}") bytes, $(sha256sum "${built_file}" | awk '{print $1}'))."
+    echo "Console live operator-ui.js matches built asset ($(forge_file_size "${built_file}") bytes, $(forge_sha256 "${built_file}" 2>/dev/null || printf '%s' unavailable))."
 
 _app-stop:
     #!/usr/bin/env bash
