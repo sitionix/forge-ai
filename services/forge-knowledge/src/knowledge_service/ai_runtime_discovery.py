@@ -4,16 +4,62 @@ import asyncio
 import json
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence
 
 import httpx
+from pydantic import BaseModel
 
 
 ProviderStatus = str
 READY: ProviderStatus = "READY"
 DEGRADED: ProviderStatus = "DEGRADED"
 UNAVAILABLE: ProviderStatus = "UNAVAILABLE"
+
+
+class AiRuntimeProviderStatus(str, Enum):
+    READY = READY
+    DEGRADED = DEGRADED
+    UNAVAILABLE = UNAVAILABLE
+
+
+class AiRuntimeEffortResponse(BaseModel):
+    effortId: str
+    description: str
+
+    class Config:
+        extra = "forbid"
+
+
+class AiRuntimeModelResponse(BaseModel):
+    modelId: str
+    displayName: str
+    description: str | None = None
+    modifiedAt: str | None = None
+    efforts: list[AiRuntimeEffortResponse] | None = None
+
+    class Config:
+        extra = "forbid"
+
+
+class AiRuntimeProviderResponse(BaseModel):
+    providerId: str
+    displayName: str
+    status: AiRuntimeProviderStatus
+    models: list[AiRuntimeModelResponse]
+    version: str | None = None
+    message: str | None = None
+
+    class Config:
+        extra = "forbid"
+
+
+class AiRuntimeOptionsResponse(BaseModel):
+    providers: list[AiRuntimeProviderResponse]
+
+    class Config:
+        extra = "forbid"
 
 
 @dataclass(frozen=True)
@@ -167,8 +213,23 @@ class OllamaAiRuntimeOptionsSource:
 
     async def discover(self) -> AiRuntimeProviderOptions:
         if self._catalog_cache is not None and self._catalog_cache.valid():
-            return self._catalog_cache.value
-        version = await self._read_version()
+            cached = self._catalog_cache.value
+            version = await self._probe_version()
+            if version is None:
+                return AiRuntimeProviderOptions(
+                    provider_id=self.provider_id,
+                    display_name=self.display_name,
+                    status=UNAVAILABLE,
+                    message="Ollama runtime is not available",
+                )
+            return AiRuntimeProviderOptions(
+                provider_id=self.provider_id,
+                display_name=self.display_name,
+                status=READY,
+                version=version,
+                models=cached.models,
+            )
+        version = await self._probe_version()
         if version is None:
             return AiRuntimeProviderOptions(
                 provider_id=self.provider_id,
@@ -199,9 +260,7 @@ class OllamaAiRuntimeOptionsSource:
         if self._owns_http_client and self._http_client is not None:
             await self._http_client.aclose()
 
-    async def _read_version(self) -> str | None:
-        if self._version:
-            return self._version
+    async def _probe_version(self) -> str | None:
         try:
             response = await self._client().get("/api/version", timeout=self._timeout())
             response.raise_for_status()
@@ -317,11 +376,11 @@ class CodexAppServerClient:
             await self._write_json(payload)
             return await asyncio.wait_for(future, timeout=self._request_timeout_seconds)
         except TimeoutError as exc:
-            self._pending.pop(request_id, None)
             raise CodexAppServerTimeout(f"Codex app-server request timed out: {method}") from exc
-        except Exception:
-            self._pending.pop(request_id, None)
+        except BaseException:
             raise
+        finally:
+            self._pending.pop(request_id, None)
 
     async def aclose(self) -> None:
         await self._stop_process()
@@ -339,10 +398,24 @@ class CodexAppServerClient:
             self._version = None
             self._reader_task = asyncio.create_task(self._read_stdout(), name="codex-app-server-stdout")
             self._stderr_task = asyncio.create_task(self._drain_stream(getattr(self._process, "stderr", None)), name="codex-app-server-stderr")
-            response = await self._initialize_request()
-            user_agent = _non_blank(response.get("userAgent")) if isinstance(response, Mapping) else None
-            self._version = self._extract_version(user_agent)
-            self._initialized = True
+            try:
+                response = await self._initialize_request()
+                user_agent = _non_blank(response.get("userAgent")) if isinstance(response, Mapping) else None
+                version = self._extract_version(user_agent)
+                if version is None:
+                    raise CodexAppServerError("Codex app-server did not return a version")
+                self._version = version
+                self._initialized = True
+            except BaseException:
+                cleanup = asyncio.create_task(self._stop_process())
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    try:
+                        await cleanup
+                    except Exception:
+                        pass
+                raise
 
     async def _initialize_request(self) -> Any:
         request_id = self._allocate_request_id()
@@ -363,11 +436,11 @@ class CodexAppServerClient:
             )
             return await asyncio.wait_for(future, timeout=self._request_timeout_seconds)
         except TimeoutError as exc:
-            self._pending.pop(request_id, None)
             raise CodexAppServerTimeout("Codex app-server initialize timed out") from exc
-        except Exception:
-            self._pending.pop(request_id, None)
+        except BaseException:
             raise
+        finally:
+            self._pending.pop(request_id, None)
 
     async def _write_json(self, payload: Mapping[str, Any]) -> None:
         process = self._process
@@ -500,14 +573,31 @@ class CodexAiRuntimeOptionsSource:
     provider_id = "codex"
     display_name = "Codex"
 
-    def __init__(self, client: CodexAppServerClient, *, cache_ttl_seconds: float = 30.0) -> None:
+    def __init__(self, client: CodexAppServerClient, *, cache_ttl_seconds: float = 30.0, max_page_count: int = 100) -> None:
         self._client = client
         self.cache_ttl_seconds = max(0.001, float(cache_ttl_seconds))
+        self.max_page_count = max(1, int(max_page_count))
         self._catalog_cache: _CacheEntry | None = None
 
     async def discover(self) -> AiRuntimeProviderOptions:
         if self._catalog_cache is not None and self._catalog_cache.valid():
-            return self._catalog_cache.value
+            cached = self._catalog_cache.value
+            try:
+                version = await self._client.initialize()
+            except CodexAppServerError:
+                return AiRuntimeProviderOptions(
+                    provider_id=self.provider_id,
+                    display_name=self.display_name,
+                    status=UNAVAILABLE,
+                    message="Codex runtime is not available",
+                )
+            return AiRuntimeProviderOptions(
+                provider_id=self.provider_id,
+                display_name=self.display_name,
+                status=READY,
+                version=version,
+                models=cached.models,
+            )
         try:
             version = await self._client.initialize()
         except CodexAppServerError:
@@ -543,7 +633,12 @@ class CodexAiRuntimeOptionsSource:
     async def _read_all_models(self) -> list[AiRuntimeModelOption]:
         models: list[AiRuntimeModelOption] = []
         cursor: str | None = None
+        seen_cursors: set[str] = set()
+        page_count = 0
         while True:
+            if page_count >= self.max_page_count:
+                raise CodexAppServerError("Codex model/list pagination exceeded maximum page count")
+            page_count += 1
             params: dict[str, Any] = {"includeHidden": False}
             if cursor:
                 params["cursor"] = cursor
@@ -560,6 +655,9 @@ class CodexAiRuntimeOptionsSource:
             next_cursor = payload.get("nextCursor")
             if not isinstance(next_cursor, str) or not next_cursor:
                 return models
+            if next_cursor in seen_cursors:
+                raise CodexAppServerError("Codex model/list pagination cursor repeated")
+            seen_cursors.add(next_cursor)
             cursor = next_cursor
 
     def _map_model(self, raw_model: Any) -> AiRuntimeModelOption | None:

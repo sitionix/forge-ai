@@ -20,6 +20,7 @@ from support import (
 import knowledge_service.main as knowledge_main
 from knowledge_service.ai_runtime_discovery import (
     READY,
+    UNAVAILABLE,
     AiRuntimeDiscoveryRegistry,
     AiRuntimeDiscoveryService,
     AiRuntimeEffortOption,
@@ -154,15 +155,31 @@ def _assert_forbidden_ai_runtime_fields_absent(payload) -> None:
     forbidden = {
         "schemaVersion",
         "currentSelection",
+        "activeSelection",
         "actions",
+        "applyEnabled",
+        "profiles",
         "capabilities",
         "metadata",
         "usage",
         "limits",
+        "rateLimits",
         "authentication",
+        "account",
         "isDefault",
         "serviceTiers",
+        "speedTiers",
+        "runningModels",
+        "loadedModels",
+        "VRAM",
+        "sizeBytes",
+        "parameterSize",
+        "quantization",
+        "family",
         "modelContextLimit",
+        "configuredContextTokens",
+        "embeddingLength",
+        "digest",
     }
     if isinstance(payload, dict):
         assert forbidden.isdisjoint(payload.keys())
@@ -383,6 +400,78 @@ def test_ai_runtime_endpoint_returns_minimal_dynamic_provider_contract(tmp_path)
         ]
     }
     _assert_forbidden_ai_runtime_fields_absent(payload)
+
+
+def test_ai_runtime_endpoint_returns_200_with_both_registered_providers_unavailable(tmp_path):
+    app, _, _, deps = build_test_app(write_runtime_config(tmp_path))
+    service = AiRuntimeDiscoveryService(
+        AiRuntimeDiscoveryRegistry(
+            [
+                StaticAiRuntimeSource(
+                    AiRuntimeProviderOptions(
+                        provider_id="ollama",
+                        display_name="Ollama",
+                        status=UNAVAILABLE,
+                        message="Ollama runtime is not available",
+                    )
+                ),
+                StaticAiRuntimeSource(
+                    AiRuntimeProviderOptions(
+                        provider_id="codex",
+                        display_name="Codex",
+                        status=UNAVAILABLE,
+                        message="Codex runtime is not available",
+                    )
+                ),
+            ]
+        )
+    )
+    object.__setattr__(deps, "ai_runtime_discovery", service)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await client.get("/api/v1/knowledge/ai-runtime")
+            return response.status_code, response.json()
+
+    status_code, payload = asyncio.run(exercise())
+
+    assert status_code == 200
+    assert payload == {
+        "providers": [
+            {
+                "providerId": "ollama",
+                "displayName": "Ollama",
+                "status": "UNAVAILABLE",
+                "models": [],
+                "message": "Ollama runtime is not available",
+            },
+            {
+                "providerId": "codex",
+                "displayName": "Codex",
+                "status": "UNAVAILABLE",
+                "models": [],
+                "message": "Codex runtime is not available",
+            },
+        ]
+    }
+    _assert_forbidden_ai_runtime_fields_absent(payload)
+
+
+def test_ai_runtime_endpoint_missing_discovery_service_returns_503_safe_error(tmp_path):
+    app, _, _, deps = build_test_app(write_runtime_config(tmp_path))
+    object.__setattr__(deps, "ai_runtime_discovery", None)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await client.get("/api/v1/knowledge/ai-runtime")
+            return response.status_code, response.json()
+
+    status_code, payload = asyncio.run(exercise())
+
+    assert status_code == 503
+    assert payload["code"] == "AI_RUNTIME_DISCOVERY_UNAVAILABLE"
+    assert payload["message"] == "AI runtime discovery is unavailable"
+    assert "correlationId" in payload
 
 
 def test_explicit_forbidden_answer_language_returns_controlled_422(tmp_path):

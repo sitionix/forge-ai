@@ -24,6 +24,10 @@ from knowledge_service.ai_runtime_discovery import (
 )
 
 
+def _connect_refused(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("refused", request=request)
+
+
 def test_public_provider_model_and_effort_shape_omits_absent_optionals():
     provider = AiRuntimeProviderOptions(
         provider_id="codex",
@@ -112,6 +116,96 @@ def test_ollama_maps_version_tags_completion_models_and_modified_at_without_show
         ],
     }
     assert seen == [("GET", "/api/version"), ("GET", "/api/tags")]
+
+
+def test_ollama_runtime_absent_from_first_request_returns_unavailable():
+    source = OllamaAiRuntimeOptionsSource(
+        "http://127.0.0.1:11434",
+        http_client=httpx.AsyncClient(base_url="http://127.0.0.1:11434", transport=httpx.MockTransport(_connect_refused)),
+    )
+
+    result = asyncio.run(source.discover()).public_dict()
+
+    assert result == {
+        "providerId": "ollama",
+        "displayName": "Ollama",
+        "status": "UNAVAILABLE",
+        "models": [],
+        "message": "Ollama runtime is not available",
+    }
+
+
+def test_ollama_ready_then_cache_expiry_then_runtime_absent_returns_unavailable():
+    available = True
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if not available:
+            raise httpx.ConnectError("refused", request=request)
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"version": "0.30.6"})
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "m", "model": "m", "capabilities": ["completion"]}]})
+        raise AssertionError(f"unexpected Ollama path: {request.url.path}")
+
+    source = OllamaAiRuntimeOptionsSource(
+        "http://127.0.0.1:11434",
+        http_client=httpx.AsyncClient(base_url="http://127.0.0.1:11434", transport=httpx.MockTransport(handler)),
+    )
+
+    first = asyncio.run(source.discover()).public_dict()
+    available = False
+    if source._catalog_cache is not None:
+        source._catalog_cache.expires_at = 0.0
+    second = asyncio.run(source.discover()).public_dict()
+
+    assert first["status"] == READY
+    assert second == {
+        "providerId": "ollama",
+        "displayName": "Ollama",
+        "status": "UNAVAILABLE",
+        "models": [],
+        "message": "Ollama runtime is not available",
+    }
+    assert seen == ["/api/version", "/api/tags", "/api/version"]
+
+
+def test_ollama_ready_then_health_success_malformed_catalog_returns_degraded():
+    degraded_catalog = False
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"version": "0.30.6"})
+        if request.url.path == "/api/tags" and degraded_catalog:
+            return httpx.Response(200, text="{")
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "m", "model": "m", "capabilities": ["completion"]}]})
+        raise AssertionError(f"unexpected Ollama path: {request.url.path}")
+
+    source = OllamaAiRuntimeOptionsSource(
+        "http://127.0.0.1:11434",
+        http_client=httpx.AsyncClient(base_url="http://127.0.0.1:11434", transport=httpx.MockTransport(handler)),
+    )
+
+    first = asyncio.run(source.discover()).public_dict()
+    degraded_catalog = True
+    if source._catalog_cache is not None:
+        source._catalog_cache.expires_at = 0.0
+    second = asyncio.run(source.discover()).public_dict()
+
+    assert first["status"] == READY
+    assert second == {
+        "providerId": "ollama",
+        "displayName": "Ollama",
+        "status": "DEGRADED",
+        "models": [],
+        "version": "0.30.6",
+        "message": "Ollama model catalog could not be read",
+    }
+    assert seen == ["/api/version", "/api/tags", "/api/version", "/api/tags"]
 
 
 def test_ollama_accepts_capabilities_from_details_when_explicitly_present():
@@ -253,6 +347,57 @@ def test_codex_initializes_and_maps_model_list_efforts_pagination_and_hidden_fil
     assert_forbidden_public_fields_absent(result)
 
 
+def test_codex_executable_absent_returns_unavailable():
+    async def missing_process(command: Sequence[str]) -> Any:
+        raise FileNotFoundError(command[0])
+
+    source = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=missing_process))
+
+    result = asyncio.run(source.discover()).public_dict()
+
+    assert result == {
+        "providerId": "codex",
+        "displayName": "Codex",
+        "status": "UNAVAILABLE",
+        "models": [],
+        "message": "Codex runtime is not available",
+    }
+
+
+def test_codex_cached_catalog_does_not_mask_current_runtime_absence():
+    first_process = FakeCodexProcess(
+        [
+            response({"userAgent": "forge-knowledge/0.146.0"}),
+            response({"data": [codex_model("gpt-5.6-sol", "GPT-5.6-Sol")], "nextCursor": None}),
+        ]
+    )
+    processes: list[FakeCodexProcess] = [first_process]
+
+    async def process_factory(command: Sequence[str]) -> Any:
+        if not processes:
+            raise FileNotFoundError(command[0])
+        return processes.pop(0)
+
+    source = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=process_factory))
+
+    async def exercise():
+        first = await source.discover()
+        first_process.terminate()
+        second = await source.discover()
+        return first.public_dict(), second.public_dict()
+
+    first, second = asyncio.run(exercise())
+
+    assert first["status"] == READY
+    assert second == {
+        "providerId": "codex",
+        "displayName": "Codex",
+        "status": "UNAVAILABLE",
+        "models": [],
+        "message": "Codex runtime is not available",
+    }
+
+
 def test_codex_client_correlates_out_of_order_responses():
     process = FakeCodexProcess(
         [
@@ -278,6 +423,107 @@ def test_codex_client_correlates_out_of_order_responses():
 
     assert first_result["data"] == ["first"]
     assert second_result["data"] == ["second"]
+
+
+def test_codex_initialize_timeout_cleans_process_and_next_discovery_restarts():
+    timeout_process = FakeCodexProcess([{"defer": True}])
+    restart_process = FakeCodexProcess(
+        [
+            response({"userAgent": "forge-knowledge/0.146.0"}),
+            response({"data": [codex_model("gpt-5.6-sol", "GPT-5.6-Sol")], "nextCursor": None}),
+        ]
+    )
+    processes = [timeout_process, restart_process]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), request_timeout_seconds=0.01)
+    source = CodexAiRuntimeOptionsSource(client)
+
+    async def exercise():
+        first = await source.discover()
+        assert client._pending == {}
+        assert client._process is None
+        assert client._reader_task is None
+        assert client._stderr_task is None
+        second = await source.discover()
+        await client.aclose()
+        await client.aclose()
+        return first, second
+
+    first, second = asyncio.run(exercise())
+
+    assert first.status == UNAVAILABLE
+    assert timeout_process.terminated is True
+    assert second.status == READY
+    assert restart_process.terminated is True
+
+
+def test_codex_initialize_error_cleans_process_and_pending_requests():
+    process = FakeCodexProcess([jsonrpc_error(-32000, "initialize failed")])
+    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1)
+
+    with pytest.raises(CodexAppServerError):
+        asyncio.run(client.initialize())
+
+    assert process.terminated is True
+    assert client._pending == {}
+    assert client._process is None
+    assert client._reader_task is None
+    assert client._stderr_task is None
+
+
+def test_codex_initialize_unusable_response_cleans_process_and_pending_requests():
+    process = FakeCodexProcess([response({"platformFamily": "unix"})])
+    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1)
+
+    with pytest.raises(CodexAppServerError):
+        asyncio.run(client.initialize())
+
+    assert process.terminated is True
+    assert client._pending == {}
+    assert client._process is None
+    assert client._reader_task is None
+    assert client._stderr_task is None
+
+
+def test_codex_initialize_cancellation_cleans_process_and_pending_requests():
+    process = FakeCodexProcess([{"defer": True}])
+    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1)
+
+    async def exercise():
+        task = asyncio.create_task(client.initialize())
+        while not process.sent:
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(exercise())
+
+    assert process.terminated is True
+    assert client._pending == {}
+    assert client._process is None
+    assert client._reader_task is None
+    assert client._stderr_task is None
+
+
+def test_codex_request_cancellation_clears_pending_entry_and_shutdown_is_idempotent():
+    process = FakeCodexProcess([response({"userAgent": "forge-knowledge/0.146.0"}), {"defer": True}])
+    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1)
+
+    async def exercise():
+        await client.initialize()
+        task = asyncio.create_task(client.request("model/list", {"includeHidden": False}))
+        while len(process.sent) < 2:
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert client._pending == {}
+        await client.aclose()
+        await client.aclose()
+
+    asyncio.run(exercise())
+
+    assert process.terminated is True
 
 
 def test_codex_request_timeout_process_exit_restart_and_shutdown():
@@ -321,6 +567,57 @@ def test_codex_exit_before_response_is_reported_as_unavailable_or_degraded():
         asyncio.run(client.initialize())
 
 
+@pytest.mark.parametrize(
+    "scripted",
+    [
+        [
+            {"result": {"userAgent": "forge-knowledge/0.146.0"}},
+            {"result": {"data": [], "nextCursor": "A"}},
+            {"result": {"data": [], "nextCursor": "A"}},
+        ],
+        [
+            {"result": {"userAgent": "forge-knowledge/0.146.0"}},
+            {"result": {"data": [], "nextCursor": "A"}},
+            {"result": {"data": [], "nextCursor": "B"}},
+            {"result": {"data": [], "nextCursor": "A"}},
+        ],
+    ],
+)
+def test_codex_repeated_or_cyclic_pagination_cursor_returns_degraded(scripted):
+    process = FakeCodexProcess(scripted)
+    source = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=lambda command: async_value(process)))
+
+    result = asyncio.run(source.discover()).public_dict()
+
+    assert result == {
+        "providerId": "codex",
+        "displayName": "Codex",
+        "status": "DEGRADED",
+        "models": [],
+        "version": "0.146.0",
+        "message": "Codex model catalog could not be read",
+    }
+
+
+def test_codex_pagination_page_limit_returns_degraded():
+    process = FakeCodexProcess(
+        [
+            response({"userAgent": "forge-knowledge/0.146.0"}),
+            response({"data": [], "nextCursor": "A"}),
+            response({"data": [], "nextCursor": "B"}),
+        ]
+    )
+    source = CodexAiRuntimeOptionsSource(
+        CodexAppServerClient(process_factory=lambda command: async_value(process)),
+        max_page_count=2,
+    )
+
+    result = asyncio.run(source.discover()).public_dict()
+
+    assert result["status"] == DEGRADED
+    assert [sent["method"] for sent in process.sent] == ["initialize", "model/list", "model/list"]
+
+
 def test_aggregate_returns_registered_provider_order_and_isolates_failures_and_timeouts():
     registry = AiRuntimeDiscoveryRegistry(
         [
@@ -340,6 +637,86 @@ def test_aggregate_returns_registered_provider_order_and_isolates_failures_and_t
     assert result["providers"][2]["message"] == "Partial catalog failed"
     assert result["providers"][3]["message"] == "Slow runtime discovery timed out"
     assert result["providers"][4]["message"] == "Broken runtime is not available"
+
+
+def test_aggregate_retains_registered_ollama_absent_and_codex_ready():
+    ollama = OllamaAiRuntimeOptionsSource(
+        "http://127.0.0.1:11434",
+        http_client=httpx.AsyncClient(base_url="http://127.0.0.1:11434", transport=httpx.MockTransport(_connect_refused)),
+    )
+    codex_process = FakeCodexProcess(
+        [
+            response({"userAgent": "forge-knowledge/0.146.0"}),
+            response({"data": [codex_model("gpt-5.6-sol", "GPT-5.6-Sol")], "nextCursor": None}),
+        ]
+    )
+    codex = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=lambda command: async_value(codex_process)))
+    service = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([ollama, codex]))
+
+    result = asyncio.run(service.discover())
+
+    assert [provider["providerId"] for provider in result["providers"]] == ["ollama", "codex"]
+    assert [provider["status"] for provider in result["providers"]] == [UNAVAILABLE, READY]
+
+
+def test_aggregate_retains_registered_ollama_ready_and_codex_absent():
+    ollama = OllamaAiRuntimeOptionsSource(
+        "http://127.0.0.1:11434",
+        http_client=httpx.AsyncClient(
+            base_url="http://127.0.0.1:11434",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json={"version": "0.30.6"}
+                    if request.url.path == "/api/version"
+                    else {"models": [{"name": "m", "model": "m", "capabilities": ["completion"]}]},
+                )
+            ),
+        ),
+    )
+
+    async def missing_process(command: Sequence[str]) -> Any:
+        raise FileNotFoundError(command[0])
+
+    codex = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=missing_process))
+    service = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([ollama, codex]))
+
+    result = asyncio.run(service.discover())
+
+    assert [provider["providerId"] for provider in result["providers"]] == ["ollama", "codex"]
+    assert [provider["status"] for provider in result["providers"]] == [READY, UNAVAILABLE]
+
+
+def test_aggregate_retains_both_registered_providers_when_both_absent():
+    ollama = OllamaAiRuntimeOptionsSource(
+        "http://127.0.0.1:11434",
+        http_client=httpx.AsyncClient(base_url="http://127.0.0.1:11434", transport=httpx.MockTransport(_connect_refused)),
+    )
+
+    async def missing_process(command: Sequence[str]) -> Any:
+        raise FileNotFoundError(command[0])
+
+    codex = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=missing_process))
+    service = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([ollama, codex]))
+
+    result = asyncio.run(service.discover())
+
+    assert result["providers"] == [
+        {
+            "providerId": "ollama",
+            "displayName": "Ollama",
+            "status": "UNAVAILABLE",
+            "models": [],
+            "message": "Ollama runtime is not available",
+        },
+        {
+            "providerId": "codex",
+            "displayName": "Codex",
+            "status": "UNAVAILABLE",
+            "models": [],
+            "message": "Codex runtime is not available",
+        },
+    ]
 
 
 class StaticSource:
@@ -394,6 +771,9 @@ class FakeCodexProcess:
                     self.returncode = int(action["exit"])
                     self.stdout.push(b"")
                     self._complete_wait()
+                    break
+                if "error" in action:
+                    self.push_json({"id": request["id"], "error": action["error"]})
                     break
                 if "method" in action:
                     self.push_json(action)
@@ -457,6 +837,10 @@ def notification(method: str, params: Mapping[str, Any]) -> dict[str, Any]:
     return {"method": method, "params": dict(params)}
 
 
+def jsonrpc_error(code: int, message: str) -> dict[str, Any]:
+    return {"error": {"code": code, "message": message}}
+
+
 def codex_model(model_id: str, display_name: str, *, hidden: bool = False, efforts: list[dict[str, str]] | None = None) -> dict[str, Any]:
     return {
         "id": model_id,
@@ -479,15 +863,31 @@ def assert_forbidden_public_fields_absent(payload: Any) -> None:
     forbidden = {
         "schemaVersion",
         "currentSelection",
+        "activeSelection",
         "actions",
+        "applyEnabled",
+        "profiles",
         "capabilities",
         "metadata",
         "usage",
         "limits",
+        "rateLimits",
         "authentication",
+        "account",
         "isDefault",
         "serviceTiers",
+        "speedTiers",
+        "runningModels",
+        "loadedModels",
+        "VRAM",
+        "sizeBytes",
+        "parameterSize",
+        "quantization",
+        "family",
         "modelContextLimit",
+        "configuredContextTokens",
+        "embeddingLength",
+        "digest",
     }
     if isinstance(payload, Mapping):
         assert forbidden.isdisjoint(payload.keys())
