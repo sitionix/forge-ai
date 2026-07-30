@@ -41,6 +41,8 @@ from knowledge_service.graph_analysis import GraphAnalysisEngine
 from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.graph_state_repository import GRAPH_STATE_FAILED, GraphStateRepository
 from knowledge_service.inventory_builder import InventoryBuilder
+from knowledge_service.bootstrap import KnowledgeDependencies
+from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.java_parser_adapter import JavaParserAdapter
@@ -54,6 +56,7 @@ from knowledge_service.semantic_index import SemanticIndexStore
 from knowledge_service.snippet_extractor import SnippetExtractor
 from knowledge_service.source_config import load_source_config
 from knowledge_service.source_graph_finalizer import CrossSourceGraphResolver, SourceGraphFinalizer
+from knowledge_service.storage_operations import StorageOperations
 from knowledge_service.structural_analysis import StaticGraphMaterializer
 from knowledge_service.structural_model import StructuralFileMetadata
 from knowledge_service.target_enrichment import (
@@ -62,6 +65,10 @@ from knowledge_service.target_enrichment import (
     TARGET_INPUT_SCHEMA_VERSION,
     TARGET_REQUEST_KIND,
 )
+
+main.app_config = None
+main.store = None
+main.analysis_supervisor = None
 
 
 def knowledge_query_request(query_text: str) -> KnowledgeQueryRequest:
@@ -114,6 +121,44 @@ class StubAnalyzer:
             raise RuntimeError("model failed")
         self.result.validate_lines(line_count)
         return self.result
+
+
+class ClosingTrackingAnalyzer(StubAnalyzer):
+    def __init__(self, result=None, fail=False, block_event=None, bad_response_attempts=0, outcomes=None):
+        super().__init__(result=result, fail=fail, block_event=block_event, bad_response_attempts=bad_response_attempts, outcomes=outcomes)
+        self.close_calls = 0
+        self.aclose_calls = 0
+
+    def close(self):
+        self.close_calls += 1
+
+    async def aclose(self):
+        self.aclose_calls += 1
+
+
+class AsyncBlockingClosingAnalyzer:
+    name = "ai-file-analyzer"
+    version = "1"
+
+    def __init__(self, started: asyncio.Event, release: asyncio.Event):
+        self.started = started
+        self.release = release
+        self.calls = 0
+        self.close_calls = 0
+        self.aclose_calls = 0
+
+    async def analyze(self, payload, line_count, repair_prompt=None):
+        del payload, line_count, repair_prompt
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return GraphAnalysisResult()
+
+    def close(self):
+        self.close_calls += 1
+
+    async def aclose(self):
+        self.aclose_calls += 1
 
 
 class CapturingGraphAnalyzer(StubAnalyzer):
@@ -204,6 +249,20 @@ class SupervisorHarness:
     def _run_background(self, coroutine):
         return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result(timeout=5)
 
+    async def _wait_for_terminal_job(self, job_id):
+        if not job_id:
+            return
+        for _ in range(120):
+            job = self.analysis_store.job(job_id)
+            if job["status"] in {"COMPLETED", "FAILED", "STOPPED"}:
+                return
+            await asyncio.sleep(0.025)
+        raise AssertionError("job did not finish")
+
+    async def _close_test_owned_analyzer(self, analyzer):
+        if isinstance(analyzer, OllamaAnalysisClient):
+            await analyzer.aclose()
+
     def start(self, request, analyzer=None):
         if getattr(analyzer, "block_event", None) is not None:
             self._ensure_background()
@@ -212,12 +271,16 @@ class SupervisorHarness:
         async def run():
             supervisor = self._new_supervisor()
             await supervisor.start_lifespan()
-            response = await supervisor.start(request, analyzer)
-            queue = supervisor._queue
-            if queue is not None and getattr(analyzer, "block_event", None) is None:
-                await queue.join()
-            await supervisor.shutdown()
-            return response
+            try:
+                response = await supervisor.start(request, analyzer)
+                queue = supervisor._queue
+                if queue is not None and getattr(analyzer, "block_event", None) is None:
+                    await queue.join()
+                await self._wait_for_terminal_job(response.get("jobId"))
+                return response
+            finally:
+                await self._close_test_owned_analyzer(analyzer)
+                await supervisor.shutdown()
 
         return asyncio.run(run())
 
@@ -225,12 +288,16 @@ class SupervisorHarness:
         async def run():
             supervisor = self._new_supervisor()
             await supervisor.start_lifespan()
-            response = await supervisor.retry_failed(request, analyzer)
-            queue = supervisor._queue
-            if queue is not None:
-                await queue.join()
-            await supervisor.shutdown()
-            return response
+            try:
+                response = await supervisor.retry_failed(request, analyzer)
+                queue = supervisor._queue
+                if queue is not None:
+                    await queue.join()
+                await self._wait_for_terminal_job(response.get("jobId"))
+                return response
+            finally:
+                await self._close_test_owned_analyzer(analyzer)
+                await supervisor.shutdown()
 
         return asyncio.run(run())
 
@@ -4295,6 +4362,90 @@ def test_background_job_returns_id_and_updates_progress(tmp_path):
     assert final["processedFiles"] == 1
 
 
+def test_caller_supplied_analysis_client_not_closed_after_successful_job(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+    analyzer = ClosingTrackingAnalyzer()
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
+
+    assert final["status"] == "COMPLETED"
+    assert analyzer.calls > 0
+    assert analyzer.close_calls == 0
+    assert analyzer.aclose_calls == 0
+
+
+def test_caller_supplied_analysis_client_not_closed_after_failed_job(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+    analyzer = ClosingTrackingAnalyzer(fail=True)
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
+
+    assert final["status"] == "COMPLETED"
+    assert final["failedFiles"] == 1
+    assert analyzer.close_calls == 0
+    assert analyzer.aclose_calls == 0
+
+
+def test_caller_supplied_analysis_client_not_closed_after_cancelled_job(tmp_path):
+    async def run():
+        store, _, _ = build_inventory(tmp_path)
+        supervisor = AnalysisSupervisor(store, app_config(tmp_path))
+        await supervisor.start_lifespan()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        analyzer = AsyncBlockingClosingAnalyzer(started, release)
+        response = await supervisor.start(AnalysisBuildRequest(), analyzer)
+        await asyncio.wait_for(started.wait(), timeout=2)
+        await supervisor.stop(response["jobId"])
+        queue = supervisor._queue
+        if queue is not None:
+            await asyncio.wait_for(queue.join(), timeout=2)
+        await supervisor.shutdown()
+        return store, response["jobId"], analyzer
+
+    store, job_id, analyzer = asyncio.run(run())
+    final = wait_job(store, job_id)
+
+    assert final["status"] == "STOPPED"
+    assert analyzer.calls == 1
+    assert analyzer.close_calls == 0
+    assert analyzer.aclose_calls == 0
+
+
+def test_same_caller_supplied_analysis_client_can_be_reused_for_sequential_jobs(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+    analyzer = ClosingTrackingAnalyzer()
+
+    first = wait_job(store, runner.start(AnalysisBuildRequest(force=True), analyzer)["jobId"])
+    first_call_count = analyzer.calls
+    second = wait_job(store, runner.start(AnalysisBuildRequest(force=True), analyzer)["jobId"])
+
+    assert first["status"] == "COMPLETED"
+    assert second["status"] == "COMPLETED"
+    assert first_call_count > 0
+    assert analyzer.calls > first_call_count
+    assert analyzer.close_calls == 0
+    assert analyzer.aclose_calls == 0
+
+
+def test_supervisor_configured_analysis_provider_closes_on_shutdown(tmp_path):
+    async def run():
+        store, _, _ = build_inventory(tmp_path)
+        analyzer = ClosingTrackingAnalyzer()
+        supervisor = AnalysisSupervisor(store, app_config(tmp_path), analysis_provider=analyzer)
+        await supervisor.start_lifespan()
+        await supervisor.shutdown()
+        return analyzer
+
+    analyzer = asyncio.run(run())
+
+    assert analyzer.close_calls == 0
+    assert analyzer.aclose_calls == 1
+
+
 def test_analysis_jobs_incompatible_schema_is_recreated_without_lifecycle_rows(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     with sqlite3.connect(db_path) as conn:
@@ -6422,12 +6573,37 @@ class FakeRunner:
 
 
 def configure_api(tmp_path, monkeypatch):
+    del monkeypatch
     store, _, _ = build_inventory(tmp_path)
     cfg = app_config(tmp_path)
-    monkeypatch.setattr(main, "app_config", cfg)
-    monkeypatch.setattr(main, "store", store)
-    monkeypatch.setattr(main, "analysis_supervisor", FakeRunner())
+    main.app_config = cfg
+    main.store = store
+    main.analysis_supervisor = FakeRunner()
+    _sync_main_app_state_from_test_globals()
     return store
+
+
+def _sync_main_app_state_from_test_globals():
+    cfg = getattr(main, "app_config", None)
+    store = getattr(main, "store", None)
+    if cfg is None or store is None:
+        return
+    analysis_store = AnalysisStore(store.db_path)
+    refresh = InventoryRefreshService(cfg, store)
+    main.app.state.app_config = cfg
+    main.app.state.knowledge_dependencies = KnowledgeDependencies(
+        inventory_store=store,
+        analysis_store=analysis_store,
+        graph_store=analysis_store,
+        source_resolver=InventoryFileResolver(store),
+        analysis_provider=None,
+        analysis_supervisor=getattr(main, "analysis_supervisor", None) or FakeRunner(),
+        inventory_refresh=refresh,
+        inventory_scheduler=AsyncInventoryScheduler(refresh, cfg),
+        storage_operations=StorageOperations(store.db_path),
+        generative_registry=None,
+        generative_provider=None,
+    )
 
 
 def post_json(path, payload):
@@ -6462,6 +6638,7 @@ async def asgi_threadpool_json(method, path, payload):
             if not task.done():
                 task.cancel()
 
+    _sync_main_app_state_from_test_globals()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://testserver") as client:
         response = await await_with_wakeup(client.request(method, path, json=payload or {}))
         return {"status": response.status_code, "json": response.json()}
@@ -6573,6 +6750,7 @@ def insert_unresolved_graph_edge(db_path):
 
 
 async def asgi_json(method, path, payload):
+    _sync_main_app_state_from_test_globals()
     body = json.dumps(payload or {}).encode("utf-8")
     messages = []
     received = False

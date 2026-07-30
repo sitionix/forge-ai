@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from typing import Any, Mapping, Sequence
@@ -11,6 +10,15 @@ from knowledge_service.formatter_protocol import (
     EndToEndFormatterDeadlineExceeded,
     EndToEndFormatterProviderError,
     EndToEndFormatterProviderResult,
+)
+from knowledge_service.generative_runtime import (
+    GenerativeProvider,
+    GenerativeProviderEmptyResponse,
+    GenerativeProviderError,
+    GenerativeProviderTimeout,
+    GenerativeRequest,
+    OllamaGenerativeProvider,
+    ResponseMode,
 )
 
 
@@ -36,22 +44,21 @@ class EndToEndFormatterPromptRenderer:
         )
 
 
-class LocalOllamaEndToEndFormatterClient:
-    name = "local-ollama-end-to-end-formatter"
+class ProviderBackedEndToEndFormatterClient:
+    name = "provider-backed-end-to-end-formatter"
 
     def __init__(
         self,
-        base_url: str,
+        provider: GenerativeProvider,
         model: str,
         timeout_seconds: float,
         *,
         renderer: EndToEndFormatterPromptRenderer | None = None,
     ) -> None:
-        self.base_url = str(base_url or "").rstrip("/")
+        self.provider = provider
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.renderer = renderer or EndToEndFormatterPromptRenderer()
-        self._client = httpx.Client(timeout=timeout_seconds)
 
     def generate(
         self,
@@ -68,41 +75,65 @@ class LocalOllamaEndToEndFormatterClient:
             raise EndToEndFormatterDeadlineExceeded("canonical formatter deadline exceeded")
         timeout_seconds = max(0.001, min(float(self.timeout_seconds or remaining), remaining))
         prompt = self.renderer.render(formatter_input, validation_errors)
-        prompt_hash = _sha256(prompt)
         started = time.perf_counter()
         try:
-            response = self._client.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": "json",
-                    "options": {"temperature": 0},
-                },
-                timeout=timeout_seconds,
+            response = self.provider.generate(
+                GenerativeRequest(
+                    prompt=prompt,
+                    model_id=self.model,
+                    response_mode=ResponseMode.JSON_OBJECT,
+                    timeout_seconds=timeout_seconds,
+                    temperature=0,
+                )
             )
-            response.raise_for_status()
-            payload = response.json()
-            raw_text = str(payload.get("response") or "")
-        except httpx.TimeoutException as exc:
+        except GenerativeProviderTimeout as exc:
             raise EndToEndFormatterDeadlineExceeded("canonical formatter provider timed out") from exc
+        except GenerativeProviderEmptyResponse as exc:
+            raise EndToEndFormatterProviderError("canonical formatter provider returned an empty response") from exc
+        except GenerativeProviderError as exc:
+            raise EndToEndFormatterProviderError("canonical formatter provider failed") from exc
         except Exception as exc:
             raise EndToEndFormatterProviderError("canonical formatter provider failed") from exc
+        raw_text = response.raw_text
         if not raw_text.strip():
             raise EndToEndFormatterProviderError("canonical formatter provider returned an empty response")
         return EndToEndFormatterProviderResult(
             raw_text=raw_text,
-            prompt_char_length=len(prompt),
-            prompt_hash=prompt_hash,
-            duration_ms=round((time.perf_counter() - started) * 1000, 3),
-            provider_name=self.name,
-            provider_model=self.model,
+            prompt_char_length=response.prompt_char_length,
+            prompt_hash=response.prompt_hash,
+            duration_ms=response.duration_ms or round((time.perf_counter() - started) * 1000, 3),
+            provider_name=getattr(self.provider, "provider_id", self.name),
+            provider_model=response.model_id,
         )
 
     def close(self) -> None:
-        self._client.close()
+        return None
 
 
-def _sha256(value: str) -> str:
-    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+class LocalOllamaEndToEndFormatterClient(ProviderBackedEndToEndFormatterClient):
+    name = "local-ollama-end-to-end-formatter"
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout_seconds: float,
+        *,
+        renderer: EndToEndFormatterPromptRenderer | None = None,
+        http_client: httpx.Client | None = None,
+    ) -> None:
+        self._ollama_provider = OllamaGenerativeProvider(
+            base_url,
+            timeout_seconds=timeout_seconds,
+            sync_client=http_client,
+        )
+        self._ollama_provider._owns_sync_client = True
+        super().__init__(
+            self._ollama_provider,
+            model,
+            timeout_seconds,
+            renderer=renderer,
+        )
+
+    def close(self) -> None:
+        self._ollama_provider.close()

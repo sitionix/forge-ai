@@ -21,7 +21,6 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
-from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.bootstrap import KnowledgeDependencies, build_dependencies, configure_logging
 from knowledge_service.canonical_narration_contract import CanonicalNarrationMetrics
@@ -37,11 +36,13 @@ from knowledge_service.end_to_end_projection import EndToEndProjectionBuilder
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.formatter_policy import FormatterPolicy
 from knowledge_service.formatter_protocol import EndToEndFormatterAllGraphsFailed, EndToEndFormatterDeadlineExceeded
-from knowledge_service.formatter_provider import EndToEndFormatterPromptRenderer, LocalOllamaEndToEndFormatterClient
+from knowledge_service.formatter_provider import (
+    EndToEndFormatterPromptRenderer,
+    ProviderBackedEndToEndFormatterClient,
+)
 from knowledge_service.formatter_service import EndToEndFormatterAnswerService, EndToEndFormatterSegmentPlanner
 from knowledge_service.freshness_service import KnowledgeFreshnessService
-from knowledge_service.inventory_file_resolver import InventoryFileResolver
-from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
+from knowledge_service.inventory_refresh import InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.knowledge_query_schema import (
@@ -60,7 +61,7 @@ from knowledge_service.observability import (
 from knowledge_service.overview_projection import read_overview
 from knowledge_service.query_interpretation import (
     QUERY_INTERPRETATION_FAILED,
-    LocalOllamaQueryInterpretationClient,
+    ProviderBackedQueryInterpretationClient,
     QueryInterpretationFailed,
     QueryInterpretationPromptRenderer,
     QueryInterpretationService,
@@ -74,11 +75,7 @@ from knowledge_service.semantic_schema import SemanticIndexBuildRequest, Semanti
 from knowledge_service.semantic_worker import SemanticBuildCoordinator, SemanticIndexBackgroundWorker
 from knowledge_service.service_catalog_provider import ServiceYamlCatalogProvider
 from knowledge_service.source_config import load_source_config
-from knowledge_service.storage_operations import StorageOperations
 
-app_config: AppConfig | None = None
-store: InventoryStore | None = None
-analysis_supervisor: AnalysisSupervisor | None = None
 LOGGER = logging.getLogger(__name__)
 HUMAN_QUERY_TERMINAL_AUDIT_PREFIX = "human-query-terminal-"
 
@@ -109,6 +106,7 @@ def create_app(
             await deps.inventory_scheduler.stop()
             if app_config.analysis_enabled:
                 await deps.analysis_supervisor.shutdown()
+            await deps.aclose()
 
     app = FastAPI(title="Knowledge Service", version="0.1.0", lifespan=lifespan)
     app.state.semantic_build_jobs = {}
@@ -712,7 +710,7 @@ def _knowledge_human_query_response(
                 terminal_error_message,
                 correlation_id=correlation_id,
             )
-        interpretation_service, close_interpreter = _query_interpretation_service(request, config)
+        interpretation_service, close_interpreter = _query_interpretation_service(request, config, deps)
         try:
             retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
         finally:
@@ -734,7 +732,7 @@ def _knowledge_human_query_response(
                 terminal_error_message,
                 correlation_id=correlation_id,
             )
-        answer_service, close_formatter = _end_to_end_formatter_service(request, config)
+        answer_service, close_formatter = _end_to_end_formatter_service(request, config, deps)
         try:
             terminal_stage = "CANONICAL_NARRATION_PLANNING"
             result = answer_service.answer(
@@ -814,6 +812,18 @@ def _knowledge_human_query_response(
             terminal_error_message,
             correlation_id=correlation_id,
         )
+    except KnowledgeError as exc:
+        if exc.code != "GENERATIVE_PROVIDER_UNAVAILABLE":
+            raise
+        terminal_status = 503
+        terminal_error_code = exc.code
+        terminal_error_message = exc.message
+        return _public_error_response(
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
+        )
     except Exception as exc:
         unexpected_exception_class = type(exc).__name__
         unexpected_exception_stage = getattr(answer_service, "current_stage", None) or terminal_stage
@@ -867,7 +877,7 @@ def _knowledge_query_tool_context_response(
         return _forbidden_response_language_response()
     try:
         deadline_at = time.monotonic() + _human_query_request_deadline_seconds(config)
-        interpretation_service, close_interpreter = _query_interpretation_service(request, config)
+        interpretation_service, close_interpreter = _query_interpretation_service(request, config, deps)
         try:
             retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
         finally:
@@ -894,6 +904,14 @@ def _knowledge_query_tool_context_response(
             502,
             QUERY_INTERPRETATION_FAILED,
             "The local model could not interpret the query.",
+        )
+    except KnowledgeError as exc:
+        if exc.code != "GENERATIVE_PROVIDER_UNAVAILABLE":
+            raise
+        return _public_error_response(
+            503,
+            exc.code,
+            exc.message,
         )
     except Exception:  # noqa: BLE001 - public tool-context endpoint must return the controlled failure envelope.
         return _public_error_response(
@@ -1300,28 +1318,13 @@ async def _run_in_thread(func, *args, request_cancel_event: threading.Event | No
 def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
     if hasattr(request.app.state, "app_config") and hasattr(request.app.state, "knowledge_dependencies"):
         return request.app.state.app_config, request.app.state.knowledge_dependencies
-    if app_config is not None and store is not None:
-        analysis_store = AnalysisStore(store.db_path)
-        supervisor = analysis_supervisor or AnalysisSupervisor(store, app_config)
-        refresh = InventoryRefreshService(app_config, store)
-        scheduler = AsyncInventoryScheduler(refresh, app_config)
-        return app_config, KnowledgeDependencies(
-            inventory_store=store,
-            analysis_store=analysis_store,
-            graph_store=analysis_store,
-            source_resolver=InventoryFileResolver(store),
-            analysis_provider=None,
-            analysis_supervisor=supervisor,
-            inventory_refresh=refresh,
-            inventory_scheduler=scheduler,
-            storage_operations=StorageOperations(store.db_path),
-        )
     raise RuntimeError("Knowledge app dependencies are not initialized")
 
 
 def _query_interpretation_service(
     request: Request,
     config: AppConfig,
+    dependencies: KnowledgeDependencies,
 ) -> tuple[QueryInterpretationService, Any | None]:
     injected_provider = getattr(request.app.state, "query_interpretation_provider", None)
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
@@ -1335,8 +1338,10 @@ def _query_interpretation_service(
             provider_model=config.analysis_model,
             audit_max_records=config.query_audit_memory_max_records,
         ), None
-    provider = LocalOllamaQueryInterpretationClient(
-        config.analysis_base_url,
+    if dependencies.generative_provider is None:
+        raise KnowledgeError("GENERATIVE_PROVIDER_UNAVAILABLE", "Knowledge generative provider is not configured")
+    provider = ProviderBackedQueryInterpretationClient(
+        dependencies.generative_provider,
         config.analysis_model,
         config.analysis_ai_call_timeout_seconds,
         config.analysis_context_tokens,
@@ -1349,12 +1354,13 @@ def _query_interpretation_service(
         provider_name=config.analysis_provider,
         provider_model=config.analysis_model,
         audit_max_records=config.query_audit_memory_max_records,
-    ), provider.close
+    ), None
 
 
 def _end_to_end_formatter_service(
     request: Request,
     config: AppConfig,
+    dependencies: KnowledgeDependencies,
 ) -> tuple[EndToEndFormatterAnswerService, Any | None]:
     injected_provider = getattr(request.app.state, "end_to_end_formatter_provider", None)
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
@@ -1375,8 +1381,10 @@ def _end_to_end_formatter_service(
             provider_model=formatter_model,
             audit_max_records=config.query_audit_memory_max_records,
         ), None
-    provider = LocalOllamaEndToEndFormatterClient(
-        config.analysis_base_url,
+    if dependencies.generative_provider is None:
+        raise KnowledgeError("GENERATIVE_PROVIDER_UNAVAILABLE", "Knowledge generative provider is not configured")
+    provider = ProviderBackedEndToEndFormatterClient(
+        dependencies.generative_provider,
         formatter_model,
         config.analysis_ai_call_timeout_seconds,
         renderer=EndToEndFormatterPromptRenderer(),
@@ -1388,7 +1396,7 @@ def _end_to_end_formatter_service(
         provider_name=config.analysis_provider,
         provider_model=formatter_model,
         audit_max_records=config.query_audit_memory_max_records,
-    ), provider.close
+    ), None
 
 
 def _human_query_request_deadline_seconds(config: AppConfig) -> float:
