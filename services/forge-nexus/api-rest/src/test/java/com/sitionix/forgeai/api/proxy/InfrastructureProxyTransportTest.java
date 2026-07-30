@@ -250,6 +250,82 @@ class InfrastructureProxyTransportTest {
         assertThat(body.get("route")).isEqualTo("jarvis.query");
     }
 
+    @Test
+    void aiRuntimeRoutePassesThroughKnowledgeResponseBodyUnmodified() throws Exception {
+        final String upstreamBody = """
+                {"providers":[{"providerId":"ollama","displayName":"Ollama","status":"READY","models":[{"modelId":"qwen2.5-coder:14b","displayName":"qwen2.5-coder:14b"}],"version":"0.30.6"}]}
+                """.strip();
+        final HttpClient httpClient = mock(HttpClient.class);
+        final HttpResponse<InputStream> upstreamResponse = mock(HttpResponse.class);
+        when(upstreamResponse.statusCode()).thenReturn(200);
+        when(upstreamResponse.body()).thenReturn(new ByteArrayInputStream(upstreamBody.getBytes(UTF_8)));
+        when(upstreamResponse.headers()).thenReturn(java.net.http.HttpHeaders.of(
+                Map.of("Content-Type", List.of("application/json"), "Cache-Control", List.of("no-store")),
+                (left, right) -> true
+        ));
+        when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenReturn(CompletableFuture.completedFuture(upstreamResponse));
+        final org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.set("X-Correlation-Id", "corr-ai-runtime");
+
+        final ResponseEntity<byte[]> response = this.transport(httpClient).forward(
+                "knowledge.ai-runtime",
+                Map.of(),
+                null,
+                headers,
+                requestWithoutQuery()
+        ).get(1, TimeUnit.SECONDS);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(new String(response.getBody(), UTF_8)).isEqualTo(upstreamBody);
+        assertThat(response.getHeaders().getFirst("X-Correlation-Id")).isEqualTo("corr-ai-runtime");
+        assertThat(response.getHeaders().getFirst("Cache-Control")).isEqualTo("no-store");
+    }
+
+    @Test
+    void aiRuntimeRouteMapsKnowledgeServerErrorThroughExistingProxyConvention() throws Exception {
+        final HttpClient httpClient = mock(HttpClient.class);
+        final HttpResponse<InputStream> upstreamResponse = mock(HttpResponse.class);
+        when(upstreamResponse.statusCode()).thenReturn(500);
+        when(upstreamResponse.body()).thenReturn(new ByteArrayInputStream("{\"code\":\"FAILED\"}".getBytes(UTF_8)));
+        when(upstreamResponse.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of("Content-Type", List.of("application/json")), (left, right) -> true));
+        when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenReturn(CompletableFuture.completedFuture(upstreamResponse));
+
+        final ResponseEntity<byte[]> response = this.transport(httpClient).forward(
+                "knowledge.ai-runtime",
+                Map.of(),
+                null,
+                new org.springframework.http.HttpHeaders(),
+                requestWithoutQuery()
+        ).get(1, TimeUnit.SECONDS);
+
+        final Map<?, ?> body = new ObjectMapper().readValue(response.getBody(), Map.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
+        assertThat(body.get("code")).isEqualTo("UPSTREAM_ERROR");
+        assertThat(body.get("route")).isEqualTo("knowledge.ai-runtime");
+    }
+
+    @Test
+    void aiRuntimeRouteMapsKnowledgeTimeoutThroughExistingProxyConvention() throws Exception {
+        final HttpClient httpClient = mock(HttpClient.class);
+        when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenReturn(CompletableFuture.failedFuture(new java.net.http.HttpTimeoutException("timed out")));
+
+        final ResponseEntity<byte[]> response = this.transport(httpClient).forward(
+                "knowledge.ai-runtime",
+                Map.of(),
+                null,
+                new org.springframework.http.HttpHeaders(),
+                requestWithoutQuery()
+        ).get(1, TimeUnit.SECONDS);
+
+        final Map<?, ?> body = new ObjectMapper().readValue(response.getBody(), Map.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.GATEWAY_TIMEOUT);
+        assertThat(body.get("code")).isEqualTo("UPSTREAM_TIMEOUT");
+        assertThat(body.get("route")).isEqualTo("knowledge.ai-runtime");
+    }
+
     private InfrastructureProxyTransport transport(final HttpClient httpClient) {
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
         final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();

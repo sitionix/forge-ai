@@ -216,6 +216,13 @@ def create_app(
             "diagnostics": [diag.__dict__ for diag in result.diagnostics],
         }
 
+    @app.get("/api/v1/knowledge/ai-runtime")
+    async def ai_runtime(request: Request) -> dict[str, Any]:
+        _, deps = _state(request)
+        if deps.ai_runtime_discovery is None:
+            raise KnowledgeError("AI_RUNTIME_DISCOVERY_UNAVAILABLE", "AI runtime discovery is unavailable")
+        return await deps.ai_runtime_discovery.discover()
+
     @app.post("/api/v1/knowledge/inventory/build")
     async def inventory_build(request: Request, body: InventoryBuildRequest) -> dict[str, Any]:
         _, deps = _state(request)

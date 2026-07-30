@@ -870,6 +870,25 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/knowledge/ai-runtime": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Ai Runtime Api V1 Knowledge Ai Runtime Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
     "/api/v1/knowledge/analysis/build": {
       "post": {
         "parameters": [],
