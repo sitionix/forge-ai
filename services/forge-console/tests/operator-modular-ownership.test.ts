@@ -104,6 +104,20 @@ function statusPayload() {
   };
 }
 
+function jarvisRuntimeResponse(path: string) {
+  if (path === '/jarvis/status') {
+    return { status: 'READY' };
+  }
+  if (path === '/knowledge/active-profile') {
+    return {
+      revision: 1,
+      llmProfile: { providerId: 'ollama', modelId: 'local-model', effort: null },
+      usage: null
+    };
+  }
+  return { providers: [{ providerId: 'ollama', displayName: 'Ollama', status: 'READY', models: [{ modelId: 'local-model', displayName: 'Local Model' }] }] };
+}
+
 function graphResponses(path: string) {
   if (path.includes('/manifest')) {
     return { status: 200, ok: true, headers: new Headers(), body: { sourceId: 'svc', graphRevision: 'rev', totalNodeCount: 1, totalEdgeCount: 0 } };
@@ -176,25 +190,25 @@ describe('Operator Console modular request ownership', () => {
 
     const jarvis = jarvisHtml();
     const jarvisHttp = {
-      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { providers: [] })),
+      get: vi.fn((path: string) => Promise.resolve(jarvisRuntimeResponse(path))),
       post: vi.fn()
     };
     bootstrapOperatorConsole({ document: jarvis.window.document, window: jarvis.window, http: jarvisHttp });
     await flushAsync();
     expect((jarvis.window.__forgeMountedOperatorPage as any).constructor.name).toBe('JarvisPage');
-    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime']);
+    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime', '/knowledge/active-profile']);
   });
 
   it('UI-IT-02 sends only restored Jarvis init requests from the chat page', async () => {
     const dom = jarvisHtml();
     const http = {
-      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { providers: [] })),
+      get: vi.fn((path: string) => Promise.resolve(jarvisRuntimeResponse(path))),
       post: vi.fn()
     };
     const page = new JarvisPage({ document: dom.window.document, http });
     page.mount();
     await flushAsync();
-    expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime']);
+    expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime', '/knowledge/active-profile']);
 
     page.dispose();
     const second = new JarvisPage({ document: dom.window.document, http });
@@ -203,8 +217,10 @@ describe('Operator Console modular request ownership', () => {
     expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual([
       '/jarvis/status',
       '/knowledge/ai-runtime',
+      '/knowledge/active-profile',
       '/jarvis/status',
-      '/knowledge/ai-runtime'
+      '/knowledge/ai-runtime',
+      '/knowledge/active-profile'
     ]);
   });
 
@@ -212,7 +228,7 @@ describe('Operator Console modular request ownership', () => {
     const dom = jarvisHtml();
     const slow = deferred<unknown>();
     const http = {
-      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { providers: [] })),
+      get: vi.fn((path: string) => Promise.resolve(jarvisRuntimeResponse(path))),
       post: vi.fn(() => slow.promise)
     };
     const page = new JarvisPage({ document: dom.window.document, http });

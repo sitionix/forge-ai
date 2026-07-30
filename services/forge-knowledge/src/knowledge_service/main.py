@@ -18,8 +18,14 @@ from typing import Any, Sequence
 
 import anyio
 from fastapi import FastAPI, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
+from knowledge_service.active_profile import (
+    ActiveLlmProfilePutRequest,
+    ActiveLlmProfilePutResponse,
+    ActiveProfileResponse,
+)
 from knowledge_service.ai_runtime_discovery import AiRuntimeOptionsResponse
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_store import AnalysisStore
@@ -128,12 +134,19 @@ def create_app(
             status = 404
         elif exc.code == "AI_RUNTIME_DISCOVERY_UNAVAILABLE":
             status = 503
+        elif exc.code == "ACTIVE_PROFILE_REVISION_CONFLICT":
+            status = 409
+        elif exc.code == "ACTIVE_LLM_PROVIDER_UNAVAILABLE":
+            status = 409
         elif exc.code in {
             "GRAPH_CURSOR_SOURCE_MISMATCH",
             "GRAPH_CURSOR_RESOURCE_MISMATCH",
             "GRAPH_CURSOR_QUERY_MISMATCH",
             "GRAPH_CURSOR_INVALID",
             "GRAPH_FILTER_INVALID",
+            "ACTIVE_LLM_EFFORT_REQUIRED",
+            "ACTIVE_LLM_EFFORT_NOT_SUPPORTED",
+            "ACTIVE_LLM_PROVIDER_NOT_EXECUTABLE",
         }:
             status = 400
         elif exc.code in {
@@ -145,6 +158,13 @@ def create_app(
         }:
             status = 409
         return JSONResponse(status_code=status, content=_safe_error(request, exc.code, exc.message))
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content=_safe_error(request, "REQUEST_VALIDATION_FAILED", "Request body failed validation"),
+        )
 
     @app.exception_handler(sqlite3.OperationalError)
     async def sqlite_operational_error_handler(request: Request, exc: sqlite3.OperationalError) -> JSONResponse:
@@ -194,8 +214,7 @@ def create_app(
             },
             "freshness": freshness,
             "generative": {
-                "provider": config.analysis_provider,
-                "model": config.analysis_model,
+                **_active_generative_status(deps, config),
                 "contextTokens": config.analysis_context_tokens,
                 "humanQueryRequestTimeoutSeconds": config.human_query_request_timeout_seconds,
             },
@@ -229,6 +248,26 @@ def create_app(
         if deps.ai_runtime_discovery is None:
             raise KnowledgeError("AI_RUNTIME_DISCOVERY_UNAVAILABLE", "AI runtime discovery is unavailable")
         return AiRuntimeOptionsResponse.parse_obj(await deps.ai_runtime_discovery.discover())
+
+    @app.get(
+        "/api/v1/knowledge/active-profile",
+        response_model=ActiveProfileResponse,
+    )
+    async def active_profile(request: Request) -> ActiveProfileResponse:
+        _, deps = _state(request)
+        if deps.active_profile_service is None:
+            raise KnowledgeError("ACTIVE_PROFILE_UNAVAILABLE", "Active profile service is unavailable")
+        return await deps.active_profile_service.get_active_profile()
+
+    @app.put(
+        "/api/v1/knowledge/active-profile/llm-profile",
+        response_model=ActiveLlmProfilePutResponse,
+    )
+    async def put_active_llm_profile(request: Request, body: ActiveLlmProfilePutRequest) -> ActiveLlmProfilePutResponse:
+        _, deps = _state(request)
+        if deps.active_profile_service is None:
+            raise KnowledgeError("ACTIVE_PROFILE_UNAVAILABLE", "Active profile service is unavailable")
+        return await deps.active_profile_service.replace_llm_profile(body)
 
     @app.post("/api/v1/knowledge/inventory/build")
     async def inventory_build(request: Request, body: InventoryBuildRequest) -> dict[str, Any]:
@@ -1354,9 +1393,13 @@ def _query_interpretation_service(
         ), None
     if dependencies.generative_provider is None:
         raise KnowledgeError("GENERATIVE_PROVIDER_UNAVAILABLE", "Knowledge generative provider is not configured")
+    snapshot = dependencies.active_llm_runtime.capture() if dependencies.active_llm_runtime is not None else None
+    provider_instance = snapshot.provider if snapshot is not None else dependencies.generative_provider
+    provider_model = snapshot.model_id if snapshot is not None else config.analysis_model
+    provider_name = snapshot.provider_id if snapshot is not None else config.analysis_provider
     provider = ProviderBackedQueryInterpretationClient(
-        dependencies.generative_provider,
-        config.analysis_model,
+        provider_instance,
+        provider_model,
         config.analysis_ai_call_timeout_seconds,
         config.analysis_context_tokens,
         renderer=QueryInterpretationPromptRenderer(),
@@ -1365,8 +1408,8 @@ def _query_interpretation_service(
         provider,
         default_response_language=default_response_language,
         request_deadline_seconds=request_deadline_seconds,
-        provider_name=config.analysis_provider,
-        provider_model=config.analysis_model,
+        provider_name=provider_name,
+        provider_model=provider_model,
         audit_max_records=config.query_audit_memory_max_records,
     ), None
 
@@ -1397,9 +1440,13 @@ def _end_to_end_formatter_service(
         ), None
     if dependencies.generative_provider is None:
         raise KnowledgeError("GENERATIVE_PROVIDER_UNAVAILABLE", "Knowledge generative provider is not configured")
+    snapshot = dependencies.active_llm_runtime.capture() if dependencies.active_llm_runtime is not None else None
+    provider_instance = snapshot.provider if snapshot is not None else dependencies.generative_provider
+    provider_model = snapshot.model_id if snapshot is not None else formatter_model
+    provider_name = snapshot.provider_id if snapshot is not None else config.analysis_provider
     provider = ProviderBackedEndToEndFormatterClient(
-        dependencies.generative_provider,
-        formatter_model,
+        provider_instance,
+        provider_model,
         config.analysis_ai_call_timeout_seconds,
         renderer=EndToEndFormatterPromptRenderer(),
     )
@@ -1407,14 +1454,31 @@ def _end_to_end_formatter_service(
         provider,
         segment_planner=segment_planner,
         request_deadline_seconds=request_deadline_seconds,
-        provider_name=config.analysis_provider,
-        provider_model=formatter_model,
+        provider_name=provider_name,
+        provider_model=provider_model,
         audit_max_records=config.query_audit_memory_max_records,
     ), None
 
 
 def _human_query_request_deadline_seconds(config: AppConfig) -> float:
     return max(0.001, float(config.human_query_request_timeout_seconds))
+
+
+def _active_generative_status(dependencies: KnowledgeDependencies, config: AppConfig) -> dict[str, Any]:
+    if dependencies.active_profile_service is None:
+        return {
+            "providerId": config.analysis_provider,
+            "modelId": config.analysis_model,
+            "effort": None,
+        }
+    snapshot = dependencies.active_profile_service.active_llm_snapshot()
+    effort = {"effortId": snapshot.effort_id} if snapshot.effort_id is not None else None
+    return {
+        "revision": snapshot.revision,
+        "providerId": snapshot.provider_id,
+        "modelId": snapshot.model_id,
+        "effort": effort,
+    }
 
 
 def _current_file_progress(dependencies: KnowledgeDependencies) -> dict[str, Any]:

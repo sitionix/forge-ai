@@ -1352,6 +1352,74 @@ body.sidebar-collapsed .sidebar-link {
   line-height: 1.45;
 }
 
+.ai-runtime-usage {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 14px;
+}
+
+.ai-runtime-usage h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ai-runtime-usage-windows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.ai-runtime-usage-window {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-runtime-usage-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.ai-runtime-usage-row strong,
+.ai-runtime-usage-row span {
+  overflow-wrap: anywhere;
+}
+
+.ai-runtime-usage-row strong {
+  font-size: 13px;
+}
+
+.ai-runtime-usage-row span,
+.ai-runtime-usage-window p {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ai-runtime-usage-window p {
+  margin: 0;
+}
+
+.ai-runtime-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(27, 36, 31, 0.12);
+}
+
+.ai-runtime-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #5f704e, #f6b84b);
+}
+
 .notice-box {
   margin: 0 0 16px;
   padding: 16px 18px;

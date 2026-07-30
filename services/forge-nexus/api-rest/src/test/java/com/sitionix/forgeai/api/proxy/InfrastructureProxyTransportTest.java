@@ -283,6 +283,30 @@ class InfrastructureProxyTransportTest {
     }
 
     @Test
+    void activeProfilePutRouteUsesPutUpstreamMethod() {
+        final HttpClient httpClient = mock(HttpClient.class);
+        final CompletableFuture<HttpResponse<InputStream>> upstream = new CompletableFuture<>();
+        when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenReturn(upstream);
+        final byte[] requestBody = """
+                {"expectedRevision":1,"providerId":"codex","modelId":"gpt-5.6-sol","effort":{"effortId":"high"}}
+                """.strip().getBytes(UTF_8);
+
+        this.transport(httpClient).forward(
+                "knowledge.active-profile.llm-profile",
+                Map.of(),
+                requestBody,
+                new org.springframework.http.HttpHeaders(),
+                requestWithoutQuery()
+        );
+
+        final ArgumentCaptor<HttpRequest> upstreamRequest = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient).sendAsync(upstreamRequest.capture(), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any());
+        assertThat(upstreamRequest.getValue().method()).isEqualTo("PUT");
+        assertThat(upstreamRequest.getValue().uri().getPath()).isEqualTo("/api/v1/knowledge/active-profile/llm-profile");
+    }
+
+    @Test
     void aiRuntimeRouteMapsKnowledgeServerErrorThroughExistingProxyConvention() throws Exception {
         final HttpClient httpClient = mock(HttpClient.class);
         final HttpResponse<InputStream> upstreamResponse = mock(HttpResponse.class);

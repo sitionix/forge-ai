@@ -74,6 +74,9 @@ export function createInfrastructureHttpClient(options = {}) {
     post(path, body, options = {}) {
       return request('POST', path, { ...options, body });
     },
+    put(path, body, options = {}) {
+      return request('PUT', path, { ...options, body });
+    },
     request
   };
 }
@@ -127,4 +130,3 @@ function enrichError(error, path, response, startedAt) {
   error.durationMs = error.durationMs || Date.now() - startedAt;
   return error;
 }
-

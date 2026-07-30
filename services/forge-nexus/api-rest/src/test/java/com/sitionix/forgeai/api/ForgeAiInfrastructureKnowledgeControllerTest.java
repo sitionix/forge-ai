@@ -41,6 +41,26 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
     }
 
     @Test
+    void activeProfileDelegatesToGenericProxyRoute() {
+        this.stub();
+
+        this.controller.activeProfile(this.headers, this.request);
+
+        verify(this.transport).forward("knowledge.active-profile", Map.of(), null, this.headers, this.request);
+    }
+
+    @Test
+    void activeLlmProfilePutDelegatesRawBodyToGenericProxyRoute() {
+        this.stub();
+        final byte[] body = "{\"expectedRevision\":1,\"providerId\":\"ollama\",\"modelId\":\"qwen\",\"effort\":null}"
+                .getBytes(StandardCharsets.UTF_8);
+
+        this.controller.putActiveLlmProfile(body, this.headers, this.request);
+
+        verify(this.transport).forward("knowledge.active-profile.llm-profile", Map.of(), body, this.headers, this.request);
+    }
+
+    @Test
     void analysisBuildDelegatesRawBodyToGenericProxyRoute() {
         this.stub();
         final byte[] body = "{\"sourceIds\":[\"svc\"]}".getBytes(StandardCharsets.UTF_8);

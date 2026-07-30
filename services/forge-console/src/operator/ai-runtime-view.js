@@ -4,7 +4,7 @@ import { RequestCoordinator } from './request-coordinator.js';
 const EMPTY_DRAFT = Object.freeze({
   providerId: null,
   modelId: null,
-  settings: {}
+  effortId: null
 });
 
 export class AiRuntimeView {
@@ -15,17 +15,21 @@ export class AiRuntimeView {
     this.disposed = false;
     this.jarvisStatus = null;
     this.runtime = null;
+    this.activeProfile = null;
     this.runtimeError = null;
+    this.applyError = null;
     this.runtimeLoading = false;
+    this.applyInProgress = false;
     this.draft = this.emptyDraft();
     this.editButton = null;
     this.dialog = null;
     this.openListener = () => this.openDialog();
     this.closeListener = () => this.closeDialog();
+    this.applyListener = () => this.applyDraft();
     this.dialogCloseListener = () => this.handleDialogClosed();
     this.dialogClickListener = (event) => this.handleDialogClick(event);
     this.dialogKeydownListener = (event) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !this.applyInProgress) {
         this.closeDialog();
       }
     };
@@ -38,6 +42,7 @@ export class AiRuntimeView {
     this.editButton?.addEventListener('click', this.openListener);
     this.document.getElementById('closeAiRuntimeDialog')?.addEventListener('click', this.closeListener);
     this.document.getElementById('cancelAiRuntimeDialog')?.addEventListener('click', this.closeListener);
+    this.document.getElementById('applyAiRuntimeDialog')?.addEventListener('click', this.applyListener);
     this.dialog?.addEventListener('close', this.dialogCloseListener);
     this.dialog?.addEventListener('click', this.dialogClickListener);
     this.dialog?.addEventListener('keydown', this.dialogKeydownListener);
@@ -53,6 +58,7 @@ export class AiRuntimeView {
     this.editButton?.removeEventListener('click', this.openListener);
     this.document.getElementById('closeAiRuntimeDialog')?.removeEventListener('click', this.closeListener);
     this.document.getElementById('cancelAiRuntimeDialog')?.removeEventListener('click', this.closeListener);
+    this.document.getElementById('applyAiRuntimeDialog')?.removeEventListener('click', this.applyListener);
     this.dialog?.removeEventListener('close', this.dialogCloseListener);
     this.dialog?.removeEventListener('click', this.dialogClickListener);
     this.dialog?.removeEventListener('keydown', this.dialogKeydownListener);
@@ -70,26 +76,35 @@ export class AiRuntimeView {
     this.renderRuntimePanel();
     this.renderModal();
     try {
-      const result = await this.requestCoordinator.run('ai-runtime-options', ({ signal }) => this.http.get('/knowledge/ai-runtime', { signal }));
+      const result = await this.requestCoordinator.run('ai-runtime-state', async ({ signal }) => {
+        const [runtime, activeProfile] = await Promise.all([
+          this.http.get('/knowledge/ai-runtime', { signal }),
+          this.http.get('/knowledge/active-profile', { signal })
+        ]);
+        return { runtime, activeProfile };
+      });
       if (!result.applied || this.disposed) {
         return null;
       }
-      this.runtime = normalizeRuntime(result.value);
+      this.runtime = normalizeRuntime(result.value.runtime);
+      this.activeProfile = normalizeActiveProfile(result.value.activeProfile);
       this.runtimeError = null;
+      this.applyError = null;
+      this.resetDraftToActive();
       setError('aiRuntimeError', null, this.document);
       setError('aiRuntimeModalError', null, this.document);
-      return this.runtime;
+      return { runtime: this.runtime, activeProfile: this.activeProfile };
     } catch (error) {
       if (!this.disposed) {
         this.runtimeError = error;
         renderRequestError('aiRuntimeError', error, {
           endpoint: '/knowledge/ai-runtime',
-          title: 'AI runtime options failed',
+          title: 'AI runtime state failed',
           safe: true
         }, this.document);
         renderRequestError('aiRuntimeModalError', error, {
-          endpoint: '/knowledge/ai-runtime',
-          title: 'AI runtime options failed',
+          endpoint: '/knowledge/active-profile',
+          title: 'AI runtime state failed',
           safe: true
         }, this.document);
       }
@@ -110,12 +125,12 @@ export class AiRuntimeView {
     }
     const status = this.jarvisStatus || {};
     const jarvisBase = status.host && status.port ? `${status.host}:${status.port}` : 'local service';
-    const model = status.model?.defaultModel || '-';
     const cardHtml = [
       this.renderStatusCard('Jarvis', status.status || 'UNKNOWN', jarvisBase),
       ...this.providerCards(),
-      this.renderStatusCard('Model', model, 'configured model')
-    ];
+      this.renderActiveLlmCard(),
+      this.renderUsageSection()
+    ].filter(Boolean);
     cards.innerHTML = cardHtml.join('');
   }
 
@@ -147,6 +162,56 @@ export class AiRuntimeView {
     `;
   }
 
+  renderActiveLlmCard() {
+    const profile = this.activeProfile;
+    if (!profile?.llmProfile) {
+      return this.runtimeLoading
+        ? this.renderStatusCard('Active LLM', 'Loading', 'active profile')
+        : this.renderStatusCard('Active LLM', '-', 'active profile');
+    }
+    const provider = this.findProvider(profile.llmProfile.providerId);
+    const model = this.findModel(profile.llmProfile.providerId, profile.llmProfile.modelId);
+    const effort = profile.llmProfile.effort?.effortId;
+    const meta = [
+      provider?.displayName || profile.llmProfile.providerId,
+      model?.displayName || profile.llmProfile.modelId,
+      effort ? `effort ${effort}` : null
+    ].filter(Boolean).join(' · ');
+    return this.renderStatusCard('Active LLM', model?.displayName || profile.llmProfile.modelId, meta);
+  }
+
+  renderUsageSection() {
+    const windows = this.activeProfile?.usage?.windows;
+    if (!Array.isArray(windows) || windows.length === 0) {
+      return '';
+    }
+    return `
+      <section class="detail-card ai-runtime-usage" aria-label="LLM usage">
+        <h3>Usage</h3>
+        <div class="ai-runtime-usage-windows">
+          ${windows.map((window) => this.renderUsageWindow(window)).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  renderUsageWindow(window) {
+    const used = clampPercent(window.usedPercent);
+    const remaining = Math.max(0, 100 - used);
+    return `
+      <article class="ai-runtime-usage-window">
+        <div class="ai-runtime-usage-row">
+          <strong>${escapeHtml(durationLabel(window.windowDurationMinutes))}</strong>
+          <span>${escapeHtml(`${used}% used · ${remaining}% remaining`)}</span>
+        </div>
+        <div class="ai-runtime-progress" aria-hidden="true">
+          <span style="width: ${used}%"></span>
+        </div>
+        <p>Resets ${escapeHtml(formatResetAt(window.resetAt))}</p>
+      </article>
+    `;
+  }
+
   renderStatusCard(title, value, meta) {
     return `
       <article class="detail-card jarvis-status-card">
@@ -162,7 +227,8 @@ export class AiRuntimeView {
   }
 
   openDialog() {
-    this.draft = this.emptyDraft();
+    this.applyError = null;
+    this.resetDraftToActive();
     this.renderModal();
     if (this.dialog) {
       this.dialog.classList.add('open');
@@ -173,13 +239,13 @@ export class AiRuntimeView {
       }
       this.document.getElementById('closeAiRuntimeDialog')?.focus();
     }
-    if ((!this.runtime && !this.runtimeLoading) || this.runtimeError) {
+    if ((!this.runtime || !this.activeProfile) && !this.runtimeLoading) {
       this.loadRuntime();
     }
   }
 
   closeDialog() {
-    if (!this.dialog) {
+    if (!this.dialog || this.applyInProgress) {
       return;
     }
     if (typeof this.dialog.close === 'function') {
@@ -193,13 +259,14 @@ export class AiRuntimeView {
   handleDialogClosed() {
     this.dialog?.classList.remove('open');
     this.draft = this.emptyDraft();
+    this.applyError = null;
     this.renderModal();
     this.editButton?.focus();
   }
 
   handleDialogClick(event) {
     const option = event.target?.closest?.('[data-ai-runtime-option]');
-    if (!option || option.disabled) {
+    if (!option || option.disabled || this.applyInProgress) {
       return;
     }
     const kind = option.dataset.optionKind;
@@ -224,8 +291,9 @@ export class AiRuntimeView {
     this.draft = {
       providerId: provider.providerId,
       modelId: null,
-      settings: {}
+      effortId: null
     };
+    this.applyError = null;
     this.renderModal();
   }
 
@@ -234,11 +302,13 @@ export class AiRuntimeView {
     if (!model) {
       return;
     }
+    const efforts = model.efforts || [];
     this.draft = {
       providerId: this.draft.providerId,
       modelId: model.modelId,
-      settings: {}
+      effortId: efforts.length === 1 ? efforts[0].effortId : null
     };
+    this.applyError = null;
     this.renderModal();
   }
 
@@ -250,11 +320,78 @@ export class AiRuntimeView {
     this.draft = {
       providerId: this.draft.providerId,
       modelId: this.draft.modelId,
-      settings: {
-        reasoningEffort: effort.effortId
-      }
+      effortId: effort.effortId
     };
+    this.applyError = null;
     this.renderModal();
+  }
+
+  async applyDraft() {
+    if (!this.canApply()) {
+      return null;
+    }
+    this.applyInProgress = true;
+    this.applyError = null;
+    this.renderModal();
+    const body = {
+      expectedRevision: this.activeProfile.revision,
+      providerId: this.draft.providerId,
+      modelId: this.draft.modelId,
+      effort: this.draft.effortId ? { effortId: this.draft.effortId } : null
+    };
+    try {
+      const result = await this.http.put('/knowledge/active-profile/llm-profile', body);
+      if (this.disposed) {
+        return null;
+      }
+      this.activeProfile = {
+        revision: Number(result?.revision || this.activeProfile.revision + 1),
+        llmProfile: normalizeLlmProfile(result?.llmProfile),
+        usage: null
+      };
+      this.resetDraftToActive();
+      this.applyInProgress = false;
+      this.closeDialog();
+      await this.loadRuntime();
+      this.editButton?.focus();
+      return result;
+    } catch (error) {
+      if (!this.disposed) {
+        if (Number(error?.status) === 409 || error?.code === 'ACTIVE_PROFILE_REVISION_CONFLICT') {
+          await this.handleRevisionConflict(error);
+        } else {
+          this.applyError = error;
+          renderRequestError('aiRuntimeModalError', error, {
+            endpoint: '/knowledge/active-profile/llm-profile',
+            title: 'Active profile update failed',
+            safe: true
+          }, this.document);
+        }
+      }
+      return null;
+    } finally {
+      if (!this.disposed) {
+        this.applyInProgress = false;
+        this.renderRuntimePanel();
+        this.renderModal();
+      }
+    }
+  }
+
+  async handleRevisionConflict(error) {
+    this.applyError = Object.assign(new Error('The active profile changed. Review the latest selection.'), {
+      code: error?.code || 'ACTIVE_PROFILE_REVISION_CONFLICT',
+      status: 409
+    });
+    try {
+      const activeProfile = await this.http.get('/knowledge/active-profile');
+      if (!this.disposed) {
+        this.activeProfile = normalizeActiveProfile(activeProfile);
+        this.resetDraftToActive();
+      }
+    } catch (_) {
+      this.applyError = error;
+    }
   }
 
   renderModal() {
@@ -262,6 +399,7 @@ export class AiRuntimeView {
     this.renderProviderOptions();
     this.renderModelOptions();
     this.renderEffortOptions();
+    this.renderApplyState();
   }
 
   renderModalError() {
@@ -269,10 +407,18 @@ export class AiRuntimeView {
     if (!error) {
       return;
     }
+    if (this.applyError) {
+      renderRequestError('aiRuntimeModalError', this.applyError, {
+        endpoint: '/knowledge/active-profile/llm-profile',
+        title: this.applyError.status === 409 ? 'Active profile changed' : 'Active profile update failed',
+        safe: true
+      }, this.document);
+      return;
+    }
     if (this.runtimeError) {
       renderRequestError('aiRuntimeModalError', this.runtimeError, {
-        endpoint: '/knowledge/ai-runtime',
-        title: 'AI runtime options failed',
+        endpoint: '/knowledge/active-profile',
+        title: 'AI runtime state failed',
         safe: true
       }, this.document);
       return;
@@ -367,7 +513,7 @@ export class AiRuntimeView {
     }
     section.classList.remove('hidden');
     container.innerHTML = efforts.map((effort) => {
-      const selected = this.draft.settings.reasoningEffort === effort.effortId;
+      const selected = this.draft.effortId === effort.effortId;
       return `
         <button
           type="button"
@@ -386,6 +532,54 @@ export class AiRuntimeView {
     }).join('');
   }
 
+  renderApplyState() {
+    const button = this.document.getElementById('applyAiRuntimeDialog');
+    const note = this.document.querySelector('.ai-runtime-note');
+    if (!button) {
+      return;
+    }
+    button.disabled = !this.canApply();
+    button.textContent = this.applyInProgress ? 'Applying...' : 'Apply';
+    if (note) {
+      const revision = this.activeProfile?.revision ? `Revision ${this.activeProfile.revision}` : 'Active profile';
+      note.textContent = revision;
+    }
+  }
+
+  canApply() {
+    if (this.applyInProgress || !this.activeProfile?.llmProfile) {
+      return false;
+    }
+    if (!this.draft.providerId || !this.draft.modelId) {
+      return false;
+    }
+    const model = this.findSelectedModel(this.draft.modelId);
+    const efforts = model?.efforts || [];
+    if (efforts.length > 0 && !this.draft.effortId) {
+      return false;
+    }
+    return this.draftDiffersFromActive();
+  }
+
+  draftDiffersFromActive() {
+    const active = this.activeProfile?.llmProfile;
+    if (!active) {
+      return false;
+    }
+    return this.draft.providerId !== active.providerId
+      || this.draft.modelId !== active.modelId
+      || (this.draft.effortId || null) !== (active.effort?.effortId || null);
+  }
+
+  resetDraftToActive() {
+    const profile = this.activeProfile?.llmProfile;
+    this.draft = profile ? {
+      providerId: profile.providerId,
+      modelId: profile.modelId,
+      effortId: profile.effort?.effortId || null
+    } : this.emptyDraft();
+  }
+
   findProvider(providerId) {
     if (!providerId) {
       return null;
@@ -393,12 +587,16 @@ export class AiRuntimeView {
     return (this.runtime?.providers || []).find((provider) => provider.providerId === providerId) || null;
   }
 
-  findSelectedModel(modelId) {
-    const provider = this.findProvider(this.draft.providerId);
+  findModel(providerId, modelId) {
+    const provider = this.findProvider(providerId);
     if (!provider || !modelId) {
       return null;
     }
     return (provider.models || []).find((model) => model.modelId === modelId) || null;
+  }
+
+  findSelectedModel(modelId) {
+    return this.findModel(this.draft.providerId, modelId);
   }
 
   findSelectedEffort(effortId) {
@@ -413,7 +611,7 @@ export class AiRuntimeView {
     return {
       providerId: EMPTY_DRAFT.providerId,
       modelId: EMPTY_DRAFT.modelId,
-      settings: {}
+      effortId: EMPTY_DRAFT.effortId
     };
   }
 }
@@ -438,4 +636,71 @@ function normalizeRuntime(value) {
       })) : []
     }))
   };
+}
+
+function normalizeActiveProfile(value) {
+  return {
+    revision: Number(value?.revision || 0),
+    llmProfile: normalizeLlmProfile(value?.llmProfile),
+    usage: value?.usage === null ? null : normalizeUsage(value?.usage)
+  };
+}
+
+function normalizeLlmProfile(value) {
+  return {
+    providerId: String(value?.providerId || ''),
+    modelId: String(value?.modelId || ''),
+    effort: value?.effort ? { effortId: String(value.effort.effortId || '') } : null
+  };
+}
+
+function normalizeUsage(value) {
+  const windows = Array.isArray(value?.windows) ? value.windows : [];
+  return {
+    windows: windows.map((window) => ({
+      kind: String(window.kind || ''),
+      usedPercent: clampPercent(window.usedPercent),
+      windowDurationMinutes: Number(window.windowDurationMinutes || 0),
+      resetAt: String(window.resetAt || '')
+    }))
+  };
+}
+
+function clampPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function durationLabel(minutes) {
+  const value = Number(minutes);
+  if (value === 300) {
+    return '5-hour limit';
+  }
+  if (value === 1440) {
+    return 'Daily limit';
+  }
+  if (value === 10080) {
+    return 'Weekly limit';
+  }
+  if (Number.isFinite(value) && value > 0 && value % 60 === 0) {
+    const hours = value / 60;
+    return `${hours}-hour limit`;
+  }
+  return `${Number.isFinite(value) && value > 0 ? value : 0}-minute limit`;
+}
+
+function formatResetAt(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '-';
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date);
 }

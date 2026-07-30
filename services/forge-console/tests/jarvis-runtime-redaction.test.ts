@@ -68,7 +68,17 @@ function graphAnswer(sourceId: string, entrypoint: string, text: string) {
 }
 
 function getResponse(path: string) {
-  return Promise.resolve(path === '/jarvis/status' ? { status: 'READY', actions: { count: 0 } } : { providers: [] });
+  if (path === '/jarvis/status') {
+    return Promise.resolve({ status: 'READY', actions: { count: 0 } });
+  }
+  if (path === '/knowledge/active-profile') {
+    return Promise.resolve({
+      revision: 1,
+      llmProfile: { providerId: 'ollama', modelId: 'local-model', effort: null },
+      usage: null
+    });
+  }
+  return Promise.resolve({ providers: [] });
 }
 
 describe('Jarvis runtime rendering', () => {
@@ -96,7 +106,7 @@ describe('Jarvis runtime rendering', () => {
     expect(text).not.toContain('["bash"');
     expect(text).not.toContain('sleep 0.2');
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('explain'), expect.any(Object));
-    expect(http.get.mock.calls.map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime']);
+    expect(http.get.mock.calls.map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime', '/knowledge/active-profile']);
     page.dispose();
   });
 

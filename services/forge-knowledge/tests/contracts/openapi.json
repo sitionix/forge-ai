@@ -1,6 +1,109 @@
 {
   "components": {
     "schemas": {
+      "ActiveLlmEffortResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effortId": {
+            "title": "Effortid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "effortId"
+        ],
+        "title": "ActiveLlmEffortResponse",
+        "type": "object"
+      },
+      "ActiveLlmProfilePutRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "$ref": "#/components/schemas/ActiveLlmEffortResponse"
+          },
+          "expectedRevision": {
+            "minimum": 1.0,
+            "title": "Expectedrevision",
+            "type": "integer"
+          },
+          "modelId": {
+            "title": "Modelid",
+            "type": "string"
+          },
+          "providerId": {
+            "title": "Providerid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "providerId",
+          "modelId"
+        ],
+        "title": "ActiveLlmProfilePutRequest",
+        "type": "object"
+      },
+      "ActiveLlmProfilePutResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "llmProfile": {
+            "$ref": "#/components/schemas/ActiveLlmProfileResponse"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "llmProfile"
+        ],
+        "title": "ActiveLlmProfilePutResponse",
+        "type": "object"
+      },
+      "ActiveLlmProfileResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "$ref": "#/components/schemas/ActiveLlmEffortResponse"
+          },
+          "modelId": {
+            "title": "Modelid",
+            "type": "string"
+          },
+          "providerId": {
+            "title": "Providerid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "modelId"
+        ],
+        "title": "ActiveLlmProfileResponse",
+        "type": "object"
+      },
+      "ActiveProfileResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "llmProfile": {
+            "$ref": "#/components/schemas/ActiveLlmProfileResponse"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/LlmUsageResponse"
+          }
+        },
+        "required": [
+          "revision",
+          "llmProfile"
+        ],
+        "title": "ActiveProfileResponse",
+        "type": "object"
+      },
       "AiRuntimeEffortResponse": {
         "additionalProperties": false,
         "properties": {
@@ -862,6 +965,52 @@
         "title": "KnowledgeQueryToolContextResponse",
         "type": "object"
       },
+      "LlmUsageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/LlmUsageWindowResponse"
+            },
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "windows"
+        ],
+        "title": "LlmUsageResponse",
+        "type": "object"
+      },
+      "LlmUsageWindowResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "resetAt": {
+            "title": "Resetat",
+            "type": "string"
+          },
+          "usedPercent": {
+            "title": "Usedpercent",
+            "type": "integer"
+          },
+          "windowDurationMinutes": {
+            "title": "Windowdurationminutes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "usedPercent",
+          "windowDurationMinutes",
+          "resetAt"
+        ],
+        "title": "LlmUsageWindowResponse",
+        "type": "object"
+      },
       "RetryFailedAnalysisRequest": {
         "additionalProperties": false,
         "properties": {
@@ -985,6 +1134,61 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/knowledge/active-profile": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveProfileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/active-profile/llm-profile": {
+      "put": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActiveLlmProfilePutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveLlmProfilePutResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
     "/api/v1/knowledge/ai-runtime": {
       "get": {
         "parameters": [],
