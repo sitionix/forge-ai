@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/forge-env.sh
 source "${SCRIPT_DIR}/lib/forge-env.sh"
+# shellcheck source=lib/portable.sh
+source "${SCRIPT_DIR}/lib/portable.sh"
 
 pid_file_status() {
   local label="$1"
@@ -29,7 +31,7 @@ listener_pids() {
 file_stamp() {
   local path="$1"
   if [[ -f "${path}" ]]; then
-    stat -c '%y' "${path}" 2>/dev/null | cut -d'.' -f1
+    forge_file_stamp "${path}" 2>/dev/null || printf '%s' "unavailable"
   else
     printf '%s' "-"
   fi
@@ -38,7 +40,7 @@ file_stamp() {
 file_hash() {
   local path="$1"
   if [[ -f "${path}" ]]; then
-    sha256sum "${path}" | awk '{print $1}'
+    forge_sha256 "${path}" 2>/dev/null || printf '%s' "unavailable"
   else
     printf '%s' "-"
   fi

@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 FORGE_AI_HOME="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 source "${FORGE_AI_HOME}/scripts/lib/forge-env.sh"
+source "${FORGE_AI_HOME}/scripts/lib/process.sh"
 
 KNOWLEDGE_ROOT="${FORGE_AI_HOME}/services/forge-knowledge"
 PYTHON="${KNOWLEDGE_ROOT}/.venv/bin/python3"
@@ -56,25 +57,24 @@ if command -v lsof >/dev/null 2>&1; then
 fi
 
 echo "Starting Knowledge service on ${HOST}:${PORT}..."
-(
-  cd "${KNOWLEDGE_ROOT}"
-  setsid nohup env \
-    KNOWLEDGE_MODULE_DIR="${KNOWLEDGE_ROOT}" \
-    FORGE_AI_HOME="${FORGE_AI_HOME}" \
-    FORGE_CONFIG_DIR="${FORGE_CONFIG_DIR}" \
-    FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR="${FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR:-}" \
-    FORGE_RUNTIME_DIR="${FORGE_RUNTIME_DIR}" \
-    FORGE_WORKSPACE_ROOT="${FORGE_WORKSPACE_ROOT}" \
-    KNOWLEDGE_HOST="${HOST}" \
-    KNOWLEDGE_PORT="${PORT}" \
-    PYTHONPATH="${KNOWLEDGE_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-    "${PYTHON}" -m uvicorn knowledge_service.main:app \
-    --app-dir "${KNOWLEDGE_ROOT}/src" \
-    --host "${HOST}" \
-    --port "${PORT}" \
-    > "${STDOUT_LOG}" 2>&1 &
-  echo $! > "${PID_FILE}"
-)
+forge_start_background \
+  "${PID_FILE}" \
+  "${STDOUT_LOG}" \
+  "${KNOWLEDGE_ROOT}" \
+  env \
+  KNOWLEDGE_MODULE_DIR="${KNOWLEDGE_ROOT}" \
+  FORGE_AI_HOME="${FORGE_AI_HOME}" \
+  FORGE_CONFIG_DIR="${FORGE_CONFIG_DIR}" \
+  FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR="${FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR:-}" \
+  FORGE_RUNTIME_DIR="${FORGE_RUNTIME_DIR}" \
+  FORGE_WORKSPACE_ROOT="${FORGE_WORKSPACE_ROOT}" \
+  KNOWLEDGE_HOST="${HOST}" \
+  KNOWLEDGE_PORT="${PORT}" \
+  PYTHONPATH="${KNOWLEDGE_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+  "${PYTHON}" -m uvicorn knowledge_service.main:app \
+  --app-dir "${KNOWLEDGE_ROOT}/src" \
+  --host "${HOST}" \
+  --port "${PORT}"
 
 for _ in {1..30}; do
   if curl -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then

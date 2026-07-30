@@ -5,8 +5,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 FORGE_AI_HOME="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 source "${FORGE_AI_HOME}/scripts/lib/forge-env.sh"
 
-export OLLAMA_HOME="${OLLAMA_HOME:-${FORGE_RUNTIME_DIR}/jarvis/data/ollama}"
-
 JARVIS_ROOT="${FORGE_AI_HOME}/services/forge-jarvis"
 PYTHON="${JARVIS_ROOT}/.venv/bin/python3"
 if [[ -x "${PYTHON}" ]]; then
