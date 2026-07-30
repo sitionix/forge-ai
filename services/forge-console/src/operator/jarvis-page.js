@@ -1,4 +1,5 @@
 import { escapeHtml, pill, renderRequestError, setError, timeOnly } from './dom-render-helpers.js';
+import { AiRuntimeView } from './ai-runtime-view.js';
 import { JarvisQueryView } from './jarvis-query-view.js';
 import { RequestCoordinator } from './request-coordinator.js';
 
@@ -14,10 +15,15 @@ export class JarvisPage {
     this.runtimeConfig = { ...DEFAULT_QUERY_CONFIG, ...(options.runtimeConfig || {}) };
     this.requestCoordinator = options.requestCoordinator || new RequestCoordinator();
     this.queryView = options.queryView || new JarvisQueryView({ document: this.document });
+    this.aiRuntimeView = options.aiRuntimeView || new AiRuntimeView({
+      document: this.document,
+      http: this.http,
+      requestCoordinator: this.requestCoordinator
+    });
     this.disposed = false;
     this.refreshListener = () => {
       this.loadStatus();
-      this.loadActions();
+      this.aiRuntimeView.loadRuntime();
     };
     this.commandListener = (event) => this.submitCommand(event);
     this.queryListener = (event) => this.submitQuery(event);
@@ -29,8 +35,9 @@ export class JarvisPage {
     this.document.getElementById('refreshJarvis')?.addEventListener('click', this.refreshListener);
     this.document.getElementById('jarvisCommandForm')?.addEventListener('submit', this.commandListener);
     this.document.getElementById('jarvisQueryForm')?.addEventListener('submit', this.queryListener);
+    this.aiRuntimeView.mount();
     this.loadStatus();
-    this.loadActions();
+    this.aiRuntimeView.loadRuntime();
   }
 
   dispose() {
@@ -39,6 +46,7 @@ export class JarvisPage {
     }
     this.disposed = true;
     this.requestCoordinator.dispose();
+    this.aiRuntimeView.dispose();
     this.document.getElementById('refreshJarvis')?.removeEventListener('click', this.refreshListener);
     this.document.getElementById('jarvisCommandForm')?.removeEventListener('submit', this.commandListener);
     this.document.getElementById('jarvisQueryForm')?.removeEventListener('submit', this.queryListener);
@@ -51,7 +59,7 @@ export class JarvisPage {
         return null;
       }
       setError('jarvisStatusError', null, this.document);
-      this.renderStatus(result.value);
+      this.aiRuntimeView.setJarvisStatus(result.value);
       const updated = this.document.getElementById('jarvisUpdated');
       if (updated) {
         updated.textContent = `updated ${timeOnly()}`;
@@ -64,23 +72,6 @@ export class JarvisPage {
         if (updated) {
           updated.textContent = 'failed';
         }
-      }
-      return null;
-    }
-  }
-
-  async loadActions() {
-    try {
-      const result = await this.requestCoordinator.run('jarvis-actions', ({ signal }) => this.http.get('/jarvis/actions', { signal }));
-      if (!result.applied || this.disposed) {
-        return null;
-      }
-      setError('jarvisActionsError', null, this.document);
-      this.renderActions(result.value.actions || []);
-      return result.value;
-    } catch (error) {
-      if (!this.disposed) {
-        renderRequestError('jarvisActionsError', error, { endpoint: '/jarvis/actions', title: 'Jarvis actions failed' }, this.document);
       }
       return null;
     }
@@ -169,59 +160,6 @@ export class JarvisPage {
       title: 'Request failed',
       message: 'The request could not be completed. Please try again.'
     };
-  }
-
-  renderStatus(data) {
-    const cards = this.document.getElementById('jarvisStatusCards');
-    if (!cards) {
-      return;
-    }
-    const jarvisBase = data.host && data.port ? `${data.host}:${data.port}` : '-';
-    const model = data.model?.defaultModel || '-';
-    cards.innerHTML = [
-      this.renderStatusCard('Jarvis', data.status || 'UNKNOWN', jarvisBase),
-      this.renderStatusCard('Ollama', data.ollama?.status || 'UNKNOWN', data.ollama?.baseUrl || '-'),
-      this.renderStatusCard('Model', model, 'default model'),
-      this.renderStatusCard('Actions', String(data.actions?.count ?? '-'), 'allowlisted')
-    ].join('');
-  }
-
-  renderStatusCard(title, value, meta) {
-    return `
-      <article class="detail-card jarvis-status-card">
-        <div class="detail-card-head">
-          <div>
-            <strong>${escapeHtml(title)}</strong>
-            <p>${escapeHtml(meta || '-')}</p>
-          </div>
-          ${pill(value || 'UNKNOWN', value)}
-        </div>
-      </article>
-    `;
-  }
-
-  renderActions(actions) {
-    const list = this.document.getElementById('jarvisActions');
-    if (!list) {
-      return;
-    }
-    if (actions.length === 0) {
-      list.innerHTML = '<div class="empty-state">No allowlisted actions reported.</div>';
-      return;
-    }
-    list.innerHTML = actions.map((action) => `
-      <article class="detail-card">
-        <div class="detail-card-head">
-          <div>
-            <strong>${escapeHtml(action.action || 'action')}</strong>
-            <p>${escapeHtml(action.description || '-')}</p>
-          </div>
-        </div>
-        <div class="pill-row">
-          ${(action.targets || []).map((target) => pill(target, 'READY_TO_START')).join('')}
-        </div>
-      </article>
-    `).join('');
   }
 
   setCommandBusy(busy) {
