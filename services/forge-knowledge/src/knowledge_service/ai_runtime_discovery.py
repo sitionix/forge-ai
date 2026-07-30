@@ -49,7 +49,6 @@ class AiRuntimeProviderResponse(BaseModel):
     status: AiRuntimeProviderStatus
     models: list[AiRuntimeModelResponse]
     version: str | None = None
-    message: str | None = None
 
     class Config:
         extra = "forbid"
@@ -100,7 +99,6 @@ class AiRuntimeProviderOptions:
     status: ProviderStatus
     models: tuple[AiRuntimeModelOption, ...] = ()
     version: str | None = None
-    message: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -111,8 +109,6 @@ class AiRuntimeProviderOptions:
         }
         if self.version:
             payload["version"] = self.version
-        if self.status != READY and self.message:
-            payload["message"] = self.message
         return payload
 
 
@@ -177,14 +173,12 @@ class AiRuntimeDiscoveryService:
                 provider_id=source.provider_id,
                 display_name=source.display_name,
                 status=UNAVAILABLE,
-                message=f"{source.display_name} runtime discovery timed out",
             )
         except Exception:
             return AiRuntimeProviderOptions(
                 provider_id=source.provider_id,
                 display_name=source.display_name,
                 status=UNAVAILABLE,
-                message=f"{source.display_name} runtime is not available",
             )
 
     async def aclose(self) -> None:
@@ -220,7 +214,6 @@ class OllamaAiRuntimeOptionsSource:
                     provider_id=self.provider_id,
                     display_name=self.display_name,
                     status=UNAVAILABLE,
-                    message="Ollama runtime is not available",
                 )
             return AiRuntimeProviderOptions(
                 provider_id=self.provider_id,
@@ -235,7 +228,6 @@ class OllamaAiRuntimeOptionsSource:
                 provider_id=self.provider_id,
                 display_name=self.display_name,
                 status=UNAVAILABLE,
-                message="Ollama runtime is not available",
             )
         models = await self._read_models()
         if models is None:
@@ -244,7 +236,6 @@ class OllamaAiRuntimeOptionsSource:
                 display_name=self.display_name,
                 status=DEGRADED,
                 version=version,
-                message="Ollama model catalog could not be read",
             )
         result = AiRuntimeProviderOptions(
             provider_id=self.provider_id,
@@ -589,7 +580,6 @@ class CodexAiRuntimeOptionsSource:
                     provider_id=self.provider_id,
                     display_name=self.display_name,
                     status=UNAVAILABLE,
-                    message="Codex runtime is not available",
                 )
             return AiRuntimeProviderOptions(
                 provider_id=self.provider_id,
@@ -605,7 +595,6 @@ class CodexAiRuntimeOptionsSource:
                 provider_id=self.provider_id,
                 display_name=self.display_name,
                 status=UNAVAILABLE,
-                message="Codex runtime is not available",
             )
         try:
             models = await self._read_all_models()
@@ -615,7 +604,6 @@ class CodexAiRuntimeOptionsSource:
                 display_name=self.display_name,
                 status=DEGRADED,
                 version=version,
-                message="Codex model catalog could not be read",
             )
         result = AiRuntimeProviderOptions(
             provider_id=self.provider_id,

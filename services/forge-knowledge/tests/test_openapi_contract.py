@@ -74,7 +74,7 @@ def test_ai_runtime_openapi_schema_is_typed() -> None:
     assert provider["properties"]["status"] == {"$ref": "#/components/schemas/AiRuntimeProviderStatus"}
     assert provider["properties"]["models"]["type"] == "array"
     assert provider["properties"]["version"]["type"] == "string"
-    assert provider["properties"]["message"]["type"] == "string"
+    assert "message" not in provider["properties"]
     assert schemas["AiRuntimeProviderStatus"]["enum"] == ["READY", "DEGRADED", "UNAVAILABLE"]
 
     assert set(model["required"]) == {"modelId", "displayName"}

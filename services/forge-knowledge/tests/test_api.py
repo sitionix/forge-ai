@@ -161,6 +161,7 @@ def _assert_forbidden_ai_runtime_fields_absent(payload) -> None:
         "profiles",
         "capabilities",
         "metadata",
+        "message",
         "usage",
         "limits",
         "rateLimits",
@@ -412,7 +413,6 @@ def test_ai_runtime_endpoint_returns_200_with_both_registered_providers_unavaila
                         provider_id="ollama",
                         display_name="Ollama",
                         status=UNAVAILABLE,
-                        message="Ollama runtime is not available",
                     )
                 ),
                 StaticAiRuntimeSource(
@@ -420,7 +420,6 @@ def test_ai_runtime_endpoint_returns_200_with_both_registered_providers_unavaila
                         provider_id="codex",
                         display_name="Codex",
                         status=UNAVAILABLE,
-                        message="Codex runtime is not available",
                     )
                 ),
             ]
@@ -443,14 +442,12 @@ def test_ai_runtime_endpoint_returns_200_with_both_registered_providers_unavaila
                 "displayName": "Ollama",
                 "status": "UNAVAILABLE",
                 "models": [],
-                "message": "Ollama runtime is not available",
             },
             {
                 "providerId": "codex",
                 "displayName": "Codex",
                 "status": "UNAVAILABLE",
                 "models": [],
-                "message": "Codex runtime is not available",
             },
         ]
     }

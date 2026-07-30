@@ -131,7 +131,6 @@ def test_ollama_runtime_absent_from_first_request_returns_unavailable():
         "displayName": "Ollama",
         "status": "UNAVAILABLE",
         "models": [],
-        "message": "Ollama runtime is not available",
     }
 
 
@@ -166,7 +165,6 @@ def test_ollama_ready_then_cache_expiry_then_runtime_absent_returns_unavailable(
         "displayName": "Ollama",
         "status": "UNAVAILABLE",
         "models": [],
-        "message": "Ollama runtime is not available",
     }
     assert seen == ["/api/version", "/api/tags", "/api/version"]
 
@@ -203,7 +201,6 @@ def test_ollama_ready_then_health_success_malformed_catalog_returns_degraded():
         "status": "DEGRADED",
         "models": [],
         "version": "0.30.6",
-        "message": "Ollama model catalog could not be read",
     }
     assert seen == ["/api/version", "/api/tags", "/api/version", "/api/tags"]
 
@@ -230,21 +227,19 @@ def test_ollama_accepts_capabilities_from_details_when_explicitly_present():
 
 
 @pytest.mark.parametrize(
-    ("handler", "expected_status", "expected_message"),
+    ("handler", "expected_status"),
     [
         (
             lambda request: (_ for _ in ()).throw(httpx.ConnectError("refused", request=request)),
             UNAVAILABLE,
-            "Ollama runtime is not available",
         ),
         (
             lambda request: httpx.Response(200, text="{"),
             UNAVAILABLE,
-            "Ollama runtime is not available",
         ),
     ],
 )
-def test_ollama_runtime_unreachable_or_identity_invalid(handler, expected_status, expected_message):
+def test_ollama_runtime_unreachable_or_identity_invalid(handler, expected_status):
     source = OllamaAiRuntimeOptionsSource(
         "http://127.0.0.1:11434",
         http_client=httpx.AsyncClient(base_url="http://127.0.0.1:11434", transport=httpx.MockTransport(handler)),
@@ -257,7 +252,6 @@ def test_ollama_runtime_unreachable_or_identity_invalid(handler, expected_status
         "displayName": "Ollama",
         "status": expected_status,
         "models": [],
-        "message": expected_message,
     }
 
 
@@ -288,7 +282,6 @@ def test_ollama_catalog_failure_after_identity_success_is_degraded(tags_response
         "status": "DEGRADED",
         "models": [],
         "version": "0.30.6",
-        "message": "Ollama model catalog could not be read",
     }
 
 
@@ -360,7 +353,6 @@ def test_codex_executable_absent_returns_unavailable():
         "displayName": "Codex",
         "status": "UNAVAILABLE",
         "models": [],
-        "message": "Codex runtime is not available",
     }
 
 
@@ -394,7 +386,6 @@ def test_codex_cached_catalog_does_not_mask_current_runtime_absence():
         "displayName": "Codex",
         "status": "UNAVAILABLE",
         "models": [],
-        "message": "Codex runtime is not available",
     }
 
 
@@ -595,7 +586,6 @@ def test_codex_repeated_or_cyclic_pagination_cursor_returns_degraded(scripted):
         "status": "DEGRADED",
         "models": [],
         "version": "0.146.0",
-        "message": "Codex model catalog could not be read",
     }
 
 
@@ -622,8 +612,8 @@ def test_aggregate_returns_registered_provider_order_and_isolates_failures_and_t
     registry = AiRuntimeDiscoveryRegistry(
         [
             StaticSource("ollama", "Ollama", AiRuntimeProviderOptions("ollama", "Ollama", READY)),
-            StaticSource("codex", "Codex", AiRuntimeProviderOptions("codex", "Codex", UNAVAILABLE, message="Codex runtime is not available")),
-            StaticSource("partial", "Partial", AiRuntimeProviderOptions("partial", "Partial", DEGRADED, message="Partial catalog failed")),
+            StaticSource("codex", "Codex", AiRuntimeProviderOptions("codex", "Codex", UNAVAILABLE)),
+            StaticSource("partial", "Partial", AiRuntimeProviderOptions("partial", "Partial", DEGRADED)),
             SlowSource("slow", "Slow"),
             BrokenSource("broken", "Broken"),
         ]
@@ -634,9 +624,7 @@ def test_aggregate_returns_registered_provider_order_and_isolates_failures_and_t
 
     assert [provider["providerId"] for provider in result["providers"]] == ["ollama", "codex", "partial", "slow", "broken"]
     assert [provider["status"] for provider in result["providers"]] == [READY, UNAVAILABLE, DEGRADED, UNAVAILABLE, UNAVAILABLE]
-    assert result["providers"][2]["message"] == "Partial catalog failed"
-    assert result["providers"][3]["message"] == "Slow runtime discovery timed out"
-    assert result["providers"][4]["message"] == "Broken runtime is not available"
+    assert all("message" not in provider for provider in result["providers"])
 
 
 def test_aggregate_retains_registered_ollama_absent_and_codex_ready():
@@ -707,14 +695,12 @@ def test_aggregate_retains_both_registered_providers_when_both_absent():
             "displayName": "Ollama",
             "status": "UNAVAILABLE",
             "models": [],
-            "message": "Ollama runtime is not available",
         },
         {
             "providerId": "codex",
             "displayName": "Codex",
             "status": "UNAVAILABLE",
             "models": [],
-            "message": "Codex runtime is not available",
         },
     ]
 
@@ -869,6 +855,7 @@ def assert_forbidden_public_fields_absent(payload: Any) -> None:
         "profiles",
         "capabilities",
         "metadata",
+        "message",
         "usage",
         "limits",
         "rateLimits",

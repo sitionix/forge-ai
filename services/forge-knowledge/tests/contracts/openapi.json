@@ -78,10 +78,6 @@
             "title": "Displayname",
             "type": "string"
           },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          },
           "models": {
             "items": {
               "$ref": "#/components/schemas/AiRuntimeModelResponse"
