@@ -1193,6 +1193,20 @@ body.sidebar-collapsed .sidebar-link {
   z-index: 20;
 }
 
+.ai-runtime-dialog.open {
+  display: grid;
+  grid-template-rows: auto minmax(0, auto) auto;
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  width: min(1180px, calc(100vw - 44px));
+  height: auto;
+  max-height: min(820px, calc(100vh - 44px));
+  margin: 0;
+  transform: translate(-50%, -50%);
+}
+
 .dialog-head {
   display: flex;
   justify-content: space-between;
@@ -1232,7 +1246,8 @@ body.sidebar-collapsed .sidebar-link {
 
 .ai-runtime-modal-body {
   position: relative;
-  max-height: min(620px, calc(100vh - 210px));
+  min-height: 0;
+  max-height: min(620px, calc(100vh - 300px));
   overflow: auto;
   padding: 22px;
   background: rgba(255, 252, 235, 0.72);
@@ -1350,6 +1365,74 @@ body.sidebar-collapsed .sidebar-link {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.ai-runtime-usage {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 14px;
+}
+
+.ai-runtime-usage h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ai-runtime-usage-windows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.ai-runtime-usage-window {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-runtime-usage-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.ai-runtime-usage-row strong,
+.ai-runtime-usage-row span {
+  overflow-wrap: anywhere;
+}
+
+.ai-runtime-usage-row strong {
+  font-size: 13px;
+}
+
+.ai-runtime-usage-row span,
+.ai-runtime-usage-window p {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ai-runtime-usage-window p {
+  margin: 0;
+}
+
+.ai-runtime-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(27, 36, 31, 0.12);
+}
+
+.ai-runtime-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #5f704e, #f6b84b);
 }
 
 .notice-box {

@@ -19,5 +19,6 @@
         <module>resources</module>
         <module>github-cli</module>
         <module>local-cli</module>
+        <module>knowledge-client</module>
     </modules>
 </project>
