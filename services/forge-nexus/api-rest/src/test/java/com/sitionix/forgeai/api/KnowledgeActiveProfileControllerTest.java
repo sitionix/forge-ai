@@ -69,7 +69,7 @@ class KnowledgeActiveProfileControllerTest {
 
         // then
         assertThat(result.getBody()).isSameAs(response);
-        assertThat(result.getHeaders().getFirst(CorrelationIdProvider.HEADER_NAME)).isEqualTo("corr-local");
+        assertThat(result.getHeaders().getFirst("X-Correlation-Id")).isEqualTo("corr-local");
         verify(this.getActiveProfile).execute();
     }
 

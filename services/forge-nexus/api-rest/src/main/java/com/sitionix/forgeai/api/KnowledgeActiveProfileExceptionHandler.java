@@ -28,7 +28,7 @@ public final class KnowledgeActiveProfileExceptionHandler {
     ) {
         final String correlationId = this.correlationId(exception.correlationId());
         return ResponseEntity.status(this.httpStatus(exception.reason()))
-                .header(CorrelationIdProvider.HEADER_NAME, correlationId)
+                .header(ActiveProfileHttpHeaders.CORRELATION_ID, correlationId)
                 .body(new InfrastructureErrorResponse(
                         exception.code(),
                         exception.getMessage(),
@@ -42,7 +42,7 @@ public final class KnowledgeActiveProfileExceptionHandler {
     ) {
         final String correlationId = this.correlationIdProvider.currentOrCreate();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .header(CorrelationIdProvider.HEADER_NAME, correlationId)
+                .header(ActiveProfileHttpHeaders.CORRELATION_ID, correlationId)
                 .body(new InfrastructureErrorResponse(
                         VALIDATION_FAILED,
                         VALIDATION_MESSAGE,
@@ -56,7 +56,7 @@ public final class KnowledgeActiveProfileExceptionHandler {
     ) {
         final String correlationId = this.correlationIdProvider.currentOrCreate();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .header(CorrelationIdProvider.HEADER_NAME, correlationId)
+                .header(ActiveProfileHttpHeaders.CORRELATION_ID, correlationId)
                 .body(new InfrastructureErrorResponse(
                         VALIDATION_FAILED,
                         UNREADABLE_MESSAGE,
@@ -65,20 +65,17 @@ public final class KnowledgeActiveProfileExceptionHandler {
     }
 
     private String correlationId(final String supplied) {
-        if (CorrelationIdProvider.isValid(supplied)) {
-            return supplied;
-        }
-        return this.correlationIdProvider.currentOrCreate();
+        return this.correlationIdProvider.preserveOrCurrent(supplied);
     }
 
     private HttpStatus httpStatus(final KnowledgeActiveProfileFailureReason reason) {
         return switch (reason) {
-            case BAD_REQUEST -> HttpStatus.BAD_REQUEST;
-            case NOT_FOUND -> HttpStatus.NOT_FOUND;
-            case CONFLICT -> HttpStatus.CONFLICT;
-            case UNPROCESSABLE_ENTITY -> HttpStatus.UNPROCESSABLE_ENTITY;
-            case UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
-            case INVALID_RESPONSE, UPSTREAM_FAILURE -> HttpStatus.BAD_GATEWAY;
+            case REQUEST_REJECTED -> HttpStatus.BAD_REQUEST;
+            case RESOURCE_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case REVISION_CONFLICT -> HttpStatus.CONFLICT;
+            case SELECTION_REJECTED -> HttpStatus.UNPROCESSABLE_ENTITY;
+            case DEPENDENCY_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case INVALID_DEPENDENCY_RESPONSE, DEPENDENCY_FAILURE -> HttpStatus.BAD_GATEWAY;
         };
     }
 }

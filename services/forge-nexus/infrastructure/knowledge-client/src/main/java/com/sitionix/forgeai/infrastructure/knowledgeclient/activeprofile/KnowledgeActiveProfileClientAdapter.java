@@ -1,16 +1,16 @@
 package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 
 import com.sitionix.forgeai.domain.exception.KnowledgeActiveProfileClientException;
-import com.sitionix.forgeai.domain.exception.KnowledgeActiveProfileFailureReason;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
-import com.sitionix.forgeai.domain.port.CorrelationIdProvider;
 import com.sitionix.forgeai.domain.port.KnowledgeActiveProfileClient;
+import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileRequest;
+import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileResponse;
+import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveProfileResponse;
 import java.net.ConnectException;
 import java.net.http.HttpTimeoutException;
 import java.net.SocketTimeoutException;
-import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.stereotype.Component;
@@ -25,79 +25,142 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
     private final KnowledgeActiveProfileHttpClient httpClient;
     private final KnowledgeActiveProfileClientMapper mapper;
     private final KnowledgeActiveProfileClientProperties properties;
-    private final CorrelationIdProvider correlationIdProvider;
+    private final KnowledgeActiveProfileResponseValidator responseValidator;
+    private final KnowledgeActiveProfileClientFailures failures;
 
     @Override
     public ActiveProfile getActiveProfile() {
-        this.requireEnabled();
-        return this.handleClientCall(() -> this.mapper.toDomain(this.httpClient.getActiveProfile()));
+        final String operation = "getActiveProfile";
+        this.requireEnabled(operation);
+        final KnowledgeActiveProfileResponse response = this.executeGet(operation);
+        this.validateGetResponse(operation, response);
+        return this.mapActiveProfileResponse(operation, response);
     }
 
     @Override
     public ActiveLlmProfileUpdateResult updateActiveLlmProfile(final UpdateActiveLlmProfileCommand command) {
-        this.requireEnabled();
-        return this.handleClientCall(() -> this.mapper.toDomain(this.httpClient.updateActiveLlmProfile(this.mapper.toRequest(command))));
+        final String operation = "updateActiveLlmProfile";
+        this.requireEnabled(operation);
+        final KnowledgeActiveLlmProfileRequest request = this.mapRequest(operation, command);
+        final KnowledgeActiveLlmProfileResponse response = this.executePut(operation, request);
+        this.validatePutResponse(operation, response);
+        return this.mapUpdateResponse(operation, response);
     }
 
-    private <T> T handleClientCall(final Supplier<T> supplier) {
+    private KnowledgeActiveProfileResponse executeGet(final String operation) {
         try {
-            return supplier.get();
+            return this.httpClient.getActiveProfile();
         } catch (final KnowledgeActiveProfileClientException exception) {
             throw exception;
-        } catch (final IllegalArgumentException | HttpMessageConversionException exception) {
-            throw this.invalidResponse();
         } catch (final ResourceAccessException exception) {
-            throw this.unavailable();
+            throw this.failUnavailable(operation, exception);
+        } catch (final HttpMessageConversionException exception) {
+            throw this.failInvalidResponse(operation, exception);
         } catch (final RestClientResponseException exception) {
-            throw this.upstreamFailure();
+            throw this.failDependency(operation, exception);
         } catch (final RestClientException exception) {
-            throw this.restClientFailure(exception);
+            throw this.restClientFailure(operation, exception);
         } catch (final RuntimeException exception) {
-            throw this.upstreamFailure();
+            throw this.failDependency(operation, exception);
         }
     }
 
-    private void requireEnabled() {
+    private KnowledgeActiveLlmProfileResponse executePut(final String operation,
+                                                         final KnowledgeActiveLlmProfileRequest request) {
+        try {
+            return this.httpClient.updateActiveLlmProfile(request);
+        } catch (final KnowledgeActiveProfileClientException exception) {
+            throw exception;
+        } catch (final ResourceAccessException exception) {
+            throw this.failUnavailable(operation, exception);
+        } catch (final HttpMessageConversionException exception) {
+            throw this.failInvalidResponse(operation, exception);
+        } catch (final RestClientResponseException exception) {
+            throw this.failDependency(operation, exception);
+        } catch (final RestClientException exception) {
+            throw this.restClientFailure(operation, exception);
+        } catch (final RuntimeException exception) {
+            throw this.failDependency(operation, exception);
+        }
+    }
+
+    private KnowledgeActiveLlmProfileRequest mapRequest(final String operation,
+                                                        final UpdateActiveLlmProfileCommand command) {
+        try {
+            return this.mapper.toRequest(command);
+        } catch (final RuntimeException exception) {
+            throw this.failDependency(operation, exception);
+        }
+    }
+
+    private void validateGetResponse(final String operation, final KnowledgeActiveProfileResponse response) {
+        try {
+            this.responseValidator.validateGetResponse(response);
+        } catch (final RuntimeException exception) {
+            throw this.failInvalidResponse(operation, exception);
+        }
+    }
+
+    private void validatePutResponse(final String operation, final KnowledgeActiveLlmProfileResponse response) {
+        try {
+            this.responseValidator.validatePutResponse(response);
+        } catch (final RuntimeException exception) {
+            throw this.failInvalidResponse(operation, exception);
+        }
+    }
+
+    private ActiveProfile mapActiveProfileResponse(final String operation, final KnowledgeActiveProfileResponse response) {
+        try {
+            final ActiveProfile activeProfile = this.mapper.toDomain(response);
+            if (activeProfile == null) {
+                throw new IllegalArgumentException("mapped active profile must not be null");
+            }
+            return activeProfile;
+        } catch (final RuntimeException exception) {
+            throw this.failInvalidResponse(operation, exception);
+        }
+    }
+
+    private ActiveLlmProfileUpdateResult mapUpdateResponse(final String operation,
+                                                           final KnowledgeActiveLlmProfileResponse response) {
+        try {
+            final ActiveLlmProfileUpdateResult result = this.mapper.toDomain(response);
+            if (result == null) {
+                throw new IllegalArgumentException("mapped active profile update result must not be null");
+            }
+            return result;
+        } catch (final RuntimeException exception) {
+            throw this.failInvalidResponse(operation, exception);
+        }
+    }
+
+    private void requireEnabled(final String operation) {
         if (!this.properties.enabled()) {
-            throw this.unavailable();
+            throw this.failUnavailable(operation, null);
         }
     }
 
-    private KnowledgeActiveProfileClientException restClientFailure(final RestClientException exception) {
+    private KnowledgeActiveProfileClientException restClientFailure(final String operation,
+                                                                   final RestClientException exception) {
         if (this.causedBy(exception, HttpMessageConversionException.class)) {
-            return this.invalidResponse();
+            return this.failInvalidResponse(operation, exception);
         }
         if (this.causedBy(exception, SocketTimeoutException.class, HttpTimeoutException.class, ConnectException.class)) {
-            return this.unavailable();
+            return this.failUnavailable(operation, exception);
         }
-        return this.upstreamFailure();
+        return this.failDependency(operation, exception);
     }
 
-    private KnowledgeActiveProfileClientException unavailable() {
-        return new KnowledgeActiveProfileClientException(
-                KnowledgeActiveProfileFailureReason.UNAVAILABLE,
-                "UPSTREAM_UNAVAILABLE",
-                "Knowledge service is unavailable.",
-                this.correlationIdProvider.currentOrCreate()
-        );
+    private KnowledgeActiveProfileClientException failUnavailable(final String operation, final Throwable cause) {
+        return this.failures.dependencyUnavailable(operation, cause);
     }
 
-    private KnowledgeActiveProfileClientException invalidResponse() {
-        return new KnowledgeActiveProfileClientException(
-                KnowledgeActiveProfileFailureReason.INVALID_RESPONSE,
-                "UPSTREAM_INVALID_RESPONSE",
-                "Knowledge service returned an invalid active-profile response.",
-                this.correlationIdProvider.currentOrCreate()
-        );
+    private KnowledgeActiveProfileClientException failInvalidResponse(final String operation, final Throwable cause) {
+        return this.failures.invalidDependencyResponse(operation, cause);
     }
 
-    private KnowledgeActiveProfileClientException upstreamFailure() {
-        return new KnowledgeActiveProfileClientException(
-                KnowledgeActiveProfileFailureReason.UPSTREAM_FAILURE,
-                "UPSTREAM_ERROR",
-                "Knowledge active-profile request failed.",
-                this.correlationIdProvider.currentOrCreate()
-        );
+    private KnowledgeActiveProfileClientException failDependency(final String operation, final Throwable cause) {
+        return this.failures.dependencyFailure(operation, cause);
     }
 
     @SafeVarargs

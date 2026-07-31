@@ -2,6 +2,7 @@ package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 
 import java.net.URI;
 import java.time.Duration;
+import java.util.Locale;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "forge.ai.infrastructure.knowledge")
@@ -57,12 +58,29 @@ public class KnowledgeActiveProfileClientProperties {
     }
 
     private void validateBaseUrl() {
-        if (!"http".equals(this.baseUrl.getScheme())) {
+        if (!"http".equalsIgnoreCase(this.baseUrl.getScheme())) {
             throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url must use http");
         }
-        final String host = this.baseUrl.getHost();
-        if (!"localhost".equals(host) && !"127.0.0.1".equals(host) && !"::1".equals(host) && !"[::1]".equals(host)) {
+        if (this.baseUrl.getUserInfo() != null) {
+            throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url must not contain user info");
+        }
+        final String host = this.normalizedHost();
+        if (!"localhost".equals(host) && !"127.0.0.1".equals(host) && !"::1".equals(host)) {
             throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url must target localhost");
+        }
+        final int port = this.baseUrl.getPort();
+        if (port == 0) {
+            throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url port must be absent or between 1 and 65535");
+        }
+        final String path = this.baseUrl.getRawPath();
+        if (path != null && !path.isEmpty() && !"/".equals(path)) {
+            throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url path must be empty or /");
+        }
+        if (this.baseUrl.getRawQuery() != null) {
+            throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url must not contain a query");
+        }
+        if (this.baseUrl.getRawFragment() != null) {
+            throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url must not contain a fragment");
         }
     }
 
@@ -70,6 +88,17 @@ public class KnowledgeActiveProfileClientProperties {
         if (timeout == null || timeout.isZero() || timeout.isNegative()) {
             throw new IllegalStateException("forge.ai.infrastructure.knowledge." + propertyName + " must be positive");
         }
-        Math.toIntExact(timeout.toMillis());
+    }
+
+    private String normalizedHost() {
+        final String host = this.baseUrl.getHost();
+        if (host == null || host.isBlank()) {
+            throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url host is required");
+        }
+        final String normalized = host.toLowerCase(Locale.ROOT);
+        if ("[::1]".equals(normalized)) {
+            return "::1";
+        }
+        return normalized;
     }
 }

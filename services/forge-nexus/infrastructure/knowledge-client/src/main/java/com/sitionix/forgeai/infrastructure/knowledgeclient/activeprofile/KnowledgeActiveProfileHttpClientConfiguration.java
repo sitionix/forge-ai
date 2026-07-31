@@ -12,7 +12,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 
-@Configuration
+@Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(KnowledgeActiveProfileClientProperties.class)
 class KnowledgeActiveProfileHttpClientConfiguration {
 
@@ -22,11 +22,23 @@ class KnowledgeActiveProfileHttpClientConfiguration {
     }
 
     @Bean
-    KnowledgeActiveProfileStatusHandler knowledgeActiveProfileStatusHandler(
-            final KnowledgeActiveProfileJson json,
+    KnowledgeActiveProfileResponseValidator knowledgeActiveProfileResponseValidator() {
+        return new KnowledgeActiveProfileResponseValidator();
+    }
+
+    @Bean
+    KnowledgeActiveProfileClientFailures knowledgeActiveProfileClientFailures(
             final CorrelationIdProvider correlationIdProvider
     ) {
-        return new KnowledgeActiveProfileStatusHandler(json.objectMapper(), correlationIdProvider);
+        return new KnowledgeActiveProfileClientFailures(correlationIdProvider);
+    }
+
+    @Bean
+    KnowledgeActiveProfileStatusHandler knowledgeActiveProfileStatusHandler(
+            final KnowledgeActiveProfileJson json,
+            final KnowledgeActiveProfileClientFailures failures
+    ) {
+        return new KnowledgeActiveProfileStatusHandler(json.objectMapper(), failures);
     }
 
     @Bean
@@ -41,7 +53,7 @@ class KnowledgeActiveProfileHttpClientConfiguration {
                 .baseUrl(properties.baseUrl().toString())
                 .requestFactory(this.requestFactory(properties))
                 .requestInterceptor((request, body, execution) -> {
-                    request.getHeaders().set(CorrelationIdProvider.HEADER_NAME, correlationIdProvider.currentOrCreate());
+                    request.getHeaders().set(KnowledgeActiveProfileHttpHeaders.CORRELATION_ID, correlationIdProvider.currentOrCreate());
                     return execution.execute(request, body);
                 })
                 .messageConverters(converters -> {

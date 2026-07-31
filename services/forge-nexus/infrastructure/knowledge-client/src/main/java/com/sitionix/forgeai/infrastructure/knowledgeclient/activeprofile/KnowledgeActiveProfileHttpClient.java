@@ -9,15 +9,12 @@ import org.springframework.web.service.annotation.GetExchange;
 import org.springframework.web.service.annotation.HttpExchange;
 import org.springframework.web.service.annotation.PutExchange;
 
-@HttpExchange(
-        accept = MediaType.APPLICATION_JSON_VALUE,
-        contentType = MediaType.APPLICATION_JSON_VALUE
-)
+@HttpExchange(accept = MediaType.APPLICATION_JSON_VALUE)
 public interface KnowledgeActiveProfileHttpClient {
 
     @GetExchange("/api/v1/knowledge/active-profile")
     KnowledgeActiveProfileResponse getActiveProfile();
 
-    @PutExchange("/api/v1/knowledge/active-profile/llm-profile")
+    @PutExchange(value = "/api/v1/knowledge/active-profile/llm-profile", contentType = MediaType.APPLICATION_JSON_VALUE)
     KnowledgeActiveLlmProfileResponse updateActiveLlmProfile(@RequestBody KnowledgeActiveLlmProfileRequest request);
 }

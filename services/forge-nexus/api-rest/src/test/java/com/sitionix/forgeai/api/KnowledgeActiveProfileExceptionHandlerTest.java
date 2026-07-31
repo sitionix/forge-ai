@@ -17,14 +17,26 @@ class KnowledgeActiveProfileExceptionHandlerTest {
 
     @BeforeEach
     void setUp() {
-        this.handler = new KnowledgeActiveProfileExceptionHandler(() -> "corr-local");
+        this.handler = new KnowledgeActiveProfileExceptionHandler(new CorrelationIdProvider() {
+            @Override
+            public String currentOrCreate() {
+                return "corr-local";
+            }
+
+            @Override
+            public String preserveOrCurrent(final String supplied) {
+                return supplied == null || supplied.isBlank() || supplied.contains(" ")
+                        ? this.currentOrCreate()
+                        : supplied;
+            }
+        });
     }
 
     @Test
     void conflictPreservesControlledError() {
         // given
         final KnowledgeActiveProfileClientException exception = new KnowledgeActiveProfileClientException(
-                KnowledgeActiveProfileFailureReason.CONFLICT,
+                KnowledgeActiveProfileFailureReason.REVISION_CONFLICT,
                 "ACTIVE_PROFILE_REVISION_CONFLICT",
                 "The active profile was changed by another request",
                 "corr-upstream"
@@ -35,7 +47,7 @@ class KnowledgeActiveProfileExceptionHandlerTest {
 
         // then
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(response.getHeaders().getFirst(CorrelationIdProvider.HEADER_NAME)).isEqualTo("corr-upstream");
+        assertThat(response.getHeaders().getFirst("X-Correlation-Id")).isEqualTo("corr-upstream");
         assertThat(response.getBody()).isEqualTo(new InfrastructureErrorResponse(
                 "ACTIVE_PROFILE_REVISION_CONFLICT",
                 "The active profile was changed by another request",
@@ -47,7 +59,7 @@ class KnowledgeActiveProfileExceptionHandlerTest {
     void invalidUpstreamCorrelationFallsBackToStableLocalCorrelation() {
         // given
         final KnowledgeActiveProfileClientException exception = new KnowledgeActiveProfileClientException(
-                KnowledgeActiveProfileFailureReason.UNAVAILABLE,
+                KnowledgeActiveProfileFailureReason.DEPENDENCY_UNAVAILABLE,
                 "UPSTREAM_UNAVAILABLE",
                 "Knowledge service is unavailable.",
                 "bad header value"
@@ -58,7 +70,7 @@ class KnowledgeActiveProfileExceptionHandlerTest {
 
         // then
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
-        assertThat(response.getHeaders().getFirst(CorrelationIdProvider.HEADER_NAME)).isEqualTo("corr-local");
+        assertThat(response.getHeaders().getFirst("X-Correlation-Id")).isEqualTo("corr-local");
         assertThat(response.getBody().correlationId()).isEqualTo("corr-local");
     }
 }

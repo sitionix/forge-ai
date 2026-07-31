@@ -77,9 +77,9 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
         this.stubGetOk("response/usage-null.json");
 
         // when // then
-        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header(CorrelationIdProvider.HEADER_NAME, "corr-get-null"))
+        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header("X-Correlation-Id", "corr-get-null"))
                 .andExpect(status().isOk())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-get-null"))
+                .andExpect(header().string("X-Correlation-Id", "corr-get-null"))
                 .andExpect(content().json(fixture("response/usage-null.json"), true));
     }
 
@@ -89,7 +89,7 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
         this.stubGetOk("response/two-usage-windows.json");
 
         // when // then
-        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header(CorrelationIdProvider.HEADER_NAME, "corr-get-windows"))
+        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header("X-Correlation-Id", "corr-get-windows"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.usage.windows.length()").value(2))
                 .andExpect(jsonPath("$.usage.windows[0].kind").value("PRIMARY"))
@@ -106,11 +106,11 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
 
         // when // then
         this.mockMvc.perform(MockMvcRequestBuilders.put(NEXUS_PUT_PATH)
-                        .header(CorrelationIdProvider.HEADER_NAME, "corr-put")
+                        .header("X-Correlation-Id", "corr-put")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(fixture("request/put-valid.json")))
                 .andExpect(status().isOk())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-put"))
+                .andExpect(header().string("X-Correlation-Id", "corr-put"))
                 .andExpect(content().json(fixture("response/put-success.json"), true));
         verify(putRequestedFor(urlEqualTo(PUT_PATH))
                 .withHeader(HttpHeaders.CONTENT_TYPE, containing(MediaType.APPLICATION_JSON_VALUE))
@@ -121,11 +121,11 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
     void putRequestValidationFailureDoesNotCallUpstream() throws Exception {
         // when // then
         this.mockMvc.perform(MockMvcRequestBuilders.put(NEXUS_PUT_PATH)
-                        .header(CorrelationIdProvider.HEADER_NAME, "corr-validation")
+                        .header("X-Correlation-Id", "corr-validation")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(fixture("request/put-invalid-validation.json")))
                 .andExpect(status().isBadRequest())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-validation"))
+                .andExpect(header().string("X-Correlation-Id", "corr-validation"))
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.message").value("Active LLM profile request is invalid."));
         verify(0, putRequestedFor(urlEqualTo(PUT_PATH)));
@@ -135,11 +135,11 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
     void putUnknownJsonPropertyDoesNotCallUpstream() throws Exception {
         // when // then
         this.mockMvc.perform(MockMvcRequestBuilders.put(NEXUS_PUT_PATH)
-                        .header(CorrelationIdProvider.HEADER_NAME, "corr-unknown")
+                        .header("X-Correlation-Id", "corr-unknown")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(fixture("request/put-unknown-field.json")))
                 .andExpect(status().isBadRequest())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-unknown"))
+                .andExpect(header().string("X-Correlation-Id", "corr-unknown"))
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
         verify(0, putRequestedFor(urlEqualTo(PUT_PATH)));
     }
@@ -153,11 +153,11 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
 
         // when // then
         this.mockMvc.perform(MockMvcRequestBuilders.put(NEXUS_PUT_PATH)
-                        .header(CorrelationIdProvider.HEADER_NAME, "corr-request")
+                        .header("X-Correlation-Id", "corr-request")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(fixture("request/put-stale.json")))
                 .andExpect(status().isConflict())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-409"))
+                .andExpect(header().string("X-Correlation-Id", "corr-409"))
                 .andExpect(jsonPath("$.code").value("ACTIVE_PROFILE_REVISION_CONFLICT"))
                 .andExpect(jsonPath("$.message").value("The active profile was changed by another request"))
                 .andExpect(jsonPath("$.correlationId").value("corr-409"));
@@ -169,9 +169,9 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
         this.stubGet(503, "response/provider-unavailable.json");
 
         // when // then
-        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header(CorrelationIdProvider.HEADER_NAME, "corr-request"))
+        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header("X-Correlation-Id", "corr-request"))
                 .andExpect(status().isServiceUnavailable())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-503"))
+                .andExpect(header().string("X-Correlation-Id", "corr-503"))
                 .andExpect(jsonPath("$.code").value("ACTIVE_LLM_PROVIDER_UNAVAILABLE"))
                 .andExpect(jsonPath("$.message").value("The selected provider is unavailable"))
                 .andExpect(jsonPath("$.correlationId").value("corr-503"));
@@ -183,9 +183,9 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
         this.stubGet(200, "response/malformed-success.json");
 
         // when // then
-        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header(CorrelationIdProvider.HEADER_NAME, "corr-malformed-success"))
+        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header("X-Correlation-Id", "corr-malformed-success"))
                 .andExpect(status().isBadGateway())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-malformed-success"))
+                .andExpect(header().string("X-Correlation-Id", "corr-malformed-success"))
                 .andExpect(jsonPath("$.code").value("UPSTREAM_INVALID_RESPONSE"))
                 .andExpect(content().string(not(containsString(this.wiremockBaseUrl))));
     }
@@ -196,9 +196,9 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
         this.stubGet(200, "response/missing-required-fields.json");
 
         // when // then
-        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header(CorrelationIdProvider.HEADER_NAME, "corr-invalid-success"))
+        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header("X-Correlation-Id", "corr-invalid-success"))
                 .andExpect(status().isBadGateway())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-invalid-success"))
+                .andExpect(header().string("X-Correlation-Id", "corr-invalid-success"))
                 .andExpect(jsonPath("$.code").value("UPSTREAM_INVALID_RESPONSE"));
     }
 
@@ -208,9 +208,9 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
         this.stubGet(409, "response/malformed-error.json");
 
         // when // then
-        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header(CorrelationIdProvider.HEADER_NAME, "corr-malformed-error"))
+        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header("X-Correlation-Id", "corr-malformed-error"))
                 .andExpect(status().isBadGateway())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-malformed-error"))
+                .andExpect(header().string("X-Correlation-Id", "corr-malformed-error"))
                 .andExpect(jsonPath("$.code").value("UPSTREAM_INVALID_RESPONSE"));
     }
 
@@ -220,9 +220,9 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
         stubFor(get(urlEqualTo(GET_PATH)).willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
 
         // when // then
-        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header(CorrelationIdProvider.HEADER_NAME, "corr-connection"))
+        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header("X-Correlation-Id", "corr-connection"))
                 .andExpect(status().isServiceUnavailable())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-connection"))
+                .andExpect(header().string("X-Correlation-Id", "corr-connection"))
                 .andExpect(jsonPath("$.code").value("UPSTREAM_UNAVAILABLE"));
     }
 
@@ -237,8 +237,8 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
                 .andReturn();
 
         // then
-        final String responseCorrelation = result.getResponse().getHeader(CorrelationIdProvider.HEADER_NAME);
-        final String upstreamCorrelation = getAllServeEvents().getFirst().getRequest().getHeader(CorrelationIdProvider.HEADER_NAME);
+        final String responseCorrelation = result.getResponse().getHeader("X-Correlation-Id");
+        final String upstreamCorrelation = getAllServeEvents().getFirst().getRequest().getHeader("X-Correlation-Id");
         assertThat(responseCorrelation).isNotBlank();
         assertThat(upstreamCorrelation).isEqualTo(responseCorrelation);
     }
@@ -252,9 +252,9 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
                         .withHeader(HttpHeaders.LOCATION, "http://127.0.0.1:1/redirected")));
 
         // when // then
-        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header(CorrelationIdProvider.HEADER_NAME, "corr-redirect"))
+        this.mockMvc.perform(MockMvcRequestBuilders.get(NEXUS_GET_PATH).header("X-Correlation-Id", "corr-redirect"))
                 .andExpect(status().isBadGateway())
-                .andExpect(header().string(CorrelationIdProvider.HEADER_NAME, "corr-redirect"))
+                .andExpect(header().string("X-Correlation-Id", "corr-redirect"))
                 .andExpect(jsonPath("$.code").value("UPSTREAM_INVALID_RESPONSE"));
         verify(1, getRequestedFor(urlEqualTo(GET_PATH)));
         verify(0, postRequestedFor(urlEqualTo("/redirected")));

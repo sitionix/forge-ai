@@ -32,7 +32,7 @@ class KnowledgeActiveProfileClientMapperTest {
     void mapsNullableEffortAndUsageNull() {
         // given
         final KnowledgeActiveProfileResponse response = new KnowledgeActiveProfileResponse(
-                1,
+                1L,
                 new KnowledgeActiveLlmProfileDetails("ollama", "qwen", null),
                 null
         );
@@ -49,7 +49,7 @@ class KnowledgeActiveProfileClientMapperTest {
     void mapsPresentEffort() {
         // given
         final KnowledgeActiveLlmProfileResponse response = new KnowledgeActiveLlmProfileResponse(
-                4,
+                4L,
                 new KnowledgeActiveLlmProfileDetails("codex", "gpt-5.6-sol", new KnowledgeActiveLlmEffort("high"))
         );
 
@@ -64,7 +64,7 @@ class KnowledgeActiveProfileClientMapperTest {
     void mapsOneUsageWindow() {
         // given
         final KnowledgeActiveProfileResponse response = new KnowledgeActiveProfileResponse(
-                3,
+                3L,
                 new KnowledgeActiveLlmProfileDetails("codex", "gpt-5.6-sol", new KnowledgeActiveLlmEffort("high")),
                 new KnowledgeLlmUsage(List.of(new KnowledgeLlmUsageWindow(
                         KnowledgeLlmUsageWindowKind.PRIMARY,
@@ -86,7 +86,7 @@ class KnowledgeActiveProfileClientMapperTest {
     void mapsTwoUsageWindows() {
         // given
         final KnowledgeActiveProfileResponse response = new KnowledgeActiveProfileResponse(
-                3,
+                3L,
                 new KnowledgeActiveLlmProfileDetails("codex", "gpt-5.6-sol", new KnowledgeActiveLlmEffort("high")),
                 new KnowledgeLlmUsage(List.of(
                         new KnowledgeLlmUsageWindow(KnowledgeLlmUsageWindowKind.PRIMARY, 34, 300, Instant.parse("2026-07-31T12:00:00Z")),

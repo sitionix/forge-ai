@@ -11,6 +11,18 @@ public final class KnowledgeActiveProfileClientException extends RuntimeExceptio
                                                  final String message,
                                                  final String correlationId) {
         super(message);
+        if (reason == null) {
+            throw new IllegalArgumentException("reason must not be null");
+        }
+        if (code == null || code.isBlank()) {
+            throw new IllegalArgumentException("code must not be blank");
+        }
+        if (message == null || message.isBlank()) {
+            throw new IllegalArgumentException("message must not be blank");
+        }
+        if (correlationId == null || correlationId.isBlank()) {
+            throw new IllegalArgumentException("correlationId must not be blank");
+        }
         this.reason = reason;
         this.code = code;
         this.correlationId = correlationId;

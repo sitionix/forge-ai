@@ -27,7 +27,7 @@ public class KnowledgeActiveProfileController {
     @GetMapping("/api/v1/infrastructure/knowledge/active-profile")
     public ResponseEntity<ActiveProfileResponse> getActiveProfile() {
         return ResponseEntity.ok()
-                .header(CorrelationIdProvider.HEADER_NAME, this.correlationIdProvider.currentOrCreate())
+                .header(ActiveProfileHttpHeaders.CORRELATION_ID, this.correlationIdProvider.currentOrCreate())
                 .body(this.activeProfileApiMapper.toResponse(this.getActiveProfile.execute()));
     }
 
@@ -36,7 +36,7 @@ public class KnowledgeActiveProfileController {
             @Valid @RequestBody final ActiveLlmProfileUpdateRequest request
     ) {
         return ResponseEntity.ok()
-                .header(CorrelationIdProvider.HEADER_NAME, this.correlationIdProvider.currentOrCreate())
+                .header(ActiveProfileHttpHeaders.CORRELATION_ID, this.correlationIdProvider.currentOrCreate())
                 .body(this.activeProfileApiMapper.toResponse(
                         this.updateActiveLlmProfile.execute(this.activeProfileApiMapper.toCommand(request))
                 ));

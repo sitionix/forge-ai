@@ -48,14 +48,15 @@ class KnowledgeActiveProfileClientAdapterTest {
                 this.httpClient,
                 this.mapper,
                 this.properties,
-                this.correlationIdProvider
+                new KnowledgeActiveProfileResponseValidator(),
+                new KnowledgeActiveProfileClientFailures(this.correlationIdProvider)
         );
     }
 
     @Test
     void getDelegatesToTypedHttpClient() {
         // given
-        final KnowledgeActiveProfileResponse clientResponse = new KnowledgeActiveProfileResponse(1, null, null);
+        final KnowledgeActiveProfileResponse clientResponse = new KnowledgeActiveProfileResponse(1L, null, null);
         final ActiveProfile domain = new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null);
         when(this.httpClient.getActiveProfile()).thenReturn(clientResponse);
         when(this.mapper.toDomain(clientResponse)).thenReturn(domain);
@@ -73,7 +74,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // given
         final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null);
         final KnowledgeActiveLlmProfileRequest request = new KnowledgeActiveLlmProfileRequest(3, "ollama", "qwen", null);
-        final KnowledgeActiveLlmProfileResponse clientResponse = new KnowledgeActiveLlmProfileResponse(4, null);
+        final KnowledgeActiveLlmProfileResponse clientResponse = new KnowledgeActiveLlmProfileResponse(4L, null);
         final ActiveLlmProfileUpdateResult domain = new ActiveLlmProfileUpdateResult(4, new ActiveLlmProfile("ollama", "qwen", null));
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.updateActiveLlmProfile(request)).thenReturn(clientResponse);
@@ -92,7 +93,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // given
         final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null);
         final KnowledgeActiveLlmProfileRequest request = new KnowledgeActiveLlmProfileRequest(3, "ollama", "qwen", null);
-        final KnowledgeActiveLlmProfileResponse clientResponse = new KnowledgeActiveLlmProfileResponse(4, null);
+        final KnowledgeActiveLlmProfileResponse clientResponse = new KnowledgeActiveLlmProfileResponse(4L, null);
         final ActiveLlmProfileUpdateResult domain = new ActiveLlmProfileUpdateResult(4, new ActiveLlmProfile("ollama", "qwen", null));
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.updateActiveLlmProfile(request)).thenReturn(clientResponse);
@@ -110,7 +111,7 @@ class KnowledgeActiveProfileClientAdapterTest {
     void controlledClientExceptionIsPreserved() {
         // given
         final KnowledgeActiveProfileClientException exception = new KnowledgeActiveProfileClientException(
-                KnowledgeActiveProfileFailureReason.CONFLICT,
+                KnowledgeActiveProfileFailureReason.REVISION_CONFLICT,
                 "ACTIVE_PROFILE_REVISION_CONFLICT",
                 "The active profile was changed by another request",
                 "corr-409"
@@ -130,7 +131,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.UNAVAILABLE);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.DEPENDENCY_UNAVAILABLE);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_UNAVAILABLE");
                     assertThat(exception.correlationId()).isEqualTo("corr-local");
                 });
@@ -146,7 +147,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.UNAVAILABLE);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.DEPENDENCY_UNAVAILABLE);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_UNAVAILABLE");
                     assertThat(exception.correlationId()).isEqualTo("corr-local");
                 });
@@ -161,7 +162,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.UNAVAILABLE);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.DEPENDENCY_UNAVAILABLE);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_UNAVAILABLE");
                 });
     }
@@ -175,7 +176,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_RESPONSE);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_INVALID_RESPONSE");
                 });
     }
@@ -192,7 +193,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_RESPONSE);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_INVALID_RESPONSE");
                 });
     }
@@ -200,7 +201,7 @@ class KnowledgeActiveProfileClientAdapterTest {
     @Test
     void invalidDomainMappingMapsToInvalidResponse() {
         // given
-        final KnowledgeActiveProfileResponse clientResponse = new KnowledgeActiveProfileResponse(1, null, null);
+        final KnowledgeActiveProfileResponse clientResponse = new KnowledgeActiveProfileResponse(1L, null, null);
         when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
         when(this.httpClient.getActiveProfile()).thenReturn(clientResponse);
         when(this.mapper.toDomain(clientResponse)).thenThrow(new IllegalArgumentException("llmProfile must not be null"));
@@ -208,7 +209,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_RESPONSE);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_INVALID_RESPONSE");
                 });
     }
@@ -222,7 +223,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.UPSTREAM_FAILURE);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.DEPENDENCY_FAILURE);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_ERROR");
                     assertThat(exception.correlationId()).isEqualTo("corr-local");
                 });

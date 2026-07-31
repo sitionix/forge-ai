@@ -28,7 +28,24 @@ class KnowledgeActiveProfileStatusHandlerTest {
     void setUp() {
         final ObjectMapper objectMapper = new ObjectMapper()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
-        this.handler = new KnowledgeActiveProfileStatusHandler(objectMapper, () -> "corr-local");
+        final CorrelationIdProvider correlationIdProvider = new CorrelationIdProvider() {
+            @Override
+            public String currentOrCreate() {
+                return "corr-local";
+            }
+
+            @Override
+            public String preserveOrCurrent(final String supplied) {
+                if (supplied == null || supplied.isBlank()) {
+                    return this.currentOrCreate();
+                }
+                return supplied;
+            }
+        };
+        this.handler = new KnowledgeActiveProfileStatusHandler(
+                objectMapper,
+                new KnowledgeActiveProfileClientFailures(correlationIdProvider)
+        );
     }
 
     @Test
@@ -41,7 +58,7 @@ class KnowledgeActiveProfileStatusHandlerTest {
         // when // then
         assertThatThrownBy(() -> this.handler.handle(mock(HttpRequest.class), response))
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.CONFLICT);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.REVISION_CONFLICT);
                     assertThat(exception.code()).isEqualTo("ACTIVE_PROFILE_REVISION_CONFLICT");
                     assertThat(exception.correlationId()).isEqualTo("corr-409");
                 });
@@ -55,7 +72,7 @@ class KnowledgeActiveProfileStatusHandlerTest {
         // when // then
         assertThatThrownBy(() -> this.handler.handle(mock(HttpRequest.class), response))
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_RESPONSE);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_INVALID_RESPONSE");
                 });
     }
@@ -68,7 +85,7 @@ class KnowledgeActiveProfileStatusHandlerTest {
         // when // then
         assertThatThrownBy(() -> this.handler.handle(mock(HttpRequest.class), response))
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.UPSTREAM_FAILURE);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.DEPENDENCY_FAILURE);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_ERROR");
                 });
     }
@@ -81,7 +98,7 @@ class KnowledgeActiveProfileStatusHandlerTest {
         // when // then
         assertThatThrownBy(() -> this.handler.handle(mock(HttpRequest.class), response))
                 .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_RESPONSE);
+                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_INVALID_RESPONSE");
                 });
     }
