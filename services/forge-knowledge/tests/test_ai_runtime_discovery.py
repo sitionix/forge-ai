@@ -17,11 +17,9 @@ from knowledge_service.ai_runtime_discovery import (
     AiRuntimeModelOption,
     AiRuntimeProviderOptions,
     CodexAiRuntimeOptionsSource,
-    CodexAppServerClient,
-    CodexAppServerError,
-    CodexAppServerTimeout,
     OllamaAiRuntimeOptionsSource,
 )
+from knowledge_service.codex_app_server import CodexAppServerClient, CodexAppServerError, CodexAppServerTimeout
 
 
 def _connect_refused(request: httpx.Request) -> httpx.Response:
@@ -333,10 +331,10 @@ def test_codex_initializes_and_maps_model_list_efforts_pagination_and_hidden_fil
             },
         ],
     }
-    assert [sent["method"] for sent in process.sent] == ["initialize", "model/list", "model/list"]
+    assert [sent["method"] for sent in process.sent] == ["initialize", "initialized", "model/list", "model/list"]
     assert process.sent[0]["params"] == {"clientInfo": {"name": "forge-knowledge", "version": "0.1.0"}}
-    assert process.sent[1]["params"] == {"includeHidden": False}
-    assert process.sent[2]["params"] == {"includeHidden": False, "cursor": "2"}
+    assert process.sent[2]["params"] == {"includeHidden": False}
+    assert process.sent[3]["params"] == {"includeHidden": False, "cursor": "2"}
     assert_forbidden_public_fields_absent(result)
 
 
@@ -403,9 +401,10 @@ def test_codex_client_correlates_out_of_order_responses():
         await client.initialize()
         first = asyncio.create_task(client.request("model/list", {"includeHidden": False}))
         second = asyncio.create_task(client.request("model/list", {"includeHidden": False, "cursor": "2"}))
-        await asyncio.sleep(0)
-        first_id = process.sent[1]["id"]
-        second_id = process.sent[2]["id"]
+        while len(process.sent) < 4:
+            await asyncio.sleep(0)
+        first_id = process.sent[2]["id"]
+        second_id = process.sent[3]["id"]
         process.push_json({"id": second_id, "result": {"data": ["second"], "nextCursor": None}})
         process.push_json({"id": first_id, "result": {"data": ["first"], "nextCursor": "2"}})
         return await first, await second
@@ -503,11 +502,15 @@ def test_codex_request_cancellation_clears_pending_entry_and_shutdown_is_idempot
     async def exercise():
         await client.initialize()
         task = asyncio.create_task(client.request("model/list", {"includeHidden": False}))
-        while len(process.sent) < 2:
+        while len(process.sent) < 3:
             await asyncio.sleep(0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+        for _ in range(20):
+            if client._pending == {}:
+                break
+            await asyncio.sleep(0.01)
         assert client._pending == {}
         await client.aclose()
         await client.aclose()
@@ -605,7 +608,7 @@ def test_codex_pagination_page_limit_returns_degraded():
     result = asyncio.run(source.discover()).public_dict()
 
     assert result["status"] == DEGRADED
-    assert [sent["method"] for sent in process.sent] == ["initialize", "model/list", "model/list"]
+    assert [sent["method"] for sent in process.sent] == ["initialize", "initialized", "model/list", "model/list"]
 
 
 def test_aggregate_returns_registered_provider_order_and_isolates_failures_and_timeouts():
@@ -749,6 +752,8 @@ class FakeCodexProcess:
         for line in data.decode("utf-8").splitlines():
             request = json.loads(line)
             self.sent.append(request)
+            if "id" not in request:
+                continue
             while self._scripted:
                 action = dict(self._scripted.pop(0))
                 if action.get("defer"):
@@ -807,12 +812,17 @@ class FakeStdin:
 class FakeStream:
     def __init__(self) -> None:
         self._queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def readline(self) -> bytes:
+        self._loop = asyncio.get_running_loop()
         return await self._queue.get()
 
     def push(self, data: bytes) -> None:
-        self._queue.put_nowait(data)
+        if self._loop is not None and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
+        else:
+            self._queue.put_nowait(data)
 
 
 def response(result: Mapping[str, Any]) -> dict[str, Any]:

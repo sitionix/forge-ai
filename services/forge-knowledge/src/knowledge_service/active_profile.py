@@ -12,10 +12,10 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, Field, root_validator
 
-from knowledge_service.ai_runtime_discovery import READY, AiRuntimeDiscoveryService, CodexAppServerClient
+from knowledge_service.ai_runtime_discovery import READY, AiRuntimeDiscoveryService
+from knowledge_service.codex_app_server import CodexAppServerClient
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.generative_runtime import GenerativeProviderRegistry, GenerativeRequest
-
 
 LOGGER = logging.getLogger(__name__)
 _SINGLETON_ID = "active"
@@ -237,7 +237,7 @@ class ActiveProfileService:
         store: ActiveProfileStore,
         runtime: ActiveLlmRuntime,
         discovery: AiRuntimeDiscoveryService,
-        usage_provider: "LlmUsageProvider",
+        usage_provider: LlmUsageProvider,
     ) -> None:
         self._store = store
         self._runtime = runtime
@@ -402,11 +402,10 @@ def _request_for_snapshot(request: GenerativeRequest, snapshot: ActiveLlmSnapsho
             "activeModelId": snapshot.model_id,
         }
     )
-    if snapshot.effort_id is not None:
-        metadata["activeEffortId"] = snapshot.effort_id
     return GenerativeRequest(
         prompt=request.prompt,
         model_id=snapshot.model_id,
+        effort_id=snapshot.effort_id,
         response_mode=request.response_mode,
         timeout_seconds=request.timeout_seconds,
         context_tokens=request.context_tokens,

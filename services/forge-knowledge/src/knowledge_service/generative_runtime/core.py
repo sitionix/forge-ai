@@ -15,6 +15,7 @@ class ResponseMode(str, Enum):
 class GenerativeRequest:
     prompt: str
     model_id: str
+    effort_id: str | None = None
     response_mode: ResponseMode = ResponseMode.TEXT
     timeout_seconds: float | None = None
     context_tokens: int | None = None
@@ -24,6 +25,7 @@ class GenerativeRequest:
     def __post_init__(self) -> None:
         object.__setattr__(self, "prompt", str(self.prompt or ""))
         object.__setattr__(self, "model_id", str(self.model_id or ""))
+        object.__setattr__(self, "effort_id", str(self.effort_id).strip() if self.effort_id is not None else None)
         if not self.model_id.strip():
             raise ValueError("GenerativeRequest.model_id is required")
         if self.context_tokens is not None and int(self.context_tokens) < 1:

@@ -3,15 +3,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
-from typing import Any, Optional
+from typing import Any
 
-from knowledge_service.ai_runtime_discovery import (
-    AiRuntimeDiscoveryRegistry,
-    AiRuntimeDiscoveryService,
-    CodexAiRuntimeOptionsSource,
-    CodexAppServerClient,
-    OllamaAiRuntimeOptionsSource,
-)
 from knowledge_service.active_profile import (
     ActiveLlmRuntime,
     ActiveProfileService,
@@ -19,16 +12,22 @@ from knowledge_service.active_profile import (
     ActiveRuntimeGenerativeProvider,
     LlmUsageProvider,
 )
+from knowledge_service.ai_runtime_discovery import (
+    AiRuntimeDiscoveryRegistry,
+    AiRuntimeDiscoveryService,
+    CodexAiRuntimeOptionsSource,
+    OllamaAiRuntimeOptionsSource,
+)
 from knowledge_service.analysis_client import ProviderBackedAnalysisClient
 from knowledge_service.analysis_service import AnalysisProvider, AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.codex_app_server import CodexAppServerClient
 from knowledge_service.config import AppConfig, ForgeSettings
-from knowledge_service.generative_runtime import GenerativeProviderRegistry, OllamaGenerativeProvider
+from knowledge_service.generative_runtime import CodexGenerativeProvider, GenerativeProviderRegistry, OllamaGenerativeProvider
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
-from knowledge_service.storage_operations import StorageOperations
-from knowledge_service.storage_operations import RetentionPolicy
+from knowledge_service.storage_operations import RetentionPolicy, StorageOperations
 
 
 @dataclass(frozen=True)
@@ -37,7 +36,7 @@ class KnowledgeDependencies:
     analysis_store: AnalysisStore
     graph_store: AnalysisStore
     source_resolver: InventoryFileResolver
-    analysis_provider: Optional[AnalysisProvider]
+    analysis_provider: AnalysisProvider | None
     analysis_supervisor: AnalysisSupervisor
     inventory_refresh: InventoryRefreshService
     inventory_scheduler: AsyncInventoryScheduler
@@ -45,7 +44,7 @@ class KnowledgeDependencies:
     ai_runtime_discovery: AiRuntimeDiscoveryService | None = None
     active_profile_service: ActiveProfileService | None = None
     active_llm_runtime: ActiveLlmRuntime | None = None
-    generative_registry: Optional[GenerativeProviderRegistry] = None
+    generative_registry: GenerativeProviderRegistry | None = None
     generative_provider: Any | None = None
 
     async def aclose(self) -> None:
@@ -58,7 +57,7 @@ class KnowledgeDependencies:
 def build_dependencies(
     config: AppConfig,
     *,
-    analysis_provider: Optional[AnalysisProvider] = None,
+    analysis_provider: AnalysisProvider | None = None,
 ) -> KnowledgeDependencies:
     inventory_store = InventoryStore(config.store_path)
     analysis_store = AnalysisStore(config.store_path)
@@ -77,16 +76,17 @@ def build_dependencies(
         storage_operations.startup_maintenance()
         if config.analysis_enabled:
             analysis_store.mark_interrupted_jobs()
-    generative_registry, _startup_generative_provider = build_generative_runtime(config)
-    active_profile_store = ActiveProfileStore(config.store_path)
-    active_profile = active_profile_store.init(provider_id=config.analysis_provider, model_id=config.analysis_model)
-    active_llm_runtime = ActiveLlmRuntime(generative_registry, active_profile)
-    generative_provider = ActiveRuntimeGenerativeProvider(active_llm_runtime)
     codex_client = CodexAppServerClient(
         client_name="forge-knowledge",
         client_version="0.1.0",
         request_timeout_seconds=min(float(config.analysis_ai_call_timeout_seconds), 5.0),
+        runtime_cwd=config.runtime_dir / "knowledge" / "codex-runtime",
     )
+    generative_registry, _startup_generative_provider = build_generative_runtime(config, codex_client=codex_client)
+    active_profile_store = ActiveProfileStore(config.store_path)
+    active_profile = active_profile_store.init(provider_id=config.analysis_provider, model_id=config.analysis_model)
+    active_llm_runtime = ActiveLlmRuntime(generative_registry, active_profile)
+    generative_provider = ActiveRuntimeGenerativeProvider(active_llm_runtime)
     ai_runtime_discovery = build_ai_runtime_discovery(config, codex_client=codex_client)
     active_profile_service = ActiveProfileService(
         active_profile_store,
@@ -128,13 +128,25 @@ def build_dependencies(
     )
 
 
-def build_generative_runtime(config: AppConfig) -> tuple[GenerativeProviderRegistry, Any]:
-    provider = OllamaGenerativeProvider(
+def build_generative_runtime(config: AppConfig, *, codex_client: CodexAppServerClient | None = None) -> tuple[GenerativeProviderRegistry, Any]:
+    ollama_provider = OllamaGenerativeProvider(
         config.analysis_base_url,
         timeout_seconds=config.analysis_ai_call_timeout_seconds,
     )
+    codex_runtime = codex_client or CodexAppServerClient(
+        client_name="forge-knowledge",
+        client_version="0.1.0",
+        request_timeout_seconds=min(float(config.analysis_ai_call_timeout_seconds), 5.0),
+        runtime_cwd=config.runtime_dir / "knowledge" / "codex-runtime",
+    )
+    codex_provider = CodexGenerativeProvider(
+        codex_runtime,
+        timeout_seconds=config.analysis_ai_call_timeout_seconds,
+        runtime_cwd=config.runtime_dir / "knowledge" / "codex-runtime",
+    )
     registry = GenerativeProviderRegistry()
-    registry.register(provider)
+    registry.register(ollama_provider)
+    registry.register(codex_provider)
     return registry, registry.resolve(config.analysis_provider)
 
 
@@ -154,6 +166,7 @@ def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServe
                 client_name="forge-knowledge",
                 client_version="0.1.0",
                 request_timeout_seconds=timeout_seconds,
+                runtime_cwd=config.runtime_dir / "knowledge" / "codex-runtime",
             )
         )
     )
@@ -180,7 +193,7 @@ def configure_logging(settings: ForgeSettings) -> None:
         )
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-    setattr(logger, "_forge_configured", True)
+    logger._forge_configured = True
     logging.getLogger("knowledge_service.analysis").setLevel(settings.logging.level)
 
 

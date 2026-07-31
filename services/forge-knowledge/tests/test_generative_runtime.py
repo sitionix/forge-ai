@@ -6,7 +6,10 @@ import json
 import httpx
 import pytest
 
+from knowledge_service.bootstrap import build_generative_runtime
+from knowledge_service.config import AppConfig
 from knowledge_service.generative_runtime import (
+    CodexGenerativeProvider,
     GenerativeProviderDuplicateError,
     GenerativeProviderEmptyResponse,
     GenerativeProviderNotFoundError,
@@ -97,6 +100,23 @@ def test_registry_registers_resolves_rejects_unknown_and_duplicate():
         registry.resolve("missing")
     with pytest.raises(GenerativeProviderDuplicateError):
         registry.register(FakeProvider())
+
+
+def test_bootstrap_generative_registry_resolves_ollama_and_codex(tmp_path):
+    config = AppConfig(
+        module_dir=tmp_path,
+        host="127.0.0.1",
+        port=1,
+        local_config_path=tmp_path / "sources.yaml",
+        store_path=tmp_path / "knowledge.sqlite",
+        runtime_dir=tmp_path / "var",
+    )
+
+    registry, startup_provider = build_generative_runtime(config)
+
+    assert startup_provider.provider_id == "ollama"
+    assert registry.resolve("ollama").provider_id == "ollama"
+    assert isinstance(registry.resolve("codex"), CodexGenerativeProvider)
 
 
 def test_registry_closes_sync_and_async_resources():

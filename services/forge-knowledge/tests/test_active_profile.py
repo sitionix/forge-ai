@@ -6,17 +6,18 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from support import AsgiTestClient, build_test_app, write_runtime_config
+
 from knowledge_service.active_profile import (
+    ActiveLlmEffortResponse,
     ActiveLlmProfilePutRequest,
     ActiveLlmProfileResponse,
     ActiveLlmRuntime,
-    ActiveProfileService,
-    ActiveProfileStore,
+    ActiveRuntimeGenerativeProvider,
     LlmUsageProvider,
     PersistedActiveProfile,
 )
 from knowledge_service.generative_runtime import GenerativeProviderRegistry, GenerativeRequest, GenerativeResponse
-from support import AsgiTestClient, build_test_app, write_runtime_config
 
 
 class FakeDiscovery:
@@ -205,10 +206,6 @@ def test_put_validation_errors_leave_previous_profile_active(tmp_path: Path):
             {"expectedRevision": 1, "providerId": "ollama", "modelId": "qwen2.5-coder:14b", "effort": {"effortId": "high"}},
             "ACTIVE_LLM_EFFORT_NOT_SUPPORTED",
         ),
-        (
-            {"expectedRevision": 1, "providerId": "codex", "modelId": "gpt-5.6-luna", "effort": {"effortId": "high"}},
-            "ACTIVE_LLM_PROVIDER_NOT_EXECUTABLE",
-        ),
     ]
 
     with AsgiTestClient(app) as client:
@@ -316,3 +313,63 @@ def test_running_operation_keeps_old_snapshot_and_new_operation_gets_new_snapsho
 
     assert old_response.model_id == "old-model"
     assert new_response.model_id == "new-model"
+
+
+def test_active_runtime_rewrites_model_and_effort_without_mutating_old_snapshot(tmp_path: Path):
+    class RecordingProvider:
+        provider_id = "codex"
+        provider_version = "1"
+
+        def __init__(self) -> None:
+            self.requests: list[GenerativeRequest] = []
+
+        def generate(self, request: GenerativeRequest) -> GenerativeResponse:
+            self.requests.append(request)
+            return GenerativeResponse(
+                raw_text=request.model_id,
+                provider_id=self.provider_id,
+                provider_version=self.provider_version,
+                model_id=request.model_id,
+                duration_ms=1,
+                prompt_char_length=len(request.prompt),
+                prompt_hash="p",
+                response_char_length=len(request.model_id),
+                response_hash="r",
+            )
+
+    provider = RecordingProvider()
+    registry = GenerativeProviderRegistry()
+    registry.register(provider)
+    runtime = ActiveLlmRuntime(
+        registry,
+        PersistedActiveProfile(
+            revision=1,
+            llm_profile=ActiveLlmProfileResponse(
+                providerId="codex",
+                modelId="old-model",
+                effort=ActiveLlmEffortResponse(effortId="low"),
+            ),
+        ),
+    )
+    old_snapshot = runtime.capture()
+    active_provider = ActiveRuntimeGenerativeProvider(runtime)
+    runtime.activate(
+        PersistedActiveProfile(
+            revision=2,
+            llm_profile=ActiveLlmProfileResponse(
+                providerId="codex",
+                modelId="new-model",
+                effort=ActiveLlmEffortResponse(effortId="high"),
+            ),
+        )
+    )
+
+    old_response = old_snapshot.provider.generate(
+        GenerativeRequest(prompt="x", model_id=old_snapshot.model_id, effort_id=old_snapshot.effort_id)
+    )
+    new_response = active_provider.generate(GenerativeRequest(prompt="x", model_id="ignored", effort_id="ignored"))
+
+    assert old_response.model_id == "old-model"
+    assert new_response.model_id == "new-model"
+    assert provider.requests[0].effort_id == "low"
+    assert provider.requests[1].effort_id == "high"
