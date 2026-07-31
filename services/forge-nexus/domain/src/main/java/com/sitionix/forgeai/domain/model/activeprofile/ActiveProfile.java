@@ -5,8 +5,4 @@ public record ActiveProfile(
         ActiveLlmProfile llmProfile,
         LlmUsage usage
 ) {
-    public ActiveProfile {
-        revision = ActiveProfileInvariants.positive(revision, "revision");
-        llmProfile = ActiveProfileInvariants.required(llmProfile, "llmProfile");
-    }
 }

@@ -1,0 +1,5 @@
+{
+  "code": "UPSTREAM_INVALID_RESPONSE",
+  "message": "Knowledge service returned an invalid response.",
+  "correlationId": null
+}

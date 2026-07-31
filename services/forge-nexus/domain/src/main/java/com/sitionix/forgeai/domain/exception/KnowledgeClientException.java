@@ -1,40 +1,43 @@
 package com.sitionix.forgeai.domain.exception;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 public final class KnowledgeClientException extends RuntimeException {
 
     private final int statusCode;
-    private final String code;
-    private final String correlationId;
+    private final String responseBody;
+    private final Map<String, List<String>> responseHeaders;
 
     public KnowledgeClientException(final int statusCode,
-                                    final String code,
-                                    final String message,
-                                    final String correlationId,
+                                    final String responseBody,
+                                    final Map<String, List<String>> responseHeaders,
                                     final Throwable cause) {
-        super(message, cause);
-        if (statusCode < 100 || statusCode > 599) {
-            throw new IllegalArgumentException("statusCode must be a valid HTTP status");
-        }
-        if (code == null || code.isBlank()) {
-            throw new IllegalArgumentException("code must not be blank");
-        }
-        if (message == null || message.isBlank()) {
-            throw new IllegalArgumentException("message must not be blank");
-        }
+        super("Knowledge service returned HTTP status " + statusCode, cause);
         this.statusCode = statusCode;
-        this.code = code;
-        this.correlationId = correlationId;
+        this.responseBody = responseBody;
+        this.responseHeaders = copyHeaders(responseHeaders);
     }
 
     public int statusCode() {
         return this.statusCode;
     }
 
-    public String code() {
-        return this.code;
+    public String responseBody() {
+        return this.responseBody;
     }
 
-    public String correlationId() {
-        return this.correlationId;
+    public Map<String, List<String>> responseHeaders() {
+        return this.responseHeaders;
+    }
+
+    private static Map<String, List<String>> copyHeaders(final Map<String, List<String>> headers) {
+        if (headers == null || headers.isEmpty()) {
+            return Map.of();
+        }
+        final Map<String, List<String>> copy = new LinkedHashMap<>();
+        headers.forEach((name, values) -> copy.put(name, values == null ? List.of() : List.copyOf(values)));
+        return Map.copyOf(copy);
     }
 }
