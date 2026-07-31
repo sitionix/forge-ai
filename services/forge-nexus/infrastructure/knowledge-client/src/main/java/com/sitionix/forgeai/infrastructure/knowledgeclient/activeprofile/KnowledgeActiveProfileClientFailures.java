@@ -3,14 +3,14 @@ package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 import com.sitionix.forgeai.domain.exception.KnowledgeActiveProfileClientException;
 import com.sitionix.forgeai.domain.exception.KnowledgeActiveProfileFailureReason;
 import com.sitionix.forgeai.domain.port.CorrelationIdProvider;
-import java.lang.System.Logger;
-import java.lang.System.Logger.Level;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor
 final class KnowledgeActiveProfileClientFailures {
 
-    private static final Logger LOG = System.getLogger(KnowledgeActiveProfileClientFailures.class.getName());
+    private static final Logger log = Logger.getLogger(KnowledgeActiveProfileClientFailures.class.getName());
     private static final String UPSTREAM_UNAVAILABLE = "UPSTREAM_UNAVAILABLE";
     private static final String UPSTREAM_INVALID_RESPONSE = "UPSTREAM_INVALID_RESPONSE";
     private static final String UPSTREAM_ERROR = "UPSTREAM_ERROR";
@@ -20,9 +20,11 @@ final class KnowledgeActiveProfileClientFailures {
 
     private final CorrelationIdProvider correlationIdProvider;
 
-    KnowledgeActiveProfileClientException dependencyUnavailable(final String operation, final Throwable cause) {
+    KnowledgeActiveProfileClientException dependencyUnavailable(final KnowledgeActiveProfileOperation operation,
+                                                                final Integer upstreamStatus,
+                                                                final Throwable cause) {
         final String correlationId = this.correlationIdProvider.currentOrCreate();
-        this.warn(operation, KnowledgeActiveProfileFailureReason.DEPENDENCY_UNAVAILABLE, correlationId, cause);
+        this.warn(operation, KnowledgeActiveProfileFailureReason.DEPENDENCY_UNAVAILABLE, correlationId, upstreamStatus, cause);
         return this.failure(
                 KnowledgeActiveProfileFailureReason.DEPENDENCY_UNAVAILABLE,
                 UPSTREAM_UNAVAILABLE,
@@ -31,9 +33,11 @@ final class KnowledgeActiveProfileClientFailures {
         );
     }
 
-    KnowledgeActiveProfileClientException invalidDependencyResponse(final String operation, final Throwable cause) {
+    KnowledgeActiveProfileClientException invalidDependencyResponse(final KnowledgeActiveProfileOperation operation,
+                                                                    final Integer upstreamStatus,
+                                                                    final Throwable cause) {
         final String correlationId = this.correlationIdProvider.currentOrCreate();
-        this.warn(operation, KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE, correlationId, cause);
+        this.warn(operation, KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE, correlationId, upstreamStatus, cause);
         return this.failure(
                 KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE,
                 UPSTREAM_INVALID_RESPONSE,
@@ -42,9 +46,11 @@ final class KnowledgeActiveProfileClientFailures {
         );
     }
 
-    KnowledgeActiveProfileClientException dependencyFailure(final String operation, final Throwable cause) {
+    KnowledgeActiveProfileClientException dependencyFailure(final KnowledgeActiveProfileOperation operation,
+                                                            final Integer upstreamStatus,
+                                                            final Throwable cause) {
         final String correlationId = this.correlationIdProvider.currentOrCreate();
-        this.error(operation, KnowledgeActiveProfileFailureReason.DEPENDENCY_FAILURE, correlationId, cause);
+        this.error(operation, KnowledgeActiveProfileFailureReason.DEPENDENCY_FAILURE, correlationId, upstreamStatus, cause);
         return this.failure(
                 KnowledgeActiveProfileFailureReason.DEPENDENCY_FAILURE,
                 UPSTREAM_ERROR,
@@ -72,33 +78,44 @@ final class KnowledgeActiveProfileClientFailures {
         return new KnowledgeActiveProfileClientException(reason, code, message, correlationId);
     }
 
-    private void warn(final String operation,
+    private void warn(final KnowledgeActiveProfileOperation operation,
                       final KnowledgeActiveProfileFailureReason reason,
                       final String correlationId,
+                      final Integer upstreamStatus,
                       final Throwable cause) {
-        LOG.log(
-                Level.WARNING,
-                "Knowledge active-profile client failure operation={0} exception={1} reason={2} correlationId={3}",
-                operation,
-                this.exceptionClass(cause),
-                reason,
-                correlationId
-        );
+        log.warning(this.message(operation, reason, correlationId, upstreamStatus, cause));
     }
 
-    private void error(final String operation,
+    private void error(final KnowledgeActiveProfileOperation operation,
                        final KnowledgeActiveProfileFailureReason reason,
                        final String correlationId,
+                       final Integer upstreamStatus,
                        final Throwable cause) {
-        final String message = "Knowledge active-profile client failure operation=" + operation
-                + " exception=" + this.exceptionClass(cause)
-                + " reason=" + reason
-                + " correlationId=" + correlationId;
+        final String message = this.message(operation, reason, correlationId, upstreamStatus, cause);
         if (cause == null) {
-            LOG.log(Level.ERROR, message);
+            log.severe(message);
             return;
         }
-        LOG.log(Level.ERROR, message, cause);
+        log.log(Level.SEVERE, message, cause);
+    }
+
+    private String message(final KnowledgeActiveProfileOperation operation,
+                           final KnowledgeActiveProfileFailureReason reason,
+                           final String correlationId,
+                           final Integer upstreamStatus,
+                           final Throwable cause) {
+        return "Knowledge active-profile client failure operation=" + operation.diagnosticName()
+                + " exception=" + this.exceptionClass(cause)
+                + " reason=" + reason
+                + " correlationId=" + correlationId
+                + " upstreamStatus=" + this.upstreamStatus(upstreamStatus);
+    }
+
+    private String upstreamStatus(final Integer upstreamStatus) {
+        if (upstreamStatus == null) {
+            return "none";
+        }
+        return upstreamStatus.toString();
     }
 
     private String exceptionClass(final Throwable cause) {

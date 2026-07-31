@@ -64,13 +64,10 @@ public class KnowledgeActiveProfileClientProperties {
         if (this.baseUrl.getUserInfo() != null) {
             throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url must not contain user info");
         }
+        this.validatePort();
         final String host = this.normalizedHost();
         if (!"localhost".equals(host) && !"127.0.0.1".equals(host) && !"::1".equals(host)) {
             throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url must target localhost");
-        }
-        final int port = this.baseUrl.getPort();
-        if (port == 0) {
-            throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url port must be absent or between 1 and 65535");
         }
         final String path = this.baseUrl.getRawPath();
         if (path != null && !path.isEmpty() && !"/".equals(path)) {
@@ -82,6 +79,27 @@ public class KnowledgeActiveProfileClientProperties {
         if (this.baseUrl.getRawFragment() != null) {
             throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url must not contain a fragment");
         }
+    }
+
+    private void validatePort() {
+        final String authority = this.baseUrl.getRawAuthority();
+        if (authority == null || authority.isBlank()) {
+            throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url host is required");
+        }
+        final boolean explicitPort = this.hasExplicitPort(authority);
+        final int port = this.baseUrl.getPort();
+        if (explicitPort && (port < 1 || port > 65535)) {
+            throw new IllegalStateException("forge.ai.infrastructure.knowledge.base-url port must be absent or between 1 and 65535");
+        }
+    }
+
+    private boolean hasExplicitPort(final String authority) {
+        final String hostPort = authority.substring(authority.lastIndexOf('@') + 1);
+        if (hostPort.startsWith("[")) {
+            final int bracket = hostPort.indexOf(']');
+            return bracket >= 0 && hostPort.length() > bracket + 1 && hostPort.charAt(bracket + 1) == ':';
+        }
+        return hostPort.lastIndexOf(':') >= 0;
     }
 
     private void validateTimeout(final Duration timeout, final String propertyName) {

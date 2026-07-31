@@ -13,10 +13,13 @@ import java.net.http.HttpTimeoutException;
 import java.net.SocketTimeoutException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.converter.HttpMessageConversionException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.client.UnknownContentTypeException;
 
 @Component
 @RequiredArgsConstructor
@@ -30,7 +33,7 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
 
     @Override
     public ActiveProfile getActiveProfile() {
-        final String operation = "getActiveProfile";
+        final KnowledgeActiveProfileOperation operation = KnowledgeActiveProfileOperation.GET_ACTIVE_PROFILE;
         this.requireEnabled(operation);
         final KnowledgeActiveProfileResponse response = this.executeGet(operation);
         this.validateGetResponse(operation, response);
@@ -39,7 +42,7 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
 
     @Override
     public ActiveLlmProfileUpdateResult updateActiveLlmProfile(final UpdateActiveLlmProfileCommand command) {
-        final String operation = "updateActiveLlmProfile";
+        final KnowledgeActiveProfileOperation operation = KnowledgeActiveProfileOperation.UPDATE_ACTIVE_LLM_PROFILE;
         this.requireEnabled(operation);
         final KnowledgeActiveLlmProfileRequest request = this.mapRequest(operation, command);
         final KnowledgeActiveLlmProfileResponse response = this.executePut(operation, request);
@@ -47,17 +50,19 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
         return this.mapUpdateResponse(operation, response);
     }
 
-    private KnowledgeActiveProfileResponse executeGet(final String operation) {
+    private KnowledgeActiveProfileResponse executeGet(final KnowledgeActiveProfileOperation operation) {
         try {
             return this.httpClient.getActiveProfile();
         } catch (final KnowledgeActiveProfileClientException exception) {
             throw exception;
         } catch (final ResourceAccessException exception) {
             throw this.failUnavailable(operation, exception);
+        } catch (final UnknownContentTypeException exception) {
+            throw this.failInvalidResponse(operation, exception.getStatusCode().value(), exception);
         } catch (final HttpMessageConversionException exception) {
             throw this.failInvalidResponse(operation, exception);
         } catch (final RestClientResponseException exception) {
-            throw this.failDependency(operation, exception);
+            throw this.failDependency(operation, exception.getStatusCode().value(), exception);
         } catch (final RestClientException exception) {
             throw this.restClientFailure(operation, exception);
         } catch (final RuntimeException exception) {
@@ -65,7 +70,7 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
         }
     }
 
-    private KnowledgeActiveLlmProfileResponse executePut(final String operation,
+    private KnowledgeActiveLlmProfileResponse executePut(final KnowledgeActiveProfileOperation operation,
                                                          final KnowledgeActiveLlmProfileRequest request) {
         try {
             return this.httpClient.updateActiveLlmProfile(request);
@@ -73,10 +78,12 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
             throw exception;
         } catch (final ResourceAccessException exception) {
             throw this.failUnavailable(operation, exception);
+        } catch (final UnknownContentTypeException exception) {
+            throw this.failInvalidResponse(operation, exception.getStatusCode().value(), exception);
         } catch (final HttpMessageConversionException exception) {
-            throw this.failInvalidResponse(operation, exception);
+            throw this.messageConversionFailure(operation, exception);
         } catch (final RestClientResponseException exception) {
-            throw this.failDependency(operation, exception);
+            throw this.failDependency(operation, exception.getStatusCode().value(), exception);
         } catch (final RestClientException exception) {
             throw this.restClientFailure(operation, exception);
         } catch (final RuntimeException exception) {
@@ -84,7 +91,7 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
         }
     }
 
-    private KnowledgeActiveLlmProfileRequest mapRequest(final String operation,
+    private KnowledgeActiveLlmProfileRequest mapRequest(final KnowledgeActiveProfileOperation operation,
                                                         final UpdateActiveLlmProfileCommand command) {
         try {
             return this.mapper.toRequest(command);
@@ -93,7 +100,7 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
         }
     }
 
-    private void validateGetResponse(final String operation, final KnowledgeActiveProfileResponse response) {
+    private void validateGetResponse(final KnowledgeActiveProfileOperation operation, final KnowledgeActiveProfileResponse response) {
         try {
             this.responseValidator.validateGetResponse(response);
         } catch (final RuntimeException exception) {
@@ -101,7 +108,7 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
         }
     }
 
-    private void validatePutResponse(final String operation, final KnowledgeActiveLlmProfileResponse response) {
+    private void validatePutResponse(final KnowledgeActiveProfileOperation operation, final KnowledgeActiveLlmProfileResponse response) {
         try {
             this.responseValidator.validatePutResponse(response);
         } catch (final RuntimeException exception) {
@@ -109,7 +116,8 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
         }
     }
 
-    private ActiveProfile mapActiveProfileResponse(final String operation, final KnowledgeActiveProfileResponse response) {
+    private ActiveProfile mapActiveProfileResponse(final KnowledgeActiveProfileOperation operation,
+                                                   final KnowledgeActiveProfileResponse response) {
         try {
             final ActiveProfile activeProfile = this.mapper.toDomain(response);
             if (activeProfile == null) {
@@ -121,7 +129,7 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
         }
     }
 
-    private ActiveLlmProfileUpdateResult mapUpdateResponse(final String operation,
+    private ActiveLlmProfileUpdateResult mapUpdateResponse(final KnowledgeActiveProfileOperation operation,
                                                            final KnowledgeActiveLlmProfileResponse response) {
         try {
             final ActiveLlmProfileUpdateResult result = this.mapper.toDomain(response);
@@ -134,14 +142,23 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
         }
     }
 
-    private void requireEnabled(final String operation) {
+    private void requireEnabled(final KnowledgeActiveProfileOperation operation) {
         if (!this.properties.enabled()) {
             throw this.failUnavailable(operation, null);
         }
     }
 
-    private KnowledgeActiveProfileClientException restClientFailure(final String operation,
+    private KnowledgeActiveProfileClientException restClientFailure(final KnowledgeActiveProfileOperation operation,
                                                                    final RestClientException exception) {
+        if (this.causedBy(exception, UnknownContentTypeException.class)) {
+            return this.failInvalidResponse(operation, null, exception);
+        }
+        if (this.causedBy(exception, HttpMessageNotWritableException.class)) {
+            return this.failDependency(operation, exception);
+        }
+        if (this.causedBy(exception, HttpMessageNotReadableException.class)) {
+            return this.failInvalidResponse(operation, exception);
+        }
         if (this.causedBy(exception, HttpMessageConversionException.class)) {
             return this.failInvalidResponse(operation, exception);
         }
@@ -151,16 +168,39 @@ public class KnowledgeActiveProfileClientAdapter implements KnowledgeActiveProfi
         return this.failDependency(operation, exception);
     }
 
-    private KnowledgeActiveProfileClientException failUnavailable(final String operation, final Throwable cause) {
-        return this.failures.dependencyUnavailable(operation, cause);
+    private KnowledgeActiveProfileClientException messageConversionFailure(final KnowledgeActiveProfileOperation operation,
+                                                                          final HttpMessageConversionException exception) {
+        if (this.causedBy(exception, HttpMessageNotWritableException.class)) {
+            return this.failDependency(operation, exception);
+        }
+        return this.failInvalidResponse(operation, exception);
     }
 
-    private KnowledgeActiveProfileClientException failInvalidResponse(final String operation, final Throwable cause) {
-        return this.failures.invalidDependencyResponse(operation, cause);
+    private KnowledgeActiveProfileClientException failUnavailable(final KnowledgeActiveProfileOperation operation,
+                                                                 final Throwable cause) {
+        return this.failures.dependencyUnavailable(operation, null, cause);
     }
 
-    private KnowledgeActiveProfileClientException failDependency(final String operation, final Throwable cause) {
-        return this.failures.dependencyFailure(operation, cause);
+    private KnowledgeActiveProfileClientException failInvalidResponse(final KnowledgeActiveProfileOperation operation,
+                                                                     final Throwable cause) {
+        return this.failures.invalidDependencyResponse(operation, null, cause);
+    }
+
+    private KnowledgeActiveProfileClientException failInvalidResponse(final KnowledgeActiveProfileOperation operation,
+                                                                     final Integer upstreamStatus,
+                                                                     final Throwable cause) {
+        return this.failures.invalidDependencyResponse(operation, upstreamStatus, cause);
+    }
+
+    private KnowledgeActiveProfileClientException failDependency(final KnowledgeActiveProfileOperation operation,
+                                                                final Throwable cause) {
+        return this.failures.dependencyFailure(operation, null, cause);
+    }
+
+    private KnowledgeActiveProfileClientException failDependency(final KnowledgeActiveProfileOperation operation,
+                                                                final Integer upstreamStatus,
+                                                                final Throwable cause) {
+        return this.failures.dependencyFailure(operation, upstreamStatus, cause);
     }
 
     @SafeVarargs

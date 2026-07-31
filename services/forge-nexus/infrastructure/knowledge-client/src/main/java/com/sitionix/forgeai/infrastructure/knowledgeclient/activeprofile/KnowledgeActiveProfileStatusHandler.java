@@ -17,19 +17,21 @@ final class KnowledgeActiveProfileStatusHandler {
     private final KnowledgeActiveProfileClientFailures failures;
 
     void handle(final HttpRequest request, final ClientHttpResponse response) throws IOException {
-        final String operation = this.operation(request);
+        final KnowledgeActiveProfileOperation operation = KnowledgeActiveProfileOperation.fromHttpMethod(request.getMethod());
         final HttpStatusCode statusCode = response.getStatusCode();
-        if (statusCode.is3xxRedirection()) {
-            throw this.failures.invalidDependencyResponse(operation, null);
+        final int upstreamStatus = statusCode.value();
+        if (statusCode.is2xxSuccessful() || statusCode.is3xxRedirection()) {
+            throw this.failures.invalidDependencyResponse(operation, upstreamStatus, null);
         }
-        final KnowledgeActiveProfileFailureReason reason = this.reason(statusCode.value());
+        final KnowledgeActiveProfileFailureReason reason = this.reason(upstreamStatus);
         if (this.controlledStatus(reason)) {
-            throw this.controlledError(operation, response, reason);
+            throw this.controlledError(operation, upstreamStatus, response, reason);
         }
-        throw this.failures.dependencyFailure(operation, null);
+        throw this.failures.dependencyFailure(operation, upstreamStatus, null);
     }
 
-    private KnowledgeActiveProfileClientException controlledError(final String operation,
+    private KnowledgeActiveProfileClientException controlledError(final KnowledgeActiveProfileOperation operation,
+                                                                  final int upstreamStatus,
                                                                   final ClientHttpResponse response,
                                                                   final KnowledgeActiveProfileFailureReason reason) {
         try {
@@ -44,7 +46,7 @@ final class KnowledgeActiveProfileStatusHandler {
                     error.correlationId()
             );
         } catch (final IOException | RuntimeException exception) {
-            throw this.failures.invalidDependencyResponse(operation, exception);
+            throw this.failures.invalidDependencyResponse(operation, upstreamStatus, exception);
         }
     }
 
@@ -61,16 +63,5 @@ final class KnowledgeActiveProfileStatusHandler {
 
     private boolean controlledStatus(final KnowledgeActiveProfileFailureReason reason) {
         return reason != KnowledgeActiveProfileFailureReason.DEPENDENCY_FAILURE;
-    }
-
-    private String operation(final HttpRequest request) {
-        final String path = request.getURI().getPath();
-        return switch (request.getMethod().name()) {
-            case "GET" -> "/api/v1/knowledge/active-profile".equals(path) ? "getActiveProfile" : "activeProfileRequest";
-            case "PUT" -> "/api/v1/knowledge/active-profile/llm-profile".equals(path)
-                    ? "updateActiveLlmProfile"
-                    : "activeProfileRequest";
-            default -> "activeProfileRequest";
-        };
     }
 }

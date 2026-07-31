@@ -61,7 +61,7 @@ class KnowledgeActiveProfileHttpClientConfiguration {
                     converters.add(new MappingJackson2HttpMessageConverter(json.objectMapper()));
                 })
                 .defaultStatusHandler(
-                        status -> status.is3xxRedirection() || status.isError(),
+                        status -> status.value() != 200,
                         statusHandler::handle
                 )
                 .build();
