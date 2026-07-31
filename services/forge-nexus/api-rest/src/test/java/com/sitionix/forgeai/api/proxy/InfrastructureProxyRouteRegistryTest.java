@@ -23,10 +23,6 @@ class InfrastructureProxyRouteRegistryTest {
                 .isEqualTo(Duration.ofSeconds(180));
         assertThat(registry.require("knowledge.ai-runtime").upstreamPath().apply(java.util.Map.of()))
                 .isEqualTo("/api/v1/knowledge/ai-runtime");
-        assertThat(registry.require("knowledge.active-profile").upstreamPath().apply(java.util.Map.of()))
-                .isEqualTo("/api/v1/knowledge/active-profile");
-        assertThat(registry.require("knowledge.active-profile.llm-profile").upstreamPath().apply(java.util.Map.of()))
-                .isEqualTo("/api/v1/knowledge/active-profile/llm-profile");
         assertThat(registry.require("knowledge.status").readTimeout()).isNull();
         assertThat(registry.require("jarvis.status").readTimeout()).isNull();
     }

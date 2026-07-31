@@ -10,7 +10,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
@@ -37,19 +36,6 @@ public class ForgeAiInfrastructureKnowledgeController {
     public CompletableFuture<ResponseEntity<byte[]>> aiRuntime(@RequestHeader final HttpHeaders headers,
                                                                final HttpServletRequest request) {
         return this.proxy("knowledge.ai-runtime", Map.of(), null, headers, request);
-    }
-
-    @GetMapping("/api/v1/infrastructure/knowledge/active-profile")
-    public CompletableFuture<ResponseEntity<byte[]>> activeProfile(@RequestHeader final HttpHeaders headers,
-                                                                   final HttpServletRequest request) {
-        return this.proxy("knowledge.active-profile", Map.of(), null, headers, request);
-    }
-
-    @PutMapping("/api/v1/infrastructure/knowledge/active-profile/llm-profile")
-    public CompletableFuture<ResponseEntity<byte[]>> putActiveLlmProfile(@RequestBody(required = false) final byte[] body,
-                                                                         @RequestHeader final HttpHeaders headers,
-                                                                         final HttpServletRequest request) {
-        return this.proxy("knowledge.active-profile.llm-profile", Map.of(), body, headers, request);
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/overview")

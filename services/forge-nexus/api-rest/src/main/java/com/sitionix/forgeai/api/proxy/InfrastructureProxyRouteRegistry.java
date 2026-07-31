@@ -22,9 +22,6 @@ public class InfrastructureProxyRouteRegistry {
         this.knowledge(registered, "knowledge.status", HttpMethod.GET, "/api/v1/knowledge/status", false);
         this.knowledge(registered, "knowledge.sources", HttpMethod.GET, "/api/v1/knowledge/sources", false);
         this.knowledge(registered, "knowledge.ai-runtime", HttpMethod.GET, "/api/v1/knowledge/ai-runtime", false);
-        this.knowledge(registered, "knowledge.active-profile", HttpMethod.GET, "/api/v1/knowledge/active-profile", false);
-        this.knowledge(registered, "knowledge.active-profile.llm-profile", HttpMethod.PUT,
-                "/api/v1/knowledge/active-profile/llm-profile", true);
         this.knowledge(registered, "knowledge.overview", HttpMethod.GET, "/api/v1/knowledge/overview", false);
         this.knowledge(registered, "knowledge.inventory.build", HttpMethod.POST, "/api/v1/knowledge/inventory/build", true);
         this.knowledge(registered, "knowledge.inventory.status", HttpMethod.GET, "/api/v1/knowledge/inventory/status", false);

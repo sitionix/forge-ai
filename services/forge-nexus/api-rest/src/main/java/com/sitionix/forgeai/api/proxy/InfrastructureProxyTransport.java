@@ -157,9 +157,6 @@ public class InfrastructureProxyTransport {
         if (route.method() == HttpMethod.POST) {
             builder.header("Content-Type", APPLICATION_JSON)
                     .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody == null ? new byte[0] : requestBody));
-        } else if (route.method() == HttpMethod.PUT) {
-            builder.header("Content-Type", APPLICATION_JSON)
-                    .PUT(HttpRequest.BodyPublishers.ofByteArray(requestBody == null ? new byte[0] : requestBody));
         } else {
             builder.GET();
         }

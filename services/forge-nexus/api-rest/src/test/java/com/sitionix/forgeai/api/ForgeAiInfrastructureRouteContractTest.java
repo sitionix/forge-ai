@@ -5,6 +5,9 @@ import static org.mockito.Mockito.mock;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.api.proxy.InfrastructureProxyTransport;
+import com.sitionix.forgeai.domain.usecase.GetActiveProfile;
+import com.sitionix.forgeai.domain.usecase.UpdateActiveLlmProfile;
+import com.sitionix.forgeai.mapper.ActiveProfileApiMapper;
 import java.util.Set;
 import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
@@ -54,7 +57,11 @@ class ForgeAiInfrastructureRouteContractTest {
     private static Set<String> routes() {
         final GenericApplicationContext context = new GenericApplicationContext();
         context.registerBean(InfrastructureProxyTransport.class, () -> mock(InfrastructureProxyTransport.class));
+        context.registerBean(GetActiveProfile.class, () -> mock(GetActiveProfile.class));
+        context.registerBean(UpdateActiveLlmProfile.class, () -> mock(UpdateActiveLlmProfile.class));
+        context.registerBean(ActiveProfileApiMapper.class, () -> mock(ActiveProfileApiMapper.class));
         context.registerBean(ObjectMapper.class, () -> new ObjectMapper());
+        context.registerBean(KnowledgeActiveProfileController.class);
         context.registerBean(ForgeAiInfrastructureKnowledgeController.class);
         context.registerBean(ForgeAiInfrastructureJarvisController.class);
         context.refresh();
