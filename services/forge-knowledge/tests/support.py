@@ -74,6 +74,9 @@ class AsgiTestClient:
     def post(self, path: str, json: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> AsgiResponse:
         return self._run(self._request("POST", path, json or {}, headers or {}))
 
+    def put(self, path: str, json: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> AsgiResponse:
+        return self._run(self._request("PUT", path, json or {}, headers or {}))
+
     def _run(self, awaitable):
         if self._loop is not None:
             return self._loop.run_until_complete(awaitable)
@@ -282,6 +285,8 @@ def _formatter_references(clause: dict[str, Any]) -> list[str]:
 def write_runtime_config(
     tmp_path: Path,
     *,
+    generative_provider: str = "ollama",
+    generative_model: str = "deterministic",
     analysis_enabled: bool = True,
     startup_maintenance_enabled: bool = True,
     max_file_size_bytes: int = 500000,
@@ -369,9 +374,9 @@ forge:
       file-enabled: false
       directory: "{runtime_dir / "logs"}"
     generative:
-      provider: ollama
+      provider: {generative_provider}
       base-url: http://localhost:11434
-      model: deterministic
+      model: {generative_model}
       context-tokens: 32768
     services:
       knowledge:

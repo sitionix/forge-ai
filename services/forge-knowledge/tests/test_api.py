@@ -90,6 +90,20 @@ class RoutingFakeGenerativeProvider:
         return None
 
 
+class FakeActiveLlmRuntime:
+    def __init__(self, provider: RoutingFakeGenerativeProvider) -> None:
+        self.provider = provider
+
+    def capture(self):
+        return SimpleNamespace(
+            revision=7,
+            provider_id=self.provider.provider_id,
+            model_id="fake-active-model",
+            effort_id=None,
+            provider=self.provider,
+        )
+
+
 def _extract_prompt_json(prompt: str, marker: str) -> dict:
     start = f"BEGIN_{marker}_JSON"
     end = f"END_{marker}_JSON"
@@ -545,11 +559,11 @@ def test_query_tool_context_remains_technical_and_human_response_has_no_evidence
     assert "tree" not in json.dumps(human_payload)
 
 
-def test_query_runtime_uses_dependencies_generative_provider(tmp_path):
+def test_query_runtime_uses_active_llm_snapshot_provider(tmp_path):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     _remove_injected_query_formatter_providers(app, query=True)
     generative_provider = RoutingFakeGenerativeProvider()
-    object.__setattr__(deps, "generative_provider", generative_provider)
+    object.__setattr__(deps, "active_llm_runtime", FakeActiveLlmRuntime(generative_provider))
     _seed_a_start_flow(app_config)
 
     async def exercise():
@@ -563,11 +577,11 @@ def test_query_runtime_uses_dependencies_generative_provider(tmp_path):
     assert any("BEGIN_QUERY_INTERPRETATION_INPUT_JSON" in request.prompt for request in generative_provider.requests)
 
 
-def test_formatter_runtime_uses_dependencies_generative_provider(tmp_path):
+def test_formatter_runtime_uses_active_llm_snapshot_provider(tmp_path):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     _remove_injected_query_formatter_providers(app, formatter=True)
     generative_provider = RoutingFakeGenerativeProvider()
-    object.__setattr__(deps, "generative_provider", generative_provider)
+    object.__setattr__(deps, "active_llm_runtime", FakeActiveLlmRuntime(generative_provider))
     _seed_a_start_flow(app_config)
 
     async def exercise():

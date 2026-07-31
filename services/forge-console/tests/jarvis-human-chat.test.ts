@@ -47,7 +47,7 @@ function deferred<T>() {
 }
 
 async function flushAsync() {
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < 12; index += 1) {
     await Promise.resolve();
   }
 }
@@ -95,6 +95,24 @@ function runtimeResponse() {
   };
 }
 
+function activeProfileResponse() {
+  return {
+    revision: 1,
+    llmProfile: { providerId: 'ollama', modelId: 'local-model', effort: null },
+    usage: null
+  };
+}
+
+function runtimeGet(path: string) {
+  if (path === '/jarvis/status') {
+    return statusResponse();
+  }
+  if (path === '/knowledge/active-profile') {
+    return activeProfileResponse();
+  }
+  return runtimeResponse();
+}
+
 function commandResponse() {
   return {
     intent: { action: 'status', target: 'jarvis' },
@@ -114,7 +132,7 @@ describe('Jarvis human chat', () => {
   it('mount loads Jarvis status and AI runtime providers', async () => {
     const dom = jarvisDom();
     const http = {
-      get: vi.fn((path: string) => Promise.resolve(path === '/jarvis/status' ? statusResponse() : runtimeResponse())),
+      get: vi.fn((path: string) => Promise.resolve(runtimeGet(path))),
       post: vi.fn()
     };
     const page = new JarvisPage({ document: dom.window.document, http });
@@ -124,6 +142,7 @@ describe('Jarvis human chat', () => {
 
     expect(http.get).toHaveBeenCalledWith('/jarvis/status', expect.any(Object));
     expect(http.get).toHaveBeenCalledWith('/knowledge/ai-runtime', expect.any(Object));
+    expect(http.get).toHaveBeenCalledWith('/knowledge/active-profile', expect.any(Object));
     expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('Jarvis');
     expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('Ollama');
     expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('UNAVAILABLE');
@@ -138,7 +157,7 @@ describe('Jarvis human chat', () => {
   it('refresh reloads Jarvis status and AI runtime providers', async () => {
     const dom = jarvisDom();
     const http = {
-      get: vi.fn((path: string) => Promise.resolve(path === '/jarvis/status' ? statusResponse() : runtimeResponse())),
+      get: vi.fn((path: string) => Promise.resolve(runtimeGet(path))),
       post: vi.fn()
     };
     const page = new JarvisPage({ document: dom.window.document, http });
@@ -148,9 +167,10 @@ describe('Jarvis human chat', () => {
     dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new dom.window.Event('click'));
     await flushAsync();
 
-    expect(http.get).toHaveBeenCalledTimes(4);
+    expect(http.get).toHaveBeenCalledTimes(6);
     expect(http.get.mock.calls.filter(([path]) => path === '/jarvis/status')).toHaveLength(2);
     expect(http.get.mock.calls.filter(([path]) => path === '/knowledge/ai-runtime')).toHaveLength(2);
+    expect(http.get.mock.calls.filter(([path]) => path === '/knowledge/active-profile')).toHaveLength(2);
     expect(http.get.mock.calls.some(([path]) => path === '/jarvis/actions')).toBe(false);
   });
 
@@ -206,7 +226,7 @@ describe('Jarvis human chat', () => {
     dom.window.document.getElementById('jarvisQueryForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
 
-    expect(http.get).toHaveBeenCalledTimes(2);
+    expect(http.get).toHaveBeenCalledTimes(3);
     expect(http.post).toHaveBeenCalledTimes(0);
   });
 

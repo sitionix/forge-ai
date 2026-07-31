@@ -1,0 +1,6 @@
+{
+  "expectedRevision": 1,
+  "providerId": "ollama",
+  "modelId": "qwen-model",
+  "effort": null
+}

@@ -12,6 +12,13 @@ from knowledge_service.ai_runtime_discovery import (
     CodexAppServerClient,
     OllamaAiRuntimeOptionsSource,
 )
+from knowledge_service.active_profile import (
+    ActiveLlmRuntime,
+    ActiveProfileService,
+    ActiveProfileStore,
+    ActiveRuntimeGenerativeProvider,
+    LlmUsageProvider,
+)
 from knowledge_service.analysis_client import ProviderBackedAnalysisClient
 from knowledge_service.analysis_service import AnalysisProvider, AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
@@ -36,6 +43,8 @@ class KnowledgeDependencies:
     inventory_scheduler: AsyncInventoryScheduler
     storage_operations: StorageOperations
     ai_runtime_discovery: AiRuntimeDiscoveryService | None = None
+    active_profile_service: ActiveProfileService | None = None
+    active_llm_runtime: ActiveLlmRuntime | None = None
     generative_registry: Optional[GenerativeProviderRegistry] = None
     generative_provider: Any | None = None
 
@@ -68,7 +77,23 @@ def build_dependencies(
         storage_operations.startup_maintenance()
         if config.analysis_enabled:
             analysis_store.mark_interrupted_jobs()
-    generative_registry, generative_provider = build_generative_runtime(config)
+    generative_registry, _startup_generative_provider = build_generative_runtime(config)
+    active_profile_store = ActiveProfileStore(config.store_path)
+    active_profile = active_profile_store.init(provider_id=config.analysis_provider, model_id=config.analysis_model)
+    active_llm_runtime = ActiveLlmRuntime(generative_registry, active_profile)
+    generative_provider = ActiveRuntimeGenerativeProvider(active_llm_runtime)
+    codex_client = CodexAppServerClient(
+        client_name="forge-knowledge",
+        client_version="0.1.0",
+        request_timeout_seconds=min(float(config.analysis_ai_call_timeout_seconds), 5.0),
+    )
+    ai_runtime_discovery = build_ai_runtime_discovery(config, codex_client=codex_client)
+    active_profile_service = ActiveProfileService(
+        active_profile_store,
+        active_llm_runtime,
+        ai_runtime_discovery,
+        LlmUsageProvider(codex_client),
+    )
     if analysis_provider is None:
         analysis_provider = ProviderBackedAnalysisClient(
             generative_provider,
@@ -95,7 +120,9 @@ def build_dependencies(
         inventory_refresh=inventory_refresh,
         inventory_scheduler=inventory_scheduler,
         storage_operations=storage_operations,
-        ai_runtime_discovery=build_ai_runtime_discovery(config),
+        ai_runtime_discovery=ai_runtime_discovery,
+        active_profile_service=active_profile_service,
+        active_llm_runtime=active_llm_runtime,
         generative_registry=generative_registry,
         generative_provider=generative_provider,
     )
@@ -111,7 +138,7 @@ def build_generative_runtime(config: AppConfig) -> tuple[GenerativeProviderRegis
     return registry, registry.resolve(config.analysis_provider)
 
 
-def build_ai_runtime_discovery(config: AppConfig) -> AiRuntimeDiscoveryService:
+def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServerClient | None = None) -> AiRuntimeDiscoveryService:
     timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), 5.0)
     registry = AiRuntimeDiscoveryRegistry()
     registry.register(
@@ -122,7 +149,8 @@ def build_ai_runtime_discovery(config: AppConfig) -> AiRuntimeDiscoveryService:
     )
     registry.register(
         CodexAiRuntimeOptionsSource(
-            CodexAppServerClient(
+            codex_client
+            or CodexAppServerClient(
                 client_name="forge-knowledge",
                 client_version="0.1.0",
                 request_timeout_seconds=timeout_seconds,

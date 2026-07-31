@@ -117,6 +117,20 @@ function statusPayload() {
   };
 }
 
+function jarvisRuntimeResponse(path: string) {
+  if (path === '/jarvis/status') {
+    return { status: 'READY' };
+  }
+  if (path === '/knowledge/active-profile') {
+    return {
+      revision: 1,
+      llmProfile: { providerId: 'ollama', modelId: 'local-model', effort: null },
+      usage: null
+    };
+  }
+  return { providers: [{ providerId: 'ollama', displayName: 'Ollama', status: 'READY', models: [{ modelId: 'local-model', displayName: 'Local Model' }] }] };
+}
+
 function graphResponse(path: string) {
   if (path.includes('/view')) {
     return {
@@ -212,12 +226,12 @@ describe('Operator legacy boundary', () => {
     const jarvis = inScopeDom('jarvis', jarvisBody());
     await runLegacy(jarvis);
     const jarvisHttp = {
-      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { providers: [] })),
+      get: vi.fn((path: string) => Promise.resolve(jarvisRuntimeResponse(path))),
       post: vi.fn()
     };
     bootstrapOperatorConsole({ document: jarvis.window.document, window: jarvis.window, http: jarvisHttp });
     await flushAsync();
-    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime']);
+    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime', '/knowledge/active-profile']);
 
     const overview = inScopeDom('knowledge', overviewBody());
     await runLegacy(overview);
