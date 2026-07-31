@@ -3,21 +3,21 @@ package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileRequest;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileResponse;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveProfileResponse;
-import org.springframework.cloud.openfeign.FeignClient;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.service.annotation.GetExchange;
+import org.springframework.web.service.annotation.HttpExchange;
+import org.springframework.web.service.annotation.PutExchange;
 
-@FeignClient(
-        name = "knowledgeActiveProfileFeignClient",
-        url = "${forge.ai.infrastructure.knowledge.base-url}",
-        configuration = KnowledgeActiveProfileFeignConfiguration.class
+@HttpExchange(
+        accept = MediaType.APPLICATION_JSON_VALUE,
+        contentType = MediaType.APPLICATION_JSON_VALUE
 )
-interface KnowledgeActiveProfileFeignClient {
+public interface KnowledgeActiveProfileHttpClient {
 
-    @GetMapping("/api/v1/knowledge/active-profile")
+    @GetExchange("/api/v1/knowledge/active-profile")
     KnowledgeActiveProfileResponse getActiveProfile();
 
-    @PutMapping("/api/v1/knowledge/active-profile/llm-profile")
+    @PutExchange("/api/v1/knowledge/active-profile/llm-profile")
     KnowledgeActiveLlmProfileResponse updateActiveLlmProfile(@RequestBody KnowledgeActiveLlmProfileRequest request);
 }

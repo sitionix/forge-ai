@@ -4,9 +4,6 @@ server:
   servlet:
     context-path: /fgaisox
 spring:
-  cloud:
-    openfeign:
-      lazy-attributes-resolution: true
   config:
     import:
       - optional:file:${FORGE_CONFIG_DIR:./config}/forge-ai.yaml

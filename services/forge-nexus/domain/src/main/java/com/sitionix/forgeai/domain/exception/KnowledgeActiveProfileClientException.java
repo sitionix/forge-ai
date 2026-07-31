@@ -2,22 +2,22 @@ package com.sitionix.forgeai.domain.exception;
 
 public final class KnowledgeActiveProfileClientException extends RuntimeException {
 
-    private final int status;
+    private final KnowledgeActiveProfileFailureReason reason;
     private final String code;
     private final String correlationId;
 
-    public KnowledgeActiveProfileClientException(final int status,
+    public KnowledgeActiveProfileClientException(final KnowledgeActiveProfileFailureReason reason,
                                                  final String code,
                                                  final String message,
                                                  final String correlationId) {
         super(message);
-        this.status = status;
+        this.reason = reason;
         this.code = code;
         this.correlationId = correlationId;
     }
 
-    public int status() {
-        return this.status;
+    public KnowledgeActiveProfileFailureReason reason() {
+        return this.reason;
     }
 
     public String code() {

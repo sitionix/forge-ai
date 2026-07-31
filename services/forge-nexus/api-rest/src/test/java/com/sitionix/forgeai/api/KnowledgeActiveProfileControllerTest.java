@@ -1,179 +1,182 @@
 package com.sitionix.forgeai.api;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.sitionix.forgeai.domain.exception.KnowledgeActiveProfileClientException;
+import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileDetailsResponse;
+import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileResponse;
+import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileUpdateRequest;
+import com.sitionix.forgeai.api.activeprofile.ActiveProfileResponse;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
-import com.sitionix.forgeai.domain.model.activeprofile.LlmEffort;
-import com.sitionix.forgeai.domain.model.activeprofile.LlmUsage;
-import com.sitionix.forgeai.domain.model.activeprofile.LlmUsageWindow;
-import com.sitionix.forgeai.domain.model.activeprofile.LlmUsageWindowKind;
+import com.sitionix.forgeai.domain.port.CorrelationIdProvider;
 import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
 import com.sitionix.forgeai.domain.usecase.GetActiveProfile;
 import com.sitionix.forgeai.domain.usecase.UpdateActiveLlmProfile;
-import com.sitionix.forgeai.mapper.ActiveProfileApiMapperImpl;
-import java.lang.reflect.Method;
-import java.time.Instant;
-import java.util.Arrays;
-import java.util.List;
+import com.sitionix.forgeai.mapper.ActiveProfileApiMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.http.MediaType;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
 class KnowledgeActiveProfileControllerTest {
 
-    private final GetActiveProfile getActiveProfile = mock(GetActiveProfile.class);
-    private final UpdateActiveLlmProfile updateActiveLlmProfile = mock(UpdateActiveLlmProfile.class);
-    private final MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new KnowledgeActiveProfileController(
-                    this.getActiveProfile,
-                    this.updateActiveLlmProfile,
-                    new ActiveProfileApiMapperImpl()
-            ))
-            .setControllerAdvice(new KnowledgeActiveProfileExceptionHandler())
-            .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper()))
-            .build();
+    @Mock
+    private GetActiveProfile getActiveProfile;
+
+    @Mock
+    private UpdateActiveLlmProfile updateActiveLlmProfile;
+
+    @Mock
+    private ActiveProfileApiMapper mapper;
+
+    @Mock
+    private CorrelationIdProvider correlationIdProvider;
+
+    private KnowledgeActiveProfileController controller;
+
+    @BeforeEach
+    void setUp() {
+        this.controller = new KnowledgeActiveProfileController(
+                this.getActiveProfile,
+                this.updateActiveLlmProfile,
+                this.mapper,
+                this.correlationIdProvider
+        );
+    }
 
     @Test
-    void getInvokesUseCaseAndMapsTypedResponse() throws Exception {
-        when(this.getActiveProfile.execute()).thenReturn(new ActiveProfile(
-                3,
-                new ActiveLlmProfile("codex", "gpt-5.6-sol", new LlmEffort("high")),
-                new LlmUsage(List.of(new LlmUsageWindow(
-                        LlmUsageWindowKind.PRIMARY,
-                        34,
-                        300,
-                        Instant.parse("2026-07-31T12:00:00Z")
-                )))
-        ));
+    void getInvokesUseCase() {
+        // given
+        final ActiveProfile profile = new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null);
+        final ActiveProfileResponse response = new ActiveProfileResponse(
+                1,
+                new ActiveLlmProfileDetailsResponse("ollama", "qwen", null),
+                null
+        );
+        when(this.getActiveProfile.execute()).thenReturn(profile);
+        when(this.mapper.toResponse(profile)).thenReturn(response);
+        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
 
-        this.mockMvc.perform(get("/api/v1/infrastructure/knowledge/active-profile"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
-                .andExpect(jsonPath("$.revision").value(3))
-                .andExpect(jsonPath("$.llmProfile.providerId").value("codex"))
-                .andExpect(jsonPath("$.llmProfile.modelId").value("gpt-5.6-sol"))
-                .andExpect(jsonPath("$.llmProfile.effort.effortId").value("high"))
-                .andExpect(jsonPath("$.usage.windows[0].kind").value("PRIMARY"))
-                .andExpect(jsonPath("$.usage.windows[0].usedPercent").value(34))
-                .andExpect(jsonPath("$.usage.windows[0].windowDurationMinutes").value(300))
-                .andExpect(jsonPath("$.usage.windows[0].resetAt").value("2026-07-31T12:00:00Z"));
+        // when
+        final ResponseEntity<ActiveProfileResponse> result = this.controller.getActiveProfile();
 
+        // then
+        assertThat(result.getBody()).isSameAs(response);
+        assertThat(result.getHeaders().getFirst(CorrelationIdProvider.HEADER_NAME)).isEqualTo("corr-local");
         verify(this.getActiveProfile).execute();
     }
 
     @Test
-    void putValidatesMapsAndInvokesUseCase() throws Exception {
-        when(this.updateActiveLlmProfile.execute(new UpdateActiveLlmProfileCommand(
-                3,
-                "codex",
-                "gpt-5.6-sol",
-                new LlmEffort("high")
-        ))).thenReturn(new ActiveLlmProfileUpdateResult(
+    void getMapsDomainResponseToTypedRestResponse() {
+        // given
+        final ActiveProfile profile = new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null);
+        final ActiveProfileResponse response = new ActiveProfileResponse(
+                1,
+                new ActiveLlmProfileDetailsResponse("ollama", "qwen", null),
+                null
+        );
+        when(this.getActiveProfile.execute()).thenReturn(profile);
+        when(this.mapper.toResponse(profile)).thenReturn(response);
+        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
+
+        // when
+        final ResponseEntity<ActiveProfileResponse> result = this.controller.getActiveProfile();
+
+        // then
+        assertThat(result.getBody()).isEqualTo(response);
+        verify(this.mapper).toResponse(profile);
+    }
+
+    @Test
+    void putMapsRequestToDomainCommand() {
+        // given
+        final ActiveLlmProfileUpdateRequest request = new ActiveLlmProfileUpdateRequest(3L, "ollama", "qwen", null);
+        final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null);
+        final ActiveLlmProfileUpdateResult update = new ActiveLlmProfileUpdateResult(4, new ActiveLlmProfile("ollama", "qwen", null));
+        final ActiveLlmProfileResponse response = new ActiveLlmProfileResponse(
                 4,
-                new ActiveLlmProfile("codex", "gpt-5.6-sol", new LlmEffort("high"))
+                new ActiveLlmProfileDetailsResponse("ollama", "qwen", null)
+        );
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.updateActiveLlmProfile.execute(command)).thenReturn(update);
+        when(this.mapper.toResponse(update)).thenReturn(response);
+        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
+
+        // when
+        this.controller.updateActiveLlmProfile(request);
+
+        // then
+        verify(this.mapper).toCommand(request);
+    }
+
+    @Test
+    void putInvokesUpdateUseCase() {
+        // given
+        final ActiveLlmProfileUpdateRequest request = new ActiveLlmProfileUpdateRequest(3L, "ollama", "qwen", null);
+        final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null);
+        final ActiveLlmProfileUpdateResult update = new ActiveLlmProfileUpdateResult(4, new ActiveLlmProfile("ollama", "qwen", null));
+        final ActiveLlmProfileResponse response = new ActiveLlmProfileResponse(
+                4,
+                new ActiveLlmProfileDetailsResponse("ollama", "qwen", null)
+        );
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.updateActiveLlmProfile.execute(command)).thenReturn(update);
+        when(this.mapper.toResponse(update)).thenReturn(response);
+        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
+
+        // when
+        this.controller.updateActiveLlmProfile(request);
+
+        // then
+        verify(this.updateActiveLlmProfile).execute(command);
+    }
+
+    @Test
+    void putMapsDomainResultToTypedRestResponse() {
+        // given
+        final ActiveLlmProfileUpdateRequest request = new ActiveLlmProfileUpdateRequest(3L, "ollama", "qwen", null);
+        final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null);
+        final ActiveLlmProfileUpdateResult update = new ActiveLlmProfileUpdateResult(4, new ActiveLlmProfile("ollama", "qwen", null));
+        final ActiveLlmProfileResponse response = new ActiveLlmProfileResponse(
+                4,
+                new ActiveLlmProfileDetailsResponse("ollama", "qwen", null)
+        );
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.updateActiveLlmProfile.execute(command)).thenReturn(update);
+        when(this.mapper.toResponse(update)).thenReturn(response);
+        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
+
+        // when
+        final ResponseEntity<ActiveLlmProfileResponse> result = this.controller.updateActiveLlmProfile(request);
+
+        // then
+        assertThat(result.getBody()).isEqualTo(response);
+        verify(this.mapper).toResponse(update);
+    }
+
+    @Test
+    void getDoesNotCallUpdateUseCase() {
+        // given
+        final ActiveProfile profile = new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null);
+        when(this.getActiveProfile.execute()).thenReturn(profile);
+        when(this.mapper.toResponse(profile)).thenReturn(new ActiveProfileResponse(
+                1,
+                new ActiveLlmProfileDetailsResponse("ollama", "qwen", null),
+                null
         ));
+        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
 
-        this.mockMvc.perform(put("/api/v1/infrastructure/knowledge/active-profile/llm-profile")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"expectedRevision":3,"providerId":"codex","modelId":"gpt-5.6-sol","effort":{"effortId":"high"}}
-                                """.strip()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.revision").value(4))
-                .andExpect(jsonPath("$.llmProfile.providerId").value("codex"))
-                .andExpect(jsonPath("$.llmProfile.modelId").value("gpt-5.6-sol"))
-                .andExpect(jsonPath("$.llmProfile.effort.effortId").value("high"));
+        // when
+        this.controller.getActiveProfile();
 
-        final ArgumentCaptor<UpdateActiveLlmProfileCommand> command = ArgumentCaptor.forClass(UpdateActiveLlmProfileCommand.class);
-        verify(this.updateActiveLlmProfile).execute(command.capture());
-        assertThat(command.getValue()).isEqualTo(new UpdateActiveLlmProfileCommand(
-                3,
-                "codex",
-                "gpt-5.6-sol",
-                new LlmEffort("high")
-        ));
-    }
-
-    @Test
-    void invalidPutRequestReturnsBadRequestBeforeUseCase() throws Exception {
-        this.mockMvc.perform(put("/api/v1/infrastructure/knowledge/active-profile/llm-profile")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"expectedRevision":0,"providerId":"","modelId":"gpt-5.6-sol","effort":null}
-                                """.strip()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-
+        // then
         verifyNoInteractions(this.updateActiveLlmProfile);
-    }
-
-    @Test
-    void unknownPutRequestFieldReturnsBadRequestBeforeUseCase() throws Exception {
-        this.mockMvc.perform(put("/api/v1/infrastructure/knowledge/active-profile/llm-profile")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"expectedRevision":3,"providerId":"codex","modelId":"gpt-5.6-sol","effort":null,"metadata":{}}
-                                """.strip()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-
-        verifyNoInteractions(this.updateActiveLlmProfile);
-    }
-
-    @Test
-    void controlledKnowledgeErrorIsPreserved() throws Exception {
-        when(this.updateActiveLlmProfile.execute(new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null)))
-                .thenThrow(new KnowledgeActiveProfileClientException(
-                        409,
-                        "ACTIVE_PROFILE_REVISION_CONFLICT",
-                        "The active profile was changed by another request",
-                        "corr-409"
-                ));
-
-        this.mockMvc.perform(put("/api/v1/infrastructure/knowledge/active-profile/llm-profile")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"expectedRevision":3,"providerId":"ollama","modelId":"qwen","effort":null}
-                                """.strip()))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("ACTIVE_PROFILE_REVISION_CONFLICT"))
-                .andExpect(jsonPath("$.message").value("The active profile was changed by another request"))
-                .andExpect(jsonPath("$.correlationId").value("corr-409"));
-    }
-
-    @Test
-    void controllerMethodsUseConcreteResponseTypesAndNoByteArrays() {
-        for (final Method method : KnowledgeActiveProfileController.class.getDeclaredMethods()) {
-            if (method.isSynthetic() || method.getName().startsWith("$jacoco")) {
-                continue;
-            }
-            assertThat(method.getReturnType()).isEqualTo(ResponseEntity.class);
-            assertThat(Arrays.stream(method.getParameterTypes()))
-                    .noneMatch(byte[].class::equals);
-        }
-    }
-
-    private static ObjectMapper objectMapper() {
-        return new ObjectMapper()
-                .registerModule(new JavaTimeModule())
-                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 }

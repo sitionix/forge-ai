@@ -2,91 +2,83 @@ package com.sitionix.forgeai.api;
 
 import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
 import com.sitionix.forgeai.domain.exception.KnowledgeActiveProfileClientException;
-import jakarta.servlet.http.HttpServletRequest;
-import java.util.UUID;
+import com.sitionix.forgeai.domain.exception.KnowledgeActiveProfileFailureReason;
+import com.sitionix.forgeai.domain.port.CorrelationIdProvider;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice(assignableTypes = KnowledgeActiveProfileController.class)
-public class KnowledgeActiveProfileExceptionHandler {
+@RequiredArgsConstructor
+public final class KnowledgeActiveProfileExceptionHandler {
 
-    private static final String CORRELATION_HEADER = "X-Correlation-Id";
+    private static final String VALIDATION_FAILED = "VALIDATION_FAILED";
+    private static final String VALIDATION_MESSAGE = "Active LLM profile request is invalid.";
+    private static final String UNREADABLE_MESSAGE = "Request body is invalid or does not match the expected contract.";
+
+    private final CorrelationIdProvider correlationIdProvider;
 
     @ExceptionHandler(KnowledgeActiveProfileClientException.class)
     public ResponseEntity<InfrastructureErrorResponse> handleKnowledgeActiveProfileClientException(
-            final KnowledgeActiveProfileClientException exception,
-            final HttpServletRequest request
+            final KnowledgeActiveProfileClientException exception
     ) {
-        return ResponseEntity.status(this.httpStatus(exception.status()))
+        final String correlationId = this.correlationId(exception.correlationId());
+        return ResponseEntity.status(this.httpStatus(exception.reason()))
+                .header(CorrelationIdProvider.HEADER_NAME, correlationId)
                 .body(new InfrastructureErrorResponse(
                         exception.code(),
                         exception.getMessage(),
-                        this.correlationId(exception.correlationId(), request)
+                        correlationId
                 ));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<InfrastructureErrorResponse> handleMethodArgumentNotValidException(
-            final MethodArgumentNotValidException exception,
-            final HttpServletRequest request
+            final MethodArgumentNotValidException exception
     ) {
+        final String correlationId = this.correlationIdProvider.currentOrCreate();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .header(CorrelationIdProvider.HEADER_NAME, correlationId)
                 .body(new InfrastructureErrorResponse(
-                        "VALIDATION_FAILED",
-                        this.validationMessage(exception),
-                        this.correlationId(null, request)
+                        VALIDATION_FAILED,
+                        VALIDATION_MESSAGE,
+                        correlationId
                 ));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<InfrastructureErrorResponse> handleHttpMessageNotReadableException(
-            final HttpMessageNotReadableException exception,
-            final HttpServletRequest request
+            final HttpMessageNotReadableException exception
     ) {
+        final String correlationId = this.correlationIdProvider.currentOrCreate();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .header(CorrelationIdProvider.HEADER_NAME, correlationId)
                 .body(new InfrastructureErrorResponse(
-                        "VALIDATION_FAILED",
-                        "Request body is invalid or does not match the expected contract",
-                        this.correlationId(null, request)
+                        VALIDATION_FAILED,
+                        UNREADABLE_MESSAGE,
+                        correlationId
                 ));
     }
 
-    private HttpStatus httpStatus(final int status) {
-        try {
-            return HttpStatus.valueOf(status);
-        } catch (final IllegalArgumentException exception) {
-            return HttpStatus.BAD_GATEWAY;
-        }
-    }
-
-    private String validationMessage(final MethodArgumentNotValidException exception) {
-        return exception.getBindingResult().getFieldErrors().stream()
-                .findFirst()
-                .map(this::validationMessage)
-                .orElse("Request body is invalid or does not match the expected contract");
-    }
-
-    private String validationMessage(final FieldError fieldError) {
-        return fieldError.getField() + " " + fieldError.getDefaultMessage();
-    }
-
-    private String correlationId(final String supplied, final HttpServletRequest request) {
-        if (this.validCorrelationId(supplied)) {
+    private String correlationId(final String supplied) {
+        if (CorrelationIdProvider.isValid(supplied)) {
             return supplied;
         }
-        final String incoming = request == null ? null : request.getHeader(CORRELATION_HEADER);
-        if (this.validCorrelationId(incoming)) {
-            return incoming;
-        }
-        return UUID.randomUUID().toString();
+        return this.correlationIdProvider.currentOrCreate();
     }
 
-    private boolean validCorrelationId(final String value) {
-        return value != null && value.matches("[A-Za-z0-9._:-]{1,128}");
+    private HttpStatus httpStatus(final KnowledgeActiveProfileFailureReason reason) {
+        return switch (reason) {
+            case BAD_REQUEST -> HttpStatus.BAD_REQUEST;
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case CONFLICT -> HttpStatus.CONFLICT;
+            case UNPROCESSABLE_ENTITY -> HttpStatus.UNPROCESSABLE_ENTITY;
+            case UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case INVALID_RESPONSE, UPSTREAM_FAILURE -> HttpStatus.BAD_GATEWAY;
+        };
     }
 }

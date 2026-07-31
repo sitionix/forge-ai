@@ -5,4 +5,8 @@ public record ActiveLlmProfile(
         String modelId,
         LlmEffort effort
 ) {
+    public ActiveLlmProfile {
+        providerId = ActiveProfileInvariants.text(providerId, "providerId");
+        modelId = ActiveProfileInvariants.text(modelId, "modelId");
+    }
 }

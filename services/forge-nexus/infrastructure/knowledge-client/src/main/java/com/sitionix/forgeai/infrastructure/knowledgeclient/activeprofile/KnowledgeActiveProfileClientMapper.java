@@ -9,8 +9,9 @@ import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.Kno
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveProfileResponse;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeLlmUsageWindowKind;
 import org.mapstruct.Mapper;
+import org.mapstruct.ReportingPolicy;
 
-@Mapper(componentModel = "spring")
+@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.ERROR)
 public interface KnowledgeActiveProfileClientMapper {
 
     ActiveProfile toDomain(KnowledgeActiveProfileResponse source);

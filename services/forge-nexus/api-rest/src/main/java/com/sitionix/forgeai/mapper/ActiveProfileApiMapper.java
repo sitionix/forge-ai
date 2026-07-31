@@ -12,8 +12,9 @@ import com.sitionix.forgeai.domain.model.activeprofile.LlmEffort;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsageWindowKind;
 import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
 import org.mapstruct.Mapper;
+import org.mapstruct.ReportingPolicy;
 
-@Mapper(componentModel = "spring")
+@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.ERROR)
 public interface ActiveProfileApiMapper {
 
     ActiveProfileResponse toResponse(ActiveProfile source);
