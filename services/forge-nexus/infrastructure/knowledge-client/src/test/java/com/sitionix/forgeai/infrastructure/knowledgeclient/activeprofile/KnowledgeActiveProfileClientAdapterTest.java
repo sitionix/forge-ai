@@ -1,15 +1,15 @@
 package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 
-import com.sitionix.forgeai.domain.exception.KnowledgeActiveProfileClientException;
-import com.sitionix.forgeai.domain.exception.KnowledgeActiveProfileFailureReason;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.domain.exception.KnowledgeClientException;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
-import com.sitionix.forgeai.domain.port.CorrelationIdProvider;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileRequest;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileResponse;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveProfileResponse;
+import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileDetails;
 import java.net.SocketTimeoutException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,9 +35,6 @@ class KnowledgeActiveProfileClientAdapterTest {
     @Mock
     private KnowledgeActiveProfileClientMapper mapper;
 
-    @Mock
-    private CorrelationIdProvider correlationIdProvider;
-
     private KnowledgeActiveProfileClientProperties properties;
     private KnowledgeActiveProfileClientAdapter adapter;
 
@@ -48,15 +45,14 @@ class KnowledgeActiveProfileClientAdapterTest {
                 this.httpClient,
                 this.mapper,
                 this.properties,
-                new KnowledgeActiveProfileResponseValidator(),
-                new KnowledgeActiveProfileClientFailures(this.correlationIdProvider)
+                new KnowledgeClientCallExecutor(new KnowledgeActiveProfileJson(new ObjectMapper()))
         );
     }
 
     @Test
     void getDelegatesToTypedHttpClient() {
         // given
-        final KnowledgeActiveProfileResponse clientResponse = new KnowledgeActiveProfileResponse(1L, null, null);
+        final KnowledgeActiveProfileResponse clientResponse = new KnowledgeActiveProfileResponse(1L, details(), null);
         final ActiveProfile domain = new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null);
         when(this.httpClient.getActiveProfile()).thenReturn(clientResponse);
         when(this.mapper.toDomain(clientResponse)).thenReturn(domain);
@@ -74,7 +70,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // given
         final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null);
         final KnowledgeActiveLlmProfileRequest request = new KnowledgeActiveLlmProfileRequest(3, "ollama", "qwen", null);
-        final KnowledgeActiveLlmProfileResponse clientResponse = new KnowledgeActiveLlmProfileResponse(4L, null);
+        final KnowledgeActiveLlmProfileResponse clientResponse = new KnowledgeActiveLlmProfileResponse(4L, details());
         final ActiveLlmProfileUpdateResult domain = new ActiveLlmProfileUpdateResult(4, new ActiveLlmProfile("ollama", "qwen", null));
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.updateActiveLlmProfile(request)).thenReturn(clientResponse);
@@ -93,7 +89,7 @@ class KnowledgeActiveProfileClientAdapterTest {
         // given
         final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null);
         final KnowledgeActiveLlmProfileRequest request = new KnowledgeActiveLlmProfileRequest(3, "ollama", "qwen", null);
-        final KnowledgeActiveLlmProfileResponse clientResponse = new KnowledgeActiveLlmProfileResponse(4L, null);
+        final KnowledgeActiveLlmProfileResponse clientResponse = new KnowledgeActiveLlmProfileResponse(4L, details());
         final ActiveLlmProfileUpdateResult domain = new ActiveLlmProfileUpdateResult(4, new ActiveLlmProfile("ollama", "qwen", null));
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.updateActiveLlmProfile(request)).thenReturn(clientResponse);
@@ -110,11 +106,12 @@ class KnowledgeActiveProfileClientAdapterTest {
     @Test
     void controlledClientExceptionIsPreserved() {
         // given
-        final KnowledgeActiveProfileClientException exception = new KnowledgeActiveProfileClientException(
-                KnowledgeActiveProfileFailureReason.REVISION_CONFLICT,
+        final KnowledgeClientException exception = new KnowledgeClientException(
+                409,
                 "ACTIVE_PROFILE_REVISION_CONFLICT",
                 "The active profile was changed by another request",
-                "corr-409"
+                "corr-409",
+                null
         );
         when(this.httpClient.getActiveProfile()).thenThrow(exception);
 
@@ -126,14 +123,12 @@ class KnowledgeActiveProfileClientAdapterTest {
     void disabledClientMapsToUnavailable() {
         // given
         this.properties.setEnabled(false);
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
 
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
-                .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.DEPENDENCY_UNAVAILABLE);
+                .isInstanceOfSatisfying(KnowledgeClientException.class, exception -> {
+                    assertThat(exception.statusCode()).isEqualTo(503);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_UNAVAILABLE");
-                    assertThat(exception.correlationId()).isEqualTo("corr-local");
                 });
         verifyNoMoreInteractions(this.httpClient);
     }
@@ -141,28 +136,25 @@ class KnowledgeActiveProfileClientAdapterTest {
     @Test
     void resourceAccessFailureMapsToUnavailable() {
         // given
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
         when(this.httpClient.getActiveProfile()).thenThrow(new ResourceAccessException("request failed"));
 
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
-                .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.DEPENDENCY_UNAVAILABLE);
+                .isInstanceOfSatisfying(KnowledgeClientException.class, exception -> {
+                    assertThat(exception.statusCode()).isEqualTo(503);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_UNAVAILABLE");
-                    assertThat(exception.correlationId()).isEqualTo("corr-local");
                 });
     }
 
     @Test
     void typedTimeoutCauseMapsToUnavailable() {
         // given
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
         when(this.httpClient.getActiveProfile()).thenThrow(new RestClientException("client failure", new SocketTimeoutException()));
 
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
-                .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.DEPENDENCY_UNAVAILABLE);
+                .isInstanceOfSatisfying(KnowledgeClientException.class, exception -> {
+                    assertThat(exception.statusCode()).isEqualTo(503);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_UNAVAILABLE");
                 });
     }
@@ -170,13 +162,12 @@ class KnowledgeActiveProfileClientAdapterTest {
     @Test
     void malformedSuccessMapsToInvalidResponse() {
         // given
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
         when(this.httpClient.getActiveProfile()).thenThrow(new HttpMessageConversionException("bad body"));
 
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
-                .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE);
+                .isInstanceOfSatisfying(KnowledgeClientException.class, exception -> {
+                    assertThat(exception.statusCode()).isEqualTo(502);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_INVALID_RESPONSE");
                 });
     }
@@ -184,7 +175,6 @@ class KnowledgeActiveProfileClientAdapterTest {
     @Test
     void nestedMalformedSuccessMapsToInvalidResponse() {
         // given
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
         when(this.httpClient.getActiveProfile()).thenThrow(new RestClientException(
                 "client failure",
                 new HttpMessageConversionException("bad body")
@@ -192,8 +182,8 @@ class KnowledgeActiveProfileClientAdapterTest {
 
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
-                .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE);
+                .isInstanceOfSatisfying(KnowledgeClientException.class, exception -> {
+                    assertThat(exception.statusCode()).isEqualTo(502);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_INVALID_RESPONSE");
                 });
     }
@@ -201,15 +191,14 @@ class KnowledgeActiveProfileClientAdapterTest {
     @Test
     void invalidDomainMappingMapsToInvalidResponse() {
         // given
-        final KnowledgeActiveProfileResponse clientResponse = new KnowledgeActiveProfileResponse(1L, null, null);
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
+        final KnowledgeActiveProfileResponse clientResponse = new KnowledgeActiveProfileResponse(1L, details(), null);
         when(this.httpClient.getActiveProfile()).thenReturn(clientResponse);
         when(this.mapper.toDomain(clientResponse)).thenThrow(new IllegalArgumentException("llmProfile must not be null"));
 
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
-                .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.INVALID_DEPENDENCY_RESPONSE);
+                .isInstanceOfSatisfying(KnowledgeClientException.class, exception -> {
+                    assertThat(exception.statusCode()).isEqualTo(502);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_INVALID_RESPONSE");
                 });
     }
@@ -217,15 +206,13 @@ class KnowledgeActiveProfileClientAdapterTest {
     @Test
     void unexpectedClientFailureMapsToSafeBadGateway() {
         // given
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
         when(this.httpClient.getActiveProfile()).thenThrow(new RestClientException("unexpected"));
 
         // when // then
         assertThatThrownBy(() -> this.adapter.getActiveProfile())
-                .isInstanceOfSatisfying(KnowledgeActiveProfileClientException.class, exception -> {
-                    assertThat(exception.reason()).isEqualTo(KnowledgeActiveProfileFailureReason.DEPENDENCY_FAILURE);
+                .isInstanceOfSatisfying(KnowledgeClientException.class, exception -> {
+                    assertThat(exception.statusCode()).isEqualTo(502);
                     assertThat(exception.code()).isEqualTo("UPSTREAM_ERROR");
-                    assertThat(exception.correlationId()).isEqualTo("corr-local");
                 });
     }
 
@@ -233,5 +220,9 @@ class KnowledgeActiveProfileClientAdapterTest {
         final KnowledgeActiveProfileClientProperties properties = new KnowledgeActiveProfileClientProperties();
         properties.setEnabled(true);
         return properties;
+    }
+
+    private static KnowledgeActiveLlmProfileDetails details() {
+        return new KnowledgeActiveLlmProfileDetails("ollama", "qwen", null);
     }
 }

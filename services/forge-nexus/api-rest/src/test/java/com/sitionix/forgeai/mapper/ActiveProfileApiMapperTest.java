@@ -10,7 +10,6 @@ import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmEffort;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsage;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsageWindow;
-import com.sitionix.forgeai.domain.model.activeprofile.LlmUsageWindowKind;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -40,15 +39,15 @@ class ActiveProfileApiMapperTest {
                 3,
                 new ActiveLlmProfile("codex", "gpt-5.6-sol", new LlmEffort("high")),
                 new LlmUsage(List.of(
-                        new LlmUsageWindow(LlmUsageWindowKind.PRIMARY, 34, 300, Instant.parse("2026-07-31T12:00:00Z")),
-                        new LlmUsageWindow(LlmUsageWindowKind.SECONDARY, 61, 10080, Instant.parse("2026-08-04T09:00:00Z"))
+                        new LlmUsageWindow("PRIMARY", 34, 300, Instant.parse("2026-07-31T12:00:00Z")),
+                        new LlmUsageWindow("SECONDARY", 61, 10080, Instant.parse("2026-08-04T09:00:00Z"))
                 ))
         ));
 
         assertThat(response.llmProfile().effort().effortId()).isEqualTo("high");
         assertThat(response.usage().windows()).hasSize(2);
-        assertThat(response.usage().windows().get(0).kind().name()).isEqualTo("PRIMARY");
-        assertThat(response.usage().windows().get(1).kind().name()).isEqualTo("SECONDARY");
+        assertThat(response.usage().windows().get(0).kind()).isEqualTo("PRIMARY");
+        assertThat(response.usage().windows().get(1).kind()).isEqualTo("SECONDARY");
         assertThat(response.usage().windows().get(1).resetAt()).isEqualTo(Instant.parse("2026-08-04T09:00:00Z"));
     }
 

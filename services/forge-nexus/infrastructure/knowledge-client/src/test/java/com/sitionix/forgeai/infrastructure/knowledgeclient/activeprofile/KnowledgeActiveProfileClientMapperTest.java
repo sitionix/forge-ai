@@ -3,7 +3,6 @@ package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmEffort;
-import com.sitionix.forgeai.domain.model.activeprofile.LlmUsageWindowKind;
 import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmEffort;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileDetails;
@@ -11,7 +10,6 @@ import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.Kno
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveProfileResponse;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeLlmUsage;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeLlmUsageWindow;
-import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeLlmUsageWindowKind;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,7 +65,7 @@ class KnowledgeActiveProfileClientMapperTest {
                 3L,
                 new KnowledgeActiveLlmProfileDetails("codex", "gpt-5.6-sol", new KnowledgeActiveLlmEffort("high")),
                 new KnowledgeLlmUsage(List.of(new KnowledgeLlmUsageWindow(
-                        KnowledgeLlmUsageWindowKind.PRIMARY,
+                        "PRIMARY",
                         34,
                         300,
                         Instant.parse("2026-07-31T12:00:00Z")
@@ -79,7 +77,7 @@ class KnowledgeActiveProfileClientMapperTest {
 
         // then
         assertThat(result.usage().windows()).hasSize(1);
-        assertThat(result.usage().windows().getFirst().kind()).isEqualTo(LlmUsageWindowKind.PRIMARY);
+        assertThat(result.usage().windows().getFirst().kind()).isEqualTo("PRIMARY");
     }
 
     @Test
@@ -89,8 +87,8 @@ class KnowledgeActiveProfileClientMapperTest {
                 3L,
                 new KnowledgeActiveLlmProfileDetails("codex", "gpt-5.6-sol", new KnowledgeActiveLlmEffort("high")),
                 new KnowledgeLlmUsage(List.of(
-                        new KnowledgeLlmUsageWindow(KnowledgeLlmUsageWindowKind.PRIMARY, 34, 300, Instant.parse("2026-07-31T12:00:00Z")),
-                        new KnowledgeLlmUsageWindow(KnowledgeLlmUsageWindowKind.SECONDARY, 61, 10080, Instant.parse("2026-08-04T09:00:00Z"))
+                        new KnowledgeLlmUsageWindow("PRIMARY", 34, 300, Instant.parse("2026-07-31T12:00:00Z")),
+                        new KnowledgeLlmUsageWindow("SECONDARY", 61, 10080, Instant.parse("2026-08-04T09:00:00Z"))
                 ))
         );
 
@@ -99,7 +97,7 @@ class KnowledgeActiveProfileClientMapperTest {
 
         // then
         assertThat(result.usage().windows()).hasSize(2);
-        assertThat(result.usage().windows().get(1).kind()).isEqualTo(LlmUsageWindowKind.SECONDARY);
+        assertThat(result.usage().windows().get(1).kind()).isEqualTo("SECONDARY");
         assertThat(result.usage().windows().get(1).resetAt()).isEqualTo(Instant.parse("2026-08-04T09:00:00Z"));
     }
 

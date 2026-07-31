@@ -7,7 +7,6 @@ import com.sitionix.forgeai.api.activeprofile.ActiveProfileResponse;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
-import com.sitionix.forgeai.domain.port.CorrelationIdProvider;
 import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
 import com.sitionix.forgeai.domain.usecase.GetActiveProfile;
 import com.sitionix.forgeai.domain.usecase.UpdateActiveLlmProfile;
@@ -36,9 +35,6 @@ class KnowledgeActiveProfileControllerTest {
     @Mock
     private ActiveProfileApiMapper mapper;
 
-    @Mock
-    private CorrelationIdProvider correlationIdProvider;
-
     private KnowledgeActiveProfileController controller;
 
     @BeforeEach
@@ -46,8 +42,7 @@ class KnowledgeActiveProfileControllerTest {
         this.controller = new KnowledgeActiveProfileController(
                 this.getActiveProfile,
                 this.updateActiveLlmProfile,
-                this.mapper,
-                this.correlationIdProvider
+                this.mapper
         );
     }
 
@@ -62,14 +57,12 @@ class KnowledgeActiveProfileControllerTest {
         );
         when(this.getActiveProfile.execute()).thenReturn(profile);
         when(this.mapper.toResponse(profile)).thenReturn(response);
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
 
         // when
         final ResponseEntity<ActiveProfileResponse> result = this.controller.getActiveProfile();
 
         // then
         assertThat(result.getBody()).isSameAs(response);
-        assertThat(result.getHeaders().getFirst("X-Correlation-Id")).isEqualTo("corr-local");
         verify(this.getActiveProfile).execute();
     }
 
@@ -84,7 +77,6 @@ class KnowledgeActiveProfileControllerTest {
         );
         when(this.getActiveProfile.execute()).thenReturn(profile);
         when(this.mapper.toResponse(profile)).thenReturn(response);
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
 
         // when
         final ResponseEntity<ActiveProfileResponse> result = this.controller.getActiveProfile();
@@ -107,7 +99,6 @@ class KnowledgeActiveProfileControllerTest {
         when(this.mapper.toCommand(request)).thenReturn(command);
         when(this.updateActiveLlmProfile.execute(command)).thenReturn(update);
         when(this.mapper.toResponse(update)).thenReturn(response);
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
 
         // when
         this.controller.updateActiveLlmProfile(request);
@@ -129,7 +120,6 @@ class KnowledgeActiveProfileControllerTest {
         when(this.mapper.toCommand(request)).thenReturn(command);
         when(this.updateActiveLlmProfile.execute(command)).thenReturn(update);
         when(this.mapper.toResponse(update)).thenReturn(response);
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
 
         // when
         this.controller.updateActiveLlmProfile(request);
@@ -151,7 +141,6 @@ class KnowledgeActiveProfileControllerTest {
         when(this.mapper.toCommand(request)).thenReturn(command);
         when(this.updateActiveLlmProfile.execute(command)).thenReturn(update);
         when(this.mapper.toResponse(update)).thenReturn(response);
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
 
         // when
         final ResponseEntity<ActiveLlmProfileResponse> result = this.controller.updateActiveLlmProfile(request);
@@ -171,7 +160,6 @@ class KnowledgeActiveProfileControllerTest {
                 new ActiveLlmProfileDetailsResponse("ollama", "qwen", null),
                 null
         ));
-        when(this.correlationIdProvider.currentOrCreate()).thenReturn("corr-local");
 
         // when
         this.controller.getActiveProfile();

@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 
+import com.sitionix.forgeai.domain.exception.KnowledgeClientException;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Locale;
@@ -27,6 +28,18 @@ public class KnowledgeActiveProfileClientProperties {
 
     public boolean enabled() {
         return Boolean.TRUE.equals(this.enabled);
+    }
+
+    void requireEnabled() {
+        if (!this.enabled()) {
+            throw new KnowledgeClientException(
+                    503,
+                    "UPSTREAM_UNAVAILABLE",
+                    "Knowledge service is unavailable.",
+                    null,
+                    null
+            );
+        }
     }
 
     public URI baseUrl() {

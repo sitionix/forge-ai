@@ -5,7 +5,6 @@ import static org.mockito.Mockito.mock;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.api.proxy.InfrastructureProxyTransport;
-import com.sitionix.forgeai.domain.port.CorrelationIdProvider;
 import com.sitionix.forgeai.domain.usecase.GetActiveProfile;
 import com.sitionix.forgeai.domain.usecase.UpdateActiveLlmProfile;
 import com.sitionix.forgeai.mapper.ActiveProfileApiMapper;
@@ -61,17 +60,6 @@ class ForgeAiInfrastructureRouteContractTest {
         context.registerBean(GetActiveProfile.class, () -> mock(GetActiveProfile.class));
         context.registerBean(UpdateActiveLlmProfile.class, () -> mock(UpdateActiveLlmProfile.class));
         context.registerBean(ActiveProfileApiMapper.class, () -> mock(ActiveProfileApiMapper.class));
-        context.registerBean(CorrelationIdProvider.class, () -> new CorrelationIdProvider() {
-            @Override
-            public String currentOrCreate() {
-                return "corr-test";
-            }
-
-            @Override
-            public String preserveOrCurrent(final String supplied) {
-                return supplied == null || supplied.isBlank() ? this.currentOrCreate() : supplied;
-            }
-        });
         context.registerBean(ObjectMapper.class, () -> new ObjectMapper());
         context.registerBean(KnowledgeActiveProfileController.class);
         context.registerBean(ForgeAiInfrastructureKnowledgeController.class);

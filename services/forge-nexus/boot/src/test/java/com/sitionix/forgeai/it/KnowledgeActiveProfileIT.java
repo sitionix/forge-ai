@@ -1,7 +1,6 @@
 package com.sitionix.forgeai.it;
 
 import com.github.tomakehurst.wiremock.http.Fault;
-import com.sitionix.forgeai.domain.port.CorrelationIdProvider;
 import com.sitionix.forgeai.it.infra.ProxyTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import java.io.IOException;

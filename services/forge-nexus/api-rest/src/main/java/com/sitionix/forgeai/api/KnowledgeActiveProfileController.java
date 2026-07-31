@@ -3,7 +3,6 @@ package com.sitionix.forgeai.api;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileUpdateRequest;
 import com.sitionix.forgeai.api.activeprofile.ActiveProfileResponse;
-import com.sitionix.forgeai.domain.port.CorrelationIdProvider;
 import com.sitionix.forgeai.domain.usecase.GetActiveProfile;
 import com.sitionix.forgeai.domain.usecase.UpdateActiveLlmProfile;
 import com.sitionix.forgeai.mapper.ActiveProfileApiMapper;
@@ -22,23 +21,18 @@ public class KnowledgeActiveProfileController {
     private final GetActiveProfile getActiveProfile;
     private final UpdateActiveLlmProfile updateActiveLlmProfile;
     private final ActiveProfileApiMapper activeProfileApiMapper;
-    private final CorrelationIdProvider correlationIdProvider;
 
     @GetMapping("/api/v1/infrastructure/knowledge/active-profile")
     public ResponseEntity<ActiveProfileResponse> getActiveProfile() {
-        return ResponseEntity.ok()
-                .header(ActiveProfileHttpHeaders.CORRELATION_ID, this.correlationIdProvider.currentOrCreate())
-                .body(this.activeProfileApiMapper.toResponse(this.getActiveProfile.execute()));
+        return ResponseEntity.ok(this.activeProfileApiMapper.toResponse(this.getActiveProfile.execute()));
     }
 
     @PutMapping("/api/v1/infrastructure/knowledge/active-profile/llm-profile")
     public ResponseEntity<ActiveLlmProfileResponse> updateActiveLlmProfile(
             @Valid @RequestBody final ActiveLlmProfileUpdateRequest request
     ) {
-        return ResponseEntity.ok()
-                .header(ActiveProfileHttpHeaders.CORRELATION_ID, this.correlationIdProvider.currentOrCreate())
-                .body(this.activeProfileApiMapper.toResponse(
-                        this.updateActiveLlmProfile.execute(this.activeProfileApiMapper.toCommand(request))
-                ));
+        return ResponseEntity.ok(this.activeProfileApiMapper.toResponse(
+                this.updateActiveLlmProfile.execute(this.activeProfileApiMapper.toCommand(request))
+        ));
     }
 }
