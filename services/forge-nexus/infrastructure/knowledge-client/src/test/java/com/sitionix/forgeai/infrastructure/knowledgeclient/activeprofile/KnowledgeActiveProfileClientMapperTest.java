@@ -123,6 +123,29 @@ class KnowledgeActiveProfileClientMapperTest {
     }
 
     @Test
+    void mapsClientRequestWithNullEffort() {
+        // given
+        final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(
+                1,
+                "ollama",
+                "qwen-model",
+                null
+        );
+        final KnowledgeActiveLlmProfileRequest expected = new KnowledgeActiveLlmProfileRequest(
+                1,
+                "ollama",
+                "qwen-model",
+                null
+        );
+
+        // when
+        final KnowledgeActiveLlmProfileRequest actual = this.mapper.toRequest(command);
+
+        // then
+        assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
     void mapsClientResponse() {
         // given
         final KnowledgeActiveProfileResponse response = new KnowledgeActiveProfileResponse(

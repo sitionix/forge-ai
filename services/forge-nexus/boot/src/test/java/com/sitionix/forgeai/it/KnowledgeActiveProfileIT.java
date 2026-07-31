@@ -54,6 +54,19 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
     }
 
     @Test
+    void putHappyPathSerializesNullEffort() {
+        final RequestBuilder<?, ?> mapping = this.testManager.wiremock()
+                .createMapping(KnowledgeActiveProfileEndpoint.UPSTREAM_PUT_ACTIVE_LLM_PROFILE_NO_EFFORT)
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(KnowledgeActiveProfileEndpoint.NEXUS_PUT_ACTIVE_LLM_PROFILE_NO_EFFORT)
+                .assertDefault();
+
+        mapping.verify();
+    }
+
+    @Test
     void validationFailureDoesNotCallUpstream() {
         this.testManager.mockMvc()
                 .ping(KnowledgeActiveProfileEndpoint.NEXUS_PUT_ACTIVE_LLM_PROFILE_VALIDATION_FAILED)

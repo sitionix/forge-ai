@@ -1,0 +1,8 @@
+{
+  "revision": 2,
+  "llmProfile": {
+    "providerId": "ollama",
+    "modelId": "qwen-model",
+    "effort": null
+  }
+}

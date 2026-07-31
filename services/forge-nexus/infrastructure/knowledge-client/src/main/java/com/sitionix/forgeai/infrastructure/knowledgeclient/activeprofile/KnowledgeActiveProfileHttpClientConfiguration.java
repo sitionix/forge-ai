@@ -30,6 +30,7 @@ class KnowledgeActiveProfileHttpClientConfiguration {
 
     private JdkClientHttpRequestFactory requestFactory(final KnowledgeActiveProfileClientProperties properties) {
         final HttpClient httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(properties.connectTimeout())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();

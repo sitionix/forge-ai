@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from knowledge_service.active_profile import (
+    ActiveLlmProfilePutRequest,
     ActiveLlmProfileResponse,
     ActiveLlmRuntime,
     ActiveProfileService,
@@ -53,8 +54,8 @@ def codex_ready() -> dict[str, Any]:
         "status": "READY",
         "models": [
             {
-                "modelId": "gpt-5.6-sol",
-                "displayName": "GPT-5.6-Sol",
+                "modelId": "gpt-5.6-luna",
+                "displayName": "GPT-5.6-Luna",
                 "efforts": [{"effortId": "low", "description": "Fast"}, {"effortId": "high", "description": "Deep"}],
             }
         ],
@@ -164,6 +165,24 @@ def test_put_replaces_llm_profile_increments_revision_and_updates_status(tmp_pat
     assert status.json()["generative"]["modelId"] == "qwen2.5-coder:32b"
 
 
+def test_active_llm_profile_put_request_accepts_explicit_effort_contract():
+    request = ActiveLlmProfilePutRequest.parse_obj(
+        {
+            "expectedRevision": 1,
+            "providerId": "codex",
+            "modelId": "gpt-5.6-luna",
+            "effort": {"effortId": "high"},
+        }
+    )
+
+    assert request.dict() == {
+        "expectedRevision": 1,
+        "providerId": "codex",
+        "modelId": "gpt-5.6-luna",
+        "effort": {"effortId": "high"},
+    }
+
+
 def test_put_validation_errors_leave_previous_profile_active(tmp_path: Path):
     app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
     service = deps.active_profile_service
@@ -177,9 +196,9 @@ def test_put_validation_errors_leave_previous_profile_active(tmp_path: Path):
         ({"expectedRevision": 1, "providerId": "missing", "modelId": "x", "effort": None}, "ACTIVE_LLM_PROVIDER_NOT_FOUND"),
         ({"expectedRevision": 1, "providerId": "offline", "modelId": "x", "effort": None}, "ACTIVE_LLM_PROVIDER_UNAVAILABLE"),
         ({"expectedRevision": 1, "providerId": "ollama", "modelId": "missing", "effort": None}, "ACTIVE_LLM_MODEL_NOT_FOUND"),
-        ({"expectedRevision": 1, "providerId": "codex", "modelId": "gpt-5.6-sol", "effort": None}, "ACTIVE_LLM_EFFORT_REQUIRED"),
+        ({"expectedRevision": 1, "providerId": "codex", "modelId": "gpt-5.6-luna", "effort": None}, "ACTIVE_LLM_EFFORT_REQUIRED"),
         (
-            {"expectedRevision": 1, "providerId": "codex", "modelId": "gpt-5.6-sol", "effort": {"effortId": "unknown"}},
+            {"expectedRevision": 1, "providerId": "codex", "modelId": "gpt-5.6-luna", "effort": {"effortId": "unknown"}},
             "ACTIVE_LLM_EFFORT_NOT_SUPPORTED",
         ),
         (
@@ -187,7 +206,7 @@ def test_put_validation_errors_leave_previous_profile_active(tmp_path: Path):
             "ACTIVE_LLM_EFFORT_NOT_SUPPORTED",
         ),
         (
-            {"expectedRevision": 1, "providerId": "codex", "modelId": "gpt-5.6-sol", "effort": {"effortId": "high"}},
+            {"expectedRevision": 1, "providerId": "codex", "modelId": "gpt-5.6-luna", "effort": {"effortId": "high"}},
             "ACTIVE_LLM_PROVIDER_NOT_EXECUTABLE",
         ),
     ]

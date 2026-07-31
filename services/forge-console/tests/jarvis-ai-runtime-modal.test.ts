@@ -87,8 +87,8 @@ function runtimeProviders() {
         version: '0.146.0',
         models: [
           {
-            modelId: 'gpt-5.6-sol',
-            displayName: 'GPT-5.6-Sol',
+            modelId: 'gpt-5.6-luna',
+            displayName: 'GPT-5.6-Luna',
             description: 'Fast responses with compact reasoning.',
             modifiedAt: '2026-07-29T14:03:00Z',
             efforts: [
@@ -270,7 +270,7 @@ describe('Jarvis AI runtime modal', () => {
     dom.window.document.getElementById('editAiRuntime')?.click();
 
     option(dom, '[data-provider-id="codex"]').click();
-    option(dom, '[data-model-id="gpt-5.6-sol"]').click();
+    option(dom, '[data-model-id="gpt-5.6-luna"]').click();
     option(dom, '[data-effort-id="high"]').click();
     dom.window.document.getElementById('applyAiRuntimeDialog')?.click();
     await flushAsync();
@@ -279,7 +279,7 @@ describe('Jarvis AI runtime modal', () => {
     expect(http.put).toHaveBeenCalledWith('/knowledge/active-profile/llm-profile', {
       expectedRevision: 3,
       providerId: 'codex',
-      modelId: 'gpt-5.6-sol',
+      modelId: 'gpt-5.6-luna',
       effort: { effortId: 'high' }
     });
     expect(text(dom)).toContain('Active profile update failed');
@@ -360,9 +360,9 @@ describe('Jarvis AI runtime modal', () => {
     dom.window.document.getElementById('editAiRuntime')?.click();
 
     option(dom, '[data-provider-id="codex"]').click();
-    expect(dom.window.document.getElementById('aiRuntimeModelOptions')?.textContent).toContain('GPT-5.6-Sol');
+    expect(dom.window.document.getElementById('aiRuntimeModelOptions')?.textContent).toContain('GPT-5.6-Luna');
     expect(dom.window.document.querySelector('.ai-runtime-note')?.textContent).toBe('Select a provider and model');
-    option(dom, '[data-model-id="gpt-5.6-sol"]').click();
+    option(dom, '[data-model-id="gpt-5.6-luna"]').click();
     expect(dom.window.document.getElementById('aiRuntimeEffortSection')?.classList.contains('hidden')).toBe(false);
     expect(dom.window.document.querySelector('.ai-runtime-note')?.textContent).toBe('Select a reasoning effort');
     option(dom, '[data-effort-id="high"]').click();

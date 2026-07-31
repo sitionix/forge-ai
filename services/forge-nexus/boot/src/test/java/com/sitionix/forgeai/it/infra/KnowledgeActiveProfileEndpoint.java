@@ -29,6 +29,14 @@ public final class KnowledgeActiveProfileEndpoint {
                     HttpStatus.OK,
                     "responseDefaultUpdateActiveLlmProfile.json");
 
+    public static final Endpoint<ActiveLlmProfileUpdateRequest, ActiveLlmProfileResponse> NEXUS_PUT_ACTIVE_LLM_PROFILE_NO_EFFORT =
+            nexusPut("/api/v1/infrastructure/knowledge/active-profile/llm-profile",
+                    ActiveLlmProfileUpdateRequest.class,
+                    ActiveLlmProfileResponse.class,
+                    "requestDefaultUpdateActiveLlmProfileNoEffort.json",
+                    HttpStatus.OK,
+                    "responseDefaultUpdateActiveLlmProfileNoEffort.json");
+
     public static final Endpoint<ActiveLlmProfileUpdateRequest, InfrastructureErrorResponse> NEXUS_PUT_ACTIVE_LLM_PROFILE_VALIDATION_FAILED =
             nexusPut("/api/v1/infrastructure/knowledge/active-profile/llm-profile",
                     ActiveLlmProfileUpdateRequest.class,
@@ -78,6 +86,14 @@ public final class KnowledgeActiveProfileEndpoint {
                     "requestDefaultUpdateActiveLlmProfile.json",
                     HttpStatus.OK,
                     "responseDefaultMappingUpdateActiveLlmProfile.json");
+
+    public static final Endpoint<KnowledgeActiveLlmProfileRequest, KnowledgeActiveLlmProfileResponse> UPSTREAM_PUT_ACTIVE_LLM_PROFILE_NO_EFFORT =
+            upstreamPut("/api/v1/knowledge/active-profile/llm-profile",
+                    KnowledgeActiveLlmProfileRequest.class,
+                    KnowledgeActiveLlmProfileResponse.class,
+                    "requestDefaultUpdateActiveLlmProfileNoEffort.json",
+                    HttpStatus.OK,
+                    "responseDefaultMappingUpdateActiveLlmProfileNoEffort.json");
 
     public static final Endpoint<KnowledgeActiveLlmProfileRequest, InfrastructureErrorResponse> UPSTREAM_PUT_ACTIVE_LLM_PROFILE_REVISION_CONFLICT =
             upstreamPut("/api/v1/knowledge/active-profile/llm-profile",
