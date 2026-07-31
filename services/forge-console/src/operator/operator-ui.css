@@ -1193,6 +1193,20 @@ body.sidebar-collapsed .sidebar-link {
   z-index: 20;
 }
 
+.ai-runtime-dialog.open {
+  display: grid;
+  grid-template-rows: auto minmax(0, auto) auto;
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  width: min(1180px, calc(100vw - 44px));
+  height: auto;
+  max-height: min(820px, calc(100vh - 44px));
+  margin: 0;
+  transform: translate(-50%, -50%);
+}
+
 .dialog-head {
   display: flex;
   justify-content: space-between;
@@ -1232,7 +1246,8 @@ body.sidebar-collapsed .sidebar-link {
 
 .ai-runtime-modal-body {
   position: relative;
-  max-height: min(620px, calc(100vh - 210px));
+  min-height: 0;
+  max-height: min(620px, calc(100vh - 300px));
   overflow: auto;
   padding: 22px;
   background: rgba(255, 252, 235, 0.72);

@@ -77,7 +77,7 @@ function runtimeProviders() {
         status: 'READY',
         models: [
           { modelId: 'qwen2.5-coder:14b', displayName: 'Qwen 14B' },
-          { modelId: 'qwen2.5-coder:32b', displayName: 'Qwen 32B' }
+          { modelId: 'another-model', displayName: 'Another Model' }
         ]
       },
       {
@@ -149,7 +149,7 @@ function createPage(options: {
       revision: 4,
       llmProfile: {
         providerId: 'ollama',
-        modelId: 'qwen2.5-coder:32b',
+        modelId: 'another-model',
         effort: null
       }
     }))
@@ -174,6 +174,16 @@ function option(dom: JSDOM, selector: string) {
 
 function getPaths(mock: ReturnType<typeof vi.fn>) {
   return mock.mock.calls.map((call) => String(call[0]));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
 }
 
 describe('Jarvis AI runtime modal', () => {
@@ -204,25 +214,47 @@ describe('Jarvis AI runtime modal', () => {
     expect(option(dom, '[data-provider-id="ollama"]').getAttribute('aria-checked')).toBe('true');
     expect(option(dom, '[data-model-id="qwen2.5-coder:14b"]').getAttribute('aria-checked')).toBe('true');
     expect(dom.window.document.getElementById('applyAiRuntimeDialog')?.hasAttribute('disabled')).toBe(true);
+    expect(dom.window.document.querySelector('.ai-runtime-note')?.textContent).toBe('No changes to apply');
   });
 
   it('enables Apply for valid changed draft and sends exact active-profile PUT body', async () => {
-    const { dom, dialog, http, page } = createPage();
+    const update = deferred<unknown>();
+    const put = vi.fn(() => update.promise);
+    const { dom, dialog, http, page } = createPage({ put });
     page.mount();
     await flushAsync();
     dom.window.document.getElementById('editAiRuntime')?.click();
 
-    option(dom, '[data-model-id="qwen2.5-coder:32b"]').click();
-    expect(dom.window.document.getElementById('applyAiRuntimeDialog')?.hasAttribute('disabled')).toBe(false);
-    dom.window.document.getElementById('applyAiRuntimeDialog')?.click();
-    await flushAsync();
+    option(dom, '[data-model-id="another-model"]').click();
+    const apply = dom.window.document.getElementById('applyAiRuntimeDialog') as HTMLButtonElement;
+    expect(apply.hasAttribute('disabled')).toBe(false);
+    expect(dom.window.document.querySelector('.ai-runtime-note')?.textContent).toBe('Ready to apply');
+    apply.click();
 
     expect(http.put).toHaveBeenCalledWith('/knowledge/active-profile/llm-profile', {
       expectedRevision: 3,
       providerId: 'ollama',
-      modelId: 'qwen2.5-coder:32b',
+      modelId: 'another-model',
       effort: null
     });
+    expect(http.put).toHaveBeenCalledTimes(1);
+    expect(apply.hasAttribute('disabled')).toBe(true);
+    expect(apply.textContent).toBe('Applying...');
+    expect(dom.window.document.querySelector('.ai-runtime-note')?.textContent).toBe('Applying active profile...');
+
+    apply.click();
+    expect(http.put).toHaveBeenCalledTimes(1);
+
+    update.resolve({
+      revision: 4,
+      llmProfile: {
+        providerId: 'ollama',
+        modelId: 'another-model',
+        effort: null
+      }
+    });
+    await flushAsync();
+
     expect(dialog.hasAttribute('open')).toBe(false);
     expect(getPaths(http.get).filter((path) => path === '/knowledge/active-profile').length).toBeGreaterThanOrEqual(2);
   });
@@ -270,7 +302,7 @@ describe('Jarvis AI runtime modal', () => {
     const put = vi.fn(() => {
       profile = activeProfile({
         revision: 4,
-        llmProfile: { providerId: 'ollama', modelId: 'qwen2.5-coder:32b', effort: null },
+        llmProfile: { providerId: 'ollama', modelId: 'another-model', effort: null },
         usage: null
       });
       return Promise.reject(conflict);
@@ -280,12 +312,12 @@ describe('Jarvis AI runtime modal', () => {
     await flushAsync();
     dom.window.document.getElementById('editAiRuntime')?.click();
 
-    option(dom, '[data-model-id="qwen2.5-coder:32b"]').click();
+    option(dom, '[data-model-id="another-model"]').click();
     dom.window.document.getElementById('applyAiRuntimeDialog')?.click();
     await flushAsync();
 
     expect(getPaths(get).filter((path) => path === '/knowledge/active-profile')).toHaveLength(2);
-    expect(option(dom, '[data-model-id="qwen2.5-coder:32b"]').getAttribute('aria-checked')).toBe('true');
+    expect(option(dom, '[data-model-id="another-model"]').getAttribute('aria-checked')).toBe('true');
     expect(text(dom)).toContain('Active profile changed');
   });
 
@@ -329,13 +361,26 @@ describe('Jarvis AI runtime modal', () => {
 
     option(dom, '[data-provider-id="codex"]').click();
     expect(dom.window.document.getElementById('aiRuntimeModelOptions')?.textContent).toContain('GPT-5.6-Sol');
+    expect(dom.window.document.querySelector('.ai-runtime-note')?.textContent).toBe('Select a provider and model');
     option(dom, '[data-model-id="gpt-5.6-sol"]').click();
     expect(dom.window.document.getElementById('aiRuntimeEffortSection')?.classList.contains('hidden')).toBe(false);
+    expect(dom.window.document.querySelector('.ai-runtime-note')?.textContent).toBe('Select a reasoning effort');
     option(dom, '[data-effort-id="high"]').click();
     expect(option(dom, '[data-effort-id="high"]').getAttribute('aria-checked')).toBe('true');
+    expect(dom.window.document.querySelector('.ai-runtime-note')?.textContent).toBe('Ready to apply');
 
     const source = await readFile(resolve(testDir, '../src/operator/ai-runtime-view.js'), 'utf8');
     expect(source).not.toMatch(/providerId\s*={2,3}\s*['"`](ollama|codex|claude)['"`]/);
+  });
+
+  it('keeps AI runtime dialog out of the stretching task-dialog inset layout', async () => {
+    const source = await readFile(resolve(testDir, '../src/operator/operator-ui.css'), 'utf8');
+    const match = source.match(/\.ai-runtime-dialog\.open\s*\{(?<body>[^}]+)\}/);
+
+    expect(match?.groups?.body).toContain('top: 50%');
+    expect(match?.groups?.body).toContain('left: 50%');
+    expect(match?.groups?.body).toContain('height: auto');
+    expect(match?.groups?.body).not.toContain('inset: 22px');
   });
 
   it('isolates status and runtime failures and preserves last good providers', async () => {

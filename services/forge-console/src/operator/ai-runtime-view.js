@@ -541,9 +541,26 @@ export class AiRuntimeView {
     button.disabled = !this.canApply();
     button.textContent = this.applyInProgress ? 'Applying...' : 'Apply';
     if (note) {
-      const revision = this.activeProfile?.revision ? `Revision ${this.activeProfile.revision}` : 'Active profile';
-      note.textContent = revision;
+      note.textContent = this.applyNote();
     }
+  }
+
+  applyNote() {
+    if (this.applyInProgress) {
+      return 'Applying active profile...';
+    }
+    if (!this.draft.providerId || !this.draft.modelId) {
+      return 'Select a provider and model';
+    }
+    const model = this.findSelectedModel(this.draft.modelId);
+    const efforts = model?.efforts || [];
+    if (efforts.length > 0 && !this.draft.effortId) {
+      return 'Select a reasoning effort';
+    }
+    if (!this.draftDiffersFromActive()) {
+      return 'No changes to apply';
+    }
+    return 'Ready to apply';
   }
 
   canApply() {
