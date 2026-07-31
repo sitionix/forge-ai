@@ -3,13 +3,20 @@ package com.sitionix.forgeai.mapper;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmEffortRequest;
+import com.sitionix.forgeai.api.activeprofile.ActiveLlmEffortResponse;
+import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileDetailsResponse;
+import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileUpdateRequest;
+import com.sitionix.forgeai.api.activeprofile.ActiveProfileResponse;
+import com.sitionix.forgeai.api.activeprofile.LlmUsageResponse;
+import com.sitionix.forgeai.api.activeprofile.LlmUsageWindowResponse;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmEffort;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsage;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsageWindow;
+import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -21,60 +28,97 @@ class ActiveProfileApiMapperTest {
 
     @Test
     void mapsNullEffortAndUsageNull() {
-        final var response = this.mapper.toResponse(new ActiveProfile(
+        // given
+        final ActiveProfile source = new ActiveProfile(
                 1,
                 new ActiveLlmProfile("ollama", "qwen2.5-coder:14b", null),
                 null
-        ));
+        );
+        final ActiveProfileResponse expected = new ActiveProfileResponse(
+                1,
+                new ActiveLlmProfileDetailsResponse("ollama", "qwen2.5-coder:14b", null),
+                null
+        );
 
-        assertThat(response.revision()).isEqualTo(1);
-        assertThat(response.llmProfile().providerId()).isEqualTo("ollama");
-        assertThat(response.llmProfile().effort()).isNull();
-        assertThat(response.usage()).isNull();
+        // when
+        final ActiveProfileResponse actual = this.mapper.toResponse(source);
+
+        // then
+        assertThat(actual).isEqualTo(expected);
     }
 
     @Test
     void mapsPresentEffortAndTwoUsageWindows() {
-        final var response = this.mapper.toResponse(new ActiveProfile(
+        // given
+        final Instant firstResetAt = Instant.parse("2026-07-31T12:00:00Z");
+        final Instant secondResetAt = Instant.parse("2026-08-04T09:00:00Z");
+        final ActiveProfile source = new ActiveProfile(
                 3,
                 new ActiveLlmProfile("codex", "gpt-5.6-sol", new LlmEffort("high")),
                 new LlmUsage(List.of(
-                        new LlmUsageWindow("PRIMARY", 34, 300, Instant.parse("2026-07-31T12:00:00Z")),
-                        new LlmUsageWindow("SECONDARY", 61, 10080, Instant.parse("2026-08-04T09:00:00Z"))
+                        new LlmUsageWindow("PRIMARY", 34, 300, firstResetAt),
+                        new LlmUsageWindow("SECONDARY", 61, 10080, secondResetAt)
                 ))
-        ));
+        );
+        final ActiveProfileResponse expected = new ActiveProfileResponse(
+                3,
+                new ActiveLlmProfileDetailsResponse(
+                        "codex",
+                        "gpt-5.6-sol",
+                        new ActiveLlmEffortResponse("high")
+                ),
+                new LlmUsageResponse(List.of(
+                        new LlmUsageWindowResponse("PRIMARY", 34, 300, firstResetAt),
+                        new LlmUsageWindowResponse("SECONDARY", 61, 10080, secondResetAt)
+                ))
+        );
 
-        assertThat(response.llmProfile().effort().effortId()).isEqualTo("high");
-        assertThat(response.usage().windows()).hasSize(2);
-        assertThat(response.usage().windows().get(0).kind()).isEqualTo("PRIMARY");
-        assertThat(response.usage().windows().get(1).kind()).isEqualTo("SECONDARY");
-        assertThat(response.usage().windows().get(1).resetAt()).isEqualTo(Instant.parse("2026-08-04T09:00:00Z"));
+        // when
+        final ActiveProfileResponse actual = this.mapper.toResponse(source);
+
+        // then
+        assertThat(actual).isEqualTo(expected);
     }
 
     @Test
     void mapsUpdateRequestToDomainCommand() {
-        final var command = this.mapper.toCommand(new ActiveLlmProfileUpdateRequest(
+        // given
+        final ActiveLlmProfileUpdateRequest source = new ActiveLlmProfileUpdateRequest(
                 3L,
                 "codex",
                 "gpt-5.6-sol",
                 new ActiveLlmEffortRequest("high")
-        ));
+        );
+        final UpdateActiveLlmProfileCommand expected = new UpdateActiveLlmProfileCommand(
+                3,
+                "codex",
+                "gpt-5.6-sol",
+                new LlmEffort("high")
+        );
 
-        assertThat(command.expectedRevision()).isEqualTo(3L);
-        assertThat(command.providerId()).isEqualTo("codex");
-        assertThat(command.modelId()).isEqualTo("gpt-5.6-sol");
-        assertThat(command.effort()).isEqualTo(new LlmEffort("high"));
+        // when
+        final UpdateActiveLlmProfileCommand actual = this.mapper.toCommand(source);
+
+        // then
+        assertThat(actual).isEqualTo(expected);
     }
 
     @Test
     void mapsUpdateResult() {
-        final var response = this.mapper.toResponse(new ActiveLlmProfileUpdateResult(
+        // given
+        final ActiveLlmProfileUpdateResult source = new ActiveLlmProfileUpdateResult(
                 4,
                 new ActiveLlmProfile("ollama", "qwen", null)
-        ));
+        );
+        final ActiveLlmProfileResponse expected = new ActiveLlmProfileResponse(
+                4,
+                new ActiveLlmProfileDetailsResponse("ollama", "qwen", null)
+        );
 
-        assertThat(response.revision()).isEqualTo(4);
-        assertThat(response.llmProfile().providerId()).isEqualTo("ollama");
-        assertThat(response.llmProfile().effort()).isNull();
+        // when
+        final ActiveLlmProfileResponse actual = this.mapper.toResponse(source);
+
+        // then
+        assertThat(actual).isEqualTo(expected);
     }
 }

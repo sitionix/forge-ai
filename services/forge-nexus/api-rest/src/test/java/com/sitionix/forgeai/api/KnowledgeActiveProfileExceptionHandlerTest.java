@@ -8,6 +8,8 @@ import java.lang.reflect.Method;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -30,6 +32,7 @@ class KnowledgeActiveProfileExceptionHandlerTest {
 
     @Test
     void validUpstreamTypedErrorPreserved() {
+        // given
         final KnowledgeClientException exception = new KnowledgeClientException(
                 409,
                 """
@@ -39,9 +42,11 @@ class KnowledgeActiveProfileExceptionHandlerTest {
                 null
         );
 
+        // when
         final ResponseEntity<InfrastructureErrorResponse> response =
                 this.handler.handleKnowledgeClientException(exception);
 
+        // then
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(response.getBody()).isEqualTo(new InfrastructureErrorResponse(
                 "ACTIVE_PROFILE_REVISION_CONFLICT",
@@ -52,11 +57,14 @@ class KnowledgeActiveProfileExceptionHandlerTest {
 
     @Test
     void malformedUpstreamErrorBecomesBadGateway() {
+        // given
         final KnowledgeClientException exception = new KnowledgeClientException(409, "{\"code\":\"ONLY_CODE\"}", Map.of(), null);
 
+        // when
         final ResponseEntity<InfrastructureErrorResponse> response =
                 this.handler.handleKnowledgeClientException(exception);
 
+        // then
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
         assertThat(response.getBody()).isEqualTo(new InfrastructureErrorResponse(
                 "UPSTREAM_INVALID_RESPONSE",
@@ -67,9 +75,14 @@ class KnowledgeActiveProfileExceptionHandlerTest {
 
     @Test
     void resourceAccessExceptionBecomesUnavailable() {
-        final ResponseEntity<InfrastructureErrorResponse> response =
-                this.handler.handleResourceAccessException(new ResourceAccessException("connection refused"));
+        // given
+        final ResourceAccessException exception = new ResourceAccessException("connection refused");
 
+        // when
+        final ResponseEntity<InfrastructureErrorResponse> response =
+                this.handler.handleResourceAccessException(exception);
+
+        // then
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
         assertThat(response.getBody()).isEqualTo(new InfrastructureErrorResponse(
                 "UPSTREAM_UNAVAILABLE",
@@ -80,21 +93,20 @@ class KnowledgeActiveProfileExceptionHandlerTest {
 
     @Test
     void validationBecomesBadRequest() throws NoSuchMethodException {
+        // given
         final ActiveLlmProfileUpdateRequest request = new ActiveLlmProfileUpdateRequest(null, "", "", null);
         final BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(request, "request");
         bindingResult.addError(new FieldError("request", "providerId", "must not be blank"));
-        final Method method = KnowledgeActiveProfileExceptionHandlerTest.class.getDeclaredMethod(
-                "validationTarget",
-                ActiveLlmProfileUpdateRequest.class
-        );
         final MethodArgumentNotValidException exception = new MethodArgumentNotValidException(
-                new MethodParameter(method, 0),
+                this.validationMethodParameter(),
                 bindingResult
         );
 
+        // when
         final ResponseEntity<InfrastructureErrorResponse> response =
                 this.handler.handleMethodArgumentNotValidException(exception);
 
+        // then
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody()).isEqualTo(new InfrastructureErrorResponse(
                 "VALIDATION_FAILED",
@@ -105,15 +117,40 @@ class KnowledgeActiveProfileExceptionHandlerTest {
 
     @Test
     void unreadableBodyBecomesBadRequest() {
-        final ResponseEntity<InfrastructureErrorResponse> response =
-                this.handler.handleHttpMessageNotReadableException(new HttpMessageNotReadableException("bad body"));
+        // given
+        final HttpMessageNotReadableException exception = new HttpMessageNotReadableException("bad body");
 
+        // when
+        final ResponseEntity<InfrastructureErrorResponse> response =
+                this.handler.handleHttpMessageNotReadableException(exception);
+
+        // then
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody()).isEqualTo(new InfrastructureErrorResponse(
                 "VALIDATION_FAILED",
                 "Request body is invalid or does not match the expected contract.",
                 null
         ));
+    }
+
+    @Test
+    void handlerOrderIsHighestPrecedence() {
+        // given
+        final Order order = KnowledgeActiveProfileExceptionHandler.class.getAnnotation(Order.class);
+
+        // when
+        final int value = order.value();
+
+        // then
+        assertThat(value).isEqualTo(Ordered.HIGHEST_PRECEDENCE);
+    }
+
+    private MethodParameter validationMethodParameter() throws NoSuchMethodException {
+        final Method method = KnowledgeActiveProfileExceptionHandlerTest.class.getDeclaredMethod(
+                "validationTarget",
+                ActiveLlmProfileUpdateRequest.class
+        );
+        return new MethodParameter(method, 0);
     }
 
     @SuppressWarnings("unused")

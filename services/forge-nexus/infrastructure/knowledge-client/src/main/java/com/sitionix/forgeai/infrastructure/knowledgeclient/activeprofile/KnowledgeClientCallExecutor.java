@@ -5,14 +5,22 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
-import org.springframework.web.client.RestClientResponseException;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientResponseException;
 
 @Component
+@RequiredArgsConstructor
 public class KnowledgeClientCallExecutor {
 
+    private final KnowledgeActiveProfileClientProperties properties;
+
     public <T> T execute(final Supplier<T> call) {
+        if (!this.properties.enabled()) {
+            throw new ResourceAccessException("Knowledge service is disabled");
+        }
         try {
             return call.get();
         } catch (final RestClientResponseException exception) {

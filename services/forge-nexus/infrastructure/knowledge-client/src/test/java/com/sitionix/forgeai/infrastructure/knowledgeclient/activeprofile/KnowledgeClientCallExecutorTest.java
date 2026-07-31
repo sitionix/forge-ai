@@ -2,10 +2,13 @@ package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 
 import com.sitionix.forgeai.domain.exception.KnowledgeClientException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientResponseException;
 
@@ -18,16 +21,24 @@ class KnowledgeClientCallExecutorTest {
 
     @BeforeEach
     void setUp() {
-        this.executor = new KnowledgeClientCallExecutor();
+        this.executor = new KnowledgeClientCallExecutor(this.properties(true));
     }
 
     @Test
     void successfulSupplierResultReturned() {
-        assertThat(this.executor.execute(() -> "ok")).isEqualTo("ok");
+        // given
+        final String expected = "ok";
+
+        // when
+        final String actual = this.executor.execute(() -> expected);
+
+        // then
+        assertThat(actual).isEqualTo(expected);
     }
 
     @Test
     void restClientResponseExceptionConvertedToKnowledgeClientException() {
+        // given
         final HttpHeaders headers = new HttpHeaders();
         headers.add("X-Upstream", "value");
         final RestClientResponseException upstream = HttpClientErrorException.create(
@@ -38,13 +49,34 @@ class KnowledgeClientCallExecutorTest {
                 StandardCharsets.UTF_8
         );
 
+        // when / then
         assertThatThrownBy(() -> this.executor.execute(() -> {
             throw upstream;
         })).isInstanceOfSatisfying(KnowledgeClientException.class, exception -> {
             assertThat(exception.statusCode()).isEqualTo(429);
             assertThat(exception.responseBody()).isEqualTo("{\"code\":\"RATE_LIMITED\"}");
-            assertThat(exception.responseHeaders()).containsEntry("X-Upstream", java.util.List.of("value"));
+            assertThat(exception.responseHeaders()).containsEntry("X-Upstream", List.of("value"));
             assertThat(exception.getCause()).isSameAs(upstream);
         });
+    }
+
+    @Test
+    void disabledPropertyThrowsResourceAccessExceptionWithoutExecutingSupplier() {
+        // given
+        final KnowledgeClientCallExecutor disabledExecutor = new KnowledgeClientCallExecutor(this.properties(false));
+        final AtomicBoolean executed = new AtomicBoolean(false);
+
+        // when / then
+        assertThatThrownBy(() -> disabledExecutor.execute(() -> {
+            executed.set(true);
+            return "ok";
+        })).isInstanceOf(ResourceAccessException.class);
+        assertThat(executed).isFalse();
+    }
+
+    private KnowledgeActiveProfileClientProperties properties(final boolean enabled) {
+        final KnowledgeActiveProfileClientProperties properties = new KnowledgeActiveProfileClientProperties();
+        properties.setEnabled(enabled);
+        return properties;
     }
 }

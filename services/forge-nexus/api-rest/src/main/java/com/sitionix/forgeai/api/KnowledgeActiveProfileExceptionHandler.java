@@ -6,6 +6,8 @@ import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
 import com.sitionix.forgeai.domain.exception.KnowledgeClientException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageConversionException;
@@ -18,6 +20,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 
 @Slf4j
+@Order(Ordered.HIGHEST_PRECEDENCE)
 @RestControllerAdvice(assignableTypes = KnowledgeActiveProfileController.class)
 @RequiredArgsConstructor
 public class KnowledgeActiveProfileExceptionHandler {
@@ -38,9 +41,9 @@ public class KnowledgeActiveProfileExceptionHandler {
             log.error("Knowledge active-profile upstream returned invalid HTTP status: {}", statusCode, exception);
             return this.response(HttpStatus.BAD_GATEWAY.value(), UPSTREAM_ERROR, "Knowledge request failed.", null);
         }
-        final KnowledgeErrorResponse error = this.parseError(exception.responseBody(), exception);
+        final InfrastructureErrorResponse error = this.parseError(exception.responseBody());
         if (error == null || !this.hasText(error.code()) || !this.hasText(error.message())) {
-            log.error("Knowledge active-profile upstream returned malformed error body. upstreamStatus={}", statusCode, exception);
+            log.warn("Knowledge active-profile upstream returned malformed error body. upstreamStatus={}", statusCode, exception);
             return this.response(
                     HttpStatus.BAD_GATEWAY.value(),
                     UPSTREAM_INVALID_RESPONSE,
@@ -55,7 +58,7 @@ public class KnowledgeActiveProfileExceptionHandler {
     public ResponseEntity<InfrastructureErrorResponse> handleResourceAccessException(
             final ResourceAccessException exception
     ) {
-        log.error("Knowledge active-profile service is unavailable", exception);
+        log.warn("Knowledge active-profile service is unavailable", exception);
         return this.response(
                 HttpStatus.SERVICE_UNAVAILABLE.value(),
                 UPSTREAM_UNAVAILABLE,
@@ -66,7 +69,7 @@ public class KnowledgeActiveProfileExceptionHandler {
 
     @ExceptionHandler({RestClientException.class, HttpMessageConversionException.class})
     public ResponseEntity<InfrastructureErrorResponse> handleInvalidUpstreamResponse(final RuntimeException exception) {
-        log.error("Knowledge active-profile service returned an invalid response", exception);
+        log.warn("Knowledge active-profile service returned an invalid response", exception);
         return this.response(
                 HttpStatus.BAD_GATEWAY.value(),
                 UPSTREAM_INVALID_RESPONSE,
@@ -77,7 +80,6 @@ public class KnowledgeActiveProfileExceptionHandler {
 
     @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class})
     public ResponseEntity<InfrastructureErrorResponse> handleMethodArgumentNotValidException(final Exception exception) {
-        log.error("Knowledge active-profile request validation failed", exception);
         return this.response(
                 HttpStatus.BAD_REQUEST.value(),
                 VALIDATION_FAILED,
@@ -90,7 +92,6 @@ public class KnowledgeActiveProfileExceptionHandler {
     public ResponseEntity<InfrastructureErrorResponse> handleHttpMessageNotReadableException(
             final HttpMessageNotReadableException exception
     ) {
-        log.error("Knowledge active-profile request body is invalid", exception);
         return this.response(
                 HttpStatus.BAD_REQUEST.value(),
                 VALIDATION_FAILED,
@@ -99,9 +100,9 @@ public class KnowledgeActiveProfileExceptionHandler {
         );
     }
 
-    private KnowledgeErrorResponse parseError(final String responseBody, final KnowledgeClientException exception) {
+    private InfrastructureErrorResponse parseError(final String responseBody) {
         try {
-            return this.objectMapper.readValue(responseBody, KnowledgeErrorResponse.class);
+            return this.objectMapper.readValue(responseBody, InfrastructureErrorResponse.class);
         } catch (final JsonProcessingException | RuntimeException parsingException) {
             return null;
         }
@@ -121,12 +122,5 @@ public class KnowledgeActiveProfileExceptionHandler {
 
     private boolean hasText(final String value) {
         return value != null && !value.isBlank();
-    }
-
-    private record KnowledgeErrorResponse(
-            String code,
-            String message,
-            String correlationId
-    ) {
     }
 }

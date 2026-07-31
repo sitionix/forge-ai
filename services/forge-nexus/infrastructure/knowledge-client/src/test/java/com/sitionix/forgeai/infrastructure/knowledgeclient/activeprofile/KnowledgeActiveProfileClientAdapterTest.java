@@ -8,7 +8,6 @@ import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.Kno
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileRequest;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileResponse;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveProfileResponse;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -45,24 +44,27 @@ class KnowledgeActiveProfileClientAdapterTest {
 
     @Test
     void getCallsExecutorAndMapsResponse() {
+        // given
         final KnowledgeActiveProfileResponse clientResponse =
                 new KnowledgeActiveProfileResponse(1L, details(), null);
         final ActiveProfile domain =
                 new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null);
-        this.executeSupplier();
-        when(this.httpClient.getActiveProfile()).thenReturn(clientResponse);
+        when(this.clientCallExecutor.<KnowledgeActiveProfileResponse>execute(any()))
+                .thenReturn(clientResponse);
         when(this.mapper.toDomain(clientResponse)).thenReturn(domain);
 
+        // when
         final ActiveProfile result = this.adapter.getActiveProfile();
 
+        // then
         assertThat(result).isSameAs(domain);
         verify(this.clientCallExecutor).execute(any());
-        verify(this.httpClient).getActiveProfile();
         verify(this.mapper).toDomain(clientResponse);
     }
 
     @Test
     void putMapsRequestCallsExecutorAndMapsResponse() {
+        // given
         final UpdateActiveLlmProfileCommand command =
                 new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null);
         final KnowledgeActiveLlmProfileRequest request =
@@ -71,24 +73,19 @@ class KnowledgeActiveProfileClientAdapterTest {
                 new KnowledgeActiveLlmProfileResponse(4L, details());
         final ActiveLlmProfileUpdateResult domain =
                 new ActiveLlmProfileUpdateResult(4, new ActiveLlmProfile("ollama", "qwen", null));
-        this.executeSupplier();
         when(this.mapper.toRequest(command)).thenReturn(request);
-        when(this.httpClient.updateActiveLlmProfile(request)).thenReturn(clientResponse);
+        when(this.clientCallExecutor.<KnowledgeActiveLlmProfileResponse>execute(any()))
+                .thenReturn(clientResponse);
         when(this.mapper.toDomain(clientResponse)).thenReturn(domain);
 
+        // when
         final ActiveLlmProfileUpdateResult result = this.adapter.updateActiveLlmProfile(command);
 
+        // then
         assertThat(result).isSameAs(domain);
         verify(this.mapper).toRequest(command);
         verify(this.clientCallExecutor).execute(any());
-        verify(this.httpClient).updateActiveLlmProfile(request);
         verify(this.mapper).toDomain(clientResponse);
-    }
-
-    @SuppressWarnings("unchecked")
-    private void executeSupplier() {
-        when(this.clientCallExecutor.execute(any()))
-                .thenAnswer(invocation -> ((Supplier<Object>) invocation.getArgument(0)).get());
     }
 
     private static KnowledgeActiveLlmProfileDetails details() {

@@ -2,6 +2,7 @@ package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.it.infra.KnowledgeActiveProfileEndpoint;
 import com.sitionix.forgeai.it.infra.ProxyTestManager;
+import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.wiremock.internal.domain.RequestBuilder;
 import org.junit.jupiter.api.Test;
@@ -9,6 +10,8 @@ import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.annotation.DirtiesContext;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @IntegrationTest(properties = {
         "forge-ai.jobs.scheduling-enabled=false",
@@ -55,6 +58,8 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
         this.testManager.mockMvc()
                 .ping(KnowledgeActiveProfileEndpoint.NEXUS_PUT_ACTIVE_LLM_PROFILE_VALIDATION_FAILED)
                 .assertDefault();
+
+        this.assertNoMatchingUpstreamRequest(KnowledgeActiveProfileEndpoint.UPSTREAM_PUT_ACTIVE_LLM_PROFILE);
     }
 
     @Test
@@ -62,6 +67,8 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
         this.testManager.mockMvc()
                 .ping(KnowledgeActiveProfileEndpoint.NEXUS_PUT_ACTIVE_LLM_PROFILE_UNKNOWN_FIELD)
                 .assertDefault();
+
+        this.assertNoMatchingUpstreamRequest(KnowledgeActiveProfileEndpoint.UPSTREAM_PUT_ACTIVE_LLM_PROFILE);
     }
 
     @Test
@@ -102,5 +109,10 @@ class KnowledgeActiveProfileIT extends AbstractForgeAiIT {
                 .assertDefault();
 
         mapping.verify();
+    }
+
+    private void assertNoMatchingUpstreamRequest(final Endpoint<?, ?> endpoint) {
+        assertThatThrownBy(() -> this.testManager.wiremock().check(endpoint).verify())
+                .isInstanceOf(AssertionError.class);
     }
 }

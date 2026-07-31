@@ -47,6 +47,7 @@ class KnowledgeActiveProfileControllerTest {
 
     @Test
     void getDelegatesAndMapsResponse() {
+        // given
         final ActiveProfile profile = new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null);
         final ActiveProfileResponse response = new ActiveProfileResponse(
                 1,
@@ -56,8 +57,10 @@ class KnowledgeActiveProfileControllerTest {
         when(this.getActiveProfile.execute()).thenReturn(profile);
         when(this.mapper.toResponse(profile)).thenReturn(response);
 
+        // when
         final ResponseEntity<ActiveProfileResponse> result = this.controller.getActiveProfile();
 
+        // then
         assertThat(result.getBody()).isSameAs(response);
         verify(this.getActiveProfile).execute();
         verify(this.mapper).toResponse(profile);
@@ -65,6 +68,7 @@ class KnowledgeActiveProfileControllerTest {
 
     @Test
     void putMapsRequestDelegatesAndMapsResponse() {
+        // given
         final ActiveLlmProfileUpdateRequest request = new ActiveLlmProfileUpdateRequest(3L, "ollama", "qwen", null);
         final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null);
         final ActiveLlmProfileUpdateResult update = new ActiveLlmProfileUpdateResult(
@@ -79,8 +83,10 @@ class KnowledgeActiveProfileControllerTest {
         when(this.updateActiveLlmProfile.execute(command)).thenReturn(update);
         when(this.mapper.toResponse(update)).thenReturn(response);
 
+        // when
         final ResponseEntity<ActiveLlmProfileResponse> result = this.controller.updateActiveLlmProfile(request);
 
+        // then
         assertThat(result.getBody()).isSameAs(response);
         verify(this.mapper).toCommand(request);
         verify(this.updateActiveLlmProfile).execute(command);

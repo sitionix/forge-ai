@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "forge.ai.infrastructure.knowledge")
 public class KnowledgeActiveProfileClientProperties {
 
-    private Boolean enabled;
+    private Boolean enabled = true;
     private URI baseUrl;
     private Duration connectTimeout;
     private Duration readTimeout;
