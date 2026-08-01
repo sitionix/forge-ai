@@ -742,7 +742,7 @@ function normalizeEmbeddingProfile(value) {
     modelId: String(value.modelId || ''),
     status: String(value.status || 'UNKNOWN').toUpperCase(),
     providerVersion: value.providerVersion ? String(value.providerVersion) : null,
-    embeddingDimension: Number.isFinite(Number(value.embeddingDimension)) ? Number(value.embeddingDimension) : null,
+    embeddingDimension: normalizePositiveNumber(value.embeddingDimension),
     lastCheckedAt: value.lastCheckedAt ? String(value.lastCheckedAt) : null,
     diagnostic: value.diagnostic ? {
       code: String(value.diagnostic.code || ''),
@@ -757,6 +757,14 @@ function normalizeLlmProfile(value) {
     modelId: String(value?.modelId || ''),
     effort: value?.effort ? { effortId: String(value.effort.effortId || '') } : null
   };
+}
+
+function normalizePositiveNumber(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
 }
 
 function normalizeUsage(value) {

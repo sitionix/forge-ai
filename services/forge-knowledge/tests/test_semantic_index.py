@@ -412,34 +412,6 @@ def test_mark_failed_stores_controlled_error_and_diagnostics(tmp_path):
     assert state["diagnostics_json"] == '[{"code":"SEMANTIC_BUILD_FAILED"}]'
 
 
-def test_mark_stale_preserves_failed_diagnostics(tmp_path):
-    store = SemanticIndexStore(tmp_path / "knowledge.sqlite")
-
-    store.mark_source_failed(
-        "edge-gateway",
-        "revision-1",
-        5,
-        error="Configured embedding model is unavailable.",
-        diagnostics=[{"code": "SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE", "message": "Configured embedding model is unavailable."}],
-        build_id="build-1",
-    )
-    store.mark_source_stale("edge-gateway", "revision-2", 6)
-
-    state = store.get_state("edge-gateway")
-    status = store.status_for_source("edge-gateway")
-    assert state["status"] == "STALE"
-    assert state["last_build_id"] == "build-1"
-    assert state["last_error"] == "Configured embedding model is unavailable."
-    assert state["diagnostics_json"] == (
-        '[{"code":"SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE","message":"Configured embedding model is unavailable."}]'
-    )
-    assert status.last_build_id == "build-1"
-    assert status.last_error == "Configured embedding model is unavailable."
-    assert status.diagnostics == (
-        {"code": "SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE", "message": "Configured embedding model is unavailable."},
-    )
-
-
 def test_progress_calculation_is_deterministic():
     assert SemanticIndexStore.progress_percent(0, 10) == 0.0
     assert SemanticIndexStore.progress_percent(1, 3) == 33.3

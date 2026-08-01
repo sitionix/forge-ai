@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Dict, Iterable, Optional
 
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.observability import observed_connect
@@ -45,7 +45,7 @@ def ensure_overview_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_source_overview_version ON knowledge_source_overview(version)")
 
 
-def refresh_overview_for_sources(conn: sqlite3.Connection, source_ids: Iterable[str] | None = None) -> None:
+def refresh_overview_for_sources(conn: sqlite3.Connection, source_ids: Optional[Iterable[str]] = None) -> None:
     ensure_overview_schema(conn)
     if not _table_exists(conn, "sources"):
         conn.execute("DELETE FROM knowledge_source_overview")
@@ -81,7 +81,7 @@ def rebuild_overview(conn: sqlite3.Connection) -> None:
     refresh_overview_for_sources(conn, None)
 
 
-def read_overview(db_path: Path) -> dict[str, Any]:
+def read_overview(db_path: Path) -> Dict[str, Any]:
     with observed_connect(db_path, timeout=0.5) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout = 500")
@@ -92,17 +92,10 @@ def read_overview(db_path: Path) -> dict[str, Any]:
             ORDER BY source_id
             """
         ).fetchall()
-        semantic_statuses = {
-            row["source_id"]: SemanticIndexStore.status_for_source_conn(conn, row["source_id"]).to_dict()
-            for row in rows
-        }
         semantic_percents = {row["source_id"]: _semantic_percent_for_overview_conn(conn, row) for row in rows}
     max_version = max((int(row["version"] or 0) for row in rows), default=0)
     updated_at = max((row["updated_at"] for row in rows if row["updated_at"]), default=None)
-    sources = [
-        _overview_source(row, semantic_statuses.get(row["source_id"]), semantic_percents.get(row["source_id"], 0.0))
-        for row in rows
-    ]
+    sources = [_overview_source(row, semantic_percents.get(row["source_id"], 0.0)) for row in rows]
     active = next((source["activeJob"] for source in sources if source["activeJob"] is not None), None)
     return {
         "version": max_version,
@@ -178,7 +171,6 @@ def _refresh_one(conn: sqlite3.Connection, source: sqlite3.Row) -> None:
             """,
             (source_id, source_id),
         ).fetchone()
-    active_columns = set(active.keys()) if active is not None else set()
     total = _int_value(counts, "total")
     succeeded = _int_value(counts, "succeeded")
     partial = _int_value(counts, "partial")
@@ -224,7 +216,7 @@ def _refresh_one(conn: sqlite3.Connection, source: sqlite3.Row) -> None:
             pending,
             round((processed / total) * 100, 1) if total else 0.0,
             active["job_id"] if active else None,
-            active["mode"] if active and "mode" in active_columns else None,
+            active["mode"] if active and "mode" in active.keys() else None,
             int(active["file_count"] or 0) if active else None,
             int(active["processed_file_count"] or 0) if active else None,
             int(active["failed_file_count"] or 0) if active else None,
@@ -235,7 +227,7 @@ def _refresh_one(conn: sqlite3.Connection, source: sqlite3.Row) -> None:
     )
 
 
-def _analysis_state(active: sqlite3.Row | None, total: int, processed: int, failed: int, pending: int) -> str:
+def _analysis_state(active: Optional[sqlite3.Row], total: int, processed: int, failed: int, pending: int) -> str:
     if active is not None:
         return "STOP_REQUESTED" if active["status"] == "STOP_REQUESTED" else "RUNNING"
     if total == 0:
@@ -247,7 +239,7 @@ def _analysis_state(active: sqlite3.Row | None, total: int, processed: int, fail
     return "PARTIAL"
 
 
-def _int_value(row: sqlite3.Row | None, key: str, default: int = 0) -> int:
+def _int_value(row: Optional[sqlite3.Row], key: str, default: int = 0) -> int:
     if row is None:
         return default
     value = row[key]
@@ -268,22 +260,20 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
 
 
-def _overview_source(row: sqlite3.Row, semantic: dict[str, Any] | None = None, semantic_percent: float = 0.0) -> dict[str, Any]:
+def _overview_source(row: sqlite3.Row, semantic_percent: float = 0.0) -> Dict[str, Any]:
     active_job = None
     if row["active_job_id"]:
-        active_keys = row.keys()
         active_job = {
             "jobId": row["active_job_id"],
             "sourceId": row["source_id"],
             "status": row["analysis_state"],
-            "mode": (row["active_job_mode"] if "active_job_mode" in active_keys else None) or "FULL",
+            "mode": row["active_job_mode"],
             "selectedFileCount": row["active_job_total_files"],
             "processedFileCount": row["active_job_processed_files"],
             "failedFileCount": row["active_job_failed_files"],
             "currentRelativePath": row["active_job_current_relative_path"],
         }
     facts_progress = _facts_progress_for_overview(row)
-    semantic_payload = semantic or _missing_semantic_status()
     return {
         "sourceId": row["source_id"],
         "displayName": row["display_name"],
@@ -295,7 +285,6 @@ def _overview_source(row: sqlite3.Row, semantic: dict[str, Any] | None = None, s
             "skippedCount": row["skipped_file_count"],
         },
         "factsProgress": facts_progress,
-        "semantic": semantic_payload,
         "analysis": {
             "status": row["analysis_state"],
             "totalFiles": row["analysis_total_files"],
@@ -320,7 +309,7 @@ def _overview_source(row: sqlite3.Row, semantic: dict[str, Any] | None = None, s
     }
 
 
-def _facts_progress_for_overview(row: sqlite3.Row) -> dict[str, Any]:
+def _facts_progress_for_overview(row: sqlite3.Row) -> Dict[str, Any]:
     total = _int_value(row, "analysis_total_files")
     completed = _int_value(row, "analysis_processed_files")
     percent = _clamp_percent(float(row["completion_percent"] or 0.0))
@@ -328,30 +317,6 @@ def _facts_progress_for_overview(row: sqlite3.Row) -> dict[str, Any]:
         "completedCount": completed,
         "totalCount": total,
         "percent": percent,
-    }
-
-
-def _missing_semantic_status() -> dict[str, Any]:
-    return {
-        "status": "MISSING",
-        "graphRevision": None,
-        "builderVersion": SEMANTIC_BUILDER_VERSION,
-        "totalNodeCount": 0,
-        "indexedNodeCount": 0,
-        "progressPercent": 0.0,
-        "totalFactCount": 0,
-        "indexedFactCount": 0,
-        "percentOfFacts": 0.0,
-        "ready": False,
-        "stale": False,
-        "embeddingModel": None,
-        "embeddingDimension": None,
-        "updatedAt": None,
-        "startedAt": None,
-        "completedAt": None,
-        "lastBuildId": None,
-        "lastError": None,
-        "diagnostics": [],
     }
 
 

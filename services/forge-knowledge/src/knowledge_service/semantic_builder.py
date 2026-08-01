@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
@@ -24,7 +23,6 @@ from knowledge_service.semantic_index import (
 )
 
 SEMANTIC_DOCUMENT_TYPE = "NODE_CONTEXT"
-LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -593,14 +591,6 @@ class SemanticIndexBuilder:
                 build_id=build_id,
                 builder_version=self.config.builder_version,
             )
-        diagnostic = diagnostics[0] if diagnostics else {}
-        LOGGER.warning(
-            "Semantic index build failed sourceId=%s buildId=%s diagnosticCode=%s diagnosticMessage=%s",
-            source_id,
-            build_id,
-            diagnostic.get("code"),
-            diagnostic.get("message") or error,
-        )
         return SemanticSourceBuildResult(
             source_id,
             "FAILED",

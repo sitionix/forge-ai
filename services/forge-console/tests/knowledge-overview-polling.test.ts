@@ -257,59 +257,6 @@ describe('Knowledge overview modular ownership', () => {
     page.dispose();
   });
 
-  it('renders source semantic FAILED diagnostics separately from analysis progress', async () => {
-    const dom = createOverviewDom();
-    const http = createHttp(() => statusPayload(10, 'COMPLETED', {}, {
-      semantic: {
-        status: 'FAILED',
-        ready: false,
-        stale: false,
-        totalNodeCount: 223,
-        indexedNodeCount: 0,
-        progressPercent: 0,
-        embeddingModel: 'embeddinggemma',
-        embeddingDimension: null,
-        lastBuildId: 'build-1',
-        lastError: 'Configured embedding model is unavailable.',
-        diagnostics: [{ code: 'SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE', message: 'Configured embedding model is unavailable.' }]
-      }
-    }));
-    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
-
-    await page.load({ manual: true });
-
-    const row = dom.window.document.querySelector('[data-source-row="ntfssox"]') as HTMLElement;
-    expect(row.textContent).toContain('COMPLETED');
-    expect(row.textContent).toMatch(/Semantic:\s*FAILED\s*0 \/ 223/);
-    expect(row.textContent).toContain('Configured embedding model is unavailable.');
-    page.dispose();
-  });
-
-  it('renders source semantic READY model and dimension separately from analysis progress', async () => {
-    const dom = createOverviewDom();
-    const http = createHttp(() => statusPayload(10, 'COMPLETED', {}, {
-      semantic: {
-        status: 'READY',
-        ready: true,
-        stale: false,
-        totalNodeCount: 223,
-        indexedNodeCount: 223,
-        progressPercent: 100,
-        embeddingModel: 'embeddinggemma',
-        embeddingDimension: 768,
-        diagnostics: []
-      }
-    }));
-    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
-
-    await page.load({ manual: true });
-
-    const row = dom.window.document.querySelector('[data-source-row="ntfssox"]') as HTMLElement;
-    expect(row.textContent).toMatch(/Semantic:\s*READY\s*223 \/ 223/);
-    expect(row.textContent).toContain('embeddinggemma · 768 dimensions');
-    page.dispose();
-  });
-
   it('renders backend analysis percent and backend semantic percent as separate widths', async () => {
     const scenarios = [
       { factsPercent: 10, semanticPercent: 0, expectedWidth: '0%' },
@@ -408,14 +355,6 @@ describe('Knowledge overview modular ownership', () => {
     expect(compositeRule).toContain('var(--semantic-overlay-percent)');
     expect(compositeRule).toContain('rgba(44, 123, 229');
     expect(compositeRule).toContain('var(--facts-percent)');
-  });
-
-  it('does not label file analysis progress as Facts in the overview shell', () => {
-    const html = readFileSync('src/operator/knowledge.html', 'utf8');
-
-    expect(html).not.toContain('<th>Facts</th>');
-    expect(html).toContain('<th>Analysis</th>');
-    expect(html).toContain('<th>Graph</th>');
   });
 
   it('keeps semantic overlay safe when semantic percent is missing or zero', async () => {

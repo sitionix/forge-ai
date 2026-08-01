@@ -232,9 +232,11 @@ describe('Jarvis AI runtime modal', () => {
     });
     unavailable.page.mount();
     await flushAsync();
+    expect(unavailable.page.aiRuntimeView.activeProfile.embeddingProfile.embeddingDimension).toBeNull();
     expect(text(unavailable.dom)).toContain('Active Embedding');
     expect(text(unavailable.dom)).toContain('Ollama · UNAVAILABLE');
     expect(text(unavailable.dom)).toContain('Configured embedding model is unavailable.');
+    expect(text(unavailable.dom)).not.toContain('0 dimensions');
 
     const disabled = createPage({
       profile: activeProfile({

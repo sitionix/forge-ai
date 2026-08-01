@@ -24,14 +24,13 @@ from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
 from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
-from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
+from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
-from knowledge_service.bootstrap import KnowledgeDependencies
 from knowledge_service.config import AppConfig
 from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
@@ -42,6 +41,7 @@ from knowledge_service.graph_analysis import GraphAnalysisEngine
 from knowledge_service.graph_schema import BoundaryDescriptor, BoundaryFact, GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.graph_state_repository import GRAPH_STATE_FAILED, GraphStateRepository
 from knowledge_service.inventory_builder import InventoryBuilder
+from knowledge_service.bootstrap import KnowledgeDependencies
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
@@ -7177,7 +7177,6 @@ def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, m
         "rootExists",
         "inventory",
         "factsProgress",
-        "semantic",
         "analysis",
         "activeJob",
         "updatedAt",
@@ -7186,8 +7185,6 @@ def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, m
     assert service["inventory"]["fileCount"] == 1
     assert set(service["inventory"]) == {"status", "fileCount", "skippedCount"}
     assert service["factsProgress"] == {"completedCount": 1, "totalCount": 1, "percent": 100.0}
-    assert service["semantic"]["status"] in {"MISSING", "PENDING"}
-    assert service["semantic"]["indexedNodeCount"] == 0
     assert service["analysis"]["totalFiles"] == 1
     assert service["analysis"]["succeededFiles"] == 1
     assert service["analysis"]["processedFiles"] == 1
@@ -7436,7 +7433,7 @@ def test_services_status_does_not_include_diagnostics_payload(tmp_path, monkeypa
     assert service["analysis"]["failedFiles"] == 1
     assert service["analysis"]["pendingFiles"] == 0
     encoded = json.dumps(result["json"])
-    for key in ("diagnosticsSummary", "examples", "rawPreview", "details"):
+    for key in ("diagnostics", "diagnosticsSummary", "examples", "message", "rawPreview", "details"):
         assert key not in encoded
 
 
@@ -7483,7 +7480,7 @@ def test_services_status_omits_diagnostic_messages_examples_and_active_job_diagn
         "failedFileCount": 0,
         "currentRelativePath": "src/main/java/example/ObjectHandler.java",
     }
-    for key in ("diagnosticsSummary", "examples", "rawPreview", "details", "lastProgressAt"):
+    for key in ("diagnostics", "diagnosticsSummary", "examples", "message", "rawPreview", "details", "lastProgressAt"):
         assert key not in encoded
 
 
@@ -7510,7 +7507,7 @@ def test_services_status_size_does_not_grow_with_diagnostics(tmp_path, monkeypat
 
     assert result["status"] == 200
     assert len(encoded) < 1400
-    for key in ("examples", "rawPreview", "details"):
+    for key in ("diagnostics", "examples", "message", "rawPreview", "details"):
         assert key not in encoded
 
 

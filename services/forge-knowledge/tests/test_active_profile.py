@@ -15,6 +15,8 @@ from knowledge_service.active_profile import (
     ActiveLlmRuntime,
     ActiveRuntimeGenerativeProvider,
     LlmUsageProvider,
+    LlmUsageResponse,
+    LlmUsageWindowResponse,
     PersistedActiveProfile,
 )
 from knowledge_service.embedding_runtime_status import EmbeddingRuntimeDiagnostic, EmbeddingRuntimeStatusSnapshot
@@ -57,6 +59,11 @@ class FakeEmbeddingStatus:
 
     async def aclose(self) -> None:
         return None
+
+
+class FailingEmbeddingStatus:
+    async def status(self) -> EmbeddingRuntimeStatusSnapshot:
+        raise RuntimeError("unexpected embedding status failure")
 
 
 def ollama_ready(*models: str) -> dict[str, Any]:
@@ -294,6 +301,47 @@ def test_active_profile_get_returns_embedding_status_without_revision_change(tmp
         "diagnostic": {
             "code": "SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE",
             "message": "Configured embedding model is unavailable.",
+        },
+    }
+
+
+def test_active_profile_get_isolates_unexpected_embedding_status_failure(tmp_path: Path):
+    app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
+    deps.active_profile_service._embedding_status_provider = FailingEmbeddingStatus()
+    deps.active_profile_service._usage_provider = FakeUsage(
+        LlmUsageResponse(
+            windows=[
+                LlmUsageWindowResponse(
+                    kind="PRIMARY",
+                    usedPercent=12,
+                    windowDurationMinutes=300,
+                    resetAt="2026-08-01T00:00:00Z",
+                )
+            ]
+        )
+    )
+
+    with AsgiTestClient(app) as client:
+        response = client.get("/api/v1/knowledge/active-profile")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "revision": 1,
+        "llmProfile": {
+            "providerId": "ollama",
+            "modelId": "qwen2.5-coder:14b",
+            "effort": None,
+        },
+        "embeddingProfile": None,
+        "usage": {
+            "windows": [
+                {
+                    "kind": "PRIMARY",
+                    "usedPercent": 12,
+                    "windowDurationMinutes": 300,
+                    "resetAt": "2026-08-01T00:00:00Z",
+                }
+            ]
         },
     }
 
