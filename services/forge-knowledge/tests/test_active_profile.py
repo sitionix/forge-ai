@@ -242,17 +242,18 @@ def test_usage_failure_returns_profile_with_usage_null(tmp_path: Path):
 
 
 def test_codex_usage_maps_available_rate_limit_windows_to_public_contract():
-    class FakeCodexClient:
-        async def request(self, method: str, params=None):
-            assert method == "account/rateLimits/read"
-            return {
-                "rateLimits": {
-                    "primary": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
-                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+    usage = asyncio.run(
+        LlmUsageProvider(
+            FakeCodexUsageClient(
+                {
+                    "rateLimits": {
+                        "primary": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
+                        "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                    }
                 }
-            }
-
-    usage = asyncio.run(LlmUsageProvider(FakeCodexClient()).usage_for("codex"))
+            )
+        ).usage_for("codex")
+    )
 
     assert usage.dict() == {
         "windows": [
@@ -270,6 +271,133 @@ def test_codex_usage_maps_available_rate_limit_windows_to_public_contract():
             },
         ]
     }
+
+
+def test_codex_usage_windows_are_dynamic_sorted_deduped_and_clamped():
+    payloads = [
+        (
+            {
+                "rateLimits": {
+                    "primary": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
+                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                }
+            },
+            [300, 10080],
+        ),
+        (
+            {
+                "rateLimits": {
+                    "primary": {"usedPercent": 44, "windowDurationMins": 1440, "resetsAt": 1785436200},
+                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                }
+            },
+            [1440, 10080],
+        ),
+        (
+            {
+                "rateLimits": {
+                    "primary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                    "secondary": None,
+                }
+            },
+            [10080],
+        ),
+        (
+            {
+                "rateLimits": {
+                    "primary": None,
+                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                }
+            },
+            [10080],
+        ),
+        (
+            {
+                "rateLimits": {
+                    "primary": {"limitId": "active-codex", "usedPercent": "bad", "windowDurationMins": 300, "resetsAt": 1785436200},
+                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                },
+                "rateLimitsByLimitId": {
+                    "active-codex": {"usedPercent": 22, "windowDurationMins": 300, "resetsAt": 1785436200},
+                    "unrelated": {"usedPercent": 99, "windowDurationMins": 1440, "resetsAt": 1785436200},
+                },
+            },
+            [300, 10080],
+        ),
+        (
+            {
+                "rateLimits": {
+                    "primary": {"limitId": "active-codex", "usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
+                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                },
+                "rateLimitsByLimitId": {
+                    "active-codex": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
+                },
+            },
+            [300, 10080],
+        ),
+        (
+            {
+                "rateLimits": {
+                    "primary": {"usedPercent": -4, "windowDurationMins": 300, "resetsAt": 1785436200},
+                    "secondary": {"usedPercent": 160, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                }
+            },
+            [300, 10080],
+        ),
+    ]
+
+    for payload, expected_durations in payloads:
+        usage = asyncio.run(LlmUsageProvider(FakeCodexUsageClient(payload)).usage_for("codex"))
+        assert [window.windowDurationMinutes for window in usage.windows] == expected_durations
+
+    clamped = asyncio.run(
+        LlmUsageProvider(
+            FakeCodexUsageClient(
+                {
+                    "rateLimits": {
+                        "primary": {"usedPercent": -4, "windowDurationMins": 300, "resetsAt": 1785436200},
+                        "secondary": {"usedPercent": 160, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                    }
+                }
+            )
+        ).usage_for("codex")
+    )
+    assert [window.usedPercent for window in clamped.windows] == [0, 100]
+
+
+def test_codex_usage_invalid_duration_reset_and_unrelated_limit_ids_are_ignored():
+    usage = asyncio.run(
+        LlmUsageProvider(
+            FakeCodexUsageClient(
+                {
+                    "rateLimits": {
+                        "primary": {"limitId": "active-codex", "usedPercent": 10, "windowDurationMins": 0, "resetsAt": 1785436200},
+                        "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 0},
+                    },
+                    "rateLimitsByLimitId": {
+                        "unrelated": {"usedPercent": 55, "windowDurationMins": 1440, "resetsAt": 1785436200},
+                    },
+                }
+            )
+        ).usage_for("codex")
+    )
+
+    assert usage.windows == []
+
+
+def test_codex_usage_returns_none_for_non_codex_or_missing_rate_limits():
+    assert asyncio.run(LlmUsageProvider(FakeCodexUsageClient({"rateLimits": {}})).usage_for("ollama")) is None
+    assert asyncio.run(LlmUsageProvider(FakeCodexUsageClient({})).usage_for("codex")) is None
+
+
+class FakeCodexUsageClient:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+
+    async def request(self, method: str, params=None):
+        assert method == "account/rateLimits/read"
+        return self.payload
 
 
 def test_running_operation_keeps_old_snapshot_and_new_operation_gets_new_snapshot(tmp_path: Path):

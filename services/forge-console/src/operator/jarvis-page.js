@@ -23,7 +23,7 @@ export class JarvisPage {
     this.disposed = false;
     this.refreshListener = () => {
       this.loadStatus();
-      this.aiRuntimeView.loadRuntime();
+      this.aiRuntimeView.loadActiveProfile();
     };
     this.commandListener = (event) => this.submitCommand(event);
     this.queryListener = (event) => this.submitQuery(event);
@@ -37,7 +37,7 @@ export class JarvisPage {
     this.document.getElementById('jarvisQueryForm')?.addEventListener('submit', this.queryListener);
     this.aiRuntimeView.mount();
     this.loadStatus();
-    this.aiRuntimeView.loadRuntime();
+    this.aiRuntimeView.loadActiveProfile();
   }
 
   dispose() {

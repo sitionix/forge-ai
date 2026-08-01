@@ -54,16 +54,40 @@ class _ActiveTurn:
     warnings: list[Any] = field(default_factory=list)
     model_metadata: dict[str, Any] = field(default_factory=dict)
     interrupt_sent: bool = False
+    failed_closed: bool = False
 
 
 class CodexAppServerClient:
     _VERSION_PATTERN = re.compile(r"^[^/]+/([^ ]+)")
-    _SIDE_EFFECT_ITEM_TYPES: ClassVar[set[str]] = {
+    _SAFE_ITEM_TYPES: ClassVar[set[str]] = {
+        "userMessage",
+        "reasoning",
+        "agentMessage",
+        "plan",
+        "contextCompaction",
+    }
+    _FORBIDDEN_ITEM_TYPES: ClassVar[set[str]] = {
         "commandExecution",
         "fileChange",
         "mcpToolCall",
         "dynamicToolCall",
+        "webSearch",
+        "collabToolCall",
+        "imageView",
     }
+    _KNOWN_APPROVAL_METHOD_HINTS: ClassVar[tuple[str, ...]] = (
+        "approval",
+        "approve",
+        "permission",
+    )
+    _KNOWN_APPROVAL_PARAM_HINTS: ClassVar[tuple[str, ...]] = (
+        "command",
+        "exec",
+        "shell",
+        "file",
+        "patch",
+        "change",
+    )
 
     def __init__(
         self,
@@ -90,6 +114,7 @@ class CodexAppServerClient:
         self._next_request_id = 1
         self._initialized = False
         self._version: str | None = None
+        self._connection_invalidated = False
 
         self._thread_lock = threading.RLock()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -102,7 +127,7 @@ class CodexAppServerClient:
         return self._version
 
     async def initialize(self) -> str:
-        return await self._await_threadsafe(lambda: self._initialize_public())
+        return await self._await_threadsafe(lambda: self._initialize_public(), cancel_cleanup=True)
 
     async def request(self, method: str, params: Mapping[str, Any] | None = None) -> Any:
         return await self._await_threadsafe(lambda: self._request_inner(method, params))
@@ -253,6 +278,7 @@ class CodexAppServerClient:
                 raise CodexAppServerTransportError("Codex app-server executable was not found") from exc
             self._initialized = False
             self._version = None
+            self._connection_invalidated = False
             self._reader_task = asyncio.create_task(self._read_stdout(), name="codex-app-server-stdout")
             self._stderr_task = asyncio.create_task(self._drain_stream(getattr(self._process, "stderr", None)), name="codex-app-server-stderr")
             try:
@@ -325,10 +351,11 @@ class CodexAppServerClient:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - stdout reader must fail pending work for any reader crash.
-            self._fail_connection(exc)
+            self._invalidate_connection(exc)
         finally:
             self._initialized = False
-            self._fail_connection(CodexAppServerTransportError("Codex app-server exited before response"))
+            if not self._connection_invalidated:
+                self._fail_connection(CodexAppServerTransportError("Codex app-server exited before response"))
 
     async def _drain_stream(self, stream: Any | None) -> None:
         if stream is None:
@@ -346,10 +373,10 @@ class CodexAppServerClient:
         try:
             payload = json.loads(text)
         except json.JSONDecodeError:
-            self._fail_connection(CodexAppServerProtocolError("Codex app-server emitted malformed JSON-RPC"))
+            self._invalidate_connection(CodexAppServerProtocolError("Codex app-server emitted malformed JSON-RPC"))
             return
         if not isinstance(payload, Mapping):
-            self._fail_connection(CodexAppServerProtocolError("Codex app-server emitted malformed JSON-RPC envelope"))
+            self._invalidate_connection(CodexAppServerProtocolError("Codex app-server emitted malformed JSON-RPC envelope"))
             return
         if "method" in payload and "id" in payload:
             self._handle_server_request(payload)
@@ -360,21 +387,22 @@ class CodexAppServerClient:
         if "id" in payload:
             self._handle_response(payload)
             return
-        self._fail_connection(CodexAppServerProtocolError("Codex app-server emitted unclassifiable JSON-RPC envelope"))
+        self._invalidate_connection(CodexAppServerProtocolError("Codex app-server emitted unclassifiable JSON-RPC envelope"))
 
     def _handle_response(self, payload: Mapping[str, Any]) -> None:
         request_id = payload.get("id")
         if not isinstance(request_id, int):
-            self._fail_connection(CodexAppServerProtocolError("Codex app-server response id was invalid"))
+            self._invalidate_connection(CodexAppServerProtocolError("Codex app-server response id was invalid"))
             return
         future = self._pending.pop(request_id, None)
         if future is None or future.done():
+            self._invalidate_connection(CodexAppServerProtocolError("Codex app-server response id did not match a pending request"))
             return
         if "error" in payload:
             future.set_exception(_error_from_envelope(payload.get("error")))
             return
         if "result" not in payload:
-            future.set_exception(CodexAppServerProtocolError("Codex app-server response omitted result"))
+            self._invalidate_connection(CodexAppServerProtocolError("Codex app-server response omitted result"))
             return
         future.set_result(payload.get("result"))
 
@@ -382,64 +410,73 @@ class CodexAppServerClient:
         method = payload.get("method")
         params = payload.get("params")
         if not isinstance(method, str):
-            self._fail_connection(CodexAppServerProtocolError("Codex app-server notification method was invalid"))
+            self._invalidate_connection(CodexAppServerProtocolError("Codex app-server notification method was invalid"))
             return
-        if method == "item/completed":
-            self._handle_item_completed(params)
+        if method == "item/started":
+            self._handle_item_event("item/started", params)
+        elif method == "item/completed":
+            self._handle_item_event("item/completed", params)
         elif method == "turn/completed":
             self._handle_turn_completed(params)
 
     def _handle_server_request(self, payload: Mapping[str, Any]) -> None:
         request_id = payload.get("id")
-        if isinstance(request_id, int):
-            asyncio.create_task(
-                self._write_json(
-                    {
-                        "id": request_id,
-                        "error": {
-                            "code": -32601,
-                            "message": "Codex server requests are not supported by Forge Knowledge generation",
-                        },
-                    }
-                )
-            )
+        method = payload.get("method")
         params = payload.get("params")
+        if isinstance(request_id, int):
+            if _is_known_approval_request(method, params):
+                response = {"id": request_id, "result": {"decision": "decline"}}
+            else:
+                response = {
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": "Codex server requests are not supported by Forge Knowledge generation",
+                    },
+                }
+            asyncio.create_task(self._write_json(response))
         turn_id = _extract_turn_id(params)
         active = self._active_turns.get(turn_id or "") if turn_id is not None else None
         if active is not None and not active.future.done():
-            asyncio.create_task(self._fail_active_turn(active, CodexAppServerProtocolError("Codex app-server requested unsupported side effect")))
+            self._schedule_fail_active_turn(active, CodexAppServerProtocolError("Codex app-server requested unsupported side effect"))
         elif self._active_turns:
             for active_turn in tuple(self._active_turns.values()):
                 if not active_turn.future.done():
-                    asyncio.create_task(
-                        self._fail_active_turn(
-                            active_turn,
-                            CodexAppServerProtocolError("Codex app-server requested unsupported side effect"),
-                        )
+                    self._schedule_fail_active_turn(
+                        active_turn,
+                        CodexAppServerProtocolError("Codex app-server requested unsupported side effect"),
                     )
 
-    def _handle_item_completed(self, params: Any) -> None:
+    def _handle_item_event(self, method: str, params: Any) -> None:
         if not isinstance(params, Mapping):
-            self._fail_connection(CodexAppServerProtocolError("Codex item/completed params must be an object"))
+            self._invalidate_connection(CodexAppServerProtocolError(f"Codex {method} params must be an object"))
             return
         turn_id = _extract_turn_id(params)
         active = self._active_turns.get(turn_id or "")
         if active is None or active.future.done():
             if turn_id is not None:
-                self._buffer_turn_notification(turn_id, "item/completed", params)
+                self._buffer_turn_notification(turn_id, method, params)
             return
         item = params.get("item") if isinstance(params.get("item"), Mapping) else params
         if not isinstance(item, Mapping):
-            self._fail_connection(CodexAppServerProtocolError("Codex item/completed item must be an object"))
+            self._invalidate_connection(CodexAppServerProtocolError(f"Codex {method} item must be an object"))
             return
         item_type = _non_blank(item.get("type"))
-        if item_type in self._SIDE_EFFECT_ITEM_TYPES:
-            asyncio.create_task(self._fail_active_turn(active, CodexAppServerProtocolError(f"Codex emitted forbidden side-effect item: {item_type}")))
+        violation = self._validate_generation_item_type(item_type)
+        if violation is not None:
+            self._schedule_fail_active_turn(active, violation)
             return
-        if item_type == "agentMessage":
+        if method == "item/completed" and item_type == "agentMessage":
             text = _extract_text(item)
             if text is not None:
                 active.messages.append(text)
+
+    def _validate_generation_item_type(self, item_type: str | None) -> CodexAppServerProtocolError | None:
+        if item_type in self._SAFE_ITEM_TYPES:
+            return None
+        if item_type in self._FORBIDDEN_ITEM_TYPES:
+            return CodexAppServerProtocolError(f"Codex emitted forbidden side-effect item: {item_type}")
+        return CodexAppServerProtocolError(f"Codex emitted unknown generation item type: {item_type or '<missing>'}")
 
     def _handle_turn_completed(self, params: Any) -> None:
         if not isinstance(params, Mapping):
@@ -450,6 +487,8 @@ class CodexAppServerClient:
         if active is None or active.future.done():
             if turn_id is not None:
                 self._buffer_turn_notification(turn_id, "turn/completed", params)
+            return
+        if active.failed_closed:
             return
         status = _non_blank(params.get("status"))
         turn = params.get("turn")
@@ -501,7 +540,14 @@ class CodexAppServerClient:
             return
         active.future.set_exception(CodexAppServerProtocolError(f"Codex turn completed with unknown status: {status}"))
 
+    def _schedule_fail_active_turn(self, active: _ActiveTurn, exc: Exception) -> None:
+        active.failed_closed = True
+        active.messages.clear()
+        asyncio.create_task(self._fail_active_turn(active, exc))
+
     async def _fail_active_turn(self, active: _ActiveTurn, exc: Exception) -> None:
+        active.failed_closed = True
+        active.messages.clear()
         await self._interrupt_turn(active)
         if not active.future.done():
             active.future.set_exception(exc)
@@ -615,6 +661,21 @@ class CodexAppServerClient:
         self._active_turns.clear()
         self._buffered_turn_notifications.clear()
 
+    def _invalidate_connection(self, exc: Exception) -> None:
+        self._connection_invalidated = True
+        self._initialized = False
+        self._version = None
+        self._fail_connection(exc)
+        process = self._process
+        self._process = None
+        if process is not None and self._returncode(process) is None:
+            terminate = getattr(process, "terminate", None)
+            if callable(terminate):
+                terminate()
+        stderr_task = self._stderr_task
+        if stderr_task is not None and not stderr_task.done():
+            stderr_task.cancel()
+
     def _buffer_turn_notification(self, turn_id: str, method: str, params: Any) -> None:
         buffered = self._buffered_turn_notifications.setdefault(turn_id, [])
         buffered.append((method, params))
@@ -624,8 +685,8 @@ class CodexAppServerClient:
     def _replay_buffered_turn_notifications(self, turn_id: str) -> None:
         buffered = self._buffered_turn_notifications.pop(turn_id, [])
         for method, params in buffered:
-            if method == "item/completed":
-                self._handle_item_completed(params)
+            if method in {"item/started", "item/completed"}:
+                self._handle_item_event(method, params)
             elif method == "turn/completed":
                 self._handle_turn_completed(params)
 
@@ -638,7 +699,7 @@ class CodexAppServerClient:
         if self._write_lock is None:
             self._write_lock = asyncio.Lock()
 
-    async def _await_threadsafe(self, coro_factory: Callable[[], Awaitable[Any]]) -> Any:
+    async def _await_threadsafe(self, coro_factory: Callable[[], Awaitable[Any]], *, cancel_cleanup: bool = False) -> Any:
         future = self._submit(coro_factory)
         try:
             return await asyncio.wrap_future(future)
@@ -648,6 +709,11 @@ class CodexAppServerClient:
                 if future.done():
                     break
                 await asyncio.sleep(0.01)
+            if cancel_cleanup:
+                try:
+                    await asyncio.wrap_future(self._submit(lambda: self._stop_process()))
+                except Exception:  # noqa: BLE001, S110 - cancellation cleanup preserves CancelledError.
+                    pass
             raise
 
     def _submit(self, coro_factory: Callable[[], Awaitable[Any]]) -> concurrent.futures.Future[Any]:
@@ -739,6 +805,27 @@ def _error_from_envelope(error: Any) -> CodexAppServerError:
             except (TypeError, ValueError):
                 status_code = None
     return CodexAppServerTransportError(message, status_code=status_code)
+
+
+def _is_known_approval_request(method: Any, params: Any) -> bool:
+    method_text = str(method or "").lower()
+    if not any(hint in method_text for hint in CodexAppServerClient._KNOWN_APPROVAL_METHOD_HINTS):
+        return False
+    if any(hint in method_text for hint in CodexAppServerClient._KNOWN_APPROVAL_PARAM_HINTS):
+        return True
+    if isinstance(params, Mapping):
+        values: list[str] = []
+        for key in ("type", "kind", "category", "action", "approvalType", "requestType", "toolName", "itemType"):
+            value = params.get(key)
+            if isinstance(value, str):
+                values.append(value.lower())
+        item = params.get("item")
+        if isinstance(item, Mapping):
+            value = item.get("type")
+            if isinstance(value, str):
+                values.append(value.lower())
+        return any(hint in value for value in values for hint in CodexAppServerClient._KNOWN_APPROVAL_PARAM_HINTS)
+    return False
 
 
 def _extract_turn_id(params: Any) -> str | None:

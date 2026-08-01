@@ -106,7 +106,7 @@ describe('Jarvis runtime rendering', () => {
     expect(text).not.toContain('["bash"');
     expect(text).not.toContain('sleep 0.2');
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('explain'), expect.any(Object));
-    expect(http.get.mock.calls.map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime', '/knowledge/active-profile']);
+    expect(http.get.mock.calls.map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/active-profile']);
     page.dispose();
   });
 

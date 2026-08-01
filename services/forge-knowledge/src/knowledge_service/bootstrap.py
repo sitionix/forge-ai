@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from typing import Any
 
@@ -30,7 +30,7 @@ from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.storage_operations import RetentionPolicy, StorageOperations
 
 
-@dataclass(frozen=True)
+@dataclass
 class KnowledgeDependencies:
     inventory_store: InventoryStore
     analysis_store: AnalysisStore
@@ -46,12 +46,17 @@ class KnowledgeDependencies:
     active_llm_runtime: ActiveLlmRuntime | None = None
     generative_registry: GenerativeProviderRegistry | None = None
     generative_provider: Any | None = None
+    codex_app_server_client: CodexAppServerClient | None = None
+    _codex_app_server_client_closed: bool = field(default=False, init=False, repr=False)
 
     async def aclose(self) -> None:
         if self.ai_runtime_discovery is not None:
             await self.ai_runtime_discovery.aclose()
         if self.generative_registry is not None:
             await self.generative_registry.aclose()
+        if self.codex_app_server_client is not None and not self._codex_app_server_client_closed:
+            self._codex_app_server_client_closed = True
+            await self.codex_app_server_client.aclose()
 
 
 def build_dependencies(
@@ -125,6 +130,7 @@ def build_dependencies(
         active_llm_runtime=active_llm_runtime,
         generative_registry=generative_registry,
         generative_provider=generative_provider,
+        codex_app_server_client=codex_client,
     )
 
 
@@ -142,7 +148,6 @@ def build_generative_runtime(config: AppConfig, *, codex_client: CodexAppServerC
     codex_provider = CodexGenerativeProvider(
         codex_runtime,
         timeout_seconds=config.analysis_ai_call_timeout_seconds,
-        runtime_cwd=config.runtime_dir / "knowledge" / "codex-runtime",
     )
     registry = GenerativeProviderRegistry()
     registry.register(ollama_provider)
@@ -153,6 +158,7 @@ def build_generative_runtime(config: AppConfig, *, codex_client: CodexAppServerC
 def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServerClient | None = None) -> AiRuntimeDiscoveryService:
     timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), 5.0)
     registry = AiRuntimeDiscoveryRegistry()
+    owns_codex_client = codex_client is None
     registry.register(
         OllamaAiRuntimeOptionsSource(
             config.analysis_base_url,
@@ -167,8 +173,9 @@ def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServe
                 client_version="0.1.0",
                 request_timeout_seconds=timeout_seconds,
                 runtime_cwd=config.runtime_dir / "knowledge" / "codex-runtime",
-            )
-        )
+            ),
+            owns_client=owns_codex_client,
+        ),
     )
     return AiRuntimeDiscoveryService(registry, provider_timeout_seconds=timeout_seconds + 1.0)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -350,30 +351,68 @@ class LlmUsageProvider:
             return None
         payload = await self._codex_client.request("account/rateLimits/read")
         rate_limits = payload.get("rateLimits") if isinstance(payload, Mapping) else None
+        rate_limits_by_limit_id = payload.get("rateLimitsByLimitId") if isinstance(payload, Mapping) else None
         if not isinstance(rate_limits, Mapping):
-            return LlmUsageResponse(windows=[])
-        windows: list[LlmUsageWindowResponse] = []
-        self._append_window(windows, "PRIMARY", rate_limits.get("primary"))
-        self._append_window(windows, "SECONDARY", rate_limits.get("secondary"))
-        return LlmUsageResponse(windows=windows)
+            self._audit_rate_limits(rate_limits, rate_limits_by_limit_id, [])
+            return None
+        windows: list[tuple[str, LlmUsageWindowResponse]] = []
+        matched_limit_ids: set[str] = set()
+        self._append_window(windows, "PRIMARY", rate_limits.get("primary"), matched_limit_ids)
+        self._append_window(windows, "SECONDARY", rate_limits.get("secondary"), matched_limit_ids)
+        if isinstance(rate_limits_by_limit_id, Mapping):
+            for limit_id, raw in sorted(rate_limits_by_limit_id.items(), key=lambda item: str(item[0])):
+                normalized_limit_id = str(limit_id or "").strip()
+                raw_limit_id = _quota_limit_id(raw)
+                if normalized_limit_id not in matched_limit_ids and (raw_limit_id is None or raw_limit_id not in matched_limit_ids):
+                    continue
+                for nested_kind, nested_raw in _quota_candidates(raw):
+                    self._append_window(windows, f"LIMIT:{normalized_limit_id}:{nested_kind}", nested_raw, matched_limit_ids)
+        deduped = _dedupe_windows([window for _, window in windows])
+        deduped.sort(key=lambda window: (window.windowDurationMinutes, window.resetAt, window.kind))
+        self._audit_rate_limits(rate_limits, rate_limits_by_limit_id, deduped)
+        return LlmUsageResponse(windows=deduped)
 
-    def _append_window(self, windows: list[LlmUsageWindowResponse], kind: str, raw: Any) -> None:
+    def _append_window(
+        self,
+        windows: list[tuple[str, LlmUsageWindowResponse]],
+        kind: str,
+        raw: Any,
+        matched_limit_ids: set[str],
+    ) -> None:
         if not isinstance(raw, Mapping):
             return
+        limit_id = _quota_limit_id(raw)
+        if limit_id is not None:
+            matched_limit_ids.add(limit_id)
         try:
-            used_percent = int(raw["usedPercent"])
+            used_percent = float(raw["usedPercent"])
             duration_minutes = int(raw["windowDurationMins"])
             reset_seconds = int(raw["resetsAt"])
         except (KeyError, TypeError, ValueError):
             return
+        if duration_minutes <= 0 or reset_seconds <= 0 or not math.isfinite(used_percent):
+            return
         reset_at = datetime.fromtimestamp(reset_seconds, tz=timezone.utc).isoformat().replace("+00:00", "Z")
-        windows.append(
+        windows.append((
+            kind,
             LlmUsageWindowResponse(
                 kind=kind,
-                usedPercent=max(0, min(100, used_percent)),
+                usedPercent=max(0, min(100, round(used_percent))),
                 windowDurationMinutes=duration_minutes,
                 resetAt=reset_at,
-            )
+            ),
+        ))
+
+    def _audit_rate_limits(self, rate_limits: Any, rate_limits_by_limit_id: Any, windows: list[LlmUsageWindowResponse]) -> None:
+        primary = rate_limits.get("primary") if isinstance(rate_limits, Mapping) else None
+        secondary = rate_limits.get("secondary") if isinstance(rate_limits, Mapping) else None
+        LOGGER.info(
+            "Codex rate-limit usage shape: rateLimits=%s rateLimitsByLimitId=%s primaryDuration=%s secondaryDuration=%s validWindows=%s",
+            isinstance(rate_limits, Mapping),
+            isinstance(rate_limits_by_limit_id, Mapping),
+            _quota_duration(primary),
+            _quota_duration(secondary),
+            len(windows),
         )
 
 
@@ -416,3 +455,48 @@ def _request_for_snapshot(request: GenerativeRequest, snapshot: ActiveLlmSnapsho
 
 def _clean_id(value: str) -> str:
     return str(value or "").strip().lower()
+
+
+def _quota_limit_id(raw: Any) -> str | None:
+    if not isinstance(raw, Mapping):
+        return None
+    for key in ("limitId", "limitID", "id"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _quota_duration(raw: Any) -> int | None:
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        duration = int(raw["windowDurationMins"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return duration if duration > 0 else None
+
+
+def _quota_candidates(raw: Any) -> list[tuple[str, Any]]:
+    if not isinstance(raw, Mapping):
+        return []
+    nested: list[tuple[str, Any]] = []
+    for key in ("primary", "secondary"):
+        value = raw.get(key)
+        if isinstance(value, Mapping):
+            nested.append((key.upper(), value))
+    if nested:
+        return nested
+    return [("WINDOW", raw)]
+
+
+def _dedupe_windows(windows: list[LlmUsageWindowResponse]) -> list[LlmUsageWindowResponse]:
+    deduped: list[LlmUsageWindowResponse] = []
+    seen: set[tuple[int, str]] = set()
+    for window in windows:
+        key = (window.windowDurationMinutes, window.resetAt)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(window)
+    return deduped

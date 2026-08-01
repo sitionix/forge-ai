@@ -16,9 +16,13 @@ export class AiRuntimeView {
     this.jarvisStatus = null;
     this.runtime = null;
     this.activeProfile = null;
+    this.activeProfileError = null;
     this.runtimeError = null;
     this.applyError = null;
     this.runtimeLoading = false;
+    this.activeProfileLoading = false;
+    this.runtimeCatalogLoadId = 0;
+    this.activeProfileLoadId = 0;
     this.applyInProgress = false;
     this.draft = this.emptyDraft();
     this.editButton = null;
@@ -71,48 +75,78 @@ export class AiRuntimeView {
     this.renderRuntimePanel();
   }
 
-  async loadRuntime() {
-    this.runtimeLoading = true;
+  async loadActiveProfile() {
+    const loadId = this.activeProfileLoadId + 1;
+    this.activeProfileLoadId = loadId;
+    this.activeProfileLoading = true;
     this.renderRuntimePanel();
     this.renderModal();
     try {
-      const result = await this.requestCoordinator.run('ai-runtime-state', async ({ signal }) => {
-        const [runtime, activeProfile] = await Promise.all([
-          this.http.get('/knowledge/ai-runtime', { signal }),
-          this.http.get('/knowledge/active-profile', { signal })
-        ]);
-        return { runtime, activeProfile };
-      });
-      if (!result.applied || this.disposed) {
+      const result = await this.requestCoordinator.run('active-profile', ({ signal }) => this.http.get('/knowledge/active-profile', { signal }));
+      if (!result.applied || this.disposed || loadId !== this.activeProfileLoadId) {
         return null;
       }
-      this.runtime = normalizeRuntime(result.value.runtime);
-      this.activeProfile = normalizeActiveProfile(result.value.activeProfile);
-      this.runtimeError = null;
+      this.activeProfile = normalizeActiveProfile(result.value);
+      this.activeProfileError = null;
       this.applyError = null;
       this.resetDraftToActive();
       setError('aiRuntimeError', null, this.document);
-      setError('aiRuntimeModalError', null, this.document);
-      return { runtime: this.runtime, activeProfile: this.activeProfile };
+      return this.activeProfile;
     } catch (error) {
-      if (!this.disposed) {
-        this.runtimeError = error;
+      if (!this.disposed && loadId === this.activeProfileLoadId) {
+        this.activeProfileError = error;
         renderRequestError('aiRuntimeError', error, {
-          endpoint: '/knowledge/ai-runtime',
-          title: 'AI runtime state failed',
-          safe: true
-        }, this.document);
-        renderRequestError('aiRuntimeModalError', error, {
           endpoint: '/knowledge/active-profile',
-          title: 'AI runtime state failed',
+          title: 'Active profile failed',
           safe: true
         }, this.document);
       }
       return null;
     } finally {
-      if (!this.disposed) {
-        this.runtimeLoading = false;
+      if (!this.disposed && loadId === this.activeProfileLoadId) {
+        this.activeProfileLoading = false;
         this.renderRuntimePanel();
+        this.renderModal();
+      }
+    }
+  }
+
+  async loadRuntimeCatalog() {
+    const loadId = this.runtimeCatalogLoadId + 1;
+    this.runtimeCatalogLoadId = loadId;
+    this.runtimeLoading = true;
+    this.runtimeError = null;
+    this.runtime = null;
+    this.applyError = null;
+    this.resetDraftToActive();
+    this.renderModal();
+    try {
+      const result = await this.requestCoordinator.run(
+        'ai-runtime-catalog',
+        ({ signal }) => this.http.get('/knowledge/ai-runtime', { signal })
+      );
+      if (!result.applied || this.disposed || loadId !== this.runtimeCatalogLoadId) {
+        return null;
+      }
+      this.runtime = normalizeRuntime(result.value);
+      this.runtimeError = null;
+      this.resetDraftToActive();
+      setError('aiRuntimeModalError', null, this.document);
+      return this.runtime;
+    } catch (error) {
+      if (!this.disposed && loadId === this.runtimeCatalogLoadId) {
+        this.runtime = null;
+        this.runtimeError = error;
+        renderRequestError('aiRuntimeModalError', error, {
+          endpoint: '/knowledge/ai-runtime',
+          title: 'AI runtime catalog failed',
+          safe: true
+        }, this.document);
+      }
+      return null;
+    } finally {
+      if (!this.disposed && loadId === this.runtimeCatalogLoadId) {
+        this.runtimeLoading = false;
         this.renderModal();
       }
     }
@@ -127,57 +161,26 @@ export class AiRuntimeView {
     const jarvisBase = status.host && status.port ? `${status.host}:${status.port}` : 'local service';
     const cardHtml = [
       this.renderStatusCard('Jarvis', status.status || 'UNKNOWN', jarvisBase),
-      ...this.providerCards(),
       this.renderActiveLlmCard(),
       this.renderUsageSection()
     ].filter(Boolean);
     cards.innerHTML = cardHtml.join('');
   }
 
-  providerCards() {
-    if (!this.runtime && this.runtimeLoading) {
-      return ['<div class="empty-state">Loading AI runtime providers...</div>'];
-    }
-    const providers = this.runtime?.providers || [];
-    if (!this.runtime && this.runtimeError) {
-      return [];
-    }
-    if (this.runtime && providers.length === 0) {
-      return ['<div class="empty-state">No AI runtime providers reported.</div>'];
-    }
-    return providers.map((provider) => this.renderProviderCard(provider));
-  }
-
-  renderProviderCard(provider) {
-    return `
-      <article class="detail-card jarvis-status-card">
-        <div class="detail-card-head">
-          <div>
-            <strong>${escapeHtml(provider.displayName || provider.providerId || 'Provider')}</strong>
-            ${provider.version ? `<p>${escapeHtml(provider.version)}</p>` : ''}
-          </div>
-          ${pill(provider.status || 'UNKNOWN', provider.status)}
-        </div>
-      </article>
-    `;
-  }
-
   renderActiveLlmCard() {
     const profile = this.activeProfile;
     if (!profile?.llmProfile) {
-      return this.runtimeLoading
+      return this.activeProfileLoading
         ? this.renderStatusCard('Active LLM', 'Loading', 'active profile')
         : this.renderStatusCard('Active LLM', '-', 'active profile');
     }
-    const provider = this.findProvider(profile.llmProfile.providerId);
-    const model = this.findModel(profile.llmProfile.providerId, profile.llmProfile.modelId);
     const effort = profile.llmProfile.effort?.effortId;
     const meta = [
-      provider?.displayName || profile.llmProfile.providerId,
-      model?.displayName || profile.llmProfile.modelId,
+      profile.llmProfile.providerId,
+      profile.llmProfile.modelId,
       effort ? `effort ${effort}` : null
     ].filter(Boolean).join(' · ');
-    return this.renderStatusCard('Active LLM', model?.displayName || profile.llmProfile.modelId, meta);
+    return this.renderStatusCard('Active LLM', profile.llmProfile.modelId, meta);
   }
 
   renderUsageSection() {
@@ -191,6 +194,7 @@ export class AiRuntimeView {
         <div class="ai-runtime-usage-windows">
           ${windows.map((window) => this.renderUsageWindow(window)).join('')}
         </div>
+        ${this.shortWindowMissing(windows) ? '<p class="detail-meta">Short-window usage is not reported by Codex.</p>' : ''}
       </section>
     `;
   }
@@ -228,6 +232,9 @@ export class AiRuntimeView {
 
   openDialog() {
     this.applyError = null;
+    this.runtimeError = null;
+    this.runtime = null;
+    this.runtimeLoading = true;
     this.resetDraftToActive();
     this.renderModal();
     if (this.dialog) {
@@ -239,9 +246,7 @@ export class AiRuntimeView {
       }
       this.document.getElementById('closeAiRuntimeDialog')?.focus();
     }
-    if ((!this.runtime || !this.activeProfile) && !this.runtimeLoading) {
-      this.loadRuntime();
-    }
+    this.loadRuntimeCatalog();
   }
 
   closeDialog() {
@@ -266,7 +271,7 @@ export class AiRuntimeView {
 
   handleDialogClick(event) {
     const option = event.target?.closest?.('[data-ai-runtime-option]');
-    if (!option || option.disabled || this.applyInProgress) {
+    if (!option || option.disabled || this.applyInProgress || this.runtimeLoading || this.runtimeError) {
       return;
     }
     const kind = option.dataset.optionKind;
@@ -350,9 +355,12 @@ export class AiRuntimeView {
         usage: null
       };
       this.resetDraftToActive();
+      await this.loadActiveProfile();
+      if (this.disposed) {
+        return null;
+      }
       this.applyInProgress = false;
       this.closeDialog();
-      await this.loadRuntime();
       this.editButton?.focus();
       return result;
     } catch (error) {
@@ -417,8 +425,8 @@ export class AiRuntimeView {
     }
     if (this.runtimeError) {
       renderRequestError('aiRuntimeModalError', this.runtimeError, {
-        endpoint: '/knowledge/active-profile',
-        title: 'AI runtime state failed',
+        endpoint: '/knowledge/ai-runtime',
+        title: 'AI runtime catalog failed',
         safe: true
       }, this.document);
       return;
@@ -431,8 +439,12 @@ export class AiRuntimeView {
     if (!container) {
       return;
     }
-    if (this.runtimeLoading && !this.runtime) {
+    if (this.runtimeLoading) {
       container.innerHTML = '<div class="empty-state">Loading AI runtime providers...</div>';
+      return;
+    }
+    if (this.runtimeError) {
+      container.innerHTML = '<div class="empty-state">Runtime catalog unavailable.</div>';
       return;
     }
     const providers = this.runtime?.providers || [];
@@ -467,9 +479,21 @@ export class AiRuntimeView {
     if (!container) {
       return;
     }
+    if (this.runtimeLoading) {
+      container.innerHTML = '<div class="empty-state">Loading AI runtime models...</div>';
+      return;
+    }
+    if (this.runtimeError) {
+      container.innerHTML = '<div class="empty-state">Runtime catalog unavailable.</div>';
+      return;
+    }
     const provider = this.findProvider(this.draft.providerId);
     if (!provider) {
       container.innerHTML = '<div class="empty-state">Select a provider</div>';
+      return;
+    }
+    if (provider.status !== 'READY') {
+      container.innerHTML = '<div class="empty-state">Provider is not selectable.</div>';
       return;
     }
     const models = provider.models || [];
@@ -549,6 +573,12 @@ export class AiRuntimeView {
     if (this.applyInProgress) {
       return 'Applying active profile...';
     }
+    if (this.runtimeLoading) {
+      return 'Loading runtime catalog...';
+    }
+    if (this.runtimeError) {
+      return 'Runtime catalog unavailable';
+    }
     if (!this.draft.providerId || !this.draft.modelId) {
       return 'Select a provider and model';
     }
@@ -564,7 +594,7 @@ export class AiRuntimeView {
   }
 
   canApply() {
-    if (this.applyInProgress || !this.activeProfile?.llmProfile) {
+    if (this.applyInProgress || this.runtimeLoading || this.runtimeError || !this.runtime || !this.activeProfile?.llmProfile) {
       return false;
     }
     if (!this.draft.providerId || !this.draft.modelId) {
@@ -602,6 +632,11 @@ export class AiRuntimeView {
       return null;
     }
     return (this.runtime?.providers || []).find((provider) => provider.providerId === providerId) || null;
+  }
+
+  shortWindowMissing(windows) {
+    const durations = new Set((windows || []).map((window) => Number(window.windowDurationMinutes)));
+    return durations.has(10080) && !durations.has(300) && !durations.has(1440);
   }
 
   findModel(providerId, modelId) {
@@ -694,19 +729,19 @@ function clampPercent(value) {
 function durationLabel(minutes) {
   const value = Number(minutes);
   if (value === 300) {
-    return '5-hour limit';
+    return '5-hour usage';
   }
   if (value === 1440) {
-    return 'Daily limit';
+    return 'Daily usage';
   }
   if (value === 10080) {
-    return 'Weekly limit';
+    return 'Weekly usage';
   }
   if (Number.isFinite(value) && value > 0 && value % 60 === 0) {
     const hours = value / 60;
-    return `${hours}-hour limit`;
+    return `${hours}-hour usage`;
   }
-  return `${Number.isFinite(value) && value > 0 ? value : 0}-minute limit`;
+  return `${Number.isFinite(value) && value > 0 ? value : 0}-minute usage`;
 }
 
 function formatResetAt(value) {

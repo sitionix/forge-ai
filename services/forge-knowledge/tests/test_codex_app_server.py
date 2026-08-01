@@ -13,6 +13,7 @@ from knowledge_service.codex_app_server import (
     CodexAppServerProtocolError,
     CodexAppServerTimeout,
     CodexAppServerTransportError,
+    CodexTurnResult,
 )
 from knowledge_service.generative_runtime import (
     CodexGenerativeProvider,
@@ -48,7 +49,7 @@ def test_initialize_sends_initialized_notification_and_correlates_requests(tmp_p
     assert [sent["method"] for sent in process.sent] == ["initialize", "initialized", "model/list"]
 
 
-def test_json_rpc_error_server_request_malformed_exit_restart_and_idempotent_close(tmp_path: Path):
+def test_json_rpc_error_malformed_restart_and_idempotent_close(tmp_path: Path):
     error_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), rpc_error(-32000, "upstream failed")])
     malformed_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), raw_line(b"{not-json\n")])
     restart_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
@@ -61,13 +62,13 @@ def test_json_rpc_error_server_request_malformed_exit_restart_and_idempotent_clo
         error_process.terminate()
         with pytest.raises(CodexAppServerProtocolError):
             await client.request("model/list")
-        malformed_process.terminate()
         restarted = await client.request("model/list")
         await client.aclose()
         await client.aclose()
         return restarted
 
     assert asyncio.run(exercise()) == {"ok": True}
+    assert malformed_process.terminated is True
     assert len([sent for sent in restart_process.sent if sent.get("method") == "initialize"]) == 1
 
 
@@ -190,6 +191,186 @@ def test_turn_terminal_failures_timeout_cancellation_and_side_effects(tmp_path: 
     assert [sent["method"] for sent in side_effect.sent].count("turn/interrupt") == 1
 
 
+@pytest.mark.parametrize("item_type", ["commandExecution", "fileChange", "webSearch", "futureThing"])
+def test_item_started_forbidden_or_unknown_fails_closed_and_interrupts_once(tmp_path: Path, item_type: str):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result({"turnId": "turn-1"}, notifications=[notification("item/started", {"turnId": "turn-1", "item": {"type": item_type}})]),
+            result({}),
+        ]
+    )
+
+    with pytest.raises(CodexAppServerProtocolError):
+        asyncio.run(_client(process, tmp_path / item_type).run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+
+    assert [sent["method"] for sent in process.sent].count("turn/interrupt") == 1
+
+
+def test_safe_item_started_and_completed_events_are_accepted(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result(
+                {"turnId": "turn-1"},
+                notifications=[
+                    notification("item/started", {"turnId": "turn-1", "item": {"type": "reasoning"}}),
+                    notification("item/completed", {"turnId": "turn-1", "item": {"type": "reasoning", "text": "hidden"}}),
+                    notification("item/started", {"turnId": "turn-1", "item": {"type": "agentMessage"}}),
+                    notification("item/completed", {"turnId": "turn-1", "item": {"type": "agentMessage", "text": "final"}}),
+                    notification("turn/completed", {"turnId": "turn-1", "status": "completed"}),
+                ],
+            ),
+        ]
+    )
+
+    payload = asyncio.run(_client(process, tmp_path / "safe").run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+
+    assert payload.raw_text == "final"
+
+
+def test_item_completed_forbidden_discards_partial_output_and_interrupts_once(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result(
+                {"turnId": "turn-1"},
+                notifications=[
+                    notification("item/completed", {"turnId": "turn-1", "item": {"type": "agentMessage", "text": "partial"}}),
+                    notification("item/completed", {"turnId": "turn-1", "item": {"type": "dynamicToolCall"}}),
+                    notification("turn/completed", {"turnId": "turn-1", "status": "completed"}),
+                ],
+            ),
+            result({}),
+        ]
+    )
+
+    with pytest.raises(CodexAppServerProtocolError):
+        asyncio.run(_client(process, tmp_path / "partial").run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+
+    assert [sent["method"] for sent in process.sent].count("turn/interrupt") == 1
+
+
+def test_known_approval_requests_decline_and_do_not_accept(tmp_path: Path):
+    command = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), result({})])
+    with pytest.raises(CodexAppServerProtocolError):
+        asyncio.run(_run_turn_until_server_request(command, tmp_path / "command-approval", "approval/request", {"turnId": "turn-1", "type": "command"}))
+    command_response = next(sent for sent in command.sent if sent.get("id") == 999 and "result" in sent)
+    assert command_response["result"] == {"decision": "decline"}
+    assert "accept" not in json.dumps(command.sent).lower()
+    assert "approved" not in json.dumps(command.sent).lower()
+    assert [sent.get("method") for sent in command.sent].count("turn/interrupt") == 1
+
+    file_change = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), result({})])
+    with pytest.raises(CodexAppServerProtocolError):
+        asyncio.run(_run_turn_until_server_request(file_change, tmp_path / "file-approval", "approval/request", {"turnId": "turn-1", "type": "fileChange"}))
+    file_response = next(sent for sent in file_change.sent if sent.get("id") == 999 and "result" in sent)
+    assert file_response["result"] == {"decision": "decline"}
+    assert "accept" not in json.dumps(file_change.sent).lower()
+    assert "approved" not in json.dumps(file_change.sent).lower()
+
+
+def test_server_request_scope_and_unknown_fail_closed(tmp_path: Path):
+    scoped = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-a"}),
+            result({"threadId": "thread-b"}),
+            result({"turnId": "turn-a"}),
+            result({"turnId": "turn-b"}),
+            result({}),
+        ]
+    )
+    first, second = asyncio.run(_run_two_turns_with_server_request(scoped, tmp_path / "scoped", {"turnId": "turn-a", "type": "command"}))
+    assert isinstance(first, CodexAppServerProtocolError)
+    assert second.raw_text == "second"
+    assert [sent["params"]["turnId"] for sent in scoped.sent if sent.get("method") == "turn/interrupt"] == ["turn-a"]
+
+    unscoped = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-a"}),
+            result({"threadId": "thread-b"}),
+            result({"turnId": "turn-a"}),
+            result({"turnId": "turn-b"}),
+            result({}),
+            result({}),
+        ]
+    )
+    first, second = asyncio.run(_run_two_turns_with_server_request(unscoped, tmp_path / "unscoped", {"type": "command"}))
+    assert isinstance(first, CodexAppServerProtocolError)
+    assert isinstance(second, CodexAppServerProtocolError)
+    assert sorted(sent["params"]["turnId"] for sent in unscoped.sent if sent.get("method") == "turn/interrupt") == ["turn-a", "turn-b"]
+
+    unknown = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), result({})])
+    with pytest.raises(CodexAppServerProtocolError):
+        asyncio.run(_run_turn_until_server_request(unknown, tmp_path / "unknown-request", "workspace/doThing", {"turnId": "turn-1"}))
+    assert any(sent.get("id") == 999 and "error" in sent for sent in unknown.sent)
+
+
+@pytest.mark.parametrize("bad_line", [b"{not-json\n", b"[]\n", b"{\"id\":\"bad\",\"result\":{}}\n", b"{\"id\":999,\"result\":{}}\n"])
+def test_protocol_corruption_invalidates_connection_and_next_request_restarts(tmp_path: Path, bad_line: bytes):
+    first_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), raw_line(bad_line)])
+    second_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [first_process, second_process]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), request_timeout_seconds=1, runtime_cwd=tmp_path)
+
+    async def exercise():
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.request("model/list")
+        payload = await client.request("model/list")
+        await client.aclose()
+        return payload
+
+    assert asyncio.run(exercise()) == {"ok": True}
+    assert first_process.terminated is True
+    assert second_process.by_method("initialize")["method"] == "initialize"
+
+
+def test_ordinary_turn_failure_and_timeout_reuse_healthy_process(tmp_path: Path):
+    failed_process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result({"turnId": "turn-1"}, notifications=[notification("turn/completed", {"turnId": "turn-1", "status": "failed", "error": {"message": "failed"}})]),
+            result({"ok": True}),
+        ]
+    )
+    failed_client = _client(failed_process, tmp_path / "failed-reuse")
+    async def failed_exercise():
+        with pytest.raises(CodexAppServerTransportError):
+            await failed_client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        payload = await failed_client.request("model/list")
+        await failed_client.aclose()
+        return payload
+
+    assert asyncio.run(failed_exercise()) == {"ok": True}
+    assert [sent["method"] for sent in failed_process.sent].count("initialize") == 1
+
+    timeout_process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result({"turnId": "turn-1"}),
+            result({}),
+            result({"ok": True}),
+        ]
+    )
+    timeout_client = _client(timeout_process, tmp_path / "timeout-reuse")
+    async def timeout_exercise():
+        with pytest.raises(CodexAppServerTimeout):
+            await timeout_client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=0.05)
+        payload = await timeout_client.request("model/list")
+        await timeout_client.aclose()
+        return payload
+
+    assert asyncio.run(timeout_exercise()) == {"ok": True}
+    assert [sent["method"] for sent in timeout_process.sent].count("initialize") == 1
+
+
 def test_cancellation_sends_one_interrupt(tmp_path: Path):
     process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), defer()])
     client = _client(process, tmp_path)
@@ -292,7 +473,7 @@ class FakeCodexProcess:
         for line in data.decode("utf-8").splitlines():
             request = json.loads(line)
             self.sent.append(request)
-            if "id" not in request:
+            if "id" not in request or "method" not in request:
                 continue
             while self._scripted:
                 action = dict(self._scripted.pop(0))
@@ -396,6 +577,37 @@ def completed_turn_process(text: str) -> FakeCodexProcess:
             ),
         ]
     )
+
+
+async def _run_turn_until_server_request(process: FakeCodexProcess, runtime_cwd: Path, method: str, params: Mapping[str, Any]) -> CodexTurnResult:
+    client = _client(process, runtime_cwd)
+    try:
+        task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        while not any(sent.get("method") == "turn/start" for sent in process.sent):
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
+        process.push_json({"id": 999, "method": method, "params": dict(params)})
+        return await task
+    finally:
+        await client.aclose()
+
+
+async def _run_two_turns_with_server_request(process: FakeCodexProcess, runtime_cwd: Path, params: Mapping[str, Any]) -> tuple[Any, Any]:
+    client = _client(process, runtime_cwd)
+    try:
+        first_task = asyncio.create_task(client.run_turn(prompt="A", model_id="m", effort_id="low", response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        second_task = asyncio.create_task(client.run_turn(prompt="B", model_id="m", effort_id="high", response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        while len([sent for sent in process.sent if sent.get("method") == "turn/start"]) < 2:
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
+        process.push_json({"id": 999, "method": "approval/request", "params": dict(params)})
+        if params.get("turnId") == "turn-a":
+            process.push_json({"method": "item/completed", "params": {"turnId": "turn-b", "item": {"type": "agentMessage", "text": "second"}}})
+            process.push_json({"method": "turn/completed", "params": {"turnId": "turn-b", "status": "completed"}})
+        results = await asyncio.gather(first_task, second_task, return_exceptions=True)
+        return results[0], results[1]
+    finally:
+        await client.aclose()
 
 
 def result(payload: Mapping[str, Any], *, notifications: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:

@@ -314,8 +314,16 @@ class CodexAiRuntimeOptionsSource:
     provider_id = "codex"
     display_name = "Codex"
 
-    def __init__(self, client: CodexAppServerClient, *, cache_ttl_seconds: float = 30.0, max_page_count: int = 100) -> None:
+    def __init__(
+        self,
+        client: CodexAppServerClient,
+        *,
+        cache_ttl_seconds: float = 30.0,
+        max_page_count: int = 100,
+        owns_client: bool = False,
+    ) -> None:
         self._client = client
+        self._owns_client = owns_client
         self.cache_ttl_seconds = max(0.001, float(cache_ttl_seconds))
         self.max_page_count = max(1, int(max_page_count))
         self._catalog_cache: _CacheEntry | None = None
@@ -366,7 +374,8 @@ class CodexAiRuntimeOptionsSource:
         return result
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        if self._owns_client:
+            await self._client.aclose()
 
     async def _read_all_models(self) -> list[AiRuntimeModelOption]:
         models: list[AiRuntimeModelOption] = []

@@ -52,11 +52,13 @@ class ProviderBackedEndToEndFormatterClient:
         provider: GenerativeProvider,
         model: str,
         timeout_seconds: float,
+        effort_id: str | None = None,
         *,
         renderer: EndToEndFormatterPromptRenderer | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
+        self.effort_id = effort_id
         self.timeout_seconds = timeout_seconds
         self.renderer = renderer or EndToEndFormatterPromptRenderer()
 
@@ -81,6 +83,7 @@ class ProviderBackedEndToEndFormatterClient:
                 GenerativeRequest(
                     prompt=prompt,
                     model_id=self.model,
+                    effort_id=self.effort_id,
                     response_mode=ResponseMode.JSON_OBJECT,
                     timeout_seconds=timeout_seconds,
                     temperature=0,
@@ -132,6 +135,7 @@ class LocalOllamaEndToEndFormatterClient(ProviderBackedEndToEndFormatterClient):
             self._ollama_provider,
             model,
             timeout_seconds,
+            effort_id=None,
             renderer=renderer,
         )
 

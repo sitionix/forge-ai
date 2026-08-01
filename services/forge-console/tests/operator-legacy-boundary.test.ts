@@ -231,7 +231,7 @@ describe('Operator legacy boundary', () => {
     };
     bootstrapOperatorConsole({ document: jarvis.window.document, window: jarvis.window, http: jarvisHttp });
     await flushAsync();
-    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime', '/knowledge/active-profile']);
+    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/active-profile']);
 
     const overview = inScopeDom('knowledge', overviewBody());
     await runLegacy(overview);

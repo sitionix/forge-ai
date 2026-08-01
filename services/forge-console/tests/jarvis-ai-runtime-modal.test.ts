@@ -194,11 +194,24 @@ describe('Jarvis AI runtime modal', () => {
     await flushAsync();
 
     expect(text(dom)).toContain('Active LLM');
-    expect(text(dom)).toContain('Qwen 14B');
-    expect(text(dom)).toContain('Ollama');
+    expect(text(dom)).toContain('qwen2.5-coder:14b');
+    expect(text(dom)).toContain('ollama');
     expect(text(dom)).not.toContain('stale-configured-model');
     expect(text(dom)).not.toContain('Usage');
-    expect(getPaths(http.get)).toEqual(['/jarvis/status', '/knowledge/ai-runtime', '/knowledge/active-profile']);
+    expect(getPaths(http.get)).toEqual(['/jarvis/status', '/knowledge/active-profile']);
+  });
+
+  it('general Refresh reloads status and active profile without runtime catalog discovery', async () => {
+    const { dom, http, page } = createPage();
+
+    page.mount();
+    await flushAsync();
+    dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new dom.window.Event('click'));
+    await flushAsync();
+
+    expect(getPaths(http.get).filter((path) => path === '/jarvis/status')).toHaveLength(2);
+    expect(getPaths(http.get).filter((path) => path === '/knowledge/active-profile')).toHaveLength(2);
+    expect(getPaths(http.get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(0);
   });
 
   it('opens with active provider and model preselected and unchanged Apply disabled', async () => {
@@ -224,6 +237,7 @@ describe('Jarvis AI runtime modal', () => {
     page.mount();
     await flushAsync();
     dom.window.document.getElementById('editAiRuntime')?.click();
+    await flushAsync();
 
     option(dom, '[data-model-id="another-model"]').click();
     const apply = dom.window.document.getElementById('applyAiRuntimeDialog') as HTMLButtonElement;
@@ -256,7 +270,8 @@ describe('Jarvis AI runtime modal', () => {
     await flushAsync();
 
     expect(dialog.hasAttribute('open')).toBe(false);
-    expect(getPaths(http.get).filter((path) => path === '/knowledge/active-profile').length).toBeGreaterThanOrEqual(2);
+    expect(getPaths(http.get).filter((path) => path === '/knowledge/active-profile')).toHaveLength(2);
+    expect(getPaths(http.get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(1);
   });
 
   it('keeps modal open on failed PUT and does not pretend activation succeeded', async () => {
@@ -268,6 +283,7 @@ describe('Jarvis AI runtime modal', () => {
     page.mount();
     await flushAsync();
     dom.window.document.getElementById('editAiRuntime')?.click();
+    await flushAsync();
 
     option(dom, '[data-provider-id="codex"]').click();
     option(dom, '[data-model-id="gpt-5.6-luna"]').click();
@@ -284,7 +300,7 @@ describe('Jarvis AI runtime modal', () => {
     });
     expect(text(dom)).toContain('Active profile update failed');
     expect(text(dom)).not.toContain('ACTIVE_LLM_PROVIDER_NOT_EXECUTABLE');
-    expect(text(dom)).toContain('Qwen 14B');
+    expect(text(dom)).toContain('qwen2.5-coder:14b');
   });
 
   it('reloads active profile and resets draft on revision conflict', async () => {
@@ -311,6 +327,7 @@ describe('Jarvis AI runtime modal', () => {
     page.mount();
     await flushAsync();
     dom.window.document.getElementById('editAiRuntime')?.click();
+    await flushAsync();
 
     option(dom, '[data-model-id="another-model"]').click();
     dom.window.document.getElementById('applyAiRuntimeDialog')?.click();
@@ -336,9 +353,9 @@ describe('Jarvis AI runtime modal', () => {
     await flushAsync();
 
     expect(text(dom)).toContain('Usage');
-    expect(text(dom)).toContain('5-hour limit');
+    expect(text(dom)).toContain('5-hour usage');
     expect(text(dom)).toContain('34% used · 66% remaining');
-    expect(text(dom)).toContain('Weekly limit');
+    expect(text(dom)).toContain('Weekly usage');
     expect(dom.window.document.querySelectorAll('.ai-runtime-progress')).toHaveLength(2);
 
     const one = createPage({
@@ -358,6 +375,7 @@ describe('Jarvis AI runtime modal', () => {
     page.mount();
     await flushAsync();
     dom.window.document.getElementById('editAiRuntime')?.click();
+    await flushAsync();
 
     option(dom, '[data-provider-id="codex"]').click();
     expect(dom.window.document.getElementById('aiRuntimeModelOptions')?.textContent).toContain('GPT-5.6-Luna');
@@ -395,14 +413,14 @@ describe('Jarvis AI runtime modal', () => {
     });
     first.page.mount();
     await flushAsync();
-    expect(text(first.dom)).toContain('Qwen 14B');
+    expect(text(first.dom)).toContain('qwen2.5-coder:14b');
     expect(first.dom.window.document.getElementById('jarvisStatusError')?.classList.contains('hidden')).toBe(false);
 
     let runtimeFails = false;
     const second = createPage({
       get: vi.fn((path: string) => {
         if (path === '/jarvis/status') return Promise.resolve(jarvisStatus());
-        if (runtimeFails && (path === '/knowledge/ai-runtime' || path === '/knowledge/active-profile')) {
+        if (runtimeFails && path === '/knowledge/active-profile') {
           return Promise.reject(Object.assign(new Error('runtime down'), { code: 'RUNTIME_DOWN' }));
         }
         if (path === '/knowledge/ai-runtime') return Promise.resolve(runtimeProviders());
@@ -412,11 +430,105 @@ describe('Jarvis AI runtime modal', () => {
     });
     second.page.mount();
     await flushAsync();
-    expect(text(second.dom)).toContain('Qwen 14B');
+    expect(text(second.dom)).toContain('qwen2.5-coder:14b');
     runtimeFails = true;
     second.dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new second.dom.window.Event('click'));
     await flushAsync();
-    expect(text(second.dom)).toContain('Qwen 14B');
+    expect(text(second.dom)).toContain('qwen2.5-coder:14b');
     expect(second.dom.window.document.getElementById('aiRuntimeError')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('loads a fresh runtime catalog on every Edit and renders only the latest response', async () => {
+    const catalogs = [
+      {
+        providers: [{
+          providerId: 'ollama',
+          displayName: 'Ollama',
+          status: 'READY',
+          models: [{ modelId: 'old-model', displayName: 'Old Model' }]
+        }]
+      },
+      {
+        providers: [{
+          providerId: 'ollama',
+          displayName: 'Ollama',
+          status: 'READY',
+          models: [{ modelId: 'new-model', displayName: 'New Model' }]
+        }]
+      }
+    ];
+    const get = vi.fn((path: string) => {
+      if (path === '/jarvis/status') return Promise.resolve(jarvisStatus());
+      if (path === '/knowledge/active-profile') {
+        return Promise.resolve(activeProfile({ llmProfile: { providerId: 'ollama', modelId: 'old-model', effort: null } }));
+      }
+      if (path === '/knowledge/ai-runtime') return Promise.resolve(catalogs.shift());
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    const { dom, dialog, page } = createPage({ get });
+
+    page.mount();
+    await flushAsync();
+    dom.window.document.getElementById('editAiRuntime')?.click();
+    await flushAsync();
+    expect(text(dom)).toContain('Old Model');
+    dialog.close();
+    await flushAsync();
+    dom.window.document.getElementById('editAiRuntime')?.click();
+    await flushAsync();
+
+    expect(getPaths(get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(2);
+    expect(text(dom)).toContain('New Model');
+    expect(text(dom)).not.toContain('Old Model');
+  });
+
+  it('disables Apply while discovery is pending and cannot apply previous catalog after discovery failure', async () => {
+    const pending = deferred<unknown>();
+    let runtimeCalls = 0;
+    const get = vi.fn((path: string) => {
+      if (path === '/jarvis/status') return Promise.resolve(jarvisStatus());
+      if (path === '/knowledge/active-profile') return Promise.resolve(activeProfile());
+      if (path === '/knowledge/ai-runtime') {
+        runtimeCalls += 1;
+        if (runtimeCalls === 1) return Promise.resolve(runtimeProviders());
+        return pending.promise;
+      }
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    const { dom, dialog, http, page } = createPage({ get });
+
+    page.mount();
+    await flushAsync();
+    dom.window.document.getElementById('editAiRuntime')?.click();
+    await flushAsync();
+    option(dom, '[data-model-id="another-model"]').click();
+    expect(dom.window.document.getElementById('applyAiRuntimeDialog')?.hasAttribute('disabled')).toBe(false);
+    dialog.close();
+    await flushAsync();
+    dom.window.document.getElementById('editAiRuntime')?.click();
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('applyAiRuntimeDialog')?.hasAttribute('disabled')).toBe(true);
+    expect(dom.window.document.querySelector('[data-model-id="another-model"]')).toBeNull();
+
+    pending.reject(Object.assign(new Error('catalog down'), { status: 503 }));
+    await flushAsync();
+    dom.window.document.getElementById('applyAiRuntimeDialog')?.click();
+
+    expect(http.put).not.toHaveBeenCalled();
+    expect(text(dom)).toContain('AI runtime catalog failed');
+  });
+
+  it('keeps non-ready providers visible but disabled', async () => {
+    const { dom, page } = createPage();
+
+    page.mount();
+    await flushAsync();
+    dom.window.document.getElementById('editAiRuntime')?.click();
+    await flushAsync();
+
+    const degraded = option(dom, '[data-provider-id="local-degraded"]');
+    expect(degraded.textContent).toContain('Local Degraded');
+    expect(degraded.hasAttribute('disabled')).toBe(true);
   });
 });

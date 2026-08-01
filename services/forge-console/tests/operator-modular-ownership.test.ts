@@ -196,7 +196,7 @@ describe('Operator Console modular request ownership', () => {
     bootstrapOperatorConsole({ document: jarvis.window.document, window: jarvis.window, http: jarvisHttp });
     await flushAsync();
     expect((jarvis.window.__forgeMountedOperatorPage as any).constructor.name).toBe('JarvisPage');
-    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime', '/knowledge/active-profile']);
+    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/active-profile']);
   });
 
   it('UI-IT-02 sends only restored Jarvis init requests from the chat page', async () => {
@@ -208,7 +208,7 @@ describe('Operator Console modular request ownership', () => {
     const page = new JarvisPage({ document: dom.window.document, http });
     page.mount();
     await flushAsync();
-    expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/ai-runtime', '/knowledge/active-profile']);
+    expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/knowledge/active-profile']);
 
     page.dispose();
     const second = new JarvisPage({ document: dom.window.document, http });
@@ -216,10 +216,8 @@ describe('Operator Console modular request ownership', () => {
     await flushAsync();
     expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual([
       '/jarvis/status',
-      '/knowledge/ai-runtime',
       '/knowledge/active-profile',
       '/jarvis/status',
-      '/knowledge/ai-runtime',
       '/knowledge/active-profile'
     ]);
   });

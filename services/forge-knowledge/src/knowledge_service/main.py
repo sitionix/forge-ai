@@ -49,9 +49,7 @@ from knowledge_service.formatter_provider import (
 )
 from knowledge_service.formatter_service import EndToEndFormatterAnswerService, EndToEndFormatterSegmentPlanner
 from knowledge_service.freshness_service import KnowledgeFreshnessService
-from knowledge_service.inventory_refresh import InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
-from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.knowledge_query_schema import (
     KnowledgeHumanQueryResponse,
     KnowledgeQueryRequest,
@@ -134,9 +132,7 @@ def create_app(
             status = 404
         elif exc.code == "AI_RUNTIME_DISCOVERY_UNAVAILABLE":
             status = 503
-        elif exc.code == "ACTIVE_PROFILE_REVISION_CONFLICT":
-            status = 409
-        elif exc.code == "ACTIVE_LLM_PROVIDER_UNAVAILABLE":
+        elif exc.code == "ACTIVE_PROFILE_REVISION_CONFLICT" or exc.code == "ACTIVE_LLM_PROVIDER_UNAVAILABLE":
             status = 409
         elif exc.code in {
             "GRAPH_CURSOR_SOURCE_MISMATCH",
@@ -1396,12 +1392,14 @@ def _query_interpretation_service(
     snapshot = dependencies.active_llm_runtime.capture() if dependencies.active_llm_runtime is not None else None
     provider_instance = snapshot.provider if snapshot is not None else dependencies.generative_provider
     provider_model = snapshot.model_id if snapshot is not None else config.analysis_model
+    provider_effort = snapshot.effort_id if snapshot is not None else None
     provider_name = snapshot.provider_id if snapshot is not None else config.analysis_provider
     provider = ProviderBackedQueryInterpretationClient(
         provider_instance,
         provider_model,
         config.analysis_ai_call_timeout_seconds,
         config.analysis_context_tokens,
+        effort_id=provider_effort,
         renderer=QueryInterpretationPromptRenderer(),
     )
     return QueryInterpretationService(
@@ -1443,11 +1441,13 @@ def _end_to_end_formatter_service(
     snapshot = dependencies.active_llm_runtime.capture() if dependencies.active_llm_runtime is not None else None
     provider_instance = snapshot.provider if snapshot is not None else dependencies.generative_provider
     provider_model = snapshot.model_id if snapshot is not None else formatter_model
+    provider_effort = snapshot.effort_id if snapshot is not None else None
     provider_name = snapshot.provider_id if snapshot is not None else config.analysis_provider
     provider = ProviderBackedEndToEndFormatterClient(
         provider_instance,
         provider_model,
         config.analysis_ai_call_timeout_seconds,
+        effort_id=provider_effort,
         renderer=EndToEndFormatterPromptRenderer(),
     )
     return EndToEndFormatterAnswerService(

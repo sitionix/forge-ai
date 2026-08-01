@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import time
-from pathlib import Path
 from typing import Any
 
 from knowledge_service.codex_app_server import (
@@ -26,12 +25,9 @@ from knowledge_service.generative_runtime.core import (
 class CodexGenerativeProvider:
     provider_id = "codex"
 
-    def __init__(self, client: CodexAppServerClient, *, timeout_seconds: float, runtime_cwd: Path | str | None = None) -> None:
+    def __init__(self, client: CodexAppServerClient, *, timeout_seconds: float) -> None:
         self._client = client
         self.timeout_seconds = max(0.001, float(timeout_seconds))
-        if runtime_cwd is not None:
-            # Runtime cwd ownership remains in the shared client; this argument is retained for explicit wiring sites.
-            Path(runtime_cwd).mkdir(parents=True, exist_ok=True)
 
     @property
     def provider_version(self) -> str:

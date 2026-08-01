@@ -6,7 +6,8 @@ import json
 import httpx
 import pytest
 
-from knowledge_service.bootstrap import build_generative_runtime
+from knowledge_service.ai_runtime_discovery import AiRuntimeDiscoveryRegistry, AiRuntimeDiscoveryService, CodexAiRuntimeOptionsSource
+from knowledge_service.bootstrap import KnowledgeDependencies, build_generative_runtime
 from knowledge_service.config import AppConfig
 from knowledge_service.generative_runtime import (
     CodexGenerativeProvider,
@@ -90,6 +91,21 @@ class SingleCallAsyncClient:
         return None
 
 
+class CloseCountingCodexClient:
+    version = "test"
+
+    def __init__(self) -> None:
+        self.close_count = 0
+        self.initialize_count = 0
+
+    async def initialize(self) -> str:
+        self.initialize_count += 1
+        return "test"
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
 def test_registry_registers_resolves_rejects_unknown_and_duplicate():
     registry = GenerativeProviderRegistry()
     provider = FakeProvider()
@@ -117,6 +133,36 @@ def test_bootstrap_generative_registry_resolves_ollama_and_codex(tmp_path):
     assert startup_provider.provider_id == "ollama"
     assert registry.resolve("ollama").provider_id == "ollama"
     assert isinstance(registry.resolve("codex"), CodexGenerativeProvider)
+
+
+def test_shared_codex_client_has_single_lifecycle_owner():
+    client = CloseCountingCodexClient()
+    discovery = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([CodexAiRuntimeOptionsSource(client)]))
+    registry = GenerativeProviderRegistry()
+    registry.register(CodexGenerativeProvider(client, timeout_seconds=3))
+    deps = KnowledgeDependencies(
+        inventory_store=None,
+        analysis_store=None,
+        graph_store=None,
+        source_resolver=None,
+        analysis_provider=None,
+        analysis_supervisor=None,
+        inventory_refresh=None,
+        inventory_scheduler=None,
+        storage_operations=None,
+        ai_runtime_discovery=discovery,
+        generative_registry=registry,
+        codex_app_server_client=client,
+    )
+
+    asyncio.run(discovery.aclose())
+    assert client.close_count == 0
+
+    asyncio.run(deps.aclose())
+    asyncio.run(deps.aclose())
+
+    assert client.close_count == 1
+    assert client.initialize_count == 0
 
 
 def test_registry_closes_sync_and_async_resources():
