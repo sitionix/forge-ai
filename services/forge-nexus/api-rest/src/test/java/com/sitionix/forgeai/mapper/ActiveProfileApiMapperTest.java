@@ -7,11 +7,15 @@ import com.sitionix.forgeai.api.activeprofile.ActiveLlmEffortResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileDetailsResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileUpdateRequest;
+import com.sitionix.forgeai.api.activeprofile.ActiveEmbeddingDiagnosticResponse;
+import com.sitionix.forgeai.api.activeprofile.ActiveEmbeddingProfileResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveProfileResponse;
 import com.sitionix.forgeai.api.activeprofile.LlmUsageResponse;
 import com.sitionix.forgeai.api.activeprofile.LlmUsageWindowResponse;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
+import com.sitionix.forgeai.domain.model.activeprofile.ActiveEmbeddingDiagnostic;
+import com.sitionix.forgeai.domain.model.activeprofile.ActiveEmbeddingProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmEffort;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsage;
@@ -32,11 +36,13 @@ class ActiveProfileApiMapperTest {
         final ActiveProfile source = new ActiveProfile(
                 1,
                 new ActiveLlmProfile("ollama", "qwen2.5-coder:14b", null),
+                embeddingProfile(),
                 null
         );
         final ActiveProfileResponse expected = new ActiveProfileResponse(
                 1,
                 new ActiveLlmProfileDetailsResponse("ollama", "qwen2.5-coder:14b", null),
+                embeddingProfileResponse(),
                 null
         );
 
@@ -55,6 +61,7 @@ class ActiveProfileApiMapperTest {
         final ActiveProfile source = new ActiveProfile(
                 3,
                 new ActiveLlmProfile("codex", "gpt-5.6-sol", new LlmEffort("high")),
+                embeddingProfile(),
                 new LlmUsage(List.of(
                         new LlmUsageWindow("PRIMARY", 34, 300, firstResetAt),
                         new LlmUsageWindow("SECONDARY", 61, 10080, secondResetAt)
@@ -67,6 +74,7 @@ class ActiveProfileApiMapperTest {
                         "gpt-5.6-sol",
                         new ActiveLlmEffortResponse("high")
                 ),
+                embeddingProfileResponse(),
                 new LlmUsageResponse(List.of(
                         new LlmUsageWindowResponse("PRIMARY", 34, 300, firstResetAt),
                         new LlmUsageWindowResponse("SECONDARY", 61, 10080, secondResetAt)
@@ -120,5 +128,29 @@ class ActiveProfileApiMapperTest {
 
         // then
         assertThat(actual).isEqualTo(expected);
+    }
+
+    private static ActiveEmbeddingProfile embeddingProfile() {
+        return new ActiveEmbeddingProfile(
+                "ollama",
+                "embeddinggemma",
+                "READY",
+                "0.32.5",
+                768,
+                "2026-08-01T00:00:00Z",
+                new ActiveEmbeddingDiagnostic("OK", "ready")
+        );
+    }
+
+    private static ActiveEmbeddingProfileResponse embeddingProfileResponse() {
+        return new ActiveEmbeddingProfileResponse(
+                "ollama",
+                "embeddinggemma",
+                "READY",
+                "0.32.5",
+                768,
+                "2026-08-01T00:00:00Z",
+                new ActiveEmbeddingDiagnosticResponse("OK", "ready")
+        );
     }
 }

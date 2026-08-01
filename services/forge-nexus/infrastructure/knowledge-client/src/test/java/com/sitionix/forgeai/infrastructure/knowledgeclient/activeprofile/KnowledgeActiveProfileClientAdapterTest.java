@@ -46,9 +46,9 @@ class KnowledgeActiveProfileClientAdapterTest {
     void getCallsExecutorAndMapsResponse() {
         // given
         final KnowledgeActiveProfileResponse clientResponse =
-                new KnowledgeActiveProfileResponse(1L, details(), null);
+                new KnowledgeActiveProfileResponse(1L, details(), null, null);
         final ActiveProfile domain =
-                new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null);
+                new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null, null);
         when(this.clientCallExecutor.<KnowledgeActiveProfileResponse>execute(any()))
                 .thenReturn(clientResponse);
         when(this.mapper.toDomain(clientResponse)).thenReturn(domain);

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, root_validator
 
 from knowledge_service.ai_runtime_discovery import READY, AiRuntimeDiscoveryService
 from knowledge_service.codex_app_server import CodexAppServerClient
+from knowledge_service.embedding_runtime_status import EmbeddingRuntimeDiagnostic, EmbeddingRuntimeStatusProvider, EmbeddingRuntimeStatusSnapshot
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.generative_runtime import GenerativeProviderRegistry, GenerativeRequest
 
@@ -55,9 +56,31 @@ class LlmUsageResponse(BaseModel):
         extra = "forbid"
 
 
+class ActiveEmbeddingDiagnosticResponse(BaseModel):
+    code: str
+    message: str
+
+    class Config:
+        extra = "forbid"
+
+
+class ActiveEmbeddingProfileResponse(BaseModel):
+    providerId: str
+    modelId: str
+    status: str
+    providerVersion: str | None
+    embeddingDimension: int | None
+    lastCheckedAt: str
+    diagnostic: ActiveEmbeddingDiagnosticResponse | None
+
+    class Config:
+        extra = "forbid"
+
+
 class ActiveProfileResponse(BaseModel):
     revision: int
     llmProfile: ActiveLlmProfileResponse
+    embeddingProfile: ActiveEmbeddingProfileResponse | None
     usage: LlmUsageResponse | None
 
     class Config:
@@ -239,11 +262,13 @@ class ActiveProfileService:
         runtime: ActiveLlmRuntime,
         discovery: AiRuntimeDiscoveryService,
         usage_provider: LlmUsageProvider,
+        embedding_status_provider: EmbeddingRuntimeStatusProvider | None = None,
     ) -> None:
         self._store = store
         self._runtime = runtime
         self._discovery = discovery
         self._usage_provider = usage_provider
+        self._embedding_status_provider = embedding_status_provider
         self._activation_lock = asyncio.Lock()
 
     def active_llm_snapshot(self) -> ActiveLlmSnapshot:
@@ -252,7 +277,13 @@ class ActiveProfileService:
     async def get_active_profile(self) -> ActiveProfileResponse:
         persisted = self._require_profile()
         usage = await self._usage_or_null(persisted.llm_profile.providerId)
-        return ActiveProfileResponse(revision=persisted.revision, llmProfile=persisted.llm_profile, usage=usage)
+        embedding_profile = await self._embedding_profile_or_null()
+        return ActiveProfileResponse(
+            revision=persisted.revision,
+            llmProfile=persisted.llm_profile,
+            embeddingProfile=embedding_profile,
+            usage=usage,
+        )
 
     async def replace_llm_profile(self, request: ActiveLlmProfilePutRequest) -> ActiveLlmProfilePutResponse:
         candidate = ActiveLlmProfileResponse(
@@ -339,6 +370,15 @@ class ActiveProfileService:
             return await self._usage_provider.usage_for(provider_id)
         except Exception:
             LOGGER.exception("Active profile usage lookup failed for provider %s", provider_id)
+            return None
+
+    async def _embedding_profile_or_null(self) -> ActiveEmbeddingProfileResponse | None:
+        if self._embedding_status_provider is None:
+            return None
+        try:
+            return _embedding_profile_response(await self._embedding_status_provider.status())
+        except Exception:
+            LOGGER.exception("Active profile embedding runtime lookup failed")
             return None
 
 
@@ -496,3 +536,20 @@ def _dedupe_windows(windows: list[LlmUsageWindowResponse]) -> list[LlmUsageWindo
         seen.add(key)
         deduped.append(window)
     return deduped
+
+
+def _embedding_profile_response(snapshot: EmbeddingRuntimeStatusSnapshot) -> ActiveEmbeddingProfileResponse:
+    diagnostic = snapshot.diagnostic
+    return ActiveEmbeddingProfileResponse(
+        providerId=snapshot.provider_id,
+        modelId=snapshot.model_id,
+        status=snapshot.status,
+        providerVersion=snapshot.provider_version,
+        embeddingDimension=snapshot.embedding_dimension,
+        lastCheckedAt=snapshot.last_checked_at,
+        diagnostic=(
+            ActiveEmbeddingDiagnosticResponse(code=diagnostic.code, message=diagnostic.message)
+            if isinstance(diagnostic, EmbeddingRuntimeDiagnostic)
+            else None
+        ),
+    )

@@ -2,12 +2,16 @@ package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
+import com.sitionix.forgeai.domain.model.activeprofile.ActiveEmbeddingDiagnostic;
+import com.sitionix.forgeai.domain.model.activeprofile.ActiveEmbeddingProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmEffort;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsage;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsageWindow;
 import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmEffort;
+import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveEmbeddingDiagnostic;
+import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveEmbeddingProfile;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileDetails;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileRequest;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileResponse;
@@ -36,11 +40,13 @@ class KnowledgeActiveProfileClientMapperTest {
         final KnowledgeActiveProfileResponse response = new KnowledgeActiveProfileResponse(
                 1L,
                 new KnowledgeActiveLlmProfileDetails("ollama", "qwen", null),
+                knowledgeEmbeddingProfile(),
                 null
         );
         final ActiveProfile expected = new ActiveProfile(
                 1,
                 new ActiveLlmProfile("ollama", "qwen", null),
+                embeddingProfile(),
                 null
         );
 
@@ -59,6 +65,7 @@ class KnowledgeActiveProfileClientMapperTest {
         final KnowledgeActiveProfileResponse response = new KnowledgeActiveProfileResponse(
                 3L,
                 new KnowledgeActiveLlmProfileDetails("codex", "gpt-5.6-sol", new KnowledgeActiveLlmEffort("high")),
+                knowledgeEmbeddingProfile(),
                 new KnowledgeLlmUsage(List.of(
                         new KnowledgeLlmUsageWindow("PRIMARY", 34, 300, firstResetAt),
                         new KnowledgeLlmUsageWindow("SECONDARY", 61, 10080, secondResetAt)
@@ -67,6 +74,7 @@ class KnowledgeActiveProfileClientMapperTest {
         final ActiveProfile expected = new ActiveProfile(
                 3,
                 new ActiveLlmProfile("codex", "gpt-5.6-sol", new LlmEffort("high")),
+                embeddingProfile(),
                 new LlmUsage(List.of(
                         new LlmUsageWindow("PRIMARY", 34, 300, firstResetAt),
                         new LlmUsageWindow("SECONDARY", 61, 10080, secondResetAt)
@@ -151,11 +159,13 @@ class KnowledgeActiveProfileClientMapperTest {
         final KnowledgeActiveProfileResponse response = new KnowledgeActiveProfileResponse(
                 3L,
                 new KnowledgeActiveLlmProfileDetails("codex", "gpt-5.6-sol", new KnowledgeActiveLlmEffort("high")),
+                knowledgeEmbeddingProfile(),
                 null
         );
         final ActiveProfile expected = new ActiveProfile(
                 3,
                 new ActiveLlmProfile("codex", "gpt-5.6-sol", new LlmEffort("high")),
+                embeddingProfile(),
                 null
         );
 
@@ -164,5 +174,29 @@ class KnowledgeActiveProfileClientMapperTest {
 
         // then
         assertThat(actual).isEqualTo(expected);
+    }
+
+    private static KnowledgeActiveEmbeddingProfile knowledgeEmbeddingProfile() {
+        return new KnowledgeActiveEmbeddingProfile(
+                "ollama",
+                "embeddinggemma",
+                "READY",
+                "0.32.5",
+                768,
+                "2026-08-01T00:00:00Z",
+                new KnowledgeActiveEmbeddingDiagnostic("OK", "ready")
+        );
+    }
+
+    private static ActiveEmbeddingProfile embeddingProfile() {
+        return new ActiveEmbeddingProfile(
+                "ollama",
+                "embeddinggemma",
+                "READY",
+                "0.32.5",
+                768,
+                "2026-08-01T00:00:00Z",
+                new ActiveEmbeddingDiagnostic("OK", "ready")
+        );
     }
 }

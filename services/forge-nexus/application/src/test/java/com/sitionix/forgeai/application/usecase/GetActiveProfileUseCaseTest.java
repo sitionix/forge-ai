@@ -29,7 +29,7 @@ class GetActiveProfileUseCaseTest {
     @Test
     void executeDelegatesExactlyOnceToDomainClientPort() {
         // given
-        final ActiveProfile profile = new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null);
+        final ActiveProfile profile = new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null, null);
         when(this.client.getActiveProfile()).thenReturn(profile);
 
         // when

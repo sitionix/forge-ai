@@ -7,11 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.observability import observed_connect
-
 
 SEMANTIC_BUILDER_VERSION = 1
 SQLITE_SEMANTIC_BUSY_TIMEOUT_MS = 5000
@@ -45,8 +44,8 @@ class SemanticIndexStatus(str, Enum):
 @dataclass(frozen=True)
 class SemanticGraphInfo:
     source_id: str
-    graph_id: Optional[str]
-    graph_revision: Optional[str]
+    graph_id: str | None
+    graph_revision: str | None
     total_node_count: int
 
 
@@ -54,17 +53,18 @@ class SemanticGraphInfo:
 class SemanticIndexStatusView:
     source_id: str
     status: SemanticIndexStatus
-    graph_revision: Optional[str]
+    graph_revision: str | None
     builder_version: int
     total_node_count: int
     indexed_node_count: int
-    embedding_model: Optional[str]
-    embedding_dimension: Optional[int]
-    updated_at: Optional[str]
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    last_build_id: Optional[str] = None
-    last_error: Optional[str] = None
+    embedding_model: str | None
+    embedding_dimension: int | None
+    updated_at: str | None
+    started_at: str | None = None
+    completed_at: str | None = None
+    last_build_id: str | None = None
+    last_error: str | None = None
+    diagnostics: tuple[dict[str, Any], ...] = ()
 
     @property
     def progress_percent(self) -> float:
@@ -106,6 +106,7 @@ class SemanticIndexStatusView:
             "completedAt": self.completed_at,
             "lastBuildId": self.last_build_id,
             "lastError": self.last_error,
+            "diagnostics": list(self.diagnostics),
         }
 
 
@@ -202,7 +203,7 @@ class SemanticIndexStore:
         with self._connect() as conn:
             ensure_semantic_index_schema(conn)
 
-    def get_state(self, source_id: str) -> Optional[dict[str, Any]]:
+    def get_state(self, source_id: str) -> dict[str, Any] | None:
         self.init()
         with self._connect() as conn:
             row = self.get_state_conn(conn, source_id)
@@ -250,7 +251,7 @@ class SemanticIndexStore:
         total_node_count: int,
         *,
         indexed_node_count: int = 0,
-        build_id: Optional[str] = None,
+        build_id: str | None = None,
         builder_version: int = SEMANTIC_BUILDER_VERSION,
     ) -> SemanticIndexStatusView:
         self.init()
@@ -274,7 +275,7 @@ class SemanticIndexStore:
         *,
         embedding_model: str,
         embedding_dimension: int,
-        build_id: Optional[str] = None,
+        build_id: str | None = None,
         builder_version: int = SEMANTIC_BUILDER_VERSION,
     ) -> SemanticIndexStatusView:
         self.init()
@@ -298,8 +299,8 @@ class SemanticIndexStore:
         total_node_count: int,
         *,
         error: str,
-        diagnostics: Optional[list[dict[str, Any]]] = None,
-        build_id: Optional[str] = None,
+        diagnostics: list[dict[str, Any]] | None = None,
+        build_id: str | None = None,
         builder_version: int = SEMANTIC_BUILDER_VERSION,
     ) -> SemanticIndexStatusView:
         self.init()
@@ -325,13 +326,13 @@ class SemanticIndexStore:
         with self._connect() as conn:
             return self.statuses_for_sources_conn(conn, source_ids)
 
-    def reconcile_missing_states(self, source_ids: Optional[Iterable[str]] = None) -> int:
+    def reconcile_missing_states(self, source_ids: Iterable[str] | None = None) -> int:
         self.init()
         with self._connect() as conn:
             return self.reconcile_missing_states_conn(conn, source_ids)
 
     @classmethod
-    def get_state_conn(cls, conn: sqlite3.Connection, source_id: str) -> Optional[sqlite3.Row]:
+    def get_state_conn(cls, conn: sqlite3.Connection, source_id: str) -> sqlite3.Row | None:
         if not _table_exists(conn, "semantic_index_state"):
             return None
         return conn.execute("SELECT * FROM semantic_index_state WHERE source_id = ?", (source_id,)).fetchone()
@@ -413,8 +414,8 @@ class SemanticIndexStore:
             embedding_model=existing["embedding_model"] if existing is not None else None,
             embedding_dimension=existing["embedding_dimension"] if existing is not None else None,
             last_build_id=existing["last_build_id"] if existing is not None else None,
-            last_error=None,
-            diagnostics_json="[]",
+            last_error=existing["last_error"] if existing is not None else None,
+            diagnostics_json=existing["diagnostics_json"] if existing is not None else "[]",
             started_at=None,
             completed_at=existing["completed_at"] if existing is not None else None,
         )
@@ -429,7 +430,7 @@ class SemanticIndexStore:
         total_node_count: int,
         *,
         indexed_node_count: int = 0,
-        build_id: Optional[str] = None,
+        build_id: str | None = None,
         builder_version: int = SEMANTIC_BUILDER_VERSION,
     ) -> SemanticIndexStatusView:
         ensure_semantic_index_schema(conn)
@@ -466,7 +467,7 @@ class SemanticIndexStore:
         *,
         embedding_model: str,
         embedding_dimension: int,
-        build_id: Optional[str] = None,
+        build_id: str | None = None,
         builder_version: int = SEMANTIC_BUILDER_VERSION,
     ) -> SemanticIndexStatusView:
         ensure_semantic_index_schema(conn)
@@ -501,8 +502,8 @@ class SemanticIndexStore:
         total_node_count: int,
         *,
         error: str,
-        diagnostics: Optional[list[dict[str, Any]]] = None,
-        build_id: Optional[str] = None,
+        diagnostics: list[dict[str, Any]] | None = None,
+        build_id: str | None = None,
         builder_version: int = SEMANTIC_BUILDER_VERSION,
     ) -> SemanticIndexStatusView:
         ensure_semantic_index_schema(conn)
@@ -546,6 +547,11 @@ class SemanticIndexStore:
                 embedding_model=None,
                 embedding_dimension=None,
                 updated_at=state["updated_at"] if state is not None else None,
+                started_at=state["started_at"] if state is not None else None,
+                completed_at=state["completed_at"] if state is not None else None,
+                last_build_id=state["last_build_id"] if state is not None else None,
+                last_error=state["last_error"] if state is not None else None,
+                diagnostics=_diagnostics(state["diagnostics_json"]) if state is not None else (),
             )
         if state is None:
             return cls._missing_or_pending_status(source_id, graph)
@@ -578,6 +584,7 @@ class SemanticIndexStore:
             completed_at=state["completed_at"],
             last_build_id=state["last_build_id"],
             last_error=state["last_error"],
+            diagnostics=_diagnostics(state["diagnostics_json"]),
         )
 
     @classmethod
@@ -592,7 +599,7 @@ class SemanticIndexStore:
         graph: SemanticGraphInfo,
         *,
         builder_version: int,
-        embedding_model: Optional[str],
+        embedding_model: str | None,
         current_revision_only: bool,
     ) -> int:
         if (
@@ -641,7 +648,7 @@ class SemanticIndexStore:
         return int(row["count"] or 0) if row is not None else 0
 
     @classmethod
-    def reconcile_missing_states_conn(cls, conn: sqlite3.Connection, source_ids: Optional[Iterable[str]] = None) -> int:
+    def reconcile_missing_states_conn(cls, conn: sqlite3.Connection, source_ids: Iterable[str] | None = None) -> int:
         ensure_semantic_index_schema(conn)
         if source_ids is None:
             if not _table_exists(conn, "analysis_graph_nodes"):
@@ -758,13 +765,13 @@ class SemanticIndexStore:
         indexed_node_count: int,
         updated_at: str,
         created_at: str,
-        embedding_model: Optional[str],
-        embedding_dimension: Optional[int],
-        last_build_id: Optional[str],
-        last_error: Optional[str],
+        embedding_model: str | None,
+        embedding_dimension: int | None,
+        last_build_id: str | None,
+        last_error: str | None,
         diagnostics_json: str,
-        started_at: Optional[str],
-        completed_at: Optional[str],
+        started_at: str | None,
+        completed_at: str | None,
     ) -> None:
         conn.execute(
             """
@@ -914,8 +921,23 @@ def _status(value: str) -> SemanticIndexStatus:
         return SemanticIndexStatus.FAILED
 
 
+def _diagnostics(raw: Any) -> tuple[dict[str, Any], ...]:
+    try:
+        payload = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(payload, list):
+        return ()
+    diagnostics: list[dict[str, Any]] = []
+    for item in payload:
+        if isinstance(item, dict):
+            diagnostics.append(dict(item))
+    return tuple(diagnostics)
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    return {key: row[key] for key in row.keys()}
+    keys = row.keys()
+    return {key: row[key] for key in keys}
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:

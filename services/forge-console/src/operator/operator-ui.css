@@ -2557,6 +2557,14 @@ body.sidebar-collapsed .sidebar-link {
   line-height: 1.35;
 }
 
+.knowledge-semantic-summary {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(100, 116, 139, 0.18);
+}
+
 .knowledge-service-detail-card {
   border: 1px solid rgba(27, 36, 31, 0.1);
   border-radius: 14px;

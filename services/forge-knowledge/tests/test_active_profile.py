@@ -17,6 +17,7 @@ from knowledge_service.active_profile import (
     LlmUsageProvider,
     PersistedActiveProfile,
 )
+from knowledge_service.embedding_runtime_status import EmbeddingRuntimeDiagnostic, EmbeddingRuntimeStatusSnapshot
 from knowledge_service.generative_runtime import GenerativeProviderRegistry, GenerativeRequest, GenerativeResponse
 
 
@@ -37,6 +38,25 @@ class FakeUsage:
         if self.error is not None:
             raise self.error
         return self.value
+
+
+class FakeEmbeddingStatus:
+    async def status(self) -> EmbeddingRuntimeStatusSnapshot:
+        return EmbeddingRuntimeStatusSnapshot(
+            provider_id="ollama",
+            model_id="embeddinggemma",
+            status="UNAVAILABLE",
+            provider_version="0.32.5",
+            embedding_dimension=None,
+            last_checked_at="2026-08-01T00:00:00Z",
+            diagnostic=EmbeddingRuntimeDiagnostic(
+                "SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE",
+                "Configured embedding model is unavailable.",
+            ),
+        )
+
+    async def aclose(self) -> None:
+        return None
 
 
 def ollama_ready(*models: str) -> dict[str, Any]:
@@ -63,6 +83,18 @@ def codex_ready() -> dict[str, Any]:
     }
 
 
+def expected_embedding_profile() -> dict[str, Any]:
+    return {
+        "providerId": "ollama",
+        "modelId": "embeddinggemma",
+        "status": "READY",
+        "providerVersion": "test",
+        "embeddingDimension": 768,
+        "lastCheckedAt": "2026-08-01T00:00:00Z",
+        "diagnostic": None,
+    }
+
+
 def test_get_active_profile_initializes_from_current_configuration_exact_contract(tmp_path: Path):
     app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
     service = deps.active_profile_service
@@ -80,6 +112,7 @@ def test_get_active_profile_initializes_from_current_configuration_exact_contrac
             "modelId": "qwen2.5-coder:14b",
             "effort": None,
         },
+        "embeddingProfile": expected_embedding_profile(),
         "usage": None,
     }
 
@@ -239,6 +272,30 @@ def test_usage_failure_returns_profile_with_usage_null(tmp_path: Path):
     assert response.status_code == 200
     assert response.json()["usage"] is None
     assert "secret@example.com" not in response.body.decode("utf-8")
+
+
+def test_active_profile_get_returns_embedding_status_without_revision_change(tmp_path: Path):
+    app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
+    deps.active_profile_service._embedding_status_provider = FakeEmbeddingStatus()
+
+    with AsgiTestClient(app) as client:
+        response = client.get("/api/v1/knowledge/active-profile")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["revision"] == 1
+    assert payload["embeddingProfile"] == {
+        "providerId": "ollama",
+        "modelId": "embeddinggemma",
+        "status": "UNAVAILABLE",
+        "providerVersion": "0.32.5",
+        "embeddingDimension": None,
+        "lastCheckedAt": "2026-08-01T00:00:00Z",
+        "diagnostic": {
+            "code": "SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE",
+            "message": "Configured embedding model is unavailable.",
+        },
+    }
 
 
 def test_codex_usage_maps_available_rate_limit_windows_to_public_contract():

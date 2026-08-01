@@ -1,6 +1,65 @@
 {
   "components": {
     "schemas": {
+      "ActiveEmbeddingDiagnosticResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ActiveEmbeddingDiagnosticResponse",
+        "type": "object"
+      },
+      "ActiveEmbeddingProfileResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "diagnostic": {
+            "$ref": "#/components/schemas/ActiveEmbeddingDiagnosticResponse"
+          },
+          "embeddingDimension": {
+            "title": "Embeddingdimension",
+            "type": "integer"
+          },
+          "lastCheckedAt": {
+            "title": "Lastcheckedat",
+            "type": "string"
+          },
+          "modelId": {
+            "title": "Modelid",
+            "type": "string"
+          },
+          "providerId": {
+            "title": "Providerid",
+            "type": "string"
+          },
+          "providerVersion": {
+            "title": "Providerversion",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "modelId",
+          "status",
+          "lastCheckedAt"
+        ],
+        "title": "ActiveEmbeddingProfileResponse",
+        "type": "object"
+      },
       "ActiveLlmEffortResponse": {
         "additionalProperties": false,
         "properties": {
@@ -86,6 +145,9 @@
       "ActiveProfileResponse": {
         "additionalProperties": false,
         "properties": {
+          "embeddingProfile": {
+            "$ref": "#/components/schemas/ActiveEmbeddingProfileResponse"
+          },
           "llmProfile": {
             "$ref": "#/components/schemas/ActiveLlmProfileResponse"
           },

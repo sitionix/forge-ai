@@ -23,6 +23,7 @@ from knowledge_service.analysis_service import AnalysisProvider, AnalysisSupervi
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.codex_app_server import CodexAppServerClient
 from knowledge_service.config import AppConfig, ForgeSettings
+from knowledge_service.embedding_runtime_status import EmbeddingRuntimeStatusProvider, OllamaEmbeddingRuntimeStatusProvider
 from knowledge_service.generative_runtime import CodexGenerativeProvider, GenerativeProviderRegistry, OllamaGenerativeProvider
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
@@ -47,13 +48,18 @@ class KnowledgeDependencies:
     generative_registry: GenerativeProviderRegistry | None = None
     generative_provider: Any | None = None
     codex_app_server_client: CodexAppServerClient | None = None
+    embedding_runtime_status_provider: EmbeddingRuntimeStatusProvider | None = None
     _codex_app_server_client_closed: bool = field(default=False, init=False, repr=False)
+    _embedding_runtime_status_provider_closed: bool = field(default=False, init=False, repr=False)
 
     async def aclose(self) -> None:
         if self.ai_runtime_discovery is not None:
             await self.ai_runtime_discovery.aclose()
         if self.generative_registry is not None:
             await self.generative_registry.aclose()
+        if self.embedding_runtime_status_provider is not None and not self._embedding_runtime_status_provider_closed:
+            self._embedding_runtime_status_provider_closed = True
+            await self.embedding_runtime_status_provider.aclose()
         if self.codex_app_server_client is not None and not self._codex_app_server_client_closed:
             self._codex_app_server_client_closed = True
             await self.codex_app_server_client.aclose()
@@ -63,6 +69,7 @@ def build_dependencies(
     config: AppConfig,
     *,
     analysis_provider: AnalysisProvider | None = None,
+    embedding_runtime_status_provider: EmbeddingRuntimeStatusProvider | None = None,
 ) -> KnowledgeDependencies:
     inventory_store = InventoryStore(config.store_path)
     analysis_store = AnalysisStore(config.store_path)
@@ -93,11 +100,13 @@ def build_dependencies(
     active_llm_runtime = ActiveLlmRuntime(generative_registry, active_profile)
     generative_provider = ActiveRuntimeGenerativeProvider(active_llm_runtime)
     ai_runtime_discovery = build_ai_runtime_discovery(config, codex_client=codex_client)
+    embedding_runtime_status_provider = embedding_runtime_status_provider or build_embedding_runtime_status_provider(config)
     active_profile_service = ActiveProfileService(
         active_profile_store,
         active_llm_runtime,
         ai_runtime_discovery,
         LlmUsageProvider(codex_client),
+        embedding_runtime_status_provider,
     )
     if analysis_provider is None:
         analysis_provider = ProviderBackedAnalysisClient(
@@ -131,6 +140,7 @@ def build_dependencies(
         generative_registry=generative_registry,
         generative_provider=generative_provider,
         codex_app_server_client=codex_client,
+        embedding_runtime_status_provider=embedding_runtime_status_provider,
     )
 
 
@@ -178,6 +188,16 @@ def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServe
         ),
     )
     return AiRuntimeDiscoveryService(registry, provider_timeout_seconds=timeout_seconds + 1.0)
+
+
+def build_embedding_runtime_status_provider(config: AppConfig) -> EmbeddingRuntimeStatusProvider:
+    return OllamaEmbeddingRuntimeStatusProvider(
+        enabled=config.semantic_enabled,
+        provider_id=config.semantic_provider,
+        base_url=config.semantic_ollama_base_url,
+        model_id=config.semantic_embedding_model,
+        timeout_seconds=config.semantic_request_timeout_seconds,
+    )
 
 
 def configure_logging(settings: ForgeSettings) -> None:

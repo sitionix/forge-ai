@@ -24,6 +24,7 @@ const SUPPORTED_ANALYSIS_STATUSES = new Set([
   'READY',
   'EMPTY'
 ]);
+const SUPPORTED_SEMANTIC_STATUSES = new Set(['MISSING', 'PENDING', 'BUILDING', 'READY', 'FAILED', 'STALE']);
 
 export class KnowledgeOverviewPage {
   constructor(options) {
@@ -320,6 +321,7 @@ export function normalizeKnowledgeOverviewPayload(payload) {
 function normalizeKnowledgeOverviewSource(source) {
   const inventory = source.inventory || {};
   const analysis = source.analysis || {};
+  const semantic = source.semantic || {};
   return {
     sourceId: source.sourceId,
     label: source.displayName || source.label || source.sourceId,
@@ -349,8 +351,32 @@ function normalizeKnowledgeOverviewSource(source) {
       activeJobCurrentRelativePath: analysis.activeJobCurrentRelativePath,
       currentFileProgress: normalizeCurrentFileProgress(analysis.currentFileProgress)
     },
+    semantic: normalizeKnowledgeSemanticStatus(semantic, analysis.semanticPercent),
     facts: source.facts || {},
     factsProgress: source.factsProgress || null
+  };
+}
+
+function normalizeKnowledgeSemanticStatus(semantic, fallbackPercent = 0) {
+  const status = String(semantic?.status || 'MISSING').toUpperCase();
+  const diagnostics = Array.isArray(semantic?.diagnostics)
+    ? semantic.diagnostics.map((diagnostic) => ({
+        code: String(diagnostic?.code || ''),
+        message: String(diagnostic?.message || '')
+      })).filter((diagnostic) => diagnostic.code || diagnostic.message)
+    : [];
+  return {
+    status: SUPPORTED_SEMANTIC_STATUSES.has(status) ? status : 'MISSING',
+    ready: Boolean(semantic?.ready),
+    stale: Boolean(semantic?.stale),
+    totalNodeCount: nonNegativeNumber(semantic?.totalNodeCount),
+    indexedNodeCount: nonNegativeNumber(semantic?.indexedNodeCount),
+    progressPercent: clampPercent(semantic?.progressPercent ?? fallbackPercent),
+    embeddingModel: semantic?.embeddingModel ? String(semantic.embeddingModel) : null,
+    embeddingDimension: Number.isFinite(Number(semantic?.embeddingDimension)) ? Number(semantic.embeddingDimension) : null,
+    lastBuildId: semantic?.lastBuildId ? String(semantic.lastBuildId) : null,
+    lastError: semantic?.lastError ? String(semantic.lastError) : null,
+    diagnostics
   };
 }
 
@@ -486,7 +512,7 @@ function renderKnowledgeSourceCells(source) {
       </div>
     </td>
     <td>${renderKnowledgeInventoryMini(inventory)}</td>
-    <td>${renderKnowledgeAnalysisProgress(analysis)}</td>
+    <td>${renderKnowledgeAnalysisProgress(analysis, source.semantic)}</td>
     <td>${renderKnowledgeFactsCell(source.facts || {})}</td>
     <td>
       <div class="knowledge-source-actions">
@@ -615,7 +641,7 @@ function renderKnowledgeFactsCell(facts) {
   return '<div class="knowledge-facts-cell"><strong>Graph</strong><small>open details</small></div>';
 }
 
-function renderKnowledgeAnalysisProgress(analysis) {
+function renderKnowledgeAnalysisProgress(analysis, semantic) {
   if (!analysis || Object.keys(analysis).length === 0) {
     return `
       <div class="knowledge-progress">
@@ -628,10 +654,10 @@ function renderKnowledgeAnalysisProgress(analysis) {
   }
   const metrics = knowledgeAnalysisMetrics(analysis);
   const status = String(analysis.status || '').toUpperCase();
-  const factsPercent = Math.max(0, Math.min(100, metrics.percent));
-  const semanticWidth = Math.min(factsPercent, clampPercent(analysis.semanticPercent));
-  const progressStyle = `--facts-percent:${escapeHtml(formatPercent(factsPercent))}%; --semantic-overlay-percent:${escapeHtml(formatPercent(semanticWidth))}%`;
-  const progressTitle = ` title="${escapeHtml(`Facts ${formatPercent(factsPercent)}%, semantic ${formatPercent(semanticWidth)}%`)}"`;
+  const analysisPercent = Math.max(0, Math.min(100, metrics.percent));
+  const semanticPercent = clampPercent(semantic?.progressPercent ?? analysis.semanticPercent);
+  const progressStyle = `--facts-percent:${escapeHtml(formatPercent(analysisPercent))}%; --semantic-overlay-percent:${escapeHtml(formatPercent(Math.min(analysisPercent, semanticPercent)))}%`;
+  const progressTitle = ` title="${escapeHtml(`Analysis ${formatPercent(analysisPercent)}%, semantic ${formatPercent(semanticPercent)}%`)}"`;
   const targetProgress = renderCurrentFileTargetProgress(analysis.currentFileProgress);
   return `
     <div class="knowledge-progress">
@@ -647,7 +673,32 @@ function renderKnowledgeAnalysisProgress(analysis) {
         pending ${escapeHtml(metrics.pending)}
         failed ${escapeHtml(metrics.failed)}
       </small>
+      ${renderKnowledgeSemanticProgress(semantic)}
       ${targetProgress}
+    </div>
+  `;
+}
+
+function renderKnowledgeSemanticProgress(semantic) {
+  if (!semantic) {
+    return '';
+  }
+  const status = String(semantic.status || 'MISSING').toUpperCase();
+  const indexed = nonNegativeNumber(semantic.indexedNodeCount);
+  const total = nonNegativeNumber(semantic.totalNodeCount);
+  const diagnostic = semantic.diagnostics?.[0]?.message || semantic.lastError || '';
+  const model = [semantic.embeddingModel, semantic.embeddingDimension ? `${semantic.embeddingDimension} dimensions` : null]
+    .filter(Boolean)
+    .join(' · ');
+  return `
+    <div class="knowledge-semantic-summary">
+      <small>
+        Semantic:
+        <span class="knowledge-semantic-state ${escapeHtml(statusClass(status))}">${escapeHtml(status)}</span>
+        ${escapeHtml(indexed)} / ${escapeHtml(total)}
+      </small>
+      ${model ? `<small>${escapeHtml(model)}</small>` : ''}
+      ${diagnostic ? `<small>${escapeHtml(diagnostic)}</small>` : ''}
     </div>
   `;
 }

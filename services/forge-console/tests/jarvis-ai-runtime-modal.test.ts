@@ -116,6 +116,15 @@ function activeProfile(overrides: Record<string, unknown> = {}) {
       modelId: 'qwen2.5-coder:14b',
       effort: null
     },
+    embeddingProfile: {
+      providerId: 'ollama',
+      modelId: 'embeddinggemma',
+      status: 'READY',
+      providerVersion: '0.32.5',
+      embeddingDimension: 768,
+      lastCheckedAt: '2026-08-01T00:00:00Z',
+      diagnostic: null
+    },
     usage: null,
     ...overrides
   };
@@ -196,9 +205,60 @@ describe('Jarvis AI runtime modal', () => {
     expect(text(dom)).toContain('Active LLM');
     expect(text(dom)).toContain('qwen2.5-coder:14b');
     expect(text(dom)).toContain('ollama');
+    expect(text(dom)).toContain('Active Embedding');
+    expect(text(dom)).toContain('embeddinggemma');
+    expect(text(dom)).toContain('Ollama · READY · 768 dimensions');
     expect(text(dom)).not.toContain('stale-configured-model');
     expect(text(dom)).not.toContain('Usage');
     expect(getPaths(http.get)).toEqual(['/jarvis/status', '/knowledge/active-profile']);
+  });
+
+  it('renders Active Embedding unavailable, disabled, and missing states safely', async () => {
+    const unavailable = createPage({
+      profile: activeProfile({
+        embeddingProfile: {
+          providerId: 'ollama',
+          modelId: 'embeddinggemma',
+          status: 'UNAVAILABLE',
+          providerVersion: '0.32.5',
+          embeddingDimension: null,
+          lastCheckedAt: '2026-08-01T00:00:00Z',
+          diagnostic: {
+            code: 'SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE',
+            message: 'Configured embedding model is unavailable.'
+          }
+        }
+      })
+    });
+    unavailable.page.mount();
+    await flushAsync();
+    expect(text(unavailable.dom)).toContain('Active Embedding');
+    expect(text(unavailable.dom)).toContain('Ollama · UNAVAILABLE');
+    expect(text(unavailable.dom)).toContain('Configured embedding model is unavailable.');
+
+    const disabled = createPage({
+      profile: activeProfile({
+        embeddingProfile: {
+          providerId: 'ollama',
+          modelId: 'embeddinggemma',
+          status: 'DISABLED',
+          providerVersion: null,
+          embeddingDimension: null,
+          lastCheckedAt: '2026-08-01T00:00:00Z',
+          diagnostic: null
+        }
+      })
+    });
+    disabled.page.mount();
+    await flushAsync();
+    expect(text(disabled.dom)).toContain('Disabled');
+    expect(text(disabled.dom)).toContain('semantic indexing');
+
+    const missing = createPage({ profile: activeProfile({ embeddingProfile: undefined }) });
+    missing.page.mount();
+    await flushAsync();
+    expect(text(missing.dom)).toContain('Active Embedding');
+    expect(text(missing.dom)).toContain('semantic indexing');
   });
 
   it('general Refresh reloads status and active profile without runtime catalog discovery', async () => {
@@ -212,6 +272,40 @@ describe('Jarvis AI runtime modal', () => {
     expect(getPaths(http.get).filter((path) => path === '/jarvis/status')).toHaveLength(2);
     expect(getPaths(http.get).filter((path) => path === '/knowledge/active-profile')).toHaveLength(2);
     expect(getPaths(http.get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(0);
+  });
+
+  it('general Refresh updates Active Embedding from active profile only', async () => {
+    let profile = activeProfile();
+    const get = vi.fn((path: string) => {
+      if (path === '/jarvis/status') return Promise.resolve(jarvisStatus());
+      if (path === '/knowledge/active-profile') return Promise.resolve(profile);
+      if (path === '/knowledge/ai-runtime') return Promise.resolve(runtimeProviders());
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    const { dom, page } = createPage({ get });
+
+    page.mount();
+    await flushAsync();
+    expect(text(dom)).toContain('Ollama · READY · 768 dimensions');
+
+    profile = activeProfile({
+      embeddingProfile: {
+        providerId: 'ollama',
+        modelId: 'embeddinggemma',
+        status: 'UNAVAILABLE',
+        providerVersion: '0.32.5',
+        embeddingDimension: null,
+        lastCheckedAt: '2026-08-01T00:00:00Z',
+        diagnostic: { code: 'SEMANTIC_PROVIDER_UNAVAILABLE', message: 'Configured embedding provider is unavailable.' }
+      }
+    });
+    dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new dom.window.Event('click'));
+    await flushAsync();
+
+    expect(text(dom)).toContain('Ollama · UNAVAILABLE');
+    expect(text(dom)).toContain('Configured embedding provider is unavailable.');
+    expect(getPaths(get).filter((path) => path === '/knowledge/active-profile')).toHaveLength(2);
+    expect(getPaths(get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(0);
   });
 
   it('opens with active provider and model preselected and unchanged Apply disabled', async () => {
@@ -379,6 +473,7 @@ describe('Jarvis AI runtime modal', () => {
 
     option(dom, '[data-provider-id="codex"]').click();
     expect(dom.window.document.getElementById('aiRuntimeModelOptions')?.textContent).toContain('GPT-5.6-Luna');
+    expect(dom.window.document.getElementById('aiRuntimeModelOptions')?.textContent).not.toContain('embeddinggemma');
     expect(dom.window.document.querySelector('.ai-runtime-note')?.textContent).toBe('Select a provider and model');
     option(dom, '[data-model-id="gpt-5.6-luna"]').click();
     expect(dom.window.document.getElementById('aiRuntimeEffortSection')?.classList.contains('hidden')).toBe(false);

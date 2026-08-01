@@ -162,6 +162,7 @@ export class AiRuntimeView {
     const cardHtml = [
       this.renderStatusCard('Jarvis', status.status || 'UNKNOWN', jarvisBase),
       this.renderActiveLlmCard(),
+      this.renderActiveEmbeddingCard(),
       this.renderUsageSection()
     ].filter(Boolean);
     cards.innerHTML = cardHtml.join('');
@@ -181,6 +182,22 @@ export class AiRuntimeView {
       effort ? `effort ${effort}` : null
     ].filter(Boolean).join(' · ');
     return this.renderStatusCard('Active LLM', profile.llmProfile.modelId, meta);
+  }
+
+  renderActiveEmbeddingCard() {
+    const profile = this.activeProfile?.embeddingProfile;
+    if (!profile) {
+      return this.activeProfileLoading
+        ? this.renderStatusCard('Active Embedding', 'Loading', 'active profile')
+        : this.renderStatusCard('Active Embedding', '-', 'semantic indexing');
+    }
+    if (profile.status === 'DISABLED') {
+      return this.renderEmbeddingStatusCard('Disabled', 'semantic indexing', profile.status, profile.diagnostic);
+    }
+    const provider = displayProvider(profile.providerId);
+    const dimension = profile.embeddingDimension ? `${profile.embeddingDimension} dimensions` : null;
+    const meta = [provider, profile.status, dimension].filter(Boolean).join(' · ');
+    return this.renderEmbeddingStatusCard(profile.modelId || '-', meta, profile.status, profile.diagnostic);
   }
 
   renderUsageSection() {
@@ -225,6 +242,22 @@ export class AiRuntimeView {
             <p>${escapeHtml(meta || '-')}</p>
           </div>
           ${pill(value || 'UNKNOWN', value)}
+        </div>
+      </article>
+    `;
+  }
+
+  renderEmbeddingStatusCard(modelId, meta, status, diagnostic) {
+    return `
+      <article class="detail-card jarvis-status-card">
+        <div class="detail-card-head">
+          <div>
+            <strong>Active Embedding</strong>
+            <p>${escapeHtml(modelId || '-')}</p>
+            <p class="detail-meta">${escapeHtml(meta || '-')}</p>
+            ${diagnostic?.message ? `<p class="detail-meta">${escapeHtml(diagnostic.message)}</p>` : ''}
+          </div>
+          ${pill(status || 'UNKNOWN', status)}
         </div>
       </article>
     `;
@@ -352,6 +385,7 @@ export class AiRuntimeView {
       this.activeProfile = {
         revision: Number(result?.revision || this.activeProfile.revision + 1),
         llmProfile: normalizeLlmProfile(result?.llmProfile),
+        embeddingProfile: this.activeProfile.embeddingProfile || null,
         usage: null
       };
       this.resetDraftToActive();
@@ -694,7 +728,26 @@ function normalizeActiveProfile(value) {
   return {
     revision: Number(value?.revision || 0),
     llmProfile: normalizeLlmProfile(value?.llmProfile),
+    embeddingProfile: normalizeEmbeddingProfile(value?.embeddingProfile),
     usage: value?.usage === null ? null : normalizeUsage(value?.usage)
+  };
+}
+
+function normalizeEmbeddingProfile(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  return {
+    providerId: String(value.providerId || ''),
+    modelId: String(value.modelId || ''),
+    status: String(value.status || 'UNKNOWN').toUpperCase(),
+    providerVersion: value.providerVersion ? String(value.providerVersion) : null,
+    embeddingDimension: Number.isFinite(Number(value.embeddingDimension)) ? Number(value.embeddingDimension) : null,
+    lastCheckedAt: value.lastCheckedAt ? String(value.lastCheckedAt) : null,
+    diagnostic: value.diagnostic ? {
+      code: String(value.diagnostic.code || ''),
+      message: String(value.diagnostic.message || '')
+    } : null
   };
 }
 
@@ -755,4 +808,12 @@ function formatResetAt(value) {
     hour: '2-digit',
     minute: '2-digit'
   }).format(date);
+}
+
+function displayProvider(providerId) {
+  const value = String(providerId || '').trim();
+  if (value.toLowerCase() === 'ollama') {
+    return 'Ollama';
+  }
+  return value || 'Provider';
 }
