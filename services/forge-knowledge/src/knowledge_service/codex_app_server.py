@@ -75,19 +75,10 @@ class CodexAppServerClient:
         "collabToolCall",
         "imageView",
     }
-    _KNOWN_APPROVAL_METHOD_HINTS: ClassVar[tuple[str, ...]] = (
-        "approval",
-        "approve",
-        "permission",
-    )
-    _KNOWN_APPROVAL_PARAM_HINTS: ClassVar[tuple[str, ...]] = (
-        "command",
-        "exec",
-        "shell",
-        "file",
-        "patch",
-        "change",
-    )
+    _APPROVAL_RESPONSES: ClassVar[dict[str, Mapping[str, str]]] = {
+        "item/commandExecution/requestApproval": {"decision": "decline"},
+        "item/fileChange/requestApproval": {"decision": "decline"},
+    }
 
     def __init__(
         self,
@@ -348,6 +339,8 @@ class CodexAppServerClient:
                 if not line:
                     break
                 self._handle_line(line)
+                if self._connection_invalidated:
+                    break
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - stdout reader must fail pending work for any reader crash.
@@ -424,8 +417,9 @@ class CodexAppServerClient:
         method = payload.get("method")
         params = payload.get("params")
         if isinstance(request_id, int):
-            if _is_known_approval_request(method, params):
-                response = {"id": request_id, "result": {"decision": "decline"}}
+            approval_response = self._APPROVAL_RESPONSES.get(method) if isinstance(method, str) else None
+            if approval_response is not None:
+                response = {"id": request_id, "result": dict(approval_response)}
             else:
                 response = {
                     "id": request_id,
@@ -452,19 +446,28 @@ class CodexAppServerClient:
             self._invalidate_connection(CodexAppServerProtocolError(f"Codex {method} params must be an object"))
             return
         turn_id = _extract_turn_id(params)
-        active = self._active_turns.get(turn_id or "")
-        if active is None or active.future.done():
-            if turn_id is not None:
-                self._buffer_turn_notification(turn_id, method, params)
-            return
-        item = params.get("item") if isinstance(params.get("item"), Mapping) else params
+        if "item" in params:
+            item = params.get("item")
+        else:
+            item = params
         if not isinstance(item, Mapping):
             self._invalidate_connection(CodexAppServerProtocolError(f"Codex {method} item must be an object"))
+            return
+        if turn_id is None:
+            self._invalidate_connection(CodexAppServerProtocolError(f"Codex {method} omitted turnId"))
             return
         item_type = _non_blank(item.get("type"))
         violation = self._validate_generation_item_type(item_type)
         if violation is not None:
+            active = self._active_turns.get(turn_id)
+            if active is None or active.future.done():
+                self._buffer_turn_notification(turn_id, method, params)
+                return
             self._schedule_fail_active_turn(active, violation)
+            return
+        active = self._active_turns.get(turn_id)
+        if active is None or active.future.done():
+            self._buffer_turn_notification(turn_id, method, params)
             return
         if method == "item/completed" and item_type == "agentMessage":
             text = _extract_text(item)
@@ -480,13 +483,15 @@ class CodexAppServerClient:
 
     def _handle_turn_completed(self, params: Any) -> None:
         if not isinstance(params, Mapping):
-            self._fail_connection(CodexAppServerProtocolError("Codex turn/completed params must be an object"))
+            self._invalidate_connection(CodexAppServerProtocolError("Codex turn/completed params must be an object"))
             return
         turn_id = _extract_turn_id(params)
+        if turn_id is None:
+            self._invalidate_connection(CodexAppServerProtocolError("Codex turn/completed omitted turnId"))
+            return
         active = self._active_turns.get(turn_id or "")
         if active is None or active.future.done():
-            if turn_id is not None:
-                self._buffer_turn_notification(turn_id, "turn/completed", params)
+            self._buffer_turn_notification(turn_id, "turn/completed", params)
             return
         if active.failed_closed:
             return
@@ -672,9 +677,26 @@ class CodexAppServerClient:
             terminate = getattr(process, "terminate", None)
             if callable(terminate):
                 terminate()
+            asyncio.create_task(self._reap_invalidated_process(process))
         stderr_task = self._stderr_task
         if stderr_task is not None and not stderr_task.done():
             stderr_task.cancel()
+
+    async def _reap_invalidated_process(self, process: Any) -> None:
+        wait = getattr(process, "wait", None)
+        if not callable(wait):
+            return
+        try:
+            await asyncio.wait_for(wait(), timeout=1.0)
+            return
+        except TimeoutError:
+            kill = getattr(process, "kill", None)
+            if callable(kill):
+                kill()
+            try:
+                await asyncio.wait_for(wait(), timeout=1.0)
+            except TimeoutError:
+                pass
 
     def _buffer_turn_notification(self, turn_id: str, method: str, params: Any) -> None:
         buffered = self._buffered_turn_notifications.setdefault(turn_id, [])
@@ -805,27 +827,6 @@ def _error_from_envelope(error: Any) -> CodexAppServerError:
             except (TypeError, ValueError):
                 status_code = None
     return CodexAppServerTransportError(message, status_code=status_code)
-
-
-def _is_known_approval_request(method: Any, params: Any) -> bool:
-    method_text = str(method or "").lower()
-    if not any(hint in method_text for hint in CodexAppServerClient._KNOWN_APPROVAL_METHOD_HINTS):
-        return False
-    if any(hint in method_text for hint in CodexAppServerClient._KNOWN_APPROVAL_PARAM_HINTS):
-        return True
-    if isinstance(params, Mapping):
-        values: list[str] = []
-        for key in ("type", "kind", "category", "action", "approvalType", "requestType", "toolName", "itemType"):
-            value = params.get(key)
-            if isinstance(value, str):
-                values.append(value.lower())
-        item = params.get("item")
-        if isinstance(item, Mapping):
-            value = item.get("type")
-            if isinstance(value, str):
-                values.append(value.lower())
-        return any(hint in value for value in values for hint in CodexAppServerClient._KNOWN_APPROVAL_PARAM_HINTS)
-    return False
 
 
 def _extract_turn_id(params: Any) -> str | None:

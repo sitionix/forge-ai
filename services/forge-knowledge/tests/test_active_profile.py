@@ -314,11 +314,15 @@ def test_codex_usage_windows_are_dynamic_sorted_deduped_and_clamped():
         (
             {
                 "rateLimits": {
-                    "primary": {"limitId": "active-codex", "usedPercent": "bad", "windowDurationMins": 300, "resetsAt": 1785436200},
+                    "limitId": "codex",
+                    "primary": {"usedPercent": "bad", "windowDurationMins": 300, "resetsAt": 1785436200},
                     "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
                 },
                 "rateLimitsByLimitId": {
-                    "active-codex": {"usedPercent": 22, "windowDurationMins": 300, "resetsAt": 1785436200},
+                    "codex": {
+                        "limitId": "codex",
+                        "primary": {"usedPercent": 22, "windowDurationMins": 300, "resetsAt": 1785436200},
+                    },
                     "unrelated": {"usedPercent": 99, "windowDurationMins": 1440, "resetsAt": 1785436200},
                 },
             },
@@ -327,11 +331,15 @@ def test_codex_usage_windows_are_dynamic_sorted_deduped_and_clamped():
         (
             {
                 "rateLimits": {
-                    "primary": {"limitId": "active-codex", "usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
+                    "limitId": "codex",
+                    "primary": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
                     "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
                 },
                 "rateLimitsByLimitId": {
-                    "active-codex": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
+                    "codex": {
+                        "limitId": "codex",
+                        "primary": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
+                    },
                 },
             },
             [300, 10080],
@@ -372,11 +380,15 @@ def test_codex_usage_invalid_duration_reset_and_unrelated_limit_ids_are_ignored(
             FakeCodexUsageClient(
                 {
                     "rateLimits": {
-                        "primary": {"limitId": "active-codex", "usedPercent": 10, "windowDurationMins": 0, "resetsAt": 1785436200},
+                        "limitId": "codex",
+                        "primary": {"usedPercent": 10, "windowDurationMins": 0, "resetsAt": 1785436200},
                         "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 0},
                     },
                     "rateLimitsByLimitId": {
-                        "unrelated": {"usedPercent": 55, "windowDurationMins": 1440, "resetsAt": 1785436200},
+                        "unrelated": {
+                            "limitId": "unrelated",
+                            "primary": {"usedPercent": 55, "windowDurationMins": 1440, "resetsAt": 1785436200},
+                        },
                     },
                 }
             )
@@ -384,6 +396,77 @@ def test_codex_usage_invalid_duration_reset_and_unrelated_limit_ids_are_ignored(
     )
 
     assert usage.windows == []
+
+
+def test_codex_usage_recovers_missing_short_window_from_matching_root_limit_id():
+    usage = asyncio.run(
+        LlmUsageProvider(
+            FakeCodexUsageClient(
+                {
+                    "rateLimits": {
+                        "limitId": "codex",
+                        "primary": None,
+                        "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                    },
+                    "rateLimitsByLimitId": {
+                        "codex": {
+                            "limitId": "codex",
+                            "primary": {"usedPercent": 22, "windowDurationMins": 300, "resetsAt": 1785436200},
+                            "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                        },
+                        "unrelated": {
+                            "limitId": "unrelated",
+                            "primary": {"usedPercent": 99, "windowDurationMins": 1440, "resetsAt": 1785436200},
+                        },
+                    },
+                }
+            )
+        ).usage_for("codex")
+    )
+
+    assert [window.windowDurationMinutes for window in usage.windows] == [300, 10080]
+
+
+def test_codex_usage_does_not_guess_by_limit_snapshot_without_root_limit_id():
+    usage = asyncio.run(
+        LlmUsageProvider(
+            FakeCodexUsageClient(
+                {
+                    "rateLimits": {
+                        "primary": None,
+                        "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                    },
+                    "rateLimitsByLimitId": {
+                        "codex": {
+                            "limitId": "codex",
+                            "primary": {"usedPercent": 22, "windowDurationMins": 300, "resetsAt": 1785436200},
+                        },
+                    },
+                }
+            )
+        ).usage_for("codex")
+    )
+
+    assert [window.windowDurationMinutes for window in usage.windows] == [10080]
+
+
+def test_codex_usage_invalid_reset_ignores_window_without_losing_valid_secondary():
+    usage = asyncio.run(
+        LlmUsageProvider(
+            FakeCodexUsageClient(
+                {
+                    "rateLimits": {
+                        "limitId": "codex",
+                        "primary": {"usedPercent": 10, "windowDurationMins": 300, "resetsAt": 999999999999999999999},
+                        "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
+                    }
+                }
+            )
+        ).usage_for("codex")
+    )
+
+    assert usage is not None
+    assert [window.windowDurationMinutes for window in usage.windows] == [10080]
 
 
 def test_codex_usage_returns_none_for_non_codex_or_missing_rate_limits():

@@ -356,17 +356,14 @@ class LlmUsageProvider:
             self._audit_rate_limits(rate_limits, rate_limits_by_limit_id, [])
             return None
         windows: list[tuple[str, LlmUsageWindowResponse]] = []
-        matched_limit_ids: set[str] = set()
-        self._append_window(windows, "PRIMARY", rate_limits.get("primary"), matched_limit_ids)
-        self._append_window(windows, "SECONDARY", rate_limits.get("secondary"), matched_limit_ids)
+        active_limit_id = _quota_limit_id(rate_limits)
+        self._append_window(windows, "PRIMARY", rate_limits.get("primary"))
+        self._append_window(windows, "SECONDARY", rate_limits.get("secondary"))
         if isinstance(rate_limits_by_limit_id, Mapping):
-            for limit_id, raw in sorted(rate_limits_by_limit_id.items(), key=lambda item: str(item[0])):
-                normalized_limit_id = str(limit_id or "").strip()
-                raw_limit_id = _quota_limit_id(raw)
-                if normalized_limit_id not in matched_limit_ids and (raw_limit_id is None or raw_limit_id not in matched_limit_ids):
-                    continue
-                for nested_kind, nested_raw in _quota_candidates(raw):
-                    self._append_window(windows, f"LIMIT:{normalized_limit_id}:{nested_kind}", nested_raw, matched_limit_ids)
+            matched_raw = rate_limits_by_limit_id.get(active_limit_id) if active_limit_id is not None else None
+            if isinstance(matched_raw, Mapping) and _quota_limit_id(matched_raw) == active_limit_id:
+                for nested_kind, nested_raw in _quota_candidates(matched_raw):
+                    self._append_window(windows, f"LIMIT:{active_limit_id}:{nested_kind}", nested_raw)
         deduped = _dedupe_windows([window for _, window in windows])
         deduped.sort(key=lambda window: (window.windowDurationMinutes, window.resetAt, window.kind))
         self._audit_rate_limits(rate_limits, rate_limits_by_limit_id, deduped)
@@ -377,13 +374,9 @@ class LlmUsageProvider:
         windows: list[tuple[str, LlmUsageWindowResponse]],
         kind: str,
         raw: Any,
-        matched_limit_ids: set[str],
     ) -> None:
         if not isinstance(raw, Mapping):
             return
-        limit_id = _quota_limit_id(raw)
-        if limit_id is not None:
-            matched_limit_ids.add(limit_id)
         try:
             used_percent = float(raw["usedPercent"])
             duration_minutes = int(raw["windowDurationMins"])
@@ -392,7 +385,10 @@ class LlmUsageProvider:
             return
         if duration_minutes <= 0 or reset_seconds <= 0 or not math.isfinite(used_percent):
             return
-        reset_at = datetime.fromtimestamp(reset_seconds, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            reset_at = datetime.fromtimestamp(reset_seconds, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        except (OverflowError, OSError, ValueError):
+            return
         windows.append((
             kind,
             LlmUsageWindowResponse(

@@ -73,7 +73,7 @@ def test_json_rpc_error_malformed_restart_and_idempotent_close(tmp_path: Path):
 
 
 def test_server_request_is_not_mistaken_for_pending_response_and_exit_fails_pending(tmp_path: Path):
-    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), server_request("approval/request", {"turnId": "missing"}), defer()])
+    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), server_request("workspace/doThing", {"turnId": "missing"}), defer()])
     client = _client(process, tmp_path)
 
     async def exercise():
@@ -257,7 +257,14 @@ def test_item_completed_forbidden_discards_partial_output_and_interrupts_once(tm
 def test_known_approval_requests_decline_and_do_not_accept(tmp_path: Path):
     command = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), result({})])
     with pytest.raises(CodexAppServerProtocolError):
-        asyncio.run(_run_turn_until_server_request(command, tmp_path / "command-approval", "approval/request", {"turnId": "turn-1", "type": "command"}))
+        asyncio.run(
+            _run_turn_until_server_request(
+                command,
+                tmp_path / "command-approval",
+                "item/commandExecution/requestApproval",
+                {"turnId": "turn-1"},
+            )
+        )
     command_response = next(sent for sent in command.sent if sent.get("id") == 999 and "result" in sent)
     assert command_response["result"] == {"decision": "decline"}
     assert "accept" not in json.dumps(command.sent).lower()
@@ -266,7 +273,14 @@ def test_known_approval_requests_decline_and_do_not_accept(tmp_path: Path):
 
     file_change = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), result({})])
     with pytest.raises(CodexAppServerProtocolError):
-        asyncio.run(_run_turn_until_server_request(file_change, tmp_path / "file-approval", "approval/request", {"turnId": "turn-1", "type": "fileChange"}))
+        asyncio.run(
+            _run_turn_until_server_request(
+                file_change,
+                tmp_path / "file-approval",
+                "item/fileChange/requestApproval",
+                {"turnId": "turn-1"},
+            )
+        )
     file_response = next(sent for sent in file_change.sent if sent.get("id") == 999 and "result" in sent)
     assert file_response["result"] == {"decision": "decline"}
     assert "accept" not in json.dumps(file_change.sent).lower()
@@ -284,7 +298,7 @@ def test_server_request_scope_and_unknown_fail_closed(tmp_path: Path):
             result({}),
         ]
     )
-    first, second = asyncio.run(_run_two_turns_with_server_request(scoped, tmp_path / "scoped", {"turnId": "turn-a", "type": "command"}))
+    first, second = asyncio.run(_run_two_turns_with_server_request(scoped, tmp_path / "scoped", {"turnId": "turn-a"}))
     assert isinstance(first, CodexAppServerProtocolError)
     assert second.raw_text == "second"
     assert [sent["params"]["turnId"] for sent in scoped.sent if sent.get("method") == "turn/interrupt"] == ["turn-a"]
@@ -300,7 +314,7 @@ def test_server_request_scope_and_unknown_fail_closed(tmp_path: Path):
             result({}),
         ]
     )
-    first, second = asyncio.run(_run_two_turns_with_server_request(unscoped, tmp_path / "unscoped", {"type": "command"}))
+    first, second = asyncio.run(_run_two_turns_with_server_request(unscoped, tmp_path / "unscoped", {}))
     assert isinstance(first, CodexAppServerProtocolError)
     assert isinstance(second, CodexAppServerProtocolError)
     assert sorted(sent["params"]["turnId"] for sent in unscoped.sent if sent.get("method") == "turn/interrupt") == ["turn-a", "turn-b"]
@@ -327,6 +341,39 @@ def test_protocol_corruption_invalidates_connection_and_next_request_restarts(tm
 
     assert asyncio.run(exercise()) == {"ok": True}
     assert first_process.terminated is True
+    assert second_process.by_method("initialize")["method"] == "initialize"
+
+
+@pytest.mark.parametrize(
+    "bad_notification",
+    [
+        {"method": "turn/completed", "params": "bad"},
+        {"method": "turn/completed", "params": {"status": "completed"}},
+        {"method": "item/completed", "params": {"turnId": "turn-1", "item": "bad"}},
+        {"method": "item/started", "params": {"item": {"type": "reasoning"}}},
+    ],
+)
+def test_malformed_notifications_invalidate_reap_and_restart(tmp_path: Path, bad_notification: Mapping[str, Any]):
+    first_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), dict(bad_notification)])
+    second_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [first_process, second_process]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), request_timeout_seconds=1, runtime_cwd=tmp_path)
+
+    async def exercise():
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.request("model/list")
+        for _ in range(100):
+            if first_process.wait_calls:
+                break
+            await asyncio.sleep(0.01)
+        payload = await client.request("model/list")
+        await client.aclose()
+        return payload
+
+    assert asyncio.run(exercise()) == {"ok": True}
+    assert first_process.terminated is True
+    assert first_process.wait_calls >= 1
+    assert first_process.returncode == 0
     assert second_process.by_method("initialize")["method"] == "initialize"
 
 
@@ -466,6 +513,8 @@ class FakeCodexProcess:
         self.returncode: int | None = None
         self.sent: list[dict[str, Any]] = []
         self.terminated = False
+        self.killed = False
+        self.wait_calls = 0
         self._scripted = list(scripted)
         self._wait: asyncio.Future[int | None] | None = None
 
@@ -518,9 +567,11 @@ class FakeCodexProcess:
         self._complete_wait()
 
     def kill(self) -> None:
+        self.killed = True
         self.terminate()
 
     async def wait(self) -> int:
+        self.wait_calls += 1
         if self.returncode is not None:
             return self.returncode
         if self._wait is None:
@@ -600,7 +651,7 @@ async def _run_two_turns_with_server_request(process: FakeCodexProcess, runtime_
         while len([sent for sent in process.sent if sent.get("method") == "turn/start"]) < 2:
             await asyncio.sleep(0)
         await asyncio.sleep(0.05)
-        process.push_json({"id": 999, "method": "approval/request", "params": dict(params)})
+        process.push_json({"id": 999, "method": "item/commandExecution/requestApproval", "params": dict(params)})
         if params.get("turnId") == "turn-a":
             process.push_json({"method": "item/completed", "params": {"turnId": "turn-b", "item": {"type": "agentMessage", "text": "second"}}})
             process.push_json({"method": "turn/completed", "params": {"turnId": "turn-b", "status": "completed"}})
