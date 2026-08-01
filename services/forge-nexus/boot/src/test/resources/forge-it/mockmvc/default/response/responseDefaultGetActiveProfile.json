@@ -5,16 +5,9 @@
     "modelId": "gpt-5.6-sol",
     "effort": {
       "effortId": "high"
-    }
-  },
-  "embeddingProfile": {
-    "providerId": "ollama",
-    "modelId": "embeddinggemma",
-    "status": "READY",
-    "providerVersion": "0.32.5",
-    "embeddingDimension": 768,
-    "lastCheckedAt": "2026-08-01T00:00:00Z",
-    "diagnostic": null
+    },
+    "providerDisplayName": "Codex",
+    "modelDisplayName": "GPT-5.6-Sol"
   },
   "usage": {
     "windows": [

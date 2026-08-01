@@ -3,19 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import sqlite3
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from pydantic import BaseModel, Field, root_validator
 
 from knowledge_service.ai_runtime_discovery import READY, AiRuntimeDiscoveryService
-from knowledge_service.codex_app_server import CodexAppServerClient
-from knowledge_service.embedding_runtime_status import EmbeddingRuntimeDiagnostic, EmbeddingRuntimeStatusProvider, EmbeddingRuntimeStatusSnapshot
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.generative_runtime import GenerativeProviderRegistry, GenerativeRequest
 
@@ -34,6 +31,8 @@ class ActiveLlmProfileResponse(BaseModel):
     providerId: str
     modelId: str
     effort: ActiveLlmEffortResponse | None
+    providerDisplayName: str | None = None
+    modelDisplayName: str | None = None
 
     class Config:
         extra = "forbid"
@@ -56,31 +55,9 @@ class LlmUsageResponse(BaseModel):
         extra = "forbid"
 
 
-class ActiveEmbeddingDiagnosticResponse(BaseModel):
-    code: str
-    message: str
-
-    class Config:
-        extra = "forbid"
-
-
-class ActiveEmbeddingProfileResponse(BaseModel):
-    providerId: str
-    modelId: str
-    status: str
-    providerVersion: str | None
-    embeddingDimension: int | None
-    lastCheckedAt: str
-    diagnostic: ActiveEmbeddingDiagnosticResponse | None
-
-    class Config:
-        extra = "forbid"
-
-
 class ActiveProfileResponse(BaseModel):
     revision: int
     llmProfile: ActiveLlmProfileResponse
-    embeddingProfile: ActiveEmbeddingProfileResponse | None
     usage: LlmUsageResponse | None
 
     class Config:
@@ -220,7 +197,17 @@ class ActiveProfileStore:
         return PersistedActiveProfile(revision=int(row["revision"]), llm_profile=llm_profile)
 
     def _profile_json(self, profile: ActiveLlmProfileResponse) -> str:
-        return json.dumps({"llmProfile": profile.dict()}, separators=(",", ":"), sort_keys=True)
+        return json.dumps(
+            {
+                "llmProfile": {
+                    "providerId": profile.providerId,
+                    "modelId": profile.modelId,
+                    "effort": profile.effort.dict() if profile.effort is not None else None,
+                }
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -254,6 +241,9 @@ class ActiveLlmRuntime:
             provider=provider,
         )
 
+    def resolve_provider(self, provider_id: str) -> Any:
+        return self._registry.resolve(provider_id)
+
 
 class ActiveProfileService:
     def __init__(
@@ -261,14 +251,12 @@ class ActiveProfileService:
         store: ActiveProfileStore,
         runtime: ActiveLlmRuntime,
         discovery: AiRuntimeDiscoveryService,
-        usage_provider: LlmUsageProvider,
-        embedding_status_provider: EmbeddingRuntimeStatusProvider | None = None,
+        usage_registry: LlmUsageRegistry,
     ) -> None:
         self._store = store
         self._runtime = runtime
         self._discovery = discovery
-        self._usage_provider = usage_provider
-        self._embedding_status_provider = embedding_status_provider
+        self._usage_registry = usage_registry
         self._activation_lock = asyncio.Lock()
 
     def active_llm_snapshot(self) -> ActiveLlmSnapshot:
@@ -277,11 +265,9 @@ class ActiveProfileService:
     async def get_active_profile(self) -> ActiveProfileResponse:
         persisted = self._require_profile()
         usage = await self._usage_or_null(persisted.llm_profile.providerId)
-        embedding_profile = await self._embedding_profile_or_null()
         return ActiveProfileResponse(
             revision=persisted.revision,
-            llmProfile=persisted.llm_profile,
-            embeddingProfile=embedding_profile,
+            llmProfile=await self._present_llm_profile(persisted.llm_profile),
             usage=usage,
         )
 
@@ -343,7 +329,7 @@ class ActiveProfileService:
             raise KnowledgeError("ACTIVE_LLM_MODEL_NOT_FOUND", "Active LLM model was not found")
         self._validate_effort(candidate.effort, model_options)
         try:
-            provider = self._runtime._registry.resolve(provider_id)
+            provider = self._runtime.resolve_provider(provider_id)
         except Exception as exc:
             raise KnowledgeError("ACTIVE_LLM_PROVIDER_NOT_EXECUTABLE", "Active LLM provider is not executable") from exc
         if not callable(getattr(provider, "generate", None)) and not callable(getattr(provider, "generate_async", None)):
@@ -366,90 +352,59 @@ class ActiveProfileService:
             raise KnowledgeError("ACTIVE_LLM_EFFORT_NOT_SUPPORTED", "Active LLM effort is not supported for this model")
 
     async def _usage_or_null(self, provider_id: str) -> LlmUsageResponse | None:
+        source = self._usage_registry.resolve_optional(provider_id)
+        if source is None:
+            return None
         try:
-            return await self._usage_provider.usage_for(provider_id)
+            return await source.usage()
         except Exception:
             LOGGER.exception("Active profile usage lookup failed for provider %s", provider_id)
             return None
 
-    async def _embedding_profile_or_null(self) -> ActiveEmbeddingProfileResponse | None:
-        if self._embedding_status_provider is None:
-            return None
+    async def _present_llm_profile(self, profile: ActiveLlmProfileResponse) -> ActiveLlmProfileResponse:
+        provider_display_name: str | None = None
+        model_display_name: str | None = None
         try:
-            return _embedding_profile_response(await self._embedding_status_provider.status())
+            options = await self._discovery.discover()
         except Exception:
-            LOGGER.exception("Active profile embedding runtime lookup failed")
-            return None
-
-
-class LlmUsageProvider:
-    def __init__(self, codex_client: CodexAppServerClient | None = None) -> None:
-        self._codex_client = codex_client
-
-    async def usage_for(self, provider_id: str) -> LlmUsageResponse | None:
-        if provider_id != "codex" or self._codex_client is None:
-            return None
-        payload = await self._codex_client.request("account/rateLimits/read")
-        rate_limits = payload.get("rateLimits") if isinstance(payload, Mapping) else None
-        rate_limits_by_limit_id = payload.get("rateLimitsByLimitId") if isinstance(payload, Mapping) else None
-        if not isinstance(rate_limits, Mapping):
-            self._audit_rate_limits(rate_limits, rate_limits_by_limit_id, [])
-            return None
-        windows: list[tuple[str, LlmUsageWindowResponse]] = []
-        active_limit_id = _quota_limit_id(rate_limits)
-        self._append_window(windows, "PRIMARY", rate_limits.get("primary"))
-        self._append_window(windows, "SECONDARY", rate_limits.get("secondary"))
-        if isinstance(rate_limits_by_limit_id, Mapping):
-            matched_raw = rate_limits_by_limit_id.get(active_limit_id) if active_limit_id is not None else None
-            if isinstance(matched_raw, Mapping) and _quota_limit_id(matched_raw) == active_limit_id:
-                for nested_kind, nested_raw in _quota_candidates(matched_raw):
-                    self._append_window(windows, f"LIMIT:{active_limit_id}:{nested_kind}", nested_raw)
-        deduped = _dedupe_windows([window for _, window in windows])
-        deduped.sort(key=lambda window: (window.windowDurationMinutes, window.resetAt, window.kind))
-        self._audit_rate_limits(rate_limits, rate_limits_by_limit_id, deduped)
-        return LlmUsageResponse(windows=deduped)
-
-    def _append_window(
-        self,
-        windows: list[tuple[str, LlmUsageWindowResponse]],
-        kind: str,
-        raw: Any,
-    ) -> None:
-        if not isinstance(raw, Mapping):
-            return
-        try:
-            used_percent = float(raw["usedPercent"])
-            duration_minutes = int(raw["windowDurationMins"])
-            reset_seconds = int(raw["resetsAt"])
-        except (KeyError, TypeError, ValueError):
-            return
-        if duration_minutes <= 0 or reset_seconds <= 0 or not math.isfinite(used_percent):
-            return
-        try:
-            reset_at = datetime.fromtimestamp(reset_seconds, tz=timezone.utc).isoformat().replace("+00:00", "Z")
-        except (OverflowError, OSError, ValueError):
-            return
-        windows.append((
-            kind,
-            LlmUsageWindowResponse(
-                kind=kind,
-                usedPercent=max(0, min(100, round(used_percent))),
-                windowDurationMinutes=duration_minutes,
-                resetAt=reset_at,
-            ),
-        ))
-
-    def _audit_rate_limits(self, rate_limits: Any, rate_limits_by_limit_id: Any, windows: list[LlmUsageWindowResponse]) -> None:
-        primary = rate_limits.get("primary") if isinstance(rate_limits, Mapping) else None
-        secondary = rate_limits.get("secondary") if isinstance(rate_limits, Mapping) else None
-        LOGGER.info(
-            "Codex rate-limit usage shape: rateLimits=%s rateLimitsByLimitId=%s primaryDuration=%s secondaryDuration=%s validWindows=%s",
-            isinstance(rate_limits, Mapping),
-            isinstance(rate_limits_by_limit_id, Mapping),
-            _quota_duration(primary),
-            _quota_duration(secondary),
-            len(windows),
+            LOGGER.exception("Active profile display metadata lookup failed")
+            options = {}
+        for provider in options.get("providers", []) if isinstance(options, Mapping) else []:
+            if not isinstance(provider, Mapping) or provider.get("providerId") != profile.providerId:
+                continue
+            provider_display_name = _optional_display_name(provider.get("displayName"))
+            for model in provider.get("models") or []:
+                if isinstance(model, Mapping) and model.get("modelId") == profile.modelId:
+                    model_display_name = _optional_display_name(model.get("displayName"))
+                    break
+            break
+        return ActiveLlmProfileResponse(
+            providerId=profile.providerId,
+            modelId=profile.modelId,
+            effort=profile.effort,
+            providerDisplayName=provider_display_name,
+            modelDisplayName=model_display_name,
         )
+
+
+class LlmUsageSource(Protocol):
+    provider_id: str
+
+    async def usage(self) -> LlmUsageResponse | None: ...
+
+
+class LlmUsageRegistry:
+    def __init__(self) -> None:
+        self._sources: dict[str, LlmUsageSource] = {}
+
+    def register(self, source: LlmUsageSource) -> None:
+        provider_id = _clean_id(source.provider_id)
+        if not provider_id:
+            raise ValueError("LLM usage provider_id is required")
+        self._sources[provider_id] = source
+
+    def resolve_optional(self, provider_id: str) -> LlmUsageSource | None:
+        return self._sources.get(_clean_id(provider_id))
 
 
 class ActiveRuntimeGenerativeProvider:
@@ -466,6 +421,9 @@ class ActiveRuntimeGenerativeProvider:
     async def generate_async(self, request: GenerativeRequest):
         snapshot = self._runtime.capture()
         return await snapshot.provider.generate_async(_request_for_snapshot(request, snapshot))
+
+    async def aclose(self) -> None:
+        return None
 
 
 def _request_for_snapshot(request: GenerativeRequest, snapshot: ActiveLlmSnapshot) -> GenerativeRequest:
@@ -493,63 +451,8 @@ def _clean_id(value: str) -> str:
     return str(value or "").strip().lower()
 
 
-def _quota_limit_id(raw: Any) -> str | None:
-    if not isinstance(raw, Mapping):
+def _optional_display_name(value: Any) -> str | None:
+    if not isinstance(value, str):
         return None
-    for key in ("limitId", "limitID", "id"):
-        value = raw.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def _quota_duration(raw: Any) -> int | None:
-    if not isinstance(raw, Mapping):
-        return None
-    try:
-        duration = int(raw["windowDurationMins"])
-    except (KeyError, TypeError, ValueError):
-        return None
-    return duration if duration > 0 else None
-
-
-def _quota_candidates(raw: Any) -> list[tuple[str, Any]]:
-    if not isinstance(raw, Mapping):
-        return []
-    nested: list[tuple[str, Any]] = []
-    for key in ("primary", "secondary"):
-        value = raw.get(key)
-        if isinstance(value, Mapping):
-            nested.append((key.upper(), value))
-    if nested:
-        return nested
-    return [("WINDOW", raw)]
-
-
-def _dedupe_windows(windows: list[LlmUsageWindowResponse]) -> list[LlmUsageWindowResponse]:
-    deduped: list[LlmUsageWindowResponse] = []
-    seen: set[tuple[int, str]] = set()
-    for window in windows:
-        key = (window.windowDurationMinutes, window.resetAt)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(window)
-    return deduped
-
-
-def _embedding_profile_response(snapshot: EmbeddingRuntimeStatusSnapshot) -> ActiveEmbeddingProfileResponse:
-    diagnostic = snapshot.diagnostic
-    return ActiveEmbeddingProfileResponse(
-        providerId=snapshot.provider_id,
-        modelId=snapshot.model_id,
-        status=snapshot.status,
-        providerVersion=snapshot.provider_version,
-        embeddingDimension=snapshot.embedding_dimension,
-        lastCheckedAt=snapshot.last_checked_at,
-        diagnostic=(
-            ActiveEmbeddingDiagnosticResponse(code=diagnostic.code, message=diagnostic.message)
-            if isinstance(diagnostic, EmbeddingRuntimeDiagnostic)
-            else None
-        ),
-    )
+    stripped = value.strip()
+    return stripped or None

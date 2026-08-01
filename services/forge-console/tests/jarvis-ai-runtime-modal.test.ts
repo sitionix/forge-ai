@@ -114,16 +114,9 @@ function activeProfile(overrides: Record<string, unknown> = {}) {
     llmProfile: {
       providerId: 'ollama',
       modelId: 'qwen2.5-coder:14b',
-      effort: null
-    },
-    embeddingProfile: {
-      providerId: 'ollama',
-      modelId: 'embeddinggemma',
-      status: 'READY',
-      providerVersion: '0.32.5',
-      embeddingDimension: 768,
-      lastCheckedAt: '2026-08-01T00:00:00Z',
-      diagnostic: null
+      effort: null,
+      providerDisplayName: 'Ollama Runtime',
+      modelDisplayName: 'Qwen Coder 14B'
     },
     usage: null,
     ...overrides
@@ -203,64 +196,11 @@ describe('Jarvis AI runtime modal', () => {
     await flushAsync();
 
     expect(text(dom)).toContain('Active LLM');
-    expect(text(dom)).toContain('qwen2.5-coder:14b');
-    expect(text(dom)).toContain('ollama');
-    expect(text(dom)).toContain('Active Embedding');
-    expect(text(dom)).toContain('embeddinggemma');
-    expect(text(dom)).toContain('Ollama · READY · 768 dimensions');
+    expect(text(dom)).toContain('Qwen Coder 14B');
+    expect(text(dom)).toContain('Ollama Runtime');
     expect(text(dom)).not.toContain('stale-configured-model');
     expect(text(dom)).not.toContain('Usage');
     expect(getPaths(http.get)).toEqual(['/jarvis/status', '/knowledge/active-profile']);
-  });
-
-  it('renders Active Embedding unavailable, disabled, and missing states safely', async () => {
-    const unavailable = createPage({
-      profile: activeProfile({
-        embeddingProfile: {
-          providerId: 'ollama',
-          modelId: 'embeddinggemma',
-          status: 'UNAVAILABLE',
-          providerVersion: '0.32.5',
-          embeddingDimension: null,
-          lastCheckedAt: '2026-08-01T00:00:00Z',
-          diagnostic: {
-            code: 'SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE',
-            message: 'Configured embedding model is unavailable.'
-          }
-        }
-      })
-    });
-    unavailable.page.mount();
-    await flushAsync();
-    expect(unavailable.page.aiRuntimeView.activeProfile.embeddingProfile.embeddingDimension).toBeNull();
-    expect(text(unavailable.dom)).toContain('Active Embedding');
-    expect(text(unavailable.dom)).toContain('Ollama · UNAVAILABLE');
-    expect(text(unavailable.dom)).toContain('Configured embedding model is unavailable.');
-    expect(text(unavailable.dom)).not.toContain('0 dimensions');
-
-    const disabled = createPage({
-      profile: activeProfile({
-        embeddingProfile: {
-          providerId: 'ollama',
-          modelId: 'embeddinggemma',
-          status: 'DISABLED',
-          providerVersion: null,
-          embeddingDimension: null,
-          lastCheckedAt: '2026-08-01T00:00:00Z',
-          diagnostic: null
-        }
-      })
-    });
-    disabled.page.mount();
-    await flushAsync();
-    expect(text(disabled.dom)).toContain('Disabled');
-    expect(text(disabled.dom)).toContain('semantic indexing');
-
-    const missing = createPage({ profile: activeProfile({ embeddingProfile: undefined }) });
-    missing.page.mount();
-    await flushAsync();
-    expect(text(missing.dom)).toContain('Active Embedding');
-    expect(text(missing.dom)).toContain('semantic indexing');
   });
 
   it('general Refresh reloads status and active profile without runtime catalog discovery', async () => {
@@ -274,40 +214,6 @@ describe('Jarvis AI runtime modal', () => {
     expect(getPaths(http.get).filter((path) => path === '/jarvis/status')).toHaveLength(2);
     expect(getPaths(http.get).filter((path) => path === '/knowledge/active-profile')).toHaveLength(2);
     expect(getPaths(http.get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(0);
-  });
-
-  it('general Refresh updates Active Embedding from active profile only', async () => {
-    let profile = activeProfile();
-    const get = vi.fn((path: string) => {
-      if (path === '/jarvis/status') return Promise.resolve(jarvisStatus());
-      if (path === '/knowledge/active-profile') return Promise.resolve(profile);
-      if (path === '/knowledge/ai-runtime') return Promise.resolve(runtimeProviders());
-      return Promise.reject(new Error(`unexpected GET ${path}`));
-    });
-    const { dom, page } = createPage({ get });
-
-    page.mount();
-    await flushAsync();
-    expect(text(dom)).toContain('Ollama · READY · 768 dimensions');
-
-    profile = activeProfile({
-      embeddingProfile: {
-        providerId: 'ollama',
-        modelId: 'embeddinggemma',
-        status: 'UNAVAILABLE',
-        providerVersion: '0.32.5',
-        embeddingDimension: null,
-        lastCheckedAt: '2026-08-01T00:00:00Z',
-        diagnostic: { code: 'SEMANTIC_PROVIDER_UNAVAILABLE', message: 'Configured embedding provider is unavailable.' }
-      }
-    });
-    dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new dom.window.Event('click'));
-    await flushAsync();
-
-    expect(text(dom)).toContain('Ollama · UNAVAILABLE');
-    expect(text(dom)).toContain('Configured embedding provider is unavailable.');
-    expect(getPaths(get).filter((path) => path === '/knowledge/active-profile')).toHaveLength(2);
-    expect(getPaths(get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(0);
   });
 
   it('opens with active provider and model preselected and unchanged Apply disabled', async () => {
@@ -498,7 +404,7 @@ describe('Jarvis AI runtime modal', () => {
     expect(match?.groups?.body).not.toContain('inset: 22px');
   });
 
-  it('isolates status and runtime failures and preserves last good providers', async () => {
+  it('isolates status failure and clears stale active profile on refresh failure before recovery', async () => {
     const statusFailure = Object.assign(new Error('status down'), { code: 'STATUS_DOWN' });
     const first = createPage({
       get: vi.fn((path: string) => {
@@ -510,7 +416,7 @@ describe('Jarvis AI runtime modal', () => {
     });
     first.page.mount();
     await flushAsync();
-    expect(text(first.dom)).toContain('qwen2.5-coder:14b');
+    expect(text(first.dom)).toContain('Qwen Coder 14B');
     expect(first.dom.window.document.getElementById('jarvisStatusError')?.classList.contains('hidden')).toBe(false);
 
     let runtimeFails = false;
@@ -527,12 +433,17 @@ describe('Jarvis AI runtime modal', () => {
     });
     second.page.mount();
     await flushAsync();
-    expect(text(second.dom)).toContain('qwen2.5-coder:14b');
+    expect(text(second.dom)).toContain('Qwen Coder 14B');
     runtimeFails = true;
     second.dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new second.dom.window.Event('click'));
     await flushAsync();
-    expect(text(second.dom)).toContain('qwen2.5-coder:14b');
+    expect(text(second.dom)).not.toContain('Qwen Coder 14B');
+    expect(text(second.dom)).toContain('Active LLM');
     expect(second.dom.window.document.getElementById('aiRuntimeError')?.classList.contains('hidden')).toBe(false);
+    runtimeFails = false;
+    second.dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new second.dom.window.Event('click'));
+    await flushAsync();
+    expect(text(second.dom)).toContain('Qwen Coder 14B');
   });
 
   it('loads a fresh runtime catalog on every Edit and renders only the latest response', async () => {

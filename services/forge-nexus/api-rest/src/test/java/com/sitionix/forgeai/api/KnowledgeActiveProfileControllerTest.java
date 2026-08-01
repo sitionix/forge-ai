@@ -48,11 +48,10 @@ class KnowledgeActiveProfileControllerTest {
     @Test
     void getDelegatesAndMapsResponse() {
         // given
-        final ActiveProfile profile = new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null, null);
+        final ActiveProfile profile = new ActiveProfile(1, new ActiveLlmProfile("ollama", "qwen", null), null);
         final ActiveProfileResponse response = new ActiveProfileResponse(
                 1,
                 new ActiveLlmProfileDetailsResponse("ollama", "qwen", null),
-                null,
                 null
         );
         when(this.getActiveProfile.execute()).thenReturn(profile);

@@ -13,7 +13,6 @@ from typing_extensions import Self
 from knowledge_service.analysis_service import AnalysisProvider
 from knowledge_service.bootstrap import KnowledgeDependencies, build_dependencies
 from knowledge_service.config import AppConfig, ForgeSettings, load_forge_settings
-from knowledge_service.embedding_runtime_status import EmbeddingRuntimeStatusSnapshot
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.main import create_app
@@ -228,27 +227,6 @@ class DeterministicFinalFlowFormatterProvider:
         )()
 
 
-class DeterministicEmbeddingRuntimeStatusProvider:
-    def __init__(self) -> None:
-        self.calls = 0
-        self.closed = False
-
-    async def status(self) -> EmbeddingRuntimeStatusSnapshot:
-        self.calls += 1
-        return EmbeddingRuntimeStatusSnapshot(
-            provider_id="ollama",
-            model_id="embeddinggemma",
-            status="READY",
-            provider_version="test",
-            embedding_dimension=768,
-            last_checked_at="2026-08-01T00:00:00Z",
-            diagnostic=None,
-        )
-
-    async def aclose(self) -> None:
-        self.closed = True
-
-
 def _strip_code_symbols(value: str) -> str:
     result = value
     for identifier in _query_identifiers(value):
@@ -443,11 +421,9 @@ def build_test_app(
     }
     settings = load_forge_settings(config_file=config_file, environ=env)
     app_config = AppConfig.from_forge_settings(settings)
-    embedding_status_provider = DeterministicEmbeddingRuntimeStatusProvider()
     deps = build_dependencies(
         app_config,
         analysis_provider=provider or DeterministicAnalysisProvider(),
-        embedding_runtime_status_provider=embedding_status_provider,
     )
     _BUILT_TEST_DEPENDENCIES.append(deps)
     app = create_app(settings=settings, dependencies=deps)

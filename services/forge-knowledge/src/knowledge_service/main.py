@@ -113,7 +113,9 @@ def create_app(
                 await deps.analysis_supervisor.shutdown()
             await deps.aclose()
 
-    app = FastAPI(title="Knowledge Service", version="0.1.0", lifespan=lifespan)
+    from knowledge_service import __version__
+
+    app = FastAPI(title="Knowledge Service", version=__version__, lifespan=lifespan)
     app.state.semantic_build_jobs = {}
     app.state.semantic_build_lock = threading.Lock()
     if settings is not None and dependencies is not None:
@@ -368,7 +370,7 @@ def create_app(
         coordinator = _semantic_build_coordinator(request.app, config, deps.inventory_store.db_path)
         job_id = f"semantic-build-{uuid.uuid4()}"
         if not config.semantic_enabled:
-            response = {
+            response: dict[str, Any] = {
                 "jobId": job_id,
                 "status": "COMPLETED",
                 "sourceIds": [],
@@ -734,9 +736,9 @@ def _knowledge_human_query_response(
     retrieval_plan = None
     query_result = None
     selected_graphs = ()
-    interpretation_records = []
-    answer_records = []
-    pipeline_records = []
+    interpretation_records: list[dict[str, Any]] = []
+    answer_records: list[dict[str, Any]] = []
+    pipeline_records: list[dict[str, Any]] = []
     answer_service = None
     try:
         if is_forbidden_response_language(body.answerLanguage):

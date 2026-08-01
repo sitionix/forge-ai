@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import pytest
+from codex_app_server_support import FakeCodexProcess, async_value, defer, notification, raw_line, result, rpc_error, server_request
 
 from knowledge_service.codex_app_server import (
     CodexAppServerClient,
@@ -13,6 +15,8 @@ from knowledge_service.codex_app_server import (
     CodexAppServerProtocolError,
     CodexAppServerTimeout,
     CodexAppServerTransportError,
+    CodexNotificationBufferPolicy,
+    CodexRuntimeSettings,
     CodexTurnResult,
 )
 from knowledge_service.generative_runtime import (
@@ -90,6 +94,53 @@ def test_server_request_is_not_mistaken_for_pending_response_and_exit_fails_pend
     assert any("error" in sent and sent.get("id") == 999 for sent in process.sent)
 
 
+def test_matched_response_missing_result_error_fails_immediately_and_reaps(tmp_path: Path):
+    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), raw_line(b'{"id":2}\n')])
+    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=30, runtime_cwd=tmp_path)
+
+    async def exercise():
+        await client.initialize()
+        started = time.monotonic()
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.request("model/list")
+        await client.aclose()
+        return time.monotonic() - started
+
+    elapsed = asyncio.run(exercise())
+
+    assert elapsed < 1.0
+    assert process.terminated is True
+
+
+@pytest.mark.parametrize("bad_line", [b'{"id":true,"result":{}}\n', b'{"id":"2","result":{}}\n'])
+def test_response_id_bool_and_string_are_rejected(tmp_path: Path, bad_line: bytes):
+    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), raw_line(bad_line)])
+    client = _client(process, tmp_path)
+
+    async def exercise():
+        await client.initialize()
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.request("model/list")
+        await client.aclose()
+
+    asyncio.run(exercise())
+    assert process.terminated is True
+
+
+def test_server_request_id_bool_is_rejected_and_reaps_process(tmp_path: Path):
+    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), raw_line(b'{"id":true,"method":"workspace/doThing","params":{}}\n')])
+    client = _client(process, tmp_path)
+
+    async def exercise():
+        await client.initialize()
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.request("model/list")
+        await client.aclose()
+
+    asyncio.run(exercise())
+    assert process.terminated is True
+
+
 def test_run_turn_envelope_json_mode_effort_and_agent_message_result(tmp_path: Path):
     process = FakeCodexProcess(
         [
@@ -102,7 +153,7 @@ def test_run_turn_envelope_json_mode_effort_and_agent_message_result(tmp_path: P
                         "item/completed",
                         {"threadId": "thread-1", "turnId": "turn-1", "item": {"type": "agentMessage", "text": "{\"json\":\"{\\\"ok\\\":true}\"}"}},
                     ),
-                    notification("turn/completed", {"threadId": "thread-1", "turnId": "turn-1", "status": "completed", "usage": {"inputTokens": 3}}),
+                    notification("turn/completed", {"threadId": "thread-1", "turnId": "turn-1", "status": "completed", "tokenUsage": {"inputTokens": 3}}),
                 ],
             ),
         ]
@@ -153,6 +204,52 @@ def test_run_turn_text_omits_effort_and_output_schema(tmp_path: Path):
     turn_start = process.by_method("turn/start")
     assert "effort" not in turn_start["params"]
     assert "outputSchema" not in turn_start["params"]
+
+
+@pytest.mark.parametrize(
+    "notifications",
+    [
+        [notification("item/completed", {"turnId": "turn-1", "item": {"type": "agentMessage", "text": "final"}}), notification("turn/completed", {"turnId": "turn-1"})],
+        [notification("turn/completed", {"turnId": "turn-1"})],
+        [notification("item/completed", {"turnId": "turn-1", "item": {"type": "agentMessage", "text": "final"}}), notification("turn/completed", {"turnId": "turn-1", "status": "done"})],
+    ],
+)
+def test_missing_or_unknown_turn_status_is_rejected(tmp_path: Path, notifications: Sequence[Mapping[str, Any]]):
+    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}, notifications=notifications)])
+
+    with pytest.raises(CodexAppServerProtocolError):
+        asyncio.run(_client(process, tmp_path).run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+
+
+@pytest.mark.parametrize(
+    "raw_text",
+    [
+        "not-json",
+        "[]",
+        "{\"json\":\"{}\",\"extra\":true}",
+        "{}",
+        "{\"json\":{}}",
+        "{\"json\":\"not-json\"}",
+        "{\"json\":\"[]\"}",
+    ],
+)
+def test_json_object_contract_rejects_malformed_wrappers(tmp_path: Path, raw_text: str):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result(
+                {"turnId": "turn-1"},
+                notifications=[
+                    notification("item/completed", {"turnId": "turn-1", "item": {"type": "agentMessage", "text": raw_text}}),
+                    notification("turn/completed", {"turnId": "turn-1", "status": "completed"}),
+                ],
+            ),
+        ]
+    )
+
+    with pytest.raises(CodexAppServerProtocolError):
+        asyncio.run(_client(process, tmp_path).run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.JSON_OBJECT, timeout_seconds=3))
 
 
 def test_turn_terminal_failures_timeout_cancellation_and_side_effects(tmp_path: Path):
@@ -229,6 +326,82 @@ def test_safe_item_started_and_completed_events_are_accepted(tmp_path: Path):
     payload = asyncio.run(_client(process, tmp_path / "safe").run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
 
     assert payload.raw_text == "final"
+
+
+def test_notification_before_turn_registration_replays_normally(tmp_path: Path):
+    process = completed_turn_process("buffered")
+    payload = asyncio.run(_client_with_buffer(process, tmp_path, max_per_turn=10, max_turn_ids=10, ttl=30).run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+
+    assert payload.raw_text == "buffered"
+
+
+def test_buffered_notification_per_turn_limit_invalidates_connection(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result(
+                {"turnId": "turn-1"},
+                notifications=[
+                    notification("item/started", {"turnId": "turn-1", "item": {"type": "reasoning"}}),
+                    notification("item/started", {"turnId": "turn-1", "item": {"type": "reasoning"}}),
+                ],
+            ),
+        ]
+    )
+
+    with pytest.raises(CodexAppServerProtocolError):
+        asyncio.run(_client_with_buffer(process, tmp_path, max_per_turn=1, max_turn_ids=10, ttl=30).run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+    assert process.terminated is True
+
+
+def test_buffered_notification_global_turn_id_limit_invalidates_connection(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result(
+                {"turnId": "turn-1"},
+                notifications=[
+                    notification("item/started", {"turnId": "unknown-a", "item": {"type": "reasoning"}}),
+                    notification("item/started", {"turnId": "unknown-b", "item": {"type": "reasoning"}}),
+                ],
+            ),
+        ]
+    )
+
+    with pytest.raises(CodexAppServerProtocolError):
+        asyncio.run(_client_with_buffer(process, tmp_path, max_per_turn=10, max_turn_ids=1, ttl=30).run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+    assert process.terminated is True
+
+
+def test_expired_buffered_notifications_are_pruned_deterministically(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result(
+                {"turnId": "turn-1"},
+                notifications=[
+                    notification("item/started", {"turnId": "expired", "item": {"type": "reasoning"}}),
+                ],
+            ),
+        ]
+    )
+    client = _client_with_buffer(process, tmp_path, max_per_turn=10, max_turn_ids=1, ttl=0.01)
+
+    async def exercise():
+        task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        while not any(sent.get("method") == "turn/start" for sent in process.sent):
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
+        process.push_json({"method": "item/completed", "params": {"turnId": "turn-1", "item": {"type": "agentMessage", "text": "fresh"}}})
+        process.push_json({"method": "turn/completed", "params": {"turnId": "turn-1", "status": "completed"}})
+        return await task
+
+    payload = asyncio.run(exercise())
+
+    assert payload.raw_text == "fresh"
 
 
 def test_item_completed_forbidden_discards_partial_output_and_interrupts_once(tmp_path: Path):
@@ -505,113 +678,22 @@ def test_codex_generative_provider_sync_async_hashes_metadata_and_error_mapping(
         )
 
 
-class FakeCodexProcess:
-    def __init__(self, scripted: Sequence[Mapping[str, Any]]) -> None:
-        self.stdin = FakeStdin(self)
-        self.stdout = FakeStream()
-        self.stderr = FakeStream()
-        self.returncode: int | None = None
-        self.sent: list[dict[str, Any]] = []
-        self.terminated = False
-        self.killed = False
-        self.wait_calls = 0
-        self._scripted = list(scripted)
-        self._wait: asyncio.Future[int | None] | None = None
-
-    def receive(self, data: bytes) -> None:
-        for line in data.decode("utf-8").splitlines():
-            request = json.loads(line)
-            self.sent.append(request)
-            if "id" not in request or "method" not in request:
-                continue
-            while self._scripted:
-                action = dict(self._scripted.pop(0))
-                if action.get("defer"):
-                    break
-                if "raw" in action:
-                    self.stdout.push(action["raw"])
-                    continue
-                if "exit" in action:
-                    self.returncode = int(action["exit"])
-                    self.stdout.push(b"")
-                    self._complete_wait()
-                    break
-                if action.get("server_request"):
-                    self.push_json({"id": 999, "method": action["method"], "params": action.get("params", {})})
-                    continue
-                if "method" in action:
-                    self.push_json(action)
-                    continue
-                if "error" in action:
-                    self.push_json({"id": request["id"], "error": action["error"]})
-                    break
-                self.push_json({"id": request["id"], "result": action.get("result", {})})
-                for emitted in action.get("notifications", []):
-                    self.push_json(emitted)
-                break
-
-    def push_json(self, payload: Mapping[str, Any]) -> None:
-        self.stdout.push(json.dumps(payload).encode("utf-8") + b"\n")
-
-    def by_method(self, method: str) -> dict[str, Any]:
-        for sent in self.sent:
-            if sent.get("method") == method:
-                return sent
-        raise AssertionError(f"method not sent: {method}")
-
-    def terminate(self) -> None:
-        self.terminated = True
-        self.returncode = 0
-        self.stdout.push(b"")
-        self.stderr.push(b"")
-        self._complete_wait()
-
-    def kill(self) -> None:
-        self.killed = True
-        self.terminate()
-
-    async def wait(self) -> int:
-        self.wait_calls += 1
-        if self.returncode is not None:
-            return self.returncode
-        if self._wait is None:
-            self._wait = asyncio.get_running_loop().create_future()
-        return await self._wait
-
-    def _complete_wait(self) -> None:
-        if self._wait is not None and not self._wait.done():
-            self._wait.set_result(self.returncode)
-
-
-class FakeStdin:
-    def __init__(self, process: FakeCodexProcess) -> None:
-        self._process = process
-
-    def write(self, data: bytes) -> None:
-        self._process.receive(data)
-
-    async def drain(self) -> None:
-        return None
-
-
-class FakeStream:
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self._loop: asyncio.AbstractEventLoop | None = None
-
-    async def readline(self) -> bytes:
-        self._loop = asyncio.get_running_loop()
-        return await self._queue.get()
-
-    def push(self, data: bytes) -> None:
-        if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
-        else:
-            self._queue.put_nowait(data)
-
-
 def _client(process: FakeCodexProcess, runtime_cwd: Path) -> CodexAppServerClient:
     return CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1, runtime_cwd=runtime_cwd)
+
+
+def _client_with_buffer(process: FakeCodexProcess, runtime_cwd: Path, *, max_per_turn: int, max_turn_ids: int, ttl: float) -> CodexAppServerClient:
+    return CodexAppServerClient(
+        process_factory=lambda command: async_value(process),
+        settings=CodexRuntimeSettings(
+            command=("codex", "app-server", "--stdio"),
+            runtime_cwd=runtime_cwd,
+            client_name="forge-knowledge",
+            client_version="0.1.0",
+            request_timeout_seconds=1,
+            notification_buffer=CodexNotificationBufferPolicy(max_per_turn=max_per_turn, max_turn_ids=max_turn_ids, max_age_seconds=ttl),
+        ),
+    )
 
 
 def completed_turn_process(text: str) -> FakeCodexProcess:
@@ -659,31 +741,3 @@ async def _run_two_turns_with_server_request(process: FakeCodexProcess, runtime_
         return results[0], results[1]
     finally:
         await client.aclose()
-
-
-def result(payload: Mapping[str, Any], *, notifications: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
-    return {"result": dict(payload), "notifications": [dict(item) for item in notifications]}
-
-
-def notification(method: str, params: Mapping[str, Any]) -> dict[str, Any]:
-    return {"method": method, "params": dict(params)}
-
-
-def server_request(method: str, params: Mapping[str, Any]) -> dict[str, Any]:
-    return {"server_request": True, "method": method, "params": dict(params)}
-
-
-def rpc_error(code: int, message: str) -> dict[str, Any]:
-    return {"error": {"code": code, "message": message}}
-
-
-def raw_line(value: bytes) -> dict[str, Any]:
-    return {"raw": value}
-
-
-def defer() -> dict[str, Any]:
-    return {"defer": True}
-
-
-async def async_value(value: Any) -> Any:
-    return value

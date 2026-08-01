@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-import json
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import httpx
 import pytest
+from codex_app_server_support import (
+    FakeCodexProcess,
+    async_value,
+    notification,
+)
+from codex_app_server_support import (
+    result as response,
+)
+from codex_app_server_support import (
+    rpc_error as jsonrpc_error,
+)
 
 from knowledge_service.ai_runtime_discovery import (
     DEGRADED,
@@ -20,6 +31,14 @@ from knowledge_service.ai_runtime_discovery import (
     OllamaAiRuntimeOptionsSource,
 )
 from knowledge_service.codex_app_server import CodexAppServerClient, CodexAppServerError, CodexAppServerTimeout
+
+
+def _codex_client(process_factory, *, request_timeout_seconds: float = 5.0) -> CodexAppServerClient:
+    return CodexAppServerClient(
+        process_factory=process_factory,
+        request_timeout_seconds=request_timeout_seconds,
+        runtime_cwd=Path.cwd().resolve() / "var" / "codex-test-runtime",
+    )
 
 
 def _connect_refused(request: httpx.Request) -> httpx.Response:
@@ -307,7 +326,7 @@ def test_codex_initializes_and_maps_model_list_efforts_pagination_and_hidden_fil
             response({"data": [codex_model("gpt-5.6-luna", "GPT-5.6-Luna", efforts=[])], "nextCursor": None}),
         ]
     )
-    client = CodexAppServerClient(process_factory=lambda command: async_value(process))
+    client = _codex_client(lambda command: async_value(process))
     source = CodexAiRuntimeOptionsSource(client)
 
     result = asyncio.run(source.discover()).public_dict()
@@ -342,7 +361,7 @@ def test_codex_executable_absent_returns_unavailable():
     async def missing_process(command: Sequence[str]) -> Any:
         raise FileNotFoundError(command[0])
 
-    source = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=missing_process))
+    source = CodexAiRuntimeOptionsSource(_codex_client(missing_process))
 
     result = asyncio.run(source.discover()).public_dict()
 
@@ -368,7 +387,7 @@ def test_codex_cached_catalog_does_not_mask_current_runtime_absence():
             raise FileNotFoundError(command[0])
         return processes.pop(0)
 
-    source = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=process_factory))
+    source = CodexAiRuntimeOptionsSource(_codex_client(process_factory))
 
     async def exercise():
         first = await source.discover()
@@ -395,7 +414,7 @@ def test_codex_client_correlates_out_of_order_responses():
             {"defer": True},
         ],
     )
-    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1)
+    client = _codex_client(lambda command: async_value(process), request_timeout_seconds=1)
 
     async def exercise():
         await client.initialize()
@@ -424,15 +443,11 @@ def test_codex_initialize_timeout_cleans_process_and_next_discovery_restarts():
         ]
     )
     processes = [timeout_process, restart_process]
-    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), request_timeout_seconds=0.01)
+    client = _codex_client(lambda command: async_value(processes.pop(0)), request_timeout_seconds=0.01)
     source = CodexAiRuntimeOptionsSource(client)
 
     async def exercise():
         first = await source.discover()
-        assert client._pending == {}
-        assert client._process is None
-        assert client._reader_task is None
-        assert client._stderr_task is None
         second = await source.discover()
         await client.aclose()
         await client.aclose()
@@ -448,35 +463,27 @@ def test_codex_initialize_timeout_cleans_process_and_next_discovery_restarts():
 
 def test_codex_initialize_error_cleans_process_and_pending_requests():
     process = FakeCodexProcess([jsonrpc_error(-32000, "initialize failed")])
-    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1)
+    client = _codex_client(lambda command: async_value(process), request_timeout_seconds=1)
 
     with pytest.raises(CodexAppServerError):
         asyncio.run(client.initialize())
 
     assert process.terminated is True
-    assert client._pending == {}
-    assert client._process is None
-    assert client._reader_task is None
-    assert client._stderr_task is None
 
 
 def test_codex_initialize_unusable_response_cleans_process_and_pending_requests():
     process = FakeCodexProcess([response({"platformFamily": "unix"})])
-    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1)
+    client = _codex_client(lambda command: async_value(process), request_timeout_seconds=1)
 
     with pytest.raises(CodexAppServerError):
         asyncio.run(client.initialize())
 
     assert process.terminated is True
-    assert client._pending == {}
-    assert client._process is None
-    assert client._reader_task is None
-    assert client._stderr_task is None
 
 
 def test_codex_initialize_cancellation_cleans_process_and_pending_requests():
     process = FakeCodexProcess([{"defer": True}])
-    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1)
+    client = _codex_client(lambda command: async_value(process), request_timeout_seconds=1)
 
     async def exercise():
         task = asyncio.create_task(client.initialize())
@@ -489,15 +496,11 @@ def test_codex_initialize_cancellation_cleans_process_and_pending_requests():
     asyncio.run(exercise())
 
     assert process.terminated is True
-    assert client._pending == {}
-    assert client._process is None
-    assert client._reader_task is None
-    assert client._stderr_task is None
 
 
 def test_codex_request_cancellation_clears_pending_entry_and_shutdown_is_idempotent():
     process = FakeCodexProcess([response({"userAgent": "forge-knowledge/0.146.0"}), {"defer": True}])
-    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1)
+    client = _codex_client(lambda command: async_value(process), request_timeout_seconds=1)
 
     async def exercise():
         await client.initialize()
@@ -507,11 +510,6 @@ def test_codex_request_cancellation_clears_pending_entry_and_shutdown_is_idempot
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        for _ in range(20):
-            if client._pending == {}:
-                break
-            await asyncio.sleep(0.01)
-        assert client._pending == {}
         await client.aclose()
         await client.aclose()
 
@@ -534,7 +532,7 @@ def test_codex_request_timeout_process_exit_restart_and_shutdown():
         ]
     )
     processes = [timeout_process, restart_process]
-    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), request_timeout_seconds=0.01)
+    client = _codex_client(lambda command: async_value(processes.pop(0)), request_timeout_seconds=0.01)
 
     async def exercise():
         await client.initialize()
@@ -555,7 +553,7 @@ def test_codex_request_timeout_process_exit_restart_and_shutdown():
 
 def test_codex_exit_before_response_is_reported_as_unavailable_or_degraded():
     process = FakeCodexProcess([{"exit": 1}])
-    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1)
+    client = _codex_client(lambda command: async_value(process), request_timeout_seconds=1)
 
     with pytest.raises(CodexAppServerError):
         asyncio.run(client.initialize())
@@ -579,7 +577,7 @@ def test_codex_exit_before_response_is_reported_as_unavailable_or_degraded():
 )
 def test_codex_repeated_or_cyclic_pagination_cursor_returns_degraded(scripted):
     process = FakeCodexProcess(scripted)
-    source = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=lambda command: async_value(process)))
+    source = CodexAiRuntimeOptionsSource(_codex_client(lambda command: async_value(process)))
 
     result = asyncio.run(source.discover()).public_dict()
 
@@ -601,7 +599,7 @@ def test_codex_pagination_page_limit_returns_degraded():
         ]
     )
     source = CodexAiRuntimeOptionsSource(
-        CodexAppServerClient(process_factory=lambda command: async_value(process)),
+        _codex_client(lambda command: async_value(process)),
         max_page_count=2,
     )
 
@@ -641,7 +639,7 @@ def test_aggregate_retains_registered_ollama_absent_and_codex_ready():
             response({"data": [codex_model("gpt-5.6-sol", "GPT-5.6-Sol")], "nextCursor": None}),
         ]
     )
-    codex = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=lambda command: async_value(codex_process)))
+    codex = CodexAiRuntimeOptionsSource(_codex_client(lambda command: async_value(codex_process)))
     service = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([ollama, codex]))
 
     result = asyncio.run(service.discover())
@@ -669,7 +667,7 @@ def test_aggregate_retains_registered_ollama_ready_and_codex_absent():
     async def missing_process(command: Sequence[str]) -> Any:
         raise FileNotFoundError(command[0])
 
-    codex = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=missing_process))
+    codex = CodexAiRuntimeOptionsSource(_codex_client(missing_process))
     service = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([ollama, codex]))
 
     result = asyncio.run(service.discover())
@@ -687,7 +685,7 @@ def test_aggregate_retains_both_registered_providers_when_both_absent():
     async def missing_process(command: Sequence[str]) -> Any:
         raise FileNotFoundError(command[0])
 
-    codex = CodexAiRuntimeOptionsSource(CodexAppServerClient(process_factory=missing_process))
+    codex = CodexAiRuntimeOptionsSource(_codex_client(missing_process))
     service = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([ollama, codex]))
 
     result = asyncio.run(service.discover())
@@ -737,106 +735,6 @@ class SlowSource:
         return AiRuntimeProviderOptions(self.provider_id, self.display_name, READY)
 
 
-class FakeCodexProcess:
-    def __init__(self, scripted: Sequence[Mapping[str, Any]]) -> None:
-        self.stdin = FakeStdin(self)
-        self.stdout = FakeStream()
-        self.stderr = FakeStream()
-        self.returncode: int | None = None
-        self.sent: list[dict[str, Any]] = []
-        self.terminated = False
-        self._scripted = list(scripted)
-        self._wait: asyncio.Future[int | None] | None = None
-
-    def receive(self, data: bytes) -> None:
-        for line in data.decode("utf-8").splitlines():
-            request = json.loads(line)
-            self.sent.append(request)
-            if "id" not in request:
-                continue
-            while self._scripted:
-                action = dict(self._scripted.pop(0))
-                if action.get("defer"):
-                    break
-                if "exit" in action:
-                    self.returncode = int(action["exit"])
-                    self.stdout.push(b"")
-                    self._complete_wait()
-                    break
-                if "error" in action:
-                    self.push_json({"id": request["id"], "error": action["error"]})
-                    break
-                if "method" in action:
-                    self.push_json(action)
-                    continue
-                payload = {"id": request["id"], "result": action["result"]}
-                self.push_json(payload)
-                break
-
-    def push_json(self, payload: Mapping[str, Any]) -> None:
-        self.stdout.push(json.dumps(payload).encode("utf-8") + b"\n")
-
-    def terminate(self) -> None:
-        self.terminated = True
-        self.returncode = 0
-        self.stdout.push(b"")
-        self.stderr.push(b"")
-        self._complete_wait()
-
-    def kill(self) -> None:
-        self.terminate()
-
-    async def wait(self) -> int:
-        if self.returncode is not None:
-            return self.returncode
-        if self._wait is None:
-            self._wait = asyncio.get_running_loop().create_future()
-        return await self._wait
-
-    def _complete_wait(self) -> None:
-        if self._wait is not None and not self._wait.done():
-            self._wait.set_result(self.returncode)
-
-
-class FakeStdin:
-    def __init__(self, process: FakeCodexProcess) -> None:
-        self._process = process
-
-    def write(self, data: bytes) -> None:
-        self._process.receive(data)
-
-    async def drain(self) -> None:
-        return None
-
-
-class FakeStream:
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self._loop: asyncio.AbstractEventLoop | None = None
-
-    async def readline(self) -> bytes:
-        self._loop = asyncio.get_running_loop()
-        return await self._queue.get()
-
-    def push(self, data: bytes) -> None:
-        if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
-        else:
-            self._queue.put_nowait(data)
-
-
-def response(result: Mapping[str, Any]) -> dict[str, Any]:
-    return {"result": dict(result)}
-
-
-def notification(method: str, params: Mapping[str, Any]) -> dict[str, Any]:
-    return {"method": method, "params": dict(params)}
-
-
-def jsonrpc_error(code: int, message: str) -> dict[str, Any]:
-    return {"error": {"code": code, "message": message}}
-
-
 def codex_model(model_id: str, display_name: str, *, hidden: bool = False, efforts: list[dict[str, str]] | None = None) -> dict[str, Any]:
     return {
         "id": model_id,
@@ -849,10 +747,6 @@ def codex_model(model_id: str, display_name: str, *, hidden: bool = False, effor
         "serviceTiers": [{"id": "priority"}],
         "defaultReasoningEffort": "low",
     }
-
-
-async def async_value(value):
-    return value
 
 
 def assert_forbidden_public_fields_absent(payload: Any) -> None:

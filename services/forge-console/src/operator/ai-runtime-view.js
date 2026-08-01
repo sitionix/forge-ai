@@ -6,6 +6,9 @@ const EMPTY_DRAFT = Object.freeze({
   modelId: null,
   effortId: null
 });
+const MINUTES_PER_HOUR = 60;
+const MINUTES_PER_DAY = 1440;
+const MINUTES_PER_WEEK = 10080;
 
 export class AiRuntimeView {
   constructor(options) {
@@ -16,7 +19,6 @@ export class AiRuntimeView {
     this.jarvisStatus = null;
     this.runtime = null;
     this.activeProfile = null;
-    this.activeProfileError = null;
     this.runtimeError = null;
     this.applyError = null;
     this.runtimeLoading = false;
@@ -87,14 +89,14 @@ export class AiRuntimeView {
         return null;
       }
       this.activeProfile = normalizeActiveProfile(result.value);
-      this.activeProfileError = null;
       this.applyError = null;
       this.resetDraftToActive();
       setError('aiRuntimeError', null, this.document);
       return this.activeProfile;
     } catch (error) {
       if (!this.disposed && loadId === this.activeProfileLoadId) {
-        this.activeProfileError = error;
+        this.activeProfile = null;
+        this.resetDraftToActive();
         renderRequestError('aiRuntimeError', error, {
           endpoint: '/knowledge/active-profile',
           title: 'Active profile failed',
@@ -162,7 +164,6 @@ export class AiRuntimeView {
     const cardHtml = [
       this.renderStatusCard('Jarvis', status.status || 'UNKNOWN', jarvisBase),
       this.renderActiveLlmCard(),
-      this.renderActiveEmbeddingCard(),
       this.renderUsageSection()
     ].filter(Boolean);
     cards.innerHTML = cardHtml.join('');
@@ -176,28 +177,14 @@ export class AiRuntimeView {
         : this.renderStatusCard('Active LLM', '-', 'active profile');
     }
     const effort = profile.llmProfile.effort?.effortId;
+    const providerName = profile.llmProfile.providerDisplayName || profile.llmProfile.providerId;
+    const modelName = profile.llmProfile.modelDisplayName || profile.llmProfile.modelId;
     const meta = [
-      profile.llmProfile.providerId,
+      providerName,
       profile.llmProfile.modelId,
       effort ? `effort ${effort}` : null
     ].filter(Boolean).join(' · ');
-    return this.renderStatusCard('Active LLM', profile.llmProfile.modelId, meta);
-  }
-
-  renderActiveEmbeddingCard() {
-    const profile = this.activeProfile?.embeddingProfile;
-    if (!profile) {
-      return this.activeProfileLoading
-        ? this.renderStatusCard('Active Embedding', 'Loading', 'active profile')
-        : this.renderStatusCard('Active Embedding', '-', 'semantic indexing');
-    }
-    if (profile.status === 'DISABLED') {
-      return this.renderEmbeddingStatusCard('Disabled', 'semantic indexing', profile.status, profile.diagnostic);
-    }
-    const provider = displayProvider(profile.providerId);
-    const dimension = profile.embeddingDimension ? `${profile.embeddingDimension} dimensions` : null;
-    const meta = [provider, profile.status, dimension].filter(Boolean).join(' · ');
-    return this.renderEmbeddingStatusCard(profile.modelId || '-', meta, profile.status, profile.diagnostic);
+    return this.renderStatusCard('Active LLM', modelName, meta);
   }
 
   renderUsageSection() {
@@ -211,7 +198,6 @@ export class AiRuntimeView {
         <div class="ai-runtime-usage-windows">
           ${windows.map((window) => this.renderUsageWindow(window)).join('')}
         </div>
-        ${this.shortWindowMissing(windows) ? '<p class="detail-meta">Short-window usage is not reported by Codex.</p>' : ''}
       </section>
     `;
   }
@@ -242,22 +228,6 @@ export class AiRuntimeView {
             <p>${escapeHtml(meta || '-')}</p>
           </div>
           ${pill(value || 'UNKNOWN', value)}
-        </div>
-      </article>
-    `;
-  }
-
-  renderEmbeddingStatusCard(modelId, meta, status, diagnostic) {
-    return `
-      <article class="detail-card jarvis-status-card">
-        <div class="detail-card-head">
-          <div>
-            <strong>Active Embedding</strong>
-            <p>${escapeHtml(modelId || '-')}</p>
-            <p class="detail-meta">${escapeHtml(meta || '-')}</p>
-            ${diagnostic?.message ? `<p class="detail-meta">${escapeHtml(diagnostic.message)}</p>` : ''}
-          </div>
-          ${pill(status || 'UNKNOWN', status)}
         </div>
       </article>
     `;
@@ -385,7 +355,6 @@ export class AiRuntimeView {
       this.activeProfile = {
         revision: Number(result?.revision || this.activeProfile.revision + 1),
         llmProfile: normalizeLlmProfile(result?.llmProfile),
-        embeddingProfile: this.activeProfile.embeddingProfile || null,
         usage: null
       };
       this.resetDraftToActive();
@@ -668,11 +637,6 @@ export class AiRuntimeView {
     return (this.runtime?.providers || []).find((provider) => provider.providerId === providerId) || null;
   }
 
-  shortWindowMissing(windows) {
-    const durations = new Set((windows || []).map((window) => Number(window.windowDurationMinutes)));
-    return durations.has(10080) && !durations.has(300) && !durations.has(1440);
-  }
-
   findModel(providerId, modelId) {
     const provider = this.findProvider(providerId);
     if (!provider || !modelId) {
@@ -728,26 +692,7 @@ function normalizeActiveProfile(value) {
   return {
     revision: Number(value?.revision || 0),
     llmProfile: normalizeLlmProfile(value?.llmProfile),
-    embeddingProfile: normalizeEmbeddingProfile(value?.embeddingProfile),
     usage: value?.usage === null ? null : normalizeUsage(value?.usage)
-  };
-}
-
-function normalizeEmbeddingProfile(value) {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-  return {
-    providerId: String(value.providerId || ''),
-    modelId: String(value.modelId || ''),
-    status: String(value.status || 'UNKNOWN').toUpperCase(),
-    providerVersion: value.providerVersion ? String(value.providerVersion) : null,
-    embeddingDimension: normalizePositiveNumber(value.embeddingDimension),
-    lastCheckedAt: value.lastCheckedAt ? String(value.lastCheckedAt) : null,
-    diagnostic: value.diagnostic ? {
-      code: String(value.diagnostic.code || ''),
-      message: String(value.diagnostic.message || '')
-    } : null
   };
 }
 
@@ -755,16 +700,10 @@ function normalizeLlmProfile(value) {
   return {
     providerId: String(value?.providerId || ''),
     modelId: String(value?.modelId || ''),
-    effort: value?.effort ? { effortId: String(value.effort.effortId || '') } : null
+    effort: value?.effort ? { effortId: String(value.effort.effortId || '') } : null,
+    providerDisplayName: value?.providerDisplayName ? String(value.providerDisplayName) : null,
+    modelDisplayName: value?.modelDisplayName ? String(value.modelDisplayName) : null
   };
-}
-
-function normalizePositiveNumber(value) {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
 }
 
 function normalizeUsage(value) {
@@ -789,17 +728,14 @@ function clampPercent(value) {
 
 function durationLabel(minutes) {
   const value = Number(minutes);
-  if (value === 300) {
-    return '5-hour usage';
-  }
-  if (value === 1440) {
+  if (value === MINUTES_PER_DAY) {
     return 'Daily usage';
   }
-  if (value === 10080) {
+  if (value === MINUTES_PER_WEEK) {
     return 'Weekly usage';
   }
-  if (Number.isFinite(value) && value > 0 && value % 60 === 0) {
-    const hours = value / 60;
+  if (Number.isFinite(value) && value > 0 && value % MINUTES_PER_HOUR === 0) {
+    const hours = value / MINUTES_PER_HOUR;
     return `${hours}-hour usage`;
   }
   return `${Number.isFinite(value) && value > 0 ? value : 0}-minute usage`;
@@ -816,12 +752,4 @@ function formatResetAt(value) {
     hour: '2-digit',
     minute: '2-digit'
   }).format(date);
-}
-
-function displayProvider(providerId) {
-  const value = String(providerId || '').trim();
-  if (value.toLowerCase() === 'ollama') {
-    return 'Ollama';
-  }
-  return value || 'Provider';
 }

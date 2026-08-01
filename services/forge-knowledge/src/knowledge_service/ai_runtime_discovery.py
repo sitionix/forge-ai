@@ -320,10 +320,8 @@ class CodexAiRuntimeOptionsSource:
         *,
         cache_ttl_seconds: float = 30.0,
         max_page_count: int = 100,
-        owns_client: bool = False,
     ) -> None:
         self._client = client
-        self._owns_client = owns_client
         self.cache_ttl_seconds = max(0.001, float(cache_ttl_seconds))
         self.max_page_count = max(1, int(max_page_count))
         self._catalog_cache: _CacheEntry | None = None
@@ -374,8 +372,7 @@ class CodexAiRuntimeOptionsSource:
         return result
 
     async def aclose(self) -> None:
-        if self._owns_client:
-            await self._client.aclose()
+        return None
 
     async def _read_all_models(self) -> list[AiRuntimeModelOption]:
         models: list[AiRuntimeModelOption] = []
@@ -412,7 +409,7 @@ class CodexAiRuntimeOptionsSource:
             raise CodexAppServerError("Codex model entry was not an object")
         if raw_model.get("hidden") is True:
             return None
-        model_id = _non_blank(raw_model.get("id")) or _non_blank(raw_model.get("model"))
+        model_id = _non_blank(raw_model.get("id"))
         display_name = _non_blank(raw_model.get("displayName"))
         if model_id is None or display_name is None:
             raise CodexAppServerError("Codex model entry is missing id/displayName")

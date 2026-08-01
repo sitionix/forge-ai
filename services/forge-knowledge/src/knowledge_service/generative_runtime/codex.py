@@ -31,44 +31,46 @@ class CodexGenerativeProvider:
 
     @property
     def provider_version(self) -> str:
-        return self._client.version or "app-server"
+        version = self._client.version
+        if version is None:
+            raise GenerativeProviderProtocolError("codex generation started before app-server initialization", provider_id=self.provider_id)
+        return version
 
     def generate(self, request: GenerativeRequest) -> GenerativeResponse:
-        started = time.perf_counter()
-        timeout = self._timeout(request.timeout_seconds)
-        try:
-            result = self._client.run_turn_sync(
+        return self._generate_with_result(
+            request,
+            lambda timeout: self._client.run_turn_sync(
                 prompt=request.prompt,
                 model_id=request.model_id,
                 effort_id=request.effort_id,
                 response_mode=request.response_mode,
                 timeout_seconds=timeout,
-            )
-        except CodexAppServerTimeout as exc:
-            raise GenerativeProviderTimeout("codex generation request timed out", provider_id=self.provider_id) from exc
-        except CodexAppServerEmptyResponse as exc:
-            raise GenerativeProviderEmptyResponse("codex returned no response text", provider_id=self.provider_id) from exc
-        except CodexAppServerProtocolError as exc:
-            raise GenerativeProviderProtocolError("codex generation protocol error", provider_id=self.provider_id) from exc
-        except CodexAppServerTransportError as exc:
-            raise GenerativeProviderTransportError(
-                "codex generation transport error",
-                provider_id=self.provider_id,
-                status_code=exc.status_code,
-            ) from exc
-        return self._normalize_response(request, result, started)
+            ),
+        )
 
     async def generate_async(self, request: GenerativeRequest) -> GenerativeResponse:
         started = time.perf_counter()
         timeout = self._timeout(request.timeout_seconds)
-        try:
-            result = await self._client.run_turn(
+        result = await self._map_transport_errors_async(
+            self._client.run_turn(
                 prompt=request.prompt,
                 model_id=request.model_id,
                 effort_id=request.effort_id,
                 response_mode=request.response_mode,
                 timeout_seconds=timeout,
             )
+        )
+        return self._normalize_response(request, result, started)
+
+    def _generate_with_result(self, request: GenerativeRequest, operation: Any) -> GenerativeResponse:
+        started = time.perf_counter()
+        timeout = self._timeout(request.timeout_seconds)
+        result = self._map_transport_errors(lambda: operation(timeout))
+        return self._normalize_response(request, result, started)
+
+    def _map_transport_errors(self, operation: Any) -> CodexTurnResult:
+        try:
+            return operation()
         except CodexAppServerTimeout as exc:
             raise GenerativeProviderTimeout("codex generation request timed out", provider_id=self.provider_id) from exc
         except CodexAppServerEmptyResponse as exc:
@@ -81,7 +83,22 @@ class CodexGenerativeProvider:
                 provider_id=self.provider_id,
                 status_code=exc.status_code,
             ) from exc
-        return self._normalize_response(request, result, started)
+
+    async def _map_transport_errors_async(self, operation: Any) -> CodexTurnResult:
+        try:
+            return await operation
+        except CodexAppServerTimeout as exc:
+            raise GenerativeProviderTimeout("codex generation request timed out", provider_id=self.provider_id) from exc
+        except CodexAppServerEmptyResponse as exc:
+            raise GenerativeProviderEmptyResponse("codex returned no response text", provider_id=self.provider_id) from exc
+        except CodexAppServerProtocolError as exc:
+            raise GenerativeProviderProtocolError("codex generation protocol error", provider_id=self.provider_id) from exc
+        except CodexAppServerTransportError as exc:
+            raise GenerativeProviderTransportError(
+                "codex generation transport error",
+                provider_id=self.provider_id,
+                status_code=exc.status_code,
+            ) from exc
 
     def close(self) -> None:
         return None

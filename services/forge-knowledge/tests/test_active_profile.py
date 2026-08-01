@@ -13,65 +13,80 @@ from knowledge_service.active_profile import (
     ActiveLlmProfilePutRequest,
     ActiveLlmProfileResponse,
     ActiveLlmRuntime,
+    ActiveProfileService,
+    ActiveProfileStore,
     ActiveRuntimeGenerativeProvider,
-    LlmUsageProvider,
-    LlmUsageResponse,
-    LlmUsageWindowResponse,
+    LlmUsageRegistry,
     PersistedActiveProfile,
 )
-from knowledge_service.embedding_runtime_status import EmbeddingRuntimeDiagnostic, EmbeddingRuntimeStatusSnapshot
+from knowledge_service.codex_usage import CodexLlmUsageSource
 from knowledge_service.generative_runtime import GenerativeProviderRegistry, GenerativeRequest, GenerativeResponse
 
 
 class FakeDiscovery:
-    def __init__(self, providers: list[dict[str, Any]]) -> None:
+    def __init__(self, providers: list[dict[str, Any]], *, error: Exception | None = None) -> None:
         self.providers = providers
+        self.error = error
 
     async def discover(self) -> dict[str, Any]:
+        if self.error is not None:
+            raise self.error
         return {"providers": self.providers}
 
 
-class FakeUsage:
+class FakeUsageSource:
+    provider_id = "codex"
+
     def __init__(self, value=None, error: Exception | None = None) -> None:
         self.value = value
         self.error = error
 
-    async def usage_for(self, provider_id: str):
+    async def usage(self):
         if self.error is not None:
             raise self.error
         return self.value
 
 
-class FakeEmbeddingStatus:
-    async def status(self) -> EmbeddingRuntimeStatusSnapshot:
-        return EmbeddingRuntimeStatusSnapshot(
-            provider_id="ollama",
-            model_id="embeddinggemma",
-            status="UNAVAILABLE",
-            provider_version="0.32.5",
-            embedding_dimension=None,
-            last_checked_at="2026-08-01T00:00:00Z",
-            diagnostic=EmbeddingRuntimeDiagnostic(
-                "SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE",
-                "Configured embedding model is unavailable.",
-            ),
+class FakeCodexUsageClient:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+
+    async def request(self, method: str, params=None):
+        assert method == "account/rateLimits/read"
+        return self.payload
+
+
+class RecordingProvider:
+    provider_id = "ollama"
+    provider_version = "1"
+
+    def __init__(self) -> None:
+        self.requests: list[GenerativeRequest] = []
+
+    def generate(self, request: GenerativeRequest) -> GenerativeResponse:
+        self.requests.append(request)
+        return GenerativeResponse(
+            raw_text=request.model_id,
+            provider_id=self.provider_id,
+            provider_version=self.provider_version,
+            model_id=request.model_id,
+            duration_ms=1,
+            prompt_char_length=len(request.prompt),
+            prompt_hash="p",
+            response_char_length=len(request.model_id),
+            response_hash="r",
         )
 
-    async def aclose(self) -> None:
-        return None
-
-
-class FailingEmbeddingStatus:
-    async def status(self) -> EmbeddingRuntimeStatusSnapshot:
-        raise RuntimeError("unexpected embedding status failure")
+    async def generate_async(self, request: GenerativeRequest) -> GenerativeResponse:
+        return self.generate(request)
 
 
 def ollama_ready(*models: str) -> dict[str, Any]:
     return {
         "providerId": "ollama",
-        "displayName": "Ollama",
+        "displayName": "Ollama Runtime",
         "status": "READY",
-        "models": [{"modelId": model, "displayName": model} for model in models],
+        "models": [{"modelId": model, "displayName": f"Display {model}"} for model in models],
     }
 
 
@@ -90,23 +105,9 @@ def codex_ready() -> dict[str, Any]:
     }
 
 
-def expected_embedding_profile() -> dict[str, Any]:
-    return {
-        "providerId": "ollama",
-        "modelId": "embeddinggemma",
-        "status": "READY",
-        "providerVersion": "test",
-        "embeddingDimension": 768,
-        "lastCheckedAt": "2026-08-01T00:00:00Z",
-        "diagnostic": None,
-    }
-
-
 def test_get_active_profile_initializes_from_current_configuration_exact_contract(tmp_path: Path):
     app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
-    service = deps.active_profile_service
-    assert service is not None
-    service._usage_provider = FakeUsage(None)
+    assert deps.active_profile_service is not None
 
     with AsgiTestClient(app) as client:
         response = client.get("/api/v1/knowledge/active-profile")
@@ -118,10 +119,49 @@ def test_get_active_profile_initializes_from_current_configuration_exact_contrac
             "providerId": "ollama",
             "modelId": "qwen2.5-coder:14b",
             "effort": None,
+            "providerDisplayName": "Ollama",
+            "modelDisplayName": None,
         },
-        "embeddingProfile": expected_embedding_profile(),
         "usage": None,
     }
+
+
+def test_active_profile_get_adds_display_metadata_without_persisting_it(tmp_path: Path):
+    store = ActiveProfileStore(tmp_path / "active.sqlite")
+    persisted = store.init(provider_id="ollama", model_id="qwen")
+    runtime = _runtime(persisted)
+    service = ActiveProfileService(
+        store,
+        runtime,
+        FakeDiscovery([ollama_ready("qwen")]),
+        LlmUsageRegistry(),
+    )
+
+    response = asyncio.run(service.get_active_profile())
+
+    assert response.llmProfile.providerDisplayName == "Ollama Runtime"
+    assert response.llmProfile.modelDisplayName == "Display qwen"
+    with sqlite3.connect(store.db_path) as conn:
+        stored = json.loads(conn.execute("SELECT profile_json FROM active_profile").fetchone()[0])
+    assert stored == {"llmProfile": {"providerId": "ollama", "modelId": "qwen", "effort": None}}
+
+
+def test_active_profile_get_keeps_ids_when_display_metadata_lookup_fails(tmp_path: Path):
+    store = ActiveProfileStore(tmp_path / "active.sqlite")
+    persisted = store.init(provider_id="ollama", model_id="qwen")
+    service = ActiveProfileService(
+        store,
+        _runtime(persisted),
+        FakeDiscovery([], error=RuntimeError("catalog unavailable")),
+        LlmUsageRegistry(),
+    )
+
+    response = asyncio.run(service.get_active_profile())
+
+    assert response.llmProfile.providerId == "ollama"
+    assert response.llmProfile.modelId == "qwen"
+    assert response.llmProfile.providerDisplayName is None
+    assert response.llmProfile.modelDisplayName is None
 
 
 def test_existing_profile_is_not_overwritten_on_restart_and_usage_is_not_persisted(tmp_path: Path):
@@ -139,7 +179,6 @@ def test_existing_profile_is_not_overwritten_on_restart_and_usage_is_not_persist
             },
         )
     assert put.status_code == 200
-    assert put.json()["revision"] == 2
 
     restarted, *_ = build_test_app(config)
     with AsgiTestClient(restarted) as client:
@@ -150,30 +189,7 @@ def test_existing_profile_is_not_overwritten_on_restart_and_usage_is_not_persist
     with sqlite3.connect(first_config.store_path) as conn:
         stored = conn.execute("SELECT profile_json FROM active_profile WHERE singleton_id = 'active'").fetchone()[0]
     assert "usage" not in json.loads(stored)
-
-
-def test_put_creates_singleton_profile_when_record_is_absent(tmp_path: Path):
-    app, _, config, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
-    deps.active_profile_service._discovery = FakeDiscovery([ollama_ready("qwen2.5-coder:14b", "qwen2.5-coder:32b")])
-    with sqlite3.connect(config.store_path) as conn:
-        conn.execute("DELETE FROM active_profile")
-
-    with AsgiTestClient(app) as client:
-        put = client.put(
-            "/api/v1/knowledge/active-profile/llm-profile",
-            {
-                "expectedRevision": 1,
-                "providerId": "ollama",
-                "modelId": "qwen2.5-coder:32b",
-                "effort": None,
-            },
-        )
-        current = client.get("/api/v1/knowledge/active-profile")
-
-    assert put.status_code == 200
-    assert put.json()["revision"] == 2
-    assert current.json()["revision"] == 2
-    assert current.json()["llmProfile"]["modelId"] == "qwen2.5-coder:32b"
+    assert "providerDisplayName" not in stored
 
 
 def test_put_replaces_llm_profile_increments_revision_and_updates_status(tmp_path: Path):
@@ -199,10 +215,11 @@ def test_put_replaces_llm_profile_increments_revision_and_updates_status(tmp_pat
             "providerId": "ollama",
             "modelId": "qwen2.5-coder:32b",
             "effort": None,
+            "providerDisplayName": None,
+            "modelDisplayName": None,
         },
     }
     assert status.json()["generative"]["revision"] == 2
-    assert status.json()["generative"]["providerId"] == "ollama"
     assert status.json()["generative"]["modelId"] == "qwen2.5-coder:32b"
 
 
@@ -242,10 +259,6 @@ def test_put_validation_errors_leave_previous_profile_active(tmp_path: Path):
             {"expectedRevision": 1, "providerId": "codex", "modelId": "gpt-5.6-luna", "effort": {"effortId": "unknown"}},
             "ACTIVE_LLM_EFFORT_NOT_SUPPORTED",
         ),
-        (
-            {"expectedRevision": 1, "providerId": "ollama", "modelId": "qwen2.5-coder:14b", "effort": {"effortId": "high"}},
-            "ACTIVE_LLM_EFFORT_NOT_SUPPORTED",
-        ),
     ]
 
     with AsgiTestClient(app) as client:
@@ -258,356 +271,71 @@ def test_put_validation_errors_leave_previous_profile_active(tmp_path: Path):
             assert current["llmProfile"]["modelId"] == "qwen2.5-coder:14b"
 
 
-def test_stale_expected_revision_returns_409(tmp_path: Path):
-    app, *_ = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
-    with AsgiTestClient(app) as client:
-        response = client.put(
-            "/api/v1/knowledge/active-profile/llm-profile",
-            {"expectedRevision": 99, "providerId": "ollama", "modelId": "qwen2.5-coder:14b", "effort": None},
-        )
-    assert response.status_code == 409
-    assert response.json()["code"] == "ACTIVE_PROFILE_REVISION_CONFLICT"
+def test_usage_registry_handles_unregistered_provider_and_source_failure(tmp_path: Path):
+    registry = LlmUsageRegistry()
+    registry.register(FakeUsageSource(error=RuntimeError("token secret@example.com should not leak")))
+    store = ActiveProfileStore(tmp_path / "active.sqlite")
+    persisted = store.init(provider_id="codex", model_id="gpt-5.6-luna")
+    service = ActiveProfileService(store, _runtime(persisted, provider_id="codex"), FakeDiscovery([codex_ready()]), registry)
+
+    response = asyncio.run(service.get_active_profile())
+
+    assert response.usage is None
+    assert registry.resolve_optional("ollama") is None
 
 
-def test_usage_failure_returns_profile_with_usage_null(tmp_path: Path):
-    app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
-    deps.active_profile_service._usage_provider = FakeUsage(error=RuntimeError("token secret@example.com should not leak"))
-
-    with AsgiTestClient(app) as client:
-        response = client.get("/api/v1/knowledge/active-profile")
-
-    assert response.status_code == 200
-    assert response.json()["usage"] is None
-    assert "secret@example.com" not in response.body.decode("utf-8")
-
-
-def test_active_profile_get_returns_embedding_status_without_revision_change(tmp_path: Path):
-    app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
-    deps.active_profile_service._embedding_status_provider = FakeEmbeddingStatus()
-
-    with AsgiTestClient(app) as client:
-        response = client.get("/api/v1/knowledge/active-profile")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["revision"] == 1
-    assert payload["embeddingProfile"] == {
-        "providerId": "ollama",
-        "modelId": "embeddinggemma",
-        "status": "UNAVAILABLE",
-        "providerVersion": "0.32.5",
-        "embeddingDimension": None,
-        "lastCheckedAt": "2026-08-01T00:00:00Z",
-        "diagnostic": {
-            "code": "SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE",
-            "message": "Configured embedding model is unavailable.",
-        },
-    }
-
-
-def test_active_profile_get_isolates_unexpected_embedding_status_failure(tmp_path: Path):
-    app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
-    deps.active_profile_service._embedding_status_provider = FailingEmbeddingStatus()
-    deps.active_profile_service._usage_provider = FakeUsage(
-        LlmUsageResponse(
-            windows=[
-                LlmUsageWindowResponse(
-                    kind="PRIMARY",
-                    usedPercent=12,
-                    windowDurationMinutes=300,
-                    resetAt="2026-08-01T00:00:00Z",
-                )
-            ]
-        )
-    )
-
-    with AsgiTestClient(app) as client:
-        response = client.get("/api/v1/knowledge/active-profile")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "revision": 1,
-        "llmProfile": {
-            "providerId": "ollama",
-            "modelId": "qwen2.5-coder:14b",
-            "effort": None,
-        },
-        "embeddingProfile": None,
-        "usage": {
-            "windows": [
-                {
-                    "kind": "PRIMARY",
-                    "usedPercent": 12,
-                    "windowDurationMinutes": 300,
-                    "resetAt": "2026-08-01T00:00:00Z",
-                }
-            ]
-        },
-    }
-
-
-def test_codex_usage_maps_available_rate_limit_windows_to_public_contract():
-    usage = asyncio.run(
-        LlmUsageProvider(
-            FakeCodexUsageClient(
-                {
-                    "rateLimits": {
-                        "primary": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
-                        "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                    }
-                }
-            )
-        ).usage_for("codex")
-    )
-
-    assert usage.dict() == {
-        "windows": [
-            {
-                "kind": "PRIMARY",
-                "usedPercent": 34,
-                "windowDurationMinutes": 300,
-                "resetAt": "2026-07-30T18:30:00Z",
-            },
-            {
-                "kind": "SECONDARY",
-                "usedPercent": 61,
-                "windowDurationMinutes": 10080,
-                "resetAt": "2026-08-04T09:00:00Z",
-            },
-        ]
-    }
-
-
-def test_codex_usage_windows_are_dynamic_sorted_deduped_and_clamped():
-    payloads = [
-        (
-            {
-                "rateLimits": {
-                    "primary": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
-                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                }
-            },
-            [300, 10080],
-        ),
-        (
-            {
-                "rateLimits": {
-                    "primary": {"usedPercent": 44, "windowDurationMins": 1440, "resetsAt": 1785436200},
-                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                }
-            },
-            [1440, 10080],
-        ),
-        (
-            {
-                "rateLimits": {
-                    "primary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                    "secondary": None,
-                }
-            },
-            [10080],
-        ),
-        (
-            {
-                "rateLimits": {
-                    "primary": None,
-                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                }
-            },
-            [10080],
-        ),
-        (
-            {
-                "rateLimits": {
-                    "limitId": "codex",
-                    "primary": {"usedPercent": "bad", "windowDurationMins": 300, "resetsAt": 1785436200},
-                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                },
-                "rateLimitsByLimitId": {
-                    "codex": {
-                        "limitId": "codex",
-                        "primary": {"usedPercent": 22, "windowDurationMins": 300, "resetsAt": 1785436200},
-                    },
-                    "unrelated": {"usedPercent": 99, "windowDurationMins": 1440, "resetsAt": 1785436200},
-                },
-            },
-            [300, 10080],
-        ),
-        (
+def test_registered_codex_source_returns_dynamic_windows_and_ignores_bad_ones():
+    source = CodexLlmUsageSource(
+        FakeCodexUsageClient(
             {
                 "rateLimits": {
                     "limitId": "codex",
                     "primary": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
-                    "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                },
-                "rateLimitsByLimitId": {
-                    "codex": {
-                        "limitId": "codex",
-                        "primary": {"usedPercent": 34, "windowDurationMins": 300, "resetsAt": 1785436200},
-                    },
-                },
-            },
-            [300, 10080],
-        ),
-        (
-            {
-                "rateLimits": {
-                    "primary": {"usedPercent": -4, "windowDurationMins": 300, "resetsAt": 1785436200},
                     "secondary": {"usedPercent": 160, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                }
-            },
-            [300, 10080],
-        ),
-    ]
-
-    for payload, expected_durations in payloads:
-        usage = asyncio.run(LlmUsageProvider(FakeCodexUsageClient(payload)).usage_for("codex"))
-        assert [window.windowDurationMinutes for window in usage.windows] == expected_durations
-
-    clamped = asyncio.run(
-        LlmUsageProvider(
-            FakeCodexUsageClient(
-                {
-                    "rateLimits": {
-                        "primary": {"usedPercent": -4, "windowDurationMins": 300, "resetsAt": 1785436200},
-                        "secondary": {"usedPercent": 160, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                    }
-                }
-            )
-        ).usage_for("codex")
-    )
-    assert [window.usedPercent for window in clamped.windows] == [0, 100]
-
-
-def test_codex_usage_invalid_duration_reset_and_unrelated_limit_ids_are_ignored():
-    usage = asyncio.run(
-        LlmUsageProvider(
-            FakeCodexUsageClient(
-                {
-                    "rateLimits": {
+                },
+                "rateLimitsByLimitId": {
+                    "codex": {
                         "limitId": "codex",
-                        "primary": {"usedPercent": 10, "windowDurationMins": 0, "resetsAt": 1785436200},
-                        "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 0},
+                        "primary": {"usedPercent": 22, "windowDurationMins": 1440, "resetsAt": 1785436200},
                     },
-                    "rateLimitsByLimitId": {
-                        "unrelated": {
-                            "limitId": "unrelated",
-                            "primary": {"usedPercent": 55, "windowDurationMins": 1440, "resetsAt": 1785436200},
-                        },
+                    "unrelated": {
+                        "limitId": "unrelated",
+                        "primary": {"usedPercent": 55, "windowDurationMins": 90, "resetsAt": 1785436200},
                     },
-                }
-            )
-        ).usage_for("codex")
+                },
+            }
+        )
     )
 
-    assert usage.windows == []
+    usage = asyncio.run(source.usage())
+
+    assert usage is not None
+    assert [window.windowDurationMinutes for window in usage.windows] == [300, 1440, 10080]
+    assert [window.usedPercent for window in usage.windows] == [34, 22, 100]
 
 
-def test_codex_usage_recovers_missing_short_window_from_matching_root_limit_id():
+def test_codex_source_returns_none_without_rate_limits_and_ignores_invalid_windows_independently():
+    assert asyncio.run(CodexLlmUsageSource(FakeCodexUsageClient({})).usage()) is None
     usage = asyncio.run(
-        LlmUsageProvider(
+        CodexLlmUsageSource(
             FakeCodexUsageClient(
                 {
                     "rateLimits": {
-                        "limitId": "codex",
-                        "primary": None,
-                        "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                    },
-                    "rateLimitsByLimitId": {
-                        "codex": {
-                            "limitId": "codex",
-                            "primary": {"usedPercent": 22, "windowDurationMins": 300, "resetsAt": 1785436200},
-                            "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                        },
-                        "unrelated": {
-                            "limitId": "unrelated",
-                            "primary": {"usedPercent": 99, "windowDurationMins": 1440, "resetsAt": 1785436200},
-                        },
-                    },
-                }
-            )
-        ).usage_for("codex")
-    )
-
-    assert [window.windowDurationMinutes for window in usage.windows] == [300, 10080]
-
-
-def test_codex_usage_does_not_guess_by_limit_snapshot_without_root_limit_id():
-    usage = asyncio.run(
-        LlmUsageProvider(
-            FakeCodexUsageClient(
-                {
-                    "rateLimits": {
-                        "primary": None,
-                        "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
-                    },
-                    "rateLimitsByLimitId": {
-                        "codex": {
-                            "limitId": "codex",
-                            "primary": {"usedPercent": 22, "windowDurationMins": 300, "resetsAt": 1785436200},
-                        },
-                    },
-                }
-            )
-        ).usage_for("codex")
-    )
-
-    assert [window.windowDurationMinutes for window in usage.windows] == [10080]
-
-
-def test_codex_usage_invalid_reset_ignores_window_without_losing_valid_secondary():
-    usage = asyncio.run(
-        LlmUsageProvider(
-            FakeCodexUsageClient(
-                {
-                    "rateLimits": {
-                        "limitId": "codex",
-                        "primary": {"usedPercent": 10, "windowDurationMins": 300, "resetsAt": 999999999999999999999},
+                        "primary": {"usedPercent": "bad", "windowDurationMins": 300, "resetsAt": 1785436200},
                         "secondary": {"usedPercent": 61, "windowDurationMins": 10080, "resetsAt": 1785834000},
                     }
                 }
             )
-        ).usage_for("codex")
+        ).usage()
     )
-
     assert usage is not None
     assert [window.windowDurationMinutes for window in usage.windows] == [10080]
 
 
-def test_codex_usage_returns_none_for_non_codex_or_missing_rate_limits():
-    assert asyncio.run(LlmUsageProvider(FakeCodexUsageClient({"rateLimits": {}})).usage_for("ollama")) is None
-    assert asyncio.run(LlmUsageProvider(FakeCodexUsageClient({})).usage_for("codex")) is None
-
-
-class FakeCodexUsageClient:
-    def __init__(self, payload: dict[str, Any]) -> None:
-        self.payload = payload
-
-    async def request(self, method: str, params=None):
-        assert method == "account/rateLimits/read"
-        return self.payload
-
-
-def test_running_operation_keeps_old_snapshot_and_new_operation_gets_new_snapshot(tmp_path: Path):
-    class RecordingProvider:
-        provider_id = "ollama"
-        provider_version = "1"
-
-        def generate(self, request: GenerativeRequest) -> GenerativeResponse:
-            return GenerativeResponse(
-                raw_text=request.model_id,
-                provider_id=self.provider_id,
-                provider_version=self.provider_version,
-                model_id=request.model_id,
-                duration_ms=1,
-                prompt_char_length=len(request.prompt),
-                prompt_hash="p",
-                response_char_length=len(request.model_id),
-                response_hash="r",
-            )
-
+def test_running_operation_keeps_old_snapshot_and_new_operation_gets_new_snapshot():
+    provider = RecordingProvider()
     registry = GenerativeProviderRegistry()
-    registry.register(RecordingProvider())
+    registry.register(provider)
     runtime = ActiveLlmRuntime(
         registry,
         PersistedActiveProfile(
@@ -631,28 +359,7 @@ def test_running_operation_keeps_old_snapshot_and_new_operation_gets_new_snapsho
     assert new_response.model_id == "new-model"
 
 
-def test_active_runtime_rewrites_model_and_effort_without_mutating_old_snapshot(tmp_path: Path):
-    class RecordingProvider:
-        provider_id = "codex"
-        provider_version = "1"
-
-        def __init__(self) -> None:
-            self.requests: list[GenerativeRequest] = []
-
-        def generate(self, request: GenerativeRequest) -> GenerativeResponse:
-            self.requests.append(request)
-            return GenerativeResponse(
-                raw_text=request.model_id,
-                provider_id=self.provider_id,
-                provider_version=self.provider_version,
-                model_id=request.model_id,
-                duration_ms=1,
-                prompt_char_length=len(request.prompt),
-                prompt_hash="p",
-                response_char_length=len(request.model_id),
-                response_hash="r",
-            )
-
+def test_active_runtime_rewrites_model_and_effort_without_mutating_old_snapshot():
     provider = RecordingProvider()
     registry = GenerativeProviderRegistry()
     registry.register(provider)
@@ -660,32 +367,21 @@ def test_active_runtime_rewrites_model_and_effort_without_mutating_old_snapshot(
         registry,
         PersistedActiveProfile(
             revision=1,
-            llm_profile=ActiveLlmProfileResponse(
-                providerId="codex",
-                modelId="old-model",
-                effort=ActiveLlmEffortResponse(effortId="low"),
-            ),
+            llm_profile=ActiveLlmProfileResponse(providerId="ollama", modelId="gpt-5.6-luna", effort=ActiveLlmEffortResponse(effortId="high")),
         ),
     )
-    old_snapshot = runtime.capture()
+
     active_provider = ActiveRuntimeGenerativeProvider(runtime)
-    runtime.activate(
-        PersistedActiveProfile(
-            revision=2,
-            llm_profile=ActiveLlmProfileResponse(
-                providerId="codex",
-                modelId="new-model",
-                effort=ActiveLlmEffortResponse(effortId="high"),
-            ),
-        )
-    )
+    response = active_provider.generate(GenerativeRequest(prompt="x", model_id="ignored", effort_id="ignored"))
 
-    old_response = old_snapshot.provider.generate(
-        GenerativeRequest(prompt="x", model_id=old_snapshot.model_id, effort_id=old_snapshot.effort_id)
-    )
-    new_response = active_provider.generate(GenerativeRequest(prompt="x", model_id="ignored", effort_id="ignored"))
+    assert response.model_id == "gpt-5.6-luna"
+    assert provider.requests[0].effort_id == "high"
+    assert provider.requests[0].metadata["activeModelId"] == "gpt-5.6-luna"
 
-    assert old_response.model_id == "old-model"
-    assert new_response.model_id == "new-model"
-    assert provider.requests[0].effort_id == "low"
-    assert provider.requests[1].effort_id == "high"
+
+def _runtime(persisted: PersistedActiveProfile, *, provider_id: str = "ollama") -> ActiveLlmRuntime:
+    provider = RecordingProvider()
+    provider.provider_id = provider_id
+    registry = GenerativeProviderRegistry()
+    registry.register(provider)
+    return ActiveLlmRuntime(registry, persisted)

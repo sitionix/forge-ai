@@ -8,6 +8,7 @@ import pytest
 
 from knowledge_service.ai_runtime_discovery import AiRuntimeDiscoveryRegistry, AiRuntimeDiscoveryService, CodexAiRuntimeOptionsSource
 from knowledge_service.bootstrap import KnowledgeDependencies, build_generative_runtime
+from knowledge_service.codex_app_server import CodexAppServerClient
 from knowledge_service.config import AppConfig
 from knowledge_service.generative_runtime import (
     CodexGenerativeProvider,
@@ -128,7 +129,8 @@ def test_bootstrap_generative_registry_resolves_ollama_and_codex(tmp_path):
         runtime_dir=tmp_path / "var",
     )
 
-    registry, startup_provider = build_generative_runtime(config)
+    codex_client = CodexAppServerClient(runtime_cwd=tmp_path / "var" / "codex-runtime")
+    registry, startup_provider = build_generative_runtime(config, codex_client=codex_client)
 
     assert startup_provider.provider_id == "ollama"
     assert registry.resolve("ollama").provider_id == "ollama"
