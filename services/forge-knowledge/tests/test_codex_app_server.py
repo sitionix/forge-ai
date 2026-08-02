@@ -18,6 +18,7 @@ from knowledge_service.codex_app_server import (
     CodexAppServerTimeout,
     CodexAppServerTransportError,
     CodexNotificationBufferPolicy,
+    CodexProtocol,
     CodexRuntimeSettings,
     CodexTurnResult,
 )
@@ -965,6 +966,164 @@ def test_unscoped_pre_registration_server_request_invalidates_after_response(tmp
     assert restarted.terminated is True
 
 
+@pytest.mark.parametrize(
+    ("method", "expected_response"),
+    [
+        (CodexProtocol.COMMAND_APPROVAL, {"result": {"decision": "decline"}}),
+        (
+            "workspace/doThing",
+            {
+                "error": {
+                    "code": -32601,
+                    "message": "Codex server requests are not supported by Forge Knowledge generation",
+                }
+            },
+        ),
+    ],
+)
+def test_unscoped_mixed_active_and_pre_registration_invalidates_all_work_and_restarts(
+    tmp_path: Path,
+    method: str,
+    expected_response: Mapping[str, Any],
+):
+    corrupted = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-a"}),
+            result({"threadId": "thread-b"}),
+            result({"turnId": "turn-a"}),
+            defer(),
+        ]
+    )
+    restarted = completed_turn_process("fresh")
+    processes = [corrupted, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
+
+    async def exercise():
+        first = asyncio.create_task(client.run_turn(prompt="A", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        second = asyncio.create_task(client.run_turn(prompt="B", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        while len([sent for sent in corrupted.sent if sent.get("method") == CodexProtocol.TURN_START]) < 2:
+            await asyncio.sleep(0)
+        corrupted.push_json({"id": 999, "method": method, "params": {}})
+        failures = await asyncio.gather(first, second, return_exceptions=True)
+        fresh = await client.run_turn(prompt="fresh", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        await client.aclose()
+        return failures, fresh
+
+    failures, fresh = asyncio.run(exercise())
+
+    response = next(sent for sent in corrupted.sent if sent.get("id") == 999)
+    for key, value in expected_response.items():
+        assert response[key] == value
+    assert all(isinstance(failure, CodexAppServerProtocolError) for failure in failures)
+    assert corrupted.terminated is True
+    assert corrupted.wait_calls >= 1
+    assert client._turn_executor._active_turns == {}
+    assert client._turn_executor._pre_registration_turns == 0
+    assert client._turn_executor._buffered_turn_notifications == {}
+    assert client._transport is not None
+    assert client._transport._pending == {}
+    assert fresh.raw_text == "fresh"
+    assert restarted.by_method(CodexProtocol.INITIALIZE)["method"] == CodexProtocol.INITIALIZE
+
+
+def test_command_approval_at_per_turn_buffer_limit_writes_decline_before_invalidation(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result(
+                {"threadId": "thread-1"},
+                notifications=[
+                    notification(CodexProtocol.ITEM_STARTED, {"turnId": "turn-1", "item": {"type": "reasoning"}}),
+                    {"id": 999, "method": CodexProtocol.COMMAND_APPROVAL, "params": {"turnId": "turn-1"}},
+                ],
+            ),
+            defer(),
+        ]
+    )
+    client = _client_with_buffer(process, tmp_path, max_per_turn=1, max_turn_ids=10, ttl=30)
+
+    async def exercise():
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        await client.aclose()
+
+    asyncio.run(exercise())
+
+    response_index, response = _server_response(process, 999)
+    assert response["result"] == {"decision": "decline"}
+    assert process.terminated is True
+    assert process.terminated_at_sent_count is not None
+    assert response_index < process.terminated_at_sent_count
+
+
+def test_file_approval_at_global_turn_id_buffer_limit_writes_decline_before_invalidation(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result(
+                {"threadId": "thread-1"},
+                notifications=[
+                    notification(CodexProtocol.ITEM_STARTED, {"turnId": "unknown-a", "item": {"type": "reasoning"}}),
+                    {"id": 999, "method": CodexProtocol.FILE_CHANGE_APPROVAL, "params": {"turnId": "unknown-b"}},
+                ],
+            ),
+            defer(),
+        ]
+    )
+    client = _client_with_buffer(process, tmp_path, max_per_turn=10, max_turn_ids=1, ttl=30)
+
+    async def exercise():
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        await client.aclose()
+
+    asyncio.run(exercise())
+
+    response_index, response = _server_response(process, 999)
+    assert response["result"] == {"decision": "decline"}
+    assert process.terminated is True
+    assert process.terminated_at_sent_count is not None
+    assert response_index < process.terminated_at_sent_count
+
+
+def test_unknown_scoped_server_request_after_buffer_ttl_writes_error_before_invalidation(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result(
+                {"threadId": "thread-1"},
+                notifications=[
+                    notification(CodexProtocol.ITEM_STARTED, {"turnId": "expired", "item": {"type": "reasoning"}}),
+                ],
+            ),
+            defer(),
+        ]
+    )
+    client = _client_with_buffer(process, tmp_path, max_per_turn=10, max_turn_ids=10, ttl=0.01)
+
+    async def exercise():
+        task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        while not any(sent.get("method") == CodexProtocol.TURN_START for sent in process.sent):
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
+        process.push_json({"id": 999, "method": "workspace/doThing", "params": {"turnId": "later"}})
+        with pytest.raises(CodexAppServerProtocolError):
+            await task
+        await client.aclose()
+
+    asyncio.run(exercise())
+
+    response_index, response = _server_response(process, 999)
+    assert response["error"] == {
+        "code": -32601,
+        "message": "Codex server requests are not supported by Forge Knowledge generation",
+    }
+    assert process.terminated is True
+    assert process.terminated_at_sent_count is not None
+    assert response_index < process.terminated_at_sent_count
+
+
 def test_server_request_scope_and_unknown_fail_closed(tmp_path: Path):
     scoped = FakeCodexProcess(
         [
@@ -1196,6 +1355,27 @@ def test_codex_generative_provider_sync_async_hashes_metadata_and_error_mapping(
             transport_client.close()
 
 
+@pytest.mark.parametrize("timeout_seconds", [0, -1])
+def test_direct_codex_turn_timeout_is_rejected_not_clamped(tmp_path: Path, timeout_seconds: float):
+    process = completed_turn_process("unused")
+    client = _client(process, tmp_path)
+    try:
+        with pytest.raises(ValueError, match="timeout_seconds must be positive"):
+            asyncio.run(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=timeout_seconds))
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("timeout_seconds", [0, -1])
+def test_codex_provider_direct_timeout_is_rejected_not_clamped(tmp_path: Path, timeout_seconds: float):
+    client = _client(completed_turn_process("unused"), tmp_path)
+    try:
+        with pytest.raises(ValueError, match="timeout_seconds must be positive"):
+            CodexGenerativeProvider(client, timeout_seconds=timeout_seconds)
+    finally:
+        client.close()
+
+
 class TerminateTimeoutProcess(FakeCodexProcess):
     def terminate(self) -> None:
         self.terminated = True
@@ -1265,6 +1445,13 @@ def _settings(runtime_cwd: Path, **overrides: Any) -> CodexRuntimeSettings:
 
 def _notification_policy() -> CodexNotificationBufferPolicy:
     return CodexNotificationBufferPolicy(max_per_turn=100, max_turn_ids=100, max_age_seconds=30.0)
+
+
+def _server_response(process: FakeCodexProcess, response_id: int) -> tuple[int, dict[str, Any]]:
+    for index, sent in enumerate(process.sent):
+        if sent.get("id") == response_id and "method" not in sent:
+            return index, sent
+    raise AssertionError(f"response not sent: {response_id}")
 
 
 def completed_turn_process(text: str) -> FakeCodexProcess:

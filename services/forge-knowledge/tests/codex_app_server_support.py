@@ -13,6 +13,7 @@ class FakeCodexProcess:
         self.returncode: int | None = None
         self.sent: list[dict[str, Any]] = []
         self.terminated = False
+        self.terminated_at_sent_count: int | None = None
         self.killed = False
         self.wait_calls = 0
         self._scripted = list(scripted)
@@ -61,6 +62,8 @@ class FakeCodexProcess:
 
     def terminate(self) -> None:
         self.terminated = True
+        if self.terminated_at_sent_count is None:
+            self.terminated_at_sent_count = len(self.sent)
         self.returncode = 0
         self.stdout.push(b"")
         self.stderr.push(b"")

@@ -10,7 +10,7 @@ from typing import Any, Mapping, Protocol, Sequence
 import httpx
 from pydantic import BaseModel
 
-from knowledge_service.codex_app_server import CodexAppServerClient, CodexAppServerError
+from knowledge_service.codex_app_server import CodexAppServerClient, CodexAppServerError, CodexProtocol
 
 ProviderStatus = str
 READY: ProviderStatus = "READY"
@@ -166,7 +166,9 @@ class AiRuntimeDiscoveryRegistry:
 class AiRuntimeDiscoveryService:
     def __init__(self, registry: AiRuntimeDiscoveryRegistry, *, provider_timeout_seconds: float = 5.0) -> None:
         self._registry = registry
-        self._provider_timeout_seconds = max(0.001, float(provider_timeout_seconds))
+        self._provider_timeout_seconds = float(provider_timeout_seconds)
+        if self._provider_timeout_seconds <= 0:
+            raise ValueError("provider_timeout_seconds must be positive")
 
     async def discover(self) -> dict[str, Any]:
         tasks = [self._discover_one(source) for source in self._registry.sources]
@@ -214,8 +216,12 @@ class OllamaAiRuntimeOptionsSource:
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = str(base_url or "").rstrip("/")
-        self.timeout_seconds = max(0.001, float(timeout_seconds))
-        self.cache_ttl_seconds = max(0.001, float(cache_ttl_seconds))
+        self.timeout_seconds = float(timeout_seconds)
+        self.cache_ttl_seconds = float(cache_ttl_seconds)
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if self.cache_ttl_seconds <= 0:
+            raise ValueError("cache_ttl_seconds must be positive")
         self._http_client = http_client
         self._owns_http_client = http_client is None
         self._version: str | None = None
@@ -337,12 +343,16 @@ class CodexAiRuntimeOptionsSource:
         self,
         client: CodexAppServerClient,
         *,
-        cache_ttl_seconds: float = 30.0,
-        max_page_count: int = 100,
+        cache_ttl_seconds: float,
+        max_page_count: int,
     ) -> None:
         self._client = client
-        self.cache_ttl_seconds = max(0.001, float(cache_ttl_seconds))
-        self.max_page_count = max(1, int(max_page_count))
+        self.cache_ttl_seconds = float(cache_ttl_seconds)
+        self.max_page_count = int(max_page_count)
+        if self.cache_ttl_seconds <= 0:
+            raise ValueError("cache_ttl_seconds must be positive")
+        if self.max_page_count <= 0:
+            raise ValueError("max_page_count must be positive")
         self._catalog_cache: _CacheEntry | None = None
 
     async def discover(self) -> AiRuntimeProviderOptions:
@@ -408,7 +418,7 @@ class CodexAiRuntimeOptionsSource:
             params: dict[str, Any] = {"includeHidden": False}
             if cursor:
                 params["cursor"] = cursor
-            payload = await self._client.request("model/list", params)
+            payload = await self._client.request(CodexProtocol.MODEL_LIST, params)
             if not isinstance(payload, Mapping):
                 raise CodexAppServerError("Codex model/list result was not an object")
             raw_models = payload.get("data")

@@ -33,13 +33,16 @@ from knowledge_service.ai_runtime_discovery import (
     CodexAiRuntimeOptionsSource,
     OllamaAiRuntimeOptionsSource,
 )
+from knowledge_service.bootstrap import build_ai_runtime_discovery
 from knowledge_service.codex_app_server import (
     CodexAppServerClient,
     CodexAppServerError,
     CodexAppServerTimeout,
     CodexNotificationBufferPolicy,
+    CodexProtocol,
     CodexRuntimeSettings,
 )
+from knowledge_service.config import AppConfig, CodexAppServerSettings
 
 
 def _codex_client(process_factory, *, request_timeout_seconds: float = 5.0) -> CodexAppServerClient:
@@ -385,7 +388,7 @@ def test_codex_initializes_and_maps_model_list_efforts_pagination_and_hidden_fil
         ]
     )
     client = _codex_client(lambda command: async_value(process))
-    source = CodexAiRuntimeOptionsSource(client)
+    source = _codex_source(client)
 
     async def exercise() -> dict[str, Any]:
         discovered = (await source.discover()).public_dict()
@@ -420,11 +423,27 @@ def test_codex_initializes_and_maps_model_list_efforts_pagination_and_hidden_fil
     assert_forbidden_public_fields_absent(result)
 
 
+def test_codex_discovery_uses_protocol_model_list_constant(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(CodexProtocol, "MODEL_LIST", "model/custom-list")
+    process = FakeCodexProcess(
+        [
+            response({"userAgent": "forge-knowledge/0.146.0"}),
+            response({"data": [codex_model("gpt-5.6-sol", "GPT-5.6-Sol")], "nextCursor": None}),
+        ]
+    )
+    source = _codex_source(_codex_client(lambda command: async_value(process)))
+
+    result = asyncio.run(source.discover())
+
+    assert result.status == READY
+    assert [sent["method"] for sent in process.sent] == ["initialize", "initialized", "model/custom-list"]
+
+
 def test_codex_executable_absent_returns_unavailable():
     async def missing_process(command: Sequence[str]) -> Any:
         raise FileNotFoundError(command[0])
 
-    source = CodexAiRuntimeOptionsSource(_codex_client(missing_process))
+    source = _codex_source(_codex_client(missing_process))
 
     result = asyncio.run(source.discover()).public_dict()
 
@@ -450,7 +469,7 @@ def test_codex_cached_catalog_does_not_mask_current_runtime_absence():
             raise FileNotFoundError(command[0])
         return processes.pop(0)
 
-    source = CodexAiRuntimeOptionsSource(_codex_client(process_factory))
+    source = _codex_source(_codex_client(process_factory))
 
     async def exercise():
         first = await source.discover()
@@ -507,7 +526,7 @@ def test_codex_initialize_timeout_cleans_process_and_next_discovery_restarts():
     )
     processes = [timeout_process, restart_process]
     client = _codex_client(lambda command: async_value(processes.pop(0)), request_timeout_seconds=0.01)
-    source = CodexAiRuntimeOptionsSource(client)
+    source = _codex_source(client)
 
     async def exercise():
         first = await source.discover()
@@ -602,7 +621,7 @@ def test_codex_request_timeout_process_exit_restart_and_shutdown():
         with pytest.raises(CodexAppServerTimeout):
             await client.request("model/list", {"includeHidden": False})
         timeout_process.terminate()
-        source = CodexAiRuntimeOptionsSource(client)
+        source = _codex_source(client)
         result = await source.discover()
         await client.aclose()
         return result
@@ -640,7 +659,7 @@ def test_codex_exit_before_response_is_reported_as_unavailable_or_degraded():
 )
 def test_codex_repeated_or_cyclic_pagination_cursor_returns_degraded(scripted):
     process = FakeCodexProcess(scripted)
-    source = CodexAiRuntimeOptionsSource(_codex_client(lambda command: async_value(process)))
+    source = _codex_source(_codex_client(lambda command: async_value(process)))
 
     result = asyncio.run(source.discover()).public_dict()
 
@@ -663,12 +682,53 @@ def test_codex_pagination_page_limit_returns_degraded():
     )
     source = CodexAiRuntimeOptionsSource(
         _codex_client(lambda command: async_value(process)),
+        cache_ttl_seconds=30.0,
         max_page_count=2,
     )
 
     result = asyncio.run(source.discover()).public_dict()
 
     assert result["status"] == DEGRADED
+    assert [sent["method"] for sent in process.sent] == ["initialize", "initialized", "model/list", "model/list"]
+
+
+def test_codex_direct_discovery_values_are_rejected():
+    client = _codex_client(lambda command: async_value(FakeCodexProcess([])))
+
+    with pytest.raises(ValueError, match="provider_timeout_seconds"):
+        AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([]), provider_timeout_seconds=0)
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        OllamaAiRuntimeOptionsSource("http://127.0.0.1:11434", timeout_seconds=0)
+    with pytest.raises(ValueError, match="cache_ttl_seconds"):
+        OllamaAiRuntimeOptionsSource("http://127.0.0.1:11434", cache_ttl_seconds=0)
+    with pytest.raises(ValueError, match="cache_ttl_seconds"):
+        CodexAiRuntimeOptionsSource(client, cache_ttl_seconds=0, max_page_count=100)
+    with pytest.raises(ValueError, match="cache_ttl_seconds"):
+        CodexAiRuntimeOptionsSource(client, cache_ttl_seconds=-1, max_page_count=100)
+    with pytest.raises(ValueError, match="max_page_count"):
+        CodexAiRuntimeOptionsSource(client, cache_ttl_seconds=30, max_page_count=0)
+    with pytest.raises(ValueError, match="max_page_count"):
+        CodexAiRuntimeOptionsSource(client, cache_ttl_seconds=30, max_page_count=-1)
+
+
+def test_codex_discovery_cache_ttl_and_page_limit_come_from_effective_settings(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            response({"userAgent": "forge-knowledge/0.146.0"}),
+            response({"data": [], "nextCursor": "A"}),
+            response({"data": [], "nextCursor": "B"}),
+        ]
+    )
+    config = _app_config(tmp_path, discovery_cache_ttl_seconds=12.5, discovery_max_page_count=2)
+    service = build_ai_runtime_discovery(config, codex_client=_codex_client(lambda command: async_value(process)))
+    codex_source = next(source for source in service._registry.sources if source.provider_id == "codex")
+    assert isinstance(codex_source, CodexAiRuntimeOptionsSource)
+
+    result = asyncio.run(service.discover())
+
+    assert codex_source.cache_ttl_seconds == 12.5
+    assert codex_source.max_page_count == 2
+    assert next(provider for provider in result["providers"] if provider["providerId"] == "codex")["status"] == DEGRADED
     assert [sent["method"] for sent in process.sent] == ["initialize", "initialized", "model/list", "model/list"]
 
 
@@ -702,7 +762,7 @@ def test_aggregate_retains_registered_ollama_absent_and_codex_ready():
             response({"data": [codex_model("gpt-5.6-sol", "GPT-5.6-Sol")], "nextCursor": None}),
         ]
     )
-    codex = CodexAiRuntimeOptionsSource(_codex_client(lambda command: async_value(codex_process)))
+    codex = _codex_source(_codex_client(lambda command: async_value(codex_process)))
     service = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([ollama, codex]))
 
     result = asyncio.run(service.discover())
@@ -730,7 +790,7 @@ def test_aggregate_retains_registered_ollama_ready_and_codex_absent():
     async def missing_process(command: Sequence[str]) -> Any:
         raise FileNotFoundError(command[0])
 
-    codex = CodexAiRuntimeOptionsSource(_codex_client(missing_process))
+    codex = _codex_source(_codex_client(missing_process))
     service = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([ollama, codex]))
 
     result = asyncio.run(service.discover())
@@ -748,7 +808,7 @@ def test_aggregate_retains_both_registered_providers_when_both_absent():
     async def missing_process(command: Sequence[str]) -> Any:
         raise FileNotFoundError(command[0])
 
-    codex = CodexAiRuntimeOptionsSource(_codex_client(missing_process))
+    codex = _codex_source(_codex_client(missing_process))
     service = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([ollama, codex]))
 
     result = asyncio.run(service.discover())
@@ -810,6 +870,30 @@ def codex_model(model_id: str, display_name: str, *, hidden: bool = False, effor
         "serviceTiers": [{"id": "priority"}],
         "defaultReasoningEffort": "low",
     }
+
+
+def _codex_source(client: CodexAppServerClient, *, cache_ttl_seconds: float = 30.0, max_page_count: int = 100) -> CodexAiRuntimeOptionsSource:
+    return CodexAiRuntimeOptionsSource(
+        client,
+        cache_ttl_seconds=cache_ttl_seconds,
+        max_page_count=max_page_count,
+    )
+
+
+def _app_config(tmp_path: Path, *, discovery_cache_ttl_seconds: float = 30.0, discovery_max_page_count: int = 100) -> AppConfig:
+    return AppConfig(
+        module_dir=tmp_path,
+        host="127.0.0.1",
+        port=7081,
+        local_config_path=tmp_path / "knowledge-sources.yaml",
+        store_path=tmp_path / "knowledge.sqlite",
+        analysis_ai_call_timeout_seconds=3,
+        codex_app_server=CodexAppServerSettings(
+            runtime_dir=tmp_path / "codex-runtime",
+            discovery_cache_ttl_seconds=discovery_cache_ttl_seconds,
+            discovery_max_page_count=discovery_max_page_count,
+        ),
+    )
 
 
 def assert_forbidden_public_fields_absent(payload: Any) -> None:

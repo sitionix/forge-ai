@@ -195,7 +195,9 @@ def test_codex_provider_uses_turn_result_version_after_client_invalidation_race(
 
 def test_shared_codex_client_has_single_lifecycle_owner():
     client = CloseCountingCodexClient()
-    discovery = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([CodexAiRuntimeOptionsSource(client)]))
+    discovery = AiRuntimeDiscoveryService(
+        AiRuntimeDiscoveryRegistry([CodexAiRuntimeOptionsSource(client, cache_ttl_seconds=30.0, max_page_count=100)])
+    )
     registry = GenerativeProviderRegistry()
     registry.register(CodexGenerativeProvider(client, timeout_seconds=3))
     deps = KnowledgeDependencies(

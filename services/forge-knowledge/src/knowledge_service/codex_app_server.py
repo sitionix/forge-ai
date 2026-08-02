@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, ClassVar, Coroutine, Mapping, Sequence, cast
 
 LOGGER = logging.getLogger(__name__)
-CODEX_MIN_TIMEOUT_SECONDS = 0.001
 
 
 class CodexAppServerError(RuntimeError):
@@ -615,11 +614,13 @@ class CodexTurnExecutor:
     ) -> CodexTurnResult:
         active: _ActiveTurn | None = None
         transport = self._transport_getter()
-        timeout = max(CODEX_MIN_TIMEOUT_SECONDS, float(timeout_seconds))
+        timeout = float(timeout_seconds)
+        if timeout <= 0:
+            raise ValueError("timeout_seconds must be positive")
         pre_registration = True
         self._pre_registration_turns += 1
         try:
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout(timeout):  # type: ignore[attr-defined]
                 thread_result = await transport.request(CodexProtocol.THREAD_START, self._thread_start_params(), timeout=timeout)
                 thread_id = self._extract_thread_id(thread_result)
                 turn_params: dict[str, Any] = {
@@ -710,24 +711,25 @@ class CodexTurnExecutor:
         if params is not None and "turnId" in params and turn_id is None:
             raise CodexAppServerProtocolError("Codex server request turnId was invalid")
         active = self._active_turns.get(turn_id or "") if turn_id is not None else None
+        invalidation: CodexAppServerProtocolError | None = None
+        if turn_id is None and self._pre_registration_turns > 0:
+            invalidation = CodexAppServerProtocolError("Codex app-server sent unscoped server request before turn registration")
         if active is not None and not active.future.done():
             self._schedule_fail_active_turn(active, CodexAppServerProtocolError("Codex app-server requested unsupported side effect"))
         elif turn_id is not None:
-            self._buffer_turn_notification(
-                turn_id,
-                self._FAIL_CLOSED_SERVER_REQUEST,
-                {"reason": "Codex app-server requested unsupported side effect"},
-            )
-        elif turn_id is None:
+            try:
+                self._buffer_turn_notification(
+                    turn_id,
+                    self._FAIL_CLOSED_SERVER_REQUEST,
+                    {"reason": "Codex app-server requested unsupported side effect"},
+                )
+            except CodexAppServerProtocolError as exc:
+                invalidation = exc
+        elif turn_id is None and invalidation is None:
             for active_turn in tuple(self._active_turns.values()):
                 if not active_turn.future.done():
                     self._schedule_fail_active_turn(active_turn, CodexAppServerProtocolError("Codex app-server requested unsupported side effect"))
-            if not self._active_turns and self._pre_registration_turns > 0:
-                return _ServerRequestHandlingResult(
-                    response=response,
-                    invalidate_after_response=CodexAppServerProtocolError("Codex app-server sent unscoped server request before turn registration"),
-                )
-        return _ServerRequestHandlingResult(response=response)
+        return _ServerRequestHandlingResult(response=response, invalidate_after_response=invalidation)
 
     def fail_active_work(self, exc: Exception) -> None:
         for active in self._active_turns.values():

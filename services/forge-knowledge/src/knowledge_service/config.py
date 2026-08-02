@@ -91,6 +91,8 @@ class CodexAppServerSettings(BaseModel):
     request_timeout_seconds: float = Field(default=5.0, ge=0.1)
     discovery_timeout_cap_seconds: float = Field(default=5.0, ge=0.1)
     discovery_timeout_allowance_seconds: float = Field(default=1.0, ge=0.1)
+    discovery_cache_ttl_seconds: float = Field(default=30.0, ge=0.1)
+    discovery_max_page_count: int = Field(default=100, ge=1)
     interrupt_grace_seconds: float = Field(default=1.0, ge=0.1)
     terminal_after_interrupt_seconds: float = Field(default=1.0, ge=0.1)
     terminate_grace_seconds: float = Field(default=1.0, ge=0.1)
@@ -789,6 +791,8 @@ def _codex_app_server_payload(data: Mapping[str, Any], env: Mapping[str, str]) -
             ("discovery-timeout-allowance-seconds", "discovery_timeout_allowance_seconds"),
             _float_configured,
         ),
+        ("discovery_cache_ttl_seconds", ("discovery-cache-ttl-seconds", "discovery_cache_ttl_seconds"), _float_configured),
+        ("discovery_max_page_count", ("discovery-max-page-count", "discovery_max_page_count"), _int_configured),
         ("interrupt_grace_seconds", ("interrupt-grace-seconds", "interrupt_grace_seconds"), _float_configured),
         (
             "terminal_after_interrupt_seconds",

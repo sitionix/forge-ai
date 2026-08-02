@@ -174,6 +174,8 @@ def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServe
     registry.register(
         CodexAiRuntimeOptionsSource(
             codex_client,
+            cache_ttl_seconds=config.codex_app_server.discovery_cache_ttl_seconds,
+            max_page_count=config.codex_app_server.discovery_max_page_count,
         ),
     )
     return AiRuntimeDiscoveryService(

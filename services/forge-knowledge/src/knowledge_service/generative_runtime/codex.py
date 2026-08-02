@@ -24,15 +24,15 @@ from knowledge_service.generative_runtime.core import (
     GenerativeResponse,
 )
 
-CODEX_PROVIDER_MIN_TIMEOUT_SECONDS = 0.001
-
 
 class CodexGenerativeProvider:
     provider_id = "codex"
 
     def __init__(self, client: CodexAppServerClient, *, timeout_seconds: float) -> None:
         self._client = client
-        self.timeout_seconds = max(CODEX_PROVIDER_MIN_TIMEOUT_SECONDS, float(timeout_seconds))
+        self.timeout_seconds = float(timeout_seconds)
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
 
     @property
     def provider_version(self) -> str:
@@ -122,10 +122,12 @@ class CodexGenerativeProvider:
         )
 
     def _timeout(self, timeout_seconds: float | None) -> float:
-        configured = max(CODEX_PROVIDER_MIN_TIMEOUT_SECONDS, float(self.timeout_seconds))
         if timeout_seconds is None:
-            return configured
-        return max(CODEX_PROVIDER_MIN_TIMEOUT_SECONDS, min(configured, float(timeout_seconds)))
+            return self.timeout_seconds
+        requested = float(timeout_seconds)
+        if requested <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        return min(self.timeout_seconds, requested)
 
     def _sha256(self, value: str) -> str:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()

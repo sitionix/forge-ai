@@ -123,6 +123,8 @@ def test_codex_app_server_defaults_are_owned_by_settings_model(tmp_path):
     assert config.codex_app_server.runtime_dir == tmp_path / "var" / "knowledge" / "codex-runtime"
     assert config.codex_app_server.request_timeout_seconds == 5.0
     assert config.codex_app_server.discovery_timeout_cap_seconds == 5.0
+    assert config.codex_app_server.discovery_cache_ttl_seconds == 30.0
+    assert config.codex_app_server.discovery_max_page_count == 100
     assert config.codex_app_server.max_buffered_notifications_per_turn == 100
 
 
@@ -135,6 +137,8 @@ def test_codex_app_server_configured_values_override_defaults_without_truthiness
           request-timeout-seconds: 7
           discovery-timeout-cap-seconds: 6
           discovery-timeout-allowance-seconds: 2
+          discovery-cache-ttl-seconds: 8
+          discovery-max-page-count: 9
           max-buffered-notifications-per-turn: 3
           max-buffered-turn-ids: 4
           buffer-ttl-seconds: 5
@@ -148,6 +152,8 @@ def test_codex_app_server_configured_values_override_defaults_without_truthiness
     assert config.codex_app_server.request_timeout_seconds == 7
     assert config.codex_app_server.discovery_timeout_cap_seconds == 6
     assert config.codex_app_server.discovery_timeout_allowance_seconds == 2
+    assert config.codex_app_server.discovery_cache_ttl_seconds == 8
+    assert config.codex_app_server.discovery_max_page_count == 9
     assert config.codex_app_server.max_buffered_notifications_per_turn == 3
     assert config.codex_app_server.max_buffered_turn_ids == 4
     assert config.codex_app_server.buffer_ttl_seconds == 5
@@ -163,6 +169,14 @@ def test_codex_app_server_configured_values_override_defaults_without_truthiness
         """
         codex-app-server:
           request-timeout-seconds: 0
+""",
+        """
+        codex-app-server:
+          discovery-cache-ttl-seconds: 0
+""",
+        """
+        codex-app-server:
+          discovery-max-page-count: 0
 """,
     ],
 )
