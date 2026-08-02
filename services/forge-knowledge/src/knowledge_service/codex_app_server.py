@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, ClassVar, Coroutine, Mapping, Sequence, cast
 
 LOGGER = logging.getLogger(__name__)
+CODEX_MIN_TIMEOUT_SECONDS = 0.001
 
 
 class CodexAppServerError(RuntimeError):
@@ -56,6 +57,7 @@ class CodexProtocol:
     APPROVAL_POLICY = "never"
     SANDBOX = "read-only"
     DECLINE = "decline"
+    METHOD_NOT_SUPPORTED = -32601
 
 
 @dataclass(frozen=True)
@@ -165,6 +167,12 @@ class _CompletedTurn:
     model_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class _ServerRequestHandlingResult:
+    response: Mapping[str, Any] | None
+    invalidate_after_response: CodexAppServerProtocolError | None = None
+
+
 class CodexGenerationPolicy:
     SAFE_ITEM_TYPES: ClassVar[set[str]] = {
         "userMessage",
@@ -233,7 +241,7 @@ class CodexProcessTransport:
         *,
         process_factory: Callable[[Sequence[str]], Awaitable[Any]],
         on_notification: Callable[[str, Any], Awaitable[None]],
-        on_server_request: Callable[[int, str, Any], Awaitable[Mapping[str, Any] | None]],
+        on_server_request: Callable[[int, str, Any], Awaitable[_ServerRequestHandlingResult]],
         on_connection_failed: Callable[[Exception], None],
     ) -> None:
         self._settings = settings
@@ -259,7 +267,12 @@ class CodexProcessTransport:
         async with self._start_lock:
             if self.is_healthy:
                 return
-            await self.stop(CodexAppServerTransportError("Codex app-server restarting"))
+            if self._cleanup_process is not None:
+                await self.stop(CodexAppServerTransportError("Codex app-server restarting"))
+                if self._cleanup_process is not None:
+                    raise CodexAppServerLifecycleError("Codex app-server process cleanup is still pending")
+            else:
+                await self.stop(CodexAppServerTransportError("Codex app-server restarting"))
             self._accepting = True
             try:
                 self._process = await self._process_factory(self._settings.command)
@@ -274,6 +287,10 @@ class CodexProcessTransport:
     def is_healthy(self) -> bool:
         return self._process is not None and self._returncode(self._process) is None and not self._connection_invalidated
 
+    @property
+    def has_cleanup_process(self) -> bool:
+        return self._cleanup_process is not None
+
     def raise_if_failed(self) -> None:
         if self._connection_failure is not None:
             raise self._connection_failure
@@ -281,6 +298,8 @@ class CodexProcessTransport:
     async def request(self, method: str, params: Mapping[str, Any] | None = None, *, timeout: float | None = None) -> Any:
         if not self._accepting:
             raise CodexAppServerTransportError("Codex app-server client is closing")
+        if self._connection_failure is not None and self._process is None:
+            raise self._connection_failure
         await self.start()
         request_id = self._allocate_request_id()
         payload: dict[str, Any] = {"id": request_id, "method": method}
@@ -309,7 +328,7 @@ class CodexProcessTransport:
         self._accepting = False
         await self._cancel_and_drain_reader_tasks()
         self._fail_pending(exc or CodexAppServerTransportError("Codex app-server stopped"))
-        process = self._process
+        process = self._process or self._cleanup_process
         self._process = None
         if process is not None:
             self._cleanup_process = process
@@ -353,7 +372,8 @@ class CodexProcessTransport:
         self._fail_pending(exc)
         process = self._process or self._cleanup_process
         self._process = None
-        self._cleanup_process = None
+        if process is not None:
+            self._cleanup_process = process
         self._connection_invalidated = False
         self._connection_failure = None
         await self._cancel_and_drain_reader_tasks()
@@ -366,7 +386,12 @@ class CodexProcessTransport:
                 kill()
             wait = getattr(process, "wait", None)
             if callable(wait):
-                await asyncio.wait_for(wait(), timeout=self._settings.kill_grace_seconds)
+                try:
+                    await asyncio.wait_for(wait(), timeout=self._settings.kill_grace_seconds)
+                except TimeoutError as timeout:
+                    raise CodexAppServerLifecycleError("Codex app-server process did not exit during forced cleanup") from timeout
+        if process is not None and self._returncode(process) is not None and self._cleanup_process is process:
+            self._cleanup_process = None
 
     async def _cancel_and_drain_reader_tasks(self) -> None:
         current = asyncio.current_task()
@@ -536,12 +561,14 @@ class CodexProcessTransport:
             await self.invalidate(CodexAppServerProtocolError("Codex app-server server request method was invalid"))
             return
         try:
-            response = await self._on_server_request(request_id, method, params)
+            result = await self._on_server_request(request_id, method, params)
         except CodexAppServerProtocolError as exc:
             await self.invalidate(exc)
             return
-        if response is not None:
-            await self._write_json(response)
+        if result.response is not None:
+            await self._write_json(result.response)
+        if result.invalidate_after_response is not None:
+            await self.invalidate(result.invalidate_after_response)
 
     def _allocate_request_id(self) -> int:
         request_id = self._next_request_id
@@ -574,6 +601,7 @@ class CodexTurnExecutor:
         self._active_turns: dict[str, _ActiveTurn] = {}
         self._buffered_turn_notifications: dict[str, list[_BufferedNotification]] = {}
         self._owned_tasks: set[asyncio.Task[None]] = set()
+        self._pre_registration_turns = 0
 
     async def run_turn(
         self,
@@ -587,7 +615,9 @@ class CodexTurnExecutor:
     ) -> CodexTurnResult:
         active: _ActiveTurn | None = None
         transport = self._transport_getter()
-        timeout = max(0.001, float(timeout_seconds))
+        timeout = max(CODEX_MIN_TIMEOUT_SECONDS, float(timeout_seconds))
+        pre_registration = True
+        self._pre_registration_turns += 1
         try:
             async with asyncio.timeout(timeout):
                 thread_result = await transport.request(CodexProtocol.THREAD_START, self._thread_start_params(), timeout=timeout)
@@ -612,6 +642,8 @@ class CodexTurnExecutor:
                     unwrap_json_payload=json_mode,
                 )
                 self._active_turns[turn_id] = active
+                self._pre_registration_turns -= 1
+                pre_registration = False
                 self._replay_buffered_turn_notifications(active)
                 transport.raise_if_failed()
                 result = await asyncio.shield(active.future)
@@ -645,6 +677,8 @@ class CodexTurnExecutor:
                 self._active_turns.pop(active.turn_id, None)
             raise
         finally:
+            if pre_registration:
+                self._pre_registration_turns -= 1
             if active is not None and active.future.done():
                 self._active_turns.pop(active.turn_id, None)
 
@@ -657,7 +691,7 @@ class CodexTurnExecutor:
         elif method == CodexProtocol.TURN_COMPLETED:
             self._handle_turn_completed(params)
 
-    async def handle_server_request(self, request_id: int, method: str, params: Any) -> Mapping[str, Any]:
+    async def handle_server_request(self, request_id: int, method: str, params: Any) -> _ServerRequestHandlingResult:
         if params is not None and not isinstance(params, Mapping):
             raise CodexAppServerProtocolError("Codex server request params must be an object")
         approval_response = self._policy.approval_response(method)
@@ -668,7 +702,7 @@ class CodexTurnExecutor:
             response = {
                 "id": request_id,
                 "error": {
-                    "code": -32601,
+                    "code": CodexProtocol.METHOD_NOT_SUPPORTED,
                     "message": "Codex server requests are not supported by Forge Knowledge generation",
                 },
             }
@@ -688,7 +722,12 @@ class CodexTurnExecutor:
             for active_turn in tuple(self._active_turns.values()):
                 if not active_turn.future.done():
                     self._schedule_fail_active_turn(active_turn, CodexAppServerProtocolError("Codex app-server requested unsupported side effect"))
-        return response
+            if not self._active_turns and self._pre_registration_turns > 0:
+                return _ServerRequestHandlingResult(
+                    response=response,
+                    invalidate_after_response=CodexAppServerProtocolError("Codex app-server sent unscoped server request before turn registration"),
+                )
+        return _ServerRequestHandlingResult(response=response)
 
     def fail_active_work(self, exc: Exception) -> None:
         for active in self._active_turns.values():
@@ -949,13 +988,17 @@ class CodexAppServerClient:
     async def aclose(self) -> None:
         if self._closed:
             return
-        try:
-            loop = self._loop
-            if loop is not None and loop.is_running():
-                await self._await_threadsafe(lambda: self._close_inner())
-            else:
-                self._closed = True
-        finally:
+        cleanup_finished = False
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            await self._await_threadsafe(lambda: self._close_inner())
+            cleanup_finished = True
+        else:
+            if self._transport is not None and self._transport.has_cleanup_process:
+                raise CodexAppServerLifecycleError("Codex app-server process cleanup is still pending")
+            self._closed = True
+            cleanup_finished = True
+        if cleanup_finished:
             self._stop_loop_thread()
 
     def close(self) -> None:

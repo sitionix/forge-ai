@@ -363,8 +363,12 @@ class ActiveProfileService:
             return None
         try:
             return await source.usage()
-        except Exception:
-            LOGGER.exception("Active profile usage lookup failed for provider %s", provider_id)
+        except Exception as exc:  # noqa: BLE001 - usage sources are provider-owned; active-profile GET must stay available.
+            LOGGER.warning(
+                "Active profile usage lookup failed for provider %s: %s",
+                provider_id,
+                type(exc).__name__,
+            )
             return None
 
     async def _present_llm_profile(self, profile: ActiveLlmSelectionResponse) -> ActiveLlmProfileDetailsResponse:

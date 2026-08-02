@@ -631,6 +631,112 @@ def test_close_kill_timeout_raises_lifecycle_error_and_stops_loop(tmp_path: Path
     assert process.killed is True
 
 
+def test_async_close_terminate_timeout_kills_and_reaps_process(tmp_path: Path):
+    process = TerminateTimeoutProcess([result({"userAgent": "forge-knowledge/0.146.0"})])
+    client = _client(process, tmp_path)
+
+    async def exercise():
+        await client.initialize()
+        await client.aclose()
+
+    asyncio.run(exercise())
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.wait_calls == 2
+
+
+def test_async_close_kill_timeout_retains_ownership_and_retry_cleans_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    process = KillTimeoutProcess([result({"userAgent": "forge-knowledge/0.146.0"})])
+    created = 0
+    loop_creations = 0
+    diagnostics: list[dict[str, Any]] = []
+    original_new_event_loop = asyncio.new_event_loop
+
+    def recording_new_event_loop():
+        nonlocal loop_creations
+        loop_creations += 1
+        loop = original_new_event_loop()
+        loop.set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        return loop
+
+    async def process_factory(command):
+        nonlocal created
+        created += 1
+        return process
+
+    monkeypatch.setattr(asyncio, "new_event_loop", recording_new_event_loop)
+    client = CodexAppServerClient(process_factory=process_factory, settings=_settings(tmp_path))
+
+    async def exercise():
+        await client.initialize()
+        with pytest.raises(CodexAppServerLifecycleError):
+            await client.aclose()
+        with pytest.raises(CodexAppServerLifecycleError):
+            await client.request("model/list")
+        process.returncode = 0
+        process._complete_wait()
+        await client.aclose()
+
+    asyncio.run(exercise())
+
+    assert created == 1
+    assert loop_creations == 1
+    assert process.terminated is True
+    assert process.killed is True
+    assert diagnostics == []
+
+
+def test_sync_force_stop_wait_timeout_retains_process_for_later_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    process = KillTimeoutProcess([result({"userAgent": "forge-knowledge/0.146.0"})])
+    settings = _settings(
+        tmp_path,
+        terminate_grace_seconds=0.2,
+        kill_grace_seconds=0.2,
+        cancellation_cleanup_timeout_seconds=0.2,
+        sync_close_timeout_seconds=1.0,
+    )
+    object.__setattr__(settings, "sync_close_timeout_seconds", 0.01)
+    created = 0
+    loop_creations = 0
+    diagnostics: list[dict[str, Any]] = []
+    original_new_event_loop = asyncio.new_event_loop
+
+    def recording_new_event_loop():
+        nonlocal loop_creations
+        loop_creations += 1
+        loop = original_new_event_loop()
+        loop.set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        return loop
+
+    async def process_factory(command):
+        nonlocal created
+        created += 1
+        return process
+
+    monkeypatch.setattr(asyncio, "new_event_loop", recording_new_event_loop)
+    client = CodexAppServerClient(process_factory=process_factory, settings=settings)
+
+    async def initialize():
+        await client.initialize()
+
+    asyncio.run(initialize())
+
+    with pytest.raises(CodexAppServerLifecycleError):
+        client.close()
+    with pytest.raises(CodexAppServerLifecycleError):
+        asyncio.run(client.request("model/list"))
+    process.returncode = 0
+    process._complete_wait()
+    client.close()
+
+    assert created == 1
+    assert loop_creations == 1
+    assert process.terminated is True
+    assert process.killed is True
+    assert diagnostics == []
+
+
 def test_sync_close_timeout_forced_cleanup_drains_pending_tasks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     process = TerminateTimeoutProcess([result({"userAgent": "forge-knowledge/0.146.0"})])
     settings = _settings(
@@ -805,6 +911,55 @@ def test_pre_registration_server_request_fails_turn_and_does_not_leak(tmp_path: 
     for key, value in expected_response.items():
         assert response[key] == value
     assert [sent["params"]["turnId"] for sent in corrupted.sent if sent.get("method") == "turn/interrupt"] == ["turn-1"]
+    assert corrupted.terminated is True
+    assert second_result.raw_text == "second"
+    assert restarted.terminated is True
+
+
+@pytest.mark.parametrize(
+    ("method", "expected_response"),
+    [
+        ("item/commandExecution/requestApproval", {"result": {"decision": "decline"}}),
+        (
+            "workspace/doThing",
+            {
+                "error": {
+                    "code": -32601,
+                    "message": "Codex server requests are not supported by Forge Knowledge generation",
+                }
+            },
+        ),
+    ],
+)
+def test_unscoped_pre_registration_server_request_invalidates_after_response(tmp_path: Path, method: str, expected_response: Mapping[str, Any]):
+    corrupted = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result(
+                {"threadId": "thread-1"},
+                notifications=[
+                    {"id": 999, "method": method, "params": {}},
+                ],
+            ),
+            result({"turnId": "turn-1"}),
+        ]
+    )
+    restarted = completed_turn_process("second")
+    processes = [corrupted, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
+
+    async def exercise():
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.run_turn(prompt="first", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        second = await client.run_turn(prompt="second", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        await client.aclose()
+        return second
+
+    second_result = asyncio.run(exercise())
+
+    response = next(sent for sent in corrupted.sent if sent.get("id") == 999)
+    for key, value in expected_response.items():
+        assert response[key] == value
     assert corrupted.terminated is True
     assert second_result.raw_text == "second"
     assert restarted.terminated is True

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import time
-from typing import Any, Awaitable, Callable, NoReturn
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any, NoReturn
 
 from knowledge_service.codex_app_server import (
     CodexAppServerClient,
@@ -22,13 +24,15 @@ from knowledge_service.generative_runtime.core import (
     GenerativeResponse,
 )
 
+CODEX_PROVIDER_MIN_TIMEOUT_SECONDS = 0.001
+
 
 class CodexGenerativeProvider:
     provider_id = "codex"
 
     def __init__(self, client: CodexAppServerClient, *, timeout_seconds: float) -> None:
         self._client = client
-        self.timeout_seconds = max(0.001, float(timeout_seconds))
+        self.timeout_seconds = max(CODEX_PROVIDER_MIN_TIMEOUT_SECONDS, float(timeout_seconds))
 
     @property
     def provider_version(self) -> str:
@@ -40,40 +44,33 @@ class CodexGenerativeProvider:
     def generate(self, request: GenerativeRequest) -> GenerativeResponse:
         started = time.perf_counter()
         timeout = self._timeout(request.timeout_seconds)
-        result = self._map_transport_errors(
-            lambda: self._client.run_turn_sync(
-                prompt=request.prompt,
-                model_id=request.model_id,
-                effort_id=request.effort_id,
-                response_mode=request.response_mode,
-                timeout_seconds=timeout,
-            ),
-        )
-        return self._normalize_response(request, result, started)
-
-    async def generate_async(self, request: GenerativeRequest) -> GenerativeResponse:
-        started = time.perf_counter()
-        timeout = self._timeout(request.timeout_seconds)
-        result = await self._map_transport_errors_async(
-            lambda: self._client.run_turn(
+        with self._transport_error_boundary():
+            result = self._client.run_turn_sync(
                 prompt=request.prompt,
                 model_id=request.model_id,
                 effort_id=request.effort_id,
                 response_mode=request.response_mode,
                 timeout_seconds=timeout,
             )
-        )
         return self._normalize_response(request, result, started)
 
-    def _map_transport_errors(self, operation: Callable[[], CodexTurnResult]) -> CodexTurnResult:
-        try:
-            return operation()
-        except (CodexAppServerTimeout, CodexAppServerEmptyResponse, CodexAppServerProtocolError, CodexAppServerTransportError, CodexAppServerLifecycleError) as exc:
-            self._raise_provider_error(exc)
+    async def generate_async(self, request: GenerativeRequest) -> GenerativeResponse:
+        started = time.perf_counter()
+        timeout = self._timeout(request.timeout_seconds)
+        with self._transport_error_boundary():
+            result = await self._client.run_turn(
+                prompt=request.prompt,
+                model_id=request.model_id,
+                effort_id=request.effort_id,
+                response_mode=request.response_mode,
+                timeout_seconds=timeout,
+            )
+        return self._normalize_response(request, result, started)
 
-    async def _map_transport_errors_async(self, operation: Callable[[], Awaitable[CodexTurnResult]]) -> CodexTurnResult:
+    @contextmanager
+    def _transport_error_boundary(self) -> Iterator[None]:
         try:
-            return await operation()
+            yield
         except (CodexAppServerTimeout, CodexAppServerEmptyResponse, CodexAppServerProtocolError, CodexAppServerTransportError, CodexAppServerLifecycleError) as exc:
             self._raise_provider_error(exc)
 
@@ -125,10 +122,10 @@ class CodexGenerativeProvider:
         )
 
     def _timeout(self, timeout_seconds: float | None) -> float:
-        configured = max(0.001, float(self.timeout_seconds or 0.001))
+        configured = max(CODEX_PROVIDER_MIN_TIMEOUT_SECONDS, float(self.timeout_seconds))
         if timeout_seconds is None:
             return configured
-        return max(0.001, min(configured, float(timeout_seconds)))
+        return max(CODEX_PROVIDER_MIN_TIMEOUT_SECONDS, min(configured, float(timeout_seconds)))
 
     def _sha256(self, value: str) -> str:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()

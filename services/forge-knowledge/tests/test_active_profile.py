@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -402,20 +403,23 @@ def test_codex_activation_is_executable_when_provider_and_effort_are_valid(tmp_p
     }
 
 
-def test_usage_registry_handles_unregistered_provider_and_source_failure(tmp_path: Path):
+def test_usage_registry_handles_unregistered_provider_and_source_failure(tmp_path: Path, caplog: pytest.LogCaptureFixture):
     registry = LlmUsageRegistry()
     registry.register(FakeUsageSource(error=RuntimeError("token secret@example.com should not leak")))
     store = ActiveProfileStore(tmp_path / "active.sqlite")
     persisted = store.init(provider_id="codex", model_id="gpt-5.6-luna")
     service = ActiveProfileService(store, _runtime(persisted, provider_id="codex"), FakeDiscovery([codex_ready()]), registry)
 
-    response = asyncio.run(service.get_active_profile())
+    with caplog.at_level(logging.WARNING, logger="knowledge_service.active_profile"):
+        response = asyncio.run(service.get_active_profile())
 
     assert response.usage is None
     assert registry.resolve_optional("ollama") is None
+    assert "RuntimeError" in caplog.text
+    assert "token secret@example.com should not leak" not in caplog.text
 
 
-def test_usage_source_failure_through_http_returns_null_usage_without_secret_text(tmp_path: Path):
+def test_usage_source_failure_through_http_returns_null_usage_without_secret_text(tmp_path: Path, caplog: pytest.LogCaptureFixture):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
     usage_registry = LlmUsageRegistry()
     usage_registry.register(FakeUsageSource(provider_id="ollama", error=RuntimeError("secret-token-123 should not leak")))
@@ -427,12 +431,13 @@ def test_usage_source_failure_through_http_returns_null_usage_without_secret_tex
         usage_registry,
     )
 
-    with AsgiTestClient(app) as client:
+    with caplog.at_level(logging.WARNING, logger="knowledge_service.active_profile"), AsgiTestClient(app) as client:
         response = client.get("/api/v1/knowledge/active-profile")
 
     assert response.status_code == 200
     assert response.json()["usage"] is None
     assert "secret-token-123" not in response.body.decode("utf-8")
+    assert "secret-token-123" not in caplog.text
 
 
 def test_registered_codex_source_returns_dynamic_windows_and_ignores_bad_ones():

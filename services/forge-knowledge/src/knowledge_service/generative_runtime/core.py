@@ -25,7 +25,8 @@ class GenerativeRequest:
     def __post_init__(self) -> None:
         object.__setattr__(self, "prompt", str(self.prompt or ""))
         object.__setattr__(self, "model_id", str(self.model_id or ""))
-        object.__setattr__(self, "effort_id", str(self.effort_id).strip() if self.effort_id is not None else None)
+        effort_id = str(self.effort_id).strip() if self.effort_id is not None else None
+        object.__setattr__(self, "effort_id", effort_id or None)
         if not self.model_id.strip():
             raise ValueError("GenerativeRequest.model_id is required")
         if self.context_tokens is not None and int(self.context_tokens) < 1:
