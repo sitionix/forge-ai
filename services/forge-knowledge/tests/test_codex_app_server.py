@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import pytest
-from codex_app_server_support import FakeCodexProcess, async_value, defer, notification, raw_line, result, rpc_error, server_request
+from codex_app_server_support import FakeCodexProcess, FakeStream, async_value, defer, notification, raw_line, result, rpc_error, server_request
 
 from knowledge_service.codex_app_server import (
     CodexAppServerClient,
     CodexAppServerEmptyResponse,
+    CodexAppServerLifecycleError,
     CodexAppServerProtocolError,
     CodexAppServerTimeout,
     CodexAppServerTransportError,
@@ -58,7 +59,7 @@ def test_json_rpc_error_malformed_restart_and_idempotent_close(tmp_path: Path):
     malformed_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), raw_line(b"{not-json\n")])
     restart_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
     processes = [error_process, malformed_process, restart_process]
-    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), request_timeout_seconds=1, runtime_cwd=tmp_path)
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
 
     async def exercise():
         with pytest.raises(CodexAppServerTransportError):
@@ -96,7 +97,10 @@ def test_server_request_is_not_mistaken_for_pending_response_and_exit_fails_pend
 
 def test_matched_response_missing_result_error_fails_immediately_and_reaps(tmp_path: Path):
     process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), raw_line(b'{"id":2}\n')])
-    client = CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=30, runtime_cwd=tmp_path)
+    client = CodexAppServerClient(
+        process_factory=lambda command: async_value(process),
+        settings=_settings(tmp_path, request_timeout_seconds=30),
+    )
 
     async def exercise():
         await client.initialize()
@@ -109,6 +113,21 @@ def test_matched_response_missing_result_error_fails_immediately_and_reaps(tmp_p
     elapsed = asyncio.run(exercise())
 
     assert elapsed < 1.0
+    assert process.terminated is True
+
+
+def test_matched_response_with_result_and_error_fails_immediately_and_reaps(tmp_path: Path):
+    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), raw_line(b'{"id":2,"result":{},"error":{"message":"bad"}}\n')])
+    client = _client(process, tmp_path)
+
+    async def exercise():
+        await client.initialize()
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.request("model/list")
+        await client.aclose()
+
+    asyncio.run(exercise())
+
     assert process.terminated is True
 
 
@@ -139,6 +158,24 @@ def test_server_request_id_bool_is_rejected_and_reaps_process(tmp_path: Path):
 
     asyncio.run(exercise())
     assert process.terminated is True
+
+
+def test_stdout_eof_marks_connection_failed_and_next_request_restarts(tmp_path: Path):
+    first_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), {"exit": 0}])
+    second_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [first_process, second_process]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
+
+    async def exercise():
+        with pytest.raises(CodexAppServerTransportError):
+            await client.request("model/list")
+        payload = await client.request("model/list")
+        await client.aclose()
+        return payload
+
+    assert asyncio.run(exercise()) == {"ok": True}
+    assert [sent.get("method") for sent in first_process.sent] == ["initialize", "initialized", "model/list"]
+    assert len([sent for sent in second_process.sent if sent.get("method") == "initialize"]) == 1
 
 
 def test_run_turn_envelope_json_mode_effort_and_agent_message_result(tmp_path: Path):
@@ -375,6 +412,35 @@ def test_buffered_notification_global_turn_id_limit_invalidates_connection(tmp_p
     assert process.terminated is True
 
 
+def test_buffer_overflow_emits_no_pending_task_diagnostics(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result(
+                {"turnId": "turn-1"},
+                notifications=[
+                    notification("item/started", {"turnId": "turn-1", "item": {"type": "reasoning"}}),
+                    notification("item/started", {"turnId": "turn-1", "item": {"type": "reasoning"}}),
+                ],
+            ),
+        ]
+    )
+    client = _client_with_buffer(process, tmp_path, max_per_turn=1, max_turn_ids=10, ttl=30)
+    diagnostics: list[dict[str, Any]] = []
+
+    async def exercise():
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        await client.aclose()
+
+    asyncio.run(exercise())
+
+    assert diagnostics == []
+
+
 def test_expired_buffered_notifications_are_pruned_deterministically(tmp_path: Path):
     process = FakeCodexProcess(
         [
@@ -399,9 +465,95 @@ def test_expired_buffered_notifications_are_pruned_deterministically(tmp_path: P
         process.push_json({"method": "turn/completed", "params": {"turnId": "turn-1", "status": "completed"}})
         return await task
 
-    payload = asyncio.run(exercise())
+    with pytest.raises(CodexAppServerProtocolError):
+        asyncio.run(exercise())
+    assert process.terminated is True
 
-    assert payload.raw_text == "fresh"
+
+def test_closed_client_operations_do_not_start_loop_thread_or_process(tmp_path: Path):
+    created = 0
+
+    async def process_factory(command):
+        nonlocal created
+        created += 1
+        return FakeCodexProcess([])
+
+    client = CodexAppServerClient(process_factory=process_factory, settings=_settings(tmp_path))
+    client.close()
+
+    async def exercise():
+        with pytest.raises(CodexAppServerTransportError):
+            await client.initialize()
+        with pytest.raises(CodexAppServerTransportError):
+            await client.request("model/list")
+        with pytest.raises(CodexAppServerTransportError):
+            await client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=1)
+
+    asyncio.run(exercise())
+    with pytest.raises(CodexAppServerTransportError):
+        client.run_turn_sync(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=1)
+
+    assert created == 0
+    assert client._loop is None
+    assert client._thread is None
+
+
+def test_close_terminate_timeout_kills_process(tmp_path: Path):
+    process = TerminateTimeoutProcess([result({"userAgent": "forge-knowledge/0.146.0"})])
+    client = _client(process, tmp_path)
+
+    async def initialize():
+        await client.initialize()
+
+    asyncio.run(initialize())
+    client.close()
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.wait_calls == 2
+
+
+def test_close_kill_timeout_raises_lifecycle_error_and_stops_loop(tmp_path: Path):
+    process = KillTimeoutProcess([result({"userAgent": "forge-knowledge/0.146.0"})])
+    client = _client(process, tmp_path)
+
+    async def initialize():
+        await client.initialize()
+
+    asyncio.run(initialize())
+
+    with pytest.raises(CodexAppServerLifecycleError):
+        client.close()
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert client._loop is None
+    assert client._thread is None
+
+
+def test_reader_cleanup_exception_during_close_is_controlled(tmp_path: Path):
+    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"})])
+    process.stdout = RaiseOnCancelStream()
+    client = _client(process, tmp_path)
+
+    async def exercise():
+        await client.initialize()
+        await client.aclose()
+
+    asyncio.run(exercise())
+
+    assert process.terminated is True
+
+
+def test_settings_reject_close_timeout_that_cannot_cover_cleanup(tmp_path: Path):
+    with pytest.raises(ValueError, match="sync_close_timeout_seconds"):
+        _settings(
+            tmp_path,
+            terminate_grace_seconds=1.0,
+            kill_grace_seconds=1.0,
+            cancellation_cleanup_timeout_seconds=1.0,
+            sync_close_timeout_seconds=2.9,
+        )
 
 
 def test_item_completed_forbidden_discards_partial_output_and_interrupts_once(tmp_path: Path):
@@ -503,7 +655,7 @@ def test_protocol_corruption_invalidates_connection_and_next_request_restarts(tm
     first_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), raw_line(bad_line)])
     second_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
     processes = [first_process, second_process]
-    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), request_timeout_seconds=1, runtime_cwd=tmp_path)
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
 
     async def exercise():
         with pytest.raises(CodexAppServerProtocolError):
@@ -530,7 +682,7 @@ def test_malformed_notifications_invalidate_reap_and_restart(tmp_path: Path, bad
     first_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), dict(bad_notification)])
     second_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
     processes = [first_process, second_process]
-    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), request_timeout_seconds=1, runtime_cwd=tmp_path)
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
 
     async def exercise():
         with pytest.raises(CodexAppServerProtocolError):
@@ -639,9 +791,11 @@ def test_two_overlapping_turns_route_interleaved_notifications(tmp_path: Path):
 
 def test_codex_generative_provider_sync_async_hashes_metadata_and_error_mapping(tmp_path: Path):
     sync_process = completed_turn_process("answer")
-    provider = CodexGenerativeProvider(_client(sync_process, tmp_path / "sync"), timeout_seconds=3)
+    sync_client = _client(sync_process, tmp_path / "sync")
+    provider = CodexGenerativeProvider(sync_client, timeout_seconds=3)
 
     response = provider.generate(GenerativeRequest(prompt="prompt", model_id="m", effort_id="low"))
+    sync_client.close()
 
     assert response.raw_text == "answer"
     assert response.provider_id == "codex"
@@ -654,46 +808,96 @@ def test_codex_generative_provider_sync_async_hashes_metadata_and_error_mapping(
     assert response.provider_metadata["requestedEffort"] == "low"
 
     async_process = completed_turn_process("async")
-    async_provider = CodexGenerativeProvider(_client(async_process, tmp_path / "async"), timeout_seconds=3)
+    async_client = _client(async_process, tmp_path / "async")
+    async_provider = CodexGenerativeProvider(async_client, timeout_seconds=3)
     async_response = asyncio.run(async_provider.generate_async(GenerativeRequest(prompt="p", model_id="m")))
+    async_client.close()
     assert async_response.raw_text == "async"
 
     with pytest.raises(GenerativeProviderEmptyResponse):
-        CodexGenerativeProvider(_client(completed_turn_process(""), tmp_path / "empty"), timeout_seconds=3).generate(GenerativeRequest(prompt="p", model_id="m"))
+        empty_client = _client(completed_turn_process(""), tmp_path / "empty")
+        try:
+            CodexGenerativeProvider(empty_client, timeout_seconds=3).generate(GenerativeRequest(prompt="p", model_id="m"))
+        finally:
+            empty_client.close()
     with pytest.raises(GenerativeProviderTimeout):
-        CodexGenerativeProvider(_client(FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), defer()]), tmp_path / "timeout-provider"), timeout_seconds=0.01).generate(
-            GenerativeRequest(prompt="p", model_id="m")
-        )
+        timeout_client = _client(FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), defer()]), tmp_path / "timeout-provider")
+        try:
+            CodexGenerativeProvider(timeout_client, timeout_seconds=0.01).generate(GenerativeRequest(prompt="p", model_id="m"))
+        finally:
+            timeout_client.close()
     with pytest.raises(GenerativeProviderProtocolError):
-        CodexGenerativeProvider(
-            _client(
-                FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "t"}), result({"turnId": "u"}, notifications=[notification("item/completed", {"turnId": "u", "item": {"type": "fileChange"}})]), result({})]),
-                tmp_path / "protocol-provider",
-            ),
-            timeout_seconds=3,
-        ).generate(GenerativeRequest(prompt="p", model_id="m"))
-    with pytest.raises(GenerativeProviderTransportError):
-        CodexGenerativeProvider(_client(FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), rpc_error(-1, "bad")]), tmp_path / "transport-provider"), timeout_seconds=3).generate(
-            GenerativeRequest(prompt="p", model_id="m")
+        protocol_client = _client(
+            FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "t"}), result({"turnId": "u"}, notifications=[notification("item/completed", {"turnId": "u", "item": {"type": "fileChange"}})]), result({})]),
+            tmp_path / "protocol-provider",
         )
+        try:
+            CodexGenerativeProvider(protocol_client, timeout_seconds=3).generate(GenerativeRequest(prompt="p", model_id="m"))
+        finally:
+            protocol_client.close()
+    with pytest.raises(GenerativeProviderTransportError):
+        transport_client = _client(FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), rpc_error(-1, "bad")]), tmp_path / "transport-provider")
+        try:
+            CodexGenerativeProvider(transport_client, timeout_seconds=3).generate(GenerativeRequest(prompt="p", model_id="m"))
+        finally:
+            transport_client.close()
+
+
+class TerminateTimeoutProcess(FakeCodexProcess):
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = 0
+        self._complete_wait()
+
+    async def wait(self) -> int:
+        self.wait_calls += 1
+        if self.returncode is not None:
+            return self.returncode
+        await asyncio.sleep(10)
+        return 0
+
+
+class KillTimeoutProcess(TerminateTimeoutProcess):
+    def kill(self) -> None:
+        self.killed = True
+
+
+class RaiseOnCancelStream(FakeStream):
+    async def readline(self) -> bytes:
+        try:
+            return await super().readline()
+        except asyncio.CancelledError as exc:
+            raise RuntimeError("reader cleanup failed") from exc
 
 
 def _client(process: FakeCodexProcess, runtime_cwd: Path) -> CodexAppServerClient:
-    return CodexAppServerClient(process_factory=lambda command: async_value(process), request_timeout_seconds=1, runtime_cwd=runtime_cwd)
+    return CodexAppServerClient(process_factory=lambda command: async_value(process), settings=_settings(runtime_cwd))
 
 
 def _client_with_buffer(process: FakeCodexProcess, runtime_cwd: Path, *, max_per_turn: int, max_turn_ids: int, ttl: float) -> CodexAppServerClient:
     return CodexAppServerClient(
         process_factory=lambda command: async_value(process),
-        settings=CodexRuntimeSettings(
-            command=("codex", "app-server", "--stdio"),
-            runtime_cwd=runtime_cwd,
-            client_name="forge-knowledge",
-            client_version="0.1.0",
-            request_timeout_seconds=1,
+        settings=_settings(
+            runtime_cwd,
             notification_buffer=CodexNotificationBufferPolicy(max_per_turn=max_per_turn, max_turn_ids=max_turn_ids, max_age_seconds=ttl),
         ),
     )
+
+
+def _settings(runtime_cwd: Path, **overrides: Any) -> CodexRuntimeSettings:
+    values: dict[str, Any] = {
+        "command": ("codex", "app-server", "--stdio"),
+        "runtime_cwd": runtime_cwd,
+        "client_name": "forge-knowledge",
+        "client_version": "0.146.0",
+        "request_timeout_seconds": 1,
+        "sync_close_timeout_seconds": 3,
+    }
+    values.update(overrides)
+    return CodexRuntimeSettings(**values)
 
 
 def completed_turn_process(text: str) -> FakeCodexProcess:

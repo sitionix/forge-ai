@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import time
-from typing import Any
+from typing import Any, Awaitable, Callable, NoReturn
 
 from knowledge_service.codex_app_server import (
     CodexAppServerClient,
     CodexAppServerEmptyResponse,
+    CodexAppServerLifecycleError,
     CodexAppServerProtocolError,
     CodexAppServerTimeout,
     CodexAppServerTransportError,
@@ -37,9 +38,10 @@ class CodexGenerativeProvider:
         return version
 
     def generate(self, request: GenerativeRequest) -> GenerativeResponse:
-        return self._generate_with_result(
-            request,
-            lambda timeout: self._client.run_turn_sync(
+        started = time.perf_counter()
+        timeout = self._timeout(request.timeout_seconds)
+        result = self._map_transport_errors(
+            lambda: self._client.run_turn_sync(
                 prompt=request.prompt,
                 model_id=request.model_id,
                 effort_id=request.effort_id,
@@ -47,12 +49,14 @@ class CodexGenerativeProvider:
                 timeout_seconds=timeout,
             ),
         )
+        provider_version = self.provider_version
+        return self._normalize_response(request, result, started, provider_version)
 
     async def generate_async(self, request: GenerativeRequest) -> GenerativeResponse:
         started = time.perf_counter()
         timeout = self._timeout(request.timeout_seconds)
         result = await self._map_transport_errors_async(
-            self._client.run_turn(
+            lambda: self._client.run_turn(
                 prompt=request.prompt,
                 model_id=request.model_id,
                 effort_id=request.effort_id,
@@ -60,45 +64,34 @@ class CodexGenerativeProvider:
                 timeout_seconds=timeout,
             )
         )
-        return self._normalize_response(request, result, started)
+        provider_version = self.provider_version
+        return self._normalize_response(request, result, started, provider_version)
 
-    def _generate_with_result(self, request: GenerativeRequest, operation: Any) -> GenerativeResponse:
-        started = time.perf_counter()
-        timeout = self._timeout(request.timeout_seconds)
-        result = self._map_transport_errors(lambda: operation(timeout))
-        return self._normalize_response(request, result, started)
-
-    def _map_transport_errors(self, operation: Any) -> CodexTurnResult:
+    def _map_transport_errors(self, operation: Callable[[], CodexTurnResult]) -> CodexTurnResult:
         try:
             return operation()
-        except CodexAppServerTimeout as exc:
-            raise GenerativeProviderTimeout("codex generation request timed out", provider_id=self.provider_id) from exc
-        except CodexAppServerEmptyResponse as exc:
-            raise GenerativeProviderEmptyResponse("codex returned no response text", provider_id=self.provider_id) from exc
-        except CodexAppServerProtocolError as exc:
-            raise GenerativeProviderProtocolError("codex generation protocol error", provider_id=self.provider_id) from exc
-        except CodexAppServerTransportError as exc:
-            raise GenerativeProviderTransportError(
-                "codex generation transport error",
-                provider_id=self.provider_id,
-                status_code=exc.status_code,
-            ) from exc
+        except (CodexAppServerTimeout, CodexAppServerEmptyResponse, CodexAppServerProtocolError, CodexAppServerTransportError, CodexAppServerLifecycleError) as exc:
+            self._raise_provider_error(exc)
 
-    async def _map_transport_errors_async(self, operation: Any) -> CodexTurnResult:
+    async def _map_transport_errors_async(self, operation: Callable[[], Awaitable[CodexTurnResult]]) -> CodexTurnResult:
         try:
-            return await operation
-        except CodexAppServerTimeout as exc:
+            return await operation()
+        except (CodexAppServerTimeout, CodexAppServerEmptyResponse, CodexAppServerProtocolError, CodexAppServerTransportError, CodexAppServerLifecycleError) as exc:
+            self._raise_provider_error(exc)
+
+    def _raise_provider_error(self, exc: Exception) -> NoReturn:
+        if isinstance(exc, CodexAppServerTimeout):
             raise GenerativeProviderTimeout("codex generation request timed out", provider_id=self.provider_id) from exc
-        except CodexAppServerEmptyResponse as exc:
+        if isinstance(exc, CodexAppServerEmptyResponse):
             raise GenerativeProviderEmptyResponse("codex returned no response text", provider_id=self.provider_id) from exc
-        except CodexAppServerProtocolError as exc:
+        if isinstance(exc, CodexAppServerProtocolError):
             raise GenerativeProviderProtocolError("codex generation protocol error", provider_id=self.provider_id) from exc
-        except CodexAppServerTransportError as exc:
-            raise GenerativeProviderTransportError(
-                "codex generation transport error",
-                provider_id=self.provider_id,
-                status_code=exc.status_code,
-            ) from exc
+        status_code = exc.status_code if isinstance(exc, CodexAppServerTransportError) else None
+        raise GenerativeProviderTransportError(
+            "codex generation transport error",
+            provider_id=self.provider_id,
+            status_code=status_code,
+        ) from exc
 
     def close(self) -> None:
         return None
@@ -106,7 +99,7 @@ class CodexGenerativeProvider:
     async def aclose(self) -> None:
         return None
 
-    def _normalize_response(self, request: GenerativeRequest, result: CodexTurnResult, started: float) -> GenerativeResponse:
+    def _normalize_response(self, request: GenerativeRequest, result: CodexTurnResult, started: float, provider_version: str) -> GenerativeResponse:
         raw_text = result.raw_text
         metadata: dict[str, Any] = {
             "threadId": result.thread_id,
@@ -123,7 +116,7 @@ class CodexGenerativeProvider:
         return GenerativeResponse(
             raw_text=raw_text,
             provider_id=self.provider_id,
-            provider_version=self.provider_version,
+            provider_version=provider_version,
             model_id=request.model_id,
             duration_ms=round((time.perf_counter() - started) * 1000, 3),
             prompt_char_length=len(request.prompt),

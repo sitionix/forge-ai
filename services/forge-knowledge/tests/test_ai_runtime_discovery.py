@@ -18,6 +18,7 @@ from codex_app_server_support import (
     rpc_error as jsonrpc_error,
 )
 
+from knowledge_service import __version__
 from knowledge_service.ai_runtime_discovery import (
     DEGRADED,
     READY,
@@ -30,14 +31,20 @@ from knowledge_service.ai_runtime_discovery import (
     CodexAiRuntimeOptionsSource,
     OllamaAiRuntimeOptionsSource,
 )
-from knowledge_service.codex_app_server import CodexAppServerClient, CodexAppServerError, CodexAppServerTimeout
+from knowledge_service.codex_app_server import CodexAppServerClient, CodexAppServerError, CodexAppServerTimeout, CodexRuntimeSettings
 
 
 def _codex_client(process_factory, *, request_timeout_seconds: float = 5.0) -> CodexAppServerClient:
     return CodexAppServerClient(
         process_factory=process_factory,
-        request_timeout_seconds=request_timeout_seconds,
-        runtime_cwd=Path.cwd().resolve() / "var" / "codex-test-runtime",
+        settings=CodexRuntimeSettings(
+            command=("codex", "app-server", "--stdio"),
+            runtime_cwd=Path.cwd().resolve() / "var" / "codex-test-runtime",
+            client_name="forge-knowledge",
+            client_version=__version__,
+            request_timeout_seconds=request_timeout_seconds,
+            sync_close_timeout_seconds=3,
+        ),
     )
 
 
@@ -329,7 +336,12 @@ def test_codex_initializes_and_maps_model_list_efforts_pagination_and_hidden_fil
     client = _codex_client(lambda command: async_value(process))
     source = CodexAiRuntimeOptionsSource(client)
 
-    result = asyncio.run(source.discover()).public_dict()
+    async def exercise() -> dict[str, Any]:
+        discovered = (await source.discover()).public_dict()
+        await client.aclose()
+        return discovered
+
+    result = asyncio.run(exercise())
 
     assert result == {
         "providerId": "codex",
@@ -351,7 +363,7 @@ def test_codex_initializes_and_maps_model_list_efforts_pagination_and_hidden_fil
         ],
     }
     assert [sent["method"] for sent in process.sent] == ["initialize", "initialized", "model/list", "model/list"]
-    assert process.sent[0]["params"] == {"clientInfo": {"name": "forge-knowledge", "version": "0.1.0"}}
+    assert process.sent[0]["params"] == {"clientInfo": {"name": "forge-knowledge", "version": __version__}}
     assert process.sent[2]["params"] == {"includeHidden": False}
     assert process.sent[3]["params"] == {"includeHidden": False, "cursor": "2"}
     assert_forbidden_public_fields_absent(result)

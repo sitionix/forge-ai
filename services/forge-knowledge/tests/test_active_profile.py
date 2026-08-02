@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
 from support import AsgiTestClient, build_test_app, write_runtime_config
 
 from knowledge_service.active_profile import (
@@ -19,27 +20,50 @@ from knowledge_service.active_profile import (
     LlmUsageRegistry,
     PersistedActiveProfile,
 )
+from knowledge_service.ai_runtime_discovery import AiRuntimeProfileMetadata
+from knowledge_service.codex_app_server import CodexProtocol
 from knowledge_service.codex_usage import CodexLlmUsageSource
 from knowledge_service.generative_runtime import GenerativeProviderRegistry, GenerativeRequest, GenerativeResponse
 
 
 class FakeDiscovery:
-    def __init__(self, providers: list[dict[str, Any]], *, error: Exception | None = None) -> None:
+    def __init__(self, providers: list[dict[str, Any]], *, error: Exception | None = None, cached: bool = False) -> None:
         self.providers = providers
         self.error = error
+        self.cached = cached
+        self.discover_calls = 0
 
     async def discover(self) -> dict[str, Any]:
+        self.discover_calls += 1
         if self.error is not None:
             raise self.error
         return {"providers": self.providers}
 
+    def cached_profile_metadata(self, provider_id: str, model_id: str) -> AiRuntimeProfileMetadata:
+        if self.error is not None:
+            raise self.error
+        if not self.cached:
+            return AiRuntimeProfileMetadata(provider_display_name=None, model_display_name=None)
+        for provider in self.providers:
+            if provider.get("providerId") != provider_id:
+                continue
+            model_display_name = None
+            for model in provider.get("models") or []:
+                if isinstance(model, dict) and model.get("modelId") == model_id:
+                    model_display_name = model.get("displayName")
+                    break
+            return AiRuntimeProfileMetadata(
+                provider_display_name=provider.get("displayName"),
+                model_display_name=model_display_name,
+            )
+        return AiRuntimeProfileMetadata(provider_display_name=None, model_display_name=None)
+
 
 class FakeUsageSource:
-    provider_id = "codex"
-
-    def __init__(self, value=None, error: Exception | None = None) -> None:
+    def __init__(self, value=None, error: Exception | None = None, provider_id: str = "codex") -> None:
         self.value = value
         self.error = error
+        self.provider_id = provider_id
 
     async def usage(self):
         if self.error is not None:
@@ -52,7 +76,7 @@ class FakeCodexUsageClient:
         self.payload = payload
 
     async def request(self, method: str, params=None):
-        assert method == "account/rateLimits/read"
+        assert method == CodexProtocol.RATE_LIMITS_READ
         return self.payload
 
 
@@ -105,6 +129,16 @@ def codex_ready() -> dict[str, Any]:
     }
 
 
+def test_usage_registry_rejects_blank_and_duplicate_provider_ids():
+    registry = LlmUsageRegistry()
+    registry.register(FakeUsageSource(provider_id="codex"))
+
+    with pytest.raises(ValueError):
+        registry.register(FakeUsageSource(provider_id=" Codex "))
+    with pytest.raises(ValueError):
+        registry.register(FakeUsageSource(provider_id=" "))
+
+
 def test_get_active_profile_initializes_from_current_configuration_exact_contract(tmp_path: Path):
     app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
     assert deps.active_profile_service is not None
@@ -115,13 +149,13 @@ def test_get_active_profile_initializes_from_current_configuration_exact_contrac
     assert response.status_code == 200
     assert response.json() == {
         "revision": 1,
-        "llmProfile": {
-            "providerId": "ollama",
-            "modelId": "qwen2.5-coder:14b",
-            "effort": None,
-            "providerDisplayName": "Ollama",
-            "modelDisplayName": None,
-        },
+            "llmProfile": {
+                "providerId": "ollama",
+                "modelId": "qwen2.5-coder:14b",
+                "effort": None,
+                "providerDisplayName": None,
+                "modelDisplayName": None,
+            },
         "usage": None,
     }
 
@@ -130,10 +164,11 @@ def test_active_profile_get_adds_display_metadata_without_persisting_it(tmp_path
     store = ActiveProfileStore(tmp_path / "active.sqlite")
     persisted = store.init(provider_id="ollama", model_id="qwen")
     runtime = _runtime(persisted)
+    discovery = FakeDiscovery([ollama_ready("qwen")], cached=True)
     service = ActiveProfileService(
         store,
         runtime,
-        FakeDiscovery([ollama_ready("qwen")]),
+        discovery,
         LlmUsageRegistry(),
     )
 
@@ -141,6 +176,7 @@ def test_active_profile_get_adds_display_metadata_without_persisting_it(tmp_path
 
     assert response.llmProfile.providerDisplayName == "Ollama Runtime"
     assert response.llmProfile.modelDisplayName == "Display qwen"
+    assert discovery.discover_calls == 0
     with sqlite3.connect(store.db_path) as conn:
         stored = json.loads(conn.execute("SELECT profile_json FROM active_profile").fetchone()[0])
     assert stored == {"llmProfile": {"providerId": "ollama", "modelId": "qwen", "effort": None}}

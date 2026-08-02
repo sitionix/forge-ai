@@ -362,22 +362,15 @@ class ActiveProfileService:
             return None
 
     async def _present_llm_profile(self, profile: ActiveLlmProfileResponse) -> ActiveLlmProfileResponse:
-        provider_display_name: str | None = None
-        model_display_name: str | None = None
         try:
-            options = await self._discovery.discover()
+            metadata = self._discovery.cached_profile_metadata(profile.providerId, profile.modelId)
         except Exception:
             LOGGER.exception("Active profile display metadata lookup failed")
-            options = {}
-        for provider in options.get("providers", []) if isinstance(options, Mapping) else []:
-            if not isinstance(provider, Mapping) or provider.get("providerId") != profile.providerId:
-                continue
-            provider_display_name = _optional_display_name(provider.get("displayName"))
-            for model in provider.get("models") or []:
-                if isinstance(model, Mapping) and model.get("modelId") == profile.modelId:
-                    model_display_name = _optional_display_name(model.get("displayName"))
-                    break
-            break
+            provider_display_name = None
+            model_display_name = None
+        else:
+            provider_display_name = _optional_display_name(metadata.provider_display_name)
+            model_display_name = _optional_display_name(metadata.model_display_name)
         return ActiveLlmProfileResponse(
             providerId=profile.providerId,
             modelId=profile.modelId,
@@ -401,6 +394,8 @@ class LlmUsageRegistry:
         provider_id = _clean_id(source.provider_id)
         if not provider_id:
             raise ValueError("LLM usage provider_id is required")
+        if provider_id in self._sources:
+            raise ValueError(f"LLM usage source already registered: {provider_id}")
         self._sources[provider_id] = source
 
     def resolve_optional(self, provider_id: str) -> LlmUsageSource | None:

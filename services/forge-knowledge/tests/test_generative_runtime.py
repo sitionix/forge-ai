@@ -8,7 +8,7 @@ import pytest
 
 from knowledge_service.ai_runtime_discovery import AiRuntimeDiscoveryRegistry, AiRuntimeDiscoveryService, CodexAiRuntimeOptionsSource
 from knowledge_service.bootstrap import KnowledgeDependencies, build_generative_runtime
-from knowledge_service.codex_app_server import CodexAppServerClient
+from knowledge_service.codex_app_server import CodexAppServerClient, CodexRuntimeSettings
 from knowledge_service.config import AppConfig
 from knowledge_service.generative_runtime import (
     CodexGenerativeProvider,
@@ -107,6 +107,16 @@ class CloseCountingCodexClient:
         self.close_count += 1
 
 
+class FailingCleanup:
+    def __init__(self, message: str) -> None:
+        self.message = message
+        self.close_count = 0
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+        raise RuntimeError(self.message)
+
+
 def test_registry_registers_resolves_rejects_unknown_and_duplicate():
     registry = GenerativeProviderRegistry()
     provider = FakeProvider()
@@ -129,7 +139,16 @@ def test_bootstrap_generative_registry_resolves_ollama_and_codex(tmp_path):
         runtime_dir=tmp_path / "var",
     )
 
-    codex_client = CodexAppServerClient(runtime_cwd=tmp_path / "var" / "codex-runtime")
+    codex_client = CodexAppServerClient(
+        settings=CodexRuntimeSettings(
+            command=("codex", "app-server", "--stdio"),
+            runtime_cwd=tmp_path / "var" / "codex-runtime",
+            client_name="forge-knowledge",
+            client_version="0.146.0",
+            request_timeout_seconds=1,
+            sync_close_timeout_seconds=3,
+        )
+    )
     registry, startup_provider = build_generative_runtime(config, codex_client=codex_client)
 
     assert startup_provider.provider_id == "ollama"
@@ -165,6 +184,56 @@ def test_shared_codex_client_has_single_lifecycle_owner():
 
     assert client.close_count == 1
     assert client.initialize_count == 0
+
+
+def test_dependency_shutdown_attempts_codex_after_discovery_failure():
+    discovery = FailingCleanup("discovery")
+    client = CloseCountingCodexClient()
+    deps = KnowledgeDependencies(
+        inventory_store=None,
+        analysis_store=None,
+        graph_store=None,
+        source_resolver=None,
+        analysis_provider=None,
+        analysis_supervisor=None,
+        inventory_refresh=None,
+        inventory_scheduler=None,
+        storage_operations=None,
+        ai_runtime_discovery=discovery,
+        generative_registry=None,
+        codex_app_server_client=client,
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(deps.aclose())
+
+    assert discovery.close_count == 1
+    assert client.close_count == 1
+
+
+def test_dependency_shutdown_attempts_codex_after_registry_failure():
+    registry = FailingCleanup("registry")
+    client = CloseCountingCodexClient()
+    deps = KnowledgeDependencies(
+        inventory_store=None,
+        analysis_store=None,
+        graph_store=None,
+        source_resolver=None,
+        analysis_provider=None,
+        analysis_supervisor=None,
+        inventory_refresh=None,
+        inventory_scheduler=None,
+        storage_operations=None,
+        ai_runtime_discovery=None,
+        generative_registry=registry,
+        codex_app_server_client=client,
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(deps.aclose())
+
+    assert registry.close_count == 1
+    assert client.close_count == 1
 
 
 def test_registry_closes_sync_and_async_resources():

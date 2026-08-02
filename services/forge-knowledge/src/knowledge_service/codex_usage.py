@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from knowledge_service.active_profile import LlmUsageResponse, LlmUsageWindowResponse
-from knowledge_service.codex_app_server import CodexAppServerClient
+from knowledge_service.codex_app_server import CodexAppServerClient, CodexProtocol
 
 LOGGER = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class CodexLlmUsageSource:
         self._client = client
 
     async def usage(self) -> LlmUsageResponse | None:
-        payload = await self._client.request("account/rateLimits/read")
+        payload = await self._client.request(CodexProtocol.RATE_LIMITS_READ)
         rate_limits = payload.get("rateLimits") if isinstance(payload, Mapping) else None
         rate_limits_by_limit_id = payload.get("rateLimitsByLimitId") if isinstance(payload, Mapping) else None
         if not isinstance(rate_limits, Mapping):

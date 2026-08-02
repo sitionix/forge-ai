@@ -112,6 +112,12 @@ class AiRuntimeProviderOptions:
         return payload
 
 
+@dataclass(frozen=True)
+class AiRuntimeProfileMetadata:
+    provider_display_name: str | None
+    model_display_name: str | None
+
+
 class AiRuntimeOptionsSource(Protocol):
     provider_id: str
     display_name: str
@@ -164,6 +170,27 @@ class AiRuntimeDiscoveryService:
         tasks = [self._discover_one(source) for source in self._registry.sources]
         providers = await asyncio.gather(*tasks)
         return {"providers": [provider.public_dict() for provider in providers]}
+
+    def cached_profile_metadata(self, provider_id: str, model_id: str) -> AiRuntimeProfileMetadata:
+        normalized_provider_id = _clean_id(provider_id)
+        normalized_model_id = _clean_id(model_id)
+        for source in self._registry.sources:
+            if _clean_id(source.provider_id) != normalized_provider_id:
+                continue
+            cached = getattr(source, "_catalog_cache", None)
+            if cached is None or not isinstance(cached, _CacheEntry) or not cached.valid():
+                return AiRuntimeProfileMetadata(provider_display_name=None, model_display_name=None)
+            provider = cached.value
+            model_display_name = None
+            for model in provider.models:
+                if _clean_id(model.model_id) == normalized_model_id:
+                    model_display_name = model.display_name
+                    break
+            return AiRuntimeProfileMetadata(
+                provider_display_name=provider.display_name,
+                model_display_name=model_display_name,
+            )
+        return AiRuntimeProfileMetadata(provider_display_name=None, model_display_name=None)
 
     async def _discover_one(self, source: AiRuntimeOptionsSource) -> AiRuntimeProviderOptions:
         try:
@@ -436,6 +463,10 @@ def _non_blank(value: Any) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _clean_id(value: Any) -> str:
+    return str(value or "").strip().lower()
 
 
 def _string_list_contains(value: Any, expected: str) -> bool:

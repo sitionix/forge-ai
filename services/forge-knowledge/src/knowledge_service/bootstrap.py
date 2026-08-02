@@ -52,13 +52,26 @@ class KnowledgeDependencies:
     _codex_app_server_client_closed: bool = field(default=False, init=False, repr=False)
 
     async def aclose(self) -> None:
+        errors: list[BaseException] = []
         if self.ai_runtime_discovery is not None:
-            await self.ai_runtime_discovery.aclose()
+            try:
+                await self.ai_runtime_discovery.aclose()
+            except BaseException as exc:  # noqa: BLE001 - cleanup must continue through all owned resources.
+                errors.append(exc)
         if self.generative_registry is not None:
-            await self.generative_registry.aclose()
+            try:
+                await self.generative_registry.aclose()
+            except BaseException as exc:  # noqa: BLE001 - cleanup must continue through all owned resources.
+                errors.append(exc)
         if self.codex_app_server_client is not None and not self._codex_app_server_client_closed:
-            self._codex_app_server_client_closed = True
-            await self.codex_app_server_client.aclose()
+            try:
+                await self.codex_app_server_client.aclose()
+            except BaseException as exc:  # noqa: BLE001 - cleanup must report after all attempts.
+                errors.append(exc)
+            else:
+                self._codex_app_server_client_closed = True
+        if errors:
+            raise RuntimeError("Knowledge dependency cleanup failed") from errors[0]
 
 
 def build_dependencies(
@@ -149,7 +162,8 @@ def build_generative_runtime(config: AppConfig, *, codex_client: CodexAppServerC
 
 
 def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServerClient) -> AiRuntimeDiscoveryService:
-    timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), 5.0)
+    codex_settings = codex_runtime_settings(config)
+    timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), codex_settings.discovery_timeout_cap_seconds)
     registry = AiRuntimeDiscoveryRegistry()
     registry.register(
         OllamaAiRuntimeOptionsSource(
@@ -162,7 +176,10 @@ def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServe
             codex_client,
         ),
     )
-    return AiRuntimeDiscoveryService(registry, provider_timeout_seconds=timeout_seconds + 1.0)
+    return AiRuntimeDiscoveryService(
+        registry,
+        provider_timeout_seconds=timeout_seconds + codex_settings.discovery_timeout_allowance_seconds,
+    )
 
 
 def codex_runtime_settings(config: AppConfig) -> CodexRuntimeSettings:

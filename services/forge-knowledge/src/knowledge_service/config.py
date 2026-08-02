@@ -17,6 +17,7 @@ DEFAULT_FORMATTER_MAX_SERIALIZED_CLAUSE_CHARS = 12000
 DEFAULT_FORMATTER_MAX_SERIALIZED_SEGMENT_CHARS = 60000
 DEFAULT_FORMATTER_MAX_REPAIR_ATTEMPTS = 1
 DEFAULT_FORMATTER_MAX_CLAUSES_PER_SEGMENT = 24
+DEFAULT_CODEX_APP_SERVER_COMMAND = ("codex", "app-server", "--stdio")
 
 
 class LoggingSettings(BaseModel):
@@ -85,7 +86,7 @@ class AnalysisSettings(BaseModel):
 
 
 class CodexAppServerSettings(BaseModel):
-    command: tuple[str, ...] = ("codex", "app-server", "--stdio")
+    command: tuple[str, ...] = DEFAULT_CODEX_APP_SERVER_COMMAND
     runtime_dir: Path | None = None
     interrupt_grace_seconds: float = Field(default=1.0, ge=0.1)
     terminal_after_interrupt_seconds: float = Field(default=1.0, ge=0.1)
@@ -100,9 +101,10 @@ class CodexAppServerSettings(BaseModel):
 
     @validator("command")
     def require_command(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value:
+        normalized = tuple(str(item).strip() for item in value if str(item).strip())
+        if not normalized:
             raise ValueError("knowledge codex app-server command must not be empty")
-        return tuple(str(item) for item in value if str(item).strip())
+        return normalized
 
 
 class SemanticSettings(BaseModel):
@@ -639,59 +641,59 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     "max_attempts_per_file": int(analysis.get("max-attempts-per-file") or analysis.get("max_attempts_per_file") or 3),
             },
             "codex_app_server": {
-                "command": tuple(codex_app_server.get("command") or ("codex", "app-server", "--stdio")),
+                "command": tuple(_config_value(codex_app_server, "command", default=DEFAULT_CODEX_APP_SERVER_COMMAND)),
                 "runtime_dir": (
-                    _path(str(codex_app_server.get("runtime-dir") or codex_app_server.get("runtime_dir")), env)
-                    if codex_app_server.get("runtime-dir") or codex_app_server.get("runtime_dir")
+                    _path(str(_config_value(codex_app_server, "runtime-dir", "runtime_dir")), env)
+                    if _config_value(codex_app_server, "runtime-dir", "runtime_dir") is not None
                     else None
                 ),
                 "interrupt_grace_seconds": _float_config(
-                    codex_app_server.get("interrupt-grace-seconds") or codex_app_server.get("interrupt_grace_seconds"),
+                    _config_value(codex_app_server, "interrupt-grace-seconds", "interrupt_grace_seconds"),
                     env,
                     1.0,
                 ),
                 "terminal_after_interrupt_seconds": _float_config(
-                    codex_app_server.get("terminal-after-interrupt-seconds") or codex_app_server.get("terminal_after_interrupt_seconds"),
+                    _config_value(codex_app_server, "terminal-after-interrupt-seconds", "terminal_after_interrupt_seconds"),
                     env,
                     1.0,
                 ),
                 "terminate_grace_seconds": _float_config(
-                    codex_app_server.get("terminate-grace-seconds") or codex_app_server.get("terminate_grace_seconds"),
+                    _config_value(codex_app_server, "terminate-grace-seconds", "terminate_grace_seconds"),
                     env,
                     1.0,
                 ),
                 "kill_grace_seconds": _float_config(
-                    codex_app_server.get("kill-grace-seconds") or codex_app_server.get("kill_grace_seconds"),
+                    _config_value(codex_app_server, "kill-grace-seconds", "kill_grace_seconds"),
                     env,
                     1.0,
                 ),
                 "sync_close_timeout_seconds": _float_config(
-                    codex_app_server.get("sync-close-timeout-seconds") or codex_app_server.get("sync_close_timeout_seconds"),
+                    _config_value(codex_app_server, "sync-close-timeout-seconds", "sync_close_timeout_seconds"),
                     env,
                     3.0,
                 ),
                 "loop_thread_join_timeout_seconds": _float_config(
-                    codex_app_server.get("loop-thread-join-timeout-seconds") or codex_app_server.get("loop_thread_join_timeout_seconds"),
+                    _config_value(codex_app_server, "loop-thread-join-timeout-seconds", "loop_thread_join_timeout_seconds"),
                     env,
                     2.0,
                 ),
                 "max_buffered_notifications_per_turn": _int_config(
-                    codex_app_server.get("max-buffered-notifications-per-turn") or codex_app_server.get("max_buffered_notifications_per_turn"),
+                    _config_value(codex_app_server, "max-buffered-notifications-per-turn", "max_buffered_notifications_per_turn"),
                     env,
                     100,
                 ),
                 "max_buffered_turn_ids": _int_config(
-                    codex_app_server.get("max-buffered-turn-ids") or codex_app_server.get("max_buffered_turn_ids"),
+                    _config_value(codex_app_server, "max-buffered-turn-ids", "max_buffered_turn_ids"),
                     env,
                     100,
                 ),
                 "buffer_ttl_seconds": _float_config(
-                    codex_app_server.get("buffer-ttl-seconds") or codex_app_server.get("buffer_ttl_seconds"),
+                    _config_value(codex_app_server, "buffer-ttl-seconds", "buffer_ttl_seconds"),
                     env,
                     30.0,
                 ),
                 "cancellation_cleanup_timeout_seconds": _float_config(
-                    codex_app_server.get("cancellation-cleanup-timeout-seconds") or codex_app_server.get("cancellation_cleanup_timeout_seconds"),
+                    _config_value(codex_app_server, "cancellation-cleanup-timeout-seconds", "cancellation_cleanup_timeout_seconds"),
                     env,
                     1.0,
                 ),
@@ -833,6 +835,13 @@ def _bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() not in {"0", "false", "no", "off"}
     return bool(value)
+
+
+def _config_value(data: Mapping[str, Any], *names: str, default: Any = None) -> Any:
+    for name in names:
+        if name in data:
+            return data[name]
+    return default
 
 
 def _int_config(value: Any, env: Mapping[str, str], default: int) -> int:
