@@ -24,6 +24,7 @@ export class JarvisPage {
     this.refreshListener = () => {
       this.loadStatus();
       this.aiRuntimeView.loadActiveProfile();
+      this.aiRuntimeView.loadRuntimeSummary();
     };
     this.commandListener = (event) => this.submitCommand(event);
     this.queryListener = (event) => this.submitQuery(event);

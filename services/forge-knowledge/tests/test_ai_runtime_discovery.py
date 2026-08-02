@@ -61,7 +61,7 @@ def _codex_client(process_factory, *, request_timeout_seconds: float = 5.0) -> C
             loop_thread_join_timeout_seconds=0.5,
             cancellation_cleanup_timeout_seconds=0.1,
             cancellation_poll_interval_seconds=0.001,
-            notification_buffer=CodexNotificationBufferPolicy(),
+            notification_buffer=CodexNotificationBufferPolicy(max_per_turn=100, max_turn_ids=100, max_age_seconds=30.0),
         ),
     )
 

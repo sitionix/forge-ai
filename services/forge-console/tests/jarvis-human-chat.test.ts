@@ -151,7 +151,7 @@ describe('Jarvis human chat', () => {
     expect(http.get.mock.calls.some(([path]) => path === '/jarvis/actions')).toBe(false);
   });
 
-  it('refresh reloads Jarvis status and active profile without reloading provider summary', async () => {
+  it('refresh reloads Jarvis status, active profile, and provider summary', async () => {
     const dom = jarvisDom();
     const http = {
       get: vi.fn((path: string) => Promise.resolve(runtimeGet(path))),
@@ -164,9 +164,9 @@ describe('Jarvis human chat', () => {
     dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new dom.window.Event('click'));
     await flushAsync();
 
-    expect(http.get).toHaveBeenCalledTimes(5);
+    expect(http.get).toHaveBeenCalledTimes(6);
     expect(http.get.mock.calls.filter(([path]) => path === '/jarvis/status')).toHaveLength(2);
-    expect(http.get.mock.calls.filter(([path]) => path === '/knowledge/ai-runtime')).toHaveLength(1);
+    expect(http.get.mock.calls.filter(([path]) => path === '/knowledge/ai-runtime')).toHaveLength(2);
     expect(http.get.mock.calls.filter(([path]) => path === '/knowledge/active-profile')).toHaveLength(2);
     expect(http.get.mock.calls.some(([path]) => path === '/jarvis/actions')).toBe(false);
   });

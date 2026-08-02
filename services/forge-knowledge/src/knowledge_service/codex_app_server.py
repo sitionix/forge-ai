@@ -60,9 +60,9 @@ class CodexProtocol:
 
 @dataclass(frozen=True)
 class CodexNotificationBufferPolicy:
-    max_per_turn: int = 100
-    max_turn_ids: int = 100
-    max_age_seconds: float = 30.0
+    max_per_turn: int
+    max_turn_ids: int
+    max_age_seconds: float
 
     def __post_init__(self) -> None:
         if self.max_per_turn < 1:
@@ -137,7 +137,7 @@ class CodexTurnResult:
 class _ActiveTurn:
     thread_id: str
     turn_id: str
-    future: asyncio.Future[CodexTurnResult]
+    future: asyncio.Future[_CompletedTurn]
     unwrap_json_payload: bool = False
     messages: list[str] = field(default_factory=list)
     token_usage: Mapping[str, Any] | None = None
@@ -152,6 +152,17 @@ class _BufferedNotification:
     method: str
     params: Any
     created_at: float
+
+
+@dataclass(frozen=True)
+class _CompletedTurn:
+    raw_text: str
+    thread_id: str
+    turn_id: str
+    turn_status: str
+    token_usage: Mapping[str, Any] | None = None
+    warnings: tuple[Any, ...] = ()
+    model_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 class CodexGenerationPolicy:
@@ -231,6 +242,7 @@ class CodexProcessTransport:
         self._on_server_request = on_server_request
         self._on_connection_failed = on_connection_failed
         self._process: Any | None = None
+        self._cleanup_process: Any | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._pending: dict[int, asyncio.Future[Any]] = {}
@@ -295,27 +307,22 @@ class CodexProcessTransport:
 
     async def stop(self, exc: Exception | None = None) -> None:
         self._accepting = False
-        for task in (self._reader_task, self._stderr_task):
-            if task is not None:
-                task.cancel()
-        for task in (self._reader_task, self._stderr_task):
-            if task is None:
-                continue
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception as cleanup_exc:
-                LOGGER.debug("Codex app-server reader task failed during shutdown", exc_info=cleanup_exc)
-        self._reader_task = None
-        self._stderr_task = None
+        await self._cancel_and_drain_reader_tasks()
         self._fail_pending(exc or CodexAppServerTransportError("Codex app-server stopped"))
         process = self._process
         self._process = None
+        if process is not None:
+            self._cleanup_process = process
         self._connection_invalidated = False
         self._connection_failure = None
         if process is not None:
-            await self._terminate_process(process)
+            cleanup_complete = False
+            try:
+                await self._terminate_process(process)
+                cleanup_complete = True
+            finally:
+                if cleanup_complete and self._cleanup_process is process:
+                    self._cleanup_process = None
 
     async def invalidate(self, exc: Exception) -> None:
         if self._connection_invalidated and self._connection_failure is not None:
@@ -326,31 +333,58 @@ class CodexProcessTransport:
         self._on_connection_failed(exc)
         process = self._process
         self._process = None
+        if process is not None:
+            self._cleanup_process = process
+        termination_error: BaseException | None = None
+        try:
+            if process is not None and self._returncode(process) is None:
+                await self._terminate_process(process)
+        except (CodexAppServerError, TimeoutError, OSError, asyncio.CancelledError) as exc_info:
+            termination_error = exc_info
+        finally:
+            await self._cancel_and_drain_reader_tasks()
+            if termination_error is None and process is not None and self._cleanup_process is process:
+                self._cleanup_process = None
+        if termination_error is not None:
+            raise termination_error
+
+    async def force_stop(self, exc: Exception) -> None:
+        self._accepting = False
+        self._fail_pending(exc)
+        process = self._process or self._cleanup_process
+        self._process = None
+        self._cleanup_process = None
+        self._connection_invalidated = False
+        self._connection_failure = None
+        await self._cancel_and_drain_reader_tasks()
         if process is not None and self._returncode(process) is None:
-            await self._terminate_process(process)
-        reader_task = self._reader_task
-        if reader_task is not None and reader_task is not asyncio.current_task():
-            if not reader_task.done():
-                reader_task.cancel()
+            terminate = getattr(process, "terminate", None)
+            if callable(terminate):
+                terminate()
+            kill = getattr(process, "kill", None)
+            if callable(kill):
+                kill()
+            wait = getattr(process, "wait", None)
+            if callable(wait):
+                await asyncio.wait_for(wait(), timeout=self._settings.kill_grace_seconds)
+
+    async def _cancel_and_drain_reader_tasks(self) -> None:
+        current = asyncio.current_task()
+        tasks = tuple(task for task in (self._reader_task, self._stderr_task) if task is not None and task is not current)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        for task in tasks:
             try:
-                await reader_task
+                await task
             except asyncio.CancelledError:
                 pass
             except Exception as cleanup_exc:
-                LOGGER.debug("Codex app-server stdout task failed during invalidation", exc_info=cleanup_exc)
-            finally:
-                self._reader_task = None
-        stderr_task = self._stderr_task
-        if stderr_task is not None and not stderr_task.done():
-            stderr_task.cancel()
-            try:
-                await stderr_task
-            except asyncio.CancelledError:
-                pass
-            except Exception as cleanup_exc:
-                LOGGER.debug("Codex app-server stderr task failed during invalidation", exc_info=cleanup_exc)
-            finally:
-                self._stderr_task = None
+                LOGGER.debug("Codex app-server reader task failed during shutdown", exc_info=cleanup_exc)
+        if self._reader_task is not current:
+            self._reader_task = None
+        if self._stderr_task is not current:
+            self._stderr_task = None
 
     async def _terminate_process(self, process: Any) -> None:
         if self._returncode(process) is not None:
@@ -531,6 +565,8 @@ class CodexProcessTransport:
 
 
 class CodexTurnExecutor:
+    _FAIL_CLOSED_SERVER_REQUEST = "__codex_fail_closed_server_request"
+
     def __init__(self, settings: CodexRuntimeSettings, policy: CodexGenerationPolicy, transport_getter: Callable[[], CodexProcessTransport]) -> None:
         self._settings = settings
         self._policy = policy
@@ -576,7 +612,7 @@ class CodexTurnExecutor:
                     unwrap_json_payload=json_mode,
                 )
                 self._active_turns[turn_id] = active
-                self._replay_buffered_turn_notifications(turn_id)
+                self._replay_buffered_turn_notifications(active)
                 transport.raise_if_failed()
                 result = await asyncio.shield(active.future)
                 return CodexTurnResult(
@@ -642,6 +678,12 @@ class CodexTurnExecutor:
         active = self._active_turns.get(turn_id or "") if turn_id is not None else None
         if active is not None and not active.future.done():
             self._schedule_fail_active_turn(active, CodexAppServerProtocolError("Codex app-server requested unsupported side effect"))
+        elif turn_id is not None:
+            self._buffer_turn_notification(
+                turn_id,
+                self._FAIL_CLOSED_SERVER_REQUEST,
+                {"reason": "Codex app-server requested unsupported side effect"},
+            )
         elif turn_id is None:
             for active_turn in tuple(self._active_turns.values()):
                 if not active_turn.future.done():
@@ -735,12 +777,11 @@ class CodexTurnExecutor:
                 active.future.set_exception(CodexAppServerEmptyResponse("Codex turn completed without agent message"))
                 return
             active.future.set_result(
-                CodexTurnResult(
+                _CompletedTurn(
                     raw_text=raw_text,
                     thread_id=active.thread_id,
                     turn_id=active.turn_id,
                     turn_status=status,
-                    server_version="",
                     token_usage=active.token_usage,
                     warnings=tuple(active.warnings),
                     model_metadata=dict(active.model_metadata),
@@ -801,11 +842,14 @@ class CodexTurnExecutor:
         if expired:
             raise CodexAppServerProtocolError("Codex buffered notification expired before turn registration")
 
-    def _replay_buffered_turn_notifications(self, turn_id: str) -> None:
+    def _replay_buffered_turn_notifications(self, active: _ActiveTurn) -> None:
         self._prune_expired_buffered_notifications()
-        buffered = self._buffered_turn_notifications.pop(turn_id, [])
+        buffered = self._buffered_turn_notifications.pop(active.turn_id, [])
         for event in buffered:
-            if event.method in {CodexProtocol.ITEM_STARTED, CodexProtocol.ITEM_COMPLETED}:
+            if event.method == self._FAIL_CLOSED_SERVER_REQUEST:
+                reason = event.params.get("reason") if isinstance(event.params, Mapping) else None
+                self._schedule_fail_active_turn(active, CodexAppServerProtocolError(str(reason or "Codex app-server requested unsupported side effect")))
+            elif event.method in {CodexProtocol.ITEM_STARTED, CodexProtocol.ITEM_COMPLETED}:
                 self._handle_item_event(event.method, event.params)
             elif event.method == CodexProtocol.TURN_COMPLETED:
                 self._handle_turn_completed(event.params)
@@ -847,6 +891,7 @@ class CodexAppServerClient:
         self._thread_lock = threading.RLock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        self._close_task: asyncio.Task[None] | None = None
 
     @property
     def version(self) -> str | None:
@@ -917,23 +962,38 @@ class CodexAppServerClient:
         if self._closed:
             return
         cleanup_future: concurrent.futures.Future[Any] | None = None
+        cleanup_finished = False
         try:
             loop = self._loop
             if loop is not None and loop.is_running():
-                cleanup_future = self._submit(lambda: self._close_inner())
+                cleanup_future = self._submit(lambda: self._close_inner(), allow_closing=True)
                 try:
                     cleanup_future.result(timeout=self._settings.sync_close_timeout_seconds)
+                    cleanup_finished = True
                 except TimeoutError:
-                    cleanup_future.cancel()
+                    forced = asyncio.run_coroutine_threadsafe(self._force_close_after_timeout(), loop)
                     try:
-                        cleanup_future.result(timeout=self._settings.cancellation_cleanup_timeout_seconds)
-                    except (TimeoutError, concurrent.futures.CancelledError):
-                        pass
+                        forced.result(timeout=self._settings.cancellation_cleanup_timeout_seconds)
+                        try:
+                            cleanup_future.result(timeout=0)
+                        except concurrent.futures.CancelledError:
+                            pass
+                        except Exception as cleanup_exc:
+                            LOGGER.debug("Codex app-server timed-out close task finished with error", exc_info=cleanup_exc)
+                    except (TimeoutError, concurrent.futures.CancelledError) as exc:
+                        raise CodexAppServerLifecycleError("Codex app-server close cleanup could not be completed") from exc
+                    except CodexAppServerLifecycleError:
+                        raise
+                    except Exception as exc:
+                        raise CodexAppServerLifecycleError("Codex app-server close cleanup could not be completed") from exc
+                    cleanup_finished = True
                     raise CodexAppServerLifecycleError("Codex app-server close cleanup timed out")
             else:
                 self._closed = True
+                cleanup_finished = True
         finally:
-            self._stop_loop_thread()
+            if cleanup_finished or self._closed:
+                self._stop_loop_thread()
 
     async def _initialize_public(self) -> str:
         await self._ensure_initialized()
@@ -1000,17 +1060,44 @@ class CodexAppServerClient:
         if self._closed:
             return
         self._closing = True
+        self._close_task = asyncio.current_task()
         try:
             self._turn_executor.fail_active_work(CodexAppServerTransportError("Codex app-server stopped"))
             if self._transport is not None:
                 await self._transport.stop(CodexAppServerTransportError("Codex app-server stopped"))
             await self._turn_executor.drain_owned_tasks()
-        finally:
             self._initialized = False
             self._version = None
             self._initialize_lock = None
             self._closed = True
+        finally:
+            if self._close_task is asyncio.current_task():
+                self._close_task = None
             self._closing = False
+
+    async def _force_close_after_timeout(self) -> None:
+        close_task = self._close_task
+        if close_task is not None and not close_task.done():
+            close_task.cancel()
+        self._turn_executor.fail_active_work(CodexAppServerTransportError("Codex app-server stopped"))
+        if self._transport is not None:
+            await self._transport.force_stop(CodexAppServerTransportError("Codex app-server stopped"))
+        await self._turn_executor.drain_owned_tasks()
+        if close_task is not None and close_task is not asyncio.current_task() and not close_task.done():
+            try:
+                await asyncio.wait_for(close_task, timeout=self._settings.cancellation_cleanup_timeout_seconds)
+            except asyncio.CancelledError:
+                pass
+            except TimeoutError as exc:
+                raise CodexAppServerLifecycleError("Codex app-server close cleanup task did not finish") from exc
+            except Exception as cleanup_exc:
+                LOGGER.debug("Codex app-server timed-out close task finished with error", exc_info=cleanup_exc)
+        self._initialized = False
+        self._version = None
+        self._initialize_lock = None
+        self._closed = True
+        self._closing = False
+        self._close_task = None
 
     def _require_transport(self) -> CodexProcessTransport:
         if self._transport is None:
@@ -1061,8 +1148,12 @@ class CodexAppServerClient:
                     LOGGER.debug("Codex app-server cancellation cleanup failed", exc_info=cleanup_exc)
             raise
 
-    def _submit(self, coro_factory: Callable[[], Awaitable[Any]]) -> concurrent.futures.Future[Any]:
-        self._raise_if_closed()
+    def _submit(self, coro_factory: Callable[[], Awaitable[Any]], *, allow_closing: bool = False) -> concurrent.futures.Future[Any]:
+        if allow_closing:
+            if self._closed:
+                raise CodexAppServerTransportError("Codex app-server client is closed")
+        else:
+            self._raise_if_closed()
         loop = self._ensure_loop_thread()
         return asyncio.run_coroutine_threadsafe(cast(Coroutine[Any, Any, Any], coro_factory()), loop)
 

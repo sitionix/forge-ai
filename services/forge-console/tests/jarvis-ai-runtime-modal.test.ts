@@ -205,7 +205,7 @@ describe('Jarvis AI runtime modal', () => {
     expect(getPaths(http.get)).toEqual(['/jarvis/status', '/knowledge/active-profile', '/knowledge/ai-runtime']);
   });
 
-  it('general Refresh reloads status and active profile without another runtime catalog discovery', async () => {
+  it('general Refresh reloads status, active profile, and runtime summary', async () => {
     const { dom, http, page } = createPage();
 
     page.mount();
@@ -215,7 +215,80 @@ describe('Jarvis AI runtime modal', () => {
 
     expect(getPaths(http.get).filter((path) => path === '/jarvis/status')).toHaveLength(2);
     expect(getPaths(http.get).filter((path) => path === '/knowledge/active-profile')).toHaveLength(2);
-    expect(getPaths(http.get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(1);
+    expect(getPaths(http.get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(2);
+  });
+
+  it('uses runtime summary display names when active-profile metadata is initially cold', async () => {
+    const runtime = deferred<unknown>();
+    const get = vi.fn((path: string) => {
+      if (path === '/jarvis/status') return Promise.resolve(jarvisStatus());
+      if (path === '/knowledge/active-profile') {
+        return Promise.resolve(activeProfile({
+          llmProfile: {
+            providerId: 'ollama',
+            modelId: 'qwen2.5-coder:14b',
+            effort: null,
+            providerDisplayName: null,
+            modelDisplayName: null
+          }
+        }));
+      }
+      if (path === '/knowledge/ai-runtime') return runtime.promise;
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    const { dom, page } = createPage({ get });
+
+    page.mount();
+    await flushAsync();
+    expect(text(dom)).toContain('qwen2.5-coder:14b');
+    expect(text(dom)).not.toContain('Qwen 14B');
+
+    runtime.resolve(runtimeProviders());
+    await flushAsync();
+
+    expect(text(dom)).toContain('Qwen 14B');
+    expect(text(dom)).toContain('Ollama');
+  });
+
+  it('general Refresh updates provider status cards from fresh summary data', async () => {
+    let runtime = runtimeProviders();
+    const get = vi.fn((path: string) => {
+      if (path === '/jarvis/status') return Promise.resolve(jarvisStatus());
+      if (path === '/knowledge/active-profile') return Promise.resolve(activeProfile());
+      if (path === '/knowledge/ai-runtime') return Promise.resolve(runtime);
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    const { dom, page } = createPage({ get });
+
+    page.mount();
+    await flushAsync();
+    expect(text(dom)).toContain('0.146.0');
+    expect(text(dom)).toContain('READY');
+
+    runtime = {
+      providers: [
+        {
+          providerId: 'codex',
+          displayName: 'Codex',
+          status: 'DEGRADED',
+          version: '0.147.0',
+          models: [
+            {
+              modelId: 'gpt-5.6-luna',
+              displayName: 'GPT-5.6-Luna',
+              description: 'Codex hosted model',
+              modifiedAt: '2026-01-03T00:00:00Z',
+              efforts: []
+            }
+          ]
+        }
+      ]
+    };
+    dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new dom.window.Event('click'));
+    await flushAsync();
+
+    expect(text(dom)).toContain('DEGRADED');
+    expect(text(dom)).toContain('0.147.0');
   });
 
   it('opens with active provider and model preselected and unchanged Apply disabled', async () => {
@@ -536,6 +609,31 @@ describe('Jarvis AI runtime modal', () => {
 
     expect(http.put).not.toHaveBeenCalled();
     expect(text(dom)).toContain('AI runtime catalog failed');
+  });
+
+  it('does not use runtime summary data to authorize Apply', async () => {
+    let runtimeCalls = 0;
+    const get = vi.fn((path: string) => {
+      if (path === '/jarvis/status') return Promise.resolve(jarvisStatus());
+      if (path === '/knowledge/active-profile') return Promise.resolve(activeProfile());
+      if (path === '/knowledge/ai-runtime') {
+        runtimeCalls += 1;
+        if (runtimeCalls === 1) return Promise.resolve(runtimeProviders());
+        return Promise.reject(Object.assign(new Error('fresh catalog unavailable'), { status: 503 }));
+      }
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    const { dom, http, page } = createPage({ get });
+
+    page.mount();
+    await flushAsync();
+    dom.window.document.getElementById('editAiRuntime')?.click();
+    await flushAsync();
+    dom.window.document.getElementById('applyAiRuntimeDialog')?.click();
+
+    expect(text(dom)).toContain('AI runtime catalog failed');
+    expect(dom.window.document.getElementById('applyAiRuntimeDialog')?.hasAttribute('disabled')).toBe(true);
+    expect(http.put).not.toHaveBeenCalled();
   });
 
   it('keeps non-ready providers visible but disabled', async () => {

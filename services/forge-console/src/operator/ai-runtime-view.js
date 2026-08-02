@@ -228,8 +228,10 @@ export class AiRuntimeView {
         : this.renderStatusCard('Active LLM', '-', 'active profile');
     }
     const effort = profile.llmProfile.effort?.effortId;
-    const providerName = profile.llmProfile.providerDisplayName || profile.llmProfile.providerId;
-    const modelName = profile.llmProfile.modelDisplayName || profile.llmProfile.modelId;
+    const summaryProvider = this.findSummaryProvider(profile.llmProfile.providerId);
+    const summaryModel = this.findSummaryModel(profile.llmProfile.providerId, profile.llmProfile.modelId);
+    const providerName = profile.llmProfile.providerDisplayName || summaryProvider?.displayName || profile.llmProfile.providerId;
+    const modelName = profile.llmProfile.modelDisplayName || summaryModel?.displayName || profile.llmProfile.modelId;
     const meta = [
       providerName,
       profile.llmProfile.modelId,
@@ -686,6 +688,21 @@ export class AiRuntimeView {
       return null;
     }
     return (this.runtime?.providers || []).find((provider) => provider.providerId === providerId) || null;
+  }
+
+  findSummaryProvider(providerId) {
+    if (!providerId) {
+      return null;
+    }
+    return (this.runtimeSummary?.providers || []).find((provider) => provider.providerId === providerId) || null;
+  }
+
+  findSummaryModel(providerId, modelId) {
+    const provider = this.findSummaryProvider(providerId);
+    if (!provider || !modelId) {
+      return null;
+    }
+    return (provider.models || []).find((model) => model.modelId === modelId) || null;
   }
 
   findModel(providerId, modelId) {
