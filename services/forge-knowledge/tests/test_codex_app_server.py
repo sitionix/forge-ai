@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -176,6 +177,89 @@ def test_stdout_eof_marks_connection_failed_and_next_request_restarts(tmp_path: 
     assert asyncio.run(exercise()) == {"ok": True}
     assert [sent.get("method") for sent in first_process.sent] == ["initialize", "initialized", "model/list"]
     assert len([sent for sent in second_process.sent if sent.get("method") == "initialize"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("first_script", "mode"),
+    [
+        ([result({"userAgent": "forge-knowledge/0.146.0"}), result({})], ResponseMode.TEXT),
+        ([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({})], ResponseMode.TEXT),
+        (
+            [
+                result({"userAgent": "forge-knowledge/0.146.0"}),
+                result(
+                    {"threadId": "thread-1"},
+                    notifications=[notification("turn/completed", {"turnId": "turn-1"})],
+                ),
+                result({"turnId": "turn-1"}),
+            ],
+            ResponseMode.TEXT,
+        ),
+        (
+            [
+                result({"userAgent": "forge-knowledge/0.146.0"}),
+                result(
+                    {"threadId": "thread-1"},
+                    notifications=[
+                        notification("item/completed", {"turnId": "turn-1", "item": {"type": "agentMessage", "text": "{\"json\":\"[]\"}"}}),
+                        notification("turn/completed", {"turnId": "turn-1", "status": "completed"}),
+                    ],
+                ),
+                result({"turnId": "turn-1"}),
+            ],
+            ResponseMode.JSON_OBJECT,
+        ),
+    ],
+)
+def test_method_level_protocol_failure_invalidates_reaps_and_restarts(tmp_path: Path, first_script: list[Mapping[str, Any]], mode: ResponseMode):
+    first_process = FakeCodexProcess(first_script)
+    second_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [first_process, second_process]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
+
+    async def exercise():
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=mode, timeout_seconds=3)
+        payload = await client.request("model/list")
+        await client.aclose()
+        return payload
+
+    assert asyncio.run(exercise()) == {"ok": True}
+    assert first_process.terminated is True
+    assert first_process.wait_calls >= 1
+    assert second_process.by_method("initialize")["method"] == "initialize"
+
+
+def test_expired_buffered_turn_event_during_method_replay_invalidates_reaps_and_restarts(tmp_path: Path):
+    first_process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result(
+                {"threadId": "thread-1"},
+                notifications=[notification("item/completed", {"turnId": "turn-1", "item": {"type": "agentMessage", "text": "expired"}})],
+            ),
+            defer(),
+        ]
+    )
+    second_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [first_process, second_process]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path, notification_buffer=CodexNotificationBufferPolicy(max_per_turn=10, max_turn_ids=10, max_age_seconds=0.01)))
+
+    async def exercise():
+        task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        while not any(sent.get("method") == "turn/start" for sent in first_process.sent):
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
+        first_process.push_json({"id": 3, "result": {"turnId": "turn-1"}})
+        with pytest.raises(CodexAppServerProtocolError):
+            await task
+        payload = await client.request("model/list")
+        await client.aclose()
+        return payload
+
+    assert asyncio.run(exercise()) == {"ok": True}
+    assert first_process.terminated is True
+    assert first_process.wait_calls >= 1
 
 
 def test_run_turn_envelope_json_mode_effort_and_agent_message_result(tmp_path: Path):
@@ -470,8 +554,26 @@ def test_expired_buffered_notifications_are_pruned_deterministically(tmp_path: P
     assert process.terminated is True
 
 
-def test_closed_client_operations_do_not_start_loop_thread_or_process(tmp_path: Path):
+def test_closed_client_operations_do_not_start_loop_thread_or_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     created = 0
+    loop_creations = 0
+    thread_creations = 0
+    original_new_event_loop = asyncio.new_event_loop
+    original_thread = threading.Thread
+
+    def counting_new_event_loop():
+        nonlocal loop_creations
+        loop_creations += 1
+        return original_new_event_loop()
+
+    class CountingThread(original_thread):
+        def __init__(self, *args, **kwargs):
+            nonlocal thread_creations
+            thread_creations += 1
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "new_event_loop", counting_new_event_loop)
+    monkeypatch.setattr(threading, "Thread", CountingThread)
 
     async def process_factory(command):
         nonlocal created
@@ -494,8 +596,8 @@ def test_closed_client_operations_do_not_start_loop_thread_or_process(tmp_path: 
         client.run_turn_sync(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=1)
 
     assert created == 0
-    assert client._loop is None
-    assert client._thread is None
+    assert loop_creations == 0
+    assert thread_creations == 0
 
 
 def test_close_terminate_timeout_kills_process(tmp_path: Path):
@@ -527,8 +629,6 @@ def test_close_kill_timeout_raises_lifecycle_error_and_stops_loop(tmp_path: Path
 
     assert process.terminated is True
     assert process.killed is True
-    assert client._loop is None
-    assert client._thread is None
 
 
 def test_reader_cleanup_exception_during_close_is_controlled(tmp_path: Path):
@@ -894,7 +994,17 @@ def _settings(runtime_cwd: Path, **overrides: Any) -> CodexRuntimeSettings:
         "client_name": "forge-knowledge",
         "client_version": "0.146.0",
         "request_timeout_seconds": 1,
+        "discovery_timeout_cap_seconds": 1,
+        "discovery_timeout_allowance_seconds": 0.1,
+        "interrupt_grace_seconds": 0.1,
+        "terminal_after_interrupt_seconds": 0.1,
+        "terminate_grace_seconds": 0.1,
+        "kill_grace_seconds": 0.1,
         "sync_close_timeout_seconds": 3,
+        "loop_thread_join_timeout_seconds": 0.5,
+        "cancellation_cleanup_timeout_seconds": 0.1,
+        "cancellation_poll_interval_seconds": 0.001,
+        "notification_buffer": CodexNotificationBufferPolicy(),
     }
     values.update(overrides)
     return CodexRuntimeSettings(**values)

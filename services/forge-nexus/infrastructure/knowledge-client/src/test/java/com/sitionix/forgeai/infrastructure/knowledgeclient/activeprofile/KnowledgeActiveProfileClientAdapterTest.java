@@ -2,11 +2,13 @@ package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
+import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmSelection;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileDetails;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileRequest;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileResponse;
+import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmSelection;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveProfileResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -70,9 +72,9 @@ class KnowledgeActiveProfileClientAdapterTest {
         final KnowledgeActiveLlmProfileRequest request =
                 new KnowledgeActiveLlmProfileRequest(3, "ollama", "qwen", null);
         final KnowledgeActiveLlmProfileResponse clientResponse =
-                new KnowledgeActiveLlmProfileResponse(4L, details());
+                new KnowledgeActiveLlmProfileResponse(4L, selection());
         final ActiveLlmProfileUpdateResult domain =
-                new ActiveLlmProfileUpdateResult(4, new ActiveLlmProfile("ollama", "qwen", null));
+                new ActiveLlmProfileUpdateResult(4, new ActiveLlmSelection("ollama", "qwen", null));
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.clientCallExecutor.<KnowledgeActiveLlmProfileResponse>execute(any()))
                 .thenReturn(clientResponse);
@@ -90,5 +92,9 @@ class KnowledgeActiveProfileClientAdapterTest {
 
     private static KnowledgeActiveLlmProfileDetails details() {
         return new KnowledgeActiveLlmProfileDetails("ollama", "qwen", null);
+    }
+
+    private static KnowledgeActiveLlmSelection selection() {
+        return new KnowledgeActiveLlmSelection("ollama", "qwen", null);
     }
 }

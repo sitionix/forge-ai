@@ -27,10 +27,16 @@ class ActiveLlmEffortResponse(BaseModel):
         extra = "forbid"
 
 
-class ActiveLlmProfileResponse(BaseModel):
+class ActiveLlmSelectionResponse(BaseModel):
     providerId: str
     modelId: str
     effort: ActiveLlmEffortResponse | None
+
+    class Config:
+        extra = "forbid"
+
+
+class ActiveLlmProfileDetailsResponse(ActiveLlmSelectionResponse):
     providerDisplayName: str | None = None
     modelDisplayName: str | None = None
 
@@ -57,7 +63,7 @@ class LlmUsageResponse(BaseModel):
 
 class ActiveProfileResponse(BaseModel):
     revision: int
-    llmProfile: ActiveLlmProfileResponse
+    llmProfile: ActiveLlmProfileDetailsResponse
     usage: LlmUsageResponse | None
 
     class Config:
@@ -82,7 +88,7 @@ class ActiveLlmProfilePutRequest(BaseModel):
 
 class ActiveLlmProfilePutResponse(BaseModel):
     revision: int
-    llmProfile: ActiveLlmProfileResponse
+    llmProfile: ActiveLlmSelectionResponse
 
     class Config:
         extra = "forbid"
@@ -91,7 +97,7 @@ class ActiveLlmProfilePutResponse(BaseModel):
 @dataclass(frozen=True)
 class PersistedActiveProfile:
     revision: int
-    llm_profile: ActiveLlmProfileResponse
+    llm_profile: ActiveLlmSelectionResponse
 
 
 @dataclass(frozen=True)
@@ -114,7 +120,7 @@ class ActiveProfileStore:
             existing = self._read(conn)
             if existing is not None:
                 return existing
-            profile = ActiveLlmProfileResponse(providerId=provider_id, modelId=model_id, effort=None)
+            profile = ActiveLlmSelectionResponse(providerId=provider_id, modelId=model_id, effort=None)
             conn.execute(
                 """
                 INSERT INTO active_profile(singleton_id, revision, profile_json, created_at, updated_at)
@@ -129,7 +135,7 @@ class ActiveProfileStore:
             self._create_schema(conn)
             return self._read(conn)
 
-    def replace_llm_profile(self, expected_revision: int, profile: ActiveLlmProfileResponse) -> PersistedActiveProfile:
+    def replace_llm_profile(self, expected_revision: int, profile: ActiveLlmSelectionResponse) -> PersistedActiveProfile:
         with self._connect() as conn:
             self._create_schema(conn)
             current = self._read(conn)
@@ -191,12 +197,12 @@ class ActiveProfileStore:
             return None
         try:
             payload = json.loads(str(row["profile_json"]))
-            llm_profile = ActiveLlmProfileResponse.parse_obj(payload.get("llmProfile"))
+            llm_profile = ActiveLlmSelectionResponse.parse_obj(payload.get("llmProfile"))
         except Exception as exc:
             raise KnowledgeError("ACTIVE_PROFILE_INVALID", "Stored active profile is invalid") from exc
         return PersistedActiveProfile(revision=int(row["revision"]), llm_profile=llm_profile)
 
-    def _profile_json(self, profile: ActiveLlmProfileResponse) -> str:
+    def _profile_json(self, profile: ActiveLlmSelectionResponse) -> str:
         return json.dumps(
             {
                 "llmProfile": {
@@ -272,7 +278,7 @@ class ActiveProfileService:
         )
 
     async def replace_llm_profile(self, request: ActiveLlmProfilePutRequest) -> ActiveLlmProfilePutResponse:
-        candidate = ActiveLlmProfileResponse(
+        candidate = ActiveLlmSelectionResponse(
             providerId=_clean_id(request.providerId),
             modelId=str(request.modelId or "").strip(),
             effort=request.effort,
@@ -304,7 +310,7 @@ class ActiveProfileService:
             raise KnowledgeError("ACTIVE_PROFILE_NOT_FOUND", "Active profile is not initialized")
         return persisted
 
-    async def _validate_candidate(self, candidate: ActiveLlmProfileResponse) -> None:
+    async def _validate_candidate(self, candidate: ActiveLlmSelectionResponse) -> None:
         provider_id = _clean_id(candidate.providerId)
         model_id = _clean_id(candidate.modelId)
         if not provider_id:
@@ -361,7 +367,7 @@ class ActiveProfileService:
             LOGGER.exception("Active profile usage lookup failed for provider %s", provider_id)
             return None
 
-    async def _present_llm_profile(self, profile: ActiveLlmProfileResponse) -> ActiveLlmProfileResponse:
+    async def _present_llm_profile(self, profile: ActiveLlmSelectionResponse) -> ActiveLlmProfileDetailsResponse:
         try:
             metadata = self._discovery.cached_profile_metadata(profile.providerId, profile.modelId)
         except Exception:
@@ -371,7 +377,7 @@ class ActiveProfileService:
         else:
             provider_display_name = _optional_display_name(metadata.provider_display_name)
             model_display_name = _optional_display_name(metadata.model_display_name)
-        return ActiveLlmProfileResponse(
+        return ActiveLlmProfileDetailsResponse(
             providerId=profile.providerId,
             modelId=profile.modelId,
             effort=profile.effort,

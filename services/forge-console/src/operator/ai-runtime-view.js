@@ -18,13 +18,17 @@ export class AiRuntimeView {
     this.disposed = false;
     this.jarvisStatus = null;
     this.runtime = null;
+    this.runtimeSummary = null;
     this.activeProfile = null;
     this.runtimeError = null;
+    this.runtimeSummaryError = null;
     this.applyError = null;
     this.runtimeLoading = false;
+    this.runtimeSummaryLoading = false;
     this.activeProfileLoading = false;
     this.runtimeCatalogLoadId = 0;
     this.activeProfileLoadId = 0;
+    this.runtimeSummaryLoadId = 0;
     this.applyInProgress = false;
     this.draft = this.emptyDraft();
     this.editButton = null;
@@ -154,6 +158,37 @@ export class AiRuntimeView {
     }
   }
 
+  async loadRuntimeSummary() {
+    const loadId = this.runtimeSummaryLoadId + 1;
+    this.runtimeSummaryLoadId = loadId;
+    this.runtimeSummaryLoading = true;
+    this.runtimeSummaryError = null;
+    this.renderRuntimePanel();
+    try {
+      const result = await this.requestCoordinator.run(
+        'ai-runtime-summary',
+        ({ signal }) => this.http.get('/knowledge/ai-runtime', { signal })
+      );
+      if (!result.applied || this.disposed || loadId !== this.runtimeSummaryLoadId) {
+        return null;
+      }
+      this.runtimeSummary = normalizeRuntime(result.value);
+      this.runtimeSummaryError = null;
+      return this.runtimeSummary;
+    } catch (error) {
+      if (!this.disposed && loadId === this.runtimeSummaryLoadId) {
+        this.runtimeSummary = null;
+        this.runtimeSummaryError = error;
+      }
+      return null;
+    } finally {
+      if (!this.disposed && loadId === this.runtimeSummaryLoadId) {
+        this.runtimeSummaryLoading = false;
+        this.renderRuntimePanel();
+      }
+    }
+  }
+
   renderRuntimePanel() {
     const cards = this.document.getElementById('jarvisStatusCards');
     if (!cards) {
@@ -164,9 +199,25 @@ export class AiRuntimeView {
     const cardHtml = [
       this.renderStatusCard('Jarvis', status.status || 'UNKNOWN', jarvisBase),
       this.renderActiveLlmCard(),
+      ...this.renderRuntimeSummaryCards(),
       this.renderUsageSection()
     ].filter(Boolean);
     cards.innerHTML = cardHtml.join('');
+  }
+
+  renderRuntimeSummaryCards() {
+    if (this.runtimeSummaryLoading && !this.runtimeSummary) {
+      return [this.renderStatusCard('LLM Providers', 'Loading', 'runtime catalog')];
+    }
+    if (this.runtimeSummaryError) {
+      return [this.renderStatusCard('LLM Providers', 'UNAVAILABLE', 'runtime catalog')];
+    }
+    const providers = this.runtimeSummary?.providers || [];
+    return providers.map((provider) => this.renderStatusCard(
+      provider.displayName || provider.providerId || 'Provider',
+      provider.status || 'UNKNOWN',
+      provider.version || provider.providerId || 'runtime provider'
+    ));
   }
 
   renderActiveLlmCard() {

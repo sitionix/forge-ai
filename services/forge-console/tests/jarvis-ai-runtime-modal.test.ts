@@ -198,12 +198,14 @@ describe('Jarvis AI runtime modal', () => {
     expect(text(dom)).toContain('Active LLM');
     expect(text(dom)).toContain('Qwen Coder 14B');
     expect(text(dom)).toContain('Ollama Runtime');
+    expect(text(dom)).toContain('Codex');
+    expect(text(dom)).toContain('0.146.0');
     expect(text(dom)).not.toContain('stale-configured-model');
     expect(text(dom)).not.toContain('Usage');
-    expect(getPaths(http.get)).toEqual(['/jarvis/status', '/knowledge/active-profile']);
+    expect(getPaths(http.get)).toEqual(['/jarvis/status', '/knowledge/active-profile', '/knowledge/ai-runtime']);
   });
 
-  it('general Refresh reloads status and active profile without runtime catalog discovery', async () => {
+  it('general Refresh reloads status and active profile without another runtime catalog discovery', async () => {
     const { dom, http, page } = createPage();
 
     page.mount();
@@ -213,7 +215,7 @@ describe('Jarvis AI runtime modal', () => {
 
     expect(getPaths(http.get).filter((path) => path === '/jarvis/status')).toHaveLength(2);
     expect(getPaths(http.get).filter((path) => path === '/knowledge/active-profile')).toHaveLength(2);
-    expect(getPaths(http.get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(0);
+    expect(getPaths(http.get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(1);
   });
 
   it('opens with active provider and model preselected and unchanged Apply disabled', async () => {
@@ -273,7 +275,7 @@ describe('Jarvis AI runtime modal', () => {
 
     expect(dialog.hasAttribute('open')).toBe(false);
     expect(getPaths(http.get).filter((path) => path === '/knowledge/active-profile')).toHaveLength(2);
-    expect(getPaths(http.get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(1);
+    expect(getPaths(http.get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(2);
   });
 
   it('keeps modal open on failed PUT and does not pretend activation succeeded', async () => {
@@ -450,6 +452,14 @@ describe('Jarvis AI runtime modal', () => {
     const catalogs = [
       {
         providers: [{
+          providerId: 'summary',
+          displayName: 'Summary Only',
+          status: 'READY',
+          models: [{ modelId: 'summary-model', displayName: 'Summary Model' }]
+        }]
+      },
+      {
+        providers: [{
           providerId: 'ollama',
           displayName: 'Ollama',
           status: 'READY',
@@ -485,9 +495,10 @@ describe('Jarvis AI runtime modal', () => {
     dom.window.document.getElementById('editAiRuntime')?.click();
     await flushAsync();
 
-    expect(getPaths(get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(2);
+    expect(getPaths(get).filter((path) => path === '/knowledge/ai-runtime')).toHaveLength(3);
     expect(text(dom)).toContain('New Model');
     expect(text(dom)).not.toContain('Old Model');
+    expect(text(dom)).toContain('Summary Only');
   });
 
   it('disables Apply while discovery is pending and cannot apply previous catalog after discovery failure', async () => {
@@ -498,7 +509,7 @@ describe('Jarvis AI runtime modal', () => {
       if (path === '/knowledge/active-profile') return Promise.resolve(activeProfile());
       if (path === '/knowledge/ai-runtime') {
         runtimeCalls += 1;
-        if (runtimeCalls === 1) return Promise.resolve(runtimeProviders());
+        if (runtimeCalls <= 2) return Promise.resolve(runtimeProviders());
         return pending.promise;
       }
       return Promise.reject(new Error(`unexpected GET ${path}`));

@@ -12,8 +12,8 @@ from support import AsgiTestClient, build_test_app, write_runtime_config
 from knowledge_service.active_profile import (
     ActiveLlmEffortResponse,
     ActiveLlmProfilePutRequest,
-    ActiveLlmProfileResponse,
     ActiveLlmRuntime,
+    ActiveLlmSelectionResponse,
     ActiveProfileService,
     ActiveProfileStore,
     ActiveRuntimeGenerativeProvider,
@@ -203,7 +203,11 @@ def test_active_profile_get_keeps_ids_when_display_metadata_lookup_fails(tmp_pat
 def test_existing_profile_is_not_overwritten_on_restart_and_usage_is_not_persisted(tmp_path: Path):
     config = write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b")
     first, _, first_config, first_deps = build_test_app(config)
-    first_deps.active_profile_service._discovery = FakeDiscovery([ollama_ready("qwen2.5-coder:14b", "qwen2.5-coder:32b")])
+    first_deps.active_profile_service = _active_profile_service(
+        first_config,
+        first_deps,
+        FakeDiscovery([ollama_ready("qwen2.5-coder:14b", "qwen2.5-coder:32b")]),
+    )
     with AsgiTestClient(first) as client:
         put = client.put(
             "/api/v1/knowledge/active-profile/llm-profile",
@@ -229,8 +233,12 @@ def test_existing_profile_is_not_overwritten_on_restart_and_usage_is_not_persist
 
 
 def test_put_replaces_llm_profile_increments_revision_and_updates_status(tmp_path: Path):
-    app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
-    deps.active_profile_service._discovery = FakeDiscovery([ollama_ready("qwen2.5-coder:14b", "qwen2.5-coder:32b")])
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
+    deps.active_profile_service = _active_profile_service(
+        app_config,
+        deps,
+        FakeDiscovery([ollama_ready("qwen2.5-coder:14b", "qwen2.5-coder:32b")]),
+    )
 
     with AsgiTestClient(app) as client:
         put = client.put(
@@ -251,12 +259,62 @@ def test_put_replaces_llm_profile_increments_revision_and_updates_status(tmp_pat
             "providerId": "ollama",
             "modelId": "qwen2.5-coder:32b",
             "effort": None,
-            "providerDisplayName": None,
-            "modelDisplayName": None,
         },
     }
     assert status.json()["generative"]["revision"] == 2
+    assert status.json()["generative"]["providerId"] == "ollama"
     assert status.json()["generative"]["modelId"] == "qwen2.5-coder:32b"
+
+
+def test_put_creates_singleton_when_record_is_absent(tmp_path: Path):
+    store = ActiveProfileStore(tmp_path / "active.sqlite")
+    initial = PersistedActiveProfile(
+        revision=1,
+        llm_profile=ActiveLlmSelectionResponse(providerId="ollama", modelId="qwen2.5-coder:14b", effort=None),
+    )
+    service = ActiveProfileService(
+        store,
+        _runtime(initial),
+        FakeDiscovery([ollama_ready("qwen2.5-coder:14b")]),
+        LlmUsageRegistry(),
+    )
+
+    response = asyncio.run(
+        service.replace_llm_profile(
+            ActiveLlmProfilePutRequest(
+                expectedRevision=1,
+                providerId="ollama",
+                modelId="qwen2.5-coder:14b",
+                effort=None,
+            )
+        )
+    )
+
+    assert response.revision == 2
+    assert response.llmProfile == ActiveLlmSelectionResponse(providerId="ollama", modelId="qwen2.5-coder:14b", effort=None)
+
+
+def test_stale_revision_returns_409(tmp_path: Path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
+    deps.active_profile_service = _active_profile_service(
+        app_config,
+        deps,
+        FakeDiscovery([ollama_ready("qwen2.5-coder:14b", "qwen2.5-coder:32b")]),
+    )
+
+    with AsgiTestClient(app) as client:
+        first = client.put(
+            "/api/v1/knowledge/active-profile/llm-profile",
+            {"expectedRevision": 1, "providerId": "ollama", "modelId": "qwen2.5-coder:32b", "effort": None},
+        )
+        stale = client.put(
+            "/api/v1/knowledge/active-profile/llm-profile",
+            {"expectedRevision": 1, "providerId": "ollama", "modelId": "qwen2.5-coder:14b", "effort": None},
+        )
+
+    assert first.status_code == 200
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "ACTIVE_PROFILE_REVISION_CONFLICT"
 
 
 def test_active_llm_profile_put_request_accepts_explicit_effort_contract():
@@ -278,18 +336,25 @@ def test_active_llm_profile_put_request_accepts_explicit_effort_contract():
 
 
 def test_put_validation_errors_leave_previous_profile_active(tmp_path: Path):
-    app, _, _, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
-    service = deps.active_profile_service
-    service._discovery = FakeDiscovery([
-        ollama_ready("qwen2.5-coder:14b"),
-        {"providerId": "offline", "displayName": "Offline", "status": "UNAVAILABLE", "models": []},
-        codex_ready(),
-    ])
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
+    deps.active_profile_service = _active_profile_service(
+        app_config,
+        deps,
+        FakeDiscovery([
+            ollama_ready("qwen2.5-coder:14b"),
+            {"providerId": "offline", "displayName": "Offline", "status": "UNAVAILABLE", "models": []},
+            codex_ready(),
+        ]),
+    )
 
     cases = [
         ({"expectedRevision": 1, "providerId": "missing", "modelId": "x", "effort": None}, "ACTIVE_LLM_PROVIDER_NOT_FOUND"),
         ({"expectedRevision": 1, "providerId": "offline", "modelId": "x", "effort": None}, "ACTIVE_LLM_PROVIDER_UNAVAILABLE"),
         ({"expectedRevision": 1, "providerId": "ollama", "modelId": "missing", "effort": None}, "ACTIVE_LLM_MODEL_NOT_FOUND"),
+        (
+            {"expectedRevision": 1, "providerId": "ollama", "modelId": "qwen2.5-coder:14b", "effort": {"effortId": "high"}},
+            "ACTIVE_LLM_EFFORT_NOT_SUPPORTED",
+        ),
         ({"expectedRevision": 1, "providerId": "codex", "modelId": "gpt-5.6-luna", "effort": None}, "ACTIVE_LLM_EFFORT_REQUIRED"),
         (
             {"expectedRevision": 1, "providerId": "codex", "modelId": "gpt-5.6-luna", "effort": {"effortId": "unknown"}},
@@ -307,6 +372,36 @@ def test_put_validation_errors_leave_previous_profile_active(tmp_path: Path):
             assert current["llmProfile"]["modelId"] == "qwen2.5-coder:14b"
 
 
+def test_codex_activation_is_executable_when_provider_and_effort_are_valid(tmp_path: Path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
+    deps.active_profile_service = _active_profile_service(
+        app_config,
+        deps,
+        FakeDiscovery([ollama_ready("qwen2.5-coder:14b"), codex_ready()]),
+    )
+
+    with AsgiTestClient(app) as client:
+        response = client.put(
+            "/api/v1/knowledge/active-profile/llm-profile",
+            {
+                "expectedRevision": 1,
+                "providerId": "codex",
+                "modelId": "gpt-5.6-luna",
+                "effort": {"effortId": "high"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "revision": 2,
+        "llmProfile": {
+            "providerId": "codex",
+            "modelId": "gpt-5.6-luna",
+            "effort": {"effortId": "high"},
+        },
+    }
+
+
 def test_usage_registry_handles_unregistered_provider_and_source_failure(tmp_path: Path):
     registry = LlmUsageRegistry()
     registry.register(FakeUsageSource(error=RuntimeError("token secret@example.com should not leak")))
@@ -318,6 +413,26 @@ def test_usage_registry_handles_unregistered_provider_and_source_failure(tmp_pat
 
     assert response.usage is None
     assert registry.resolve_optional("ollama") is None
+
+
+def test_usage_source_failure_through_http_returns_null_usage_without_secret_text(tmp_path: Path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path, generative_model="qwen2.5-coder:14b"))
+    usage_registry = LlmUsageRegistry()
+    usage_registry.register(FakeUsageSource(provider_id="ollama", error=RuntimeError("secret-token-123 should not leak")))
+    assert deps.active_llm_runtime is not None
+    deps.active_profile_service = ActiveProfileService(
+        ActiveProfileStore(app_config.store_path),
+        deps.active_llm_runtime,
+        FakeDiscovery([ollama_ready("qwen2.5-coder:14b")]),
+        usage_registry,
+    )
+
+    with AsgiTestClient(app) as client:
+        response = client.get("/api/v1/knowledge/active-profile")
+
+    assert response.status_code == 200
+    assert response.json()["usage"] is None
+    assert "secret-token-123" not in response.body.decode("utf-8")
 
 
 def test_registered_codex_source_returns_dynamic_windows_and_ignores_bad_ones():
@@ -376,14 +491,14 @@ def test_running_operation_keeps_old_snapshot_and_new_operation_gets_new_snapsho
         registry,
         PersistedActiveProfile(
             revision=1,
-            llm_profile=ActiveLlmProfileResponse(providerId="ollama", modelId="old-model", effort=None),
+            llm_profile=ActiveLlmSelectionResponse(providerId="ollama", modelId="old-model", effort=None),
         ),
     )
     old_snapshot = runtime.capture()
     runtime.activate(
         PersistedActiveProfile(
             revision=2,
-            llm_profile=ActiveLlmProfileResponse(providerId="ollama", modelId="new-model", effort=None),
+            llm_profile=ActiveLlmSelectionResponse(providerId="ollama", modelId="new-model", effort=None),
         )
     )
 
@@ -403,7 +518,7 @@ def test_active_runtime_rewrites_model_and_effort_without_mutating_old_snapshot(
         registry,
         PersistedActiveProfile(
             revision=1,
-            llm_profile=ActiveLlmProfileResponse(providerId="ollama", modelId="gpt-5.6-luna", effort=ActiveLlmEffortResponse(effortId="high")),
+            llm_profile=ActiveLlmSelectionResponse(providerId="ollama", modelId="gpt-5.6-luna", effort=ActiveLlmEffortResponse(effortId="high")),
         ),
     )
 
@@ -421,3 +536,13 @@ def _runtime(persisted: PersistedActiveProfile, *, provider_id: str = "ollama") 
     registry = GenerativeProviderRegistry()
     registry.register(provider)
     return ActiveLlmRuntime(registry, persisted)
+
+
+def _active_profile_service(app_config, deps, discovery: FakeDiscovery) -> ActiveProfileService:
+    assert deps.active_llm_runtime is not None
+    return ActiveProfileService(
+        ActiveProfileStore(app_config.store_path),
+        deps.active_llm_runtime,
+        discovery,
+        LlmUsageRegistry(),
+    )

@@ -38,6 +38,7 @@ export class JarvisPage {
     this.aiRuntimeView.mount();
     this.loadStatus();
     this.aiRuntimeView.loadActiveProfile();
+    this.aiRuntimeView.loadRuntimeSummary();
   }
 
   dispose() {

@@ -183,27 +183,31 @@ def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServe
 
 
 def codex_runtime_settings(config: AppConfig) -> CodexRuntimeSettings:
-    timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), 5.0)
-    runtime_dir = config.codex_app_server_runtime_dir
+    codex = config.codex_app_server
+    timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), codex.request_timeout_seconds)
+    runtime_dir = codex.runtime_dir
     if runtime_dir is None:
         raise ValueError("Codex app-server runtime directory must be configured")
     return CodexRuntimeSettings(
-        command=tuple(config.codex_app_server_command),
+        command=tuple(codex.command),
         runtime_cwd=runtime_dir,
         client_name=__application_name__,
         client_version=__version__,
         request_timeout_seconds=timeout_seconds,
-        interrupt_grace_seconds=config.codex_interrupt_grace_seconds,
-        terminal_after_interrupt_seconds=config.codex_terminal_after_interrupt_seconds,
-        terminate_grace_seconds=config.codex_terminate_grace_seconds,
-        kill_grace_seconds=config.codex_kill_grace_seconds,
-        sync_close_timeout_seconds=config.codex_sync_close_timeout_seconds,
-        loop_thread_join_timeout_seconds=config.codex_loop_thread_join_timeout_seconds,
-        cancellation_cleanup_timeout_seconds=config.codex_cancellation_cleanup_timeout_seconds,
+        discovery_timeout_cap_seconds=codex.discovery_timeout_cap_seconds,
+        discovery_timeout_allowance_seconds=codex.discovery_timeout_allowance_seconds,
+        interrupt_grace_seconds=codex.interrupt_grace_seconds,
+        terminal_after_interrupt_seconds=codex.terminal_after_interrupt_seconds,
+        terminate_grace_seconds=codex.terminate_grace_seconds,
+        kill_grace_seconds=codex.kill_grace_seconds,
+        sync_close_timeout_seconds=codex.sync_close_timeout_seconds,
+        loop_thread_join_timeout_seconds=codex.loop_thread_join_timeout_seconds,
+        cancellation_cleanup_timeout_seconds=codex.cancellation_cleanup_timeout_seconds,
+        cancellation_poll_interval_seconds=codex.cancellation_poll_interval_seconds,
         notification_buffer=CodexNotificationBufferPolicy(
-            max_per_turn=config.codex_max_buffered_notifications_per_turn,
-            max_turn_ids=config.codex_max_buffered_turn_ids,
-            max_age_seconds=config.codex_buffer_ttl_seconds,
+            max_per_turn=codex.max_buffered_notifications_per_turn,
+            max_turn_ids=codex.max_buffered_turn_ids,
+            max_age_seconds=codex.buffer_ttl_seconds,
         ),
     )
 

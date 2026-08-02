@@ -6,6 +6,5 @@ __application_name__ = "forge-knowledge"
 try:
     __version__ = version(__distribution_name__)
     __package_name__ = metadata(__distribution_name__)["Name"]
-except PackageNotFoundError:  # pragma: no cover - editable metadata is available in runtime/test environments.
-    __version__ = "0+unknown"
-    __package_name__ = __distribution_name__
+except PackageNotFoundError as exc:  # pragma: no cover - startup/runtime environments provide package metadata.
+    raise RuntimeError(f"Package metadata is required for {__distribution_name__}") from exc

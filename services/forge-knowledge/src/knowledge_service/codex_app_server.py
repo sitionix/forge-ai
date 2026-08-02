@@ -79,18 +79,18 @@ class CodexRuntimeSettings:
     runtime_cwd: Path
     client_name: str
     client_version: str
-    request_timeout_seconds: float = 5.0
-    discovery_timeout_cap_seconds: float = 5.0
-    discovery_timeout_allowance_seconds: float = 1.0
-    interrupt_grace_seconds: float = 1.0
-    terminal_after_interrupt_seconds: float = 1.0
-    terminate_grace_seconds: float = 1.0
-    kill_grace_seconds: float = 1.0
-    sync_close_timeout_seconds: float = 3.0
-    loop_thread_join_timeout_seconds: float = 2.0
-    cancellation_cleanup_timeout_seconds: float = 1.0
-    cancellation_poll_interval_seconds: float = 0.01
-    notification_buffer: CodexNotificationBufferPolicy = field(default_factory=CodexNotificationBufferPolicy)
+    request_timeout_seconds: float
+    discovery_timeout_cap_seconds: float
+    discovery_timeout_allowance_seconds: float
+    interrupt_grace_seconds: float
+    terminal_after_interrupt_seconds: float
+    terminate_grace_seconds: float
+    kill_grace_seconds: float
+    sync_close_timeout_seconds: float
+    loop_thread_join_timeout_seconds: float
+    cancellation_cleanup_timeout_seconds: float
+    cancellation_poll_interval_seconds: float
+    notification_buffer: CodexNotificationBufferPolicy
 
     def __post_init__(self) -> None:
         if not self.command:
@@ -127,6 +127,7 @@ class CodexTurnResult:
     thread_id: str
     turn_id: str
     turn_status: str
+    server_version: str
     token_usage: Mapping[str, Any] | None = None
     warnings: tuple[Any, ...] = ()
     model_metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -327,6 +328,18 @@ class CodexProcessTransport:
         self._process = None
         if process is not None and self._returncode(process) is None:
             await self._terminate_process(process)
+        reader_task = self._reader_task
+        if reader_task is not None and reader_task is not asyncio.current_task():
+            if not reader_task.done():
+                reader_task.cancel()
+            try:
+                await reader_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as cleanup_exc:
+                LOGGER.debug("Codex app-server stdout task failed during invalidation", exc_info=cleanup_exc)
+            finally:
+                self._reader_task = None
         stderr_task = self._stderr_task
         if stderr_task is not None and not stderr_task.done():
             stderr_task.cancel()
@@ -336,6 +349,8 @@ class CodexProcessTransport:
                 pass
             except Exception as cleanup_exc:
                 LOGGER.debug("Codex app-server stderr task failed during invalidation", exc_info=cleanup_exc)
+            finally:
+                self._stderr_task = None
 
     async def _terminate_process(self, process: Any) -> None:
         if self._returncode(process) is not None:
@@ -532,12 +547,13 @@ class CodexTurnExecutor:
         effort_id: str | None,
         response_mode: Any,
         timeout_seconds: float,
+        server_version: str,
     ) -> CodexTurnResult:
         active: _ActiveTurn | None = None
+        transport = self._transport_getter()
         timeout = max(0.001, float(timeout_seconds))
         try:
             async with asyncio.timeout(timeout):
-                transport = self._transport_getter()
                 thread_result = await transport.request(CodexProtocol.THREAD_START, self._thread_start_params(), timeout=timeout)
                 thread_id = self._extract_thread_id(thread_result)
                 turn_params: dict[str, Any] = {
@@ -562,7 +578,25 @@ class CodexTurnExecutor:
                 self._active_turns[turn_id] = active
                 self._replay_buffered_turn_notifications(turn_id)
                 transport.raise_if_failed()
-                return await asyncio.shield(active.future)
+                result = await asyncio.shield(active.future)
+                return CodexTurnResult(
+                    raw_text=result.raw_text,
+                    thread_id=result.thread_id,
+                    turn_id=result.turn_id,
+                    turn_status=result.turn_status,
+                    server_version=server_version,
+                    token_usage=result.token_usage,
+                    warnings=result.warnings,
+                    model_metadata=result.model_metadata,
+                )
+        except CodexAppServerProtocolError as exc:
+            if active is not None:
+                self._active_turns.pop(active.turn_id, None)
+                if not active.future.done():
+                    active.future.set_exception(exc)
+            self._buffered_turn_notifications.clear()
+            await transport.invalidate(exc)
+            raise
         except TimeoutError as exc:
             if active is not None:
                 await self._interrupt_turn(active)
@@ -706,6 +740,7 @@ class CodexTurnExecutor:
                     thread_id=active.thread_id,
                     turn_id=active.turn_id,
                     turn_status=status,
+                    server_version="",
                     token_usage=active.token_usage,
                     warnings=tuple(active.warnings),
                     model_metadata=dict(active.model_metadata),
@@ -920,12 +955,15 @@ class CodexAppServerClient:
         timeout_seconds: float,
     ) -> CodexTurnResult:
         await self._ensure_initialized()
+        if self._version is None:
+            raise CodexAppServerProtocolError("Codex app-server did not return a version")
         return await self._turn_executor.run_turn(
             prompt=prompt,
             model_id=model_id,
             effort_id=effort_id,
             response_mode=response_mode,
             timeout_seconds=timeout_seconds,
+            server_version=self._version,
         )
 
     async def _ensure_initialized(self) -> None:

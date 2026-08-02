@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -27,11 +28,18 @@ from knowledge_service.ai_runtime_discovery import (
     AiRuntimeDiscoveryService,
     AiRuntimeEffortOption,
     AiRuntimeModelOption,
+    AiRuntimeProfileMetadata,
     AiRuntimeProviderOptions,
     CodexAiRuntimeOptionsSource,
     OllamaAiRuntimeOptionsSource,
 )
-from knowledge_service.codex_app_server import CodexAppServerClient, CodexAppServerError, CodexAppServerTimeout, CodexRuntimeSettings
+from knowledge_service.codex_app_server import (
+    CodexAppServerClient,
+    CodexAppServerError,
+    CodexAppServerTimeout,
+    CodexNotificationBufferPolicy,
+    CodexRuntimeSettings,
+)
 
 
 def _codex_client(process_factory, *, request_timeout_seconds: float = 5.0) -> CodexAppServerClient:
@@ -43,7 +51,17 @@ def _codex_client(process_factory, *, request_timeout_seconds: float = 5.0) -> C
             client_name="forge-knowledge",
             client_version=__version__,
             request_timeout_seconds=request_timeout_seconds,
+            discovery_timeout_cap_seconds=1,
+            discovery_timeout_allowance_seconds=0.1,
+            interrupt_grace_seconds=0.1,
+            terminal_after_interrupt_seconds=0.1,
+            terminate_grace_seconds=0.1,
+            kill_grace_seconds=0.1,
             sync_close_timeout_seconds=3,
+            loop_thread_join_timeout_seconds=0.5,
+            cancellation_cleanup_timeout_seconds=0.1,
+            cancellation_poll_interval_seconds=0.001,
+            notification_buffer=CodexNotificationBufferPolicy(),
         ),
     )
 
@@ -87,6 +105,39 @@ def test_public_provider_model_and_effort_shape_omits_absent_optionals():
         ],
     }
     assert_forbidden_public_fields_absent(payload)
+
+
+class AlternateCachedSource:
+    provider_id = "other"
+    display_name = "Other Runtime"
+
+    def __init__(self) -> None:
+        self.catalog = AiRuntimeProviderOptions(
+            provider_id=self.provider_id,
+            display_name=self.display_name,
+            status=READY,
+            models=(AiRuntimeModelOption(model_id="model-a", display_name="Model A"),),
+            version="1.2.3",
+        )
+        self.discover_calls = 0
+
+    async def discover(self) -> AiRuntimeProviderOptions:
+        self.discover_calls += 1
+        return self.catalog
+
+    def cached_profile_metadata(self, model_id: str) -> AiRuntimeProfileMetadata:
+        model_name = next((model.display_name for model in self.catalog.models if model.model_id == model_id), None)
+        return AiRuntimeProfileMetadata(provider_display_name=self.catalog.display_name, model_display_name=model_name)
+
+
+def test_cached_profile_metadata_uses_public_source_contract_without_provider_probe():
+    source = AlternateCachedSource()
+    service = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([source]))
+
+    metadata = service.cached_profile_metadata("other", "model-a")
+
+    assert metadata == AiRuntimeProfileMetadata(provider_display_name="Other Runtime", model_display_name="Model A")
+    assert source.discover_calls == 0
 
 
 def test_ollama_maps_version_tags_completion_models_and_modified_at_without_show_calls():
@@ -174,13 +225,13 @@ def test_ollama_ready_then_cache_expiry_then_runtime_absent_returns_unavailable(
 
     source = OllamaAiRuntimeOptionsSource(
         "http://127.0.0.1:11434",
+        cache_ttl_seconds=0.001,
         http_client=httpx.AsyncClient(base_url="http://127.0.0.1:11434", transport=httpx.MockTransport(handler)),
     )
 
     first = asyncio.run(source.discover()).public_dict()
     available = False
-    if source._catalog_cache is not None:
-        source._catalog_cache.expires_at = 0.0
+    time.sleep(0.01)
     second = asyncio.run(source.discover()).public_dict()
 
     assert first["status"] == READY
@@ -209,13 +260,13 @@ def test_ollama_ready_then_health_success_malformed_catalog_returns_degraded():
 
     source = OllamaAiRuntimeOptionsSource(
         "http://127.0.0.1:11434",
+        cache_ttl_seconds=0.001,
         http_client=httpx.AsyncClient(base_url="http://127.0.0.1:11434", transport=httpx.MockTransport(handler)),
     )
 
     first = asyncio.run(source.discover()).public_dict()
     degraded_catalog = True
-    if source._catalog_cache is not None:
-        source._catalog_cache.expires_at = 0.0
+    time.sleep(0.01)
     second = asyncio.run(source.discover()).public_dict()
 
     assert first["status"] == READY

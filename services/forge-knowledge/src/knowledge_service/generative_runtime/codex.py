@@ -49,8 +49,7 @@ class CodexGenerativeProvider:
                 timeout_seconds=timeout,
             ),
         )
-        provider_version = self.provider_version
-        return self._normalize_response(request, result, started, provider_version)
+        return self._normalize_response(request, result, started)
 
     async def generate_async(self, request: GenerativeRequest) -> GenerativeResponse:
         started = time.perf_counter()
@@ -64,8 +63,7 @@ class CodexGenerativeProvider:
                 timeout_seconds=timeout,
             )
         )
-        provider_version = self.provider_version
-        return self._normalize_response(request, result, started, provider_version)
+        return self._normalize_response(request, result, started)
 
     def _map_transport_errors(self, operation: Callable[[], CodexTurnResult]) -> CodexTurnResult:
         try:
@@ -99,7 +97,7 @@ class CodexGenerativeProvider:
     async def aclose(self) -> None:
         return None
 
-    def _normalize_response(self, request: GenerativeRequest, result: CodexTurnResult, started: float, provider_version: str) -> GenerativeResponse:
+    def _normalize_response(self, request: GenerativeRequest, result: CodexTurnResult, started: float) -> GenerativeResponse:
         raw_text = result.raw_text
         metadata: dict[str, Any] = {
             "threadId": result.thread_id,
@@ -116,7 +114,7 @@ class CodexGenerativeProvider:
         return GenerativeResponse(
             raw_text=raw_text,
             provider_id=self.provider_id,
-            provider_version=provider_version,
+            provider_version=result.server_version,
             model_id=request.model_id,
             duration_ms=round((time.perf_counter() - started) * 1000, 3),
             prompt_char_length=len(request.prompt),

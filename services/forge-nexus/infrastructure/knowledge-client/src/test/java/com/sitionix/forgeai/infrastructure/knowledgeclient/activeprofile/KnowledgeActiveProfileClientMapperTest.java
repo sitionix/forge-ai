@@ -2,6 +2,7 @@ package com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile;
 
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
+import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmSelection;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmEffort;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsage;
@@ -11,6 +12,7 @@ import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.Kno
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileDetails;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileRequest;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmProfileResponse;
+import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveLlmSelection;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeActiveProfileResponse;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeLlmUsage;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.activeprofile.dto.KnowledgeLlmUsageWindow;
@@ -85,11 +87,11 @@ class KnowledgeActiveProfileClientMapperTest {
         // given
         final KnowledgeActiveLlmProfileResponse response = new KnowledgeActiveLlmProfileResponse(
                 4L,
-                new KnowledgeActiveLlmProfileDetails("codex", "gpt-5.6-sol", new KnowledgeActiveLlmEffort("high"))
+                new KnowledgeActiveLlmSelection("codex", "gpt-5.6-sol", new KnowledgeActiveLlmEffort("high"))
         );
         final ActiveLlmProfileUpdateResult expected = new ActiveLlmProfileUpdateResult(
                 4,
-                new ActiveLlmProfile("codex", "gpt-5.6-sol", new LlmEffort("high"))
+                new ActiveLlmSelection("codex", "gpt-5.6-sol", new LlmEffort("high"))
         );
 
         // when

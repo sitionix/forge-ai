@@ -88,6 +88,9 @@ class AnalysisSettings(BaseModel):
 class CodexAppServerSettings(BaseModel):
     command: tuple[str, ...] = DEFAULT_CODEX_APP_SERVER_COMMAND
     runtime_dir: Path | None = None
+    request_timeout_seconds: float = Field(default=5.0, ge=0.1)
+    discovery_timeout_cap_seconds: float = Field(default=5.0, ge=0.1)
+    discovery_timeout_allowance_seconds: float = Field(default=1.0, ge=0.1)
     interrupt_grace_seconds: float = Field(default=1.0, ge=0.1)
     terminal_after_interrupt_seconds: float = Field(default=1.0, ge=0.1)
     terminate_grace_seconds: float = Field(default=1.0, ge=0.1)
@@ -98,10 +101,13 @@ class CodexAppServerSettings(BaseModel):
     max_buffered_turn_ids: int = Field(default=100, ge=1)
     buffer_ttl_seconds: float = Field(default=30.0, ge=0.1)
     cancellation_cleanup_timeout_seconds: float = Field(default=1.0, ge=0.1)
+    cancellation_poll_interval_seconds: float = Field(default=0.01, ge=0.001)
 
     @validator("command")
     def require_command(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(str(item).strip() for item in value if str(item).strip())
+        if any(not str(item).strip() for item in value):
+            raise ValueError("knowledge codex app-server command elements must not be blank")
+        normalized = tuple(str(item).strip() for item in value)
         if not normalized:
             raise ValueError("knowledge codex app-server command must not be empty")
         return normalized
@@ -262,18 +268,7 @@ class AppConfig(BaseModel):
     semantic_top_k: int = 20
     semantic_min_similarity: float = 0.35
     semantic_query_timeout_ms: int = 1500
-    codex_app_server_command: tuple[str, ...] = ("codex", "app-server", "--stdio")
-    codex_app_server_runtime_dir: Path | None = None
-    codex_interrupt_grace_seconds: float = 1.0
-    codex_terminal_after_interrupt_seconds: float = 1.0
-    codex_terminate_grace_seconds: float = 1.0
-    codex_kill_grace_seconds: float = 1.0
-    codex_sync_close_timeout_seconds: float = 3.0
-    codex_loop_thread_join_timeout_seconds: float = 2.0
-    codex_max_buffered_notifications_per_turn: int = 100
-    codex_max_buffered_turn_ids: int = 100
-    codex_buffer_ttl_seconds: float = 30.0
-    codex_cancellation_cleanup_timeout_seconds: float = 1.0
+    codex_app_server: CodexAppServerSettings = Field(default_factory=CodexAppServerSettings)
     retention_inventory_build_days: int = 30
     retention_analysis_job_days: int = 30
     retention_analysis_diagnostic_days: int = 30
@@ -293,7 +288,13 @@ class AppConfig(BaseModel):
                 data.setdefault(field, value)
         module_dir = Path(data.get("module_dir", knowledge_module_dir()))
         data.setdefault("runtime_dir", module_dir / "var")
-        data.setdefault("codex_app_server_runtime_dir", Path(data["runtime_dir"]) / "knowledge" / "codex-runtime")
+        codex_app_server = data.get("codex_app_server")
+        if codex_app_server is None:
+            data["codex_app_server"] = CodexAppServerSettings(runtime_dir=Path(data["runtime_dir"]) / "knowledge" / "codex-runtime")
+        elif isinstance(codex_app_server, CodexAppServerSettings) and codex_app_server.runtime_dir is None:
+            data["codex_app_server"] = codex_app_server.copy(update={"runtime_dir": Path(data["runtime_dir"]) / "knowledge" / "codex-runtime"})
+        elif isinstance(codex_app_server, dict) and codex_app_server.get("runtime_dir") is None:
+            data["codex_app_server"] = {**codex_app_server, "runtime_dir": Path(data["runtime_dir"]) / "knowledge" / "codex-runtime"}
         data.setdefault("config_dir", module_dir / "config")
         data.setdefault("workspace_root", module_dir.parent)
         data.setdefault("logging", LoggingSettings(directory=module_dir / "var" / "logs"))
@@ -318,6 +319,7 @@ class AppConfig(BaseModel):
         codex = knowledge.codex_app_server
         semantic = knowledge.semantic
         codex_runtime_dir = codex.runtime_dir or settings.runtime_dir / "knowledge" / "codex-runtime"
+        codex_app_server = codex.copy(update={"runtime_dir": codex_runtime_dir})
         return cls(
             module_dir=(module_dir or knowledge_module_dir()).resolve(),
             host=knowledge.host,
@@ -369,18 +371,7 @@ class AppConfig(BaseModel):
             semantic_top_k=semantic.semantic_top_k,
             semantic_min_similarity=semantic.min_similarity,
             semantic_query_timeout_ms=semantic.query_timeout_ms,
-            codex_app_server_command=codex.command,
-            codex_app_server_runtime_dir=codex_runtime_dir,
-            codex_interrupt_grace_seconds=codex.interrupt_grace_seconds,
-            codex_terminal_after_interrupt_seconds=codex.terminal_after_interrupt_seconds,
-            codex_terminate_grace_seconds=codex.terminate_grace_seconds,
-            codex_kill_grace_seconds=codex.kill_grace_seconds,
-            codex_sync_close_timeout_seconds=codex.sync_close_timeout_seconds,
-            codex_loop_thread_join_timeout_seconds=codex.loop_thread_join_timeout_seconds,
-            codex_max_buffered_notifications_per_turn=codex.max_buffered_notifications_per_turn,
-            codex_max_buffered_turn_ids=codex.max_buffered_turn_ids,
-            codex_buffer_ttl_seconds=codex.buffer_ttl_seconds,
-            codex_cancellation_cleanup_timeout_seconds=codex.cancellation_cleanup_timeout_seconds,
+            codex_app_server=codex_app_server,
             retention_inventory_build_days=knowledge.storage.retention_inventory_build_days,
             retention_analysis_job_days=knowledge.storage.retention_analysis_job_days,
             retention_analysis_diagnostic_days=knowledge.storage.retention_analysis_diagnostic_days,
@@ -640,64 +631,7 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     "shutdown_grace_seconds": float(analysis.get("shutdown-grace-seconds") or analysis.get("shutdown_grace_seconds") or 5.0),
                     "max_attempts_per_file": int(analysis.get("max-attempts-per-file") or analysis.get("max_attempts_per_file") or 3),
             },
-            "codex_app_server": {
-                "command": tuple(_config_value(codex_app_server, "command", default=DEFAULT_CODEX_APP_SERVER_COMMAND)),
-                "runtime_dir": (
-                    _path(str(_config_value(codex_app_server, "runtime-dir", "runtime_dir")), env)
-                    if _config_value(codex_app_server, "runtime-dir", "runtime_dir") is not None
-                    else None
-                ),
-                "interrupt_grace_seconds": _float_config(
-                    _config_value(codex_app_server, "interrupt-grace-seconds", "interrupt_grace_seconds"),
-                    env,
-                    1.0,
-                ),
-                "terminal_after_interrupt_seconds": _float_config(
-                    _config_value(codex_app_server, "terminal-after-interrupt-seconds", "terminal_after_interrupt_seconds"),
-                    env,
-                    1.0,
-                ),
-                "terminate_grace_seconds": _float_config(
-                    _config_value(codex_app_server, "terminate-grace-seconds", "terminate_grace_seconds"),
-                    env,
-                    1.0,
-                ),
-                "kill_grace_seconds": _float_config(
-                    _config_value(codex_app_server, "kill-grace-seconds", "kill_grace_seconds"),
-                    env,
-                    1.0,
-                ),
-                "sync_close_timeout_seconds": _float_config(
-                    _config_value(codex_app_server, "sync-close-timeout-seconds", "sync_close_timeout_seconds"),
-                    env,
-                    3.0,
-                ),
-                "loop_thread_join_timeout_seconds": _float_config(
-                    _config_value(codex_app_server, "loop-thread-join-timeout-seconds", "loop_thread_join_timeout_seconds"),
-                    env,
-                    2.0,
-                ),
-                "max_buffered_notifications_per_turn": _int_config(
-                    _config_value(codex_app_server, "max-buffered-notifications-per-turn", "max_buffered_notifications_per_turn"),
-                    env,
-                    100,
-                ),
-                "max_buffered_turn_ids": _int_config(
-                    _config_value(codex_app_server, "max-buffered-turn-ids", "max_buffered_turn_ids"),
-                    env,
-                    100,
-                ),
-                "buffer_ttl_seconds": _float_config(
-                    _config_value(codex_app_server, "buffer-ttl-seconds", "buffer_ttl_seconds"),
-                    env,
-                    30.0,
-                ),
-                "cancellation_cleanup_timeout_seconds": _float_config(
-                    _config_value(codex_app_server, "cancellation-cleanup-timeout-seconds", "cancellation_cleanup_timeout_seconds"),
-                    env,
-                    1.0,
-                ),
-            },
+            "codex_app_server": _codex_app_server_payload(codex_app_server, env),
             "semantic": {
                     "enabled": _bool(semantic.get("enabled", True)),
                     "auto_build_enabled": _bool(semantic.get("auto-build-enabled", semantic.get("auto_build_enabled", True))),
@@ -844,6 +778,53 @@ def _config_value(data: Mapping[str, Any], *names: str, default: Any = None) -> 
     return default
 
 
+def _codex_app_server_payload(data: Mapping[str, Any], env: Mapping[str, str]) -> dict[str, Any]:
+    fields: tuple[tuple[str, tuple[str, ...], Callable[[Any, Mapping[str, str]], Any]], ...] = (
+        ("command", ("command",), _command_configured),
+        ("runtime_dir", ("runtime-dir", "runtime_dir"), lambda value, runtime_env: _path(str(value), runtime_env)),
+        ("request_timeout_seconds", ("request-timeout-seconds", "request_timeout_seconds"), _float_configured),
+        ("discovery_timeout_cap_seconds", ("discovery-timeout-cap-seconds", "discovery_timeout_cap_seconds"), _float_configured),
+        (
+            "discovery_timeout_allowance_seconds",
+            ("discovery-timeout-allowance-seconds", "discovery_timeout_allowance_seconds"),
+            _float_configured,
+        ),
+        ("interrupt_grace_seconds", ("interrupt-grace-seconds", "interrupt_grace_seconds"), _float_configured),
+        (
+            "terminal_after_interrupt_seconds",
+            ("terminal-after-interrupt-seconds", "terminal_after_interrupt_seconds"),
+            _float_configured,
+        ),
+        ("terminate_grace_seconds", ("terminate-grace-seconds", "terminate_grace_seconds"), _float_configured),
+        ("kill_grace_seconds", ("kill-grace-seconds", "kill_grace_seconds"), _float_configured),
+        ("sync_close_timeout_seconds", ("sync-close-timeout-seconds", "sync_close_timeout_seconds"), _float_configured),
+        ("loop_thread_join_timeout_seconds", ("loop-thread-join-timeout-seconds", "loop_thread_join_timeout_seconds"), _float_configured),
+        (
+            "max_buffered_notifications_per_turn",
+            ("max-buffered-notifications-per-turn", "max_buffered_notifications_per_turn"),
+            _int_configured,
+        ),
+        ("max_buffered_turn_ids", ("max-buffered-turn-ids", "max_buffered_turn_ids"), _int_configured),
+        ("buffer_ttl_seconds", ("buffer-ttl-seconds", "buffer_ttl_seconds"), _float_configured),
+        (
+            "cancellation_cleanup_timeout_seconds",
+            ("cancellation-cleanup-timeout-seconds", "cancellation_cleanup_timeout_seconds"),
+            _float_configured,
+        ),
+        (
+            "cancellation_poll_interval_seconds",
+            ("cancellation-poll-interval-seconds", "cancellation_poll_interval_seconds"),
+            _float_configured,
+        ),
+    )
+    payload: dict[str, Any] = {}
+    for target, aliases, converter in fields:
+        raw = _config_value(data, *aliases)
+        if raw is not None:
+            payload[target] = converter(raw, env)
+    return payload
+
+
 def _int_config(value: Any, env: Mapping[str, str], default: int) -> int:
     if value is None or value == "":
         return int(default)
@@ -866,3 +847,21 @@ def _float_config(value: Any, env: Mapping[str, str], default: float) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     return float(_expand(str(value), env))
+
+
+def _int_configured(value: Any, env: Mapping[str, str]) -> int:
+    if isinstance(value, int):
+        return value
+    return int(_expand(str(value), env))
+
+
+def _float_configured(value: Any, env: Mapping[str, str]) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return float(_expand(str(value), env))
+
+
+def _command_configured(value: Any, env: Mapping[str, str]) -> Any:
+    if isinstance(value, (list, tuple)):
+        return tuple(_expand(str(item), env) for item in value)
+    return value

@@ -6,12 +6,14 @@ import com.sitionix.forgeai.api.activeprofile.ActiveLlmEffortRequest;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmEffortResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileDetailsResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileResponse;
+import com.sitionix.forgeai.api.activeprofile.ActiveLlmSelectionResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileUpdateRequest;
 import com.sitionix.forgeai.api.activeprofile.ActiveProfileResponse;
 import com.sitionix.forgeai.api.activeprofile.LlmUsageResponse;
 import com.sitionix.forgeai.api.activeprofile.LlmUsageWindowResponse;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
+import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmSelection;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmEffort;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsage;
@@ -110,11 +112,11 @@ class ActiveProfileApiMapperTest {
         // given
         final ActiveLlmProfileUpdateResult source = new ActiveLlmProfileUpdateResult(
                 4,
-                new ActiveLlmProfile("ollama", "qwen", null)
+                new ActiveLlmSelection("ollama", "qwen", null)
         );
         final ActiveLlmProfileResponse expected = new ActiveLlmProfileResponse(
                 4,
-                new ActiveLlmProfileDetailsResponse("ollama", "qwen", null)
+                new ActiveLlmSelectionResponse("ollama", "qwen", null)
         );
 
         // when

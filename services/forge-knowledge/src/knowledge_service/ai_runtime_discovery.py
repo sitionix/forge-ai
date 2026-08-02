@@ -124,6 +124,8 @@ class AiRuntimeOptionsSource(Protocol):
 
     async def discover(self) -> AiRuntimeProviderOptions: ...
 
+    def cached_profile_metadata(self, model_id: str) -> AiRuntimeProfileMetadata: ...
+
 
 @dataclass
 class _CacheEntry:
@@ -173,23 +175,10 @@ class AiRuntimeDiscoveryService:
 
     def cached_profile_metadata(self, provider_id: str, model_id: str) -> AiRuntimeProfileMetadata:
         normalized_provider_id = _clean_id(provider_id)
-        normalized_model_id = _clean_id(model_id)
         for source in self._registry.sources:
             if _clean_id(source.provider_id) != normalized_provider_id:
                 continue
-            cached = getattr(source, "_catalog_cache", None)
-            if cached is None or not isinstance(cached, _CacheEntry) or not cached.valid():
-                return AiRuntimeProfileMetadata(provider_display_name=None, model_display_name=None)
-            provider = cached.value
-            model_display_name = None
-            for model in provider.models:
-                if _clean_id(model.model_id) == normalized_model_id:
-                    model_display_name = model.display_name
-                    break
-            return AiRuntimeProfileMetadata(
-                provider_display_name=provider.display_name,
-                model_display_name=model_display_name,
-            )
+            return source.cached_profile_metadata(model_id)
         return AiRuntimeProfileMetadata(provider_display_name=None, model_display_name=None)
 
     async def _discover_one(self, source: AiRuntimeOptionsSource) -> AiRuntimeProviderOptions:
@@ -277,6 +266,9 @@ class OllamaAiRuntimeOptionsSource:
     async def aclose(self) -> None:
         if self._owns_http_client and self._http_client is not None:
             await self._http_client.aclose()
+
+    def cached_profile_metadata(self, model_id: str) -> AiRuntimeProfileMetadata:
+        return _metadata_from_cache(self._catalog_cache, model_id)
 
     async def _probe_version(self) -> str | None:
         try:
@@ -401,6 +393,9 @@ class CodexAiRuntimeOptionsSource:
     async def aclose(self) -> None:
         return None
 
+    def cached_profile_metadata(self, model_id: str) -> AiRuntimeProfileMetadata:
+        return _metadata_from_cache(self._catalog_cache, model_id)
+
     async def _read_all_models(self) -> list[AiRuntimeModelOption]:
         models: list[AiRuntimeModelOption] = []
         cursor: str | None = None
@@ -473,3 +468,19 @@ def _string_list_contains(value: Any, expected: str) -> bool:
     if not isinstance(value, list):
         return False
     return any(isinstance(item, str) and item == expected for item in value)
+
+
+def _metadata_from_cache(cache: _CacheEntry | None, model_id: str) -> AiRuntimeProfileMetadata:
+    if cache is None or not cache.valid():
+        return AiRuntimeProfileMetadata(provider_display_name=None, model_display_name=None)
+    provider = cache.value
+    normalized_model_id = _clean_id(model_id)
+    model_display_name = None
+    for model in provider.models:
+        if _clean_id(model.model_id) == normalized_model_id:
+            model_display_name = model.display_name
+            break
+    return AiRuntimeProfileMetadata(
+        provider_display_name=provider.display_name,
+        model_display_name=model_display_name,
+    )

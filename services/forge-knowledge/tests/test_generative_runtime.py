@@ -8,7 +8,7 @@ import pytest
 
 from knowledge_service.ai_runtime_discovery import AiRuntimeDiscoveryRegistry, AiRuntimeDiscoveryService, CodexAiRuntimeOptionsSource
 from knowledge_service.bootstrap import KnowledgeDependencies, build_generative_runtime
-from knowledge_service.codex_app_server import CodexAppServerClient, CodexRuntimeSettings
+from knowledge_service.codex_app_server import CodexAppServerClient, CodexNotificationBufferPolicy, CodexRuntimeSettings, CodexTurnResult
 from knowledge_service.config import AppConfig
 from knowledge_service.generative_runtime import (
     CodexGenerativeProvider,
@@ -117,6 +117,21 @@ class FailingCleanup:
         raise RuntimeError(self.message)
 
 
+class VersionRaceCodexClient:
+    @property
+    def version(self) -> str:
+        raise AssertionError("provider must use the version captured in CodexTurnResult")
+
+    def run_turn_sync(self, **kwargs):
+        return CodexTurnResult(
+            raw_text="answer",
+            thread_id="thread-a",
+            turn_id="turn-a",
+            turn_status="completed",
+            server_version="0.146.0",
+        )
+
+
 def test_registry_registers_resolves_rejects_unknown_and_duplicate():
     registry = GenerativeProviderRegistry()
     provider = FakeProvider()
@@ -146,7 +161,17 @@ def test_bootstrap_generative_registry_resolves_ollama_and_codex(tmp_path):
             client_name="forge-knowledge",
             client_version="0.146.0",
             request_timeout_seconds=1,
+            discovery_timeout_cap_seconds=1,
+            discovery_timeout_allowance_seconds=0.1,
+            interrupt_grace_seconds=0.1,
+            terminal_after_interrupt_seconds=0.1,
+            terminate_grace_seconds=0.1,
+            kill_grace_seconds=0.1,
             sync_close_timeout_seconds=3,
+            loop_thread_join_timeout_seconds=0.5,
+            cancellation_cleanup_timeout_seconds=0.1,
+            cancellation_poll_interval_seconds=0.001,
+            notification_buffer=CodexNotificationBufferPolicy(),
         )
     )
     registry, startup_provider = build_generative_runtime(config, codex_client=codex_client)
@@ -154,6 +179,14 @@ def test_bootstrap_generative_registry_resolves_ollama_and_codex(tmp_path):
     assert startup_provider.provider_id == "ollama"
     assert registry.resolve("ollama").provider_id == "ollama"
     assert isinstance(registry.resolve("codex"), CodexGenerativeProvider)
+
+
+def test_codex_provider_uses_turn_result_version_after_client_invalidation_race():
+    provider = CodexGenerativeProvider(VersionRaceCodexClient(), timeout_seconds=3)
+
+    response = provider.generate(GenerativeRequest(prompt="prompt", model_id="gpt-5.6-luna"))
+
+    assert response.provider_version == "0.146.0"
 
 
 def test_shared_codex_client_has_single_lifecycle_owner():

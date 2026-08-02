@@ -15,6 +15,36 @@
         "title": "ActiveLlmEffortResponse",
         "type": "object"
       },
+      "ActiveLlmProfileDetailsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "$ref": "#/components/schemas/ActiveLlmEffortResponse"
+          },
+          "modelDisplayName": {
+            "title": "Modeldisplayname",
+            "type": "string"
+          },
+          "modelId": {
+            "title": "Modelid",
+            "type": "string"
+          },
+          "providerDisplayName": {
+            "title": "Providerdisplayname",
+            "type": "string"
+          },
+          "providerId": {
+            "title": "Providerid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "modelId"
+        ],
+        "title": "ActiveLlmProfileDetailsResponse",
+        "type": "object"
+      },
       "ActiveLlmProfilePutRequest": {
         "additionalProperties": false,
         "properties": {
@@ -47,7 +77,7 @@
         "additionalProperties": false,
         "properties": {
           "llmProfile": {
-            "$ref": "#/components/schemas/ActiveLlmProfileResponse"
+            "$ref": "#/components/schemas/ActiveLlmSelectionResponse"
           },
           "revision": {
             "title": "Revision",
@@ -61,22 +91,14 @@
         "title": "ActiveLlmProfilePutResponse",
         "type": "object"
       },
-      "ActiveLlmProfileResponse": {
+      "ActiveLlmSelectionResponse": {
         "additionalProperties": false,
         "properties": {
           "effort": {
             "$ref": "#/components/schemas/ActiveLlmEffortResponse"
           },
-          "modelDisplayName": {
-            "title": "Modeldisplayname",
-            "type": "string"
-          },
           "modelId": {
             "title": "Modelid",
-            "type": "string"
-          },
-          "providerDisplayName": {
-            "title": "Providerdisplayname",
             "type": "string"
           },
           "providerId": {
@@ -88,14 +110,14 @@
           "providerId",
           "modelId"
         ],
-        "title": "ActiveLlmProfileResponse",
+        "title": "ActiveLlmSelectionResponse",
         "type": "object"
       },
       "ActiveProfileResponse": {
         "additionalProperties": false,
         "properties": {
           "llmProfile": {
-            "$ref": "#/components/schemas/ActiveLlmProfileResponse"
+            "$ref": "#/components/schemas/ActiveLlmProfileDetailsResponse"
           },
           "revision": {
             "title": "Revision",
