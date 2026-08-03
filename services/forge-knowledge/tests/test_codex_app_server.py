@@ -269,7 +269,12 @@ def test_permission_error_during_process_creation_is_controlled_and_provider_gen
 
 
 class RuntimeErrorStream(FakeStream):
+    def __init__(self) -> None:
+        super().__init__()
+        self.read_started = threading.Event()
+
     async def readline(self) -> bytes:
+        self.read_started.set()
         raise RuntimeError("secret-token-stdout")
 
 
@@ -281,8 +286,10 @@ def test_unexpected_stdout_reader_failure_is_controlled_reaped_and_restarts(tmp_
     client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
 
     async def exercise():
+        request_task = asyncio.create_task(client.request(CodexProtocol.MODEL_LIST))
+        assert await asyncio.to_thread(broken.stdout.read_started.wait, 1.0) is True
         with pytest.raises(CodexAppServerTransportError) as exc_info:
-            await client.request(CodexProtocol.MODEL_LIST)
+            await request_task
         payload = await client.request(CodexProtocol.MODEL_LIST)
         await client.aclose()
         await _assert_no_codex_tasks()
@@ -1464,7 +1471,8 @@ def test_cancellation_sends_one_interrupt(tmp_path: Path):
         task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=5))
         while any(sent.get("method") == "turn/start" for sent in process.sent) is False:
             await asyncio.sleep(0)
-        await asyncio.sleep(0.05)
+        assert await asyncio.to_thread(process.stdout.wait_for_reads, 3, 1.0) is True
+        await asyncio.sleep(0.1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task

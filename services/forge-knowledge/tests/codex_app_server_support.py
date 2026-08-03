@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from typing import Any, Mapping, Sequence
 
 
@@ -117,10 +118,20 @@ class FakeStream:
     def __init__(self) -> None:
         self._queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._read_count = 0
+        self._read_condition = threading.Condition()
 
     async def readline(self) -> bytes:
         self._loop = asyncio.get_running_loop()
-        return await self._queue.get()
+        line = await self._queue.get()
+        with self._read_condition:
+            self._read_count += 1
+            self._read_condition.notify_all()
+        return line
+
+    def wait_for_reads(self, count: int, timeout: float) -> bool:
+        with self._read_condition:
+            return self._read_condition.wait_for(lambda: self._read_count >= count, timeout=timeout)
 
     def push(self, data: bytes) -> None:
         if self._loop is not None and self._loop.is_running():
