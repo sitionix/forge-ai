@@ -6,12 +6,14 @@ import com.sitionix.forgeai.api.activeprofile.ActiveLlmEffortRequest;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmEffortResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileDetailsResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileResponse;
+import com.sitionix.forgeai.api.activeprofile.ActiveLlmSelectionResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileUpdateRequest;
 import com.sitionix.forgeai.api.activeprofile.ActiveProfileResponse;
 import com.sitionix.forgeai.api.activeprofile.LlmUsageResponse;
 import com.sitionix.forgeai.api.activeprofile.LlmUsageWindowResponse;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
+import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmSelection;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmEffort;
 import com.sitionix.forgeai.domain.model.activeprofile.LlmUsage;
@@ -31,12 +33,12 @@ class ActiveProfileApiMapperTest {
         // given
         final ActiveProfile source = new ActiveProfile(
                 1,
-                new ActiveLlmProfile("ollama", "qwen2.5-coder:14b", null),
+                new ActiveLlmProfile("ollama", "qwen2.5-coder:14b", null, "Ollama", "Qwen 14B"),
                 null
         );
         final ActiveProfileResponse expected = new ActiveProfileResponse(
                 1,
-                new ActiveLlmProfileDetailsResponse("ollama", "qwen2.5-coder:14b", null),
+                new ActiveLlmProfileDetailsResponse("ollama", "qwen2.5-coder:14b", null, "Ollama", "Qwen 14B"),
                 null
         );
 
@@ -54,7 +56,7 @@ class ActiveProfileApiMapperTest {
         final Instant secondResetAt = Instant.parse("2026-08-04T09:00:00Z");
         final ActiveProfile source = new ActiveProfile(
                 3,
-                new ActiveLlmProfile("codex", "gpt-5.6-sol", new LlmEffort("high")),
+                new ActiveLlmProfile("codex", "gpt-5.6-sol", new LlmEffort("high"), "Codex", "GPT-5.6-Sol"),
                 new LlmUsage(List.of(
                         new LlmUsageWindow("PRIMARY", 34, 300, firstResetAt),
                         new LlmUsageWindow("SECONDARY", 61, 10080, secondResetAt)
@@ -65,7 +67,9 @@ class ActiveProfileApiMapperTest {
                 new ActiveLlmProfileDetailsResponse(
                         "codex",
                         "gpt-5.6-sol",
-                        new ActiveLlmEffortResponse("high")
+                        new ActiveLlmEffortResponse("high"),
+                        "Codex",
+                        "GPT-5.6-Sol"
                 ),
                 new LlmUsageResponse(List.of(
                         new LlmUsageWindowResponse("PRIMARY", 34, 300, firstResetAt),
@@ -108,11 +112,11 @@ class ActiveProfileApiMapperTest {
         // given
         final ActiveLlmProfileUpdateResult source = new ActiveLlmProfileUpdateResult(
                 4,
-                new ActiveLlmProfile("ollama", "qwen", null)
+                new ActiveLlmSelection("ollama", "qwen", null)
         );
         final ActiveLlmProfileResponse expected = new ActiveLlmProfileResponse(
                 4,
-                new ActiveLlmProfileDetailsResponse("ollama", "qwen", null)
+                new ActiveLlmSelectionResponse("ollama", "qwen", null)
         );
 
         // when
@@ -121,4 +125,5 @@ class ActiveProfileApiMapperTest {
         // then
         assertThat(actual).isEqualTo(expected);
     }
+
 }

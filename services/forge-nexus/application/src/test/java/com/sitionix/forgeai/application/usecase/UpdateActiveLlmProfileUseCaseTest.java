@@ -1,7 +1,7 @@
 package com.sitionix.forgeai.application.usecase;
 
-import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
+import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmSelection;
 import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
 import com.sitionix.forgeai.domain.port.KnowledgeActiveProfileClient;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +33,7 @@ class UpdateActiveLlmProfileUseCaseTest {
         final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(1, "ollama", "qwen", null);
         final ActiveLlmProfileUpdateResult update = new ActiveLlmProfileUpdateResult(
                 2,
-                new ActiveLlmProfile("ollama", "qwen", null)
+                new ActiveLlmSelection("ollama", "qwen", null)
         );
         when(this.client.updateActiveLlmProfile(command)).thenReturn(update);
 

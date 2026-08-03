@@ -6,13 +6,13 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import httpx
 
 from knowledge_service.config import (
-    DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS,
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+    DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS,
 )
 from knowledge_service.generative_runtime import GenerativeProvider, GenerativeRequest, OllamaGenerativeProvider, ResponseMode
 from knowledge_service.knowledge_query_schema import KnowledgeQueryIntent, KnowledgeQueryRequest
@@ -21,7 +21,6 @@ from knowledge_service.language_policy import (
     normalize_detected_language,
     normalize_response_language,
 )
-
 
 QUERY_INTERPRETATION_FAILED = "QUERY_INTERPRETATION_FAILED"
 
@@ -66,8 +65,8 @@ class QueryRetrievalPlan:
     detected_language: str
     response_language: str
 
-    def query_inputs(self) -> List[tuple[str, str]]:
-        result: List[tuple[str, str]] = []
+    def query_inputs(self) -> list[tuple[str, str]]:
+        result: list[tuple[str, str]] = []
         self._append(result, "ORIGINAL_QUERY", self.original_query)
         self._append(result, "NORMALIZED_QUERY", self.normalized_query)
         for query in self.search_queries:
@@ -76,7 +75,7 @@ class QueryRetrievalPlan:
             self._append(result, "CODE_IDENTIFIER", identifier)
         return result
 
-    def _append(self, values: List[tuple[str, str]], reason: str, value: str) -> None:
+    def _append(self, values: list[tuple[str, str]], reason: str, value: str) -> None:
         normalized = str(value or "").strip()
         if not normalized:
             return
@@ -168,7 +167,7 @@ class QueryInterpretationService:
         self.renderer = renderer or QueryInterpretationPromptRenderer()
         self.provider_name = provider_name
         self.provider_model = provider_model
-        self.audit_records: Deque[Dict[str, Any]] = deque(maxlen=max(0, int(audit_max_records)))
+        self.audit_records: deque[dict[str, Any]] = deque(maxlen=max(0, int(audit_max_records)))
 
     def interpret(self, request: KnowledgeQueryRequest, *, deadline_at: float | None = None) -> QueryRetrievalPlan:
         if deadline_at is None:
@@ -245,7 +244,7 @@ class QueryInterpretationService:
         *,
         explicit_language: str | None,
     ) -> QueryInterpretation:
-        errors: List[str] = []
+        errors: list[str] = []
         try:
             payload = json.loads(raw_text)
         except Exception as exc:
@@ -305,13 +304,13 @@ class QueryInterpretationService:
             concepts=tuple(concepts),
         )
 
-    def _string_list(self, value: Any, field_name: str, max_items: int, errors: List[str]) -> List[str]:
+    def _string_list(self, value: Any, field_name: str, max_items: int, errors: list[str]) -> list[str]:
         if not isinstance(value, list):
             errors.append(f"{field_name} must be a list.")
             return []
         if len(value) > max_items:
             errors.append(f"{field_name} must contain at most {max_items} items.")
-        result: List[str] = []
+        result: list[str] = []
         seen: set[str] = set()
         for index, item in enumerate(value):
             if not isinstance(item, str):
@@ -334,7 +333,7 @@ class QueryInterpretationService:
         field_name: str,
         values: Sequence[str],
         query_text: str,
-        errors: List[str],
+        errors: list[str],
     ) -> None:
         for value in values:
             for match in _CODE_LIKE_RE.finditer(value):
@@ -342,8 +341,8 @@ class QueryInterpretationService:
                 if identifier not in query_text:
                     errors.append(f"{field_name} contains invented code-like identifier {identifier!r}.")
 
-    def _merge_exact_query_identifiers(self, values: Sequence[str], query_text: str, errors: List[str]) -> List[str]:
-        result: List[str] = []
+    def _merge_exact_query_identifiers(self, values: Sequence[str], query_text: str, errors: list[str]) -> list[str]:
+        result: list[str] = []
         seen: set[str] = set()
         for value in [*values, *[match.group(0) for match in _CODE_LIKE_RE.finditer(query_text)]]:
             normalized = str(value or "").strip()
@@ -423,10 +422,12 @@ class ProviderBackedQueryInterpretationClient:
         model: str,
         timeout_seconds: int,
         context_tokens: int,
+        effort_id: str | None = None,
         renderer: QueryInterpretationPromptRenderer | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
+        self.effort_id = effort_id
         self.timeout_seconds = timeout_seconds
         self.context_tokens = int(context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS)
         if self.context_tokens < 1024:
@@ -447,6 +448,7 @@ class ProviderBackedQueryInterpretationClient:
             GenerativeRequest(
                 prompt=prompt,
                 model_id=self.model,
+                effort_id=self.effort_id,
                 response_mode=ResponseMode.JSON_OBJECT,
                 timeout_seconds=call_timeout,
                 context_tokens=self.context_tokens,
@@ -485,6 +487,7 @@ class LocalOllamaQueryInterpretationClient(ProviderBackedQueryInterpretationClie
             model,
             timeout_seconds,
             context_tokens,
+            effort_id=None,
             renderer=renderer,
         )
 
