@@ -172,6 +172,12 @@ class _ServerRequestHandlingResult:
     invalidate_after_response: CodexAppServerProtocolError | None = None
 
 
+@dataclass(frozen=True)
+class _SubmittedCoroutine:
+    result: concurrent.futures.Future[Any]
+    completed: concurrent.futures.Future[None]
+
+
 def _effective_timeout(timeout: float | None, configured_timeout: float) -> float:
     if timeout is None:
         return float(configured_timeout)
@@ -1287,20 +1293,65 @@ class CodexAppServerClient:
         return match.group(1) if match else None
 
     async def _await_threadsafe(self, coro_factory: Callable[[], Awaitable[Any]], *, cancel_cleanup: bool = False) -> Any:
-        future = self._submit(coro_factory)
+        submitted = self._submit_tracked(coro_factory)
         try:
-            return await asyncio.wrap_future(future)
+            return await asyncio.wrap_future(submitted.result)
         except asyncio.CancelledError:
-            future.cancel()
-            deadline = time.monotonic() + self._settings.cancellation_cleanup_timeout_seconds
-            while not future.done() and time.monotonic() < deadline:
-                await asyncio.sleep(self._settings.cancellation_poll_interval_seconds)
+            submitted.result.cancel()
+            try:
+                await asyncio.wait_for(
+                    asyncio.wrap_future(submitted.completed),
+                    timeout=self._settings.cancellation_cleanup_timeout_seconds,
+                )
+            except TimeoutError:
+                pass
             if cancel_cleanup:
                 try:
                     await asyncio.wrap_future(self._submit(lambda: self._close_inner()))
                 except Exception as cleanup_exc:
                     LOGGER.debug("Codex app-server cancellation cleanup failed", exc_info=cleanup_exc)
             raise
+
+    def _submit_tracked(self, coro_factory: Callable[[], Awaitable[Any]]) -> _SubmittedCoroutine:
+        self._raise_if_closed()
+        loop = self._ensure_loop_thread()
+        result_future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+        completed_future: concurrent.futures.Future[None] = concurrent.futures.Future()
+
+        def start() -> None:
+            try:
+                task = loop.create_task(cast(Coroutine[Any, Any, Any], coro_factory()))
+            except Exception as exc:  # noqa: BLE001 - loop-thread submission is the async/sync boundary.
+                if not result_future.cancelled():
+                    result_future.set_exception(exc)
+                completed_future.set_result(None)
+                return
+
+            def cancel_task(_future: concurrent.futures.Future[Any]) -> None:
+                if _future.cancelled() and not task.done():
+                    task.cancel()
+
+            result_future.add_done_callback(lambda _future: loop.call_soon_threadsafe(cancel_task, _future))
+            if result_future.cancelled():
+                task.cancel()
+
+            def finish(done: asyncio.Task[Any]) -> None:
+                try:
+                    if not result_future.cancelled():
+                        result_future.set_result(done.result())
+                except asyncio.CancelledError:
+                    result_future.cancel()
+                except Exception as exc:  # noqa: BLE001 - loop-thread task failures are propagated through the public future.
+                    if not result_future.cancelled():
+                        result_future.set_exception(exc)
+                finally:
+                    if not completed_future.done():
+                        completed_future.set_result(None)
+
+            task.add_done_callback(finish)
+
+        loop.call_soon_threadsafe(start)
+        return _SubmittedCoroutine(result=result_future, completed=completed_future)
 
     def _submit(self, coro_factory: Callable[[], Awaitable[Any]], *, allow_closing: bool = False) -> concurrent.futures.Future[Any]:
         if allow_closing:
