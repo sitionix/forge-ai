@@ -2,10 +2,12 @@ package com.sitionix.forgeai.api;
 
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileDetailsResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileResponse;
+import com.sitionix.forgeai.api.activeprofile.ActiveLlmSelectionResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileUpdateRequest;
 import com.sitionix.forgeai.api.activeprofile.ActiveProfileResponse;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmProfileUpdateResult;
+import com.sitionix.forgeai.domain.model.activeprofile.ActiveLlmSelection;
 import com.sitionix.forgeai.domain.model.activeprofile.ActiveProfile;
 import com.sitionix.forgeai.domain.model.activeprofile.UpdateActiveLlmProfileCommand;
 import com.sitionix.forgeai.domain.usecase.GetActiveProfile;
@@ -73,11 +75,11 @@ class KnowledgeActiveProfileControllerTest {
         final UpdateActiveLlmProfileCommand command = new UpdateActiveLlmProfileCommand(3, "ollama", "qwen", null);
         final ActiveLlmProfileUpdateResult update = new ActiveLlmProfileUpdateResult(
                 4,
-                new ActiveLlmProfile("ollama", "qwen", null)
+                new ActiveLlmSelection("ollama", "qwen", null)
         );
         final ActiveLlmProfileResponse response = new ActiveLlmProfileResponse(
                 4,
-                new ActiveLlmProfileDetailsResponse("ollama", "qwen", null)
+                new ActiveLlmSelectionResponse("ollama", "qwen", null)
         );
         when(this.mapper.toCommand(request)).thenReturn(command);
         when(this.updateActiveLlmProfile.execute(command)).thenReturn(update);

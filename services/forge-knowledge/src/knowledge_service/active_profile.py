@@ -8,14 +8,13 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from pydantic import BaseModel, Field, root_validator
 
-from knowledge_service.ai_runtime_discovery import READY, AiRuntimeDiscoveryService, CodexAppServerClient
+from knowledge_service.ai_runtime_discovery import READY, AiRuntimeDiscoveryService
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.generative_runtime import GenerativeProviderRegistry, GenerativeRequest
-
 
 LOGGER = logging.getLogger(__name__)
 _SINGLETON_ID = "active"
@@ -28,10 +27,18 @@ class ActiveLlmEffortResponse(BaseModel):
         extra = "forbid"
 
 
-class ActiveLlmProfileResponse(BaseModel):
+class ActiveLlmSelectionResponse(BaseModel):
     providerId: str
     modelId: str
     effort: ActiveLlmEffortResponse | None
+
+    class Config:
+        extra = "forbid"
+
+
+class ActiveLlmProfileDetailsResponse(ActiveLlmSelectionResponse):
+    providerDisplayName: str | None = None
+    modelDisplayName: str | None = None
 
     class Config:
         extra = "forbid"
@@ -56,7 +63,7 @@ class LlmUsageResponse(BaseModel):
 
 class ActiveProfileResponse(BaseModel):
     revision: int
-    llmProfile: ActiveLlmProfileResponse
+    llmProfile: ActiveLlmProfileDetailsResponse
     usage: LlmUsageResponse | None
 
     class Config:
@@ -81,7 +88,7 @@ class ActiveLlmProfilePutRequest(BaseModel):
 
 class ActiveLlmProfilePutResponse(BaseModel):
     revision: int
-    llmProfile: ActiveLlmProfileResponse
+    llmProfile: ActiveLlmSelectionResponse
 
     class Config:
         extra = "forbid"
@@ -90,7 +97,7 @@ class ActiveLlmProfilePutResponse(BaseModel):
 @dataclass(frozen=True)
 class PersistedActiveProfile:
     revision: int
-    llm_profile: ActiveLlmProfileResponse
+    llm_profile: ActiveLlmSelectionResponse
 
 
 @dataclass(frozen=True)
@@ -113,7 +120,7 @@ class ActiveProfileStore:
             existing = self._read(conn)
             if existing is not None:
                 return existing
-            profile = ActiveLlmProfileResponse(providerId=provider_id, modelId=model_id, effort=None)
+            profile = ActiveLlmSelectionResponse(providerId=provider_id, modelId=model_id, effort=None)
             conn.execute(
                 """
                 INSERT INTO active_profile(singleton_id, revision, profile_json, created_at, updated_at)
@@ -128,7 +135,7 @@ class ActiveProfileStore:
             self._create_schema(conn)
             return self._read(conn)
 
-    def replace_llm_profile(self, expected_revision: int, profile: ActiveLlmProfileResponse) -> PersistedActiveProfile:
+    def replace_llm_profile(self, expected_revision: int, profile: ActiveLlmSelectionResponse) -> PersistedActiveProfile:
         with self._connect() as conn:
             self._create_schema(conn)
             current = self._read(conn)
@@ -190,13 +197,23 @@ class ActiveProfileStore:
             return None
         try:
             payload = json.loads(str(row["profile_json"]))
-            llm_profile = ActiveLlmProfileResponse.parse_obj(payload.get("llmProfile"))
+            llm_profile = ActiveLlmSelectionResponse.parse_obj(payload.get("llmProfile"))
         except Exception as exc:
             raise KnowledgeError("ACTIVE_PROFILE_INVALID", "Stored active profile is invalid") from exc
         return PersistedActiveProfile(revision=int(row["revision"]), llm_profile=llm_profile)
 
-    def _profile_json(self, profile: ActiveLlmProfileResponse) -> str:
-        return json.dumps({"llmProfile": profile.dict()}, separators=(",", ":"), sort_keys=True)
+    def _profile_json(self, profile: ActiveLlmSelectionResponse) -> str:
+        return json.dumps(
+            {
+                "llmProfile": {
+                    "providerId": profile.providerId,
+                    "modelId": profile.modelId,
+                    "effort": profile.effort.dict() if profile.effort is not None else None,
+                }
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -230,6 +247,9 @@ class ActiveLlmRuntime:
             provider=provider,
         )
 
+    def resolve_provider(self, provider_id: str) -> Any:
+        return self._registry.resolve(provider_id)
+
 
 class ActiveProfileService:
     def __init__(
@@ -237,12 +257,12 @@ class ActiveProfileService:
         store: ActiveProfileStore,
         runtime: ActiveLlmRuntime,
         discovery: AiRuntimeDiscoveryService,
-        usage_provider: "LlmUsageProvider",
+        usage_registry: LlmUsageRegistry,
     ) -> None:
         self._store = store
         self._runtime = runtime
         self._discovery = discovery
-        self._usage_provider = usage_provider
+        self._usage_registry = usage_registry
         self._activation_lock = asyncio.Lock()
 
     def active_llm_snapshot(self) -> ActiveLlmSnapshot:
@@ -251,10 +271,14 @@ class ActiveProfileService:
     async def get_active_profile(self) -> ActiveProfileResponse:
         persisted = self._require_profile()
         usage = await self._usage_or_null(persisted.llm_profile.providerId)
-        return ActiveProfileResponse(revision=persisted.revision, llmProfile=persisted.llm_profile, usage=usage)
+        return ActiveProfileResponse(
+            revision=persisted.revision,
+            llmProfile=await self._present_llm_profile(persisted.llm_profile),
+            usage=usage,
+        )
 
     async def replace_llm_profile(self, request: ActiveLlmProfilePutRequest) -> ActiveLlmProfilePutResponse:
-        candidate = ActiveLlmProfileResponse(
+        candidate = ActiveLlmSelectionResponse(
             providerId=_clean_id(request.providerId),
             modelId=str(request.modelId or "").strip(),
             effort=request.effort,
@@ -286,7 +310,7 @@ class ActiveProfileService:
             raise KnowledgeError("ACTIVE_PROFILE_NOT_FOUND", "Active profile is not initialized")
         return persisted
 
-    async def _validate_candidate(self, candidate: ActiveLlmProfileResponse) -> None:
+    async def _validate_candidate(self, candidate: ActiveLlmSelectionResponse) -> None:
         provider_id = _clean_id(candidate.providerId)
         model_id = _clean_id(candidate.modelId)
         if not provider_id:
@@ -311,7 +335,7 @@ class ActiveProfileService:
             raise KnowledgeError("ACTIVE_LLM_MODEL_NOT_FOUND", "Active LLM model was not found")
         self._validate_effort(candidate.effort, model_options)
         try:
-            provider = self._runtime._registry.resolve(provider_id)
+            provider = self._runtime.resolve_provider(provider_id)
         except Exception as exc:
             raise KnowledgeError("ACTIVE_LLM_PROVIDER_NOT_EXECUTABLE", "Active LLM provider is not executable") from exc
         if not callable(getattr(provider, "generate", None)) and not callable(getattr(provider, "generate_async", None)):
@@ -334,47 +358,63 @@ class ActiveProfileService:
             raise KnowledgeError("ACTIVE_LLM_EFFORT_NOT_SUPPORTED", "Active LLM effort is not supported for this model")
 
     async def _usage_or_null(self, provider_id: str) -> LlmUsageResponse | None:
-        try:
-            return await self._usage_provider.usage_for(provider_id)
-        except Exception:
-            LOGGER.exception("Active profile usage lookup failed for provider %s", provider_id)
+        source = self._usage_registry.resolve_optional(provider_id)
+        if source is None:
             return None
-
-
-class LlmUsageProvider:
-    def __init__(self, codex_client: CodexAppServerClient | None = None) -> None:
-        self._codex_client = codex_client
-
-    async def usage_for(self, provider_id: str) -> LlmUsageResponse | None:
-        if provider_id != "codex" or self._codex_client is None:
-            return None
-        payload = await self._codex_client.request("account/rateLimits/read")
-        rate_limits = payload.get("rateLimits") if isinstance(payload, Mapping) else None
-        if not isinstance(rate_limits, Mapping):
-            return LlmUsageResponse(windows=[])
-        windows: list[LlmUsageWindowResponse] = []
-        self._append_window(windows, "PRIMARY", rate_limits.get("primary"))
-        self._append_window(windows, "SECONDARY", rate_limits.get("secondary"))
-        return LlmUsageResponse(windows=windows)
-
-    def _append_window(self, windows: list[LlmUsageWindowResponse], kind: str, raw: Any) -> None:
-        if not isinstance(raw, Mapping):
-            return
         try:
-            used_percent = int(raw["usedPercent"])
-            duration_minutes = int(raw["windowDurationMins"])
-            reset_seconds = int(raw["resetsAt"])
-        except (KeyError, TypeError, ValueError):
-            return
-        reset_at = datetime.fromtimestamp(reset_seconds, tz=timezone.utc).isoformat().replace("+00:00", "Z")
-        windows.append(
-            LlmUsageWindowResponse(
-                kind=kind,
-                usedPercent=max(0, min(100, used_percent)),
-                windowDurationMinutes=duration_minutes,
-                resetAt=reset_at,
+            return await source.usage()
+        except Exception as exc:  # noqa: BLE001 - usage sources are provider-owned; active-profile GET must stay available.
+            LOGGER.warning(
+                "Active profile usage lookup failed for provider %s: %s",
+                provider_id,
+                type(exc).__name__,
             )
+            return None
+
+    async def _present_llm_profile(self, profile: ActiveLlmSelectionResponse) -> ActiveLlmProfileDetailsResponse:
+        try:
+            metadata = self._discovery.cached_profile_metadata(profile.providerId, profile.modelId)
+        except Exception as exc:  # noqa: BLE001 - display metadata is optional; active-profile GET must stay available.
+            LOGGER.warning(
+                "Active profile display metadata lookup failed provider_id=%s model_id=%s error_type=%s",
+                profile.providerId,
+                profile.modelId,
+                type(exc).__name__,
+            )
+            provider_display_name = None
+            model_display_name = None
+        else:
+            provider_display_name = _optional_display_name(metadata.provider_display_name)
+            model_display_name = _optional_display_name(metadata.model_display_name)
+        return ActiveLlmProfileDetailsResponse(
+            providerId=profile.providerId,
+            modelId=profile.modelId,
+            effort=profile.effort,
+            providerDisplayName=provider_display_name,
+            modelDisplayName=model_display_name,
         )
+
+
+class LlmUsageSource(Protocol):
+    provider_id: str
+
+    async def usage(self) -> LlmUsageResponse | None: ...
+
+
+class LlmUsageRegistry:
+    def __init__(self) -> None:
+        self._sources: dict[str, LlmUsageSource] = {}
+
+    def register(self, source: LlmUsageSource) -> None:
+        provider_id = _clean_id(source.provider_id)
+        if not provider_id:
+            raise ValueError("LLM usage provider_id is required")
+        if provider_id in self._sources:
+            raise ValueError(f"LLM usage source already registered: {provider_id}")
+        self._sources[provider_id] = source
+
+    def resolve_optional(self, provider_id: str) -> LlmUsageSource | None:
+        return self._sources.get(_clean_id(provider_id))
 
 
 class ActiveRuntimeGenerativeProvider:
@@ -392,6 +432,9 @@ class ActiveRuntimeGenerativeProvider:
         snapshot = self._runtime.capture()
         return await snapshot.provider.generate_async(_request_for_snapshot(request, snapshot))
 
+    async def aclose(self) -> None:
+        return None
+
 
 def _request_for_snapshot(request: GenerativeRequest, snapshot: ActiveLlmSnapshot) -> GenerativeRequest:
     metadata = dict(request.metadata or {})
@@ -402,11 +445,10 @@ def _request_for_snapshot(request: GenerativeRequest, snapshot: ActiveLlmSnapsho
             "activeModelId": snapshot.model_id,
         }
     )
-    if snapshot.effort_id is not None:
-        metadata["activeEffortId"] = snapshot.effort_id
     return GenerativeRequest(
         prompt=request.prompt,
         model_id=snapshot.model_id,
+        effort_id=snapshot.effort_id,
         response_mode=request.response_mode,
         timeout_seconds=request.timeout_seconds,
         context_tokens=request.context_tokens,
@@ -417,3 +459,10 @@ def _request_for_snapshot(request: GenerativeRequest, snapshot: ActiveLlmSnapsho
 
 def _clean_id(value: str) -> str:
     return str(value or "").strip().lower()
+
+
+def _optional_display_name(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None

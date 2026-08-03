@@ -4,8 +4,10 @@ import asyncio
 from pathlib import Path
 
 import pytest
+
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.config import (
+    DEFAULT_CODEX_APP_SERVER_COMMAND,
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
     DEFAULT_GENERATIVE_MODEL,
     AppConfig,
@@ -111,6 +113,80 @@ def test_root_human_query_timeout_changes_knowledge_deadline(tmp_path):
     assert config.human_query_request_timeout_seconds == 42
 
 
+def test_codex_app_server_defaults_are_owned_by_settings_model(tmp_path):
+    config_file = _minimal_forge_config(tmp_path)
+
+    settings = load_forge_settings(config_file=config_file, environ=_env(tmp_path, config_file))
+    config = AppConfig.from_forge_settings(settings)
+
+    assert config.codex_app_server.command == DEFAULT_CODEX_APP_SERVER_COMMAND
+    assert config.codex_app_server.runtime_dir == tmp_path / "var" / "knowledge" / "codex-runtime"
+    assert config.codex_app_server.request_timeout_seconds == 5.0
+    assert config.codex_app_server.discovery_timeout_cap_seconds == 5.0
+    assert config.codex_app_server.discovery_cache_ttl_seconds == 30.0
+    assert config.codex_app_server.discovery_max_page_count == 100
+    assert config.codex_app_server.max_buffered_notifications_per_turn == 100
+
+
+def test_codex_app_server_configured_values_override_defaults_without_truthiness_fallback(tmp_path):
+    config_file = _minimal_forge_config(
+        tmp_path,
+        codex_app_server="""
+        codex-app-server:
+          command: ["codex-custom", "app-server", "--stdio"]
+          request-timeout-seconds: 7
+          discovery-timeout-cap-seconds: 6
+          discovery-timeout-allowance-seconds: 2
+          discovery-cache-ttl-seconds: 8
+          discovery-max-page-count: 9
+          max-buffered-notifications-per-turn: 3
+          max-buffered-turn-ids: 4
+          buffer-ttl-seconds: 5
+""",
+    )
+
+    settings = load_forge_settings(config_file=config_file, environ=_env(tmp_path, config_file))
+    config = AppConfig.from_forge_settings(settings)
+
+    assert config.codex_app_server.command == ("codex-custom", "app-server", "--stdio")
+    assert config.codex_app_server.request_timeout_seconds == 7
+    assert config.codex_app_server.discovery_timeout_cap_seconds == 6
+    assert config.codex_app_server.discovery_timeout_allowance_seconds == 2
+    assert config.codex_app_server.discovery_cache_ttl_seconds == 8
+    assert config.codex_app_server.discovery_max_page_count == 9
+    assert config.codex_app_server.max_buffered_notifications_per_turn == 3
+    assert config.codex_app_server.max_buffered_turn_ids == 4
+    assert config.codex_app_server.buffer_ttl_seconds == 5
+
+
+@pytest.mark.parametrize(
+    "codex_app_server",
+    [
+        """
+        codex-app-server:
+          command: ["codex", "  "]
+""",
+        """
+        codex-app-server:
+          request-timeout-seconds: 0
+""",
+        """
+        codex-app-server:
+          discovery-cache-ttl-seconds: 0
+""",
+        """
+        codex-app-server:
+          discovery-max-page-count: 0
+""",
+    ],
+)
+def test_codex_app_server_explicit_invalid_values_are_rejected(tmp_path, codex_app_server: str):
+    config_file = _minimal_forge_config(tmp_path, codex_app_server=codex_app_server)
+
+    with pytest.raises(ValueError):
+        load_forge_settings(config_file=config_file, environ=_env(tmp_path, config_file))
+
+
 def test_shared_human_query_timeout_env_override_changes_knowledge_deadline(tmp_path):
     config_file = _minimal_forge_config(tmp_path)
     environ = _env(tmp_path, config_file)
@@ -182,6 +258,7 @@ def _minimal_forge_config(
     generative_model: str = DEFAULT_GENERATIVE_MODEL,
     generative_context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS,
     human_query_timeout_seconds: int = 180,
+    codex_app_server: str = "",
 ) -> Path:
     config_dir = tmp_path / "config"
     runtime_dir = tmp_path / "var"
@@ -220,6 +297,7 @@ forge:
         inventory:
           source-catalog-path: "{config_dir / "knowledge" / "knowledge-sources.yaml"}"
           service-catalog-path: "{config_dir / "services.yaml"}"
+        {codex_app_server.rstrip()}
 """.lstrip(),
         encoding="utf-8",
     )

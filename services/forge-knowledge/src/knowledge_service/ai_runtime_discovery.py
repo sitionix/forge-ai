@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence
+from typing import Any, Mapping, Protocol, Sequence
 
 import httpx
 from pydantic import BaseModel
 
+from knowledge_service.codex_app_server import CodexAppServerClient, CodexAppServerError, CodexProtocol
 
 ProviderStatus = str
 READY: ProviderStatus = "READY"
@@ -112,11 +112,19 @@ class AiRuntimeProviderOptions:
         return payload
 
 
+@dataclass(frozen=True)
+class AiRuntimeProfileMetadata:
+    provider_display_name: str | None
+    model_display_name: str | None
+
+
 class AiRuntimeOptionsSource(Protocol):
     provider_id: str
     display_name: str
 
     async def discover(self) -> AiRuntimeProviderOptions: ...
+
+    def cached_profile_metadata(self, model_id: str) -> AiRuntimeProfileMetadata: ...
 
 
 @dataclass
@@ -158,12 +166,22 @@ class AiRuntimeDiscoveryRegistry:
 class AiRuntimeDiscoveryService:
     def __init__(self, registry: AiRuntimeDiscoveryRegistry, *, provider_timeout_seconds: float = 5.0) -> None:
         self._registry = registry
-        self._provider_timeout_seconds = max(0.001, float(provider_timeout_seconds))
+        self._provider_timeout_seconds = float(provider_timeout_seconds)
+        if self._provider_timeout_seconds <= 0:
+            raise ValueError("provider_timeout_seconds must be positive")
 
     async def discover(self) -> dict[str, Any]:
         tasks = [self._discover_one(source) for source in self._registry.sources]
         providers = await asyncio.gather(*tasks)
         return {"providers": [provider.public_dict() for provider in providers]}
+
+    def cached_profile_metadata(self, provider_id: str, model_id: str) -> AiRuntimeProfileMetadata:
+        normalized_provider_id = _clean_id(provider_id)
+        for source in self._registry.sources:
+            if _clean_id(source.provider_id) != normalized_provider_id:
+                continue
+            return source.cached_profile_metadata(model_id)
+        return AiRuntimeProfileMetadata(provider_display_name=None, model_display_name=None)
 
     async def _discover_one(self, source: AiRuntimeOptionsSource) -> AiRuntimeProviderOptions:
         try:
@@ -174,7 +192,7 @@ class AiRuntimeDiscoveryService:
                 display_name=source.display_name,
                 status=UNAVAILABLE,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - discovery isolates provider failures.
             return AiRuntimeProviderOptions(
                 provider_id=source.provider_id,
                 display_name=source.display_name,
@@ -198,8 +216,12 @@ class OllamaAiRuntimeOptionsSource:
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = str(base_url or "").rstrip("/")
-        self.timeout_seconds = max(0.001, float(timeout_seconds))
-        self.cache_ttl_seconds = max(0.001, float(cache_ttl_seconds))
+        self.timeout_seconds = float(timeout_seconds)
+        self.cache_ttl_seconds = float(cache_ttl_seconds)
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if self.cache_ttl_seconds <= 0:
+            raise ValueError("cache_ttl_seconds must be positive")
         self._http_client = http_client
         self._owns_http_client = http_client is None
         self._version: str | None = None
@@ -250,6 +272,9 @@ class OllamaAiRuntimeOptionsSource:
     async def aclose(self) -> None:
         if self._owns_http_client and self._http_client is not None:
             await self._http_client.aclose()
+
+    def cached_profile_metadata(self, model_id: str) -> AiRuntimeProfileMetadata:
+        return _metadata_from_cache(self._catalog_cache, model_id)
 
     async def _probe_version(self) -> str | None:
         try:
@@ -310,264 +335,24 @@ class OllamaAiRuntimeOptionsSource:
         return httpx.Timeout(timeout, connect=min(1.0, timeout))
 
 
-class CodexAppServerError(RuntimeError):
-    pass
-
-
-class CodexAppServerTimeout(CodexAppServerError, TimeoutError):
-    pass
-
-
-class CodexAppServerClient:
-    _VERSION_PATTERN = re.compile(r"^[^/]+/([^ ]+)")
-
-    def __init__(
-        self,
-        *,
-        client_name: str = "forge-knowledge",
-        client_version: str = "0.1.0",
-        command: Sequence[str] = ("codex", "app-server", "--stdio"),
-        request_timeout_seconds: float = 5.0,
-        process_factory: Callable[[Sequence[str]], Awaitable[Any]] | None = None,
-    ) -> None:
-        self._client_name = client_name
-        self._client_version = client_version
-        self._command = tuple(command)
-        self._request_timeout_seconds = max(0.001, float(request_timeout_seconds))
-        self._process_factory = process_factory or self._default_process_factory
-        self._process: Any | None = None
-        self._reader_task: asyncio.Task[None] | None = None
-        self._stderr_task: asyncio.Task[None] | None = None
-        self._pending: dict[int, asyncio.Future[Any]] = {}
-        self._next_request_id = 1
-        self._start_lock = asyncio.Lock()
-        self._write_lock = asyncio.Lock()
-        self._initialized = False
-        self._version: str | None = None
-
-    @property
-    def version(self) -> str | None:
-        return self._version
-
-    async def initialize(self) -> str:
-        await self._ensure_started()
-        if self._version is None:
-            raise CodexAppServerError("Codex app-server did not return a version")
-        return self._version
-
-    async def request(self, method: str, params: Mapping[str, Any] | None = None) -> Any:
-        await self._ensure_started()
-        request_id = self._allocate_request_id()
-        payload: dict[str, Any] = {"id": request_id, "method": method}
-        if params is not None:
-            payload["params"] = dict(params)
-        future = asyncio.get_running_loop().create_future()
-        self._pending[request_id] = future
-        try:
-            await self._write_json(payload)
-            return await asyncio.wait_for(future, timeout=self._request_timeout_seconds)
-        except TimeoutError as exc:
-            raise CodexAppServerTimeout(f"Codex app-server request timed out: {method}") from exc
-        except BaseException:
-            raise
-        finally:
-            self._pending.pop(request_id, None)
-
-    async def aclose(self) -> None:
-        await self._stop_process()
-
-    async def _ensure_started(self) -> None:
-        async with self._start_lock:
-            if self._process is not None and self._returncode(self._process) is None and self._initialized:
-                return
-            await self._stop_process()
-            try:
-                self._process = await self._process_factory(self._command)
-            except FileNotFoundError as exc:
-                raise CodexAppServerError("Codex app-server executable was not found") from exc
-            self._initialized = False
-            self._version = None
-            self._reader_task = asyncio.create_task(self._read_stdout(), name="codex-app-server-stdout")
-            self._stderr_task = asyncio.create_task(self._drain_stream(getattr(self._process, "stderr", None)), name="codex-app-server-stderr")
-            try:
-                response = await self._initialize_request()
-                user_agent = _non_blank(response.get("userAgent")) if isinstance(response, Mapping) else None
-                version = self._extract_version(user_agent)
-                if version is None:
-                    raise CodexAppServerError("Codex app-server did not return a version")
-                self._version = version
-                self._initialized = True
-            except BaseException:
-                cleanup = asyncio.create_task(self._stop_process())
-                try:
-                    await asyncio.shield(cleanup)
-                except asyncio.CancelledError:
-                    try:
-                        await cleanup
-                    except Exception:
-                        pass
-                raise
-
-    async def _initialize_request(self) -> Any:
-        request_id = self._allocate_request_id()
-        future = asyncio.get_running_loop().create_future()
-        self._pending[request_id] = future
-        try:
-            await self._write_json(
-                {
-                    "id": request_id,
-                    "method": "initialize",
-                    "params": {
-                        "clientInfo": {
-                            "name": self._client_name,
-                            "version": self._client_version,
-                        }
-                    },
-                }
-            )
-            return await asyncio.wait_for(future, timeout=self._request_timeout_seconds)
-        except TimeoutError as exc:
-            raise CodexAppServerTimeout("Codex app-server initialize timed out") from exc
-        except BaseException:
-            raise
-        finally:
-            self._pending.pop(request_id, None)
-
-    async def _write_json(self, payload: Mapping[str, Any]) -> None:
-        process = self._process
-        if process is None or self._returncode(process) is not None:
-            raise CodexAppServerError("Codex app-server process is not running")
-        stdin = getattr(process, "stdin", None)
-        if stdin is None:
-            raise CodexAppServerError("Codex app-server stdin is unavailable")
-        encoded = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
-        async with self._write_lock:
-            stdin.write(encoded)
-            drain = getattr(stdin, "drain", None)
-            if callable(drain):
-                await drain()
-
-    async def _read_stdout(self) -> None:
-        stream = getattr(self._process, "stdout", None)
-        try:
-            while stream is not None:
-                line = await stream.readline()
-                if not line:
-                    break
-                self._handle_line(line)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self._fail_pending(exc)
-        finally:
-            self._fail_pending(CodexAppServerError("Codex app-server exited before response"))
-            self._initialized = False
-
-    async def _drain_stream(self, stream: Any | None) -> None:
-        if stream is None:
-            return
-        try:
-            while await stream.readline():
-                pass
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            return
-
-    def _handle_line(self, line: bytes | str) -> None:
-        text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else str(line)
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            return
-        if not isinstance(payload, Mapping) or "id" not in payload:
-            return
-        request_id = payload.get("id")
-        if not isinstance(request_id, int):
-            return
-        future = self._pending.pop(request_id, None)
-        if future is None or future.done():
-            return
-        if "error" in payload:
-            future.set_exception(CodexAppServerError("Codex app-server returned an error"))
-            return
-        future.set_result(payload.get("result"))
-
-    async def _stop_process(self) -> None:
-        for task in (self._reader_task, self._stderr_task):
-            if task is not None:
-                task.cancel()
-        for task in (self._reader_task, self._stderr_task):
-            if task is not None:
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    pass
-        self._reader_task = None
-        self._stderr_task = None
-        self._fail_pending(CodexAppServerError("Codex app-server stopped"))
-        process = self._process
-        self._process = None
-        self._initialized = False
-        self._version = None
-        if process is None or self._returncode(process) is not None:
-            return
-        terminate = getattr(process, "terminate", None)
-        if callable(terminate):
-            terminate()
-        wait = getattr(process, "wait", None)
-        if callable(wait):
-            try:
-                await asyncio.wait_for(wait(), timeout=1.0)
-                return
-            except TimeoutError:
-                kill = getattr(process, "kill", None)
-                if callable(kill):
-                    kill()
-                try:
-                    await asyncio.wait_for(wait(), timeout=1.0)
-                except TimeoutError:
-                    pass
-
-    async def _default_process_factory(self, command: Sequence[str]) -> Any:
-        return await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-    def _allocate_request_id(self) -> int:
-        request_id = self._next_request_id
-        self._next_request_id += 1
-        return request_id
-
-    def _extract_version(self, user_agent: str | None) -> str | None:
-        if user_agent is None:
-            return None
-        match = self._VERSION_PATTERN.match(user_agent)
-        return match.group(1) if match else None
-
-    def _fail_pending(self, exc: Exception) -> None:
-        for future in self._pending.values():
-            if not future.done():
-                future.set_exception(exc)
-        self._pending.clear()
-
-    def _returncode(self, process: Any) -> int | None:
-        return getattr(process, "returncode", None)
-
-
 class CodexAiRuntimeOptionsSource:
     provider_id = "codex"
     display_name = "Codex"
 
-    def __init__(self, client: CodexAppServerClient, *, cache_ttl_seconds: float = 30.0, max_page_count: int = 100) -> None:
+    def __init__(
+        self,
+        client: CodexAppServerClient,
+        *,
+        cache_ttl_seconds: float,
+        max_page_count: int,
+    ) -> None:
         self._client = client
-        self.cache_ttl_seconds = max(0.001, float(cache_ttl_seconds))
-        self.max_page_count = max(1, int(max_page_count))
+        self.cache_ttl_seconds = float(cache_ttl_seconds)
+        self.max_page_count = int(max_page_count)
+        if self.cache_ttl_seconds <= 0:
+            raise ValueError("cache_ttl_seconds must be positive")
+        if self.max_page_count <= 0:
+            raise ValueError("max_page_count must be positive")
         self._catalog_cache: _CacheEntry | None = None
 
     async def discover(self) -> AiRuntimeProviderOptions:
@@ -616,7 +401,10 @@ class CodexAiRuntimeOptionsSource:
         return result
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        return None
+
+    def cached_profile_metadata(self, model_id: str) -> AiRuntimeProfileMetadata:
+        return _metadata_from_cache(self._catalog_cache, model_id)
 
     async def _read_all_models(self) -> list[AiRuntimeModelOption]:
         models: list[AiRuntimeModelOption] = []
@@ -630,7 +418,7 @@ class CodexAiRuntimeOptionsSource:
             params: dict[str, Any] = {"includeHidden": False}
             if cursor:
                 params["cursor"] = cursor
-            payload = await self._client.request("model/list", params)
+            payload = await self._client.request(CodexProtocol.MODEL_LIST, params)
             if not isinstance(payload, Mapping):
                 raise CodexAppServerError("Codex model/list result was not an object")
             raw_models = payload.get("data")
@@ -653,7 +441,7 @@ class CodexAiRuntimeOptionsSource:
             raise CodexAppServerError("Codex model entry was not an object")
         if raw_model.get("hidden") is True:
             return None
-        model_id = _non_blank(raw_model.get("id")) or _non_blank(raw_model.get("model"))
+        model_id = _non_blank(raw_model.get("id"))
         display_name = _non_blank(raw_model.get("displayName"))
         if model_id is None or display_name is None:
             raise CodexAppServerError("Codex model entry is missing id/displayName")
@@ -682,7 +470,27 @@ def _non_blank(value: Any) -> str | None:
     return stripped or None
 
 
+def _clean_id(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
 def _string_list_contains(value: Any, expected: str) -> bool:
     if not isinstance(value, list):
         return False
     return any(isinstance(item, str) and item == expected for item in value)
+
+
+def _metadata_from_cache(cache: _CacheEntry | None, model_id: str) -> AiRuntimeProfileMetadata:
+    if cache is None or not cache.valid():
+        return AiRuntimeProfileMetadata(provider_display_name=None, model_display_name=None)
+    provider = cache.value
+    normalized_model_id = _clean_id(model_id)
+    model_display_name = None
+    for model in provider.models:
+        if _clean_id(model.model_id) == normalized_model_id:
+            model_display_name = model.display_name
+            break
+    return AiRuntimeProfileMetadata(
+        provider_display_name=provider.display_name,
+        model_display_name=model_display_name,
+    )

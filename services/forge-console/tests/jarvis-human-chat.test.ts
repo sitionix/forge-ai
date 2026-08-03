@@ -129,7 +129,7 @@ function expectedPayload(queryText: string) {
 }
 
 describe('Jarvis human chat', () => {
-  it('mount loads Jarvis status and AI runtime providers', async () => {
+  it('mount loads Jarvis status, active profile, and provider summary', async () => {
     const dom = jarvisDom();
     const http = {
       get: vi.fn((path: string) => Promise.resolve(runtimeGet(path))),
@@ -141,20 +141,17 @@ describe('Jarvis human chat', () => {
     await flushAsync();
 
     expect(http.get).toHaveBeenCalledWith('/jarvis/status', expect.any(Object));
-    expect(http.get).toHaveBeenCalledWith('/knowledge/ai-runtime', expect.any(Object));
     expect(http.get).toHaveBeenCalledWith('/knowledge/active-profile', expect.any(Object));
+    expect(http.get).toHaveBeenCalledWith('/knowledge/ai-runtime', expect.any(Object));
     expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('Jarvis');
-    expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('Ollama');
-    expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('UNAVAILABLE');
-    expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('Codex');
-    expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('0.146.0');
+    expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('ollama');
     expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('local-model');
     expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).not.toContain('allowlisted');
     expect(dom.window.document.getElementById('jarvisUpdated')?.textContent).toContain('updated');
     expect(http.get.mock.calls.some(([path]) => path === '/jarvis/actions')).toBe(false);
   });
 
-  it('refresh reloads Jarvis status and AI runtime providers', async () => {
+  it('refresh reloads Jarvis status, active profile, and provider summary', async () => {
     const dom = jarvisDom();
     const http = {
       get: vi.fn((path: string) => Promise.resolve(runtimeGet(path))),

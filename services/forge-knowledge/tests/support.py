@@ -18,7 +18,6 @@ from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.main import create_app
 from knowledge_service.query_interpretation import QueryInterpretationProviderResult
 
-
 _BUILT_TEST_DEPENDENCIES: list[KnowledgeDependencies] = []
 
 

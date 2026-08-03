@@ -6,7 +6,12 @@ import json
 import httpx
 import pytest
 
+from knowledge_service.ai_runtime_discovery import AiRuntimeDiscoveryRegistry, AiRuntimeDiscoveryService, CodexAiRuntimeOptionsSource
+from knowledge_service.bootstrap import KnowledgeDependencies, build_generative_runtime
+from knowledge_service.codex_app_server import CodexAppServerClient, CodexNotificationBufferPolicy, CodexRuntimeSettings, CodexTurnResult
+from knowledge_service.config import AppConfig
 from knowledge_service.generative_runtime import (
+    CodexGenerativeProvider,
     GenerativeProviderDuplicateError,
     GenerativeProviderEmptyResponse,
     GenerativeProviderNotFoundError,
@@ -53,6 +58,17 @@ class FakeProvider:
         self.aclosed = True
 
 
+def test_generative_request_normalizes_blank_effort_to_none():
+    assert GenerativeRequest(prompt="x", model_id="m", effort_id="   ").effort_id is None
+
+
+def test_generative_request_positional_response_mode_contract_is_preserved():
+    request = GenerativeRequest("prompt", "model", ResponseMode.JSON_OBJECT)
+
+    assert request.response_mode == ResponseMode.JSON_OBJECT
+    assert request.effort_id is None
+
+
 class SingleCallSyncClient:
     def __init__(self, response: httpx.Response | Exception) -> None:
         self.response = response
@@ -87,6 +103,55 @@ class SingleCallAsyncClient:
         return None
 
 
+class CloseCountingCodexClient:
+    version = "test"
+
+    def __init__(self) -> None:
+        self.close_count = 0
+        self.initialize_count = 0
+
+    async def initialize(self) -> str:
+        self.initialize_count += 1
+        return "test"
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
+class FailingCleanup:
+    def __init__(self, message: str) -> None:
+        self.message = message
+        self.close_count = 0
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+        raise RuntimeError(self.message)
+
+
+class CancellingCleanup:
+    def __init__(self) -> None:
+        self.close_count = 0
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+        raise asyncio.CancelledError
+
+
+class VersionRaceCodexClient:
+    @property
+    def version(self) -> str:
+        raise AssertionError("provider must use the version captured in CodexTurnResult")
+
+    def run_turn_sync(self, **kwargs):
+        return CodexTurnResult(
+            raw_text="answer",
+            thread_id="thread-a",
+            turn_id="turn-a",
+            turn_status="completed",
+            server_version="0.146.0",
+        )
+
+
 def test_registry_registers_resolves_rejects_unknown_and_duplicate():
     registry = GenerativeProviderRegistry()
     provider = FakeProvider()
@@ -97,6 +162,159 @@ def test_registry_registers_resolves_rejects_unknown_and_duplicate():
         registry.resolve("missing")
     with pytest.raises(GenerativeProviderDuplicateError):
         registry.register(FakeProvider())
+
+
+def test_bootstrap_generative_registry_resolves_ollama_and_codex(tmp_path):
+    config = AppConfig(
+        module_dir=tmp_path,
+        host="127.0.0.1",
+        port=1,
+        local_config_path=tmp_path / "sources.yaml",
+        store_path=tmp_path / "knowledge.sqlite",
+        runtime_dir=tmp_path / "var",
+    )
+
+    codex_client = CodexAppServerClient(
+        settings=CodexRuntimeSettings(
+            command=("codex", "app-server", "--stdio"),
+            runtime_cwd=tmp_path / "var" / "codex-runtime",
+            client_name="forge-knowledge",
+            client_version="0.146.0",
+            request_timeout_seconds=1,
+            discovery_timeout_cap_seconds=1,
+            discovery_timeout_allowance_seconds=0.1,
+            interrupt_grace_seconds=0.1,
+            terminal_after_interrupt_seconds=0.1,
+            terminate_grace_seconds=0.1,
+            kill_grace_seconds=0.1,
+            sync_close_timeout_seconds=3,
+            loop_thread_join_timeout_seconds=0.5,
+            cancellation_cleanup_timeout_seconds=0.1,
+            notification_buffer=CodexNotificationBufferPolicy(max_per_turn=100, max_turn_ids=100, max_age_seconds=30.0),
+        )
+    )
+    registry, startup_provider = build_generative_runtime(config, codex_client=codex_client)
+
+    assert startup_provider.provider_id == "ollama"
+    assert registry.resolve("ollama").provider_id == "ollama"
+    assert isinstance(registry.resolve("codex"), CodexGenerativeProvider)
+
+
+def test_codex_provider_uses_turn_result_version_after_client_invalidation_race():
+    provider = CodexGenerativeProvider(VersionRaceCodexClient(), timeout_seconds=3)
+
+    response = provider.generate(GenerativeRequest(prompt="prompt", model_id="gpt-5.6-luna"))
+
+    assert response.provider_version == "0.146.0"
+
+
+def test_shared_codex_client_has_single_lifecycle_owner():
+    client = CloseCountingCodexClient()
+    discovery = AiRuntimeDiscoveryService(
+        AiRuntimeDiscoveryRegistry([CodexAiRuntimeOptionsSource(client, cache_ttl_seconds=30.0, max_page_count=100)])
+    )
+    registry = GenerativeProviderRegistry()
+    registry.register(CodexGenerativeProvider(client, timeout_seconds=3))
+    deps = KnowledgeDependencies(
+        inventory_store=None,
+        analysis_store=None,
+        graph_store=None,
+        source_resolver=None,
+        analysis_provider=None,
+        analysis_supervisor=None,
+        inventory_refresh=None,
+        inventory_scheduler=None,
+        storage_operations=None,
+        ai_runtime_discovery=discovery,
+        generative_registry=registry,
+        codex_app_server_client=client,
+    )
+
+    asyncio.run(discovery.aclose())
+    assert client.close_count == 0
+
+    asyncio.run(deps.aclose())
+    asyncio.run(deps.aclose())
+
+    assert client.close_count == 1
+    assert client.initialize_count == 0
+
+
+def test_dependency_shutdown_attempts_codex_after_discovery_failure():
+    discovery = FailingCleanup("discovery")
+    client = CloseCountingCodexClient()
+    deps = KnowledgeDependencies(
+        inventory_store=None,
+        analysis_store=None,
+        graph_store=None,
+        source_resolver=None,
+        analysis_provider=None,
+        analysis_supervisor=None,
+        inventory_refresh=None,
+        inventory_scheduler=None,
+        storage_operations=None,
+        ai_runtime_discovery=discovery,
+        generative_registry=None,
+        codex_app_server_client=client,
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(deps.aclose())
+
+    assert discovery.close_count == 1
+    assert client.close_count == 1
+
+
+def test_dependency_shutdown_attempts_codex_after_registry_failure():
+    registry = FailingCleanup("registry")
+    client = CloseCountingCodexClient()
+    deps = KnowledgeDependencies(
+        inventory_store=None,
+        analysis_store=None,
+        graph_store=None,
+        source_resolver=None,
+        analysis_provider=None,
+        analysis_supervisor=None,
+        inventory_refresh=None,
+        inventory_scheduler=None,
+        storage_operations=None,
+        ai_runtime_discovery=None,
+        generative_registry=registry,
+        codex_app_server_client=client,
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(deps.aclose())
+
+    assert registry.close_count == 1
+    assert client.close_count == 1
+
+
+def test_dependency_shutdown_preserves_cancellation_after_remaining_cleanup():
+    discovery = CancellingCleanup()
+    registry = FailingCleanup("registry")
+    client = CloseCountingCodexClient()
+    deps = KnowledgeDependencies(
+        inventory_store=None,
+        analysis_store=None,
+        graph_store=None,
+        source_resolver=None,
+        analysis_provider=None,
+        analysis_supervisor=None,
+        inventory_refresh=None,
+        inventory_scheduler=None,
+        storage_operations=None,
+        ai_runtime_discovery=discovery,
+        generative_registry=registry,
+        codex_app_server_client=client,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(deps.aclose())
+
+    assert discovery.close_count == 1
+    assert registry.close_count == 1
+    assert client.close_count == 1
 
 
 def test_registry_closes_sync_and_async_resources():

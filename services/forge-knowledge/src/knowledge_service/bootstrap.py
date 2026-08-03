@@ -1,43 +1,45 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
-from typing import Any, Optional
+from typing import Any
 
-from knowledge_service.ai_runtime_discovery import (
-    AiRuntimeDiscoveryRegistry,
-    AiRuntimeDiscoveryService,
-    CodexAiRuntimeOptionsSource,
-    CodexAppServerClient,
-    OllamaAiRuntimeOptionsSource,
-)
+from knowledge_service import __application_name__, __version__
 from knowledge_service.active_profile import (
     ActiveLlmRuntime,
     ActiveProfileService,
     ActiveProfileStore,
     ActiveRuntimeGenerativeProvider,
-    LlmUsageProvider,
+    LlmUsageRegistry,
+)
+from knowledge_service.ai_runtime_discovery import (
+    AiRuntimeDiscoveryRegistry,
+    AiRuntimeDiscoveryService,
+    CodexAiRuntimeOptionsSource,
+    OllamaAiRuntimeOptionsSource,
 )
 from knowledge_service.analysis_client import ProviderBackedAnalysisClient
 from knowledge_service.analysis_service import AnalysisProvider, AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.codex_app_server import CodexAppServerClient, CodexNotificationBufferPolicy, CodexRuntimeSettings
+from knowledge_service.codex_usage import CodexLlmUsageSource
 from knowledge_service.config import AppConfig, ForgeSettings
-from knowledge_service.generative_runtime import GenerativeProviderRegistry, OllamaGenerativeProvider
+from knowledge_service.generative_runtime import CodexGenerativeProvider, GenerativeProviderRegistry, OllamaGenerativeProvider
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
-from knowledge_service.storage_operations import StorageOperations
-from knowledge_service.storage_operations import RetentionPolicy
+from knowledge_service.storage_operations import RetentionPolicy, StorageOperations
 
 
-@dataclass(frozen=True)
+@dataclass
 class KnowledgeDependencies:
     inventory_store: InventoryStore
     analysis_store: AnalysisStore
     graph_store: AnalysisStore
     source_resolver: InventoryFileResolver
-    analysis_provider: Optional[AnalysisProvider]
+    analysis_provider: AnalysisProvider | None
     analysis_supervisor: AnalysisSupervisor
     inventory_refresh: InventoryRefreshService
     inventory_scheduler: AsyncInventoryScheduler
@@ -45,20 +47,47 @@ class KnowledgeDependencies:
     ai_runtime_discovery: AiRuntimeDiscoveryService | None = None
     active_profile_service: ActiveProfileService | None = None
     active_llm_runtime: ActiveLlmRuntime | None = None
-    generative_registry: Optional[GenerativeProviderRegistry] = None
+    generative_registry: GenerativeProviderRegistry | None = None
     generative_provider: Any | None = None
+    codex_app_server_client: CodexAppServerClient | None = None
+    _codex_app_server_client_closed: bool = field(default=False, init=False, repr=False)
 
     async def aclose(self) -> None:
+        errors: list[Exception] = []
+        cancelled: asyncio.CancelledError | None = None
         if self.ai_runtime_discovery is not None:
-            await self.ai_runtime_discovery.aclose()
+            try:
+                await self.ai_runtime_discovery.aclose()
+            except asyncio.CancelledError as exc:
+                cancelled = exc
+            except Exception as exc:  # noqa: BLE001 - cleanup must continue through all owned resources.
+                errors.append(exc)
         if self.generative_registry is not None:
-            await self.generative_registry.aclose()
+            try:
+                await self.generative_registry.aclose()
+            except asyncio.CancelledError as exc:
+                cancelled = exc
+            except Exception as exc:  # noqa: BLE001 - cleanup must continue through all owned resources.
+                errors.append(exc)
+        if self.codex_app_server_client is not None and not self._codex_app_server_client_closed:
+            try:
+                await self.codex_app_server_client.aclose()
+            except asyncio.CancelledError as exc:
+                cancelled = exc
+            except Exception as exc:  # noqa: BLE001 - cleanup must report after all attempts.
+                errors.append(exc)
+            else:
+                self._codex_app_server_client_closed = True
+        if cancelled is not None:
+            raise cancelled
+        if errors:
+            raise RuntimeError("Knowledge dependency cleanup failed") from errors[0]
 
 
 def build_dependencies(
     config: AppConfig,
     *,
-    analysis_provider: Optional[AnalysisProvider] = None,
+    analysis_provider: AnalysisProvider | None = None,
 ) -> KnowledgeDependencies:
     inventory_store = InventoryStore(config.store_path)
     analysis_store = AnalysisStore(config.store_path)
@@ -77,22 +106,20 @@ def build_dependencies(
         storage_operations.startup_maintenance()
         if config.analysis_enabled:
             analysis_store.mark_interrupted_jobs()
-    generative_registry, _startup_generative_provider = build_generative_runtime(config)
+    codex_client = CodexAppServerClient(settings=codex_runtime_settings(config))
+    generative_registry, _startup_generative_provider = build_generative_runtime(config, codex_client=codex_client)
     active_profile_store = ActiveProfileStore(config.store_path)
     active_profile = active_profile_store.init(provider_id=config.analysis_provider, model_id=config.analysis_model)
     active_llm_runtime = ActiveLlmRuntime(generative_registry, active_profile)
     generative_provider = ActiveRuntimeGenerativeProvider(active_llm_runtime)
-    codex_client = CodexAppServerClient(
-        client_name="forge-knowledge",
-        client_version="0.1.0",
-        request_timeout_seconds=min(float(config.analysis_ai_call_timeout_seconds), 5.0),
-    )
     ai_runtime_discovery = build_ai_runtime_discovery(config, codex_client=codex_client)
+    usage_registry = LlmUsageRegistry()
+    usage_registry.register(CodexLlmUsageSource(codex_client))
     active_profile_service = ActiveProfileService(
         active_profile_store,
         active_llm_runtime,
         ai_runtime_discovery,
-        LlmUsageProvider(codex_client),
+        usage_registry,
     )
     if analysis_provider is None:
         analysis_provider = ProviderBackedAnalysisClient(
@@ -125,21 +152,28 @@ def build_dependencies(
         active_llm_runtime=active_llm_runtime,
         generative_registry=generative_registry,
         generative_provider=generative_provider,
+        codex_app_server_client=codex_client,
     )
 
 
-def build_generative_runtime(config: AppConfig) -> tuple[GenerativeProviderRegistry, Any]:
-    provider = OllamaGenerativeProvider(
+def build_generative_runtime(config: AppConfig, *, codex_client: CodexAppServerClient) -> tuple[GenerativeProviderRegistry, Any]:
+    ollama_provider = OllamaGenerativeProvider(
         config.analysis_base_url,
         timeout_seconds=config.analysis_ai_call_timeout_seconds,
     )
+    codex_provider = CodexGenerativeProvider(
+        codex_client,
+        timeout_seconds=config.analysis_ai_call_timeout_seconds,
+    )
     registry = GenerativeProviderRegistry()
-    registry.register(provider)
+    registry.register(ollama_provider)
+    registry.register(codex_provider)
     return registry, registry.resolve(config.analysis_provider)
 
 
-def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServerClient | None = None) -> AiRuntimeDiscoveryService:
-    timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), 5.0)
+def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServerClient) -> AiRuntimeDiscoveryService:
+    codex_settings = codex_runtime_settings(config)
+    timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), codex_settings.discovery_timeout_cap_seconds)
     registry = AiRuntimeDiscoveryRegistry()
     registry.register(
         OllamaAiRuntimeOptionsSource(
@@ -149,15 +183,44 @@ def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServe
     )
     registry.register(
         CodexAiRuntimeOptionsSource(
-            codex_client
-            or CodexAppServerClient(
-                client_name="forge-knowledge",
-                client_version="0.1.0",
-                request_timeout_seconds=timeout_seconds,
-            )
-        )
+            codex_client,
+            cache_ttl_seconds=config.codex_app_server.discovery_cache_ttl_seconds,
+            max_page_count=config.codex_app_server.discovery_max_page_count,
+        ),
     )
-    return AiRuntimeDiscoveryService(registry, provider_timeout_seconds=timeout_seconds + 1.0)
+    return AiRuntimeDiscoveryService(
+        registry,
+        provider_timeout_seconds=timeout_seconds + codex_settings.discovery_timeout_allowance_seconds,
+    )
+
+
+def codex_runtime_settings(config: AppConfig) -> CodexRuntimeSettings:
+    codex = config.codex_app_server
+    timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), codex.request_timeout_seconds)
+    runtime_dir = codex.runtime_dir
+    if runtime_dir is None:
+        raise ValueError("Codex app-server runtime directory must be configured")
+    return CodexRuntimeSettings(
+        command=tuple(codex.command),
+        runtime_cwd=runtime_dir,
+        client_name=__application_name__,
+        client_version=__version__,
+        request_timeout_seconds=timeout_seconds,
+        discovery_timeout_cap_seconds=codex.discovery_timeout_cap_seconds,
+        discovery_timeout_allowance_seconds=codex.discovery_timeout_allowance_seconds,
+        interrupt_grace_seconds=codex.interrupt_grace_seconds,
+        terminal_after_interrupt_seconds=codex.terminal_after_interrupt_seconds,
+        terminate_grace_seconds=codex.terminate_grace_seconds,
+        kill_grace_seconds=codex.kill_grace_seconds,
+        sync_close_timeout_seconds=codex.sync_close_timeout_seconds,
+        loop_thread_join_timeout_seconds=codex.loop_thread_join_timeout_seconds,
+        cancellation_cleanup_timeout_seconds=codex.cancellation_cleanup_timeout_seconds,
+        notification_buffer=CodexNotificationBufferPolicy(
+            max_per_turn=codex.max_buffered_notifications_per_turn,
+            max_turn_ids=codex.max_buffered_turn_ids,
+            max_age_seconds=codex.buffer_ttl_seconds,
+        ),
+    )
 
 
 def configure_logging(settings: ForgeSettings) -> None:
@@ -180,7 +243,7 @@ def configure_logging(settings: ForgeSettings) -> None:
         )
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-    setattr(logger, "_forge_configured", True)
+    logger.__dict__["_forge_configured"] = True
     logging.getLogger("knowledge_service.analysis").setLevel(settings.logging.level)
 
 

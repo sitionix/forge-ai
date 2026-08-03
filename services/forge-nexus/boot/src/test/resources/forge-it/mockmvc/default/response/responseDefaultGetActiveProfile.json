@@ -5,7 +5,9 @@
     "modelId": "gpt-5.6-sol",
     "effort": {
       "effortId": "high"
-    }
+    },
+    "providerDisplayName": "Codex",
+    "modelDisplayName": "GPT-5.6-Sol"
   },
   "usage": {
     "windows": [
