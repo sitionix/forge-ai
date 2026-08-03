@@ -18,6 +18,7 @@ from knowledge_service.codex_app_server import (
     CodexAppServerTimeout,
     CodexAppServerTransportError,
     CodexNotificationBufferPolicy,
+    CodexProcessTransport,
     CodexProtocol,
     CodexRuntimeSettings,
     CodexTurnResult,
@@ -281,17 +282,31 @@ class RuntimeErrorStream(FakeStream):
 def test_unexpected_stdout_reader_failure_is_controlled_reaped_and_restarts(tmp_path: Path):
     broken = FakeCodexProcess([])
     broken.stdout = RuntimeErrorStream()
-    restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    restarted = FakeCodexProcess([result({"ok": True})])
     processes = [broken, restarted]
-    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
+    settings = _settings(tmp_path)
+
+    async def ignore_notification(method: str, params: Any) -> None:
+        return None
+
+    async def reject_server_request(request_id: int, method: str, params: Any) -> Any:
+        raise AssertionError(f"unexpected server request: {request_id} {method}")
+
+    transport = CodexProcessTransport(
+        settings,
+        process_factory=lambda command: async_value(processes.pop(0)),
+        on_notification=ignore_notification,
+        on_server_request=reject_server_request,
+        on_connection_failed=lambda exc: None,
+    )
 
     async def exercise():
-        request_task = asyncio.create_task(client.request(CodexProtocol.MODEL_LIST))
+        request_task = asyncio.create_task(transport.request(CodexProtocol.MODEL_LIST))
         assert await asyncio.to_thread(broken.stdout.read_started.wait, 1.0) is True
         with pytest.raises(CodexAppServerTransportError) as exc_info:
             await request_task
-        payload = await client.request(CodexProtocol.MODEL_LIST)
-        await client.aclose()
+        payload = await transport.request(CodexProtocol.MODEL_LIST)
+        await transport.stop(CodexAppServerTransportError("test complete"))
         await _assert_no_codex_tasks()
         return str(exc_info.value), payload
 
@@ -1472,7 +1487,7 @@ def test_cancellation_sends_one_interrupt(tmp_path: Path):
         while any(sent.get("method") == "turn/start" for sent in process.sent) is False:
             await asyncio.sleep(0)
         assert await asyncio.to_thread(process.stdout.wait_for_reads, 3, 1.0) is True
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(1.0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
