@@ -712,24 +712,38 @@ def test_codex_direct_discovery_values_are_rejected():
 
 
 def test_codex_discovery_cache_ttl_and_page_limit_come_from_effective_settings(tmp_path: Path):
-    process = FakeCodexProcess(
+    cached_process = FakeCodexProcess(
+        [
+            response({"userAgent": "forge-knowledge/0.146.0"}),
+            response({"data": [{"id": "m", "displayName": "Model"}], "nextCursor": None}),
+        ]
+    )
+    cached_config = _app_config(tmp_path / "cached", discovery_cache_ttl_seconds=12.5, discovery_max_page_count=5)
+    cached_service = build_ai_runtime_discovery(cached_config, codex_client=_codex_client(lambda command: async_value(cached_process)))
+
+    result = asyncio.run(cached_service.discover())
+    cached_result = asyncio.run(cached_service.discover())
+
+    codex = next(provider for provider in result["providers"] if provider["providerId"] == "codex")
+    cached_codex = next(provider for provider in cached_result["providers"] if provider["providerId"] == "codex")
+    assert codex["status"] == READY
+    assert cached_codex == codex
+    assert [sent["method"] for sent in cached_process.sent] == ["initialize", "initialized", "model/list"]
+
+    limited_process = FakeCodexProcess(
         [
             response({"userAgent": "forge-knowledge/0.146.0"}),
             response({"data": [], "nextCursor": "A"}),
             response({"data": [], "nextCursor": "B"}),
         ]
     )
-    config = _app_config(tmp_path, discovery_cache_ttl_seconds=12.5, discovery_max_page_count=2)
-    service = build_ai_runtime_discovery(config, codex_client=_codex_client(lambda command: async_value(process)))
-    codex_source = next(source for source in service._registry.sources if source.provider_id == "codex")
-    assert isinstance(codex_source, CodexAiRuntimeOptionsSource)
+    limited_config = _app_config(tmp_path / "limited", discovery_cache_ttl_seconds=12.5, discovery_max_page_count=2)
+    limited_service = build_ai_runtime_discovery(limited_config, codex_client=_codex_client(lambda command: async_value(limited_process)))
 
-    result = asyncio.run(service.discover())
+    limited_result = asyncio.run(limited_service.discover())
 
-    assert codex_source.cache_ttl_seconds == 12.5
-    assert codex_source.max_page_count == 2
-    assert next(provider for provider in result["providers"] if provider["providerId"] == "codex")["status"] == DEGRADED
-    assert [sent["method"] for sent in process.sent] == ["initialize", "initialized", "model/list", "model/list"]
+    assert next(provider for provider in limited_result["providers"] if provider["providerId"] == "codex")["status"] == DEGRADED
+    assert [sent["method"] for sent in limited_process.sent] == ["initialize", "initialized", "model/list", "model/list"]
 
 
 def test_aggregate_returns_registered_provider_order_and_isolates_failures_and_timeouts():

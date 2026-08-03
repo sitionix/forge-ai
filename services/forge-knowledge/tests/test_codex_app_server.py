@@ -180,6 +180,121 @@ def test_stdout_eof_marks_connection_failed_and_next_request_restarts(tmp_path: 
     assert len([sent for sent in second_process.sent if sent.get("method") == "initialize"]) == 1
 
 
+def test_stalled_stdin_drain_during_initialize_is_bounded_reaped_and_restarts(tmp_path: Path):
+    stalled = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"})])
+    stalled.stdin.block_on_drain_call = 1
+    restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [stalled, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path, request_timeout_seconds=0.05))
+
+    async def exercise():
+        started = time.monotonic()
+        with pytest.raises(CodexAppServerTransportError):
+            await client.initialize()
+        elapsed = time.monotonic() - started
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return elapsed, payload
+
+    elapsed, payload = asyncio.run(exercise())
+
+    assert elapsed < 0.5
+    assert stalled.terminated is True
+    assert payload == {"ok": True}
+    assert restarted.by_method(CodexProtocol.INITIALIZE)["method"] == CodexProtocol.INITIALIZE
+
+
+def test_stalled_stdin_drain_during_normal_request_is_bounded_reaped_and_restarts(tmp_path: Path):
+    stalled = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": False})])
+    stalled.stdin.block_on_drain_call = 3
+    restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [stalled, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path, request_timeout_seconds=0.05))
+
+    async def exercise():
+        with pytest.raises(CodexAppServerTransportError):
+            await client.request(CodexProtocol.MODEL_LIST)
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return payload
+
+    assert asyncio.run(exercise()) == {"ok": True}
+    assert stalled.terminated is True
+    assert restarted.by_method(CodexProtocol.MODEL_LIST)["method"] == CodexProtocol.MODEL_LIST
+
+
+def test_broken_pipe_during_request_write_is_controlled_reaped_and_restarts(tmp_path: Path):
+    broken = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"})])
+    broken.stdin.fail_methods.add(CodexProtocol.MODEL_LIST)
+    restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [broken, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
+
+    async def exercise():
+        with pytest.raises(CodexAppServerTransportError):
+            await client.request(CodexProtocol.MODEL_LIST)
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return payload
+
+    assert asyncio.run(exercise()) == {"ok": True}
+    assert broken.terminated is True
+
+
+def test_permission_error_during_process_creation_is_controlled_and_provider_generic(tmp_path: Path):
+    async def denied(command: Sequence[str]) -> Any:
+        raise PermissionError("secret-token-123")
+
+    client = CodexAppServerClient(process_factory=denied, settings=_settings(tmp_path))
+
+    async def direct_failure():
+        with pytest.raises(CodexAppServerTransportError) as exc_info:
+            await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        return str(exc_info.value)
+
+    message = asyncio.run(direct_failure())
+    assert "secret-token-123" not in message
+
+    provider_client = CodexAppServerClient(process_factory=denied, settings=_settings(tmp_path / "provider"))
+    provider = CodexGenerativeProvider(provider_client, timeout_seconds=0.5)
+    with pytest.raises(GenerativeProviderTransportError) as provider_exc:
+        provider.generate(GenerativeRequest(prompt="x", model_id="m"))
+    provider_client.close()
+    assert str(provider_exc.value) == "codex generation transport error"
+
+
+class RuntimeErrorStream(FakeStream):
+    async def readline(self) -> bytes:
+        raise RuntimeError("secret-token-stdout")
+
+
+def test_unexpected_stdout_reader_failure_is_controlled_reaped_and_restarts(tmp_path: Path):
+    broken = FakeCodexProcess([])
+    broken.stdout = RuntimeErrorStream()
+    restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [broken, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
+
+    async def exercise():
+        with pytest.raises(CodexAppServerTransportError) as exc_info:
+            await client.request(CodexProtocol.MODEL_LIST)
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return str(exc_info.value), payload
+
+    message, payload = asyncio.run(exercise())
+
+    assert "secret-token-stdout" not in message
+    assert broken.terminated is True
+    assert payload == {"ok": True}
+
+
 @pytest.mark.parametrize(
     ("first_script", "mode"),
     [
@@ -1008,21 +1123,20 @@ def test_unscoped_mixed_active_and_pre_registration_invalidates_all_work_and_res
         failures = await asyncio.gather(first, second, return_exceptions=True)
         fresh = await client.run_turn(prompt="fresh", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
         await client.aclose()
+        await client.aclose()
+        await _assert_no_codex_tasks()
         return failures, fresh
 
     failures, fresh = asyncio.run(exercise())
 
-    response = next(sent for sent in corrupted.sent if sent.get("id") == 999)
+    response_index, response = _server_response(corrupted, 999)
     for key, value in expected_response.items():
         assert response[key] == value
     assert all(isinstance(failure, CodexAppServerProtocolError) for failure in failures)
     assert corrupted.terminated is True
+    assert corrupted.terminated_at_sent_count is not None
+    assert response_index < corrupted.terminated_at_sent_count
     assert corrupted.wait_calls >= 1
-    assert client._turn_executor._active_turns == {}
-    assert client._turn_executor._pre_registration_turns == 0
-    assert client._turn_executor._buffered_turn_notifications == {}
-    assert client._transport is not None
-    assert client._transport._pending == {}
     assert fresh.raw_text == "fresh"
     assert restarted.by_method(CodexProtocol.INITIALIZE)["method"] == CodexProtocol.INITIALIZE
 
@@ -1255,6 +1369,93 @@ def test_ordinary_turn_failure_and_timeout_reuse_healthy_process(tmp_path: Path)
     assert [sent["method"] for sent in timeout_process.sent].count("initialize") == 1
 
 
+def test_stalled_write_during_turn_interrupt_does_not_block_timeout_and_restarts(tmp_path: Path):
+    stalled = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), defer()])
+    stalled.stdin.block_on_method = CodexProtocol.TURN_INTERRUPT
+    restarted = completed_turn_process("fresh")
+    processes = [stalled, restarted]
+    client = CodexAppServerClient(
+        process_factory=lambda command: async_value(processes.pop(0)),
+        settings=_settings(
+            tmp_path,
+            interrupt_grace_seconds=0.02,
+            terminal_after_interrupt_seconds=0.01,
+            request_timeout_seconds=0.2,
+        ),
+    )
+
+    async def exercise():
+        started = time.monotonic()
+        with pytest.raises(CodexAppServerTimeout):
+            await client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=0.05)
+        elapsed = time.monotonic() - started
+        fresh = await client.run_turn(prompt="fresh", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=1)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return elapsed, fresh
+
+    elapsed, fresh = asyncio.run(exercise())
+
+    assert elapsed < 0.5
+    assert stalled.terminated is True
+    assert [sent["method"] for sent in stalled.sent].count(CodexProtocol.TURN_INTERRUPT) == 1
+    assert fresh.raw_text == "fresh"
+
+
+def test_server_approval_response_write_failure_invalidates_reaps_and_restarts(tmp_path: Path):
+    broken = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result({"turnId": "turn-1"}),
+            defer(),
+        ]
+    )
+    broken.stdin.fail_response_writes = True
+    restarted = completed_turn_process("fresh")
+    processes = [broken, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
+
+    async def exercise():
+        task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        while not any(sent.get("method") == CodexProtocol.TURN_START for sent in broken.sent):
+            await asyncio.sleep(0)
+        broken.push_json({"id": 999, "method": CodexProtocol.COMMAND_APPROVAL, "params": {"turnId": "turn-1"}})
+        with pytest.raises(CodexAppServerTransportError):
+            await task
+        fresh = await client.run_turn(prompt="fresh", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return fresh
+
+    fresh = asyncio.run(exercise())
+
+    assert broken.terminated is True
+    assert not any(sent.get("id") == 999 and "method" not in sent for sent in broken.sent)
+    assert fresh.raw_text == "fresh"
+
+
+def test_requested_generation_timeout_includes_cold_initialization_and_restarts(tmp_path: Path):
+    stalled = FakeCodexProcess([defer()])
+    restarted = completed_turn_process("fresh")
+    processes = [stalled, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path, request_timeout_seconds=1))
+    provider = CodexGenerativeProvider(client, timeout_seconds=1)
+
+    started = time.monotonic()
+    with pytest.raises(GenerativeProviderTimeout):
+        provider.generate(GenerativeRequest(prompt="x", model_id="m", timeout_seconds=0.05))
+    elapsed = time.monotonic() - started
+
+    response = provider.generate(GenerativeRequest(prompt="fresh", model_id="m", timeout_seconds=1))
+    client.close()
+    client.close()
+
+    assert elapsed < 0.5
+    assert stalled.terminated is True
+    assert response.raw_text == "fresh"
+
+
 def test_cancellation_sends_one_interrupt(tmp_path: Path):
     process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), defer()])
     client = _client(process, tmp_path)
@@ -1452,6 +1653,17 @@ def _server_response(process: FakeCodexProcess, response_id: int) -> tuple[int, 
         if sent.get("id") == response_id and "method" not in sent:
             return index, sent
     raise AssertionError(f"response not sent: {response_id}")
+
+
+async def _assert_no_codex_tasks() -> None:
+    await asyncio.sleep(0)
+    current = asyncio.current_task()
+    pending = [
+        task
+        for task in asyncio.all_tasks()
+        if task is not current and not task.done() and task.get_name().startswith("codex-app-server")
+    ]
+    assert pending == []
 
 
 def completed_turn_process(text: str) -> FakeCodexProcess:

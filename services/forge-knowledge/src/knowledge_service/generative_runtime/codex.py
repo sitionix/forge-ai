@@ -73,6 +73,8 @@ class CodexGenerativeProvider:
             yield
         except (CodexAppServerTimeout, CodexAppServerEmptyResponse, CodexAppServerProtocolError, CodexAppServerTransportError, CodexAppServerLifecycleError) as exc:
             self._raise_provider_error(exc)
+        except Exception as exc:
+            raise GenerativeProviderTransportError("codex generation transport error", provider_id=self.provider_id) from exc
 
     def _raise_provider_error(self, exc: Exception) -> NoReturn:
         if isinstance(exc, CodexAppServerTimeout):

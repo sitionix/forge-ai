@@ -183,22 +183,30 @@ def test_active_profile_get_adds_display_metadata_without_persisting_it(tmp_path
     assert stored == {"llmProfile": {"providerId": "ollama", "modelId": "qwen", "effort": None}}
 
 
-def test_active_profile_get_keeps_ids_when_display_metadata_lookup_fails(tmp_path: Path):
+def test_active_profile_get_keeps_ids_when_display_metadata_lookup_fails(tmp_path: Path, caplog: pytest.LogCaptureFixture):
     store = ActiveProfileStore(tmp_path / "active.sqlite")
     persisted = store.init(provider_id="ollama", model_id="qwen")
+    secret = "secret-token-123"
     service = ActiveProfileService(
         store,
         _runtime(persisted),
-        FakeDiscovery([], error=RuntimeError("catalog unavailable")),
+        FakeDiscovery([], error=RuntimeError(f"catalog unavailable {secret}")),
         LlmUsageRegistry(),
     )
 
-    response = asyncio.run(service.get_active_profile())
+    with caplog.at_level(logging.WARNING, logger="knowledge_service.active_profile"):
+        response = asyncio.run(service.get_active_profile())
 
     assert response.llmProfile.providerId == "ollama"
     assert response.llmProfile.modelId == "qwen"
     assert response.llmProfile.providerDisplayName is None
     assert response.llmProfile.modelDisplayName is None
+    log_text = caplog.text
+    assert "provider_id=ollama" in log_text
+    assert "model_id=qwen" in log_text
+    assert "RuntimeError" in log_text
+    assert secret not in log_text
+    assert "Traceback" not in log_text
 
 
 def test_existing_profile_is_not_overwritten_on_restart_and_usage_is_not_persisted(tmp_path: Path):

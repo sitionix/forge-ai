@@ -15,12 +15,12 @@ class ResponseMode(str, Enum):
 class GenerativeRequest:
     prompt: str
     model_id: str
-    effort_id: str | None = None
     response_mode: ResponseMode = ResponseMode.TEXT
     timeout_seconds: float | None = None
     context_tokens: int | None = None
     temperature: float | int | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    effort_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "prompt", str(self.prompt or ""))

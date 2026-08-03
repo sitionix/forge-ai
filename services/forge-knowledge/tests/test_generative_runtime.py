@@ -62,6 +62,13 @@ def test_generative_request_normalizes_blank_effort_to_none():
     assert GenerativeRequest(prompt="x", model_id="m", effort_id="   ").effort_id is None
 
 
+def test_generative_request_positional_response_mode_contract_is_preserved():
+    request = GenerativeRequest("prompt", "model", ResponseMode.JSON_OBJECT)
+
+    assert request.response_mode == ResponseMode.JSON_OBJECT
+    assert request.effort_id is None
+
+
 class SingleCallSyncClient:
     def __init__(self, response: httpx.Response | Exception) -> None:
         self.response = response

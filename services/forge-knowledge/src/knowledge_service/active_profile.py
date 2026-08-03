@@ -374,8 +374,13 @@ class ActiveProfileService:
     async def _present_llm_profile(self, profile: ActiveLlmSelectionResponse) -> ActiveLlmProfileDetailsResponse:
         try:
             metadata = self._discovery.cached_profile_metadata(profile.providerId, profile.modelId)
-        except Exception:
-            LOGGER.exception("Active profile display metadata lookup failed")
+        except Exception as exc:  # noqa: BLE001 - display metadata is optional; active-profile GET must stay available.
+            LOGGER.warning(
+                "Active profile display metadata lookup failed provider_id=%s model_id=%s error_type=%s",
+                profile.providerId,
+                profile.modelId,
+                type(exc).__name__,
+            )
             provider_display_name = None
             model_display_name = None
         else:

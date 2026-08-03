@@ -89,12 +89,28 @@ class FakeCodexProcess:
 class FakeStdin:
     def __init__(self, process: FakeCodexProcess) -> None:
         self._process = process
+        self.drain_calls = 0
+        self.block_on_drain_call: int | None = None
+        self.block_on_method: str | None = None
+        self.fail_methods: set[str] = set()
+        self.fail_response_writes = False
+        self._last_payload: dict[str, Any] | None = None
 
     def write(self, data: bytes) -> None:
+        payload = json.loads(data.decode("utf-8").strip())
+        if self.fail_response_writes and "id" in payload and "method" not in payload:
+            raise BrokenPipeError
+        method = payload.get("method")
+        if isinstance(method, str) and method in self.fail_methods:
+            raise BrokenPipeError
+        self._last_payload = payload
         self._process.receive(data)
 
     async def drain(self) -> None:
-        return None
+        self.drain_calls += 1
+        method = self._last_payload.get("method") if self._last_payload is not None else None
+        if self.block_on_drain_call == self.drain_calls or (isinstance(method, str) and method == self.block_on_method):
+            await asyncio.Event().wait()
 
 
 class FakeStream:
