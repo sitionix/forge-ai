@@ -908,11 +908,15 @@ class CodexTurnExecutor:
         turn_id = _extract_turn_id(params)
         if turn_id is None:
             raise CodexAppServerProtocolError("Codex turn/completed omitted turnId")
+        completion_params = params
+        turn = params.get("turn")
+        if isinstance(turn, Mapping):
+            completion_params = {**dict(turn), **dict(params), "turnId": turn_id}
         active = self._active_turns.get(turn_id)
         if active is None or active.future.done():
-            self._buffer_turn_notification(turn_id, CodexProtocol.TURN_COMPLETED, params)
+            self._buffer_turn_notification(turn_id, CodexProtocol.TURN_COMPLETED, completion_params)
             return
-        self._complete_active_turn(active, params)
+        self._complete_active_turn(active, completion_params)
 
     def _complete_active_turn(self, active: _ActiveTurn, params: Mapping[str, Any]) -> None:
         if active.failed_closed:
@@ -1030,10 +1034,28 @@ class CodexTurnExecutor:
         return value
 
     def _extract_thread_id(self, payload: Any) -> str:
-        return self._extract_required_id(payload, "threadId", CodexProtocol.THREAD_START)
+        if not isinstance(payload, Mapping):
+            raise CodexAppServerProtocolError(f"Codex {CodexProtocol.THREAD_START} result must be an object")
+        value = _non_blank(payload.get("threadId"))
+        if value is None:
+            thread = payload.get("thread")
+            if isinstance(thread, Mapping):
+                value = _non_blank(thread.get("id")) or _non_blank(thread.get("sessionId"))
+        if value is None:
+            raise CodexAppServerProtocolError(f"Codex {CodexProtocol.THREAD_START} result omitted threadId")
+        return value
 
     def _extract_turn_id(self, payload: Any) -> str:
-        return self._extract_required_id(payload, "turnId", CodexProtocol.TURN_START)
+        if not isinstance(payload, Mapping):
+            raise CodexAppServerProtocolError(f"Codex {CodexProtocol.TURN_START} result must be an object")
+        value = _non_blank(payload.get("turnId"))
+        if value is None:
+            turn = payload.get("turn")
+            if isinstance(turn, Mapping):
+                value = _non_blank(turn.get("id"))
+        if value is None:
+            raise CodexAppServerProtocolError(f"Codex {CodexProtocol.TURN_START} result omitted turnId")
+        return value
 
 
 class CodexAppServerClient:
@@ -1491,9 +1513,19 @@ def _extract_turn_id(params: Any) -> str | None:
     value = _non_blank(params.get("turnId"))
     if value is not None:
         return value
+    turn = params.get("turn")
+    if isinstance(turn, Mapping):
+        value = _non_blank(turn.get("id"))
+        if value is not None:
+            return value
     item = params.get("item")
     if isinstance(item, Mapping):
-        return _non_blank(item.get("turnId"))
+        value = _non_blank(item.get("turnId"))
+        if value is not None:
+            return value
+        turn = item.get("turn")
+        if isinstance(turn, Mapping):
+            return _non_blank(turn.get("id"))
     return None
 
 

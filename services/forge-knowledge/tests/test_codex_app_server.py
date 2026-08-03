@@ -479,6 +479,28 @@ def test_run_turn_text_omits_effort_and_output_schema(tmp_path: Path):
     assert "outputSchema" not in turn_start["params"]
 
 
+def test_run_turn_accepts_nested_thread_start_result(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"thread": {"id": "thread-nested"}}),
+            result(
+                {"turn": {"id": "turn-nested"}},
+                notifications=[
+                    notification("item/completed", {"threadId": "thread-nested", "turn": {"id": "turn-nested"}, "item": {"type": "agentMessage", "text": "nested"}}),
+                    notification("turn/completed", {"threadId": "thread-nested", "turn": {"id": "turn-nested", "status": "completed"}}),
+                ],
+            ),
+        ]
+    )
+    client = _client(process, tmp_path)
+
+    payload = asyncio.run(client.run_turn(prompt="Plain", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+
+    assert payload.raw_text == "nested"
+    assert process.by_method(CodexProtocol.TURN_START)["params"]["threadId"] == "thread-nested"
+
+
 @pytest.mark.parametrize(
     "notifications",
     [
