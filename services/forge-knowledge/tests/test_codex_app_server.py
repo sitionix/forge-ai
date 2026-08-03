@@ -501,6 +501,146 @@ def test_run_turn_accepts_nested_thread_start_result(tmp_path: Path):
     assert process.by_method(CodexProtocol.TURN_START)["params"]["threadId"] == "thread-nested"
 
 
+def test_run_turn_accepts_equal_flat_and_nested_envelope_ids_and_status(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1", "thread": {"id": "thread-1", "sessionId": "thread-1"}}),
+            result(
+                {"turnId": "turn-1", "turn": {"id": "turn-1"}},
+                notifications=[
+                    notification(
+                        "item/completed",
+                        {
+                            "turnId": "turn-1",
+                            "item": {
+                                "turnId": "turn-1",
+                                "turn": {"id": "turn-1"},
+                                "type": "agentMessage",
+                                "text": "equal aliases",
+                            },
+                        },
+                    ),
+                    notification("turn/completed", {"turnId": "turn-1", "status": "completed", "turn": {"id": "turn-1", "status": "completed"}}),
+                ],
+            ),
+        ]
+    )
+
+    payload = asyncio.run(_client(process, tmp_path).run_turn(prompt="Plain", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+
+    assert payload.raw_text == "equal aliases"
+    assert payload.thread_id == "thread-1"
+    assert payload.turn_id == "turn-1"
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-flat", "thread": {"id": "thread-nested"}}),
+        ],
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result({"turnId": "turn-flat", "turn": {"id": "turn-nested"}}),
+        ],
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result(
+                {"turnId": "turn-1"},
+                notifications=[
+                    notification("item/completed", {"turnId": "turn-1", "item": {"turnId": "turn-2", "type": "agentMessage", "text": "bad"}}),
+                ],
+            ),
+        ],
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result(
+                {"turnId": "turn-1"},
+                notifications=[
+                    notification("item/completed", {"turnId": "turn-1", "item": {"turn": {"id": "turn-2"}, "type": "agentMessage", "text": "bad"}}),
+                ],
+            ),
+        ],
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result(
+                {"turnId": "turn-1"},
+                notifications=[
+                    notification("item/completed", {"turnId": "turn-1", "item": {"type": "agentMessage", "text": "bad"}}),
+                    notification("turn/completed", {"turnId": "turn-1", "status": "completed", "turn": {"id": "turn-1", "status": "failed"}}),
+                ],
+            ),
+        ],
+    ],
+)
+def test_conflicting_nested_codex_envelope_ids_or_status_fail_closed_and_restart(tmp_path: Path, script: list[Mapping[str, Any]]):
+    corrupted = FakeCodexProcess(script)
+    restarted = completed_turn_process("fresh")
+    processes = [corrupted, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
+
+    async def exercise():
+        with pytest.raises(CodexAppServerProtocolError):
+            await client.run_turn(prompt="bad", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        fresh = await client.run_turn(prompt="fresh", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return fresh
+
+    fresh = asyncio.run(exercise())
+
+    assert corrupted.terminated is True
+    assert corrupted.wait_calls >= 1
+    assert fresh.raw_text == "fresh"
+    assert restarted.by_method(CodexProtocol.INITIALIZE)["method"] == CodexProtocol.INITIALIZE
+
+
+def test_conflicting_turn_identity_cannot_complete_or_mutate_concurrent_turn(tmp_path: Path):
+    corrupted = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-a"}),
+            result({"threadId": "thread-b"}),
+            result({"turnId": "turn-a"}),
+            result({"turnId": "turn-b"}),
+        ]
+    )
+    restarted = completed_turn_process("fresh")
+    processes = [corrupted, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
+
+    async def exercise():
+        first = asyncio.create_task(client.run_turn(prompt="A", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        second = asyncio.create_task(client.run_turn(prompt="B", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        while len([sent for sent in corrupted.sent if sent.get("method") == CodexProtocol.TURN_START]) < 2:
+            await asyncio.sleep(0)
+        corrupted.push_json(
+            {
+                "method": CodexProtocol.ITEM_COMPLETED,
+                "params": {"turnId": "turn-a", "item": {"turnId": "turn-b", "type": "agentMessage", "text": "poison"}},
+            }
+        )
+        failures = await asyncio.gather(first, second, return_exceptions=True)
+        fresh = await client.run_turn(prompt="fresh", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return failures, fresh
+
+    failures, fresh = asyncio.run(exercise())
+
+    assert all(isinstance(failure, CodexAppServerProtocolError) for failure in failures)
+    assert fresh.raw_text == "fresh"
+    assert fresh.raw_text != "poison"
+    assert corrupted.terminated is True
+    assert restarted.by_method(CodexProtocol.INITIALIZE)["method"] == CodexProtocol.INITIALIZE
+
+
 @pytest.mark.parametrize(
     "notifications",
     [
@@ -1514,9 +1654,11 @@ def test_requested_generation_timeout_includes_cold_initialization_and_restarts(
     assert response.raw_text == "fresh"
 
 
-def test_cancellation_sends_one_interrupt(tmp_path: Path):
+def test_active_turn_caller_cancellation_reaps_and_restarts(tmp_path: Path):
     process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), defer()])
-    client = _client(process, tmp_path)
+    restarted = completed_turn_process("fresh")
+    processes = [process, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
 
     async def exercise():
         task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=5))
@@ -1527,10 +1669,16 @@ def test_cancellation_sends_one_interrupt(tmp_path: Path):
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+        fresh = await client.run_turn(prompt="fresh", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
         await client.aclose()
+        await _assert_no_codex_tasks()
+        return fresh
 
-    asyncio.run(exercise())
-    assert [sent["method"] for sent in process.sent].count("turn/interrupt") == 1
+    fresh = asyncio.run(exercise())
+
+    assert process.terminated is True
+    assert fresh.raw_text == "fresh"
+    assert restarted.by_method(CodexProtocol.INITIALIZE)["method"] == CodexProtocol.INITIALIZE
 
 
 def test_remote_rate_limit_error_during_active_generation_keeps_process_healthy(tmp_path: Path):
@@ -1747,6 +1895,152 @@ def test_public_request_cancellation_after_write_reaps_and_restarts(tmp_path: Pa
     assert diagnostics == []
 
 
+@pytest.mark.parametrize(
+    ("script", "cancel_after_method"),
+    [
+        ([result({"userAgent": "forge-knowledge/0.146.0"}), defer()], CodexProtocol.RATE_LIMITS_READ),
+        ([result({"userAgent": "forge-knowledge/0.146.0"}), defer()], CodexProtocol.MODEL_LIST),
+    ],
+)
+def test_submitted_request_cancellation_preserved_when_cleanup_fails_and_process_remains_owned(
+    tmp_path: Path,
+    script: list[Mapping[str, Any]],
+    cancel_after_method: str,
+):
+    process = KillTimeoutProcess(script)
+    created = 0
+
+    async def process_factory(command):
+        nonlocal created
+        created += 1
+        return process
+
+    client = CodexAppServerClient(
+        process_factory=process_factory,
+        settings=_settings(tmp_path, terminate_grace_seconds=0.02, kill_grace_seconds=0.02, cancellation_cleanup_timeout_seconds=0.05),
+    )
+
+    async def exercise():
+        diagnostics: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        task = asyncio.create_task(client.request(cancel_after_method))
+        await _wait_for_method(process, cancel_after_method)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with pytest.raises(CodexAppServerLifecycleError):
+            await client.request(CodexProtocol.MODEL_LIST)
+        process.returncode = 0
+        process._complete_wait()
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return diagnostics
+
+    diagnostics = asyncio.run(exercise())
+
+    assert created == 1
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.wait_calls >= 2
+    assert diagnostics == []
+
+
+@pytest.mark.parametrize(
+    ("operation", "script", "cancel_after_method"),
+    [
+        ("initialize", [defer()], CodexProtocol.INITIALIZE),
+        ("thread-start", [result({"userAgent": "forge-knowledge/0.146.0"}), defer()], CodexProtocol.THREAD_START),
+        ("turn-start", [result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), defer()], CodexProtocol.TURN_START),
+    ],
+)
+def test_initialize_and_pre_registration_cancellation_preserved_when_cleanup_fails(
+    tmp_path: Path,
+    operation: str,
+    script: list[Mapping[str, Any]],
+    cancel_after_method: str,
+):
+    process = KillTimeoutProcess(script)
+    created = 0
+
+    async def process_factory(command):
+        nonlocal created
+        created += 1
+        return process
+
+    client = CodexAppServerClient(
+        process_factory=process_factory,
+        settings=_settings(tmp_path, terminate_grace_seconds=0.02, kill_grace_seconds=0.02, cancellation_cleanup_timeout_seconds=0.05),
+    )
+
+    async def exercise():
+        diagnostics: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        if operation == "initialize":
+            task = asyncio.create_task(client.initialize())
+        else:
+            task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        await _wait_for_method(process, cancel_after_method)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with pytest.raises(CodexAppServerLifecycleError):
+            await client.request(CodexProtocol.MODEL_LIST)
+        process.returncode = 0
+        process._complete_wait()
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return diagnostics
+
+    diagnostics = asyncio.run(exercise())
+
+    assert created == 1
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.wait_calls >= 2
+    assert diagnostics == []
+
+
+def test_active_turn_cancellation_preserved_when_cleanup_fails_and_process_remains_owned(tmp_path: Path):
+    process = KillTimeoutProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), defer()])
+    created = 0
+
+    async def process_factory(command):
+        nonlocal created
+        created += 1
+        return process
+
+    client = CodexAppServerClient(
+        process_factory=process_factory,
+        settings=_settings(tmp_path, terminate_grace_seconds=0.02, kill_grace_seconds=0.02, cancellation_cleanup_timeout_seconds=0.05),
+    )
+
+    async def exercise():
+        diagnostics: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        await _wait_for_method(process, CodexProtocol.TURN_START)
+        assert await asyncio.to_thread(process.stdout.wait_for_reads, 3, 1.0) is True
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with pytest.raises(CodexAppServerLifecycleError):
+            await client.request(CodexProtocol.MODEL_LIST)
+        process.returncode = 0
+        process._complete_wait()
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return diagnostics
+
+    diagnostics = asyncio.run(exercise())
+
+    assert created == 1
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.wait_calls >= 2
+    assert [sent["method"] for sent in process.sent].count(CodexProtocol.TURN_INTERRUPT) <= 1
+    assert diagnostics == []
+
+
 def test_fail_active_interrupt_write_failure_does_not_self_cancel_cleanup(tmp_path: Path):
     broken = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), defer()])
     broken.stdin.block_on_method = CodexProtocol.TURN_INTERRUPT
@@ -1943,7 +2237,6 @@ def _settings(runtime_cwd: Path, **overrides: Any) -> CodexRuntimeSettings:
         "sync_close_timeout_seconds": 3,
         "loop_thread_join_timeout_seconds": 0.5,
         "cancellation_cleanup_timeout_seconds": 0.1,
-        "cancellation_poll_interval_seconds": 0.001,
         "notification_buffer": _notification_policy(),
     }
     values.update(overrides)

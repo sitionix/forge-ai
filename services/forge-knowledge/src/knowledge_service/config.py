@@ -103,7 +103,6 @@ class CodexAppServerSettings(BaseModel):
     max_buffered_turn_ids: int = Field(default=100, ge=1)
     buffer_ttl_seconds: float = Field(default=30.0, ge=0.1)
     cancellation_cleanup_timeout_seconds: float = Field(default=1.0, ge=0.1)
-    cancellation_poll_interval_seconds: float = Field(default=0.01, ge=0.001)
 
     @validator("command")
     def require_command(cls, value: tuple[str, ...]) -> tuple[str, ...]:
@@ -813,11 +812,6 @@ def _codex_app_server_payload(data: Mapping[str, Any], env: Mapping[str, str]) -
         (
             "cancellation_cleanup_timeout_seconds",
             ("cancellation-cleanup-timeout-seconds", "cancellation_cleanup_timeout_seconds"),
-            _float_configured,
-        ),
-        (
-            "cancellation_poll_interval_seconds",
-            ("cancellation-poll-interval-seconds", "cancellation_poll_interval_seconds"),
             _float_configured,
         ),
     )

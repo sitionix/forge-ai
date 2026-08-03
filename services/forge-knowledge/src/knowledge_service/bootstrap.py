@@ -215,7 +215,6 @@ def codex_runtime_settings(config: AppConfig) -> CodexRuntimeSettings:
         sync_close_timeout_seconds=codex.sync_close_timeout_seconds,
         loop_thread_join_timeout_seconds=codex.loop_thread_join_timeout_seconds,
         cancellation_cleanup_timeout_seconds=codex.cancellation_cleanup_timeout_seconds,
-        cancellation_poll_interval_seconds=codex.cancellation_poll_interval_seconds,
         notification_buffer=CodexNotificationBufferPolicy(
             max_per_turn=codex.max_buffered_notifications_per_turn,
             max_turn_ids=codex.max_buffered_turn_ids,

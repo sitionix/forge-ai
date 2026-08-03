@@ -97,7 +97,6 @@ class CodexRuntimeSettings:
     sync_close_timeout_seconds: float
     loop_thread_join_timeout_seconds: float
     cancellation_cleanup_timeout_seconds: float
-    cancellation_poll_interval_seconds: float
     notification_buffer: CodexNotificationBufferPolicy
 
     def __post_init__(self) -> None:
@@ -116,7 +115,6 @@ class CodexRuntimeSettings:
             "sync_close_timeout_seconds",
             "loop_thread_join_timeout_seconds",
             "cancellation_cleanup_timeout_seconds",
-            "cancellation_poll_interval_seconds",
         ):
             if getattr(self, field_name) <= 0:
                 raise ValueError(f"{field_name} must be positive")
@@ -391,7 +389,10 @@ class CodexProcessTransport:
             raise
         except asyncio.CancelledError:
             if submitted:
-                await self.invalidate(CodexAppServerTransportError("Codex app-server request was cancelled after submission"))
+                try:
+                    await self.invalidate(CodexAppServerTransportError("Codex app-server request was cancelled after submission"))
+                except (Exception, asyncio.CancelledError) as cleanup_exc:
+                    LOGGER.debug("Codex app-server cancellation cleanup failed", exc_info=cleanup_exc)
             raise
         finally:
             self._pending.pop(request_id, None)
@@ -401,10 +402,23 @@ class CodexProcessTransport:
         if params is not None:
             payload["params"] = dict(params)
         deadline = _deadline_after(_effective_timeout(timeout, self._settings.request_timeout_seconds))
+        submitted = False
+
+        def mark_submitted() -> None:
+            nonlocal submitted
+            submitted = True
+
         try:
-            await self._write_json(payload, deadline=deadline)
+            await self._write_json(payload, deadline=deadline, on_submitted=mark_submitted)
         except CodexAppServerTransportError as exc:
             await self.invalidate(exc)
+            raise
+        except asyncio.CancelledError:
+            if submitted:
+                try:
+                    await self.invalidate(CodexAppServerTransportError("Codex app-server notification was cancelled after submission"))
+                except (Exception, asyncio.CancelledError) as cleanup_exc:
+                    LOGGER.debug("Codex app-server notification cancellation cleanup failed", exc_info=cleanup_exc)
             raise
 
     async def stop(self, exc: Exception | None = None) -> None:
@@ -790,8 +804,11 @@ class CodexTurnExecutor:
             raise CodexAppServerTimeout("Codex app-server turn timed out") from exc
         except asyncio.CancelledError:
             if active is not None:
-                await self._interrupt_turn(active)
                 self._active_turns.pop(active.turn_id, None)
+                try:
+                    await transport.invalidate(CodexAppServerTransportError("Codex app-server turn was cancelled after submission"))
+                except (Exception, asyncio.CancelledError) as cleanup_exc:
+                    LOGGER.debug("Codex app-server turn cancellation cleanup failed", exc_info=cleanup_exc)
             raise
         finally:
             if pre_registration:
@@ -823,9 +840,7 @@ class CodexTurnExecutor:
                     "message": "Codex server requests are not supported by Forge Knowledge generation",
                 },
             }
-        turn_id = _extract_turn_id(params)
-        if params is not None and "turnId" in params and turn_id is None:
-            raise CodexAppServerProtocolError("Codex server request turnId was invalid")
+        turn_id = _resolve_turn_id(params, "server request", required=False)
         active = self._active_turns.get(turn_id or "") if turn_id is not None else None
         invalidation: CodexAppServerProtocolError | None = None
         if turn_id is None and self._pre_registration_turns > 0:
@@ -882,7 +897,7 @@ class CodexTurnExecutor:
     def _handle_item_event(self, method: str, params: Any) -> None:
         if not isinstance(params, Mapping):
             raise CodexAppServerProtocolError(f"Codex {method} params must be an object")
-        turn_id = _extract_turn_id(params)
+        turn_id = _resolve_turn_id(params, method, required=False)
         item = params.get("item") if "item" in params else params
         if not isinstance(item, Mapping):
             raise CodexAppServerProtocolError(f"Codex {method} item must be an object")
@@ -905,13 +920,14 @@ class CodexTurnExecutor:
     def _handle_turn_completed(self, params: Any) -> None:
         if not isinstance(params, Mapping):
             raise CodexAppServerProtocolError("Codex turn/completed params must be an object")
-        turn_id = _extract_turn_id(params)
+        turn_id = _resolve_turn_id(params, CodexProtocol.TURN_COMPLETED, required=True)
         if turn_id is None:
             raise CodexAppServerProtocolError("Codex turn/completed omitted turnId")
-        completion_params = params
+        status = _resolve_turn_completed_status(params)
         turn = params.get("turn")
-        if isinstance(turn, Mapping):
-            completion_params = {**dict(turn), **dict(params), "turnId": turn_id}
+        completion_params = {**dict(turn), **dict(params)} if isinstance(turn, Mapping) else dict(params)
+        completion_params["turnId"] = turn_id
+        completion_params["status"] = status
         active = self._active_turns.get(turn_id)
         if active is None or active.future.done():
             self._buffer_turn_notification(turn_id, CodexProtocol.TURN_COMPLETED, completion_params)
@@ -1025,37 +1041,15 @@ class CodexTurnExecutor:
             elif event.method == CodexProtocol.TURN_COMPLETED:
                 self._handle_turn_completed(event.params)
 
-    def _extract_required_id(self, payload: Any, key: str, method: str) -> str:
-        if not isinstance(payload, Mapping):
-            raise CodexAppServerProtocolError(f"Codex {method} result must be an object")
-        value = _non_blank(payload.get(key))
-        if value is None:
-            raise CodexAppServerProtocolError(f"Codex {method} result omitted {key}")
-        return value
-
     def _extract_thread_id(self, payload: Any) -> str:
         if not isinstance(payload, Mapping):
             raise CodexAppServerProtocolError(f"Codex {CodexProtocol.THREAD_START} result must be an object")
-        value = _non_blank(payload.get("threadId"))
-        if value is None:
-            thread = payload.get("thread")
-            if isinstance(thread, Mapping):
-                value = _non_blank(thread.get("id")) or _non_blank(thread.get("sessionId"))
-        if value is None:
-            raise CodexAppServerProtocolError(f"Codex {CodexProtocol.THREAD_START} result omitted threadId")
-        return value
+        return _resolve_thread_id(payload, CodexProtocol.THREAD_START)
 
     def _extract_turn_id(self, payload: Any) -> str:
         if not isinstance(payload, Mapping):
             raise CodexAppServerProtocolError(f"Codex {CodexProtocol.TURN_START} result must be an object")
-        value = _non_blank(payload.get("turnId"))
-        if value is None:
-            turn = payload.get("turn")
-            if isinstance(turn, Mapping):
-                value = _non_blank(turn.get("id"))
-        if value is None:
-            raise CodexAppServerProtocolError(f"Codex {CodexProtocol.TURN_START} result omitted turnId")
-        return value
+        return _resolve_turn_id(payload, CodexProtocol.TURN_START, required=True) or ""
 
 
 class CodexAppServerClient:
@@ -1265,6 +1259,14 @@ class CodexAppServerClient:
                     timeout=_remaining_or_timeout(deadline, "Codex app-server initialize timed out"),
                 )
             except CodexAppServerRemoteError:
+                self._initialized = False
+                self._version = None
+                raise
+            except asyncio.CancelledError:
+                try:
+                    await transport.stop(CodexAppServerTransportError("Codex app-server initialize cancelled"))
+                except (Exception, asyncio.CancelledError) as cleanup_exc:
+                    LOGGER.debug("Codex app-server initialize cancellation cleanup failed", exc_info=cleanup_exc)
                 self._initialized = False
                 self._version = None
                 raise
@@ -1507,26 +1509,75 @@ def _error_from_envelope(error: Any, *, require_jsonrpc_error: bool = False) -> 
     return CodexAppServerRemoteError(message, error_code=error_code, status_code=status_code)
 
 
-def _extract_turn_id(params: Any) -> str | None:
+def _resolve_thread_id(payload: Mapping[str, Any], context: str) -> str:
+    value = _resolve_identity(
+        context,
+        (
+            ("threadId", payload, "threadId"),
+            ("thread.id", payload.get("thread"), "id"),
+            ("thread.sessionId", payload.get("thread"), "sessionId"),
+        ),
+        required_message=f"Codex {context} result omitted threadId",
+    )
+    assert value is not None
+    return value
+
+
+def _resolve_turn_id(params: Any, context: str, *, required: bool) -> str | None:
     if not isinstance(params, Mapping):
+        if required:
+            raise CodexAppServerProtocolError(f"Codex {context} omitted turnId")
         return None
-    value = _non_blank(params.get("turnId"))
-    if value is not None:
-        return value
-    turn = params.get("turn")
-    if isinstance(turn, Mapping):
-        value = _non_blank(turn.get("id"))
-        if value is not None:
-            return value
     item = params.get("item")
-    if isinstance(item, Mapping):
-        value = _non_blank(item.get("turnId"))
-        if value is not None:
-            return value
-        turn = item.get("turn")
-        if isinstance(turn, Mapping):
-            return _non_blank(turn.get("id"))
-    return None
+    return _resolve_identity(
+        context,
+        (
+            ("turnId", params, "turnId"),
+            ("turn.id", params.get("turn"), "id"),
+            ("item.turnId", item, "turnId"),
+            ("item.turn.id", item.get("turn") if isinstance(item, Mapping) else None, "id"),
+        ),
+        required_message=f"Codex {context} omitted turnId" if required else None,
+    )
+
+
+def _resolve_turn_completed_status(params: Mapping[str, Any]) -> str:
+    value = _resolve_identity(
+        CodexProtocol.TURN_COMPLETED,
+        (
+            ("status", params, "status"),
+            ("turn.status", params.get("turn"), "status"),
+        ),
+        required_message="Codex turn/completed omitted status",
+    )
+    assert value is not None
+    return value
+
+
+def _resolve_identity(
+    context: str,
+    locations: Sequence[tuple[str, Any, str]],
+    *,
+    required_message: str | None,
+) -> str | None:
+    values: list[tuple[str, str]] = []
+    for label, container, key in locations:
+        if not isinstance(container, Mapping) or key not in container:
+            continue
+        raw = container.get(key)
+        value = _non_blank(raw)
+        if value is None:
+            raise CodexAppServerProtocolError(f"Codex {context} {label} was invalid")
+        values.append((label, value))
+    if not values:
+        if required_message is not None:
+            raise CodexAppServerProtocolError(required_message)
+        return None
+    distinct = {value for _, value in values}
+    if len(distinct) > 1:
+        labels = ", ".join(label for label, _ in values)
+        raise CodexAppServerProtocolError(f"Codex {context} contained conflicting identities: {labels}")
+    return values[0][1]
 
 
 def _extract_text(payload: Mapping[str, Any]) -> str | None:
