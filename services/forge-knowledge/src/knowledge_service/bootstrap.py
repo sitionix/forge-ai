@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
@@ -52,24 +53,33 @@ class KnowledgeDependencies:
     _codex_app_server_client_closed: bool = field(default=False, init=False, repr=False)
 
     async def aclose(self) -> None:
-        errors: list[BaseException] = []
+        errors: list[Exception] = []
+        cancelled: asyncio.CancelledError | None = None
         if self.ai_runtime_discovery is not None:
             try:
                 await self.ai_runtime_discovery.aclose()
-            except BaseException as exc:  # noqa: BLE001 - cleanup must continue through all owned resources.
+            except asyncio.CancelledError as exc:
+                cancelled = exc
+            except Exception as exc:  # noqa: BLE001 - cleanup must continue through all owned resources.
                 errors.append(exc)
         if self.generative_registry is not None:
             try:
                 await self.generative_registry.aclose()
-            except BaseException as exc:  # noqa: BLE001 - cleanup must continue through all owned resources.
+            except asyncio.CancelledError as exc:
+                cancelled = exc
+            except Exception as exc:  # noqa: BLE001 - cleanup must continue through all owned resources.
                 errors.append(exc)
         if self.codex_app_server_client is not None and not self._codex_app_server_client_closed:
             try:
                 await self.codex_app_server_client.aclose()
-            except BaseException as exc:  # noqa: BLE001 - cleanup must report after all attempts.
+            except asyncio.CancelledError as exc:
+                cancelled = exc
+            except Exception as exc:  # noqa: BLE001 - cleanup must report after all attempts.
                 errors.append(exc)
             else:
                 self._codex_app_server_client_closed = True
+        if cancelled is not None:
+            raise cancelled
         if errors:
             raise RuntimeError("Knowledge dependency cleanup failed") from errors[0]
 

@@ -32,6 +32,13 @@ class CodexAppServerTransportError(CodexAppServerError):
         super().__init__(message)
 
 
+class CodexAppServerRemoteError(CodexAppServerError):
+    def __init__(self, message: str, *, error_code: int | None = None, status_code: int | None = None) -> None:
+        self.error_code = error_code
+        self.status_code = status_code
+        super().__init__(message)
+
+
 class CodexAppServerProtocolError(CodexAppServerError):
     pass
 
@@ -360,8 +367,14 @@ class CodexProcessTransport:
             payload["params"] = dict(params)
         future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
+        submitted = False
+
+        def mark_submitted() -> None:
+            nonlocal submitted
+            submitted = True
+
         try:
-            await self._write_json(payload, deadline=deadline)
+            await self._write_json(payload, deadline=deadline, on_submitted=mark_submitted)
             result = await _wait_with_deadline(
                 future,
                 deadline=deadline,
@@ -375,6 +388,10 @@ class CodexProcessTransport:
             raise
         except CodexAppServerTransportError as exc:
             await self.invalidate(exc)
+            raise
+        except asyncio.CancelledError:
+            if submitted:
+                await self.invalidate(CodexAppServerTransportError("Codex app-server request was cancelled after submission"))
             raise
         finally:
             self._pending.pop(request_id, None)
@@ -499,7 +516,7 @@ class CodexProcessTransport:
             except TimeoutError as exc:
                 raise CodexAppServerLifecycleError("Codex app-server process did not exit after kill") from exc
 
-    async def _write_json(self, payload: Mapping[str, Any], *, deadline: float) -> None:
+    async def _write_json(self, payload: Mapping[str, Any], *, deadline: float, on_submitted: Callable[[], None] | None = None) -> None:
         process = self._process
         if process is None or self._returncode(process) is not None:
             raise CodexAppServerTransportError("Codex app-server process is not running")
@@ -514,6 +531,8 @@ class CodexProcessTransport:
             await asyncio.wait_for(self._write_lock.acquire(), timeout=_remaining(deadline))
             acquired = True
             stdin.write(encoded)
+            if on_submitted is not None:
+                on_submitted()
             drain = getattr(stdin, "drain", None)
             if callable(drain):
                 await asyncio.wait_for(drain(), timeout=_remaining(deadline))
@@ -607,7 +626,13 @@ class CodexProcessTransport:
             return
         if has_error:
             self._pending.pop(request_id, None)
-            future.set_exception(_error_from_envelope(payload.get("error")))
+            try:
+                remote_exc = _error_from_envelope(payload.get("error"), require_jsonrpc_error=True)
+            except CodexAppServerProtocolError as protocol_exc:
+                future.set_exception(protocol_exc)
+                await self.invalidate(protocol_exc)
+                return
+            future.set_exception(remote_exc)
             return
         if has_result:
             self._pending.pop(request_id, None)
@@ -697,14 +722,18 @@ class CodexTurnExecutor:
     ) -> CodexTurnResult:
         active: _ActiveTurn | None = None
         transport = self._transport_getter()
-        timeout = float(timeout_seconds)
-        if timeout <= 0:
+        deadline = float(timeout_seconds)
+        if deadline <= 0:
             raise ValueError("timeout_seconds must be positive")
         pre_registration = True
         self._pre_registration_turns += 1
         try:
-            async with asyncio.timeout(timeout):  # type: ignore[attr-defined]
-                thread_result = await transport.request(CodexProtocol.THREAD_START, self._thread_start_params(), timeout=timeout)
+            async with asyncio.timeout_at(deadline):  # type: ignore[attr-defined]
+                thread_result = await transport.request(
+                    CodexProtocol.THREAD_START,
+                    self._thread_start_params(),
+                    timeout=_remaining_or_timeout(deadline, "Codex app-server turn timed out"),
+                )
                 thread_id = self._extract_thread_id(thread_result)
                 turn_params: dict[str, Any] = {
                     "threadId": thread_id,
@@ -716,7 +745,11 @@ class CodexTurnExecutor:
                 json_mode = str(getattr(response_mode, "value", response_mode)) == "json_object"
                 if json_mode:
                     turn_params["outputSchema"] = _json_object_output_schema()
-                turn_result = await transport.request(CodexProtocol.TURN_START, turn_params, timeout=timeout)
+                turn_result = await transport.request(
+                    CodexProtocol.TURN_START,
+                    turn_params,
+                    timeout=_remaining_or_timeout(deadline, "Codex app-server turn timed out"),
+                )
                 turn_id = self._extract_turn_id(turn_result)
                 transport.raise_if_failed()
                 active = _ActiveTurn(
@@ -815,8 +848,12 @@ class CodexTurnExecutor:
         return _ServerRequestHandlingResult(response=response, invalidate_after_response=invalidation)
 
     def fail_active_work(self, exc: Exception) -> None:
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
         for task in tuple(self._owned_tasks):
-            if not task.done():
+            if task is not current and not task.done():
                 task.cancel()
         for active in self._active_turns.values():
             if not active.future.done():
@@ -1165,7 +1202,7 @@ class CodexAppServerClient:
             model_id=model_id,
             effort_id=effort_id,
             response_mode=response_mode,
-            timeout_seconds=_remaining_or_timeout(deadline, "Codex app-server turn timed out"),
+            timeout_seconds=deadline,
             server_version=self._version,
         )
 
@@ -1205,6 +1242,10 @@ class CodexAppServerClient:
                     {},
                     timeout=_remaining_or_timeout(deadline, "Codex app-server initialize timed out"),
                 )
+            except CodexAppServerRemoteError:
+                self._initialized = False
+                self._version = None
+                raise
             except BaseException:
                 await transport.stop(CodexAppServerTransportError("Codex app-server initialize failed"))
                 self._initialized = False
@@ -1418,10 +1459,18 @@ def _json_object_output_schema() -> dict[str, Any]:
     }
 
 
-def _error_from_envelope(error: Any) -> CodexAppServerError:
+def _error_from_envelope(error: Any, *, require_jsonrpc_error: bool = False) -> CodexAppServerError:
+    error_code: int | None = None
     status_code: int | None = None
     message = "Codex app-server returned an error"
     if isinstance(error, Mapping):
+        raw_code = error.get("code")
+        if type(raw_code) is int:
+            error_code = raw_code
+        elif require_jsonrpc_error:
+            raise CodexAppServerProtocolError("Codex app-server error response code was invalid")
+        if require_jsonrpc_error and not isinstance(error.get("message"), str):
+            raise CodexAppServerProtocolError("Codex app-server error response message was invalid")
         info = error.get("codexErrorInfo")
         if not isinstance(info, Mapping):
             info = error.get("data") if isinstance(error.get("data"), Mapping) else None
@@ -1431,7 +1480,9 @@ def _error_from_envelope(error: Any) -> CodexAppServerError:
                 status_code = int(raw_status) if raw_status is not None else None
             except (TypeError, ValueError):
                 status_code = None
-    return CodexAppServerTransportError(message, status_code=status_code)
+    elif require_jsonrpc_error:
+        raise CodexAppServerProtocolError("Codex app-server error response was invalid")
+    return CodexAppServerRemoteError(message, error_code=error_code, status_code=status_code)
 
 
 def _extract_turn_id(params: Any) -> str | None:

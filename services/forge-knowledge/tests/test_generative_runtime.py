@@ -128,6 +128,15 @@ class FailingCleanup:
         raise RuntimeError(self.message)
 
 
+class CancellingCleanup:
+    def __init__(self) -> None:
+        self.close_count = 0
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+        raise asyncio.CancelledError
+
+
 class VersionRaceCodexClient:
     @property
     def version(self) -> str:
@@ -278,6 +287,33 @@ def test_dependency_shutdown_attempts_codex_after_registry_failure():
     with pytest.raises(RuntimeError):
         asyncio.run(deps.aclose())
 
+    assert registry.close_count == 1
+    assert client.close_count == 1
+
+
+def test_dependency_shutdown_preserves_cancellation_after_remaining_cleanup():
+    discovery = CancellingCleanup()
+    registry = FailingCleanup("registry")
+    client = CloseCountingCodexClient()
+    deps = KnowledgeDependencies(
+        inventory_store=None,
+        analysis_store=None,
+        graph_store=None,
+        source_resolver=None,
+        analysis_provider=None,
+        analysis_supervisor=None,
+        inventory_refresh=None,
+        inventory_scheduler=None,
+        storage_operations=None,
+        ai_runtime_discovery=discovery,
+        generative_registry=registry,
+        codex_app_server_client=client,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(deps.aclose())
+
+    assert discovery.close_count == 1
     assert registry.close_count == 1
     assert client.close_count == 1
 

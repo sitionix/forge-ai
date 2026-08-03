@@ -10,11 +10,15 @@ from typing import Any, Mapping, Sequence
 import pytest
 from codex_app_server_support import FakeCodexProcess, FakeStream, async_value, defer, notification, raw_line, result, rpc_error, server_request
 
+from knowledge_service.active_profile import ActiveLlmRuntime, ActiveProfileService, ActiveProfileStore, LlmUsageRegistry
+from knowledge_service.ai_runtime_discovery import AiRuntimeDiscoveryRegistry, AiRuntimeDiscoveryService, CodexAiRuntimeOptionsSource
 from knowledge_service.codex_app_server import (
     CodexAppServerClient,
     CodexAppServerEmptyResponse,
+    CodexAppServerError,
     CodexAppServerLifecycleError,
     CodexAppServerProtocolError,
+    CodexAppServerRemoteError,
     CodexAppServerTimeout,
     CodexAppServerTransportError,
     CodexNotificationBufferPolicy,
@@ -23,10 +27,12 @@ from knowledge_service.codex_app_server import (
     CodexRuntimeSettings,
     CodexTurnResult,
 )
+from knowledge_service.codex_usage import CodexLlmUsageSource
 from knowledge_service.generative_runtime import (
     CodexGenerativeProvider,
     GenerativeProviderEmptyResponse,
     GenerativeProviderProtocolError,
+    GenerativeProviderRegistry,
     GenerativeProviderTimeout,
     GenerativeProviderTransportError,
     GenerativeRequest,
@@ -57,17 +63,25 @@ def test_initialize_sends_initialized_notification_and_correlates_requests(tmp_p
     assert [sent["method"] for sent in process.sent] == ["initialize", "initialized", "model/list"]
 
 
-def test_json_rpc_error_malformed_restart_and_idempotent_close(tmp_path: Path):
-    error_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), rpc_error(-32000, "upstream failed")])
-    malformed_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), raw_line(b"{not-json\n")])
+def test_json_rpc_remote_error_is_local_but_malformed_restarts_and_idempotent_close(tmp_path: Path):
+    malformed_process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            {"error": {"code": -32000, "message": "secret upstream failed", "data": {"status": 429}}},
+            raw_line(b"{not-json\n"),
+        ]
+    )
     restart_process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
-    processes = [error_process, malformed_process, restart_process]
+    processes = [malformed_process, restart_process]
     client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path))
 
     async def exercise():
-        with pytest.raises(CodexAppServerTransportError):
+        with pytest.raises(CodexAppServerRemoteError) as remote_exc:
             await client.request("model/list")
-        error_process.terminate()
+        assert remote_exc.value.error_code == -32000
+        assert remote_exc.value.status_code == 429
+        assert "secret" not in str(remote_exc.value)
+        assert malformed_process.terminated is False
         with pytest.raises(CodexAppServerProtocolError):
             await client.request("model/list")
         restarted = await client.request("model/list")
@@ -523,7 +537,7 @@ def test_turn_terminal_failures_timeout_cancellation_and_side_effects(tmp_path: 
             result({"turnId": "turn-1"}, notifications=[notification("turn/completed", {"turnId": "turn-1", "status": "failed", "error": {"message": "failed"}})]),
         ]
     )
-    with pytest.raises(CodexAppServerTransportError):
+    with pytest.raises(CodexAppServerRemoteError):
         asyncio.run(_client(failed, tmp_path / "failed").run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
 
     timeout = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), defer()])
@@ -1361,7 +1375,7 @@ def test_ordinary_turn_failure_and_timeout_reuse_healthy_process(tmp_path: Path)
     )
     failed_client = _client(failed_process, tmp_path / "failed-reuse")
     async def failed_exercise():
-        with pytest.raises(CodexAppServerTransportError):
+        with pytest.raises(CodexAppServerRemoteError):
             await failed_client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
         payload = await failed_client.request("model/list")
         await failed_client.aclose()
@@ -1495,6 +1509,253 @@ def test_cancellation_sends_one_interrupt(tmp_path: Path):
 
     asyncio.run(exercise())
     assert [sent["method"] for sent in process.sent].count("turn/interrupt") == 1
+
+
+def test_remote_rate_limit_error_during_active_generation_keeps_process_healthy(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result({"turnId": "turn-1"}),
+            rpc_error(-32000, "secret rate-limit failure"),
+            result({"ok": True}),
+        ]
+    )
+    client = _client(process, tmp_path)
+    service = _active_codex_profile_service(client, tmp_path)
+
+    async def exercise():
+        generation = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        await _wait_for_method(process, CodexProtocol.TURN_START)
+        assert await asyncio.to_thread(process.stdout.wait_for_reads, 3, 1.0) is True
+        profile = await service.get_active_profile()
+        assert profile.usage is None
+        _complete_turn(process, "turn-1", "answer")
+        generated = await generation
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return generated, payload
+
+    generated, payload = asyncio.run(exercise())
+
+    assert generated.raw_text == "answer"
+    assert payload == {"ok": True}
+    assert process.terminated is True
+    assert [sent["method"] for sent in process.sent].count(CodexProtocol.INITIALIZE) == 1
+
+
+def test_remote_model_list_error_during_active_generation_degrades_without_restart(tmp_path: Path):
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            result({"turnId": "turn-1"}),
+            rpc_error(-32000, "secret discovery failure"),
+            result({"ok": True}),
+        ]
+    )
+    client = _client(process, tmp_path)
+    discovery = AiRuntimeDiscoveryService(
+        AiRuntimeDiscoveryRegistry([CodexAiRuntimeOptionsSource(client, cache_ttl_seconds=30.0, max_page_count=100)])
+    )
+
+    async def exercise():
+        generation = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        await _wait_for_method(process, CodexProtocol.TURN_START)
+        assert await asyncio.to_thread(process.stdout.wait_for_reads, 3, 1.0) is True
+        discovered = await discovery.discover()
+        _complete_turn(process, "turn-1", "answer")
+        generated = await generation
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return discovered, generated, payload
+
+    discovered, generated, payload = asyncio.run(exercise())
+
+    assert discovered["providers"][0]["status"] == "DEGRADED"
+    assert generated.raw_text == "answer"
+    assert payload == {"ok": True}
+    assert process.terminated is True
+    assert [sent["method"] for sent in process.sent].count(CodexProtocol.INITIALIZE) == 1
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            rpc_error(-32000, "secret thread failure"),
+            result({"threadId": "thread-2"}),
+            result(
+                {"turnId": "turn-2"},
+                notifications=[
+                    notification("item/completed", {"turnId": "turn-2", "item": {"type": "agentMessage", "text": "fresh"}}),
+                    notification("turn/completed", {"turnId": "turn-2", "status": "completed"}),
+                ],
+            ),
+        ],
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"threadId": "thread-1"}),
+            rpc_error(-32000, "secret turn failure"),
+            result({"threadId": "thread-2"}),
+            result(
+                {"turnId": "turn-2"},
+                notifications=[
+                    notification("item/completed", {"turnId": "turn-2", "item": {"type": "agentMessage", "text": "fresh"}}),
+                    notification("turn/completed", {"turnId": "turn-2", "status": "completed"}),
+                ],
+            ),
+        ],
+    ],
+)
+def test_remote_thread_or_turn_start_error_fails_one_generation_and_reuses_process(tmp_path: Path, script: list[Mapping[str, Any]]):
+    process = FakeCodexProcess(script)
+    client = _client(process, tmp_path)
+
+    async def exercise():
+        with pytest.raises(CodexAppServerRemoteError) as exc_info:
+            await client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        assert "secret" not in str(exc_info.value)
+        fresh = await client.run_turn(prompt="fresh", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return fresh
+
+    fresh = asyncio.run(exercise())
+
+    assert fresh.raw_text == "fresh"
+    assert process.terminated is True
+    assert [sent["method"] for sent in process.sent].count(CodexProtocol.INITIALIZE) == 1
+
+
+@pytest.mark.parametrize(
+    ("script", "blocked_method"),
+    [
+        ([result({"userAgent": "forge-knowledge/0.146.0"}), defer()], CodexProtocol.THREAD_START),
+        ([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), defer()], CodexProtocol.TURN_START),
+    ],
+)
+def test_pre_registration_deadline_expiry_reaps_and_next_request_restarts(tmp_path: Path, script: list[Mapping[str, Any]], blocked_method: str):
+    stalled = FakeCodexProcess(script)
+    restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [stalled, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path, request_timeout_seconds=1))
+
+    async def exercise():
+        diagnostics: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        started = time.monotonic()
+        with pytest.raises(CodexAppServerTimeout):
+            await client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=0.05)
+        elapsed = time.monotonic() - started
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return elapsed, payload, diagnostics
+
+    elapsed, payload, diagnostics = asyncio.run(exercise())
+
+    assert elapsed < 0.5
+    assert stalled.terminated is True
+    assert payload == {"ok": True}
+    assert restarted.by_method(CodexProtocol.MODEL_LIST)["method"] == CodexProtocol.MODEL_LIST
+    assert stalled.by_method(blocked_method)["method"] == blocked_method
+    assert diagnostics == []
+
+
+@pytest.mark.parametrize(
+    ("script", "blocked_method"),
+    [
+        ([result({"userAgent": "forge-knowledge/0.146.0"}), defer()], CodexProtocol.THREAD_START),
+        ([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), defer()], CodexProtocol.TURN_START),
+    ],
+)
+def test_pre_registration_caller_cancellation_after_submission_reaps_and_restarts(tmp_path: Path, script: list[Mapping[str, Any]], blocked_method: str):
+    stalled = FakeCodexProcess(script)
+    restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [stalled, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path, request_timeout_seconds=1))
+
+    async def exercise():
+        diagnostics: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        await _wait_for_method(stalled, blocked_method)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return payload, diagnostics
+
+    payload, diagnostics = asyncio.run(exercise())
+
+    assert stalled.terminated is True
+    assert payload == {"ok": True}
+    assert diagnostics == []
+
+
+def test_public_request_cancellation_after_write_reaps_and_restarts(tmp_path: Path):
+    stalled = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), defer()])
+    restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [stalled, restarted]
+    client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path, request_timeout_seconds=1))
+
+    async def exercise():
+        diagnostics: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        task = asyncio.create_task(client.request(CodexProtocol.RATE_LIMITS_READ))
+        await _wait_for_method(stalled, CodexProtocol.RATE_LIMITS_READ)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return payload, diagnostics
+
+    payload, diagnostics = asyncio.run(exercise())
+
+    assert stalled.terminated is True
+    assert payload == {"ok": True}
+    assert diagnostics == []
+
+
+def test_fail_active_interrupt_write_failure_does_not_self_cancel_cleanup(tmp_path: Path):
+    broken = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"threadId": "thread-1"}), result({"turnId": "turn-1"}), defer()])
+    broken.stdin.block_on_method = CodexProtocol.TURN_INTERRUPT
+    restarted = completed_turn_process("fresh")
+    processes = [broken, restarted]
+    client = CodexAppServerClient(
+        process_factory=lambda command: async_value(processes.pop(0)),
+        settings=_settings(tmp_path, interrupt_grace_seconds=0.02, terminal_after_interrupt_seconds=0.01),
+    )
+
+    async def exercise():
+        diagnostics: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        task = asyncio.create_task(client.run_turn(prompt="x", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3))
+        await _wait_for_method(broken, CodexProtocol.TURN_START)
+        assert await asyncio.to_thread(broken.stdout.wait_for_reads, 3, 1.0) is True
+        await asyncio.sleep(0.05)
+        broken.push_json({"id": 999, "method": CodexProtocol.COMMAND_APPROVAL, "params": {"turnId": "turn-1"}})
+        with pytest.raises(CodexAppServerError):
+            await task
+        fresh = await client.run_turn(prompt="fresh", model_id="m", effort_id=None, response_mode=ResponseMode.TEXT, timeout_seconds=3)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return fresh, diagnostics
+
+    fresh, diagnostics = asyncio.run(exercise())
+
+    assert broken.terminated is True
+    assert [sent.get("method") for sent in broken.sent].count(CodexProtocol.TURN_INTERRUPT) == 1
+    assert fresh.raw_text == "fresh"
+    assert diagnostics == []
 
 
 def test_two_overlapping_turns_route_interleaved_notifications(tmp_path: Path):
@@ -1676,6 +1937,31 @@ def _server_response(process: FakeCodexProcess, response_id: int) -> tuple[int, 
         if sent.get("id") == response_id and "method" not in sent:
             return index, sent
     raise AssertionError(f"response not sent: {response_id}")
+
+
+async def _wait_for_method(process: FakeCodexProcess, method: str) -> None:
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        if any(sent.get("method") == method for sent in process.sent):
+            return
+        await asyncio.sleep(0)
+    raise AssertionError(f"method not sent: {method}")
+
+
+def _complete_turn(process: FakeCodexProcess, turn_id: str, text: str) -> None:
+    process.push_json({"method": CodexProtocol.ITEM_COMPLETED, "params": {"turnId": turn_id, "item": {"type": "agentMessage", "text": text}}})
+    process.push_json({"method": CodexProtocol.TURN_COMPLETED, "params": {"turnId": turn_id, "status": "completed"}})
+
+
+def _active_codex_profile_service(client: CodexAppServerClient, runtime_cwd: Path) -> ActiveProfileService:
+    store = ActiveProfileStore(runtime_cwd / "active.sqlite")
+    persisted = store.init(provider_id="codex", model_id="m")
+    registry = GenerativeProviderRegistry()
+    registry.register(CodexGenerativeProvider(client, timeout_seconds=3))
+    usage_registry = LlmUsageRegistry()
+    usage_registry.register(CodexLlmUsageSource(client))
+    discovery = AiRuntimeDiscoveryService(AiRuntimeDiscoveryRegistry([]))
+    return ActiveProfileService(store, ActiveLlmRuntime(registry, persisted), discovery, usage_registry)
 
 
 async def _assert_no_codex_tasks() -> None:

@@ -543,14 +543,29 @@ def test_codex_initialize_timeout_cleans_process_and_next_discovery_restarts():
     assert restart_process.terminated is True
 
 
-def test_codex_initialize_error_cleans_process_and_pending_requests():
-    process = FakeCodexProcess([jsonrpc_error(-32000, "initialize failed")])
+def test_codex_initialize_remote_error_keeps_process_reusable():
+    process = FakeCodexProcess(
+        [
+            jsonrpc_error(-32000, "initialize failed"),
+            response({"userAgent": "forge-knowledge/0.146.0"}),
+            response({"data": [codex_model("gpt-5.6-sol", "GPT-5.6-Sol")], "nextCursor": None}),
+        ]
+    )
     client = _codex_client(lambda command: async_value(process), request_timeout_seconds=1)
 
-    with pytest.raises(CodexAppServerError):
-        asyncio.run(client.initialize())
+    async def exercise():
+        with pytest.raises(CodexAppServerError):
+            await client.initialize()
+        terminated_after_remote_error = process.terminated
+        payload = await client.request(CodexProtocol.MODEL_LIST, {"includeHidden": False})
+        await client.aclose()
+        return terminated_after_remote_error, payload
 
-    assert process.terminated is True
+    terminated_after_remote_error, payload = asyncio.run(exercise())
+
+    assert terminated_after_remote_error is False
+    assert payload["data"][0]["id"] == "gpt-5.6-sol"
+    assert [sent["method"] for sent in process.sent].count(CodexProtocol.INITIALIZE) == 2
 
 
 def test_codex_initialize_unusable_response_cleans_process_and_pending_requests():

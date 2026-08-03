@@ -11,6 +11,7 @@ from knowledge_service.codex_app_server import (
     CodexAppServerEmptyResponse,
     CodexAppServerLifecycleError,
     CodexAppServerProtocolError,
+    CodexAppServerRemoteError,
     CodexAppServerTimeout,
     CodexAppServerTransportError,
     CodexTurnResult,
@@ -71,7 +72,14 @@ class CodexGenerativeProvider:
     def _transport_error_boundary(self) -> Iterator[None]:
         try:
             yield
-        except (CodexAppServerTimeout, CodexAppServerEmptyResponse, CodexAppServerProtocolError, CodexAppServerTransportError, CodexAppServerLifecycleError) as exc:
+        except (
+            CodexAppServerTimeout,
+            CodexAppServerEmptyResponse,
+            CodexAppServerProtocolError,
+            CodexAppServerRemoteError,
+            CodexAppServerTransportError,
+            CodexAppServerLifecycleError,
+        ) as exc:
             self._raise_provider_error(exc)
         except Exception as exc:
             raise GenerativeProviderTransportError("codex generation transport error", provider_id=self.provider_id) from exc
@@ -83,7 +91,7 @@ class CodexGenerativeProvider:
             raise GenerativeProviderEmptyResponse("codex returned no response text", provider_id=self.provider_id) from exc
         if isinstance(exc, CodexAppServerProtocolError):
             raise GenerativeProviderProtocolError("codex generation protocol error", provider_id=self.provider_id) from exc
-        status_code = exc.status_code if isinstance(exc, CodexAppServerTransportError) else None
+        status_code = exc.status_code if isinstance(exc, (CodexAppServerRemoteError, CodexAppServerTransportError)) else None
         raise GenerativeProviderTransportError(
             "codex generation transport error",
             provider_id=self.provider_id,
