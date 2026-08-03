@@ -92,10 +92,14 @@ class CodexGenerativeProvider:
         if isinstance(exc, CodexAppServerProtocolError):
             raise GenerativeProviderProtocolError("codex generation protocol error", provider_id=self.provider_id) from exc
         status_code = exc.status_code if isinstance(exc, (CodexAppServerRemoteError, CodexAppServerTransportError)) else None
+        error_code = exc.error_code if isinstance(exc, CodexAppServerTransportError) else None
+        details = exc.details if isinstance(exc, CodexAppServerTransportError) else None
         raise GenerativeProviderTransportError(
             "codex generation transport error",
             provider_id=self.provider_id,
             status_code=status_code,
+            error_code=error_code,
+            details=details,
         ) from exc
 
     def close(self) -> None:

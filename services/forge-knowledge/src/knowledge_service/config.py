@@ -88,6 +88,7 @@ class AnalysisSettings(BaseModel):
 class CodexAppServerSettings(BaseModel):
     command: tuple[str, ...] = DEFAULT_CODEX_APP_SERVER_COMMAND
     runtime_dir: Path | None = None
+    stdio_stream_limit_bytes: int = Field(default=4_194_304, ge=1)
     request_timeout_seconds: float = Field(default=5.0, ge=0.1)
     discovery_timeout_cap_seconds: float = Field(default=5.0, ge=0.1)
     discovery_timeout_allowance_seconds: float = Field(default=1.0, ge=0.1)
@@ -783,6 +784,7 @@ def _codex_app_server_payload(data: Mapping[str, Any], env: Mapping[str, str]) -
     fields: tuple[tuple[str, tuple[str, ...], Callable[[Any, Mapping[str, str]], Any]], ...] = (
         ("command", ("command",), _command_configured),
         ("runtime_dir", ("runtime-dir", "runtime_dir"), lambda value, runtime_env: _path(str(value), runtime_env)),
+        ("stdio_stream_limit_bytes", ("stdio-stream-limit-bytes", "stdio_stream_limit_bytes"), _int_configured),
         ("request_timeout_seconds", ("request-timeout-seconds", "request_timeout_seconds"), _float_configured),
         ("discovery_timeout_cap_seconds", ("discovery-timeout-cap-seconds", "discovery_timeout_cap_seconds"), _float_configured),
         (

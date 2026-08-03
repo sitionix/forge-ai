@@ -205,6 +205,7 @@ def codex_runtime_settings(config: AppConfig) -> CodexRuntimeSettings:
         runtime_cwd=runtime_dir,
         client_name=__application_name__,
         client_version=__version__,
+        stdio_stream_limit_bytes=codex.stdio_stream_limit_bytes,
         request_timeout_seconds=timeout_seconds,
         discovery_timeout_cap_seconds=codex.discovery_timeout_cap_seconds,
         discovery_timeout_allowance_seconds=codex.discovery_timeout_allowance_seconds,

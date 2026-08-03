@@ -18,7 +18,7 @@ from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.formatter_protocol import EndToEndFormatterProviderError
 from knowledge_service.formatter_provider import ProviderBackedEndToEndFormatterClient
-from knowledge_service.generative_runtime import GenerativeProviderProtocolError, GenerativeRequest, GenerativeResponse
+from knowledge_service.generative_runtime import GenerativeProviderProtocolError, GenerativeProviderTransportError, GenerativeRequest, GenerativeResponse
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.query_interpretation import (
     ProviderBackedQueryInterpretationClient,
@@ -114,6 +114,39 @@ def test_analysis_protocol_error_message_is_provider_neutral_with_identity_detai
     assert exc.value.details["providerVersion"] == "2026-07"
     assert exc.value.details["modelId"] == "codex-model"
     assert exc.value.details["providerErrorClass"] == "GenerativeProviderProtocolError"
+
+
+def test_codex_stdio_frame_limit_is_non_retryable_safe_analysis_error():
+    provider = SharedFakeGenerativeProvider(
+        [
+            GenerativeProviderTransportError(
+                "codex generation transport error",
+                provider_id="codex",
+                error_code="CODEX_STDIO_FRAME_TOO_LARGE",
+                details={
+                    "stream": "stdout",
+                    "configuredLimitBytes": 4096,
+                    "method": "turn/start",
+                    "exceptionClass": "ValueError",
+                },
+            )
+        ]
+    )
+    provider.provider_id = "codex"
+    provider.provider_version = "0.146.0"
+    client = ProviderBackedAnalysisClient(provider, "codex-model", 7, 32768)
+
+    with pytest.raises(KnowledgeError) as exc:
+        asyncio.run(client.analyze(_analysis_payload(), 1))
+
+    assert exc.value.code == "CODEX_STDIO_FRAME_TOO_LARGE"
+    assert exc.value.message == "Codex app-server stdout JSON-RPC frame exceeded configured limit"
+    assert exc.value.details["stream"] == "stdout"
+    assert exc.value.details["configuredLimitBytes"] == 4096
+    assert exc.value.details["method"] == "turn/start"
+    assert exc.value.details["providerErrorCode"] == "CODEX_STDIO_FRAME_TOO_LARGE"
+    assert "public class ObjectHandler" not in str(exc.value)
+    assert "public class ObjectHandler" not in json.dumps(exc.value.details)
 
 
 def test_ollama_analysis_compatibility_wrapper_preserves_protocol_error_code():

@@ -6,18 +6,19 @@ import inspect
 import json
 import logging
 import uuid
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol
 
 from knowledge_service.analysis_graph_contract import GraphContractProvider
+from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
 from knowledge_service.analysis_runtime_events import AnalysisRuntimeContext, analysis_runtime_context
-from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.analyzer_runtime import AnalyzerProvider, AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
-from knowledge_service.analyzer_runtime import AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.config import AppConfig
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_analysis import GraphAnalysisEngine
@@ -31,12 +32,12 @@ class AnalysisProvider(Protocol):
     name: str
     version: str
 
-    async def analyze(
+    def analyze(
         self,
         payload: Dict[str, Any],
         line_count: int,
         repair_prompt: Optional[str] = None,
-    ) -> GraphAnalysisResult: ...
+    ) -> GraphAnalysisResult | Awaitable[GraphAnalysisResult]: ...
 
 
 ATTEMPT_KIND_GENERATION = "GENERATION"
@@ -462,10 +463,10 @@ class AnalysisSupervisor:
                     file_started_at = datetime.now(timezone.utc)
                     row_data = dict(row)
                     async def analyze_with_retry_for_job(
-                        provider: AnalysisProvider,
+                        provider: AnalyzerProvider,
                         payload: Dict[str, Any],
                         payload_line_count: int,
-                    ):
+                    ) -> tuple[GraphAnalysisResult, List[Dict[str, Any]], Dict[str, Any]]:
                         return await self._analyze_with_retry(provider, payload, payload_line_count, job_id=job_id, row=row_data)
 
                     runtime_result = await self.analyzer_runtime.execute(row_data, metadata, lines, analyzer, analyze_with_retry_for_job, job_id=job_id)
@@ -1142,6 +1143,16 @@ class AnalysisSupervisor:
             "targetKind",
             "targetIndex",
             "targetCount",
+            "providerId",
+            "providerVersion",
+            "modelId",
+            "providerErrorClass",
+            "providerErrorCode",
+            "stream",
+            "configuredLimitBytes",
+            "method",
+            "pendingMethods",
+            "exceptionClass",
         ):
             if exc_details.get(key) is not None:
                 metadata[key] = exc_details.get(key)

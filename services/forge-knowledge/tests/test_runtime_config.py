@@ -11,6 +11,7 @@ from knowledge_service.config import (
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
     DEFAULT_GENERATIVE_MODEL,
     AppConfig,
+    CodexAppServerSettings,
     load_forge_settings,
 )
 from knowledge_service.query_interpretation import LocalOllamaQueryInterpretationClient
@@ -121,6 +122,7 @@ def test_codex_app_server_defaults_are_owned_by_settings_model(tmp_path):
 
     assert config.codex_app_server.command == DEFAULT_CODEX_APP_SERVER_COMMAND
     assert config.codex_app_server.runtime_dir == tmp_path / "var" / "knowledge" / "codex-runtime"
+    assert config.codex_app_server.stdio_stream_limit_bytes == CodexAppServerSettings().stdio_stream_limit_bytes
     assert config.codex_app_server.request_timeout_seconds == 5.0
     assert config.codex_app_server.discovery_timeout_cap_seconds == 5.0
     assert config.codex_app_server.discovery_cache_ttl_seconds == 30.0
@@ -134,6 +136,7 @@ def test_codex_app_server_configured_values_override_defaults_without_truthiness
         codex_app_server="""
         codex-app-server:
           command: ["codex-custom", "app-server", "--stdio"]
+          stdio-stream-limit-bytes: 123456
           request-timeout-seconds: 7
           discovery-timeout-cap-seconds: 6
           discovery-timeout-allowance-seconds: 2
@@ -149,6 +152,7 @@ def test_codex_app_server_configured_values_override_defaults_without_truthiness
     config = AppConfig.from_forge_settings(settings)
 
     assert config.codex_app_server.command == ("codex-custom", "app-server", "--stdio")
+    assert config.codex_app_server.stdio_stream_limit_bytes == 123456
     assert config.codex_app_server.request_timeout_seconds == 7
     assert config.codex_app_server.discovery_timeout_cap_seconds == 6
     assert config.codex_app_server.discovery_timeout_allowance_seconds == 2
@@ -169,6 +173,10 @@ def test_codex_app_server_configured_values_override_defaults_without_truthiness
         """
         codex-app-server:
           request-timeout-seconds: 0
+""",
+        """
+        codex-app-server:
+          stdio-stream-limit-bytes: 0
 """,
         """
         codex-app-server:

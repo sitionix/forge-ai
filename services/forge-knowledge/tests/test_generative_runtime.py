@@ -9,7 +9,7 @@ import pytest
 from knowledge_service.ai_runtime_discovery import AiRuntimeDiscoveryRegistry, AiRuntimeDiscoveryService, CodexAiRuntimeOptionsSource
 from knowledge_service.bootstrap import KnowledgeDependencies, build_generative_runtime
 from knowledge_service.codex_app_server import CodexAppServerClient, CodexNotificationBufferPolicy, CodexRuntimeSettings, CodexTurnResult
-from knowledge_service.config import AppConfig
+from knowledge_service.config import AppConfig, CodexAppServerSettings
 from knowledge_service.generative_runtime import (
     CodexGenerativeProvider,
     GenerativeProviderDuplicateError,
@@ -180,6 +180,7 @@ def test_bootstrap_generative_registry_resolves_ollama_and_codex(tmp_path):
             runtime_cwd=tmp_path / "var" / "codex-runtime",
             client_name="forge-knowledge",
             client_version="0.146.0",
+            stdio_stream_limit_bytes=CodexAppServerSettings().stdio_stream_limit_bytes,
             request_timeout_seconds=1,
             discovery_timeout_cap_seconds=1,
             discovery_timeout_allowance_seconds=0.1,

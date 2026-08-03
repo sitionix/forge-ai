@@ -86,18 +86,23 @@ class ProviderBackedAnalysisClient:
             message = "AI analyzer transport error"
             if exc.status_code is not None:
                 message = f"AI analyzer HTTP error {exc.status_code}"
+            error_code = str(getattr(exc, "error_code", "") or "")
+            if error_code == "CODEX_STDIO_FRAME_TOO_LARGE":
+                message = self._codex_stdio_frame_message(exc)
+            provider_error_details = self._provider_error_details(exc)
             self._emit_failed_response(
-                request_metadata,
+                {**request_metadata, **provider_error_details},
                 request_started_at,
                 request_started,
-                "ANALYSIS_AI_TRANSPORT_ERROR",
+                error_code or "ANALYSIS_AI_TRANSPORT_ERROR",
                 message,
                 response_text=exc.response_text,
             )
             raise KnowledgeError(
-                "ANALYSIS_AI_TRANSPORT_ERROR",
+                error_code or "ANALYSIS_AI_TRANSPORT_ERROR",
                 message,
                 raw_preview=exc.response_text,
+                **provider_error_details,
             ) from exc
         except GenerativeProviderProtocolError as exc:
             if isinstance(exc, GenerativeProviderEmptyResponse):
@@ -141,7 +146,7 @@ class ProviderBackedAnalysisClient:
             status="COMPLETED",
             started_at=request_started_at,
             completed_at=utc_now(),
-            duration_ms=provider_response.duration_ms,
+            duration_ms=int(provider_response.duration_ms),
             metadata=response_metadata,
         )
         if not is_target_enrichment_payload(payload):
@@ -266,13 +271,28 @@ class ProviderBackedAnalysisClient:
             "providerResponseMetadata": dict(getattr(response, "provider_metadata", {}) or {}),
         }
 
-    def _provider_error_details(self, exc: GenerativeProviderProtocolError) -> Dict[str, Any]:
+    def _provider_error_details(self, exc: GenerativeProviderProtocolError | GenerativeProviderTransportError) -> Dict[str, Any]:
+        provider_version: Any = None
+        try:
+            provider_version = getattr(self.provider, "provider_version", None)
+        except Exception:  # noqa: BLE001 - provider version is optional diagnostic metadata.
+            provider_version = None
+        details = dict(getattr(exc, "details", {}) or {})
+        provider_error_code = getattr(exc, "error_code", None)
+        if provider_error_code:
+            details["providerErrorCode"] = provider_error_code
         return {
             "providerId": getattr(exc, "provider_id", None) or getattr(self.provider, "provider_id", None),
-            "providerVersion": getattr(self.provider, "provider_version", None),
+            "providerVersion": provider_version,
             "modelId": self.model,
             "providerErrorClass": exc.__class__.__name__,
+            **details,
         }
+
+    def _codex_stdio_frame_message(self, exc: GenerativeProviderTransportError) -> str:
+        details = dict(getattr(exc, "details", {}) or {})
+        stream = str(details.get("stream") or "stdio")
+        return f"Codex app-server {stream} JSON-RPC frame exceeded configured limit"
 
     def _emit_failed_response(
         self,
