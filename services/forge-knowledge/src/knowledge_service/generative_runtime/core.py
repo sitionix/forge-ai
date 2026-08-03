@@ -69,9 +69,13 @@ class GenerativeProviderTransportError(GenerativeProviderError):
         provider_id: str | None = None,
         status_code: int | None = None,
         response_text: str | None = None,
+        error_code: str | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> None:
         self.status_code = status_code
         self.response_text = response_text
+        self.error_code = error_code
+        self.details = dict(details or {})
         super().__init__(message, provider_id=provider_id)
 
 

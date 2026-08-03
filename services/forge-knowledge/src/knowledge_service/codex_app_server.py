@@ -27,8 +27,17 @@ class CodexAppServerLifecycleError(CodexAppServerError):
 
 
 class CodexAppServerTransportError(CodexAppServerError):
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_code: str | None = None,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         self.status_code = status_code
+        self.error_code = error_code
+        self.details = dict(details or {})
         super().__init__(message)
 
 
@@ -87,6 +96,7 @@ class CodexRuntimeSettings:
     runtime_cwd: Path
     client_name: str
     client_version: str
+    stdio_stream_limit_bytes: int
     request_timeout_seconds: float
     discovery_timeout_cap_seconds: float
     discovery_timeout_allowance_seconds: float
@@ -104,6 +114,8 @@ class CodexRuntimeSettings:
             raise ValueError("Codex command is required")
         if not Path(self.runtime_cwd).is_absolute():
             raise ValueError("Codex runtime_cwd must be absolute")
+        if self.stdio_stream_limit_bytes <= 0:
+            raise ValueError("stdio_stream_limit_bytes must be positive")
         for field_name in (
             "request_timeout_seconds",
             "discovery_timeout_cap_seconds",
@@ -214,9 +226,34 @@ async def _wait_with_deadline(awaitable: Awaitable[Any], *, deadline: float, tim
         raise CodexAppServerTimeout(timeout_message) from exc
 
 
-def _normalize_transport_exception(exc: BaseException, message: str) -> CodexAppServerTransportError:
+def _normalize_transport_exception(
+    exc: BaseException,
+    message: str,
+    *,
+    stream_name: str | None = None,
+    configured_limit_bytes: int | None = None,
+    pending_methods: Sequence[str] = (),
+) -> CodexAppServerTransportError:
     if isinstance(exc, CodexAppServerTransportError):
         return exc
+    if isinstance(exc, (asyncio.LimitOverrunError, ValueError)) and "Separator is found, but chunk is longer than limit" in str(exc):
+        stream = stream_name or "stdio"
+        details: dict[str, Any] = {
+            "stream": stream,
+            "exceptionClass": exc.__class__.__name__,
+        }
+        if configured_limit_bytes is not None:
+            details["configuredLimitBytes"] = configured_limit_bytes
+        methods = [method for method in pending_methods if method]
+        if methods:
+            details["pendingMethods"] = methods[:5]
+            if len(methods) == 1:
+                details["method"] = methods[0]
+        return CodexAppServerTransportError(
+            f"Codex app-server {stream} JSON-RPC frame exceeded configured limit",
+            error_code="CODEX_STDIO_FRAME_TOO_LARGE",
+            details=details,
+        )
     return CodexAppServerTransportError(message)
 
 
@@ -307,6 +344,7 @@ class CodexProcessTransport:
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._pending: dict[int, asyncio.Future[Any]] = {}
+        self._pending_methods: dict[int, str] = {}
         self._next_request_id = 1
         self._start_lock: asyncio.Lock | None = None
         self._write_lock: asyncio.Lock | None = None
@@ -365,6 +403,7 @@ class CodexProcessTransport:
             payload["params"] = dict(params)
         future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
+        self._pending_methods[request_id] = method
         submitted = False
 
         def mark_submitted() -> None:
@@ -396,6 +435,7 @@ class CodexProcessTransport:
             raise
         finally:
             self._pending.pop(request_id, None)
+            self._pending_methods.pop(request_id, None)
 
     async def write_notification(self, method: str, params: Mapping[str, Any] | None = None, *, timeout: float | None = None) -> None:
         payload: dict[str, Any] = {"method": method}
@@ -573,7 +613,15 @@ class CodexProcessTransport:
         except Exception as exc:  # noqa: BLE001 - reader task is the transport failure boundary.
             if not self._accepting:
                 return
-            await self.invalidate(_normalize_transport_exception(exc, "Codex app-server stdout transport failed"))
+            await self.invalidate(
+                _normalize_transport_exception(
+                    exc,
+                    "Codex app-server stdout transport failed",
+                    stream_name="stdout",
+                    configured_limit_bytes=self._settings.stdio_stream_limit_bytes,
+                    pending_methods=tuple(self._pending_methods.values()),
+                )
+            )
         finally:
             if self._accepting and not self._connection_invalidated and self._process is not None:
                 try:
@@ -598,7 +646,15 @@ class CodexProcessTransport:
             raise
         except Exception as drain_exc:  # noqa: BLE001 - stderr reader task is a transport failure boundary.
             if self._accepting:
-                await self.invalidate(_normalize_transport_exception(drain_exc, f"Codex app-server {stream_name} transport failed"))
+                await self.invalidate(
+                    _normalize_transport_exception(
+                        drain_exc,
+                        f"Codex app-server {stream_name} transport failed",
+                        stream_name=stream_name,
+                        configured_limit_bytes=self._settings.stdio_stream_limit_bytes,
+                        pending_methods=tuple(self._pending_methods.values()),
+                    )
+                )
             return
 
     async def _handle_line(self, line: bytes | str) -> None:
@@ -701,6 +757,7 @@ class CodexProcessTransport:
             if not future.done():
                 future.set_exception(exc)
         self._pending.clear()
+        self._pending_methods.clear()
 
     def _ensure_locks(self) -> None:
         if self._start_lock is None:
@@ -1349,6 +1406,7 @@ class CodexAppServerClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=self._settings.stdio_stream_limit_bytes,
         )
 
     def _extract_version(self, user_agent: str | None) -> str | None:

@@ -28,6 +28,7 @@ from knowledge_service.codex_app_server import (
     CodexTurnResult,
 )
 from knowledge_service.codex_usage import CodexLlmUsageSource
+from knowledge_service.config import CodexAppServerSettings
 from knowledge_service.generative_runtime import (
     CodexGenerativeProvider,
     GenerativeProviderEmptyResponse,
@@ -258,6 +259,160 @@ def test_broken_pipe_during_request_write_is_controlled_reaped_and_restarts(tmp_
 
     assert asyncio.run(exercise()) == {"ok": True}
     assert broken.terminated is True
+
+
+def test_default_process_factory_passes_configured_stdio_stream_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs: Any) -> FakeCodexProcess:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    settings = _settings(tmp_path, stdio_stream_limit_bytes=123_456)
+    client = CodexAppServerClient(settings=settings)
+
+    async def exercise():
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        return payload
+
+    assert asyncio.run(exercise()) == {"ok": True}
+    assert captured["command"] == settings.command
+    assert captured["kwargs"]["limit"] == 123_456
+
+
+def test_large_valid_stdout_frame_is_read_parsed_and_keeps_process_healthy(tmp_path: Path):
+    large_value = "safe-large-value-" + ("x" * 100_000)
+    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"value": large_value}), result({"ok": True})])
+    client = _client(process, tmp_path)
+
+    async def exercise():
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        second_payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return payload, second_payload
+
+    payload, second_payload = asyncio.run(exercise())
+
+    assert payload == {"value": large_value}
+    assert second_payload == {"ok": True}
+    assert process.terminated_at_sent_count is None or process.terminated_at_sent_count >= len(process.sent)
+
+
+def test_large_nested_turn_start_envelope_registers_turn_and_completes(tmp_path: Path):
+    large_metadata = "safe-large-value-" + ("x" * 100_000)
+    process = FakeCodexProcess(
+        [
+            result({"userAgent": "forge-knowledge/0.146.0"}),
+            result({"thread": {"id": "thread-1"}, "metadata": large_metadata}),
+            result(
+                {"turn": {"id": "turn-1", "status": "running", "metadata": large_metadata}},
+                notifications=[
+                    notification("item/completed", {"turn": {"id": "turn-1"}, "item": {"type": "agentMessage", "text": "final text"}}),
+                    notification("turn/completed", {"turn": {"id": "turn-1", "status": "completed", "metadata": large_metadata}}),
+                ],
+            ),
+        ]
+    )
+    client = _client(process, tmp_path)
+
+    async def exercise():
+        turn = await client.run_turn(
+            prompt="prompt",
+            model_id="gpt-test",
+            effort_id="high",
+            response_mode=ResponseMode.TEXT,
+            timeout_seconds=1,
+        )
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return turn
+
+    turn = asyncio.run(exercise())
+
+    assert turn.raw_text == "final text"
+    assert turn.thread_id == "thread-1"
+    assert turn.turn_id == "turn-1"
+    assert process.by_method(CodexProtocol.TURN_START)["method"] == CodexProtocol.TURN_START
+
+
+class LimitOverrunStream(FakeStream):
+    def __init__(self, *, normal_reads_before_overrun: int = 0) -> None:
+        super().__init__()
+        self.read_started = threading.Event()
+        self.release_overrun = threading.Event()
+        self._normal_reads_before_overrun = normal_reads_before_overrun
+
+    async def readline(self) -> bytes:
+        if self._normal_reads_before_overrun > 0:
+            self._normal_reads_before_overrun -= 1
+            return await super().readline()
+        self.read_started.set()
+        await asyncio.to_thread(self.release_overrun.wait)
+        raise ValueError("Separator is found, but chunk is longer than limit")
+
+
+def test_stdio_frame_limit_overflow_is_classified_reaped_and_restarts_without_payload_leak(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    payload_marker = "secret-prompt-or-payload-" + ("x" * 100_000)
+    broken = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"})])
+    broken.stdout = LimitOverrunStream(normal_reads_before_overrun=1)
+    restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [broken, restarted]
+    client = CodexAppServerClient(
+        process_factory=lambda command: async_value(processes.pop(0)),
+        settings=_settings(tmp_path, stdio_stream_limit_bytes=4096),
+    )
+
+    async def exercise():
+        await client.initialize()
+        request_task = asyncio.create_task(client.request(CodexProtocol.MODEL_LIST, {"prompt": payload_marker}))
+        while len(broken.sent) < 2:
+            await asyncio.sleep(0)
+        assert await asyncio.to_thread(broken.stdout.read_started.wait, 1.0) is True
+        broken.stdout.release_overrun.set()
+        with pytest.raises(CodexAppServerTransportError) as exc_info:
+            await request_task
+        restarted_payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return exc_info.value, restarted_payload
+
+    exc, restarted_payload = asyncio.run(exercise())
+
+    assert exc.error_code == "CODEX_STDIO_FRAME_TOO_LARGE"
+    assert str(exc) == "Codex app-server stdout JSON-RPC frame exceeded configured limit"
+    assert exc.details["stream"] == "stdout"
+    assert exc.details["configuredLimitBytes"] == 4096
+    assert exc.details["exceptionClass"] == "ValueError"
+    assert payload_marker not in str(exc)
+    assert payload_marker not in caplog.text
+    assert broken.terminated is True
+    assert restarted_payload == {"ok": True}
+
+
+def test_large_stderr_line_below_configured_limit_does_not_crash_reader(tmp_path: Path):
+    process = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+
+    async def process_factory(command: Sequence[str]) -> FakeCodexProcess:
+        process.stderr.push(("diagnostic-" + ("x" * 100_000) + "\n").encode("utf-8"))
+        return process
+
+    client = CodexAppServerClient(process_factory=process_factory, settings=_settings(tmp_path))
+
+    async def exercise():
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return payload
+
+    assert asyncio.run(exercise()) == {"ok": True}
 
 
 def test_permission_error_during_process_creation_is_controlled_and_provider_generic(tmp_path: Path):
@@ -2227,6 +2382,7 @@ def _settings(runtime_cwd: Path, **overrides: Any) -> CodexRuntimeSettings:
         "runtime_cwd": runtime_cwd,
         "client_name": "forge-knowledge",
         "client_version": "0.146.0",
+        "stdio_stream_limit_bytes": CodexAppServerSettings().stdio_stream_limit_bytes,
         "request_timeout_seconds": 1,
         "discovery_timeout_cap_seconds": 1,
         "discovery_timeout_allowance_seconds": 0.1,

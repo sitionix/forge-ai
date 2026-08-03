@@ -53,6 +53,7 @@ def _codex_client(process_factory, *, request_timeout_seconds: float = 5.0) -> C
             runtime_cwd=Path.cwd().resolve() / "var" / "codex-test-runtime",
             client_name="forge-knowledge",
             client_version=__version__,
+            stdio_stream_limit_bytes=CodexAppServerSettings().stdio_stream_limit_bytes,
             request_timeout_seconds=request_timeout_seconds,
             discovery_timeout_cap_seconds=1,
             discovery_timeout_allowance_seconds=0.1,
