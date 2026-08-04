@@ -193,6 +193,23 @@ run_nexus_tests() {
   return "${exit_code}"
 }
 
+run_agent_tests() {
+  local marker="${REPORT_DIR}/forge-agent-marker"
+  local exit_code
+
+  touch "${marker}"
+  set +e
+  (
+    cd "${ROOT_DIR}"
+    mvn -q -pl services/forge-agent/boot -am verify
+  )
+  exit_code=$?
+  set -e
+
+  LAST_TEST_COUNT="$(count_junit_reports_since "${ROOT_DIR}/services/forge-agent" "${marker}")"
+  return "${exit_code}"
+}
+
 run_portable_startup_tests() {
   local log="${REPORT_DIR}/portable-startup.log"
   local exit_code
@@ -212,6 +229,7 @@ run_test "portable-startup-shell" run_portable_startup_tests
 run_test "forge-knowledge" run_knowledge_tests
 run_test "forge-jarvis" run_jarvis_tests
 run_test "forge-console" run_console_tests
+run_test "forge-agent" run_agent_tests
 run_test "forge-nexus" run_nexus_tests
 
 if [[ "${FAILED}" -eq 0 ]]; then

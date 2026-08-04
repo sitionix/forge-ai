@@ -24,6 +24,8 @@ jobs:
             name: Forge Jarvis
           - service: forge-console
             name: Forge Console
+          - service: forge-agent
+            name: Forge Agent
           - service: forge-nexus
             name: Forge Nexus
     env:
@@ -83,6 +85,10 @@ jobs:
               npm run typecheck
               npm test
               npm run build
+              ;;
+
+            forge-agent)
+              mvn -B -ntp -pl services/forge-agent/boot -am verify
               ;;
 
             forge-nexus)

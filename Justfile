@@ -3,7 +3,10 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 root := justfile_directory()
 app_pid := root + "/var/forge-ai.pid"
 app_log := root + "/var/logs/forge-ai.log"
+agent_pid := root + "/var/forge-agent.pid"
+agent_log := root + "/var/logs/forge-agent.log"
 app_url := "http://127.0.0.1:9099/fgaisox"
+agent_url := "http://127.0.0.1:7091"
 knowledge_url := "http://127.0.0.1:7081"
 jarvis_url := "http://127.0.0.1:7071"
 sqlite_path := root + "/var/knowledge/knowledge.sqlite"
@@ -11,9 +14,11 @@ sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 start: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _mongo-start _sqlite-start _ollama-start _console-build _knowledge-start _jarvis-start _app-start _console-live-check
     @echo "Forge AI stack is up:"
     @echo "  app:       {{app_url}}"
+    @echo "  agent:     {{agent_url}}"
     @echo "  knowledge: {{knowledge_url}}"
     @echo "  jarvis:    {{jarvis_url}}"
     @echo "  mongo:     mongodb://localhost:27019/forge_ai"
+    @echo "  postgres:  postgresql://localhost:54329/forge_agent"
     @echo "  sqlite:    {{sqlite_path}}"
 
 stop: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _mongo-stop
@@ -23,10 +28,10 @@ status:
     @scripts/status.sh
 
 _mongo-start:
-    @docker compose up -d forge-ai-mongo
+    @docker compose up -d forge-ai-mongo forge-agent-postgres
 
 _mongo-stop:
-    @docker compose stop forge-ai-mongo >/dev/null || true
+    @docker compose stop forge-ai-mongo forge-agent-postgres >/dev/null || true
 
 _sqlite-start:
     @mkdir -p "{{root}}/var/knowledge"
@@ -69,6 +74,67 @@ _app-start:
     set -euo pipefail
     source "{{root}}/scripts/lib/process.sh"
     mkdir -p "{{root}}/var/logs"
+    if [[ -f "{{agent_pid}}" ]] && kill -0 "$(cat "{{agent_pid}}")" >/dev/null 2>&1; then
+        echo "Stopping Forge Agent pid $(cat "{{agent_pid}}")"
+        kill "$(cat "{{agent_pid}}")" >/dev/null 2>&1 || true
+        rm -f "{{agent_pid}}"
+        sleep 1
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+        agent_port_pid="$(lsof -t -iTCP:7091 -sTCP:LISTEN 2>/dev/null || true)"
+        if [[ -n "${agent_port_pid}" ]]; then
+            echo "Stopping Forge Agent listener pid ${agent_port_pid}"
+            for pid in ${agent_port_pid}; do
+                kill "${pid}" >/dev/null 2>&1 || true
+            done
+            rm -f "{{agent_pid}}"
+            sleep 1
+        fi
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+        for i in {1..20}; do
+            if ! lsof -t -iTCP:7091 -sTCP:LISTEN >/dev/null 2>&1; then
+                break
+            fi
+            sleep 0.5
+        done
+        if lsof -t -iTCP:7091 -sTCP:LISTEN >/dev/null 2>&1; then
+            echo "Forge Agent port 7091 is still occupied after stop."
+            lsof -iTCP:7091 -sTCP:LISTEN || true
+            exit 1
+        fi
+    fi
+    mvn -pl services/forge-agent/boot -am -DskipTests package
+    : > "{{agent_log}}"
+    forge_start_background \
+        "{{agent_pid}}" \
+        "{{agent_log}}" \
+        "{{root}}" \
+        env \
+        FORGE_AGENT_DB_URL="jdbc:postgresql://localhost:54329/forge_agent" \
+        FORGE_AGENT_DB_USERNAME="forge_agent" \
+        FORGE_AGENT_DB_PASSWORD="forge_agent" \
+        FORGE_AGENT_PORT="7091" \
+        java -jar services/forge-agent/boot/target/boot-0.0.1-SNAPSHOT.jar \
+        --spring.docker.compose.enabled=false
+    sleep 1
+    if [[ -f "{{agent_pid}}" ]]; then
+        echo "Forge Agent pid $(cat "{{agent_pid}}"), log {{agent_log}}"
+    else
+        echo "Forge Agent starting, log {{agent_log}}"
+    fi
+    for i in {1..40}; do
+        if curl -fsS "{{agent_url}}/actuator/health" >/dev/null 2>&1; then
+            echo "Forge Agent is UP at {{agent_url}}"
+            break
+        fi
+        sleep 2
+    done
+    if ! curl -fsS "{{agent_url}}/actuator/health" >/dev/null 2>&1; then
+        echo "Forge Agent did not become healthy. Last log lines:"
+        tail -n 80 "{{agent_log}}" || true
+        exit 1
+    fi
     if [[ -f "{{app_pid}}" ]] && kill -0 "$(cat "{{app_pid}}")" >/dev/null 2>&1; then
         echo "Stopping Forge AI app pid $(cat "{{app_pid}}")"
         kill "$(cat "{{app_pid}}")" >/dev/null 2>&1 || true
@@ -169,8 +235,25 @@ _app-stop:
             stopped=1
         fi
     fi
+    if [[ -f "{{agent_pid}}" ]] && kill -0 "$(cat "{{agent_pid}}")" >/dev/null 2>&1; then
+        pid="$(cat "{{agent_pid}}")"
+        kill "${pid}" >/dev/null 2>&1 || true
+        echo "Stopped Forge Agent pid ${pid}"
+        stopped=1
+    fi
+    rm -f "{{agent_pid}}"
+    if command -v lsof >/dev/null 2>&1; then
+        pids="$(lsof -t -iTCP:7091 -sTCP:LISTEN 2>/dev/null || true)"
+        if [[ -n "${pids}" ]]; then
+            echo "Stopping Forge Agent listener pid(s) ${pids}"
+            for pid in ${pids}; do
+                kill "${pid}" >/dev/null 2>&1 || true
+            done
+            stopped=1
+        fi
+    fi
     if [[ "${stopped}" == "0" ]]; then
-        echo "Forge AI app is not running."
+        echo "Forge AI app and Forge Agent are not running."
     fi
 
 _logs:

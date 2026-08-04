@@ -5,3 +5,16 @@ services:
       - "27019:27017"
     environment:
       MONGO_INITDB_DATABASE: forge_ai
+  forge-agent-postgres:
+    image: postgres:16
+    ports:
+      - "54329:5432"
+    environment:
+      POSTGRES_DB: forge_agent
+      POSTGRES_USER: forge_agent
+      POSTGRES_PASSWORD: forge_agent
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forge_agent -d forge_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

@@ -27,3 +27,11 @@ declare module '../src/operator/knowledge-graph-page.js' {
 declare module '../src/operator/jarvis-page.js' {
   export const JarvisPage: any;
 }
+
+declare module '../src/operator/agents-v2-page.js' {
+  export const AgentsV2Page: any;
+}
+
+declare module '../src/operator/agents-v2-api.js' {
+  export const createAgentsV2Api: any;
+}

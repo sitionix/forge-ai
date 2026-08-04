@@ -1,0 +1,25 @@
+server:
+  port: ${FORGE_AGENT_PORT:7091}
+spring:
+  application:
+    name: forge-agent
+  datasource:
+    url: ${FORGE_AGENT_DB_URL:jdbc:postgresql://localhost:54329/forge_agent}
+    username: ${FORGE_AGENT_DB_USERNAME:forge_agent}
+    password: ${FORGE_AGENT_DB_PASSWORD:forge_agent}
+  flyway:
+    enabled: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  endpoints:
+    web:
+      exposure:
+        include: "health,info"

@@ -20,5 +20,6 @@
         <module>github-cli</module>
         <module>local-cli</module>
         <module>knowledge-client</module>
+        <module>agent-client</module>
     </modules>
 </project>

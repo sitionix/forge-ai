@@ -121,6 +121,13 @@
               <small>config</small>
             </span>
           </a>
+          <a class="sidebar-link ${page === 'agents-v2' ? 'active' : ''}" href="./agents-v2.html">
+            <span class="sidebar-icon">V2</span>
+            <span class="sidebar-label">
+              <strong>Agents V2</strong>
+              <small>dynamic config</small>
+            </span>
+          </a>
           <a class="sidebar-link ${page === 'services' || page === 'service' ? 'active' : ''}" href="./services.html">
             <span class="sidebar-icon">S</span>
             <span class="sidebar-label">

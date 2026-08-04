@@ -1,4 +1,5 @@
 import { createInfrastructureHttpClient } from './infrastructure-http-client.js';
+import { AgentsV2Page } from './agents-v2-page.js';
 import { JarvisPage } from './jarvis-page.js';
 import { KnowledgeGraphPage } from './knowledge-graph-page.js';
 import { KnowledgeOverviewPage } from './knowledge-overview-page.js';
@@ -31,7 +32,8 @@ export function bootstrapOperatorConsole(options = {}) {
   const registry = {
     knowledge: () => new KnowledgeOverviewPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
     'knowledge-graph': () => new KnowledgeGraphPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
-    jarvis: () => new JarvisPage({ document: documentRef, http, runtimeConfig })
+    jarvis: () => new JarvisPage({ document: documentRef, http, runtimeConfig }),
+    'agents-v2': () => new AgentsV2Page({ document: documentRef, http })
   };
   const router = new OperatorRouter(registry, { document: documentRef });
   const mountedPage = router.mount(pageName);
@@ -71,6 +73,7 @@ export function initSidebar(documentRef = document, windowRef = window, page = d
     ['new-task', './new-task.html', '+', 'New Task'],
     ['services', './services.html', 'S', 'Services'],
     ['agents', './agents.html', 'A', 'Agents'],
+    ['agents-v2', './agents-v2.html', 'V2', 'Agents V2'],
     ['jarvis', './jarvis.html', 'J', 'Jarvis'],
     ['knowledge', './knowledge.html', 'K', 'Knowledge']
   ];
