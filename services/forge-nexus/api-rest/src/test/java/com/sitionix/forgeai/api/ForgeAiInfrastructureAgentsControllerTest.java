@@ -1,7 +1,9 @@
 package com.sitionix.forgeai.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
@@ -114,6 +116,18 @@ class ForgeAiInfrastructureAgentsControllerTest {
         assertThat(actual.getHeaders().getLocation().toString()).endsWith("/api/v1/infrastructure/agents/definitions/" + AGENT_ID);
         assertThat(actual.getBody()).isSameAs(response);
         verify(this.createAgentDefinition).execute(PROJECT_ID, command);
+    }
+
+    @Test
+    void givenLocallyInvalidAgentRequest_whenCreateAgent_thenUseCaseIsNotCalled() {
+        final var request = this.request();
+        when(this.mapper.toCommand(request)).thenThrow(new IllegalArgumentException("Output schema must be a JSON object."));
+
+        assertThatThrownBy(() -> this.controller.createAgent(PROJECT_ID, request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("JSON object");
+
+        verifyNoInteractions(this.createAgentDefinition);
     }
 
     @Test

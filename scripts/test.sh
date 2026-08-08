@@ -201,7 +201,7 @@ run_agent_tests() {
   set +e
   (
     cd "${ROOT_DIR}"
-    mvn -q -pl services/forge-agent/boot -am verify
+    mvn -q -pl services/forge-agent/integration-test -am verify
   )
   exit_code=$?
   set -e

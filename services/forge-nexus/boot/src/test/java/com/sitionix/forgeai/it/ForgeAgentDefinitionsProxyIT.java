@@ -5,6 +5,7 @@ import com.sitionix.forgeai.it.infra.ForgeAgentProxyMockMvcEndpoint;
 import com.sitionix.forgeai.it.infra.ForgeAgentProxyWireMockEndpoint;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
+import com.sitionix.forgeit.wiremock.api.WireMockPathParams;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
@@ -13,6 +14,7 @@ import org.springframework.test.annotation.DirtiesContext;
 
 import static com.sitionix.forgeai.it.ForgeAgentProxyFixtures.AGENT_ID;
 import static com.sitionix.forgeai.it.ForgeAgentProxyFixtures.PROJECT_ID;
+import static com.sitionix.forgeit.wiremock.api.Parameter.equalTo;
 
 @IntegrationTest(properties = {
         "forge-ai.jobs.scheduling-enabled=false",
@@ -32,7 +34,8 @@ class ForgeAgentDefinitionsProxyIT extends AbstractForgeAiIT {
     @Test
     void givenProjectId_whenListAgents_thenPathIsForwarded() {
         final var mapping = this.testManager.wiremock()
-                .createMapping(ForgeAgentProxyWireMockEndpoint.listProjectAgents(PROJECT_ID))
+                .createMapping(ForgeAgentProxyWireMockEndpoint.listProjectAgents())
+                .pathPattern(projectWireMockPathParams())
                 .createDefault();
 
         this.testManager.mockMvc()
@@ -46,7 +49,8 @@ class ForgeAgentDefinitionsProxyIT extends AbstractForgeAiIT {
     @Test
     void givenAgentRequest_whenCreateAgent_thenBodyAndProjectPathAreForwarded() {
         final var mapping = this.testManager.wiremock()
-                .createMapping(ForgeAgentProxyWireMockEndpoint.createAgent(PROJECT_ID))
+                .createMapping(ForgeAgentProxyWireMockEndpoint.createAgent())
+                .pathPattern(projectWireMockPathParams())
                 .createDefault();
 
         this.testManager.mockMvc()
@@ -60,7 +64,8 @@ class ForgeAgentDefinitionsProxyIT extends AbstractForgeAiIT {
     @Test
     void givenAgentId_whenGetAgent_thenPathIsForwarded() {
         final var mapping = this.testManager.wiremock()
-                .createMapping(ForgeAgentProxyWireMockEndpoint.getAgent(AGENT_ID))
+                .createMapping(ForgeAgentProxyWireMockEndpoint.getAgent())
+                .pathPattern(agentWireMockPathParams())
                 .createDefault();
 
         this.testManager.mockMvc()
@@ -74,7 +79,8 @@ class ForgeAgentDefinitionsProxyIT extends AbstractForgeAiIT {
     @Test
     void givenAgentUpdate_whenUpdateAgent_thenBodyAndPathAreForwarded() {
         final var mapping = this.testManager.wiremock()
-                .createMapping(ForgeAgentProxyWireMockEndpoint.updateAgent(AGENT_ID))
+                .createMapping(ForgeAgentProxyWireMockEndpoint.updateAgent())
+                .pathPattern(agentWireMockPathParams())
                 .createDefault();
 
         this.testManager.mockMvc()
@@ -91,6 +97,14 @@ class ForgeAgentDefinitionsProxyIT extends AbstractForgeAiIT {
 
     private static PathParams agentMockMvcPathParams() {
         return PathParams.create().add("agentId", AGENT_ID);
+    }
+
+    private static WireMockPathParams projectWireMockPathParams() {
+        return WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString()));
+    }
+
+    private static WireMockPathParams agentWireMockPathParams() {
+        return WireMockPathParams.create().add("agentId", equalTo(AGENT_ID.toString()));
     }
 
 }

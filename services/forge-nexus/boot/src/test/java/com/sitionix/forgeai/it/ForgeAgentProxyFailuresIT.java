@@ -5,6 +5,7 @@ import com.sitionix.forgeai.it.infra.ForgeAgentProxyMockMvcEndpoint;
 import com.sitionix.forgeai.it.infra.ForgeAgentProxyWireMockEndpoint;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
+import com.sitionix.forgeit.wiremock.api.WireMockPathParams;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
@@ -13,7 +14,7 @@ import org.springframework.test.annotation.DirtiesContext;
 
 import static com.sitionix.forgeai.it.ForgeAgentProxyFixtures.AGENT_ID;
 import static com.sitionix.forgeai.it.ForgeAgentProxyFixtures.PROJECT_ID;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static com.sitionix.forgeit.wiremock.api.Parameter.equalTo;
 
 @IntegrationTest(properties = {
         "forge-ai.jobs.scheduling-enabled=false",
@@ -33,7 +34,8 @@ class ForgeAgentProxyFailuresIT extends AbstractForgeAiIT {
     @Test
     void givenControlledUpstreamValidationError_whenCreateAgent_thenErrorIsPreserved() {
         final var mapping = this.testManager.wiremock()
-                .createMapping(ForgeAgentProxyWireMockEndpoint.createAgentValidationError(PROJECT_ID))
+                .createMapping(ForgeAgentProxyWireMockEndpoint.createAgentValidationError())
+                .pathPattern(projectWireMockPathParams())
                 .createDefault();
 
         this.testManager.mockMvc()
@@ -47,7 +49,8 @@ class ForgeAgentProxyFailuresIT extends AbstractForgeAiIT {
     @Test
     void givenMalformedSuccessfulUpstreamResponse_whenGetAgent_thenBadGatewayIsReturned() {
         final var mapping = this.testManager.wiremock()
-                .createMapping(ForgeAgentProxyWireMockEndpoint.getAgentMalformedSuccess(AGENT_ID))
+                .createMapping(ForgeAgentProxyWireMockEndpoint.getAgentMalformedSuccess())
+                .pathPattern(agentWireMockPathParams())
                 .createDefault();
 
         this.testManager.mockMvc()
@@ -61,7 +64,8 @@ class ForgeAgentProxyFailuresIT extends AbstractForgeAiIT {
     @Test
     void givenUnavailableUpstream_whenGetAgent_thenServiceUnavailableIsReturned() {
         final var mapping = this.testManager.wiremock()
-                .createMapping(ForgeAgentProxyWireMockEndpoint.getAgent(AGENT_ID))
+                .createMapping(ForgeAgentProxyWireMockEndpoint.getAgent())
+                .pathPattern(agentWireMockPathParams())
                 .delayForResponse(7000)
                 .createDefault();
 
@@ -79,12 +83,6 @@ class ForgeAgentProxyFailuresIT extends AbstractForgeAiIT {
                 .ping(ForgeAgentProxyMockMvcEndpoint.createAgentLocalInvalid())
                 .withPathParameters(projectMockMvcPathParams())
                 .assertDefault();
-
-        assertThatThrownBy(() -> this.testManager.wiremock()
-                .check(ForgeAgentProxyWireMockEndpoint.createAgent(PROJECT_ID))
-                .verify())
-                .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("Request count is 0 but expected 1");
     }
 
     private static PathParams projectMockMvcPathParams() {
@@ -93,6 +91,14 @@ class ForgeAgentProxyFailuresIT extends AbstractForgeAiIT {
 
     private static PathParams agentMockMvcPathParams() {
         return PathParams.create().add("agentId", AGENT_ID);
+    }
+
+    private static WireMockPathParams projectWireMockPathParams() {
+        return WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString()));
+    }
+
+    private static WireMockPathParams agentWireMockPathParams() {
+        return WireMockPathParams.create().add("agentId", equalTo(AGENT_ID.toString()));
     }
 
 }

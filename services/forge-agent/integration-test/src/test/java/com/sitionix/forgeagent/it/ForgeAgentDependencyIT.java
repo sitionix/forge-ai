@@ -29,7 +29,6 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DE
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEPENDENCY;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 @IntegrationTest
 class ForgeAgentDependencyIT {
@@ -50,7 +49,7 @@ class ForgeAgentDependencyIT {
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentDependsOnArchitect.json")
                 .expectStatus(HttpStatus.CREATED)
-                .andExpectPath(jsonPath("$.dependsOn[0].id").value(AGENT_A_ID.toString()))
+                .expectResponse("responseCreateAgentWithDependency.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         assertThat(this.forgeIt.postgresql().get(AgentDependencyEntity.class).getAll())
@@ -67,7 +66,7 @@ class ForgeAgentDependencyIT {
                 .withPathParameters(PathParams.create().add("agentId", AGENT_A_ID))
                 .withRequest("requestUpdateSelfDependency.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
-                .andExpectPath(jsonPath("$.code").value("SELF_DEPENDENCY"))
+                .expectResponse("responseSelfDependencyError.json")
                 .assertAndCreate();
     }
 
@@ -80,7 +79,7 @@ class ForgeAgentDependencyIT {
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateUnknownDependencyAgent.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
-                .andExpectPath(jsonPath("$.code").value("UNKNOWN_DEPENDENCY"))
+                .expectResponse("responseUnknownDependencyError.json")
                 .assertAndCreate();
     }
 
@@ -98,7 +97,7 @@ class ForgeAgentDependencyIT {
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateCrossProjectDependencyAgent.json")
                 .expectStatus(HttpStatus.CONFLICT)
-                .andExpectPath(jsonPath("$.code").value("CROSS_PROJECT_DEPENDENCY"))
+                .expectResponse("responseCrossProjectDependencyError.json")
                 .assertAndCreate();
 
         assertThat(OTHER_PROJECT_AGENT_ID).isNotNull();
@@ -116,7 +115,7 @@ class ForgeAgentDependencyIT {
                 .withPathParameters(PathParams.create().add("agentId", AGENT_A_ID))
                 .withRequest("requestUpdateAgentADependsOnC.json")
                 .expectStatus(HttpStatus.CONFLICT)
-                .andExpectPath(jsonPath("$.code").value("DEPENDENCY_GRAPH_CYCLE"))
+                .expectResponse("responseDependencyCycleError.json")
                 .assertAndCreate();
     }
 
@@ -130,7 +129,7 @@ class ForgeAgentDependencyIT {
                 .withPathParameters(PathParams.create().add("agentId", TARGET_AGENT_ID))
                 .withRequest("requestUpdateTargetDependsOnB.json")
                 .expectStatus(HttpStatus.OK)
-                .andExpectPath(jsonPath("$.dependsOn[0].id").value(AGENT_B_ID.toString()))
+                .expectResponse("responseUpdateTargetDependsOnB.json", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
@@ -138,22 +137,20 @@ class ForgeAgentDependencyIT {
                 .withPathParameters(PathParams.create().add("agentId", AGENT_B_ID))
                 .withRequest("requestUpdateDependencyBCreatesCycle.json")
                 .expectStatus(HttpStatus.CONFLICT)
-                .andExpectPath(jsonPath("$.code").value("DEPENDENCY_GRAPH_CYCLE"))
+                .expectResponse("responseDependencyCycleError.json")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
                 .ping(getAgent())
                 .withPathParameters(PathParams.create().add("agentId", AGENT_B_ID))
                 .expectStatus(HttpStatus.OK)
-                .andExpectPath(jsonPath("$.name").value("Agent B"))
-                .andExpectPath(jsonPath("$.instructions").value("Do work for Agent B."))
-                .andExpectPath(jsonPath("$.dependsOn").isEmpty())
+                .expectResponse("responseGetAgentB.json")
                 .assertAndCreate();
         this.forgeIt.mockMvc()
                 .ping(getAgent())
                 .withPathParameters(PathParams.create().add("agentId", TARGET_AGENT_ID))
                 .expectStatus(HttpStatus.OK)
-                .andExpectPath(jsonPath("$.dependsOn[0].id").value(AGENT_B_ID.toString()))
+                .expectResponse("responseGetTargetDependsOnB.json", "updatedAt")
                 .assertAndCreate();
         final Set<AgentDependencyId> persistedEdges = this.forgeIt.postgresql()
                 .get(AgentDependencyEntity.class)

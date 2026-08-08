@@ -9,7 +9,6 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
-import java.util.UUID;
 import org.springframework.http.HttpStatus;
 
 public final class ForgeAgentProxyWireMockEndpoint {
@@ -33,15 +32,15 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "responseAgentProxyCreateProject.json");
     }
 
-    public static Endpoint<Void, AgentDefinitionListResponse[]> listProjectAgents(final UUID projectId) {
-        return upstreamGet("/api/v1/projects/" + projectId + "/agents",
+    public static Endpoint<Void, AgentDefinitionListResponse[]> listProjectAgents() {
+        return upstreamGet("/api/v1/projects/{projectId}/agents",
                 AgentDefinitionListResponse[].class,
                 HttpStatus.OK,
                 "responseAgentProxyProjectAgents.json");
     }
 
-    public static Endpoint<AgentDefinitionRequest, AgentDefinitionResponse> createAgent(final UUID projectId) {
-        return upstreamPost("/api/v1/projects/" + projectId + "/agents",
+    public static Endpoint<AgentDefinitionRequest, AgentDefinitionResponse> createAgent() {
+        return upstreamPost("/api/v1/projects/{projectId}/agents",
                 AgentDefinitionRequest.class,
                 AgentDefinitionResponse.class,
                 "requestAgentProxySaveAgent.json",
@@ -49,15 +48,15 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "responseAgentProxyAgent.json");
     }
 
-    public static Endpoint<Void, AgentDefinitionResponse> getAgent(final UUID agentId) {
-        return upstreamGet("/api/v1/agents/" + agentId,
+    public static Endpoint<Void, AgentDefinitionResponse> getAgent() {
+        return upstreamGet("/api/v1/agents/{agentId}",
                 AgentDefinitionResponse.class,
                 HttpStatus.OK,
                 "responseAgentProxyAgent.json");
     }
 
-    public static Endpoint<AgentDefinitionRequest, AgentDefinitionResponse> updateAgent(final UUID agentId) {
-        return upstreamPut("/api/v1/agents/" + agentId,
+    public static Endpoint<AgentDefinitionRequest, AgentDefinitionResponse> updateAgent() {
+        return upstreamPut("/api/v1/agents/{agentId}",
                 AgentDefinitionRequest.class,
                 AgentDefinitionResponse.class,
                 "requestAgentProxySaveAgent.json",
@@ -65,8 +64,8 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "responseAgentProxyAgentUpdated.json");
     }
 
-    public static Endpoint<AgentDefinitionRequest, InfrastructureErrorResponse> createAgentValidationError(final UUID projectId) {
-        return upstreamPost("/api/v1/projects/" + projectId + "/agents",
+    public static Endpoint<AgentDefinitionRequest, InfrastructureErrorResponse> createAgentValidationError() {
+        return upstreamPost("/api/v1/projects/{projectId}/agents",
                 AgentDefinitionRequest.class,
                 InfrastructureErrorResponse.class,
                 "requestAgentProxySaveAgent.json",
@@ -74,8 +73,8 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "responseAgentProxyValidationError.json");
     }
 
-    public static Endpoint<Void, AgentDefinitionResponse> getAgentMalformedSuccess(final UUID agentId) {
-        return upstreamGet("/api/v1/agents/" + agentId,
+    public static Endpoint<Void, AgentDefinitionResponse> getAgentMalformedSuccess() {
+        return upstreamGet("/api/v1/agents/{agentId}",
                 AgentDefinitionResponse.class,
                 HttpStatus.OK,
                 "responseAgentProxyMalformedAgent.json");

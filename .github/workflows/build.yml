@@ -101,7 +101,7 @@ jobs:
             </servers>
           </settings>
           EOF
-              mvn -B -ntp -s .maven-settings.xml -pl services/forge-agent/boot -am verify
+              mvn -B -ntp -s .maven-settings.xml -pl services/forge-agent/integration-test -am verify
               ;;
 
             forge-nexus)

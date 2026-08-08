@@ -18,7 +18,6 @@ import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateA
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 @IntegrationTest
 class ForgeAgentDefinitionIT {
@@ -38,8 +37,7 @@ class ForgeAgentDefinitionIT {
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgent.json")
                 .expectStatus(HttpStatus.CREATED)
-                .andExpectPath(jsonPath("$.name").value("Analyzer"))
-                .andExpectPath(jsonPath("$.outputSchema.type").value("object"))
+                .expectResponse("responseCreateAgent.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         final AgentDefinitionEntity created = this.forgeIt.postgresql()
@@ -54,15 +52,14 @@ class ForgeAgentDefinitionIT {
                 .ping(listProjectAgents())
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
-                .andExpectPath(jsonPath("$[0].name").value("Analyzer"))
-                .andExpectPath(jsonPath("$[0].dependsOn").isEmpty())
+                .expectResponse("responseListAgents.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
                 .ping(getAgent())
                 .withPathParameters(PathParams.create().add("agentId", created.getId()))
                 .expectStatus(HttpStatus.OK)
-                .andExpectPath(jsonPath("$.instructions").value("Analyze project context."))
+                .expectResponse("responseGetAgent.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
@@ -70,8 +67,7 @@ class ForgeAgentDefinitionIT {
                 .withPathParameters(PathParams.create().add("agentId", created.getId()))
                 .withRequest("requestUpdateAgent.json")
                 .expectStatus(HttpStatus.OK)
-                .andExpectPath(jsonPath("$.name").value("Analyzer Updated"))
-                .andExpectPath(jsonPath("$.outputSchema.properties.updated.type").value("boolean"))
+                .expectResponse("responseUpdateAgent.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.postgresql()
@@ -97,7 +93,7 @@ class ForgeAgentDefinitionIT {
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentLowercase.json")
                 .expectStatus(HttpStatus.CONFLICT)
-                .andExpectPath(jsonPath("$.code").value("DUPLICATE_AGENT_NAME"))
+                .expectResponse("responseDuplicateAgentError.json")
                 .assertAndCreate();
         this.forgeIt.mockMvc()
                 .ping(createAgent())
