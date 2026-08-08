@@ -1,0 +1,10 @@
+{
+  "name": "Target",
+  "instructions": "Now depends on B.",
+  "outputSchema": {
+    "type": "object"
+  },
+  "dependsOnAgentIds": [
+    "20000000-0000-4000-8000-000000000002"
+  ]
+}

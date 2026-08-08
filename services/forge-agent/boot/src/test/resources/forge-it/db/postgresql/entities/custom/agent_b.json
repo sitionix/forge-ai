@@ -1,0 +1,10 @@
+{
+  "id": "20000000-0000-4000-8000-000000000002",
+  "projectId": "10000000-0000-4000-8000-000000000001",
+  "name": "Agent B",
+  "normalizedName": "agent b",
+  "instructions": "Do work for Agent B.",
+  "outputSchema": "{\"type\":\"object\"}",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Analyzer",
+  "instructions": "Analyze project context.",
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string"
+      }
+    }
+  },
+  "dependsOnAgentIds": []
+}

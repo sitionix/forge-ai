@@ -1,0 +1,98 @@
+package com.sitionix.forgeai.it;
+
+import com.sitionix.forgeai.it.infra.ProxyTestManager;
+import com.sitionix.forgeai.it.infra.ForgeAgentProxyMockMvcEndpoint;
+import com.sitionix.forgeai.it.infra.ForgeAgentProxyWireMockEndpoint;
+import com.sitionix.forgeit.core.test.IntegrationTest;
+import com.sitionix.forgeit.mockmvc.api.PathParams;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.annotation.DirtiesContext;
+
+import static com.sitionix.forgeai.it.ForgeAgentProxyFixtures.AGENT_ID;
+import static com.sitionix.forgeai.it.ForgeAgentProxyFixtures.PROJECT_ID;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+@IntegrationTest(properties = {
+        "forge-ai.jobs.scheduling-enabled=false",
+        "forge.ai.infrastructure.agent.base-url=${forge-it.wiremock.base-url}",
+        "forge.ai.infrastructure.agent.connect-timeout=5s",
+        "forge.ai.infrastructure.agent.read-timeout=5s",
+        "forge.ai.infrastructure.knowledge.base-url=${forge-it.wiremock.base-url}",
+        "forge.ai.infrastructure.jarvis.base-url=${forge-it.wiremock.base-url}"
+})
+@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
+@Execution(ExecutionMode.SAME_THREAD)
+class ForgeAgentProxyFailuresIT extends AbstractForgeAiIT {
+
+    @Autowired
+    private ProxyTestManager testManager;
+
+    @Test
+    void givenControlledUpstreamValidationError_whenCreateAgent_thenErrorIsPreserved() {
+        final var mapping = this.testManager.wiremock()
+                .createMapping(ForgeAgentProxyWireMockEndpoint.createAgentValidationError(PROJECT_ID))
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(ForgeAgentProxyMockMvcEndpoint.createAgentValidationError())
+                .withPathParameters(projectMockMvcPathParams())
+                .assertDefault();
+
+        mapping.verify();
+    }
+
+    @Test
+    void givenMalformedSuccessfulUpstreamResponse_whenGetAgent_thenBadGatewayIsReturned() {
+        final var mapping = this.testManager.wiremock()
+                .createMapping(ForgeAgentProxyWireMockEndpoint.getAgentMalformedSuccess(AGENT_ID))
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(ForgeAgentProxyMockMvcEndpoint.getAgentMalformedSuccess())
+                .withPathParameters(agentMockMvcPathParams())
+                .assertDefault();
+
+        mapping.verify();
+    }
+
+    @Test
+    void givenUnavailableUpstream_whenGetAgent_thenServiceUnavailableIsReturned() {
+        final var mapping = this.testManager.wiremock()
+                .createMapping(ForgeAgentProxyWireMockEndpoint.getAgent(AGENT_ID))
+                .delayForResponse(7000)
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(ForgeAgentProxyMockMvcEndpoint.getAgentUpstreamUnavailable())
+                .withPathParameters(agentMockMvcPathParams())
+                .assertDefault();
+
+        mapping.verify();
+    }
+
+    @Test
+    void givenLocalInvalidRequest_whenCreateAgent_thenUpstreamIsNotCalled() {
+        this.testManager.mockMvc()
+                .ping(ForgeAgentProxyMockMvcEndpoint.createAgentLocalInvalid())
+                .withPathParameters(projectMockMvcPathParams())
+                .assertDefault();
+
+        assertThatThrownBy(() -> this.testManager.wiremock()
+                .check(ForgeAgentProxyWireMockEndpoint.createAgent(PROJECT_ID))
+                .verify())
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("Request count is 0 but expected 1");
+    }
+
+    private static PathParams projectMockMvcPathParams() {
+        return PathParams.create().add("projectId", PROJECT_ID);
+    }
+
+    private static PathParams agentMockMvcPathParams() {
+        return PathParams.create().add("agentId", AGENT_ID);
+    }
+
+}

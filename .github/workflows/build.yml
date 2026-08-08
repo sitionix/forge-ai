@@ -88,7 +88,20 @@ jobs:
               ;;
 
             forge-agent)
-              mvn -B -ntp -pl services/forge-agent/boot -am verify
+              cat > .maven-settings.xml <<EOF
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+            <servers>
+              <server>
+                <id>github-forge-it</id>
+                <username>${MAVEN_REPOSITORY_USERNAME}</username>
+                <password>${MAVEN_REPOSITORY_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+              mvn -B -ntp -s .maven-settings.xml -pl services/forge-agent/boot -am verify
               ;;
 
             forge-nexus)
