@@ -28,10 +28,11 @@ declare module '../src/operator/jarvis-page.js' {
   export const JarvisPage: any;
 }
 
-declare module '../src/operator/agents-v2-page.js' {
-  export const AgentsV2Page: any;
+declare module '../src/operator/agent-projects-page.js' {
+  export const AgentProjectsPage: any;
 }
 
-declare module '../src/operator/agents-v2-api.js' {
+declare module '../src/operator/agent-projects-api.js' {
+  export const createAgentProjectsApi: any;
   export const createAgentsV2Api: any;
 }

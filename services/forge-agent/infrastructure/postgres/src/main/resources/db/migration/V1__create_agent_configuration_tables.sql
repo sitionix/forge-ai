@@ -27,7 +27,22 @@ CREATE TABLE agent_definitions (
     CONSTRAINT chk_agent_definitions_output_schema_object CHECK (jsonb_typeof(output_schema) = 'object')
 );
 
+CREATE TABLE agent_dependencies (
+    agent_id UUID NOT NULL,
+    depends_on_agent_id UUID NOT NULL,
+    PRIMARY KEY (agent_id, depends_on_agent_id),
+    CONSTRAINT fk_agent_dependencies_agent
+        FOREIGN KEY (agent_id) REFERENCES agent_definitions(id),
+    CONSTRAINT fk_agent_dependencies_depends_on_agent
+        FOREIGN KEY (depends_on_agent_id) REFERENCES agent_definitions(id),
+    CONSTRAINT chk_agent_dependencies_not_self CHECK (agent_id <> depends_on_agent_id)
+);
+
 CREATE INDEX idx_agent_projects_normalized_name_id
     ON agent_projects(normalized_name, id);
 CREATE INDEX idx_agent_definitions_project_normalized_name_id
     ON agent_definitions(project_id, normalized_name, id);
+CREATE INDEX idx_agent_dependencies_agent_id
+    ON agent_dependencies(agent_id);
+CREATE INDEX idx_agent_dependencies_depends_on_agent_id
+    ON agent_dependencies(depends_on_agent_id);

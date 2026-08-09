@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.entity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
 import jakarta.persistence.Table;
 import java.util.UUID;
 import lombok.Getter;
@@ -12,6 +13,7 @@ import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "workflow_nodes")
+@IdClass(WorkflowNodeEntityId.class)
 @Getter
 @Setter
 public class WorkflowNodeEntity {
@@ -19,6 +21,7 @@ public class WorkflowNodeEntity {
     @Id
     private UUID id;
 
+    @Id
     @Column(name = "workflow_id", nullable = false)
     private UUID workflowId;
 

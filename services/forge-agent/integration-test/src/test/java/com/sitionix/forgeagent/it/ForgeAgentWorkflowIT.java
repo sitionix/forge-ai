@@ -14,6 +14,7 @@ import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createW
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getWorkflow;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getWorkflowError;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.listProjectWorkflows;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateAgent;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateWorkflow;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateWorkflowError;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
@@ -149,6 +150,106 @@ class ForgeAgentWorkflowIT {
     }
 
     @Test
+    void givenSameNodeIdInDifferentWorkflows_whenGraphsAreSaved_thenWorkflowOwnershipScopesPersistenceIdentity() {
+        this.seedProjectAgentsAndWorkflow();
+        final UUID secondWorkflowId = UUID.fromString("30000000-0000-4000-8000-000000000002");
+        final WorkflowEntity secondWorkflow = new WorkflowEntity();
+        secondWorkflow.setId(secondWorkflowId);
+        secondWorkflow.setProjectId(PROJECT_ALPHA_ID);
+        secondWorkflow.setName("Second Workflow");
+        secondWorkflow.setNormalizedName("second workflow");
+        secondWorkflow.setCreatedAt(java.time.Instant.parse("2026-01-01T00:00:00Z"));
+        secondWorkflow.setUpdatedAt(java.time.Instant.parse("2026-01-01T00:00:00Z"));
+        this.forgeIt.postgresql().create().to(WORKFLOW.withEntity(secondWorkflow)).build();
+
+        this.forgeIt.mockMvc()
+                .ping(updateWorkflow())
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestUpdateWorkflowGraph.json")
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+        this.forgeIt.mockMvc()
+                .ping(updateWorkflow())
+                .withPathParameters(PathParams.create().add("workflowId", secondWorkflowId))
+                .withRequest("requestSecondWorkflowSameNodeId.json")
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseSecondWorkflowSameNodeId.json", "updatedAt")
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(getWorkflow())
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseWorkflowGraph.json", "updatedAt")
+                .assertAndCreate();
+        this.forgeIt.mockMvc()
+                .ping(getWorkflow())
+                .withPathParameters(PathParams.create().add("workflowId", secondWorkflowId))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseSecondWorkflowSameNodeId.json", "updatedAt")
+                .assertAndCreate();
+
+        final List<WorkflowNodeEntity> sameIdRows = this.forgeIt.postgresql()
+                .get(WorkflowNodeEntity.class)
+                .getAll()
+                .stream()
+                .filter(entity -> NODE_A_ID.equals(entity.getId()))
+                .toList();
+        assertThat(sameIdRows)
+                .hasSize(2)
+                .extracting(WorkflowNodeEntity::getWorkflowId)
+                .containsExactlyInAnyOrder(WORKFLOW_ID, secondWorkflowId);
+        assertThat(sameIdRows.stream()
+                .filter(entity -> WORKFLOW_ID.equals(entity.getWorkflowId()))
+                .findFirst()
+                .orElseThrow()
+                .getPositionX()).isEqualTo(120.0);
+        assertThat(sameIdRows.stream()
+                .filter(entity -> secondWorkflowId.equals(entity.getWorkflowId()))
+                .findFirst()
+                .orElseThrow()
+                .getPositionX()).isEqualTo(900.0);
+    }
+
+    @Test
+    void givenWorkflowNodeTargetsAgent_whenAgentIsUpdated_thenWorkflowTopologyRemainsUnchanged() {
+        this.seedProjectAgentsAndWorkflow();
+
+        this.forgeIt.mockMvc()
+                .ping(updateWorkflow())
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestUpdateWorkflowGraph.json")
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(updateAgent())
+                .withPathParameters(PathParams.create().add("agentId", AGENT_A_ID))
+                .withRequest("requestUpdateAgent.json")
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(getWorkflow())
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseWorkflowGraph.json", "updatedAt")
+                .assertAndCreate();
+
+        final WorkflowNodeEntity nodeA = this.forgeIt.postgresql()
+                .get(WorkflowNodeEntity.class)
+                .getAll()
+                .stream()
+                .filter(entity -> WORKFLOW_ID.equals(entity.getWorkflowId()) && NODE_A_ID.equals(entity.getId()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(nodeA.getTargetId()).isEqualTo(AGENT_A_ID);
+        assertThat(nodeA.getDependsOnNodeIds()).isEmpty();
+        assertThat(nodeA.getPositionX()).isEqualTo(120.0);
+        assertThat(nodeA.getPositionY()).isEqualTo(100.0);
+    }
+
+    @Test
     void givenInvalidWorkflowGraphs_whenUpdateWorkflow_thenControlledErrorsAreReturned() {
         this.seedTwoProjectsAgentsAndWorkflow();
 
@@ -233,7 +334,7 @@ class ForgeAgentWorkflowIT {
     }
 
     @Test
-    void givenDifferentWorkflows_whenUpdatedConcurrently_thenBothWorkflowRowsCanChange() throws Exception {
+    void givenDifferentWorkflows_whenUpdatedConcurrently_thenBothWorkflowUpdatesSucceed() throws Exception {
         this.seedTwoProjectsAgentsAndWorkflow();
         final WorkflowEntity secondWorkflow = new WorkflowEntity();
         secondWorkflow.setId(UUID.fromString("30000000-0000-4000-8000-000000000002"));

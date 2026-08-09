@@ -2,6 +2,7 @@ package com.sitionix.forgeai.infrastructure.agentclient;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 
@@ -25,7 +26,6 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequ
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,14 +54,13 @@ class ForgeAgentClientAdapterTest {
     @BeforeEach
     void setUp() {
         this.adapter = new ForgeAgentClientAdapter(this.httpClient, this.mapper, this.executor);
-        this.executeSuppliedCalls();
     }
 
     @Test
     void listProjectsDelegatesThroughExecutorAndMapper() {
         final var upstreamResponse = new AgentProjectResponse(PROJECT_ID, "Sitionix", CREATED, UPDATED);
         final var expected = new AgentProject(PROJECT_ID, "Sitionix", CREATED, UPDATED);
-        when(this.httpClient.listProjects()).thenReturn(List.of(upstreamResponse));
+        doReturn(List.of(upstreamResponse)).when(this.executor).execute(any());
         when(this.mapper.requireList(List.of(upstreamResponse), "projects")).thenReturn(List.of(upstreamResponse));
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 
@@ -75,10 +74,14 @@ class ForgeAgentClientAdapterTest {
         final var upstreamResponse = new AgentProjectResponse(PROJECT_ID, "Sitionix", CREATED, UPDATED);
         final var expected = new AgentProject(PROJECT_ID, "Sitionix", CREATED, UPDATED);
         when(this.mapper.toRequest(command)).thenReturn(request);
-        when(this.httpClient.createProject(request)).thenReturn(upstreamResponse);
+        doReturn(upstreamResponse).when(this.executor).execute(any());
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 
         assertThat(this.adapter.createProject(command)).isEqualTo(expected);
+
+        final InOrder inOrder = inOrder(this.mapper, this.executor);
+        inOrder.verify(this.mapper).toRequest(command);
+        inOrder.verify(this.executor).execute(any());
     }
 
     @Test
@@ -89,13 +92,10 @@ class ForgeAgentClientAdapterTest {
         final var request = new AgentDefinitionRequest("Backend", "Do work.", null);
         final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, CREATED, UPDATED);
         final var details = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), CREATED, UPDATED);
-        when(this.httpClient.listProjectAgents(PROJECT_ID)).thenReturn(List.of(listResponse));
+        doReturn(List.of(listResponse), upstreamResponse, upstreamResponse, upstreamResponse).when(this.executor).execute(any());
         when(this.mapper.requireList(List.of(listResponse), "agents")).thenReturn(List.of(listResponse));
         when(this.mapper.toDomain(listResponse)).thenReturn(listItem);
         when(this.mapper.toRequest(command)).thenReturn(request);
-        when(this.httpClient.createAgent(PROJECT_ID, request)).thenReturn(upstreamResponse);
-        when(this.httpClient.getAgent(AGENT_ID)).thenReturn(upstreamResponse);
-        when(this.httpClient.updateAgent(AGENT_ID, request)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(details);
 
         assertThat(this.adapter.listProjectAgents(PROJECT_ID)).containsExactly(listItem);
@@ -112,27 +112,19 @@ class ForgeAgentClientAdapterTest {
         final var saveRequest = new SaveAgentWorkflowRequest("Full Testing", List.of());
         final var upstreamResponse = new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
         final var workflow = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
-        when(this.httpClient.listProjectWorkflows(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
+        doReturn(List.of(upstreamResponse), upstreamResponse, upstreamResponse, upstreamResponse).when(this.executor).execute(any());
         when(this.mapper.requireList(List.of(upstreamResponse), "workflows")).thenReturn(List.of(upstreamResponse));
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(workflow);
         when(this.mapper.toRequest(createCommand)).thenReturn(createRequest);
         when(this.mapper.toRequest(saveCommand)).thenReturn(saveRequest);
-        when(this.httpClient.createWorkflow(PROJECT_ID, createRequest)).thenReturn(upstreamResponse);
-        when(this.httpClient.getWorkflow(WORKFLOW_ID)).thenReturn(upstreamResponse);
-        when(this.httpClient.updateWorkflow(WORKFLOW_ID, saveRequest)).thenReturn(upstreamResponse);
 
         assertThat(this.adapter.listProjectWorkflows(PROJECT_ID)).containsExactly(workflow);
         assertThat(this.adapter.createWorkflow(PROJECT_ID, createCommand)).isEqualTo(workflow);
         assertThat(this.adapter.getWorkflow(WORKFLOW_ID)).isEqualTo(workflow);
         assertThat(this.adapter.updateWorkflow(WORKFLOW_ID, saveCommand)).isEqualTo(workflow);
 
-        final InOrder inOrder = inOrder(this.executor, this.mapper, this.httpClient);
+        final InOrder inOrder = inOrder(this.executor, this.mapper);
         inOrder.verify(this.executor).execute(any());
-        inOrder.verify(this.httpClient).listProjectWorkflows(PROJECT_ID);
-    }
-
-    @SuppressWarnings("unchecked")
-    private void executeSuppliedCalls() {
-        when(this.executor.execute(any(Supplier.class))).thenAnswer(invocation -> ((Supplier<?>) invocation.getArgument(0)).get());
+        inOrder.verify(this.mapper).requireList(List.of(upstreamResponse), "workflows");
     }
 }

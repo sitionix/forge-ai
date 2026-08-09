@@ -9,6 +9,10 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -31,7 +35,8 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
 
     @Override
     public AgentProject createProject(final CreateAgentProjectCommand command) {
-        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createProject(this.mapper.toRequest(command))));
+        final AgentProjectRequest request = this.mapper.toRequest(command);
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createProject(request)));
     }
 
     @Override
@@ -43,7 +48,8 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
 
     @Override
     public AgentDefinitionDetails createAgent(final UUID projectId, final SaveAgentDefinitionCommand command) {
-        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createAgent(projectId, this.mapper.toRequest(command))));
+        final AgentDefinitionRequest request = this.mapper.toRequest(command);
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createAgent(projectId, request)));
     }
 
     @Override
@@ -53,7 +59,8 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
 
     @Override
     public AgentDefinitionDetails updateAgent(final UUID agentId, final SaveAgentDefinitionCommand command) {
-        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.updateAgent(agentId, this.mapper.toRequest(command))));
+        final AgentDefinitionRequest request = this.mapper.toRequest(command);
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.updateAgent(agentId, request)));
     }
 
     @Override
@@ -65,7 +72,8 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
 
     @Override
     public AgentWorkflow createWorkflow(final UUID projectId, final CreateAgentWorkflowCommand command) {
-        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createWorkflow(projectId, this.mapper.toRequest(command))));
+        final AgentWorkflowRequest request = this.mapper.toRequest(command);
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createWorkflow(projectId, request)));
     }
 
     @Override
@@ -75,6 +83,7 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
 
     @Override
     public AgentWorkflow updateWorkflow(final UUID workflowId, final SaveAgentWorkflowCommand command) {
-        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.updateWorkflow(workflowId, this.mapper.toRequest(command))));
+        final SaveAgentWorkflowRequest request = this.mapper.toRequest(command);
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.updateWorkflow(workflowId, request)));
     }
 }

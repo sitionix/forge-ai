@@ -114,11 +114,11 @@
               <small>create OPEN</small>
             </span>
           </a>
-          <a class="sidebar-link ${page === 'agents-v2' ? 'active' : ''}" href="./agents-v2.html">
-            <span class="sidebar-icon">A</span>
+          <a class="sidebar-link ${page === 'agent-projects' ? 'active' : ''}" href="./agent-projects.html">
+            <span class="sidebar-icon">P</span>
             <span class="sidebar-label">
-              <strong>Agents</strong>
-              <small>configuration</small>
+              <strong>Projects</strong>
+              <small>agent workflows</small>
             </span>
           </a>
           <a class="sidebar-link ${page === 'agents' ? 'active' : ''}" href="./agents.html">

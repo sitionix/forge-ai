@@ -3,58 +3,57 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Forge AI Agents</title>
+  <title>Forge AI Projects</title>
   <link rel="stylesheet" href="./operator-ui.css">
 </head>
-<body data-page="agents-v2">
+<body data-page="agent-projects">
   <main class="shell agents-v2-shell">
-    <header class="hero compact-hero">
-      <div>
-        <p class="eyebrow">Forge AI Operator</p>
-        <h1>Agents</h1>
-        <p class="muted">Manage reusable agents and orchestration workflows.</p>
-      </div>
-    </header>
-
-    <section id="agentsV2Workspace" class="agents-v2-layout" aria-label="Agent workflow configuration">
-      <aside class="panel agents-v2-projects-panel">
-        <div class="panel-head compact">
-          <div>
-            <h2>Projects</h2>
-          </div>
-          <button id="agentsV2CreateProject" class="icon-button" type="button" aria-label="Create project">+</button>
+    <section id="agentsV2ProjectsView" class="panel project-index-view" aria-label="Agent projects">
+      <div class="panel-head compact">
+        <div>
+          <h1>Projects</h1>
+          <p>Manage projects and their agent workflows.</p>
         </div>
-        <div id="agentsV2ProjectsError" class="error-box hidden"></div>
-        <div id="agentsV2ProjectsList" class="agents-v2-list" aria-live="polite"></div>
-      </aside>
+        <button id="agentsV2CreateProject" class="button small secondary" type="button">New Project</button>
+      </div>
+      <div id="agentsV2ProjectsError" class="error-box hidden"></div>
+      <div id="agentsV2ProjectsList" class="agents-v2-card-grid project-index-grid" aria-live="polite"></div>
+    </section>
 
-      <section class="panel agents-v2-workspace-panel">
+    <section id="agentsV2Workspace" class="project-workspace-view hidden" aria-label="Project agent configuration">
+      <header class="panel project-workspace-header">
         <div class="panel-head compact">
           <div>
             <p id="agentsV2ProjectCrumbs" class="agents-v2-crumbs">Projects</p>
-            <h2 id="agentsV2ProjectTitle">Select a project</h2>
+            <h1 id="agentsV2ProjectTitle">Project</h1>
+            <p>Project agent configuration</p>
           </div>
+          <button id="agentsV2WorkspaceBack" class="button small secondary" type="button">← Projects</button>
         </div>
-        <div class="agents-v2-tabs" role="tablist" aria-label="Project configuration">
-          <button id="agentsV2AgentsTab" class="active" type="button">Agents</button>
-          <button id="agentsV2WorkflowsTab" type="button">Workflows</button>
-        </div>
-        <section id="agentsV2AgentsPane" class="agents-v2-tab-panel">
-          <div class="agents-v2-pane-head">
+      </header>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head">
+          <div>
             <h2>Agents</h2>
-            <button id="agentsV2CreateAgent" class="button small secondary" type="button" disabled>New Agent</button>
+            <p>Reusable agents available to this project.</p>
           </div>
-          <div id="agentsV2AgentsError" class="error-box hidden"></div>
-          <div id="agentsV2AgentsList" class="agents-v2-card-grid" aria-live="polite"></div>
-        </section>
-        <section id="agentsV2WorkflowsPane" class="agents-v2-tab-panel hidden">
-          <div class="agents-v2-pane-head">
+          <button id="agentsV2CreateAgent" class="button small secondary" type="button" disabled>New Agent</button>
+        </div>
+        <div id="agentsV2AgentsError" class="error-box hidden"></div>
+        <div id="agentsV2AgentsList" class="agents-v2-card-grid" aria-live="polite"></div>
+      </section>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head">
+          <div>
             <h2>Workflows</h2>
-            <button id="agentsV2CreateWorkflow" class="button small secondary" type="button" disabled>New Workflow</button>
+            <p>Agent orchestration definitions.</p>
           </div>
-          <div id="agentsV2WorkflowsError" class="error-box hidden"></div>
-          <div id="agentsV2WorkflowsList" class="agents-v2-card-grid" aria-live="polite"></div>
-        </section>
+          <button id="agentsV2CreateWorkflow" class="button small secondary" type="button" disabled>New Workflow</button>
+        </div>
+        <div id="agentsV2WorkflowsError" class="error-box hidden"></div>
+        <div id="agentsV2WorkflowsList" class="agents-v2-card-grid" aria-live="polite"></div>
       </section>
     </section>
 
@@ -62,23 +61,23 @@
       <div class="panel-head compact">
         <div>
           <p id="agentsV2BuilderCrumbs" class="agents-v2-crumbs">Projects / Workflows</p>
-          <h2 id="agentsV2BuilderTitle">Workflow</h2>
+          <h1 id="agentsV2BuilderTitle">Workflow</h1>
         </div>
-        <button id="agentsV2BuilderBack" class="button small secondary" type="button">Back</button>
+        <div class="workflow-builder-top-actions">
+          <button id="agentsV2BuilderBack" class="button small secondary" type="button">← Back to Project</button>
+          <button id="agentsV2WorkflowSave" class="button small" type="button">Save</button>
+        </div>
       </div>
       <div id="agentsV2WorkflowBuilderError" class="error-box hidden"></div>
       <div class="workflow-builder-body">
         <aside class="workflow-agent-palette">
-          <h3>Agents</h3>
+          <h2>Agents</h2>
           <div id="agentsV2WorkflowAgentList"></div>
         </aside>
         <div id="agentsV2WorkflowCanvas" class="workflow-canvas">
           <svg id="agentsV2WorkflowEdges" class="workflow-edges" aria-hidden="true"></svg>
           <div id="agentsV2WorkflowNodes" class="workflow-nodes"></div>
         </div>
-      </div>
-      <div class="workflow-builder-actions">
-        <button id="agentsV2WorkflowSave" class="button" type="button">Save</button>
       </div>
     </section>
 

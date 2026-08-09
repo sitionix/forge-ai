@@ -1,4 +1,4 @@
-export function createAgentsV2Api(http) {
+export function createAgentProjectsApi(http) {
   const root = '/agents';
   return {
     listProjects() {
@@ -33,3 +33,5 @@ export function createAgentsV2Api(http) {
     }
   };
 }
+
+export const createAgentsV2Api = createAgentProjectsApi;
