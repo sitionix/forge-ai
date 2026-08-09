@@ -18,6 +18,18 @@ export function createAgentsV2Api(http) {
     },
     updateAgent(agentId, request) {
       return http.put(`${root}/definitions/${encodeURIComponent(agentId)}`, request);
+    },
+    listProjectWorkflows(projectId) {
+      return http.get(`${root}/projects/${encodeURIComponent(projectId)}/workflows`);
+    },
+    createWorkflow(projectId, request) {
+      return http.post(`${root}/projects/${encodeURIComponent(projectId)}/workflows`, request);
+    },
+    getWorkflow(workflowId) {
+      return http.get(`${root}/workflows/${encodeURIComponent(workflowId)}`);
+    },
+    updateWorkflow(workflowId, request) {
+      return http.put(`${root}/workflows/${encodeURIComponent(workflowId)}`, request);
     }
   };
 }

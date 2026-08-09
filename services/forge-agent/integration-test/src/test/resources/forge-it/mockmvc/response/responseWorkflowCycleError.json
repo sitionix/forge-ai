@@ -1,0 +1,5 @@
+{
+  "code": "WORKFLOW_GRAPH_CYCLE",
+  "message": "Workflow graph contains a cycle.",
+  "correlationId": null
+}

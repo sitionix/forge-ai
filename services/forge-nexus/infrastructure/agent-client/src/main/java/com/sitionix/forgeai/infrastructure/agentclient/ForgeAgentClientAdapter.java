@@ -3,8 +3,11 @@ package com.sitionix.forgeai.infrastructure.agentclient;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
 import java.util.List;
 import java.util.UUID;
@@ -51,5 +54,27 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     @Override
     public AgentDefinitionDetails updateAgent(final UUID agentId, final SaveAgentDefinitionCommand command) {
         return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.updateAgent(agentId, this.mapper.toRequest(command))));
+    }
+
+    @Override
+    public List<AgentWorkflow> listProjectWorkflows(final UUID projectId) {
+        return this.mapper.requireList(this.clientCallExecutor.execute(() -> this.httpClient.listProjectWorkflows(projectId)), "workflows").stream()
+                .map(this.mapper::toDomain)
+                .toList();
+    }
+
+    @Override
+    public AgentWorkflow createWorkflow(final UUID projectId, final CreateAgentWorkflowCommand command) {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createWorkflow(projectId, this.mapper.toRequest(command))));
+    }
+
+    @Override
+    public AgentWorkflow getWorkflow(final UUID workflowId) {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.getWorkflow(workflowId)));
+    }
+
+    @Override
+    public AgentWorkflow updateWorkflow(final UUID workflowId, final SaveAgentWorkflowCommand command) {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.updateWorkflow(workflowId, this.mapper.toRequest(command))));
     }
 }

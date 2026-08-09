@@ -72,8 +72,8 @@ export function initSidebar(documentRef = document, windowRef = window, page = d
     ['tickets', './index.html', 'T', 'Tickets'],
     ['new-task', './new-task.html', '+', 'New Task'],
     ['services', './services.html', 'S', 'Services'],
-    ['agents', './agents.html', 'A', 'Agents'],
-    ['agents-v2', './agents-v2.html', 'V2', 'Agents V2'],
+    ['agents-v2', './agents-v2.html', 'A', 'Agents'],
+    ['agents', './agents.html', 'RT', 'Agent Runtime'],
     ['jarvis', './jarvis.html', 'J', 'Jarvis'],
     ['knowledge', './knowledge.html', 'K', 'Knowledge']
   ];

@@ -1,0 +1,5 @@
+{
+  "code": "UNKNOWN_NODE_DEPENDENCY",
+  "message": "Workflow node dependencies must reference nodes in the same workflow.",
+  "correlationId": null
+}

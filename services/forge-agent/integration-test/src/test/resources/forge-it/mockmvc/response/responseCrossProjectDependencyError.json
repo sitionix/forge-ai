@@ -1,5 +1,0 @@
-{
-  "code": "CROSS_PROJECT_DEPENDENCY",
-  "message": "Dependencies must belong to the same project.",
-  "correlationId": null
-}

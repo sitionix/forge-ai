@@ -4,11 +4,15 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentDependencySummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.Node;
+import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -31,12 +35,24 @@ public class AgentProxyApiMapper {
             return new SaveAgentDefinitionCommand(
                     request.name(),
                     request.instructions(),
-                    new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(request.outputSchema())),
-                    request.dependsOnAgentIds() == null ? List.of() : request.dependsOnAgentIds()
+                    new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(request.outputSchema()))
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Output schema must be valid JSON.", exception);
         }
+    }
+
+    public CreateAgentWorkflowCommand toCommand(final AgentWorkflowRequest request) {
+        return new CreateAgentWorkflowCommand(request.name());
+    }
+
+    public SaveAgentWorkflowCommand toCommand(final SaveAgentWorkflowRequest request) {
+        return new SaveAgentWorkflowCommand(
+                request.name(),
+                request.nodes() == null ? List.of() : request.nodes().stream()
+                        .map(this::toDomain)
+                        .toList()
+        );
     }
 
     public AgentProjectResponse toResponse(final AgentProject project) {
@@ -48,7 +64,6 @@ public class AgentProxyApiMapper {
                 agent.id(),
                 agent.projectId(),
                 agent.name(),
-                this.toDependencyResponses(agent.dependsOn()),
                 agent.createdAt(),
                 agent.updatedAt()
         );
@@ -62,7 +77,6 @@ public class AgentProxyApiMapper {
                     agent.name(),
                     agent.instructions(),
                     this.objectMapper.readTree(agent.outputSchema().jsonObject()),
-                    this.toDependencyResponses(agent.dependsOn()),
                     agent.createdAt(),
                     agent.updatedAt()
             );
@@ -71,9 +85,32 @@ public class AgentProxyApiMapper {
         }
     }
 
-    private List<AgentDependencyResponse> toDependencyResponses(final List<AgentDependencySummary> dependencies) {
-        return dependencies.stream()
-                .map(dependency -> new AgentDependencyResponse(dependency.id(), dependency.name()))
-                .toList();
+    public AgentWorkflowResponse toResponse(final AgentWorkflow workflow) {
+        return new AgentWorkflowResponse(
+                workflow.id(),
+                workflow.projectId(),
+                workflow.name(),
+                workflow.nodes().stream().map(this::toResponse).toList(),
+                workflow.createdAt(),
+                workflow.updatedAt()
+        );
+    }
+
+    private Node toDomain(final NodeRequest request) {
+        return new Node(
+                request.id(),
+                request.targetId(),
+                request.dependsOnNodeIds() == null ? List.of() : request.dependsOnNodeIds(),
+                request.position() == null ? new NodePosition(0.0, 0.0) : new NodePosition(request.position().x(), request.position().y())
+        );
+    }
+
+    private NodeResponse toResponse(final Node node) {
+        return new NodeResponse(
+                node.id(),
+                node.targetId(),
+                node.dependsOnNodeIds(),
+                new NodePositionResponse(node.position().x(), node.position().y())
+        );
     }
 }

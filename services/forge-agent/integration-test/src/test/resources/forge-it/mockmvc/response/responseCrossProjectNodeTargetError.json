@@ -1,0 +1,5 @@
+{
+  "code": "CROSS_PROJECT_NODE_TARGET",
+  "message": "Workflow node targets must belong to the same project.",
+  "correlationId": null
+}

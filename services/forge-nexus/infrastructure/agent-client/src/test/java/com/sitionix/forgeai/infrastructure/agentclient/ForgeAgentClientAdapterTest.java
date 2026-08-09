@@ -7,16 +7,21 @@ import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentDependencySummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -33,7 +38,7 @@ class ForgeAgentClientAdapterTest {
 
     private static final UUID PROJECT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
-    private static final UUID DEPENDENCY_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+    private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -60,14 +65,7 @@ class ForgeAgentClientAdapterTest {
         when(this.mapper.requireList(List.of(upstreamResponse), "projects")).thenReturn(List.of(upstreamResponse));
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 
-        final var actual = this.adapter.listProjects();
-
-        assertThat(actual).containsExactly(expected);
-        final InOrder inOrder = inOrder(this.executor, this.httpClient, this.mapper);
-        inOrder.verify(this.executor).execute(any());
-        inOrder.verify(this.httpClient).listProjects();
-        inOrder.verify(this.mapper).requireList(List.of(upstreamResponse), "projects");
-        inOrder.verify(this.mapper).toDomain(upstreamResponse);
+        assertThat(this.adapter.listProjects()).containsExactly(expected);
     }
 
     @Test
@@ -80,129 +78,61 @@ class ForgeAgentClientAdapterTest {
         when(this.httpClient.createProject(request)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 
-        final var actual = this.adapter.createProject(command);
-
-        assertThat(actual).isEqualTo(expected);
-        final InOrder inOrder = inOrder(this.executor, this.mapper, this.httpClient);
-        inOrder.verify(this.executor).execute(any());
-        inOrder.verify(this.mapper).toRequest(command);
-        inOrder.verify(this.httpClient).createProject(request);
-        inOrder.verify(this.mapper).toDomain(upstreamResponse);
+        assertThat(this.adapter.createProject(command)).isEqualTo(expected);
     }
 
     @Test
-    void listProjectAgentsDelegatesThroughExecutorAndMapper() {
-        final var upstreamResponse = new AgentDefinitionListResponse(
-                AGENT_ID,
-                PROJECT_ID,
-                "Backend",
-                List.of(),
-                CREATED,
-                UPDATED
-        );
-        final var expected = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", List.of(), CREATED, UPDATED);
-        when(this.httpClient.listProjectAgents(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
-        when(this.mapper.requireList(List.of(upstreamResponse), "agents")).thenReturn(List.of(upstreamResponse));
-        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
-
-        final var actual = this.adapter.listProjectAgents(PROJECT_ID);
-
-        assertThat(actual).containsExactly(expected);
-        final InOrder inOrder = inOrder(this.executor, this.httpClient, this.mapper);
-        inOrder.verify(this.executor).execute(any());
-        inOrder.verify(this.httpClient).listProjectAgents(PROJECT_ID);
-        inOrder.verify(this.mapper).requireList(List.of(upstreamResponse), "agents");
-        inOrder.verify(this.mapper).toDomain(upstreamResponse);
-    }
-
-    @Test
-    void createAgentMapsRequestExecutesCallAndMapsResponse() {
-        final var command = this.command();
-        final var request = this.request();
-        final var upstreamResponse = this.upstreamAgentResponse();
-        final var expected = this.agentDetails();
+    void agentCallsUseTypedRequestResponseFlow() {
+        final var listResponse = new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED);
+        final var listItem = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED);
+        final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{\"type\":\"object\"}"));
+        final var request = new AgentDefinitionRequest("Backend", "Do work.", null);
+        final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, CREATED, UPDATED);
+        final var details = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), CREATED, UPDATED);
+        when(this.httpClient.listProjectAgents(PROJECT_ID)).thenReturn(List.of(listResponse));
+        when(this.mapper.requireList(List.of(listResponse), "agents")).thenReturn(List.of(listResponse));
+        when(this.mapper.toDomain(listResponse)).thenReturn(listItem);
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.createAgent(PROJECT_ID, request)).thenReturn(upstreamResponse);
-        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
-
-        final var actual = this.adapter.createAgent(PROJECT_ID, command);
-
-        assertThat(actual).isEqualTo(expected);
-        final InOrder inOrder = inOrder(this.executor, this.mapper, this.httpClient);
-        inOrder.verify(this.executor).execute(any());
-        inOrder.verify(this.mapper).toRequest(command);
-        inOrder.verify(this.httpClient).createAgent(PROJECT_ID, request);
-        inOrder.verify(this.mapper).toDomain(upstreamResponse);
-    }
-
-    @Test
-    void getAgentExecutesCallAndMapsResponse() {
-        final var upstreamResponse = this.upstreamAgentResponse();
-        final var expected = this.agentDetails();
         when(this.httpClient.getAgent(AGENT_ID)).thenReturn(upstreamResponse);
-        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+        when(this.httpClient.updateAgent(AGENT_ID, request)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(details);
 
-        final var actual = this.adapter.getAgent(AGENT_ID);
-
-        assertThat(actual).isEqualTo(expected);
-        final InOrder inOrder = inOrder(this.executor, this.httpClient, this.mapper);
-        inOrder.verify(this.executor).execute(any());
-        inOrder.verify(this.httpClient).getAgent(AGENT_ID);
-        inOrder.verify(this.mapper).toDomain(upstreamResponse);
+        assertThat(this.adapter.listProjectAgents(PROJECT_ID)).containsExactly(listItem);
+        assertThat(this.adapter.createAgent(PROJECT_ID, command)).isEqualTo(details);
+        assertThat(this.adapter.getAgent(AGENT_ID)).isEqualTo(details);
+        assertThat(this.adapter.updateAgent(AGENT_ID, command)).isEqualTo(details);
     }
 
     @Test
-    void updateAgentMapsRequestExecutesCallAndMapsResponse() {
-        final var command = this.command();
-        final var request = this.request();
-        final var upstreamResponse = this.upstreamAgentResponse();
-        final var expected = this.agentDetails();
-        when(this.mapper.toRequest(command)).thenReturn(request);
-        when(this.httpClient.updateAgent(AGENT_ID, request)).thenReturn(upstreamResponse);
-        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+    void workflowCallsUseTypedRequestResponseFlow() {
+        final var createCommand = new CreateAgentWorkflowCommand("Full Testing");
+        final var saveCommand = new SaveAgentWorkflowCommand("Full Testing", List.of());
+        final var createRequest = new AgentWorkflowRequest("Full Testing");
+        final var saveRequest = new SaveAgentWorkflowRequest("Full Testing", List.of());
+        final var upstreamResponse = new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
+        final var workflow = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
+        when(this.httpClient.listProjectWorkflows(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
+        when(this.mapper.requireList(List.of(upstreamResponse), "workflows")).thenReturn(List.of(upstreamResponse));
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(workflow);
+        when(this.mapper.toRequest(createCommand)).thenReturn(createRequest);
+        when(this.mapper.toRequest(saveCommand)).thenReturn(saveRequest);
+        when(this.httpClient.createWorkflow(PROJECT_ID, createRequest)).thenReturn(upstreamResponse);
+        when(this.httpClient.getWorkflow(WORKFLOW_ID)).thenReturn(upstreamResponse);
+        when(this.httpClient.updateWorkflow(WORKFLOW_ID, saveRequest)).thenReturn(upstreamResponse);
 
-        final var actual = this.adapter.updateAgent(AGENT_ID, command);
+        assertThat(this.adapter.listProjectWorkflows(PROJECT_ID)).containsExactly(workflow);
+        assertThat(this.adapter.createWorkflow(PROJECT_ID, createCommand)).isEqualTo(workflow);
+        assertThat(this.adapter.getWorkflow(WORKFLOW_ID)).isEqualTo(workflow);
+        assertThat(this.adapter.updateWorkflow(WORKFLOW_ID, saveCommand)).isEqualTo(workflow);
 
-        assertThat(actual).isEqualTo(expected);
         final InOrder inOrder = inOrder(this.executor, this.mapper, this.httpClient);
         inOrder.verify(this.executor).execute(any());
-        inOrder.verify(this.mapper).toRequest(command);
-        inOrder.verify(this.httpClient).updateAgent(AGENT_ID, request);
-        inOrder.verify(this.mapper).toDomain(upstreamResponse);
+        inOrder.verify(this.httpClient).listProjectWorkflows(PROJECT_ID);
     }
 
     @SuppressWarnings("unchecked")
     private void executeSuppliedCalls() {
         when(this.executor.execute(any(Supplier.class))).thenAnswer(invocation -> ((Supplier<?>) invocation.getArgument(0)).get());
-    }
-
-    private SaveAgentDefinitionCommand command() {
-        return new SaveAgentDefinitionCommand(
-                "Backend",
-                "Do work.",
-                new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
-                List.of(DEPENDENCY_ID)
-        );
-    }
-
-    private AgentDefinitionRequest request() {
-        return new AgentDefinitionRequest("Backend", "Do work.", null, List.of(DEPENDENCY_ID));
-    }
-
-    private AgentDefinitionResponse upstreamAgentResponse() {
-        return new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, List.of(), CREATED, UPDATED);
-    }
-
-    private AgentDefinitionDetails agentDetails() {
-        return new AgentDefinitionDetails(
-                AGENT_ID,
-                PROJECT_ID,
-                "Backend",
-                "Do work.",
-                new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
-                List.of(new AgentDependencySummary(DEPENDENCY_ID, "Architect")),
-                CREATED,
-                UPDATED
-        );
     }
 }

@@ -1,0 +1,5 @@
+{
+  "code": "SELF_NODE_DEPENDENCY",
+  "message": "A workflow node cannot depend on itself.",
+  "correlationId": null
+}
