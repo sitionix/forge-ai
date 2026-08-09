@@ -1,0 +1,22 @@
+{
+  "id": "00000000-0000-4000-8000-000000000000",
+  "projectId": "10000000-0000-4000-8000-000000000001",
+  "name": "Backend Implementer",
+  "instructions": "Implement backend changes.",
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string"
+      }
+    }
+  },
+  "dependsOn": [
+    {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "name": "Agent A"
+    }
+  ],
+  "createdAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z"
+}

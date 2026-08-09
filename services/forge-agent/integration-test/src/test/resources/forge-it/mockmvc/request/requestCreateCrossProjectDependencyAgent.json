@@ -1,0 +1,10 @@
+{
+  "name": "Cross Project Dependency",
+  "instructions": "Reference a dependency from another project.",
+  "outputSchema": {
+    "type": "object"
+  },
+  "dependsOnAgentIds": [
+    "20000000-0000-4000-8000-000000000005"
+  ]
+}

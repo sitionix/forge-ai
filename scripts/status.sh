@@ -56,6 +56,17 @@ else
   echo "Forge Nexus: DOWN at ${FORGE_NEXUS_BASE_URL} pid=${NEXUS_PID} listener=${NEXUS_LISTENERS:-"-"} jarTimestamp=$(file_stamp "${NEXUS_JAR}")"
 fi
 
+AGENT_PID_FILE="${FORGE_AI_HOME}/var/forge-agent.pid"
+AGENT_JAR="${FORGE_AI_HOME}/services/forge-agent/boot/target/boot-0.0.1-SNAPSHOT.jar"
+AGENT_BASE_URL="${FORGE_AGENT_BASE_URL:-http://127.0.0.1:7091}"
+AGENT_PID="$(pid_file_status "Forge Agent" "${AGENT_PID_FILE}")"
+AGENT_LISTENERS="$(listener_pids 7091)"
+if curl --max-time 10 --retry 3 --retry-delay 1 --retry-connrefused -fsS "${AGENT_BASE_URL}/actuator/health" >/dev/null 2>&1; then
+  echo "Forge Agent: UP at ${AGENT_BASE_URL} pid=${AGENT_PID} listener=${AGENT_LISTENERS:-"-"} jarTimestamp=$(file_stamp "${AGENT_JAR}")"
+else
+  echo "Forge Agent: DOWN at ${AGENT_BASE_URL} pid=${AGENT_PID} listener=${AGENT_LISTENERS:-"-"} jarTimestamp=$(file_stamp "${AGENT_JAR}")"
+fi
+
 BUILT_JS="${FORGE_AI_HOME}/services/forge-console/dist/operator/operator-ui.js"
 LIVE_JS="$(mktemp)"
 if curl --max-time 10 --retry 3 --retry-delay 1 --retry-connrefused -fsS "${FORGE_NEXUS_BASE_URL}/operator/operator-ui.js" > "${LIVE_JS}" 2>/dev/null; then

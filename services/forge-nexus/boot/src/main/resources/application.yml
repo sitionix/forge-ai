@@ -77,6 +77,11 @@ forge:
         base-url: ${FORGE_KNOWLEDGE_BASE_URL:http://127.0.0.1:7081}
         connect-timeout: 2s
         read-timeout: 120s
+      agent:
+        enabled: true
+        base-url: ${FORGE_AGENT_BASE_URL:http://127.0.0.1:7091}
+        connect-timeout: 2s
+        read-timeout: 30s
 forge-ai:
   jobs:
     ready-to-start:

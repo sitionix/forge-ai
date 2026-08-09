@@ -1,0 +1,15 @@
+{
+  "name": "Backend Implementer",
+  "instructions": "Implement backend production changes.",
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string"
+      }
+    }
+  },
+  "dependsOnAgentIds": [
+    "33333333-3333-4333-8333-333333333333"
+  ]
+}

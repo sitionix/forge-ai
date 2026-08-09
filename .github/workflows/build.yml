@@ -24,6 +24,8 @@ jobs:
             name: Forge Jarvis
           - service: forge-console
             name: Forge Console
+          - service: forge-agent
+            name: Forge Agent
           - service: forge-nexus
             name: Forge Nexus
     env:
@@ -83,6 +85,23 @@ jobs:
               npm run typecheck
               npm test
               npm run build
+              ;;
+
+            forge-agent)
+              cat > .maven-settings.xml <<EOF
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+            <servers>
+              <server>
+                <id>github-forge-it</id>
+                <username>${MAVEN_REPOSITORY_USERNAME}</username>
+                <password>${MAVEN_REPOSITORY_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+              mvn -B -ntp -s .maven-settings.xml -pl services/forge-agent/integration-test -am verify
               ;;
 
             forge-nexus)

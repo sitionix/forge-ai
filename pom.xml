@@ -14,5 +14,6 @@
 
     <modules>
         <module>services/forge-nexus</module>
+        <module>services/forge-agent</module>
     </modules>
 </project>

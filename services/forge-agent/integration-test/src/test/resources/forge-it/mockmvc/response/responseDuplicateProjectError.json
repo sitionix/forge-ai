@@ -1,0 +1,5 @@
+{
+  "code": "DUPLICATE_PROJECT_NAME",
+  "message": "A project with this name already exists.",
+  "correlationId": null
+}

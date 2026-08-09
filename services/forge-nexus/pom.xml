@@ -86,6 +86,10 @@
                 <artifactId>knowledge-client</artifactId>
             </dependency>
             <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>agent-client</artifactId>
+            </dependency>
+            <dependency>
                 <groupId>org.mapstruct</groupId>
                 <artifactId>mapstruct</artifactId>
                 <version>${mapstruct.version}</version>

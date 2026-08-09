@@ -16,6 +16,15 @@ else
     echo "Forge Nexus PID file missing or process is not running."
   fi
   rm -f "${PID_FILE}"
+
+  AGENT_PID_FILE="${FORGE_AI_HOME}/var/forge-agent.pid"
+  if [[ -f "${AGENT_PID_FILE}" ]] && kill -0 "$(cat "${AGENT_PID_FILE}")" >/dev/null 2>&1; then
+    kill "$(cat "${AGENT_PID_FILE}")"
+    echo "Stopped Forge Agent PID $(cat "${AGENT_PID_FILE}")."
+  else
+    echo "Forge Agent PID file missing or process is not running."
+  fi
+  rm -f "${AGENT_PID_FILE}"
 fi
 
 "${SCRIPT_DIR}/jarvis/stop.sh"

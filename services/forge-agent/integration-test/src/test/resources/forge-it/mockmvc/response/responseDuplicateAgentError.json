@@ -1,0 +1,5 @@
+{
+  "code": "DUPLICATE_AGENT_NAME",
+  "message": "An agent with this name already exists in this project.",
+  "correlationId": null
+}

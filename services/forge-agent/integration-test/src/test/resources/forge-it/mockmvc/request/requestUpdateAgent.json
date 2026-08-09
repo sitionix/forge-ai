@@ -1,0 +1,13 @@
+{
+  "name": "Analyzer Updated",
+  "instructions": "Analyze project context with updated instructions.",
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "updated": {
+        "type": "boolean"
+      }
+    }
+  },
+  "dependsOnAgentIds": []
+}

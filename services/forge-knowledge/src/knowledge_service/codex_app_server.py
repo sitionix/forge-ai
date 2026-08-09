@@ -424,8 +424,9 @@ class CodexProcessTransport:
             await self.invalidate(exc)
             raise
         except CodexAppServerTransportError as exc:
-            await self.invalidate(exc)
-            raise
+            failure = self._connection_failure if self._connection_invalidated and self._connection_failure is not None else exc
+            await self.invalidate(failure)
+            raise failure
         except asyncio.CancelledError:
             if submitted:
                 try:
