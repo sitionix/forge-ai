@@ -5,7 +5,6 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.AgentDependencyId;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -20,8 +19,4 @@ public interface SpringDataAgentDependencyRepository extends JpaRepository<Agent
     List<AgentDependencyEntity> findByProjectId(@Param("projectId") UUID projectId);
 
     List<AgentDependencyEntity> findByIdAgentId(UUID agentId);
-
-    @Modifying
-    @Query("delete from AgentDependencyEntity dependency where dependency.id.agentId = :agentId")
-    void deleteByAgentId(@Param("agentId") UUID agentId);
 }

@@ -6,12 +6,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.sitionix.forgeai.api.agentproxy.AgentDefinitionListResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProxyApiMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentDependencySummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
@@ -36,6 +39,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
 
     private static final UUID PROJECT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
+    private static final UUID DEPENDENCY_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
 
     @Mock
@@ -77,6 +81,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
 
         final var actual = this.controller.listProjects();
 
+        assertThat(actual.getStatusCode().value()).isEqualTo(200);
         assertThat(actual.getBody()).containsExactly(response);
         verify(this.listAgentProjects).execute();
         verify(this.mapper).toResponse(project);
@@ -97,7 +102,38 @@ class ForgeAiInfrastructureAgentsControllerTest {
         assertThat(actual.getStatusCode().value()).isEqualTo(201);
         assertThat(actual.getHeaders().getLocation().toString()).endsWith("/api/v1/infrastructure/agents/projects/" + PROJECT_ID);
         assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
         verify(this.createAgentProject).execute(command);
+        verify(this.mapper).toResponse(project);
+    }
+
+    @Test
+    void listProjectAgentsDelegatesProjectIdAndMapsResponse() {
+        final var item = new AgentDefinitionListItem(
+                AGENT_ID,
+                PROJECT_ID,
+                "Backend",
+                List.of(new AgentDependencySummary(DEPENDENCY_ID, "Architect")),
+                NOW,
+                NOW
+        );
+        final var response = new AgentDefinitionListResponse(
+                AGENT_ID,
+                PROJECT_ID,
+                "Backend",
+                List.of(),
+                NOW,
+                NOW
+        );
+        when(this.listProjectAgentDefinitions.execute(PROJECT_ID)).thenReturn(List.of(item));
+        when(this.mapper.toResponse(item)).thenReturn(response);
+
+        final var actual = this.controller.listProjectAgents(PROJECT_ID);
+
+        assertThat(actual.getStatusCode().value()).isEqualTo(200);
+        assertThat(actual.getBody()).containsExactly(response);
+        verify(this.listProjectAgentDefinitions).execute(PROJECT_ID);
+        verify(this.mapper).toResponse(item);
     }
 
     @Test
@@ -115,7 +151,9 @@ class ForgeAiInfrastructureAgentsControllerTest {
         assertThat(actual.getStatusCode().value()).isEqualTo(201);
         assertThat(actual.getHeaders().getLocation().toString()).endsWith("/api/v1/infrastructure/agents/definitions/" + AGENT_ID);
         assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
         verify(this.createAgentDefinition).execute(PROJECT_ID, command);
+        verify(this.mapper).toResponse(agent);
     }
 
     @Test
@@ -127,24 +165,42 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("JSON object");
 
+        verify(this.mapper).toCommand(request);
         verifyNoInteractions(this.createAgentDefinition);
     }
 
     @Test
-    void getAndUpdateAgentDelegateThroughUseCases() {
+    void getAgentDelegatesAgentIdAndMapsResponse() {
+        final var agent = this.agent();
+        final var response = this.response();
+        when(this.getAgentDefinition.execute(AGENT_ID)).thenReturn(agent);
+        when(this.mapper.toResponse(agent)).thenReturn(response);
+
+        final var actual = this.controller.getAgent(AGENT_ID);
+
+        assertThat(actual.getStatusCode().value()).isEqualTo(200);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.getAgentDefinition).execute(AGENT_ID);
+        verify(this.mapper).toResponse(agent);
+    }
+
+    @Test
+    void updateAgentMapsRequestDelegatesAgentIdAndReturnsOk() {
         final var request = this.request();
         final var command = this.command();
         final var agent = this.agent();
         final var response = this.response();
-        when(this.getAgentDefinition.execute(AGENT_ID)).thenReturn(agent);
-        when(this.updateAgentDefinition.execute(AGENT_ID, command)).thenReturn(agent);
         when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.updateAgentDefinition.execute(AGENT_ID, command)).thenReturn(agent);
         when(this.mapper.toResponse(agent)).thenReturn(response);
 
-        assertThat(this.controller.getAgent(AGENT_ID).getBody()).isSameAs(response);
-        assertThat(this.controller.updateAgent(AGENT_ID, request).getBody()).isSameAs(response);
-        verify(this.getAgentDefinition).execute(AGENT_ID);
+        final var actual = this.controller.updateAgent(AGENT_ID, request);
+
+        assertThat(actual.getStatusCode().value()).isEqualTo(200);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
         verify(this.updateAgentDefinition).execute(AGENT_ID, command);
+        verify(this.mapper).toResponse(agent);
     }
 
     private AgentDefinitionRequest request() {

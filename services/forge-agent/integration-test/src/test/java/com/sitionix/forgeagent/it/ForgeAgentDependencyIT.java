@@ -169,6 +169,31 @@ class ForgeAgentDependencyIT {
         assertThat(persistedEdges).containsExactly(new AgentDependencyId(TARGET_AGENT_ID, AGENT_B_ID));
     }
 
+    @Test
+    void givenUnchangedDependency_whenUpdateAgent_thenDependencyEdgeIsPreserved() {
+        this.seedProjectWithAgents("agent_b.json", "target_agent.json");
+        this.seedDependency(TARGET_AGENT_ID, AGENT_B_ID);
+
+        this.forgeIt.mockMvc()
+                .ping(updateAgent())
+                .withPathParameters(PathParams.create().add("agentId", TARGET_AGENT_ID))
+                .withRequest("requestUpdateTargetDependsOnB.json")
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseUpdateTargetDependsOnB.json", "updatedAt")
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(getAgent())
+                .withPathParameters(PathParams.create().add("agentId", TARGET_AGENT_ID))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseGetTargetDependsOnB.json", "updatedAt")
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(AgentDependencyEntity.class).getAll())
+                .extracting(AgentDependencyEntity::getId)
+                .containsExactly(new AgentDependencyId(TARGET_AGENT_ID, AGENT_B_ID));
+    }
+
     private void seedProjectWithAgents(final String... agentFixtures) {
         DbGraphChain<?> builder = this.forgeIt.postgresql()
                 .create()

@@ -6,8 +6,11 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.AgentDependencyEnt
 import com.sitionix.forgeagent.infrastructure.postgres.entity.AgentDependencyId;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataAgentDependencyRepository;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
@@ -31,13 +34,28 @@ public class PostgresAgentDependencyRepository implements AgentDependencyReposit
 
     @Override
     public void replaceDependencies(final UUID agentId, final Collection<UUID> dependsOnAgentIds) {
-        this.repository.deleteByAgentId(agentId);
-        if (dependsOnAgentIds == null || dependsOnAgentIds.isEmpty()) {
-            return;
+        final List<AgentDependencyEntity> currentDependencies = this.repository.findByIdAgentId(agentId);
+        final Set<UUID> desiredDependencyIds = dependsOnAgentIds == null
+                ? Set.of()
+                : dependsOnAgentIds.stream().collect(Collectors.toCollection(LinkedHashSet::new));
+        final Set<UUID> currentDependencyIds = currentDependencies.stream()
+                .map(entity -> entity.getId().getDependsOnAgentId())
+                .collect(Collectors.toSet());
+
+        final List<AgentDependencyEntity> toDelete = currentDependencies.stream()
+                .filter(entity -> !desiredDependencyIds.contains(entity.getId().getDependsOnAgentId()))
+                .toList();
+        if (!toDelete.isEmpty()) {
+            this.repository.deleteAll(toDelete);
         }
-        this.repository.saveAll(dependsOnAgentIds.stream()
+
+        final List<AgentDependencyEntity> toInsert = desiredDependencyIds.stream()
+                .filter(dependsOnAgentId -> !currentDependencyIds.contains(dependsOnAgentId))
                 .map(dependsOnAgentId -> new AgentDependencyEntity(new AgentDependencyId(agentId, dependsOnAgentId)))
-                .toList());
+                .toList();
+        if (!toInsert.isEmpty()) {
+            this.repository.saveAll(toInsert);
+        }
     }
 
     private AgentDependency toDomain(final AgentDependencyEntity entity) {

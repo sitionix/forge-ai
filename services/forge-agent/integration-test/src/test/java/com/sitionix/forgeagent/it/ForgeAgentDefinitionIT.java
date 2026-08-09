@@ -10,10 +10,14 @@ import org.springframework.http.HttpStatus;
 
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_ALPHA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_BETA_ID;
+import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_GAMMA_ID;
+import static com.sitionix.forgeagent.it.ForgeAgentFixtures.UNKNOWN_AGENT_ID;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createAgent;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createAgentError;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getAgent;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getAgentError;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.listProjectAgents;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.listProjectAgentsError;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateAgent;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
@@ -105,6 +109,26 @@ class ForgeAgentDefinitionIT {
         assertThat(this.forgeIt.postgresql().get(AgentDefinitionEntity.class).getAll())
                 .extracting(AgentDefinitionEntity::getName)
                 .containsExactlyInAnyOrder("Analyzer", "Analyzer");
+    }
+
+    @Test
+    void givenMissingProject_whenListProjectAgents_thenProjectNotFoundIsReturned() {
+        this.forgeIt.mockMvc()
+                .ping(listProjectAgentsError())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_GAMMA_ID))
+                .expectStatus(HttpStatus.NOT_FOUND)
+                .expectResponse("responseProjectNotFoundError.json")
+                .assertAndCreate();
+    }
+
+    @Test
+    void givenMissingAgent_whenGetAgent_thenAgentNotFoundIsReturned() {
+        this.forgeIt.mockMvc()
+                .ping(getAgentError())
+                .withPathParameters(PathParams.create().add("agentId", UNKNOWN_AGENT_ID))
+                .expectStatus(HttpStatus.NOT_FOUND)
+                .expectResponse("responseAgentNotFoundError.json")
+                .assertAndCreate();
     }
 
     private void seedTwoProjects() {

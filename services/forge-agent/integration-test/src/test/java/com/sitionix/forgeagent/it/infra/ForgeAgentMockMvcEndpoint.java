@@ -30,6 +30,10 @@ public final class ForgeAgentMockMvcEndpoint {
         return Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.GET, Void.class, AgentListResponse[].class);
     }
 
+    public static Endpoint<Void, ForgeAgentErrorResponse> listProjectAgentsError() {
+        return Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
+    }
+
     public static Endpoint<SaveAgentRequest, AgentResponse> createAgent() {
         return Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.POST, SaveAgentRequest.class, AgentResponse.class);
     }
@@ -40,6 +44,10 @@ public final class ForgeAgentMockMvcEndpoint {
 
     public static Endpoint<Void, AgentResponse> getAgent() {
         return Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.GET, Void.class, AgentResponse.class);
+    }
+
+    public static Endpoint<Void, ForgeAgentErrorResponse> getAgentError() {
+        return Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
     }
 
     public static Endpoint<SaveAgentRequest, AgentResponse> updateAgent() {
