@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createProject;
@@ -19,8 +20,16 @@ class ForgeAgentProjectIT {
     @Autowired
     private ForgeAgentTestManager forgeIt;
 
+    @Autowired
+    private Environment environment;
+
     @Test
     void givenProjectRequest_whenCreateProject_thenProjectIsPersisted() {
+        assertThat(this.environment.getProperty("spring.application.name")).isEqualTo("forge-agent");
+        assertThat(this.environment.getProperty("spring.jpa.open-in-view", Boolean.class)).isFalse();
+        assertThat(this.environment.getProperty("spring.jpa.hibernate.ddl-auto")).isEqualTo("validate");
+        assertThat(this.environment.getProperty("spring.flyway.enabled", Boolean.class)).isTrue();
+
         this.forgeIt.mockMvc()
                 .ping(createProject())
                 .withRequest("requestCreateProject.json")

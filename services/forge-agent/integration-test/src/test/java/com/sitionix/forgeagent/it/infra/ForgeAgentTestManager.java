@@ -5,9 +5,9 @@ import com.sitionix.forgeit.core.api.ForgeIT;
 import com.sitionix.forgeit.mockmvc.api.MockMvcSupport;
 import com.sitionix.forgeit.postgresql.api.PostgresqlSupport;
 
-@ForgeFeatures({
+@ForgeFeatures(value = {
         MockMvcSupport.class,
         PostgresqlSupport.class
 })
-public interface ForgeAgentTestManager extends ForgeIT, MockMvcSupport, PostgresqlSupport {
+public interface ForgeAgentTestManager extends ForgeIT {
 }

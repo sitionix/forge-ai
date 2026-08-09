@@ -78,7 +78,7 @@ class ForgeAgentProxyFailuresIT extends AbstractForgeAiIT {
     }
 
     @Test
-    void givenLocalInvalidRequest_whenCreateAgent_thenUpstreamIsNotCalled() {
+    void givenLocalInvalidRequest_whenCreateAgent_thenValidationErrorIsReturned() {
         this.testManager.mockMvc()
                 .ping(ForgeAgentProxyMockMvcEndpoint.createAgentLocalInvalid())
                 .withPathParameters(projectMockMvcPathParams())
