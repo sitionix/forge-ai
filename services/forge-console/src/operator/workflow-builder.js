@@ -290,7 +290,33 @@ export class WorkflowBuilder {
       element.style.left = `${node.position.x}px`;
       element.style.top = `${node.position.y}px`;
     }
-    this.renderEdges();
+    this.updateConnectedEdges(node.id);
+  }
+
+  updateConnectedEdges(nodeId) {
+    const svg = this.byId('agentsV2WorkflowEdges');
+    svg.querySelectorAll(`[data-edge-source="${cssEscape(nodeId)}"], [data-edge-target="${cssEscape(nodeId)}"]`).forEach((group) => {
+      this.updateEdgeGroup(group);
+    });
+  }
+
+  updateEdgeGroup(group) {
+    const source = this.workflow?.nodes.find((node) => node.id === group.dataset.edgeSource);
+    const target = this.workflow?.nodes.find((node) => node.id === group.dataset.edgeTarget);
+    if (!source || !target) {
+      return;
+    }
+    const start = this.connectorPoint(source.id, 'output');
+    const end = this.connectorPoint(target.id, 'input');
+    const path = this.pathD(start, end);
+    group.querySelectorAll('.edge-visible, .edge-hit').forEach((element) => {
+      element.setAttribute('d', path);
+    });
+    const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    group.querySelector('.edge-remove')?.setAttribute('cx', midpoint.x);
+    group.querySelector('.edge-remove')?.setAttribute('cy', midpoint.y);
+    group.querySelector('.edge-remove-label')?.setAttribute('x', midpoint.x);
+    group.querySelector('.edge-remove-label')?.setAttribute('y', midpoint.y + 4);
   }
 
   cancelConnectionDrag() {

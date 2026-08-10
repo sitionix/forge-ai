@@ -287,6 +287,31 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-node-id="node-1"]')).toBe(element);
   });
 
+  it('Node body drag updates only connected edge geometry without rebuilding unrelated edge DOM', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      node('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20),
+      node('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', ['a'], 260, 20),
+      node('c', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', [], 10, 220),
+      node('d', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', ['c'], 260, 220)
+    ]))) });
+    const { dom } = await openedBuilder(fakeApi);
+    const movingEdge = dom.window.document.querySelector<SVGGElement>('[data-edge-source="a"][data-edge-target="b"]')!;
+    const unrelatedEdge = dom.window.document.querySelector<SVGGElement>('[data-edge-source="c"][data-edge-target="d"]')!;
+    const movingPathBefore = movingEdge.querySelector('.edge-visible')!.getAttribute('d');
+    const unrelatedPathBefore = unrelatedEdge.querySelector('.edge-visible')!.getAttribute('d');
+    const nodeElement = dom.window.document.querySelector<HTMLElement>('[data-node-id="a"]')!;
+
+    nodeElement.dispatchEvent(pointer(dom, 'pointerdown', 10, 20));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 60, 80));
+
+    const movingEdgeAfter = dom.window.document.querySelector<SVGGElement>('[data-edge-source="a"][data-edge-target="b"]')!;
+    const unrelatedEdgeAfter = dom.window.document.querySelector<SVGGElement>('[data-edge-source="c"][data-edge-target="d"]')!;
+    expect(movingEdgeAfter).toBe(movingEdge);
+    expect(movingEdgeAfter.querySelector('.edge-visible')!.getAttribute('d')).not.toBe(movingPathBefore);
+    expect(unrelatedEdgeAfter).toBe(unrelatedEdge);
+    expect(unrelatedEdgeAfter.querySelector('.edge-visible')!.getAttribute('d')).toBe(unrelatedPathBefore);
+  });
+
   it('dragging from output handle previews and dropping on target input creates dependency', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),

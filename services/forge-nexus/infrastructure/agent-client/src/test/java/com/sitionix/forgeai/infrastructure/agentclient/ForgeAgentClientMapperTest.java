@@ -52,7 +52,7 @@ class ForgeAgentClientMapperTest {
     }
 
     @Test
-    void agentCommandMapsToRequestWithoutDependencies() throws Exception {
+    void agentCommandMapsToRequest() throws Exception {
         final var command = new SaveAgentDefinitionCommand(
                 "Backend Implementer",
                 "Do backend work.",

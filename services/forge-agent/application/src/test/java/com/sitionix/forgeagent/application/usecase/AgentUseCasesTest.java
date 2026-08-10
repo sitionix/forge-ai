@@ -3,8 +3,6 @@ package com.sitionix.forgeagent.application.usecase;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
@@ -51,7 +49,7 @@ class AgentUseCasesTest {
     }
 
     @Test
-    void createsAgentWithoutDependencyGraphLocking() {
+    void createsAgentDefinition() {
         when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.of(this.project()));
         when(this.agentDefinitionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -62,7 +60,6 @@ class AgentUseCasesTest {
 
         assertThat(created.name()).isEqualTo("Analyzer");
         assertThat(created.projectId()).isEqualTo(this.projectId);
-        verify(this.projectRepository, never()).findByIdForUpdate(any());
     }
 
     @Test
@@ -103,7 +100,7 @@ class AgentUseCasesTest {
     }
 
     @Test
-    void listAndGetDoNotExposeDependencies() {
+    void listAndGetAgentDefinitionData() {
         final AgentDefinition agent = this.agent("Analyzer");
         when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.of(this.project()));
         when(this.agentDefinitionRepository.findByProjectId(this.projectId)).thenReturn(List.of(agent));

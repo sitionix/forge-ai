@@ -39,7 +39,7 @@ class AgentProxyApiMapperTest {
     }
 
     @Test
-    void mapsAgentRequestToCommandWithoutDependencies() throws Exception {
+    void mapsAgentRequestToCommand() throws Exception {
         final var request = new AgentDefinitionRequest("Backend", "Do work.", this.objectMapper.readTree("{\"type\":\"object\"}"));
 
         assertThat(this.mapper.toCommand(request)).isEqualTo(new SaveAgentDefinitionCommand(
@@ -65,13 +65,13 @@ class AgentProxyApiMapperTest {
     }
 
     @Test
-    void mapsAgentListItemToTypedResponseWithoutDependencies() {
+    void mapsAgentListItemToTypedResponse() {
         assertThat(this.mapper.toResponse(new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED)))
                 .isEqualTo(new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED));
     }
 
     @Test
-    void mapsAgentDetailsToTypedResponseWithoutDependencies() throws Exception {
+    void mapsAgentDetailsToTypedResponse() throws Exception {
         final var agent = new AgentDefinitionDetails(
                 AGENT_ID,
                 PROJECT_ID,

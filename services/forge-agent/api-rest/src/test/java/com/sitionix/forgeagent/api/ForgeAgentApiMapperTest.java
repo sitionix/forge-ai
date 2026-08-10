@@ -53,7 +53,7 @@ class ForgeAgentApiMapperTest {
     }
 
     @Test
-    void mapsAgentRequestToCommandWithoutDependencies() throws Exception {
+    void mapsAgentRequestToCommand() throws Exception {
         final SaveAgentRequest request = new SaveAgentRequest(
                 "Analyzer",
                 "Analyze changes.",
@@ -83,7 +83,7 @@ class ForgeAgentApiMapperTest {
     }
 
     @Test
-    void mapsAgentListItemToResponseWithoutDependencies() {
+    void mapsAgentListItemToResponse() {
         final var item = new AgentListItem(AGENT_ID, PROJECT_ID, "Analyzer", CREATED, UPDATED);
 
         assertThat(this.mapper.toResponse(item))
@@ -91,7 +91,7 @@ class ForgeAgentApiMapperTest {
     }
 
     @Test
-    void mapsAgentDetailsToResponseWithoutDependencies() throws Exception {
+    void mapsAgentDetailsToResponse() throws Exception {
         final var agent = new AgentDetails(
                 AGENT_ID,
                 PROJECT_ID,

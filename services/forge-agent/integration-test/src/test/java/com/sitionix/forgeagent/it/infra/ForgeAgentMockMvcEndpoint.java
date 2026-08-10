@@ -61,10 +61,6 @@ public final class ForgeAgentMockMvcEndpoint {
         return Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.PUT, SaveAgentRequest.class, ForgeAgentErrorResponse.class);
     }
 
-    public static Endpoint<SaveAgentRequest, Void> updateAgentUntyped() {
-        return Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.PUT, SaveAgentRequest.class, Void.class);
-    }
-
     public static Endpoint<Void, WorkflowResponse[]> listProjectWorkflows() {
         return Endpoint.createContract("/api/v1/projects/{projectId}/workflows", HttpMethod.GET, Void.class, WorkflowResponse[].class);
     }

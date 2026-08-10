@@ -42,6 +42,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class ForgeAiInfrastructureAgentsControllerTest {
@@ -94,52 +95,112 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     @Test
-    void listAndCreateProjectsDelegateAndMapResponses() {
-        final var project = new AgentProject(PROJECT_ID, "Sitionix", NOW, NOW);
-        final var response = new AgentProjectResponse(PROJECT_ID, "Sitionix", NOW, NOW);
+    void listProjects() {
+        final AgentProject project = this.project();
+        final AgentProjectResponse response = this.projectResponse();
         when(this.listAgentProjects.execute()).thenReturn(List.of(project));
         when(this.mapper.toResponse(project)).thenReturn(response);
 
-        assertThat(this.controller.listProjects().getBody()).containsExactly(response);
+        final var actual = this.controller.listProjects();
 
-        final var request = new AgentProjectRequest("Sitionix");
-        final var command = new CreateAgentProjectCommand("Sitionix");
-        when(this.mapper.toCommand(request)).thenReturn(command);
-        when(this.createAgentProject.execute(command)).thenReturn(project);
-
-        final var created = this.controller.createProject(request);
-
-        assertThat(created.getStatusCode().value()).isEqualTo(201);
-        assertThat(created.getHeaders().getLocation().toString()).endsWith("/api/v1/infrastructure/agents/projects/" + PROJECT_ID);
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).containsExactly(response);
+        verify(this.listAgentProjects).execute();
+        verify(this.mapper).toResponse(project);
     }
 
     @Test
-    void agentRoutesDelegateAndMapResponsesWithoutDependencies() {
-        final var item = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", NOW, NOW);
-        final var listResponse = new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", NOW, NOW);
-        when(this.listProjectAgentDefinitions.execute(PROJECT_ID)).thenReturn(List.of(item));
-        when(this.mapper.toResponse(item)).thenReturn(listResponse);
-        assertThat(this.controller.listProjectAgents(PROJECT_ID).getBody()).containsExactly(listResponse);
-
-        final var request = this.agentRequest();
-        final var command = this.agentCommand();
-        final var agent = this.agent();
-        final var response = this.agentResponse();
+    void createProject() {
+        final AgentProjectRequest request = new AgentProjectRequest("Sitionix");
+        final CreateAgentProjectCommand command = new CreateAgentProjectCommand("Sitionix");
+        final AgentProject project = this.project();
+        final AgentProjectResponse response = this.projectResponse();
         when(this.mapper.toCommand(request)).thenReturn(command);
-        when(this.mapper.toResponse(agent)).thenReturn(response);
-        when(this.createAgentDefinition.execute(PROJECT_ID, command)).thenReturn(agent);
-        when(this.getAgentDefinition.execute(AGENT_ID)).thenReturn(agent);
-        when(this.updateAgentDefinition.execute(AGENT_ID, command)).thenReturn(agent);
+        when(this.createAgentProject.execute(command)).thenReturn(project);
+        when(this.mapper.toResponse(project)).thenReturn(response);
 
-        assertThat(this.controller.createAgent(PROJECT_ID, request).getHeaders().getLocation().toString())
-                .endsWith("/api/v1/infrastructure/agents/definitions/" + AGENT_ID);
-        assertThat(this.controller.getAgent(AGENT_ID).getBody()).isSameAs(response);
-        assertThat(this.controller.updateAgent(AGENT_ID, request).getBody()).isSameAs(response);
+        final var actual = this.controller.createProject(request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(actual.getHeaders().getLocation().toString()).isEqualTo("/api/v1/infrastructure/agents/projects/" + PROJECT_ID);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
+        verify(this.createAgentProject).execute(command);
+        verify(this.mapper).toResponse(project);
+    }
+
+    @Test
+    void listProjectAgents() {
+        final AgentDefinitionListItem item = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", NOW, NOW);
+        final AgentDefinitionListResponse response = new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", NOW, NOW);
+        when(this.listProjectAgentDefinitions.execute(PROJECT_ID)).thenReturn(List.of(item));
+        when(this.mapper.toResponse(item)).thenReturn(response);
+
+        final var actual = this.controller.listProjectAgents(PROJECT_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).containsExactly(response);
+        verify(this.listProjectAgentDefinitions).execute(PROJECT_ID);
+        verify(this.mapper).toResponse(item);
+    }
+
+    @Test
+    void createAgent() {
+        final AgentDefinitionRequest request = this.agentRequest();
+        final SaveAgentDefinitionCommand command = this.agentCommand();
+        final AgentDefinitionDetails agent = this.agent();
+        final AgentDefinitionResponse response = this.agentResponse();
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.createAgentDefinition.execute(PROJECT_ID, command)).thenReturn(agent);
+        when(this.mapper.toResponse(agent)).thenReturn(response);
+
+        final var actual = this.controller.createAgent(PROJECT_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(actual.getHeaders().getLocation().toString()).isEqualTo("/api/v1/infrastructure/agents/definitions/" + AGENT_ID);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
+        verify(this.createAgentDefinition).execute(PROJECT_ID, command);
+        verify(this.mapper).toResponse(agent);
+    }
+
+    @Test
+    void getAgent() {
+        final AgentDefinitionDetails agent = this.agent();
+        final AgentDefinitionResponse response = this.agentResponse();
+        when(this.getAgentDefinition.execute(AGENT_ID)).thenReturn(agent);
+        when(this.mapper.toResponse(agent)).thenReturn(response);
+
+        final var actual = this.controller.getAgent(AGENT_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.getAgentDefinition).execute(AGENT_ID);
+        verify(this.mapper).toResponse(agent);
+    }
+
+    @Test
+    void updateAgent() {
+        final AgentDefinitionRequest request = this.agentRequest();
+        final SaveAgentDefinitionCommand command = this.agentCommand();
+        final AgentDefinitionDetails agent = this.agent();
+        final AgentDefinitionResponse response = this.agentResponse();
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.updateAgentDefinition.execute(AGENT_ID, command)).thenReturn(agent);
+        when(this.mapper.toResponse(agent)).thenReturn(response);
+
+        final var actual = this.controller.updateAgent(AGENT_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
+        verify(this.updateAgentDefinition).execute(AGENT_ID, command);
+        verify(this.mapper).toResponse(agent);
     }
 
     @Test
     void locallyInvalidAgentRequestDoesNotCallUseCase() {
-        final var request = this.agentRequest();
+        final AgentDefinitionRequest request = this.agentRequest();
         when(this.mapper.toCommand(request)).thenThrow(new IllegalArgumentException("Output schema must be a JSON object."));
 
         assertThatThrownBy(() -> this.controller.createAgent(PROJECT_ID, request))
@@ -150,27 +211,80 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     @Test
-    void workflowRoutesDelegateAndMapResponses() {
-        final var createRequest = new AgentWorkflowRequest("Full Testing");
-        final var saveRequest = new SaveAgentWorkflowRequest("Full Testing", List.of());
-        final var createCommand = new CreateAgentWorkflowCommand("Full Testing");
-        final var saveCommand = new SaveAgentWorkflowCommand("Full Testing", List.of());
-        final var workflow = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), NOW, NOW);
-        final var response = new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), NOW, NOW);
+    void listProjectWorkflows() {
+        final AgentWorkflow workflow = this.workflow();
+        final AgentWorkflowResponse response = this.workflowResponse();
         when(this.listAgentWorkflows.execute(PROJECT_ID)).thenReturn(List.of(workflow));
-        when(this.mapper.toCommand(createRequest)).thenReturn(createCommand);
-        when(this.mapper.toCommand(saveRequest)).thenReturn(saveCommand);
-        when(this.createAgentWorkflow.execute(PROJECT_ID, createCommand)).thenReturn(workflow);
-        when(this.getAgentWorkflow.execute(WORKFLOW_ID)).thenReturn(workflow);
-        when(this.updateAgentWorkflow.execute(WORKFLOW_ID, saveCommand)).thenReturn(workflow);
         when(this.mapper.toResponse(workflow)).thenReturn(response);
 
-        assertThat(this.controller.listProjectWorkflows(PROJECT_ID).getBody()).containsExactly(response);
-        assertThat(this.controller.createWorkflow(PROJECT_ID, createRequest).getHeaders().getLocation().toString())
-                .endsWith("/api/v1/infrastructure/agents/workflows/" + WORKFLOW_ID);
-        assertThat(this.controller.getWorkflow(WORKFLOW_ID).getBody()).isSameAs(response);
-        assertThat(this.controller.updateWorkflow(WORKFLOW_ID, saveRequest).getBody()).isSameAs(response);
-        verify(this.updateAgentWorkflow).execute(WORKFLOW_ID, saveCommand);
+        final var actual = this.controller.listProjectWorkflows(PROJECT_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).containsExactly(response);
+        verify(this.listAgentWorkflows).execute(PROJECT_ID);
+        verify(this.mapper).toResponse(workflow);
+    }
+
+    @Test
+    void createWorkflow() {
+        final AgentWorkflowRequest request = new AgentWorkflowRequest("Full Testing");
+        final CreateAgentWorkflowCommand command = new CreateAgentWorkflowCommand("Full Testing");
+        final AgentWorkflow workflow = this.workflow();
+        final AgentWorkflowResponse response = this.workflowResponse();
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.createAgentWorkflow.execute(PROJECT_ID, command)).thenReturn(workflow);
+        when(this.mapper.toResponse(workflow)).thenReturn(response);
+
+        final var actual = this.controller.createWorkflow(PROJECT_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(actual.getHeaders().getLocation().toString()).isEqualTo("/api/v1/infrastructure/agents/workflows/" + WORKFLOW_ID);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
+        verify(this.createAgentWorkflow).execute(PROJECT_ID, command);
+        verify(this.mapper).toResponse(workflow);
+    }
+
+    @Test
+    void getWorkflow() {
+        final AgentWorkflow workflow = this.workflow();
+        final AgentWorkflowResponse response = this.workflowResponse();
+        when(this.getAgentWorkflow.execute(WORKFLOW_ID)).thenReturn(workflow);
+        when(this.mapper.toResponse(workflow)).thenReturn(response);
+
+        final var actual = this.controller.getWorkflow(WORKFLOW_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.getAgentWorkflow).execute(WORKFLOW_ID);
+        verify(this.mapper).toResponse(workflow);
+    }
+
+    @Test
+    void updateWorkflow() {
+        final SaveAgentWorkflowRequest request = new SaveAgentWorkflowRequest("Full Testing", List.of());
+        final SaveAgentWorkflowCommand command = new SaveAgentWorkflowCommand("Full Testing", List.of());
+        final AgentWorkflow workflow = this.workflow();
+        final AgentWorkflowResponse response = this.workflowResponse();
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.updateAgentWorkflow.execute(WORKFLOW_ID, command)).thenReturn(workflow);
+        when(this.mapper.toResponse(workflow)).thenReturn(response);
+
+        final var actual = this.controller.updateWorkflow(WORKFLOW_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
+        verify(this.updateAgentWorkflow).execute(WORKFLOW_ID, command);
+        verify(this.mapper).toResponse(workflow);
+    }
+
+    private AgentProject project() {
+        return new AgentProject(PROJECT_ID, "Sitionix", NOW, NOW);
+    }
+
+    private AgentProjectResponse projectResponse() {
+        return new AgentProjectResponse(PROJECT_ID, "Sitionix", NOW, NOW);
     }
 
     private AgentDefinitionRequest agentRequest() {
@@ -187,5 +301,13 @@ class ForgeAiInfrastructureAgentsControllerTest {
 
     private AgentDefinitionResponse agentResponse() {
         return new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, NOW, NOW);
+    }
+
+    private AgentWorkflow workflow() {
+        return new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), NOW, NOW);
+    }
+
+    private AgentWorkflowResponse workflowResponse() {
+        return new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), NOW, NOW);
     }
 }
