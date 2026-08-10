@@ -18,6 +18,7 @@ import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRepository;
@@ -239,13 +240,13 @@ class WorkflowRunUseCasesTest {
     @Test
     void listDelegatesDeterministicRepositoryHistory() {
         final Workflow workflow = this.fanInWorkflow();
-        final WorkflowRun first = this.run(UUID.fromString("50000000-0000-4000-8000-000000000001"), Instant.parse("2026-08-10T12:00:00Z"));
-        final WorkflowRun second = this.run(UUID.fromString("50000000-0000-4000-8000-000000000002"), Instant.parse("2026-08-10T12:01:00Z"));
+        final WorkflowRunSummary first = this.summary(UUID.fromString("50000000-0000-4000-8000-000000000001"), Instant.parse("2026-08-10T12:00:00Z"));
+        final WorkflowRunSummary second = this.summary(UUID.fromString("50000000-0000-4000-8000-000000000002"), Instant.parse("2026-08-10T12:01:00Z"));
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(workflow));
-        when(this.workflowRunRepository.findBySourceWorkflowId(this.workflowId)).thenReturn(List.of(second, first));
+        when(this.workflowRunRepository.findSummariesBySourceWorkflowId(this.workflowId)).thenReturn(List.of(second, first));
 
         assertThat(this.useCases.listWorkflowRuns(this.workflowId)).containsExactly(second, first);
-        verify(this.workflowRunRepository).findBySourceWorkflowId(this.workflowId);
+        verify(this.workflowRunRepository).findSummariesBySourceWorkflowId(this.workflowId);
     }
 
     @Test
@@ -275,6 +276,10 @@ class WorkflowRunUseCasesTest {
 
     private WorkflowRun run(final UUID runId, final Instant createdAt) {
         return new WorkflowRun(runId, this.projectId, this.workflowId, "Full Testing", "Run it", WorkflowRunStatus.QUEUED, List.of(), createdAt, null, null);
+    }
+
+    private WorkflowRunSummary summary(final UUID runId, final Instant createdAt) {
+        return new WorkflowRunSummary(runId, this.workflowId, "Full Testing", WorkflowRunStatus.QUEUED, createdAt, null, null);
     }
 
     private NodeRun nodeRun(final WorkflowRun run, final UUID sourceNodeId) {

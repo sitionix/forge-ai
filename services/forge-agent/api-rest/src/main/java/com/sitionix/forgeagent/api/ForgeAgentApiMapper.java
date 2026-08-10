@@ -34,6 +34,7 @@ import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -122,7 +123,7 @@ class ForgeAgentApiMapper {
         );
     }
 
-    WorkflowRunSummaryResponse toSummaryResponse(final WorkflowRun run) {
+    WorkflowRunSummaryResponse toSummaryResponse(final WorkflowRunSummary run) {
         return new WorkflowRunSummaryResponse(
                 run.id(),
                 run.sourceWorkflowId(),

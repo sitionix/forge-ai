@@ -9,6 +9,7 @@ import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRepository;
@@ -67,10 +68,10 @@ public class WorkflowRunUseCases {
     }
 
     @Transactional(readOnly = true)
-    public List<WorkflowRun> listWorkflowRuns(final UUID workflowId) {
+    public List<WorkflowRunSummary> listWorkflowRuns(final UUID workflowId) {
         this.workflowRepository.findById(workflowId)
                 .orElseThrow(() -> new NotFoundException("WORKFLOW_NOT_FOUND", "Workflow was not found."));
-        return this.workflowRunRepository.findBySourceWorkflowId(workflowId);
+        return this.workflowRunRepository.findSummariesBySourceWorkflowId(workflowId);
     }
 
     @Transactional(readOnly = true)

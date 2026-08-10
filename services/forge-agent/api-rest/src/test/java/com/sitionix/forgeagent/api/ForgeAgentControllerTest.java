@@ -40,6 +40,7 @@ import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import java.time.Instant;
 import java.util.List;
@@ -283,7 +284,7 @@ class ForgeAgentControllerTest {
 
     @Test
     void listWorkflowRuns() {
-        final WorkflowRun run = this.workflowRun();
+        final WorkflowRunSummary run = new WorkflowRunSummary(RUN_ID, WORKFLOW_ID, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null);
         final WorkflowRunSummaryResponse response = new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null);
         when(this.workflowRunUseCases.listWorkflowRuns(WORKFLOW_ID)).thenReturn(List.of(run));
         when(this.mapper.toSummaryResponse(run)).thenReturn(response);

@@ -7,6 +7,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
@@ -42,10 +43,22 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     }
 
     @Override
-    public List<WorkflowRun> findBySourceWorkflowId(final UUID workflowId) {
+    public List<WorkflowRunSummary> findSummariesBySourceWorkflowId(final UUID workflowId) {
         return this.workflowRunRepository.findBySourceWorkflowIdOrderByCreatedAtDescIdDesc(workflowId).stream()
-                .map(this::toDomain)
+                .map(this::toSummary)
                 .toList();
+    }
+
+    private WorkflowRunSummary toSummary(final WorkflowRunEntity entity) {
+        return new WorkflowRunSummary(
+                entity.getId(),
+                entity.getSourceWorkflowId(),
+                entity.getWorkflowName(),
+                WorkflowRunStatus.valueOf(entity.getStatus()),
+                entity.getCreatedAt(),
+                entity.getStartedAt(),
+                entity.getFinishedAt()
+        );
     }
 
     private WorkflowRun toDomain(final WorkflowRunEntity entity) {

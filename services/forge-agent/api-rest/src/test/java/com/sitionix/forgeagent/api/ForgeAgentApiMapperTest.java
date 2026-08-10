@@ -38,6 +38,7 @@ import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import java.time.Instant;
 import java.util.List;
@@ -194,7 +195,15 @@ class ForgeAgentApiMapperTest {
                 null
         );
 
-        assertThat(this.mapper.toSummaryResponse(run)).isEqualTo(new WorkflowRunSummaryResponse(
+        assertThat(this.mapper.toSummaryResponse(new WorkflowRunSummary(
+                RUN_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                WorkflowRunStatus.QUEUED,
+                CREATED,
+                null,
+                null
+        ))).isEqualTo(new WorkflowRunSummaryResponse(
                 RUN_ID,
                 WORKFLOW_ID,
                 "Full Testing",

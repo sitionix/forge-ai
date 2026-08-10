@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
@@ -12,6 +13,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
@@ -100,7 +102,7 @@ class PostgresWorkflowRunRepositoryTest {
     }
 
     @Test
-    void reconstructsDomainIncludingOutputAndFailure() {
+    void findByIdReconstructsDomainIncludingNodeRunsOutputAndFailure() {
         final NodeRunEntity node = this.nodeEntity(NODE_RUN_B, SOURCE_NODE_B, AGENT_B, List.of(NODE_RUN_A));
         node.setOutput("{\"summary\":\"done\"}");
         node.setFailureCode("ERR");
@@ -118,24 +120,30 @@ class PostgresWorkflowRunRepositoryTest {
             assertThat(nodeRun.output()).isEqualTo(new NodeRunOutput("{\"summary\":\"done\"}"));
             assertThat(nodeRun.failure()).isEqualTo(new NodeRunFailure("ERR", "Failed"));
         });
+        verify(this.nodeRunRepository).findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID);
     }
 
     @Test
-    void historyUsesDeterministicRepositoryOrderingAndScopesNodeLoadsByRunId() {
+    void historyUsesDeterministicRepositoryOrderingAndDoesNotLoadNodeRuns() {
         final UUID olderRunId = UUID.fromString("33333333-3333-4333-8333-333333333332");
         when(this.workflowRunRepository.findBySourceWorkflowIdOrderByCreatedAtDescIdDesc(WORKFLOW_ID)).thenReturn(List.of(
                 this.runEntity(RUN_ID, Instant.parse("2026-08-10T12:01:00Z")),
                 this.runEntity(olderRunId, Instant.parse("2026-08-10T12:00:00Z"))
         ));
-        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
-        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(olderRunId)).thenReturn(List.of());
 
-        final List<WorkflowRun> runs = this.repository.findBySourceWorkflowId(WORKFLOW_ID);
+        final List<WorkflowRunSummary> runs = this.repository.findSummariesBySourceWorkflowId(WORKFLOW_ID);
 
-        assertThat(runs).extracting(WorkflowRun::id).containsExactly(RUN_ID, olderRunId);
+        assertThat(runs).extracting(WorkflowRunSummary::id).containsExactly(RUN_ID, olderRunId);
+        assertThat(runs).first().satisfies(summary -> {
+            assertThat(summary.sourceWorkflowId()).isEqualTo(WORKFLOW_ID);
+            assertThat(summary.workflowName()).isEqualTo("Full Testing");
+            assertThat(summary.status()).isEqualTo(WorkflowRunStatus.QUEUED);
+            assertThat(summary.createdAt()).isEqualTo(Instant.parse("2026-08-10T12:01:00Z"));
+            assertThat(summary.startedAt()).isNull();
+            assertThat(summary.finishedAt()).isNull();
+        });
         verify(this.workflowRunRepository).findBySourceWorkflowIdOrderByCreatedAtDescIdDesc(WORKFLOW_ID);
-        verify(this.nodeRunRepository).findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID);
-        verify(this.nodeRunRepository).findByWorkflowRunIdOrderByCreatedAtAscIdAsc(olderRunId);
+        verifyNoInteractions(this.nodeRunRepository);
     }
 
     private WorkflowRun run(final List<NodeRun> nodeRuns) {
