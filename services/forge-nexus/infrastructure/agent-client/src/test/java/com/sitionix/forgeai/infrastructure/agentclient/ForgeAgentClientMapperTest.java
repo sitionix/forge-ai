@@ -6,11 +6,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
@@ -22,11 +30,16 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunFailureResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -39,6 +52,8 @@ class ForgeAgentClientMapperTest {
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID NODE_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
+    private static final UUID RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
+    private static final UUID NODE_RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -115,6 +130,85 @@ class ForgeAgentClientMapperTest {
     }
 
     @Test
+    void workflowRunCommandsAndResponsesMapSuccessfully() throws Exception {
+        assertThat(this.mapper.toRequest(new CreateAgentWorkflowRunCommand("Review auth changes.")))
+                .isEqualTo(new CreateWorkflowRunRequest("Review auth changes."));
+
+        assertThat(this.mapper.toDomain(new WorkflowRunSummaryResponse(
+                RUN_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                AgentWorkflowRunStatus.QUEUED,
+                CREATED,
+                null,
+                null
+        ))).isEqualTo(new AgentWorkflowRunSummary(
+                RUN_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                AgentWorkflowRunStatus.QUEUED,
+                CREATED,
+                null,
+                null
+        ));
+
+        final var nodeRunResponse = new NodeRunResponse(
+                NODE_RUN_ID,
+                NODE_ID,
+                AGENT_ID,
+                "Analyzer",
+                "Analyze changes.",
+                this.objectMapper.readTree("{\"type\":\"object\"}"),
+                List.of(),
+                new NodePositionResponse(1.0, 2.0),
+                AgentNodeRunStatus.PENDING,
+                this.objectMapper.readTree("{\"summary\":\"done\"}"),
+                new NodeRunFailureResponse("ERR", "Failed"),
+                CREATED,
+                null,
+                null
+        );
+        assertThat(this.mapper.toDomain(new WorkflowRunResponse(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.QUEUED,
+                List.of(nodeRunResponse),
+                CREATED,
+                null,
+                null
+        ))).isEqualTo(new AgentWorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.QUEUED,
+                List.of(new AgentNodeRun(
+                        NODE_RUN_ID,
+                        NODE_ID,
+                        AGENT_ID,
+                        "Analyzer",
+                        "Analyze changes.",
+                        new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
+                        List.of(),
+                        new NodePosition(1.0, 2.0),
+                        AgentNodeRunStatus.PENDING,
+                        new AgentNodeRunOutputDocument("{\"summary\":\"done\"}"),
+                        new AgentNodeRunFailure("ERR", "Failed"),
+                        CREATED,
+                        null,
+                        null
+                )),
+                CREATED,
+                null,
+                null
+        ));
+    }
+
+    @Test
     void malformedUpstreamResponsesFailClosed() throws Exception {
         assertThatThrownBy(() -> this.mapper.toDomain(this.responseWithOutputSchema(null)))
                 .isInstanceOf(HttpMessageConversionException.class)
@@ -138,6 +232,20 @@ class ForgeAgentClientMapperTest {
         assertThatThrownBy(() -> this.mapper.requireList(null, "agents"))
                 .isInstanceOf(HttpMessageConversionException.class)
                 .hasMessageContaining("agents");
+        assertThatThrownBy(() -> this.mapper.toDomain(new WorkflowRunResponse(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.QUEUED,
+                List.of(new NodeRunResponse(NODE_RUN_ID, NODE_ID, AGENT_ID, "Analyzer", "Analyze", this.objectMapper.readTree("[]"), List.of(), new NodePositionResponse(1.0, 2.0), AgentNodeRunStatus.PENDING, null, null, CREATED, null, null)),
+                CREATED,
+                null,
+                null
+        )))
+                .isInstanceOf(HttpMessageConversionException.class)
+                .hasMessageContaining("nodeRun.agentOutputSchema");
     }
 
     private AgentDefinitionResponse responseWithOutputSchema(final com.fasterxml.jackson.databind.JsonNode outputSchema) {

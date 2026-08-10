@@ -3,11 +3,14 @@ package com.sitionix.forgeagent.it.infra;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.ForgeAgentErrorResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
+import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
@@ -91,5 +94,21 @@ public final class ForgeAgentMockMvcEndpoint {
 
     public static Endpoint<SaveWorkflowRequest, ForgeAgentErrorResponse> updateWorkflowError() {
         return Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.PUT, SaveWorkflowRequest.class, ForgeAgentErrorResponse.class);
+    }
+
+    public static Endpoint<CreateWorkflowRunRequest, WorkflowRunResponse> createWorkflowRun() {
+        return Endpoint.createContract("/api/v1/workflows/{workflowId}/runs", HttpMethod.POST, CreateWorkflowRunRequest.class, WorkflowRunResponse.class);
+    }
+
+    public static Endpoint<CreateWorkflowRunRequest, ForgeAgentErrorResponse> createWorkflowRunError() {
+        return Endpoint.createContract("/api/v1/workflows/{workflowId}/runs", HttpMethod.POST, CreateWorkflowRunRequest.class, ForgeAgentErrorResponse.class);
+    }
+
+    public static Endpoint<Void, WorkflowRunSummaryResponse[]> listWorkflowRuns() {
+        return Endpoint.createContract("/api/v1/workflows/{workflowId}/runs", HttpMethod.GET, Void.class, WorkflowRunSummaryResponse[].class);
+    }
+
+    public static Endpoint<Void, WorkflowRunResponse> getWorkflowRun() {
+        return Endpoint.createContract("/api/v1/workflow-runs/{runId}", HttpMethod.GET, Void.class, WorkflowRunResponse.class);
     }
 }

@@ -4,14 +4,18 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import java.util.List;
 import java.util.UUID;
@@ -85,5 +89,23 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     public AgentWorkflow updateWorkflow(final UUID workflowId, final SaveAgentWorkflowCommand command) {
         final SaveAgentWorkflowRequest request = this.mapper.toRequest(command);
         return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.updateWorkflow(workflowId, request)));
+    }
+
+    @Override
+    public AgentWorkflowRun createWorkflowRun(final UUID workflowId, final CreateAgentWorkflowRunCommand command) {
+        final CreateWorkflowRunRequest request = this.mapper.toRequest(command);
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createWorkflowRun(workflowId, request)));
+    }
+
+    @Override
+    public List<AgentWorkflowRunSummary> listWorkflowRuns(final UUID workflowId) {
+        return this.mapper.requireList(this.clientCallExecutor.execute(() -> this.httpClient.listWorkflowRuns(workflowId)), "workflow runs").stream()
+                .map(this.mapper::toDomain)
+                .toList();
+    }
+
+    @Override
+    public AgentWorkflowRun getWorkflowRun(final UUID runId) {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.getWorkflowRun(runId)));
     }
 }

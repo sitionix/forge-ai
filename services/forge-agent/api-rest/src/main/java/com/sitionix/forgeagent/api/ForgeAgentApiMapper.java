@@ -6,14 +6,20 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.NodeRunFailureResponse;
+import com.sitionix.forgeagent.api.dto.NodeRunResponse;
 import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
+import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
+import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
@@ -23,9 +29,11 @@ import com.sitionix.forgeagent.domain.model.AgentDetails;
 import com.sitionix.forgeagent.domain.model.AgentListItem;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.Workflow;
+import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -69,6 +77,10 @@ class ForgeAgentApiMapper {
         );
     }
 
+    CreateWorkflowRunCommand toCommand(final CreateWorkflowRunRequest request) {
+        return new CreateWorkflowRunCommand(request.input());
+    }
+
     ProjectResponse toResponse(final Project project) {
         return new ProjectResponse(project.id(), project.name(), project.createdAt(), project.updatedAt());
     }
@@ -110,6 +122,33 @@ class ForgeAgentApiMapper {
         );
     }
 
+    WorkflowRunSummaryResponse toSummaryResponse(final WorkflowRun run) {
+        return new WorkflowRunSummaryResponse(
+                run.id(),
+                run.sourceWorkflowId(),
+                run.workflowName(),
+                run.status(),
+                run.createdAt(),
+                run.startedAt(),
+                run.finishedAt()
+        );
+    }
+
+    WorkflowRunResponse toResponse(final WorkflowRun run) {
+        return new WorkflowRunResponse(
+                run.id(),
+                run.projectId(),
+                run.sourceWorkflowId(),
+                run.workflowName(),
+                run.input(),
+                run.status(),
+                run.nodeRuns().stream().map(this::toResponse).toList(),
+                run.createdAt(),
+                run.startedAt(),
+                run.finishedAt()
+        );
+    }
+
     private Node toNode(final NodeRequest request) {
         final NodePosition position = request.position() == null
                 ? new NodePosition(0.0, 0.0)
@@ -129,5 +168,28 @@ class ForgeAgentApiMapper {
                 node.dependsOnNodeIds(),
                 new NodePositionResponse(node.position().x(), node.position().y())
         );
+    }
+
+    private NodeRunResponse toResponse(final NodeRun nodeRun) {
+        try {
+            return new NodeRunResponse(
+                    nodeRun.id(),
+                    nodeRun.sourceNodeId(),
+                    nodeRun.sourceAgentId(),
+                    nodeRun.agentName(),
+                    nodeRun.agentInstructions(),
+                    this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
+                    nodeRun.dependsOnNodeRunIds(),
+                    new NodePositionResponse(nodeRun.position().x(), nodeRun.position().y()),
+                    nodeRun.status(),
+                    nodeRun.output() == null ? null : this.objectMapper.readTree(nodeRun.output().jsonValue()),
+                    nodeRun.failure() == null ? null : new NodeRunFailureResponse(nodeRun.failure().code(), nodeRun.failure().message()),
+                    nodeRun.createdAt(),
+                    nodeRun.startedAt(),
+                    nodeRun.finishedAt()
+            );
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalStateException("Stored node run JSON is invalid.", exception);
+        }
     }
 }

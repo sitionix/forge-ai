@@ -4,8 +4,11 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import java.util.List;
@@ -32,4 +35,10 @@ public interface ForgeAgentClient {
     AgentWorkflow getWorkflow(UUID workflowId);
 
     AgentWorkflow updateWorkflow(UUID workflowId, SaveAgentWorkflowCommand command);
+
+    AgentWorkflowRun createWorkflowRun(UUID workflowId, CreateAgentWorkflowRunCommand command);
+
+    List<AgentWorkflowRunSummary> listWorkflowRuns(UUID workflowId);
+
+    AgentWorkflowRun getWorkflowRun(UUID runId);
 }

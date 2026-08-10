@@ -4,10 +4,13 @@ import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
@@ -113,6 +116,38 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "requestAgentProxyUpdateWorkflow.json",
                 HttpStatus.OK,
                 "responseAgentProxyWorkflowUpdated.json");
+    }
+
+    public static Endpoint<CreateWorkflowRunRequest, WorkflowRunResponse> createWorkflowRun() {
+        return upstreamPost("/api/v1/workflows/{workflowId}/runs",
+                CreateWorkflowRunRequest.class,
+                WorkflowRunResponse.class,
+                "requestAgentProxyCreateWorkflowRun.json",
+                HttpStatus.CREATED,
+                "responseAgentProxyWorkflowRun.json");
+    }
+
+    public static Endpoint<Void, WorkflowRunSummaryResponse[]> listWorkflowRuns() {
+        return upstreamGet("/api/v1/workflows/{workflowId}/runs",
+                WorkflowRunSummaryResponse[].class,
+                HttpStatus.OK,
+                "responseAgentProxyWorkflowRuns.json");
+    }
+
+    public static Endpoint<Void, WorkflowRunResponse> getWorkflowRun() {
+        return upstreamGet("/api/v1/workflow-runs/{runId}",
+                WorkflowRunResponse.class,
+                HttpStatus.OK,
+                "responseAgentProxyWorkflowRun.json");
+    }
+
+    public static Endpoint<CreateWorkflowRunRequest, InfrastructureErrorResponse> createWorkflowRunValidationError() {
+        return upstreamPost("/api/v1/workflows/{workflowId}/runs",
+                CreateWorkflowRunRequest.class,
+                InfrastructureErrorResponse.class,
+                "requestAgentProxyCreateWorkflowRun.json",
+                HttpStatus.CONFLICT,
+                "responseAgentProxyValidationError.json");
     }
 
     private static <Res> Endpoint<Void, Res> upstreamGet(final String path,
