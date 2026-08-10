@@ -2,8 +2,8 @@ package com.sitionix.forgeai.infrastructure.agentclient;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
@@ -26,9 +26,11 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequ
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentMatchers;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -53,78 +55,176 @@ class ForgeAgentClientAdapterTest {
 
     @BeforeEach
     void setUp() {
+        when(this.executor.execute(ArgumentMatchers.<Supplier<Object>>any()))
+                .thenAnswer(invocation -> invocation.<Supplier<Object>>getArgument(0).get());
         this.adapter = new ForgeAgentClientAdapter(this.httpClient, this.mapper, this.executor);
     }
 
     @Test
-    void listProjectsDelegatesThroughExecutorAndMapper() {
+    void listProjectsExecutesTypedClientCallAndMapsResponse() {
         final var upstreamResponse = new AgentProjectResponse(PROJECT_ID, "Sitionix", CREATED, UPDATED);
         final var expected = new AgentProject(PROJECT_ID, "Sitionix", CREATED, UPDATED);
-        doReturn(List.of(upstreamResponse)).when(this.executor).execute(any());
+        when(this.httpClient.listProjects()).thenReturn(List.of(upstreamResponse));
         when(this.mapper.requireList(List.of(upstreamResponse), "projects")).thenReturn(List.of(upstreamResponse));
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 
         assertThat(this.adapter.listProjects()).containsExactly(expected);
+
+        final InOrder inOrder = inOrder(this.executor, this.httpClient, this.mapper);
+        inOrder.verify(this.executor).execute(any());
+        inOrder.verify(this.httpClient).listProjects();
+        inOrder.verify(this.mapper).requireList(List.of(upstreamResponse), "projects");
+        inOrder.verify(this.mapper).toDomain(upstreamResponse);
     }
 
     @Test
-    void createProjectMapsRequestExecutesCallAndMapsResponse() {
+    void createProjectMapsRequestExecutesTypedClientCallAndMapsResponse() {
         final var command = new CreateAgentProjectCommand("Sitionix");
         final var request = new AgentProjectRequest("Sitionix");
         final var upstreamResponse = new AgentProjectResponse(PROJECT_ID, "Sitionix", CREATED, UPDATED);
         final var expected = new AgentProject(PROJECT_ID, "Sitionix", CREATED, UPDATED);
         when(this.mapper.toRequest(command)).thenReturn(request);
-        doReturn(upstreamResponse).when(this.executor).execute(any());
+        when(this.httpClient.createProject(request)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 
         assertThat(this.adapter.createProject(command)).isEqualTo(expected);
 
-        final InOrder inOrder = inOrder(this.mapper, this.executor);
+        final InOrder inOrder = inOrder(this.mapper, this.executor, this.httpClient);
         inOrder.verify(this.mapper).toRequest(command);
         inOrder.verify(this.executor).execute(any());
+        inOrder.verify(this.httpClient).createProject(request);
+        inOrder.verify(this.mapper).toDomain(upstreamResponse);
     }
 
     @Test
-    void agentCallsUseTypedRequestResponseFlow() {
-        final var listResponse = new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED);
-        final var listItem = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED);
+    void listProjectAgentsExecutesTypedClientCallAndMapsResponse() {
+        final var upstreamResponse = new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED);
+        final var expected = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED);
+        when(this.httpClient.listProjectAgents(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
+        when(this.mapper.requireList(List.of(upstreamResponse), "agents")).thenReturn(List.of(upstreamResponse));
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.listProjectAgents(PROJECT_ID)).containsExactly(expected);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).listProjectAgents(PROJECT_ID);
+        verify(this.mapper).requireList(List.of(upstreamResponse), "agents");
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void createAgentMapsRequestExecutesTypedClientCallAndMapsResponse() {
         final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{\"type\":\"object\"}"));
         final var request = new AgentDefinitionRequest("Backend", "Do work.", null);
         final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, CREATED, UPDATED);
-        final var details = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), CREATED, UPDATED);
-        doReturn(List.of(listResponse), upstreamResponse, upstreamResponse, upstreamResponse).when(this.executor).execute(any());
-        when(this.mapper.requireList(List.of(listResponse), "agents")).thenReturn(List.of(listResponse));
-        when(this.mapper.toDomain(listResponse)).thenReturn(listItem);
+        final var expected = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), CREATED, UPDATED);
         when(this.mapper.toRequest(command)).thenReturn(request);
-        when(this.mapper.toDomain(upstreamResponse)).thenReturn(details);
+        when(this.httpClient.createAgent(PROJECT_ID, request)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 
-        assertThat(this.adapter.listProjectAgents(PROJECT_ID)).containsExactly(listItem);
-        assertThat(this.adapter.createAgent(PROJECT_ID, command)).isEqualTo(details);
-        assertThat(this.adapter.getAgent(AGENT_ID)).isEqualTo(details);
-        assertThat(this.adapter.updateAgent(AGENT_ID, command)).isEqualTo(details);
+        assertThat(this.adapter.createAgent(PROJECT_ID, command)).isEqualTo(expected);
+
+        verify(this.mapper).toRequest(command);
+        verify(this.executor).execute(any());
+        verify(this.httpClient).createAgent(PROJECT_ID, request);
+        verify(this.mapper).toDomain(upstreamResponse);
     }
 
     @Test
-    void workflowCallsUseTypedRequestResponseFlow() {
-        final var createCommand = new CreateAgentWorkflowCommand("Full Testing");
-        final var saveCommand = new SaveAgentWorkflowCommand("Full Testing", List.of());
-        final var createRequest = new AgentWorkflowRequest("Full Testing");
-        final var saveRequest = new SaveAgentWorkflowRequest("Full Testing", List.of());
+    void getAgentExecutesTypedClientCallAndMapsResponse() {
+        final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, CREATED, UPDATED);
+        final var expected = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), CREATED, UPDATED);
+        when(this.httpClient.getAgent(AGENT_ID)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.getAgent(AGENT_ID)).isEqualTo(expected);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).getAgent(AGENT_ID);
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void updateAgentMapsRequestExecutesTypedClientCallAndMapsResponse() {
+        final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{\"type\":\"object\"}"));
+        final var request = new AgentDefinitionRequest("Backend", "Do work.", null);
+        final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, CREATED, UPDATED);
+        final var expected = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), CREATED, UPDATED);
+        when(this.mapper.toRequest(command)).thenReturn(request);
+        when(this.httpClient.updateAgent(AGENT_ID, request)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.updateAgent(AGENT_ID, command)).isEqualTo(expected);
+
+        verify(this.mapper).toRequest(command);
+        verify(this.executor).execute(any());
+        verify(this.httpClient).updateAgent(AGENT_ID, request);
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void listProjectWorkflowsExecutesTypedClientCallAndMapsResponse() {
         final var upstreamResponse = new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
-        final var workflow = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
-        doReturn(List.of(upstreamResponse), upstreamResponse, upstreamResponse, upstreamResponse).when(this.executor).execute(any());
+        final var expected = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
+        when(this.httpClient.listProjectWorkflows(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
         when(this.mapper.requireList(List.of(upstreamResponse), "workflows")).thenReturn(List.of(upstreamResponse));
-        when(this.mapper.toDomain(upstreamResponse)).thenReturn(workflow);
-        when(this.mapper.toRequest(createCommand)).thenReturn(createRequest);
-        when(this.mapper.toRequest(saveCommand)).thenReturn(saveRequest);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 
-        assertThat(this.adapter.listProjectWorkflows(PROJECT_ID)).containsExactly(workflow);
-        assertThat(this.adapter.createWorkflow(PROJECT_ID, createCommand)).isEqualTo(workflow);
-        assertThat(this.adapter.getWorkflow(WORKFLOW_ID)).isEqualTo(workflow);
-        assertThat(this.adapter.updateWorkflow(WORKFLOW_ID, saveCommand)).isEqualTo(workflow);
+        assertThat(this.adapter.listProjectWorkflows(PROJECT_ID)).containsExactly(expected);
 
-        final InOrder inOrder = inOrder(this.executor, this.mapper);
-        inOrder.verify(this.executor).execute(any());
-        inOrder.verify(this.mapper).requireList(List.of(upstreamResponse), "workflows");
+        verify(this.executor).execute(any());
+        verify(this.httpClient).listProjectWorkflows(PROJECT_ID);
+        verify(this.mapper).requireList(List.of(upstreamResponse), "workflows");
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void createWorkflowMapsRequestExecutesTypedClientCallAndMapsResponse() {
+        final var command = new CreateAgentWorkflowCommand("Full Testing");
+        final var request = new AgentWorkflowRequest("Full Testing");
+        final var upstreamResponse = new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
+        final var expected = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
+        when(this.mapper.toRequest(command)).thenReturn(request);
+        when(this.httpClient.createWorkflow(PROJECT_ID, request)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.createWorkflow(PROJECT_ID, command)).isEqualTo(expected);
+
+        verify(this.mapper).toRequest(command);
+        verify(this.executor).execute(any());
+        verify(this.httpClient).createWorkflow(PROJECT_ID, request);
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void getWorkflowExecutesTypedClientCallAndMapsResponse() {
+        final var upstreamResponse = new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
+        final var expected = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
+        when(this.httpClient.getWorkflow(WORKFLOW_ID)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.getWorkflow(WORKFLOW_ID)).isEqualTo(expected);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).getWorkflow(WORKFLOW_ID);
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void updateWorkflowMapsRequestExecutesTypedClientCallAndMapsResponse() {
+        final var command = new SaveAgentWorkflowCommand("Full Testing", List.of());
+        final var request = new SaveAgentWorkflowRequest("Full Testing", List.of());
+        final var upstreamResponse = new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
+        final var expected = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
+        when(this.mapper.toRequest(command)).thenReturn(request);
+        when(this.httpClient.updateWorkflow(WORKFLOW_ID, request)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.updateWorkflow(WORKFLOW_ID, command)).isEqualTo(expected);
+
+        verify(this.mapper).toRequest(command);
+        verify(this.executor).execute(any());
+        verify(this.httpClient).updateWorkflow(WORKFLOW_ID, request);
+        verify(this.mapper).toDomain(upstreamResponse);
     }
 }
