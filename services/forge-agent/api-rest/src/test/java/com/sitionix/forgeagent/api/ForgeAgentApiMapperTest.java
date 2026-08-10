@@ -7,7 +7,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.NodeRunResponse;
 import com.sitionix.forgeagent.api.dto.NodePositionRequest;
 import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
@@ -15,8 +17,11 @@ import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
+import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
+import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
@@ -25,9 +30,16 @@ import com.sitionix.forgeagent.domain.model.AgentDetails;
 import com.sitionix.forgeagent.domain.model.AgentListItem;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeRun;
+import com.sitionix.forgeagent.domain.model.NodeRunFailure;
+import com.sitionix.forgeagent.domain.model.NodeRunOutput;
+import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.Workflow;
+import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
+import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -40,6 +52,8 @@ class ForgeAgentApiMapperTest {
     private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID NODE_A = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     private static final UUID NODE_B = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    private static final UUID RUN_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
+    private static final UUID NODE_RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -145,6 +159,85 @@ class ForgeAgentApiMapperTest {
                 List.of(new NodeResponse(NODE_B, AGENT_ID, List.of(NODE_A), new NodePositionResponse(3.0, 4.0))),
                 CREATED,
                 UPDATED
+        ));
+    }
+
+    @Test
+    void mapsWorkflowRunRequestsAndResponses() throws Exception {
+        assertThat(this.mapper.toCommand(new CreateWorkflowRunRequest("Review auth changes.")))
+                .isEqualTo(new CreateWorkflowRunCommand("Review auth changes."));
+
+        final WorkflowRun run = new WorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                "Review auth changes.",
+                WorkflowRunStatus.QUEUED,
+                List.of(new NodeRun(
+                        NODE_RUN_ID,
+                        NODE_A,
+                        AGENT_ID,
+                        "Analyzer",
+                        "Analyze changes.",
+                        AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                        List.of(),
+                        new NodePosition(1.0, 2.0),
+                        NodeRunStatus.PENDING,
+                        new NodeRunOutput("{\"summary\":\"done\"}"),
+                        new NodeRunFailure("ERR", "Failed"),
+                        CREATED,
+                        null,
+                        null
+                )),
+                CREATED,
+                null,
+                null
+        );
+
+        assertThat(this.mapper.toSummaryResponse(new WorkflowRunSummary(
+                RUN_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                WorkflowRunStatus.QUEUED,
+                CREATED,
+                null,
+                null
+        ))).isEqualTo(new WorkflowRunSummaryResponse(
+                RUN_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                WorkflowRunStatus.QUEUED,
+                CREATED,
+                null,
+                null
+        ));
+        assertThat(this.mapper.toResponse(run)).isEqualTo(new WorkflowRunResponse(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                "Review auth changes.",
+                WorkflowRunStatus.QUEUED,
+                List.of(new NodeRunResponse(
+                        NODE_RUN_ID,
+                        NODE_A,
+                        AGENT_ID,
+                        "Analyzer",
+                        "Analyze changes.",
+                        this.objectMapper.readTree("{\"type\":\"object\"}"),
+                        List.of(),
+                        new NodePositionResponse(1.0, 2.0),
+                        NodeRunStatus.PENDING,
+                        this.objectMapper.readTree("{\"summary\":\"done\"}"),
+                        new com.sitionix.forgeagent.api.dto.NodeRunFailureResponse("ERR", "Failed"),
+                        CREATED,
+                        null,
+                        null
+                )),
+                CREATED,
+                null,
+                null
         ));
     }
 }

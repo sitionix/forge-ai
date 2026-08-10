@@ -4,11 +4,16 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
@@ -55,6 +60,10 @@ public class AgentProxyApiMapper {
         );
     }
 
+    public CreateAgentWorkflowRunCommand toCommand(final CreateAgentWorkflowRunRequest request) {
+        return new CreateAgentWorkflowRunCommand(request.input());
+    }
+
     public AgentProjectResponse toResponse(final AgentProject project) {
         return new AgentProjectResponse(project.id(), project.name(), project.createdAt(), project.updatedAt());
     }
@@ -96,6 +105,33 @@ public class AgentProxyApiMapper {
         );
     }
 
+    public AgentWorkflowRunSummaryResponse toResponse(final AgentWorkflowRunSummary run) {
+        return new AgentWorkflowRunSummaryResponse(
+                run.id(),
+                run.sourceWorkflowId(),
+                run.workflowName(),
+                run.status(),
+                run.createdAt(),
+                run.startedAt(),
+                run.finishedAt()
+        );
+    }
+
+    public AgentWorkflowRunResponse toResponse(final AgentWorkflowRun run) {
+        return new AgentWorkflowRunResponse(
+                run.id(),
+                run.projectId(),
+                run.sourceWorkflowId(),
+                run.workflowName(),
+                run.input(),
+                run.status(),
+                run.nodeRuns().stream().map(this::toResponse).toList(),
+                run.createdAt(),
+                run.startedAt(),
+                run.finishedAt()
+        );
+    }
+
     private Node toDomain(final NodeRequest request) {
         return new Node(
                 request.id(),
@@ -112,5 +148,32 @@ public class AgentProxyApiMapper {
                 node.dependsOnNodeIds(),
                 new NodePositionResponse(node.position().x(), node.position().y())
         );
+    }
+
+    private AgentNodeRunResponse toResponse(final AgentNodeRun nodeRun) {
+        try {
+            return new AgentNodeRunResponse(
+                    nodeRun.id(),
+                    nodeRun.sourceNodeId(),
+                    nodeRun.sourceAgentId(),
+                    nodeRun.agentName(),
+                    nodeRun.agentInstructions(),
+                    this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
+                    nodeRun.dependsOnNodeRunIds(),
+                    new NodePositionResponse(nodeRun.position().x(), nodeRun.position().y()),
+                    nodeRun.status(),
+                    nodeRun.output() == null ? null : this.objectMapper.readTree(nodeRun.output().jsonValue()),
+                    nodeRun.failure() == null ? null : this.toResponse(nodeRun.failure()),
+                    nodeRun.createdAt(),
+                    nodeRun.startedAt(),
+                    nodeRun.finishedAt()
+            );
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalStateException("Agent workflow run JSON is not valid JSON.", exception);
+        }
+    }
+
+    private AgentNodeRunFailureResponse toResponse(final AgentNodeRunFailure failure) {
+        return new AgentNodeRunFailureResponse(failure.code(), failure.message());
     }
 }

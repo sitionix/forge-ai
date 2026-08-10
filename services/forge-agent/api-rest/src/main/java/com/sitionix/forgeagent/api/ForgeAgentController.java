@@ -3,13 +3,17 @@ package com.sitionix.forgeagent.api;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
+import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
 import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
+import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowUseCases;
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -31,6 +35,7 @@ public class ForgeAgentController {
     private final ProjectUseCases projectUseCases;
     private final AgentUseCases agentUseCases;
     private final WorkflowUseCases workflowUseCases;
+    private final WorkflowRunUseCases workflowRunUseCases;
     private final ForgeAgentApiMapper mapper;
 
     @GetMapping("/api/v1/projects")
@@ -94,5 +99,26 @@ public class ForgeAgentController {
     public ResponseEntity<WorkflowResponse> updateWorkflow(@PathVariable final UUID workflowId,
                                                            @Valid @RequestBody final SaveWorkflowRequest request) {
         return ResponseEntity.ok(this.mapper.toResponse(this.workflowUseCases.updateWorkflow(workflowId, this.mapper.toCommand(request))));
+    }
+
+    @PostMapping("/api/v1/workflows/{workflowId}/runs")
+    public ResponseEntity<WorkflowRunResponse> createWorkflowRun(@PathVariable final UUID workflowId,
+                                                                 @Valid @RequestBody final CreateWorkflowRunRequest request) {
+        final WorkflowRunResponse response = this.mapper.toResponse(
+                this.workflowRunUseCases.createWorkflowRun(workflowId, this.mapper.toCommand(request))
+        );
+        return ResponseEntity.created(URI.create("/api/v1/workflow-runs/" + response.id())).body(response);
+    }
+
+    @GetMapping("/api/v1/workflows/{workflowId}/runs")
+    public ResponseEntity<List<WorkflowRunSummaryResponse>> listWorkflowRuns(@PathVariable final UUID workflowId) {
+        return ResponseEntity.ok(this.workflowRunUseCases.listWorkflowRuns(workflowId).stream()
+                .map(this.mapper::toSummaryResponse)
+                .toList());
+    }
+
+    @GetMapping("/api/v1/workflow-runs/{runId}")
+    public ResponseEntity<WorkflowRunResponse> getWorkflowRun(@PathVariable final UUID runId) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.workflowRunUseCases.getWorkflowRun(runId)));
     }
 }

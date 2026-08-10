@@ -8,7 +8,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.NodeRunResponse;
 import com.sitionix.forgeagent.api.dto.NodePositionRequest;
 import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
@@ -16,21 +18,30 @@ import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
+import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
+import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
+import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowUseCases;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
 import com.sitionix.forgeagent.domain.model.AgentListItem;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeRun;
+import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.Workflow;
+import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
+import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -48,6 +59,8 @@ class ForgeAgentControllerTest {
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID NODE_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
+    private static final UUID RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
+    private static final UUID NODE_RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
     private static final AgentOutputSchema OUTPUT_SCHEMA = AgentOutputSchema.ofCanonicalJsonObject("{}");
 
@@ -58,6 +71,8 @@ class ForgeAgentControllerTest {
     @Mock
     private WorkflowUseCases workflowUseCases;
     @Mock
+    private WorkflowRunUseCases workflowRunUseCases;
+    @Mock
     private ForgeAgentApiMapper mapper;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -65,7 +80,7 @@ class ForgeAgentControllerTest {
 
     @BeforeEach
     void setUp() {
-        this.controller = new ForgeAgentController(this.projectUseCases, this.agentUseCases, this.workflowUseCases, this.mapper);
+        this.controller = new ForgeAgentController(this.projectUseCases, this.agentUseCases, this.workflowUseCases, this.workflowRunUseCases, this.mapper);
     }
 
     @Test
@@ -247,6 +262,56 @@ class ForgeAgentControllerTest {
         verify(this.mapper).toResponse(workflow);
     }
 
+    @Test
+    void createWorkflowRun() {
+        final CreateWorkflowRunRequest request = new CreateWorkflowRunRequest("Review auth changes.");
+        final CreateWorkflowRunCommand command = new CreateWorkflowRunCommand("Review auth changes.");
+        final WorkflowRun run = this.workflowRun();
+        final WorkflowRunResponse response = this.workflowRunResponse();
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, command)).thenReturn(run);
+        when(this.mapper.toResponse(run)).thenReturn(response);
+
+        final var actual = this.controller.createWorkflowRun(WORKFLOW_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(actual.getHeaders().getLocation().toString()).isEqualTo("/api/v1/workflow-runs/" + RUN_ID);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
+        verify(this.workflowRunUseCases).createWorkflowRun(WORKFLOW_ID, command);
+        verify(this.mapper).toResponse(run);
+    }
+
+    @Test
+    void listWorkflowRuns() {
+        final WorkflowRunSummary run = new WorkflowRunSummary(RUN_ID, WORKFLOW_ID, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null);
+        final WorkflowRunSummaryResponse response = new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null);
+        when(this.workflowRunUseCases.listWorkflowRuns(WORKFLOW_ID)).thenReturn(List.of(run));
+        when(this.mapper.toSummaryResponse(run)).thenReturn(response);
+
+        final var actual = this.controller.listWorkflowRuns(WORKFLOW_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).containsExactly(response);
+        verify(this.workflowRunUseCases).listWorkflowRuns(WORKFLOW_ID);
+        verify(this.mapper).toSummaryResponse(run);
+    }
+
+    @Test
+    void getWorkflowRun() {
+        final WorkflowRun run = this.workflowRun();
+        final WorkflowRunResponse response = this.workflowRunResponse();
+        when(this.workflowRunUseCases.getWorkflowRun(RUN_ID)).thenReturn(run);
+        when(this.mapper.toResponse(run)).thenReturn(response);
+
+        final var actual = this.controller.getWorkflowRun(RUN_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.workflowRunUseCases).getWorkflowRun(RUN_ID);
+        verify(this.mapper).toResponse(run);
+    }
+
     private Project project() {
         return new Project(PROJECT_ID, "Sitionix", "sitionix", NOW, NOW);
     }
@@ -291,6 +356,66 @@ class ForgeAgentControllerTest {
                 List.of(new NodeResponse(NODE_ID, AGENT_ID, List.of(), new NodePositionResponse(1.0, 2.0))),
                 NOW,
                 NOW
+        );
+    }
+
+    private WorkflowRun workflowRun() {
+        return new WorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                "Review auth changes.",
+                WorkflowRunStatus.QUEUED,
+                List.of(new NodeRun(
+                        NODE_RUN_ID,
+                        NODE_ID,
+                        AGENT_ID,
+                        "Backend",
+                        "Do work.",
+                        OUTPUT_SCHEMA,
+                        List.of(),
+                        new NodePosition(1.0, 2.0),
+                        NodeRunStatus.PENDING,
+                        null,
+                        null,
+                        NOW,
+                        null,
+                        null
+                )),
+                NOW,
+                null,
+                null
+        );
+    }
+
+    private WorkflowRunResponse workflowRunResponse() {
+        return new WorkflowRunResponse(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                "Full Testing",
+                "Review auth changes.",
+                WorkflowRunStatus.QUEUED,
+                List.of(new NodeRunResponse(
+                        NODE_RUN_ID,
+                        NODE_ID,
+                        AGENT_ID,
+                        "Backend",
+                        "Do work.",
+                        this.objectMapper.createObjectNode(),
+                        List.of(),
+                        new NodePositionResponse(1.0, 2.0),
+                        NodeRunStatus.PENDING,
+                        null,
+                        null,
+                        NOW,
+                        null,
+                        null
+                )),
+                NOW,
+                null,
+                null
         );
     }
 }

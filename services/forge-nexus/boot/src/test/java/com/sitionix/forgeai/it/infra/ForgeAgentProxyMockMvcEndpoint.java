@@ -4,10 +4,13 @@ import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionListResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse;
+import com.sitionix.forgeai.api.agentproxy.CreateAgentWorkflowRunRequest;
 import com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
@@ -129,6 +132,38 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                 "requestAgentProxyUpdateWorkflow.json",
                 HttpStatus.OK,
                 "responseAgentProxyWorkflowUpdated.json");
+    }
+
+    public static Endpoint<CreateAgentWorkflowRunRequest, AgentWorkflowRunResponse> createWorkflowRun() {
+        return nexusPost("/api/v1/infrastructure/agents/workflows/{workflowId}/runs",
+                CreateAgentWorkflowRunRequest.class,
+                AgentWorkflowRunResponse.class,
+                "requestAgentProxyCreateWorkflowRun.json",
+                HttpStatus.CREATED,
+                "responseAgentProxyWorkflowRun.json");
+    }
+
+    public static Endpoint<Void, AgentWorkflowRunSummaryResponse[]> listWorkflowRuns() {
+        return nexusGet("/api/v1/infrastructure/agents/workflows/{workflowId}/runs",
+                AgentWorkflowRunSummaryResponse[].class,
+                HttpStatus.OK,
+                "responseAgentProxyWorkflowRuns.json");
+    }
+
+    public static Endpoint<Void, AgentWorkflowRunResponse> getWorkflowRun() {
+        return nexusGet("/api/v1/infrastructure/agents/workflow-runs/{runId}",
+                AgentWorkflowRunResponse.class,
+                HttpStatus.OK,
+                "responseAgentProxyWorkflowRun.json");
+    }
+
+    public static Endpoint<CreateAgentWorkflowRunRequest, InfrastructureErrorResponse> createWorkflowRunValidationError() {
+        return nexusPost("/api/v1/infrastructure/agents/workflows/{workflowId}/runs",
+                CreateAgentWorkflowRunRequest.class,
+                InfrastructureErrorResponse.class,
+                "requestAgentProxyCreateWorkflowRun.json",
+                HttpStatus.CONFLICT,
+                "responseAgentProxyValidationError.json");
     }
 
     private static <Res> Endpoint<Void, Res> nexusGet(final String path,

@@ -4,11 +4,17 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
@@ -20,11 +26,16 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunFailureResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.converter.HttpMessageConversionException;
@@ -113,6 +124,10 @@ public class ForgeAgentClientMapper {
         );
     }
 
+    CreateWorkflowRunRequest toRequest(final CreateAgentWorkflowRunCommand command) {
+        return new CreateWorkflowRunRequest(command.input());
+    }
+
     AgentWorkflow toDomain(final AgentWorkflowResponse response) {
         this.requireResponse(response, "workflow");
         this.requireId(response.id(), "workflow.id");
@@ -127,6 +142,51 @@ public class ForgeAgentClientMapper {
                         .toList(),
                 response.createdAt(),
                 response.updatedAt()
+        );
+    }
+
+    AgentWorkflowRunSummary toDomain(final WorkflowRunSummaryResponse response) {
+        this.requireResponse(response, "workflow run summary");
+        this.requireId(response.id(), "workflowRun.id");
+        this.requireId(response.sourceWorkflowId(), "workflowRun.sourceWorkflowId");
+        this.requireText(response.workflowName(), "workflowRun.workflowName");
+        if (response.status() == null) {
+            throw this.invalid("workflowRun.status must not be null");
+        }
+        return new AgentWorkflowRunSummary(
+                response.id(),
+                response.sourceWorkflowId(),
+                response.workflowName(),
+                response.status(),
+                response.createdAt(),
+                response.startedAt(),
+                response.finishedAt()
+        );
+    }
+
+    AgentWorkflowRun toDomain(final WorkflowRunResponse response) {
+        this.requireResponse(response, "workflow run");
+        this.requireId(response.id(), "workflowRun.id");
+        this.requireId(response.projectId(), "workflowRun.projectId");
+        this.requireId(response.sourceWorkflowId(), "workflowRun.sourceWorkflowId");
+        this.requireText(response.workflowName(), "workflowRun.workflowName");
+        this.requireText(response.input(), "workflowRun.input");
+        if (response.status() == null) {
+            throw this.invalid("workflowRun.status must not be null");
+        }
+        return new AgentWorkflowRun(
+                response.id(),
+                response.projectId(),
+                response.sourceWorkflowId(),
+                response.workflowName(),
+                response.input(),
+                response.status(),
+                this.requireList(response.nodeRuns(), "workflowRun.nodeRuns").stream()
+                        .map(this::toDomain)
+                        .toList(),
+                response.createdAt(),
+                response.startedAt(),
+                response.finishedAt()
         );
     }
 
@@ -153,6 +213,51 @@ public class ForgeAgentClientMapper {
                 this.requireList(response.dependsOnNodeIds(), "node.dependsOnNodeIds"),
                 new NodePosition(position.x(), position.y())
         );
+    }
+
+    private AgentNodeRun toDomain(final NodeRunResponse response) {
+        this.requireResponse(response, "node run");
+        this.requireId(response.id(), "nodeRun.id");
+        this.requireId(response.sourceNodeId(), "nodeRun.sourceNodeId");
+        this.requireId(response.sourceAgentId(), "nodeRun.sourceAgentId");
+        this.requireText(response.agentName(), "nodeRun.agentName");
+        this.requireText(response.agentInstructions(), "nodeRun.agentInstructions");
+        if (response.agentOutputSchema() == null || !response.agentOutputSchema().isObject()) {
+            throw this.invalid("nodeRun.agentOutputSchema must be a JSON object");
+        }
+        if (response.position() == null) {
+            throw this.invalid("nodeRun.position must not be null");
+        }
+        if (response.status() == null) {
+            throw this.invalid("nodeRun.status must not be null");
+        }
+        try {
+            return new AgentNodeRun(
+                    response.id(),
+                    response.sourceNodeId(),
+                    response.sourceAgentId(),
+                    response.agentName(),
+                    response.agentInstructions(),
+                    new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(response.agentOutputSchema())),
+                    this.requireList(response.dependsOnNodeRunIds(), "nodeRun.dependsOnNodeRunIds"),
+                    new NodePosition(response.position().x(), response.position().y()),
+                    response.status(),
+                    response.output() == null ? null : new AgentNodeRunOutputDocument(this.objectMapper.writeValueAsString(response.output())),
+                    response.failure() == null ? null : this.toDomain(response.failure()),
+                    response.createdAt(),
+                    response.startedAt(),
+                    response.finishedAt()
+            );
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalArgumentException("Forge Agent node run JSON was invalid.", exception);
+        }
+    }
+
+    private AgentNodeRunFailure toDomain(final NodeRunFailureResponse response) {
+        this.requireResponse(response, "node run failure");
+        this.requireText(response.code(), "nodeRun.failure.code");
+        this.requireText(response.message(), "nodeRun.failure.message");
+        return new AgentNodeRunFailure(response.code(), response.message());
     }
 
     <T> List<T> requireList(final List<T> responses, final String field) {

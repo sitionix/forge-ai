@@ -3,18 +3,24 @@ package com.sitionix.forgeai.api;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionListResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProxyApiMapper;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse;
+import com.sitionix.forgeai.api.agentproxy.CreateAgentWorkflowRunRequest;
 import com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.domain.usecase.CreateAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
+import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.GetAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflow;
+import com.sitionix.forgeai.domain.usecase.GetAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.ListAgentProjects;
+import com.sitionix.forgeai.domain.usecase.ListAgentWorkflowRuns;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflows;
 import com.sitionix.forgeai.domain.usecase.ListProjectAgentDefinitions;
 import com.sitionix.forgeai.domain.usecase.UpdateAgentDefinition;
@@ -46,6 +52,9 @@ public class ForgeAiInfrastructureAgentsController {
     private final CreateAgentWorkflow createAgentWorkflow;
     private final GetAgentWorkflow getAgentWorkflow;
     private final UpdateAgentWorkflow updateAgentWorkflow;
+    private final CreateAgentWorkflowRun createAgentWorkflowRun;
+    private final ListAgentWorkflowRuns listAgentWorkflowRuns;
+    private final GetAgentWorkflowRun getAgentWorkflowRun;
     private final AgentProxyApiMapper mapper;
 
     @GetMapping("/api/v1/infrastructure/agents/projects")
@@ -113,5 +122,26 @@ public class ForgeAiInfrastructureAgentsController {
     public ResponseEntity<AgentWorkflowResponse> updateWorkflow(@PathVariable final UUID workflowId,
                                                                 @Valid @RequestBody final SaveAgentWorkflowRequest request) {
         return ResponseEntity.ok(this.mapper.toResponse(this.updateAgentWorkflow.execute(workflowId, this.mapper.toCommand(request))));
+    }
+
+    @PostMapping("/api/v1/infrastructure/agents/workflows/{workflowId}/runs")
+    public ResponseEntity<AgentWorkflowRunResponse> createWorkflowRun(@PathVariable final UUID workflowId,
+                                                                      @Valid @RequestBody final CreateAgentWorkflowRunRequest request) {
+        final AgentWorkflowRunResponse response = this.mapper.toResponse(
+                this.createAgentWorkflowRun.execute(workflowId, this.mapper.toCommand(request))
+        );
+        return ResponseEntity.created(URI.create("/api/v1/infrastructure/agents/workflow-runs/" + response.id())).body(response);
+    }
+
+    @GetMapping("/api/v1/infrastructure/agents/workflows/{workflowId}/runs")
+    public ResponseEntity<List<AgentWorkflowRunSummaryResponse>> listWorkflowRuns(@PathVariable final UUID workflowId) {
+        return ResponseEntity.ok(this.listAgentWorkflowRuns.execute(workflowId).stream()
+                .map(this.mapper::toResponse)
+                .toList());
+    }
+
+    @GetMapping("/api/v1/infrastructure/agents/workflow-runs/{runId}")
+    public ResponseEntity<AgentWorkflowRunResponse> getWorkflowRun(@PathVariable final UUID runId) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.getAgentWorkflowRun.execute(runId)));
     }
 }
