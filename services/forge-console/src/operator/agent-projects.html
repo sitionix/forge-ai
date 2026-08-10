@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forge AI Projects</title>
+  <link rel="stylesheet" href="./operator-ui.css">
+</head>
+<body data-page="agent-projects">
+  <main class="shell agents-v2-shell">
+    <section id="agentsV2ProjectsView" class="panel project-index-view" aria-label="Agent projects">
+      <div class="panel-head compact">
+        <div>
+          <h1>Projects</h1>
+          <p>Manage projects and their agent workflows.</p>
+        </div>
+        <button id="agentsV2CreateProject" class="button small secondary" type="button">New Project</button>
+      </div>
+      <div id="agentsV2ProjectsError" class="error-box hidden"></div>
+      <div id="agentsV2ProjectsList" class="agents-v2-card-grid project-index-grid" aria-live="polite"></div>
+    </section>
+
+    <section id="agentsV2Workspace" class="project-workspace-view hidden" aria-label="Project agent configuration">
+      <header class="panel project-workspace-header">
+        <div class="panel-head compact">
+          <div>
+            <p id="agentsV2ProjectCrumbs" class="agents-v2-crumbs">Projects</p>
+            <h1 id="agentsV2ProjectTitle">Project</h1>
+            <p>Project agent configuration</p>
+          </div>
+          <button id="agentsV2WorkspaceBack" class="button small secondary" type="button">← Projects</button>
+        </div>
+      </header>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head">
+          <div>
+            <h2>Agents</h2>
+            <p>Reusable agents available to this project.</p>
+          </div>
+          <button id="agentsV2CreateAgent" class="button small secondary" type="button" disabled>New Agent</button>
+        </div>
+        <div id="agentsV2AgentsError" class="error-box hidden"></div>
+        <div id="agentsV2AgentsList" class="agents-v2-card-grid" aria-live="polite"></div>
+      </section>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head">
+          <div>
+            <h2>Workflows</h2>
+            <p>Agent orchestration definitions.</p>
+          </div>
+          <button id="agentsV2CreateWorkflow" class="button small secondary" type="button" disabled>New Workflow</button>
+        </div>
+        <div id="agentsV2WorkflowsError" class="error-box hidden"></div>
+        <div id="agentsV2WorkflowsList" class="agents-v2-card-grid" aria-live="polite"></div>
+      </section>
+    </section>
+
+    <section id="agentsV2Builder" class="panel agents-v2-builder hidden" aria-label="Workflow builder">
+      <div class="panel-head compact">
+        <div>
+          <p id="agentsV2BuilderCrumbs" class="agents-v2-crumbs">Projects / Workflows</p>
+          <h1 id="agentsV2BuilderTitle">Workflow</h1>
+        </div>
+        <div class="workflow-builder-top-actions">
+          <button id="agentsV2BuilderBack" class="button small secondary" type="button">← Back to Project</button>
+          <button id="agentsV2WorkflowSave" class="button small" type="button">Save</button>
+        </div>
+      </div>
+      <div id="agentsV2WorkflowBuilderError" class="error-box hidden"></div>
+      <div class="workflow-builder-body">
+        <aside class="workflow-agent-palette">
+          <h2>Agents</h2>
+          <div id="agentsV2WorkflowAgentList"></div>
+        </aside>
+        <div id="agentsV2WorkflowCanvas" class="workflow-canvas">
+          <svg id="agentsV2WorkflowEdges" class="workflow-edges" aria-hidden="true"></svg>
+          <div id="agentsV2WorkflowNodes" class="workflow-nodes"></div>
+        </div>
+      </div>
+    </section>
+
+    <dialog id="agentsV2ProjectDialog" class="modal-dialog">
+      <form id="agentsV2ProjectForm" method="dialog" class="modal-form">
+        <div class="modal-head">
+          <h2>Create Project</h2>
+        </div>
+        <div id="agentsV2ProjectModalError" class="error-box hidden"></div>
+        <label class="field-label" for="agentsV2ProjectName">Name</label>
+        <input id="agentsV2ProjectName" class="text-input" type="text" required maxlength="120">
+        <div class="modal-actions">
+          <button id="agentsV2ProjectCancel" class="button secondary" type="button">Cancel</button>
+          <button id="agentsV2ProjectSave" class="button" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="agentsV2AgentDialog" class="modal-dialog wide">
+      <form id="agentsV2AgentForm" method="dialog" class="modal-form">
+        <div class="modal-head">
+          <h2 id="agentsV2AgentModalTitle">Create Agent</h2>
+        </div>
+        <div id="agentsV2AgentModalError" class="error-box hidden"></div>
+        <label class="field-label" for="agentsV2AgentName">Name</label>
+        <input id="agentsV2AgentName" class="text-input" type="text" required maxlength="120">
+        <label class="field-label" for="agentsV2AgentInstructions">Instructions</label>
+        <textarea id="agentsV2AgentInstructions" class="agent-modal-textarea" required></textarea>
+        <label class="field-label" for="agentsV2AgentOutputJson">Output JSON</label>
+        <textarea id="agentsV2AgentOutputJson" class="agent-modal-textarea code" required spellcheck="false"></textarea>
+        <div id="agentsV2AgentJsonError" class="field-error hidden"></div>
+        <div class="modal-actions">
+          <button id="agentsV2AgentCancel" class="button secondary" type="button">Cancel</button>
+          <button id="agentsV2AgentSave" class="button" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="agentsV2WorkflowDialog" class="modal-dialog">
+      <form id="agentsV2WorkflowForm" method="dialog" class="modal-form">
+        <div class="modal-head">
+          <h2>Create Workflow</h2>
+        </div>
+        <div id="agentsV2WorkflowModalError" class="error-box hidden"></div>
+        <label class="field-label" for="agentsV2WorkflowName">Name</label>
+        <input id="agentsV2WorkflowName" class="text-input" type="text" required maxlength="120">
+        <div class="modal-actions">
+          <button id="agentsV2WorkflowCancel" class="button secondary" type="button">Cancel</button>
+          <button id="agentsV2WorkflowCreateSave" class="button" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+  </main>
+
+  <script src="./runtime-config.js"></script>
+  <script type="module">
+    import { bootstrapOperatorConsole } from './operator-bootstrap.js';
+    bootstrapOperatorConsole();
+  </script>
+</body>
+</html>

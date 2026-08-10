@@ -114,18 +114,18 @@
               <small>create OPEN</small>
             </span>
           </a>
-          <a class="sidebar-link ${page === 'agents' ? 'active' : ''}" href="./agents.html">
-            <span class="sidebar-icon">A</span>
+          <a class="sidebar-link ${page === 'agent-projects' ? 'active' : ''}" href="./agent-projects.html">
+            <span class="sidebar-icon">P</span>
             <span class="sidebar-label">
-              <strong>Agents</strong>
-              <small>config</small>
+              <strong>Projects</strong>
+              <small>agent workflows</small>
             </span>
           </a>
-          <a class="sidebar-link ${page === 'agents-v2' ? 'active' : ''}" href="./agents-v2.html">
-            <span class="sidebar-icon">V2</span>
+          <a class="sidebar-link ${page === 'agents' ? 'active' : ''}" href="./agents.html">
+            <span class="sidebar-icon">RT</span>
             <span class="sidebar-label">
-              <strong>Agents V2</strong>
-              <small>dynamic config</small>
+              <strong>Agent Runtime</strong>
+              <small>legacy runtime</small>
             </span>
           </a>
           <a class="sidebar-link ${page === 'services' || page === 'service' ? 'active' : ''}" href="./services.html">

@@ -6,12 +6,19 @@ import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProxyApiMapper;
+import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRequest;
+import com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse;
+import com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.domain.usecase.CreateAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
+import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.GetAgentDefinition;
+import com.sitionix.forgeai.domain.usecase.GetAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.ListAgentProjects;
+import com.sitionix.forgeai.domain.usecase.ListAgentWorkflows;
 import com.sitionix.forgeai.domain.usecase.ListProjectAgentDefinitions;
 import com.sitionix.forgeai.domain.usecase.UpdateAgentDefinition;
+import com.sitionix.forgeai.domain.usecase.UpdateAgentWorkflow;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
@@ -35,6 +42,10 @@ public class ForgeAiInfrastructureAgentsController {
     private final CreateAgentDefinition createAgentDefinition;
     private final GetAgentDefinition getAgentDefinition;
     private final UpdateAgentDefinition updateAgentDefinition;
+    private final ListAgentWorkflows listAgentWorkflows;
+    private final CreateAgentWorkflow createAgentWorkflow;
+    private final GetAgentWorkflow getAgentWorkflow;
+    private final UpdateAgentWorkflow updateAgentWorkflow;
     private final AgentProxyApiMapper mapper;
 
     @GetMapping("/api/v1/infrastructure/agents/projects")
@@ -75,5 +86,32 @@ public class ForgeAiInfrastructureAgentsController {
     public ResponseEntity<AgentDefinitionResponse> updateAgent(@PathVariable final UUID agentId,
                                                                @Valid @RequestBody final AgentDefinitionRequest request) {
         return ResponseEntity.ok(this.mapper.toResponse(this.updateAgentDefinition.execute(agentId, this.mapper.toCommand(request))));
+    }
+
+    @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/workflows")
+    public ResponseEntity<List<AgentWorkflowResponse>> listProjectWorkflows(@PathVariable final UUID projectId) {
+        return ResponseEntity.ok(this.listAgentWorkflows.execute(projectId).stream()
+                .map(this.mapper::toResponse)
+                .toList());
+    }
+
+    @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/workflows")
+    public ResponseEntity<AgentWorkflowResponse> createWorkflow(@PathVariable final UUID projectId,
+                                                                @Valid @RequestBody final AgentWorkflowRequest request) {
+        final AgentWorkflowResponse response = this.mapper.toResponse(
+                this.createAgentWorkflow.execute(projectId, this.mapper.toCommand(request))
+        );
+        return ResponseEntity.created(URI.create("/api/v1/infrastructure/agents/workflows/" + response.id())).body(response);
+    }
+
+    @GetMapping("/api/v1/infrastructure/agents/workflows/{workflowId}")
+    public ResponseEntity<AgentWorkflowResponse> getWorkflow(@PathVariable final UUID workflowId) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.getAgentWorkflow.execute(workflowId)));
+    }
+
+    @PutMapping("/api/v1/infrastructure/agents/workflows/{workflowId}")
+    public ResponseEntity<AgentWorkflowResponse> updateWorkflow(@PathVariable final UUID workflowId,
+                                                                @Valid @RequestBody final SaveAgentWorkflowRequest request) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.updateAgentWorkflow.execute(workflowId, this.mapper.toCommand(request))));
     }
 }

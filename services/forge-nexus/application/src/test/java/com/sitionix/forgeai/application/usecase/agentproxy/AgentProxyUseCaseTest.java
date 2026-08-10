@@ -8,8 +8,13 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.Node;
+import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
 import java.time.Instant;
 import java.util.List;
@@ -24,6 +29,8 @@ class AgentProxyUseCaseTest {
 
     private static final UUID PROJECT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
+    private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+    private static final UUID NODE_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
 
     @Mock
@@ -54,7 +61,7 @@ class AgentProxyUseCaseTest {
 
     @Test
     void listProjectAgentsDelegatesToClient() {
-        final var agent = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", List.of(), NOW, NOW);
+        final var agent = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", NOW, NOW);
         when(this.forgeAgentClient.listProjectAgents(PROJECT_ID)).thenReturn(List.of(agent));
 
         final var actual = new ListProjectAgentDefinitionsUseCase(this.forgeAgentClient).execute(PROJECT_ID);
@@ -65,8 +72,8 @@ class AgentProxyUseCaseTest {
 
     @Test
     void agentDefinitionUseCasesDelegateToClient() {
-        final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{}"), List.of());
-        final var agent = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), List.of(), NOW, NOW);
+        final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{}"));
+        final var agent = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), NOW, NOW);
         when(this.forgeAgentClient.createAgent(PROJECT_ID, command)).thenReturn(agent);
         when(this.forgeAgentClient.getAgent(AGENT_ID)).thenReturn(agent);
         when(this.forgeAgentClient.updateAgent(AGENT_ID, command)).thenReturn(agent);
@@ -77,5 +84,26 @@ class AgentProxyUseCaseTest {
         verify(this.forgeAgentClient).createAgent(PROJECT_ID, command);
         verify(this.forgeAgentClient).getAgent(AGENT_ID);
         verify(this.forgeAgentClient).updateAgent(AGENT_ID, command);
+    }
+
+    @Test
+    void workflowUseCasesDelegateToClient() {
+        final var node = new Node(NODE_ID, AGENT_ID, List.of(), new NodePosition(1.0, 2.0));
+        final var createCommand = new CreateAgentWorkflowCommand("Full Testing");
+        final var saveCommand = new SaveAgentWorkflowCommand("Full Testing", List.of(node));
+        final var workflow = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(node), NOW, NOW);
+        when(this.forgeAgentClient.listProjectWorkflows(PROJECT_ID)).thenReturn(List.of(workflow));
+        when(this.forgeAgentClient.createWorkflow(PROJECT_ID, createCommand)).thenReturn(workflow);
+        when(this.forgeAgentClient.getWorkflow(WORKFLOW_ID)).thenReturn(workflow);
+        when(this.forgeAgentClient.updateWorkflow(WORKFLOW_ID, saveCommand)).thenReturn(workflow);
+
+        assertThat(new ListAgentWorkflowsUseCase(this.forgeAgentClient).execute(PROJECT_ID)).containsExactly(workflow);
+        assertThat(new CreateAgentWorkflowUseCase(this.forgeAgentClient).execute(PROJECT_ID, createCommand)).isSameAs(workflow);
+        assertThat(new GetAgentWorkflowUseCase(this.forgeAgentClient).execute(WORKFLOW_ID)).isSameAs(workflow);
+        assertThat(new UpdateAgentWorkflowUseCase(this.forgeAgentClient).execute(WORKFLOW_ID, saveCommand)).isSameAs(workflow);
+        verify(this.forgeAgentClient).listProjectWorkflows(PROJECT_ID);
+        verify(this.forgeAgentClient).createWorkflow(PROJECT_ID, createCommand);
+        verify(this.forgeAgentClient).getWorkflow(WORKFLOW_ID);
+        verify(this.forgeAgentClient).updateWorkflow(WORKFLOW_ID, saveCommand);
     }
 }

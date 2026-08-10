@@ -6,6 +6,9 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionReques
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
@@ -78,6 +81,38 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 AgentDefinitionResponse.class,
                 HttpStatus.OK,
                 "responseAgentProxyMalformedAgent.json");
+    }
+
+    public static Endpoint<Void, AgentWorkflowResponse[]> listProjectWorkflows() {
+        return upstreamGet("/api/v1/projects/{projectId}/workflows",
+                AgentWorkflowResponse[].class,
+                HttpStatus.OK,
+                "responseAgentProxyWorkflows.json");
+    }
+
+    public static Endpoint<AgentWorkflowRequest, AgentWorkflowResponse> createWorkflow() {
+        return upstreamPost("/api/v1/projects/{projectId}/workflows",
+                AgentWorkflowRequest.class,
+                AgentWorkflowResponse.class,
+                "requestAgentProxyCreateWorkflow.json",
+                HttpStatus.CREATED,
+                "responseAgentProxyWorkflow.json");
+    }
+
+    public static Endpoint<Void, AgentWorkflowResponse> getWorkflow() {
+        return upstreamGet("/api/v1/workflows/{workflowId}",
+                AgentWorkflowResponse.class,
+                HttpStatus.OK,
+                "responseAgentProxyWorkflow.json");
+    }
+
+    public static Endpoint<SaveAgentWorkflowRequest, AgentWorkflowResponse> updateWorkflow() {
+        return upstreamPut("/api/v1/workflows/{workflowId}",
+                SaveAgentWorkflowRequest.class,
+                AgentWorkflowResponse.class,
+                "requestAgentProxyUpdateWorkflow.json",
+                HttpStatus.OK,
+                "responseAgentProxyWorkflowUpdated.json");
     }
 
     private static <Res> Endpoint<Void, Res> upstreamGet(final String path,

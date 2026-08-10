@@ -50,7 +50,7 @@ public class ForgeAgentExceptionHandler {
                                                                 final HttpServletRequest request) {
         log.warn("Forge Agent persistence constraint rejected a request");
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(new ForgeAgentErrorResponse("PERSISTENCE_CONFLICT", "Request conflicts with existing agent data.", this.correlationId(request)));
+                .body(new ForgeAgentErrorResponse("PERSISTENCE_CONFLICT", "Request conflicts with existing Forge Agent configuration data.", this.correlationId(request)));
     }
 
     @ExceptionHandler(RuntimeException.class)

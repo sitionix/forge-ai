@@ -29,11 +29,6 @@ public class PostgresProjectRepository implements ProjectRepository {
     }
 
     @Override
-    public Optional<Project> findByIdForUpdate(final UUID projectId) {
-        return this.repository.findByIdForUpdate(projectId).map(this::toDomain);
-    }
-
-    @Override
     public boolean existsByNormalizedName(final String normalizedName) {
         return this.repository.existsByNormalizedName(normalizedName);
     }

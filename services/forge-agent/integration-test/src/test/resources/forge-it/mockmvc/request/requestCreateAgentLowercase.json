@@ -3,6 +3,5 @@
   "instructions": "Analyze duplicate project context.",
   "outputSchema": {
     "type": "object"
-  },
-  "dependsOnAgentIds": []
+  }
 }

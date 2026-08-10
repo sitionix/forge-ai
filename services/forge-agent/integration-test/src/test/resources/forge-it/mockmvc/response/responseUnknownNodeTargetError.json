@@ -1,0 +1,5 @@
+{
+  "code": "UNKNOWN_NODE_TARGET",
+  "message": "Workflow nodes must target existing agents.",
+  "correlationId": null
+}

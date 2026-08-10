@@ -4,20 +4,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeagent.api.dto.AgentDependencyResponse;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.NodePositionRequest;
+import com.sitionix.forgeagent.api.dto.NodePositionResponse;
+import com.sitionix.forgeagent.api.dto.NodeRequest;
+import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
+import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
+import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
+import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
-import com.sitionix.forgeagent.domain.model.AgentDependencySummary;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
 import com.sitionix.forgeagent.domain.model.AgentListItem;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
+import com.sitionix.forgeagent.domain.model.Workflow;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -27,7 +37,9 @@ class ForgeAgentApiMapperTest {
 
     private static final UUID PROJECT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
-    private static final UUID DEPENDENCY_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+    private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+    private static final UUID NODE_A = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    private static final UUID NODE_B = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -36,12 +48,8 @@ class ForgeAgentApiMapperTest {
 
     @Test
     void mapsProjectRequestToCommand() {
-        final var request = new CreateProjectRequest("Sitionix");
-        final var expected = new CreateProjectCommand("Sitionix");
-
-        final var actual = this.mapper.toCommand(request);
-
-        assertThat(actual).isEqualTo(expected);
+        assertThat(this.mapper.toCommand(new CreateProjectRequest("Sitionix")))
+                .isEqualTo(new CreateProjectCommand("Sitionix"));
     }
 
     @Test
@@ -49,29 +57,19 @@ class ForgeAgentApiMapperTest {
         final SaveAgentRequest request = new SaveAgentRequest(
                 "Analyzer",
                 "Analyze changes.",
-                this.objectMapper.readTree("{\"type\":\"object\"}"),
-                List.of(DEPENDENCY_ID)
+                this.objectMapper.readTree("{\"type\":\"object\"}")
         );
-        final var expected = new SaveAgentCommand(
+
+        assertThat(this.mapper.toCommand(request)).isEqualTo(new SaveAgentCommand(
                 "Analyzer",
                 "Analyze changes.",
-                AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
-                List.of(DEPENDENCY_ID)
-        );
-
-        final var actual = this.mapper.toCommand(request);
-
-        assertThat(actual).isEqualTo(expected);
+                AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}")
+        ));
     }
 
     @Test
     void rejectsOutputSchemaWithNonObjectRoot() throws Exception {
-        final SaveAgentRequest request = new SaveAgentRequest(
-                "Analyzer",
-                "Analyze changes.",
-                this.objectMapper.readTree("[]"),
-                List.of()
-        );
+        final SaveAgentRequest request = new SaveAgentRequest("Analyzer", "Analyze changes.", this.objectMapper.readTree("[]"));
 
         assertThatThrownBy(() -> this.mapper.toCommand(request))
                 .isInstanceOf(ValidationException.class)
@@ -80,36 +78,16 @@ class ForgeAgentApiMapperTest {
 
     @Test
     void mapsProjectToResponse() {
-        final var project = new Project(PROJECT_ID, "Sitionix", "sitionix", CREATED, UPDATED);
-        final var expected = new ProjectResponse(PROJECT_ID, "Sitionix", CREATED, UPDATED);
-
-        final var actual = this.mapper.toResponse(project);
-
-        assertThat(actual).isEqualTo(expected);
+        assertThat(this.mapper.toResponse(new Project(PROJECT_ID, "Sitionix", "sitionix", CREATED, UPDATED)))
+                .isEqualTo(new ProjectResponse(PROJECT_ID, "Sitionix", CREATED, UPDATED));
     }
 
     @Test
     void mapsAgentListItemToResponse() {
-        final var item = new AgentListItem(
-                AGENT_ID,
-                PROJECT_ID,
-                "Analyzer",
-                List.of(new AgentDependencySummary(DEPENDENCY_ID, "Architect")),
-                CREATED,
-                UPDATED
-        );
-        final var expected = new AgentListResponse(
-                AGENT_ID,
-                PROJECT_ID,
-                "Analyzer",
-                List.of(new AgentDependencyResponse(DEPENDENCY_ID, "Architect")),
-                CREATED,
-                UPDATED
-        );
+        final var item = new AgentListItem(AGENT_ID, PROJECT_ID, "Analyzer", CREATED, UPDATED);
 
-        final var actual = this.mapper.toResponse(item);
-
-        assertThat(actual).isEqualTo(expected);
+        assertThat(this.mapper.toResponse(item))
+                .isEqualTo(new AgentListResponse(AGENT_ID, PROJECT_ID, "Analyzer", CREATED, UPDATED));
     }
 
     @Test
@@ -120,23 +98,53 @@ class ForgeAgentApiMapperTest {
                 "Analyzer",
                 "Analyze changes.",
                 AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
-                List.of(new AgentDependencySummary(DEPENDENCY_ID, "Architect")),
                 CREATED,
                 UPDATED
         );
-        final var expected = new AgentResponse(
+
+        assertThat(this.mapper.toResponse(agent)).isEqualTo(new AgentResponse(
                 AGENT_ID,
                 PROJECT_ID,
                 "Analyzer",
                 "Analyze changes.",
                 this.objectMapper.readTree("{\"type\":\"object\"}"),
-                List.of(new AgentDependencyResponse(DEPENDENCY_ID, "Architect")),
+                CREATED,
+                UPDATED
+        ));
+    }
+
+    @Test
+    void mapsWorkflowRequestsAndResponses() {
+        assertThat(this.mapper.toCommand(new CreateWorkflowRequest("Full Testing")))
+                .isEqualTo(new CreateWorkflowCommand("Full Testing"));
+
+        final SaveWorkflowRequest saveRequest = new SaveWorkflowRequest(
+                "Full Testing",
+                List.of(new NodeRequest(NODE_A, AGENT_ID, List.of(), new NodePositionRequest(1.0, 2.0)),
+                        new NodeRequest(NODE_B, AGENT_ID, List.of(NODE_A), new NodePositionRequest(3.0, 4.0)))
+        );
+        assertThat(this.mapper.toCommand(saveRequest)).isEqualTo(new SaveWorkflowCommand(
+                "Full Testing",
+                List.of(new Node(NODE_A, AGENT_ID, List.of(), new NodePosition(1.0, 2.0)),
+                        new Node(NODE_B, AGENT_ID, List.of(NODE_A), new NodePosition(3.0, 4.0)))
+        ));
+
+        final Workflow workflow = new Workflow(
+                WORKFLOW_ID,
+                PROJECT_ID,
+                "Full Testing",
+                "full testing",
+                List.of(new Node(NODE_B, AGENT_ID, List.of(NODE_A), new NodePosition(3.0, 4.0))),
                 CREATED,
                 UPDATED
         );
-
-        final var actual = this.mapper.toResponse(agent);
-
-        assertThat(actual).isEqualTo(expected);
+        assertThat(this.mapper.toResponse(workflow)).isEqualTo(new WorkflowResponse(
+                WORKFLOW_ID,
+                PROJECT_ID,
+                "Full Testing",
+                List.of(new NodeResponse(NODE_B, AGENT_ID, List.of(NODE_A), new NodePositionResponse(3.0, 4.0))),
+                CREATED,
+                UPDATED
+        ));
     }
 }

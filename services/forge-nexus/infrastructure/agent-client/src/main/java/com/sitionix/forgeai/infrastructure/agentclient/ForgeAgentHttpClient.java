@@ -5,6 +5,9 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionReques
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.MediaType;
@@ -33,4 +36,16 @@ public interface ForgeAgentHttpClient {
 
     @PutExchange(value = "/api/v1/agents/{agentId}", contentType = MediaType.APPLICATION_JSON_VALUE)
     AgentDefinitionResponse updateAgent(@PathVariable UUID agentId, @RequestBody AgentDefinitionRequest request);
+
+    @GetExchange("/api/v1/projects/{projectId}/workflows")
+    List<AgentWorkflowResponse> listProjectWorkflows(@PathVariable UUID projectId);
+
+    @PostExchange(value = "/api/v1/projects/{projectId}/workflows", contentType = MediaType.APPLICATION_JSON_VALUE)
+    AgentWorkflowResponse createWorkflow(@PathVariable UUID projectId, @RequestBody AgentWorkflowRequest request);
+
+    @GetExchange("/api/v1/workflows/{workflowId}")
+    AgentWorkflowResponse getWorkflow(@PathVariable UUID workflowId);
+
+    @PutExchange(value = "/api/v1/workflows/{workflowId}", contentType = MediaType.APPLICATION_JSON_VALUE)
+    AgentWorkflowResponse updateWorkflow(@PathVariable UUID workflowId, @RequestBody SaveAgentWorkflowRequest request);
 }

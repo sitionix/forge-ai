@@ -11,8 +11,6 @@ public interface ProjectRepository {
 
     Optional<Project> findById(UUID projectId);
 
-    Optional<Project> findByIdForUpdate(UUID projectId);
-
     boolean existsByNormalizedName(String normalizedName);
 
     Project save(Project project);

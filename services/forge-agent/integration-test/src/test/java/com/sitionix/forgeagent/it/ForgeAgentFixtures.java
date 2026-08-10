@@ -15,6 +15,12 @@ final class ForgeAgentFixtures {
     static final UUID OTHER_PROJECT_AGENT_ID = UUID.fromString("20000000-0000-4000-8000-000000000005");
     static final UUID UNKNOWN_AGENT_ID = UUID.fromString("20000000-0000-4000-8000-000000009999");
 
+    static final UUID WORKFLOW_ID = UUID.fromString("30000000-0000-4000-8000-000000000001");
+    static final UUID UNKNOWN_WORKFLOW_ID = UUID.fromString("30000000-0000-4000-8000-000000009999");
+    static final UUID NODE_A_ID = UUID.fromString("40000000-0000-4000-8000-000000000001");
+    static final UUID NODE_B_ID = UUID.fromString("40000000-0000-4000-8000-000000000002");
+    static final UUID NODE_C_ID = UUID.fromString("40000000-0000-4000-8000-000000000003");
+
     private ForgeAgentFixtures() {
     }
 }

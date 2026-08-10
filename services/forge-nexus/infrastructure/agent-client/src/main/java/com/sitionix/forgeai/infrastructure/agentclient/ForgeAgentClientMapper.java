@@ -4,17 +4,27 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentDependencySummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.Node;
+import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
-import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDependencyResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.converter.HttpMessageConversionException;
@@ -38,8 +48,7 @@ public class ForgeAgentClientMapper {
             return new AgentDefinitionRequest(
                     command.name(),
                     command.instructions(),
-                    this.objectMapper.readTree(command.outputSchema().jsonObject()),
-                    command.dependsOnAgentIds() == null ? List.of() : command.dependsOnAgentIds()
+                    this.objectMapper.readTree(command.outputSchema().jsonObject())
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Output schema must be valid JSON.", exception);
@@ -62,7 +71,6 @@ public class ForgeAgentClientMapper {
                 response.id(),
                 response.projectId(),
                 response.name(),
-                this.toDependencies(response.dependsOn()),
                 response.createdAt(),
                 response.updatedAt()
         );
@@ -84,7 +92,6 @@ public class ForgeAgentClientMapper {
                     response.name(),
                     response.instructions(),
                     new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(response.outputSchema())),
-                    this.toDependencies(response.dependsOn()),
                     response.createdAt(),
                     response.updatedAt()
             );
@@ -93,15 +100,59 @@ public class ForgeAgentClientMapper {
         }
     }
 
-    private List<AgentDependencySummary> toDependencies(final List<AgentDependencyResponse> dependencies) {
-        return this.requireList(dependencies, "agent.dependsOn").stream()
-                .map(dependency -> {
-                    this.requireResponse(dependency, "agent dependency");
-                    this.requireId(dependency.id(), "dependency.id");
-                    this.requireText(dependency.name(), "dependency.name");
-                    return new AgentDependencySummary(dependency.id(), dependency.name());
-                })
-                .toList();
+    AgentWorkflowRequest toRequest(final CreateAgentWorkflowCommand command) {
+        return new AgentWorkflowRequest(command.name());
+    }
+
+    SaveAgentWorkflowRequest toRequest(final SaveAgentWorkflowCommand command) {
+        return new SaveAgentWorkflowRequest(
+                command.name(),
+                command.nodes() == null ? List.of() : command.nodes().stream()
+                        .map(this::toRequest)
+                        .toList()
+        );
+    }
+
+    AgentWorkflow toDomain(final AgentWorkflowResponse response) {
+        this.requireResponse(response, "workflow");
+        this.requireId(response.id(), "workflow.id");
+        this.requireId(response.projectId(), "workflow.projectId");
+        this.requireText(response.name(), "workflow.name");
+        return new AgentWorkflow(
+                response.id(),
+                response.projectId(),
+                response.name(),
+                this.requireList(response.nodes(), "workflow.nodes").stream()
+                        .map(this::toDomain)
+                        .toList(),
+                response.createdAt(),
+                response.updatedAt()
+        );
+    }
+
+    private NodeRequest toRequest(final Node node) {
+        return new NodeRequest(
+                node.id(),
+                node.targetId(),
+                node.dependsOnNodeIds() == null ? List.of() : node.dependsOnNodeIds(),
+                node.position() == null ? new NodePositionRequest(0.0, 0.0) : new NodePositionRequest(node.position().x(), node.position().y())
+        );
+    }
+
+    private Node toDomain(final NodeResponse response) {
+        this.requireResponse(response, "workflow node");
+        this.requireId(response.id(), "node.id");
+        this.requireId(response.targetId(), "node.targetId");
+        final NodePositionResponse position = response.position();
+        if (position == null) {
+            throw this.invalid("node.position must not be null");
+        }
+        return new Node(
+                response.id(),
+                response.targetId(),
+                this.requireList(response.dependsOnNodeIds(), "node.dependsOnNodeIds"),
+                new NodePosition(position.x(), position.y())
+        );
     }
 
     <T> List<T> requireList(final List<T> responses, final String field) {

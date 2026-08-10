@@ -373,7 +373,7 @@ def test_stdio_frame_limit_overflow_is_classified_reaped_and_restarts_without_pa
     async def exercise():
         await client.initialize()
         request_task = asyncio.create_task(client.request(CodexProtocol.MODEL_LIST, {"prompt": payload_marker}))
-        while len(broken.sent) < 2:
+        while not any(sent.get("method") == CodexProtocol.MODEL_LIST for sent in broken.sent):
             await asyncio.sleep(0)
         assert await asyncio.to_thread(broken.stdout.read_started.wait, 1.0) is True
         broken.stdout.release_overrun.set()
