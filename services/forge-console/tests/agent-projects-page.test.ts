@@ -30,8 +30,32 @@ function agent(id: string, name: string, projectId = project().id) {
     name,
     instructions: `${name} instructions`,
     outputSchema: { type: 'object' },
+    model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'medium' },
     createdAt: '2026-08-04T00:00:00Z',
     updatedAt: '2026-08-04T00:00:00Z'
+  };
+}
+
+function runtime() {
+  return {
+    providers: [
+      {
+        providerId: 'codex',
+        displayName: 'Codex',
+        status: 'READY',
+        version: 'codex 1.0.0',
+        models: [
+          {
+            modelId: 'discovered-model',
+            displayName: 'Discovered Model',
+            description: 'Live model',
+            efforts: [
+              { effortId: 'medium', description: 'Medium' }
+            ]
+          }
+        ]
+      }
+    ]
   };
 }
 
@@ -60,6 +84,7 @@ function api(overrides = {}) {
   return {
     listProjects: vi.fn(() => Promise.resolve([project()])),
     createProject: vi.fn(() => Promise.resolve(project('22222222-2222-4222-8222-222222222222', 'Forge AI'))),
+    getRuntime: vi.fn(() => Promise.resolve(runtime())),
     listProjectAgents: vi.fn(() => Promise.resolve(agents)),
     createAgent: vi.fn(() => Promise.resolve(agent('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'Analyzer'))),
     getAgent: vi.fn((agentId: string) => Promise.resolve(agents.find((item) => item.id === agentId) || agents[0])),

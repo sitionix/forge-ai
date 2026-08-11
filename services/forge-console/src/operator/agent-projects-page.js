@@ -20,6 +20,10 @@ export class AgentProjectsPage {
       workflowsProjectId: null,
       editingAgentId: null,
       openWorkflowId: null,
+      runtime: null,
+      runtimeError: '',
+      agentModelSelection: null,
+      savedAgentModelSelection: null,
       saving: false
     };
     this.projectLoadSequence = 0;
@@ -59,6 +63,9 @@ export class AgentProjectsPage {
     this.byId('agentsV2ProjectForm')?.addEventListener('submit', (event) => this.submitProject(event));
     this.byId('agentsV2AgentCancel')?.addEventListener('click', () => this.closeDialog('agentsV2AgentDialog'));
     this.byId('agentsV2AgentForm')?.addEventListener('submit', (event) => this.submitAgent(event));
+    this.byId('agentsV2AgentProvider')?.addEventListener('change', () => this.onProviderChanged());
+    this.byId('agentsV2AgentModel')?.addEventListener('change', () => this.onModelChanged());
+    this.byId('agentsV2AgentEffort')?.addEventListener('change', () => this.onEffortChanged());
     this.byId('agentsV2WorkflowCancel')?.addEventListener('click', () => this.closeDialog('agentsV2WorkflowDialog'));
     this.byId('agentsV2WorkflowForm')?.addEventListener('submit', (event) => this.submitWorkflow(event));
   }
@@ -225,6 +232,10 @@ export class AgentProjectsPage {
     this.byId('agentsV2AgentName').value = '';
     this.byId('agentsV2AgentInstructions').value = '';
     this.byId('agentsV2AgentOutputJson').value = JSON.stringify(DEFAULT_OUTPUT_SCHEMA, null, 2);
+    this.state.runtime = null;
+    this.state.runtimeError = '';
+    this.state.agentModelSelection = null;
+    this.state.savedAgentModelSelection = null;
     if (agentId) {
       try {
         const agent = await this.api.getAgent(agentId);
@@ -235,11 +246,14 @@ export class AgentProjectsPage {
         this.byId('agentsV2AgentName').value = agent.name || '';
         this.byId('agentsV2AgentInstructions').value = agent.instructions || '';
         this.byId('agentsV2AgentOutputJson').value = JSON.stringify(agent.outputSchema || DEFAULT_OUTPUT_SCHEMA, null, 2);
+        this.state.savedAgentModelSelection = agent.model || null;
+        this.state.agentModelSelection = agent.model || null;
       } catch (error) {
         this.showError('agentsV2AgentsError', error.message || 'Agent details failed to load.');
         return;
       }
     }
+    await this.loadRuntimeForAgentModal();
     this.openDialog('agentsV2AgentDialog');
   }
 
@@ -258,8 +272,15 @@ export class AgentProjectsPage {
     const request = {
       name: this.byId('agentsV2AgentName').value,
       instructions: this.byId('agentsV2AgentInstructions').value,
-      outputSchema
+      outputSchema,
+      model: this.currentValidModelSelection()
     };
+    if (!request.model) {
+      this.showError('agentsV2AgentModalError', this.state.runtimeError || 'Select a current ready model.');
+      this.state.saving = false;
+      this.byId('agentsV2AgentSave').disabled = false;
+      return;
+    }
     try {
       if (this.state.editingAgentId) {
         await this.api.updateAgent(this.state.editingAgentId, request);
@@ -361,6 +382,146 @@ export class AgentProjectsPage {
       this.showFieldError('Output JSON is not valid JSON.');
       return null;
     }
+  }
+
+  async loadRuntimeForAgentModal() {
+    this.renderModelPickerLoading();
+    try {
+      this.state.runtime = await this.api.getRuntime();
+      this.state.runtimeError = '';
+    } catch (error) {
+      this.state.runtime = { providers: [] };
+      this.state.runtimeError = error.message || 'Runtime catalog failed to load.';
+      this.showError('agentsV2AgentModalError', this.state.runtimeError);
+    }
+    this.ensureInitialModelSelection();
+    this.renderModelPicker();
+  }
+
+  renderModelPickerLoading() {
+    for (const id of ['agentsV2AgentProvider', 'agentsV2AgentModel', 'agentsV2AgentEffort']) {
+      const select = this.byId(id);
+      if (select) {
+        select.innerHTML = '<option value="">Loading...</option>';
+        select.disabled = true;
+      }
+    }
+  }
+
+  ensureInitialModelSelection() {
+    const saved = this.state.savedAgentModelSelection;
+    if (saved) {
+      this.state.agentModelSelection = { ...saved };
+      return;
+    }
+    const provider = this.readyProviders()[0];
+    const model = provider?.models?.[0];
+    const effort = model?.efforts?.length === 1 ? model.efforts[0] : null;
+    this.state.agentModelSelection = provider && model
+      ? { providerId: provider.providerId, modelId: model.modelId, effortId: effort?.effortId || null }
+      : null;
+  }
+
+  renderModelPicker() {
+    const providerSelect = this.byId('agentsV2AgentProvider');
+    const modelSelect = this.byId('agentsV2AgentModel');
+    const effortSelect = this.byId('agentsV2AgentEffort');
+    const selection = this.state.agentModelSelection || {};
+    const readyProviders = this.readyProviders();
+    const saved = this.state.savedAgentModelSelection;
+    providerSelect.disabled = !readyProviders.length;
+    providerSelect.innerHTML = [
+      '<option value="">Select provider</option>',
+      ...readyProviders.map((provider) => `<option value="${escapeHtml(provider.providerId)}">${escapeHtml(provider.displayName || provider.providerId)}</option>`),
+      saved?.providerId && !readyProviders.some((provider) => provider.providerId === saved.providerId)
+        ? `<option value="${escapeHtml(saved.providerId)}" disabled>${escapeHtml(saved.providerId)} (stale)</option>`
+        : ''
+    ].join('');
+    providerSelect.value = selection.providerId || '';
+
+    const provider = this.runtimeProvider(selection.providerId);
+    const models = provider?.models || [];
+    modelSelect.disabled = !provider || !models.length;
+    modelSelect.innerHTML = [
+      '<option value="">Select model</option>',
+      ...models.map((model) => `<option value="${escapeHtml(model.modelId)}">${escapeHtml(model.displayName || model.modelId)}</option>`),
+      saved?.modelId && selection.providerId === saved.providerId && !models.some((model) => model.modelId === saved.modelId)
+        ? `<option value="${escapeHtml(saved.modelId)}" disabled>${escapeHtml(saved.modelId)} (stale)</option>`
+        : ''
+    ].join('');
+    modelSelect.value = selection.modelId || '';
+
+    const model = models.find((candidate) => candidate.modelId === selection.modelId);
+    const efforts = model?.efforts || [];
+    effortSelect.disabled = !model || !efforts.length;
+    effortSelect.innerHTML = [
+      efforts.length ? '<option value="">Select effort</option>' : '<option value="">No effort</option>',
+      ...efforts.map((effort) => `<option value="${escapeHtml(effort.effortId)}">${escapeHtml(effort.description || effort.effortId)}</option>`),
+      saved?.effortId && selection.modelId === saved.modelId && !efforts.some((effort) => effort.effortId === saved.effortId)
+        ? `<option value="${escapeHtml(saved.effortId)}" disabled>${escapeHtml(saved.effortId)} (stale)</option>`
+        : ''
+    ].join('');
+    effortSelect.value = selection.effortId || '';
+  }
+
+  onProviderChanged() {
+    const providerId = this.byId('agentsV2AgentProvider').value || null;
+    const provider = this.runtimeProvider(providerId);
+    const model = provider?.models?.[0];
+    const effort = model?.efforts?.length === 1 ? model.efforts[0] : null;
+    this.state.agentModelSelection = provider && model
+      ? { providerId, modelId: model.modelId, effortId: effort?.effortId || null }
+      : null;
+    this.renderModelPicker();
+  }
+
+  onModelChanged() {
+    const providerId = this.byId('agentsV2AgentProvider').value || null;
+    const modelId = this.byId('agentsV2AgentModel').value || null;
+    const model = this.runtimeProvider(providerId)?.models?.find((candidate) => candidate.modelId === modelId);
+    const effort = model?.efforts?.length === 1 ? model.efforts[0] : null;
+    this.state.agentModelSelection = providerId && modelId
+      ? { providerId, modelId, effortId: effort?.effortId || null }
+      : null;
+    this.renderModelPicker();
+  }
+
+  onEffortChanged() {
+    const selection = this.state.agentModelSelection;
+    if (!selection) {
+      return;
+    }
+    this.state.agentModelSelection = {
+      ...selection,
+      effortId: this.byId('agentsV2AgentEffort').value || null
+    };
+  }
+
+  currentValidModelSelection() {
+    const selection = this.state.agentModelSelection;
+    if (!selection?.providerId || !selection?.modelId) {
+      return null;
+    }
+    const model = this.runtimeProvider(selection.providerId)?.models?.find((candidate) => candidate.modelId === selection.modelId);
+    if (!model) {
+      return null;
+    }
+    const efforts = model.efforts || [];
+    if (!efforts.length) {
+      return { providerId: selection.providerId, modelId: selection.modelId, effortId: null };
+    }
+    if (!selection.effortId || !efforts.some((effort) => effort.effortId === selection.effortId)) {
+      return null;
+    }
+    return { providerId: selection.providerId, modelId: selection.modelId, effortId: selection.effortId };
+  }
+
+  readyProviders() {
+    return (this.state.runtime?.providers || []).filter((provider) => provider.status === 'READY');
+  }
+
+  runtimeProvider(providerId) {
+    return this.readyProviders().find((provider) => provider.providerId === providerId);
   }
 
   projectDataCurrent() {

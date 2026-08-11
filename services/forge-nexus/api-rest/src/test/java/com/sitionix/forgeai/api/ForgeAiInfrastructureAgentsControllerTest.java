@@ -36,6 +36,7 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.GetAgentDefinition;
+import com.sitionix.forgeai.domain.usecase.GetAgentRuntime;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.ListAgentProjects;
@@ -68,6 +69,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
     @Mock
     private CreateAgentProject createAgentProject;
     @Mock
+    private GetAgentRuntime getAgentRuntime;
+    @Mock
     private ListProjectAgentDefinitions listProjectAgentDefinitions;
     @Mock
     private CreateAgentDefinition createAgentDefinition;
@@ -99,6 +102,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
         this.controller = new ForgeAiInfrastructureAgentsController(
                 this.listAgentProjects,
                 this.createAgentProject,
+                this.getAgentRuntime,
                 this.listProjectAgentDefinitions,
                 this.createAgentDefinition,
                 this.getAgentDefinition,

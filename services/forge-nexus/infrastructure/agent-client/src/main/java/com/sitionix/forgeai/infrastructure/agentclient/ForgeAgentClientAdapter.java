@@ -3,6 +3,7 @@ package com.sitionix.forgeai.infrastructure.agentclient;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
@@ -41,6 +42,11 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     public AgentProject createProject(final CreateAgentProjectCommand command) {
         final AgentProjectRequest request = this.mapper.toRequest(command);
         return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createProject(request)));
+    }
+
+    @Override
+    public AgentRuntimeCatalog getRuntime() {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(this.httpClient::getRuntime));
     }
 
     @Override

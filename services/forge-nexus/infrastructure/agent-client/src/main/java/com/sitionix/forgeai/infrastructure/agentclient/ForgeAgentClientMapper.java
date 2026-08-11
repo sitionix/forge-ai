@@ -4,11 +4,16 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentModelSelection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
@@ -22,8 +27,13 @@ import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentModelSelectionDto;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeEffortResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeModelResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeProviderResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
@@ -59,7 +69,8 @@ public class ForgeAgentClientMapper {
             return new AgentDefinitionRequest(
                     command.name(),
                     command.instructions(),
-                    this.objectMapper.readTree(command.outputSchema().jsonObject())
+                    this.objectMapper.readTree(command.outputSchema().jsonObject()),
+                    this.toDto(command.model())
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Output schema must be valid JSON.", exception);
@@ -103,6 +114,7 @@ public class ForgeAgentClientMapper {
                     response.name(),
                     response.instructions(),
                     new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(response.outputSchema())),
+                    this.toDomain(response.model()),
                     response.createdAt(),
                     response.updatedAt()
             );
@@ -188,6 +200,62 @@ public class ForgeAgentClientMapper {
                 response.startedAt(),
                 response.finishedAt()
         );
+    }
+
+    AgentRuntimeCatalog toDomain(final AgentRuntimeResponse response) {
+        this.requireResponse(response, "agent runtime");
+        return new AgentRuntimeCatalog(this.requireList(response.providers(), "runtime.providers").stream()
+                .map(this::toDomain)
+                .toList());
+    }
+
+    private AgentRuntimeProvider toDomain(final AgentRuntimeProviderResponse response) {
+        this.requireResponse(response, "runtime provider");
+        this.requireText(response.providerId(), "runtime.providerId");
+        this.requireText(response.displayName(), "runtime.displayName");
+        if (response.status() == null) {
+            throw this.invalid("runtime.status must not be null");
+        }
+        return new AgentRuntimeProvider(
+                response.providerId(),
+                response.displayName(),
+                response.status(),
+                response.version(),
+                this.requireList(response.models(), "runtime.models").stream().map(this::toDomain).toList()
+        );
+    }
+
+    private AgentRuntimeModel toDomain(final AgentRuntimeModelResponse response) {
+        this.requireResponse(response, "runtime model");
+        this.requireText(response.modelId(), "runtime.modelId");
+        this.requireText(response.displayName(), "runtime.modelDisplayName");
+        return new AgentRuntimeModel(
+                response.modelId(),
+                response.displayName(),
+                response.description(),
+                this.requireList(response.efforts(), "runtime.efforts").stream().map(this::toDomain).toList()
+        );
+    }
+
+    private AgentRuntimeEffort toDomain(final AgentRuntimeEffortResponse response) {
+        this.requireResponse(response, "runtime effort");
+        this.requireText(response.effortId(), "runtime.effortId");
+        this.requireText(response.description(), "runtime.effortDescription");
+        return new AgentRuntimeEffort(response.effortId(), response.description());
+    }
+
+    private AgentModelSelectionDto toDto(final AgentModelSelection model) {
+        if (model == null) {
+            return null;
+        }
+        return new AgentModelSelectionDto(model.providerId(), model.modelId(), model.effortId());
+    }
+
+    private AgentModelSelection toDomain(final AgentModelSelectionDto model) {
+        if (model == null) {
+            return null;
+        }
+        return new AgentModelSelection(model.providerId(), model.modelId(), model.effortId());
     }
 
     private NodeRequest toRequest(final Node node) {

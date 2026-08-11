@@ -4,7 +4,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
+import com.sitionix.forgeagent.api.dto.AgentModelSelectionRequest;
+import com.sitionix.forgeagent.api.dto.AgentModelSelectionResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
+import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
+import com.sitionix.forgeagent.api.dto.CodexRuntimeEffortResponse;
+import com.sitionix.forgeagent.api.dto.CodexRuntimeModelResponse;
+import com.sitionix.forgeagent.api.dto.CodexRuntimeProviderResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
@@ -27,7 +33,12 @@ import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
 import com.sitionix.forgeagent.domain.model.AgentListItem;
+import com.sitionix.forgeagent.domain.model.AgentModelSelection;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.AiRuntimeCatalog;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeEffort;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeModel;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodePosition;
@@ -58,7 +69,8 @@ class ForgeAgentApiMapper {
             return new SaveAgentCommand(
                     request.name(),
                     request.instructions(),
-                    AgentOutputSchema.ofCanonicalJsonObject(this.objectMapper.writeValueAsString(outputSchema))
+                    AgentOutputSchema.ofCanonicalJsonObject(this.objectMapper.writeValueAsString(outputSchema)),
+                    this.toModelSelection(request.model())
             );
         } catch (final JsonProcessingException exception) {
             throw new ValidationException("INVALID_OUTPUT_SCHEMA", "Output schema must be valid JSON.");
@@ -104,6 +116,7 @@ class ForgeAgentApiMapper {
                     agent.name(),
                     agent.instructions(),
                     this.objectMapper.readTree(agent.outputSchema().jsonObject()),
+                    this.toResponse(agent.model()),
                     agent.createdAt(),
                     agent.updatedAt()
             );
@@ -192,5 +205,46 @@ class ForgeAgentApiMapper {
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored node run JSON is invalid.", exception);
         }
+    }
+
+    AiRuntimeResponse toResponse(final AiRuntimeCatalog catalog) {
+        return new AiRuntimeResponse(catalog.providers().stream().map(this::toResponse).toList());
+    }
+
+    private CodexRuntimeProviderResponse toResponse(final CodexRuntimeProvider provider) {
+        return new CodexRuntimeProviderResponse(
+                provider.providerId(),
+                provider.displayName(),
+                provider.status(),
+                provider.version(),
+                provider.models().stream().map(this::toResponse).toList()
+        );
+    }
+
+    private CodexRuntimeModelResponse toResponse(final CodexRuntimeModel model) {
+        return new CodexRuntimeModelResponse(
+                model.modelId(),
+                model.displayName(),
+                model.description(),
+                model.efforts().stream().map(this::toResponse).toList()
+        );
+    }
+
+    private CodexRuntimeEffortResponse toResponse(final CodexRuntimeEffort effort) {
+        return new CodexRuntimeEffortResponse(effort.effortId(), effort.description());
+    }
+
+    private AgentModelSelection toModelSelection(final AgentModelSelectionRequest request) {
+        if (request == null) {
+            return null;
+        }
+        return new AgentModelSelection(request.providerId(), request.modelId(), request.effortId());
+    }
+
+    private AgentModelSelectionResponse toResponse(final AgentModelSelection selection) {
+        if (selection == null) {
+            return null;
+        }
+        return new AgentModelSelectionResponse(selection.providerId(), selection.modelId(), selection.effortId());
     }
 }

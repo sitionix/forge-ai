@@ -25,6 +25,7 @@ import com.sitionix.forgeagent.application.usecase.AgentUseCases;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
+import com.sitionix.forgeagent.application.usecase.GetAiRuntime;
 import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
@@ -69,6 +70,8 @@ class ForgeAgentControllerTest {
     @Mock
     private AgentUseCases agentUseCases;
     @Mock
+    private GetAiRuntime getAiRuntime;
+    @Mock
     private WorkflowUseCases workflowUseCases;
     @Mock
     private WorkflowRunUseCases workflowRunUseCases;
@@ -80,7 +83,14 @@ class ForgeAgentControllerTest {
 
     @BeforeEach
     void setUp() {
-        this.controller = new ForgeAgentController(this.projectUseCases, this.agentUseCases, this.workflowUseCases, this.workflowRunUseCases, this.mapper);
+        this.controller = new ForgeAgentController(
+                this.projectUseCases,
+                this.agentUseCases,
+                this.getAiRuntime,
+                this.workflowUseCases,
+                this.workflowRunUseCases,
+                this.mapper
+        );
     }
 
     @Test

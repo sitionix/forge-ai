@@ -5,6 +5,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionReques
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
@@ -27,6 +28,9 @@ public interface ForgeAgentHttpClient {
 
     @PostExchange(value = "/api/v1/projects", contentType = MediaType.APPLICATION_JSON_VALUE)
     AgentProjectResponse createProject(@RequestBody AgentProjectRequest request);
+
+    @GetExchange("/api/v1/runtime")
+    AgentRuntimeResponse getRuntime();
 
     @GetExchange("/api/v1/projects/{projectId}/agents")
     List<AgentDefinitionListResponse> listProjectAgents(@PathVariable UUID projectId);

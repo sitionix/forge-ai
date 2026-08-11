@@ -11,6 +11,11 @@
       }
     }
   },
+  "model": {
+    "providerId": "codex",
+    "modelId": "updated-model",
+    "effortId": "high"
+  },
   "createdAt": "2026-08-04T00:00:00Z",
   "updatedAt": "2026-08-04T00:02:00Z"
 }

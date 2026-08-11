@@ -11,6 +11,11 @@
       }
     }
   },
+  "model": {
+    "providerId": "codex",
+    "modelId": "discovered-model",
+    "effortId": "medium"
+  },
   "createdAt": "2026-08-04T00:00:00Z",
   "updatedAt": "2026-08-04T00:01:00Z"
 }

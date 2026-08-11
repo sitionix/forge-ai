@@ -4,10 +4,15 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentModelSelection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
@@ -40,7 +45,8 @@ public class AgentProxyApiMapper {
             return new SaveAgentDefinitionCommand(
                     request.name(),
                     request.instructions(),
-                    new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(request.outputSchema()))
+                    new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(request.outputSchema())),
+                    this.toDomain(request.model())
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Output schema must be valid JSON.", exception);
@@ -86,12 +92,54 @@ public class AgentProxyApiMapper {
                     agent.name(),
                     agent.instructions(),
                     this.objectMapper.readTree(agent.outputSchema().jsonObject()),
+                    this.toResponse(agent.model()),
                     agent.createdAt(),
                     agent.updatedAt()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Agent output schema is not valid JSON.", exception);
         }
+    }
+
+    public AgentRuntimeResponse toResponse(final AgentRuntimeCatalog runtime) {
+        return new AgentRuntimeResponse(runtime.providers().stream().map(this::toResponse).toList());
+    }
+
+    private AgentRuntimeProviderResponse toResponse(final AgentRuntimeProvider provider) {
+        return new AgentRuntimeProviderResponse(
+                provider.providerId(),
+                provider.displayName(),
+                provider.status(),
+                provider.version(),
+                provider.models().stream().map(this::toResponse).toList()
+        );
+    }
+
+    private AgentRuntimeModelResponse toResponse(final AgentRuntimeModel model) {
+        return new AgentRuntimeModelResponse(
+                model.modelId(),
+                model.displayName(),
+                model.description(),
+                model.efforts().stream().map(this::toResponse).toList()
+        );
+    }
+
+    private AgentRuntimeEffortResponse toResponse(final AgentRuntimeEffort effort) {
+        return new AgentRuntimeEffortResponse(effort.effortId(), effort.description());
+    }
+
+    private AgentModelSelection toDomain(final AgentModelSelectionRequest request) {
+        if (request == null) {
+            return null;
+        }
+        return new AgentModelSelection(request.providerId(), request.modelId(), request.effortId());
+    }
+
+    private AgentModelSelectionResponse toResponse(final AgentModelSelection model) {
+        if (model == null) {
+            return null;
+        }
+        return new AgentModelSelectionResponse(model.providerId(), model.modelId(), model.effortId());
     }
 
     public AgentWorkflowResponse toResponse(final AgentWorkflow workflow) {

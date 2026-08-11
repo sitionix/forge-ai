@@ -40,6 +40,15 @@ public class AgentDefinitionEntity {
     @Column(name = "output_schema", nullable = false, columnDefinition = "jsonb")
     private String outputSchema;
 
+    @Column(name = "model_provider_id")
+    private String modelProviderId;
+
+    @Column(name = "model_id")
+    private String modelId;
+
+    @Column(name = "model_effort_id")
+    private String modelEffortId;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

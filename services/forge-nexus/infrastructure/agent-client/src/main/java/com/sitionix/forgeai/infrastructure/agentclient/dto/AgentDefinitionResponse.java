@@ -10,7 +10,17 @@ public record AgentDefinitionResponse(
         String name,
         String instructions,
         JsonNode outputSchema,
+        AgentModelSelectionDto model,
         Instant createdAt,
         Instant updatedAt
 ) {
+    public AgentDefinitionResponse(final UUID id,
+                                   final UUID projectId,
+                                   final String name,
+                                   final String instructions,
+                                   final JsonNode outputSchema,
+                                   final Instant createdAt,
+                                   final Instant updatedAt) {
+        this(id, projectId, name, instructions, outputSchema, null, createdAt, updatedAt);
+    }
 }

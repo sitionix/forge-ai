@@ -8,6 +8,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProxyApiMapper;
+import com.sitionix.forgeai.api.agentproxy.AgentRuntimeResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse;
 import com.sitionix.forgeai.api.agentproxy.CreateAgentWorkflowRunRequest;
@@ -17,6 +18,7 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.GetAgentDefinition;
+import com.sitionix.forgeai.domain.usecase.GetAgentRuntime;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.ListAgentProjects;
@@ -44,6 +46,7 @@ public class ForgeAiInfrastructureAgentsController {
 
     private final ListAgentProjects listAgentProjects;
     private final CreateAgentProject createAgentProject;
+    private final GetAgentRuntime getAgentRuntime;
     private final ListProjectAgentDefinitions listProjectAgentDefinitions;
     private final CreateAgentDefinition createAgentDefinition;
     private final GetAgentDefinition getAgentDefinition;
@@ -68,6 +71,11 @@ public class ForgeAiInfrastructureAgentsController {
     public ResponseEntity<AgentProjectResponse> createProject(@Valid @RequestBody final AgentProjectRequest request) {
         final AgentProjectResponse response = this.mapper.toResponse(this.createAgentProject.execute(this.mapper.toCommand(request)));
         return ResponseEntity.created(URI.create("/api/v1/infrastructure/agents/projects/" + response.id())).body(response);
+    }
+
+    @GetMapping("/api/v1/infrastructure/agents/runtime")
+    public ResponseEntity<AgentRuntimeResponse> getRuntime() {
+        return ResponseEntity.ok(this.mapper.toResponse(this.getAgentRuntime.execute()));
     }
 
     @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/agents")
