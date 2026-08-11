@@ -33,6 +33,7 @@ public class NodeRunLifecycle {
 
     public static final String SOURCE_AGENT_NOT_FOUND = "SOURCE_AGENT_NOT_FOUND";
     public static final String AGENT_MODEL_NOT_CONFIGURED = "AGENT_MODEL_NOT_CONFIGURED";
+    public static final String INVALID_NODE_RUN_DEPENDENCY = "INVALID_NODE_RUN_DEPENDENCY";
     public static final String LIFECYCLE_CONFLICT = "NODE_RUN_LIFECYCLE_CONFLICT";
 
     private final NodeRunRepository nodeRunRepository;
@@ -49,6 +50,9 @@ public class NodeRunLifecycle {
 
         final WorkflowRun workflowRun = this.workflowRunRepository.findByIdForUpdate(workflowRunId.get())
                 .orElseThrow(() -> new ConflictException("WORKFLOW_RUN_NOT_FOUND", "Owning workflow run was not found."));
+        if (this.isTerminal(workflowRun.status())) {
+            return Optional.empty();
+        }
         final Optional<NodeRun> locked = this.nodeRunRepository.findByIdForUpdate(nodeRunId);
         if (locked.isEmpty() || locked.get().status() != NodeRunStatus.PENDING) {
             return Optional.empty();
@@ -56,6 +60,15 @@ public class NodeRunLifecycle {
 
         final NodeRun nodeRun = locked.get();
         final Map<UUID, NodeRun> dependencies = this.dependenciesById(nodeRun.dependsOnNodeRunIds());
+        if (this.hasInvalidDependencies(nodeRun, dependencies)) {
+            this.nodeRunRepository.save(this.withFailed(
+                    nodeRun,
+                    new NodeRunFailure(INVALID_NODE_RUN_DEPENDENCY, "Node run dependency is invalid."),
+                    Instant.now(this.clock)
+            ));
+            this.reconcileWorkflowRun(workflowRun, Instant.now(this.clock));
+            return Optional.empty();
+        }
         if (this.hasDependencyStatus(dependencies.values(), NodeRunStatus.FAILED, NodeRunStatus.BLOCKED, NodeRunStatus.CANCELLED)) {
             this.nodeRunRepository.save(this.withBlocked(nodeRun, Instant.now(this.clock)));
             this.reconcileWorkflowRun(workflowRun, Instant.now(this.clock));
@@ -187,6 +200,16 @@ public class NodeRunLifecycle {
         return ordered;
     }
 
+    private boolean hasInvalidDependencies(final NodeRun nodeRun, final Map<UUID, NodeRun> dependenciesById) {
+        for (final UUID dependencyId : nodeRun.dependsOnNodeRunIds()) {
+            final NodeRun dependency = dependenciesById.get(dependencyId);
+            if (dependency == null || !nodeRun.workflowRunId().equals(dependency.workflowRunId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean hasDependencyStatus(final Collection<NodeRun> dependencies, final NodeRunStatus... statuses) {
         for (final NodeRun dependency : dependencies) {
             for (final NodeRunStatus status : statuses) {
@@ -211,11 +234,14 @@ public class NodeRunLifecycle {
     private Optional<NodeRunExecutionModel> toExecutionModel(final AgentModelSelection selection) {
         if (selection == null
                 || this.isBlank(selection.providerId())
-                || this.isBlank(selection.modelId())
-                || this.isBlank(selection.effortId())) {
+                || this.isBlank(selection.modelId())) {
             return Optional.empty();
         }
-        return Optional.of(new NodeRunExecutionModel(selection.providerId(), selection.modelId(), selection.effortId()));
+        return Optional.of(new NodeRunExecutionModel(
+                selection.providerId(),
+                selection.modelId(),
+                this.isBlank(selection.effortId()) ? null : selection.effortId()
+        ));
     }
 
     private boolean isBlank(final String value) {

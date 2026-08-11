@@ -130,6 +130,39 @@ class PostgresWorkflowRunRepositoryTest {
     }
 
     @Test
+    void findByIdReconstructsExecutionModelWithNullableEffort() {
+        final NodeRunEntity node = this.nodeEntity(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, List.of());
+        node.setExecutionModelProviderId("codex");
+        node.setExecutionModelId("model-without-effort");
+        node.setExecutionModelEffortId(null);
+        when(this.workflowRunRepository.findById(RUN_ID)).thenReturn(Optional.of(this.runEntity(RUN_ID, NOW)));
+        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of(node));
+
+        final WorkflowRun run = this.repository.findById(RUN_ID).orElseThrow();
+
+        assertThat(run.nodeRuns()).singleElement()
+                .extracting(NodeRun::executionModel)
+                .isEqualTo(new NodeRunExecutionModel("codex", "model-without-effort", null));
+    }
+
+    @Test
+    void savePersistsExecutionModelWithNullableEffort() {
+        when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
+
+        this.repository.save(this.run(List.of(this.withExecutionModel(
+                this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, List.of(), null, null),
+                new NodeRunExecutionModel("codex", "model-without-effort", null)
+        ))));
+
+        assertThat(this.savedNodes()).singleElement().satisfies(node -> {
+            assertThat(node.getExecutionModelProviderId()).isEqualTo("codex");
+            assertThat(node.getExecutionModelId()).isEqualTo("model-without-effort");
+            assertThat(node.getExecutionModelEffortId()).isNull();
+        });
+    }
+
+    @Test
     void historyUsesDeterministicRepositoryOrderingAndDoesNotLoadNodeRuns() {
         final UUID olderRunId = UUID.fromString("33333333-3333-4333-8333-333333333332");
         when(this.workflowRunRepository.findBySourceWorkflowIdOrderByCreatedAtDescIdDesc(WORKFLOW_ID)).thenReturn(List.of(
@@ -181,6 +214,27 @@ class PostgresWorkflowRunRepositoryTest {
                 NOW,
                 null,
                 null
+        );
+    }
+
+    private NodeRun withExecutionModel(final NodeRun nodeRun, final NodeRunExecutionModel executionModel) {
+        return new NodeRun(
+                nodeRun.id(),
+                nodeRun.workflowRunId(),
+                nodeRun.sourceNodeId(),
+                nodeRun.sourceAgentId(),
+                nodeRun.agentName(),
+                nodeRun.agentInstructions(),
+                nodeRun.agentOutputSchema(),
+                nodeRun.dependsOnNodeRunIds(),
+                nodeRun.position(),
+                nodeRun.status(),
+                nodeRun.output(),
+                nodeRun.failure(),
+                executionModel,
+                nodeRun.createdAt(),
+                nodeRun.startedAt(),
+                nodeRun.finishedAt()
         );
     }
 

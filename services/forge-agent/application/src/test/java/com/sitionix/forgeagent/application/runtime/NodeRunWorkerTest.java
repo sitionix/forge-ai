@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
+import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import java.time.Duration;
@@ -107,6 +108,38 @@ class NodeRunWorkerTest {
         this.worker.poll();
 
         verify(this.agentExecutor, never()).execute(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void executorRuntimeExceptionPersistsSafeNormalizedFailure() {
+        when(this.nodeRunRepository.findPendingIds()).thenReturn(List.of(NODE_RUN_A));
+        when(this.lifecycle.tryStart(NODE_RUN_A)).thenReturn(Optional.of(this.claim(NODE_RUN_A)));
+        when(this.agentExecutor.execute(this.claim(NODE_RUN_A))).thenThrow(new IllegalStateException("secret upstream body"));
+
+        this.worker.poll();
+        this.executorService.close();
+
+        verify(this.lifecycle).fail(
+                NODE_RUN_A,
+                new NodeRunFailure(NodeRunWorker.AGENT_EXECUTOR_FAILED, "Agent execution failed.")
+        );
+        verify(this.lifecycle, never()).succeed(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void executorNullOutputFailsNodeRun() {
+        when(this.nodeRunRepository.findPendingIds()).thenReturn(List.of(NODE_RUN_A));
+        when(this.lifecycle.tryStart(NODE_RUN_A)).thenReturn(Optional.of(this.claim(NODE_RUN_A)));
+        when(this.agentExecutor.execute(this.claim(NODE_RUN_A))).thenReturn(null);
+
+        this.worker.poll();
+        this.executorService.close();
+
+        verify(this.lifecycle).fail(
+                NODE_RUN_A,
+                new NodeRunFailure(NodeRunWorker.AGENT_EXECUTOR_INVALID_OUTPUT, "Agent execution returned no output.")
+        );
+        verify(this.lifecycle, never()).succeed(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     private NodeExecutionClaim claim(final UUID nodeRunId) {

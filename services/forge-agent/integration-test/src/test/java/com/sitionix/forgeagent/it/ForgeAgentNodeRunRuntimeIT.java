@@ -199,6 +199,39 @@ class ForgeAgentNodeRunRuntimeIT {
     }
 
     @Test
+    void givenAgentModelWithoutEffort_whenNodeRunStarts_thenNullableEffortPersists() throws Exception {
+        this.seedProjectAgentAWithoutEffortAndWorkflow();
+        this.updateWorkflow("requestWorkflowSingleNodeA.json");
+        final WorkflowRunEntity run = this.createRun(1);
+        final UUID nodeRunId = this.nodeRunsBySourceNodeId(run.getId()).get(NODE_A_ID).getId();
+
+        final DeterministicAgentExecutor agentExecutor = new DeterministicAgentExecutor();
+        final TrackingExecutorService executorService = new TrackingExecutorService();
+        final NodeRunWorker worker = new NodeRunWorker(this.nodeRunRepository, this.nodeRunLifecycle, agentExecutor, executorService);
+        try {
+            worker.poll();
+            final NodeExecutionClaim claim = agentExecutor.awaitStarted(nodeRunId);
+
+            assertThat(claim.executionModel().providerId()).isEqualTo("codex");
+            assertThat(claim.executionModel().modelId()).isEqualTo("model-without-effort");
+            assertThat(claim.executionModel().effortId()).isNull();
+            assertThat(this.nodeRun(nodeRunId)).satisfies(started -> {
+                assertThat(started.getStatus()).isEqualTo("RUNNING");
+                assertThat(started.getExecutionModelProviderId()).isEqualTo("codex");
+                assertThat(started.getExecutionModelId()).isEqualTo("model-without-effort");
+                assertThat(started.getExecutionModelEffortId()).isNull();
+            });
+
+            agentExecutor.completeSuccess(nodeRunId, "{\"node\":\"A\"}");
+            executorService.awaitCompletedCount(1);
+            assertThat(this.nodeRun(nodeRunId).getExecutionModelEffortId()).isNull();
+        } finally {
+            agentExecutor.completeAll();
+            executorService.shutdownNow();
+        }
+    }
+
+    @Test
     void givenSamePendingNodeRun_whenTwoTryStartCallsRace_thenExactlyOneClaimPersistsRunningState() throws Exception {
         this.seedProjectAgentsAndWorkflow();
         this.updateAgent(AGENT_A_ID, "requestUpdateAgentAWithModelA.json");
@@ -304,6 +337,15 @@ class ForgeAgentNodeRunRuntimeIT {
                 .to(AGENT_DEFINITION.withJson("agent_a.json"))
                 .to(AGENT_DEFINITION.withJson("agent_b.json"))
                 .to(AGENT_DEFINITION.withJson("agent_c.json"))
+                .to(WORKFLOW.withJson("workflow_alpha.json"))
+                .build();
+    }
+
+    private void seedProjectAgentAWithoutEffortAndWorkflow() {
+        this.forgeIt.postgresql()
+                .create()
+                .to(PROJECT.withJson("project_alpha.json"))
+                .to(AGENT_DEFINITION.withJson("agent_a_model_without_effort.json"))
                 .to(WORKFLOW.withJson("workflow_alpha.json"))
                 .build();
     }

@@ -15,7 +15,14 @@ public interface SpringDataNodeRunRepository extends JpaRepository<NodeRunEntity
 
     List<NodeRunEntity> findByWorkflowRunIdOrderByCreatedAtAscIdAsc(UUID workflowRunId);
 
-    @Query("select n.id from NodeRunEntity n where n.status = 'PENDING' order by n.createdAt asc, n.id asc")
+    @Query("""
+            select n.id
+            from NodeRunEntity n
+            join WorkflowRunEntity w on w.id = n.workflowRunId
+            where n.status = 'PENDING'
+              and w.status in ('QUEUED', 'RUNNING')
+            order by n.createdAt asc, n.id asc
+            """)
     List<UUID> findPendingIds();
 
     @Query("select n.workflowRunId from NodeRunEntity n where n.id = :id")

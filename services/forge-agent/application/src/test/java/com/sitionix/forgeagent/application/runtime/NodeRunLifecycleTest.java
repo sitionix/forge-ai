@@ -41,6 +41,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class NodeRunLifecycleTest {
 
     private static final UUID WORKFLOW_RUN_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
+    private static final UUID OTHER_WORKFLOW_RUN_ID = UUID.fromString("10000000-0000-4000-8000-000000000101");
     private static final UUID PROJECT_ID = UUID.fromString("10000000-0000-4000-8000-000000000002");
     private static final UUID WORKFLOW_ID = UUID.fromString("10000000-0000-4000-8000-000000000003");
     private static final UUID AGENT_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
@@ -144,6 +145,18 @@ class NodeRunLifecycleTest {
     }
 
     @Test
+    void modelSelectionWithoutEffortClaimsSuccessfully() {
+        this.agents.put(AGENT_ID, this.agent(new AgentModelSelection("codex", "model-without-effort", null)));
+        this.nodeRuns.put(NODE_RUN_A, this.nodeRun(NODE_RUN_A, List.of(), NodeRunStatus.PENDING));
+
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(NODE_RUN_A).orElseThrow();
+
+        assertThat(this.nodeRuns.get(NODE_RUN_A).status()).isEqualTo(NodeRunStatus.RUNNING);
+        assertThat(claim.executionModel()).isEqualTo(new NodeRunExecutionModel("codex", "model-without-effort", null));
+        assertThat(this.nodeRuns.get(NODE_RUN_A).executionModel()).isEqualTo(new NodeRunExecutionModel("codex", "model-without-effort", null));
+    }
+
+    @Test
     void agentModelChangedAfterClaimDoesNotMutatePersistedExecutionModel() {
         this.agents.put(AGENT_ID, this.agent(new AgentModelSelection("codex", "model-b", "xhigh")));
         this.nodeRuns.put(NODE_RUN_A, this.nodeRun(NODE_RUN_A, List.of(), NodeRunStatus.PENDING));
@@ -174,6 +187,40 @@ class NodeRunLifecycleTest {
 
         assertThat(this.nodeRuns.get(NODE_RUN_A).status()).isEqualTo(NodeRunStatus.FAILED);
         assertThat(this.nodeRuns.get(NODE_RUN_A).failure().code()).isEqualTo(NodeRunLifecycle.AGENT_MODEL_NOT_CONFIGURED);
+    }
+
+    @Test
+    void missingDependencyFailsClosed() {
+        this.nodeRuns.put(NODE_RUN_B, this.nodeRun(NODE_RUN_B, List.of(NODE_RUN_A), NodeRunStatus.PENDING));
+
+        assertThat(this.lifecycle.tryStart(NODE_RUN_B)).isEmpty();
+
+        assertThat(this.nodeRuns.get(NODE_RUN_B).status()).isEqualTo(NodeRunStatus.FAILED);
+        assertThat(this.nodeRuns.get(NODE_RUN_B).failure())
+                .isEqualTo(new NodeRunFailure(NodeRunLifecycle.INVALID_NODE_RUN_DEPENDENCY, "Node run dependency is invalid."));
+        assertThat(this.nodeRuns.get(NODE_RUN_B).finishedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void crossWorkflowRunDependencyFailsClosed() {
+        this.nodeRuns.put(NODE_RUN_A, this.withWorkflowRunId(this.nodeRun(NODE_RUN_A, List.of(), NodeRunStatus.SUCCEEDED), OTHER_WORKFLOW_RUN_ID));
+        this.nodeRuns.put(NODE_RUN_B, this.nodeRun(NODE_RUN_B, List.of(NODE_RUN_A), NodeRunStatus.PENDING));
+
+        assertThat(this.lifecycle.tryStart(NODE_RUN_B)).isEmpty();
+
+        assertThat(this.nodeRuns.get(NODE_RUN_B).status()).isEqualTo(NodeRunStatus.FAILED);
+        assertThat(this.nodeRuns.get(NODE_RUN_B).failure().code()).isEqualTo(NodeRunLifecycle.INVALID_NODE_RUN_DEPENDENCY);
+    }
+
+    @Test
+    void terminalWorkflowRunDoesNotClaimPendingNode() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.CANCELLED, NOW, NOW);
+        this.nodeRuns.put(NODE_RUN_A, this.nodeRun(NODE_RUN_A, List.of(), NodeRunStatus.PENDING));
+
+        assertThat(this.lifecycle.tryStart(NODE_RUN_A)).isEmpty();
+
+        assertThat(this.nodeRuns.get(NODE_RUN_A).status()).isEqualTo(NodeRunStatus.PENDING);
+        verify(this.agentDefinitionRepository, never()).findById(any());
     }
 
     @Test
@@ -266,6 +313,7 @@ class NodeRunLifecycleTest {
 
     private void assertDependencyBlocks(final NodeRunStatus dependencyStatus) {
         this.nodeRuns.clear();
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.QUEUED, null, null);
         this.nodeRuns.put(NODE_RUN_A, this.nodeRun(NODE_RUN_A, List.of(), dependencyStatus));
         this.nodeRuns.put(NODE_RUN_B, this.nodeRun(NODE_RUN_B, List.of(NODE_RUN_A), NodeRunStatus.PENDING));
 
@@ -371,6 +419,27 @@ class NodeRunLifecycleTest {
                 nodeRun.status(),
                 nodeRun.output(),
                 failure,
+                nodeRun.executionModel(),
+                nodeRun.createdAt(),
+                nodeRun.startedAt(),
+                nodeRun.finishedAt()
+        );
+    }
+
+    private NodeRun withWorkflowRunId(final NodeRun nodeRun, final UUID workflowRunId) {
+        return new NodeRun(
+                nodeRun.id(),
+                workflowRunId,
+                nodeRun.sourceNodeId(),
+                nodeRun.sourceAgentId(),
+                nodeRun.agentName(),
+                nodeRun.agentInstructions(),
+                nodeRun.agentOutputSchema(),
+                nodeRun.dependsOnNodeRunIds(),
+                nodeRun.position(),
+                nodeRun.status(),
+                nodeRun.output(),
+                nodeRun.failure(),
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),

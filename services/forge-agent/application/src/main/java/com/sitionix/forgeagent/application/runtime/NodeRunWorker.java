@@ -10,6 +10,9 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class NodeRunWorker {
 
+    static final String AGENT_EXECUTOR_FAILED = "AGENT_EXECUTOR_FAILED";
+    static final String AGENT_EXECUTOR_INVALID_OUTPUT = "AGENT_EXECUTOR_INVALID_OUTPUT";
+
     private final NodeRunRepository nodeRunRepository;
     private final NodeRunLifecycle lifecycle;
     private final AgentExecutor agentExecutor;
@@ -27,10 +30,11 @@ public class NodeRunWorker {
             try {
                 output = this.agentExecutor.execute(claim);
             } catch (final RuntimeException exception) {
-                this.lifecycle.fail(claim.nodeRunId(), new NodeRunFailure(
-                        "AGENT_EXECUTOR_FAILED",
-                        exception.getMessage() == null ? "Agent execution failed." : exception.getMessage()
-                ));
+                this.lifecycle.fail(claim.nodeRunId(), new NodeRunFailure(AGENT_EXECUTOR_FAILED, "Agent execution failed."));
+                return;
+            }
+            if (output == null) {
+                this.lifecycle.fail(claim.nodeRunId(), new NodeRunFailure(AGENT_EXECUTOR_INVALID_OUTPUT, "Agent execution returned no output."));
                 return;
             }
             this.lifecycle.succeed(claim.nodeRunId(), output);
