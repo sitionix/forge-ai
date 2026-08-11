@@ -211,6 +211,84 @@ describe('Agent projects page', () => {
     expect(fakeApi.updateAgent).toHaveBeenCalledWith('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', expect.not.objectContaining({ dependsOnAgentIds: expect.anything() }));
   });
 
+  it('editing Agent can change the saved model selection', async () => {
+    const fakeApi = api({
+      getRuntime: vi.fn(() => Promise.resolve({
+        providers: [{
+          providerId: 'codex',
+          displayName: 'Codex',
+          status: 'READY',
+          version: 'codex 1.0.0',
+          models: [
+            {
+              modelId: 'discovered-model',
+              displayName: 'Discovered Model',
+              description: 'Current saved model',
+              efforts: [{ effortId: 'medium', description: 'Medium' }]
+            },
+            {
+              modelId: 'new-model',
+              displayName: 'New Model',
+              description: 'Replacement model',
+              efforts: [{ effortId: 'xhigh', description: 'Maximum reasoning' }]
+            }
+          ]
+        }]
+      }))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    selectValue(dom, 'agentsV2AgentModel', 'new-model');
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.updateAgent).toHaveBeenCalledWith('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', expect.objectContaining({
+      model: { providerId: 'codex', modelId: 'new-model', effortId: 'xhigh' }
+    }));
+  });
+
+  it('editing Agent refreshes runtime catalog so newly available models can be selected', async () => {
+    const refreshedRuntime = {
+      providers: [{
+        providerId: 'codex',
+        displayName: 'Codex',
+        status: 'READY',
+        version: 'codex 1.0.1',
+        models: [
+          {
+            modelId: 'discovered-model',
+            displayName: 'Discovered Model',
+            description: 'Current saved model',
+            efforts: [{ effortId: 'medium', description: 'Medium' }]
+          },
+          {
+            modelId: 'new-model',
+            displayName: 'New Model',
+            description: 'Model discovered after workspace load',
+            efforts: [{ effortId: 'xhigh', description: 'Maximum reasoning' }]
+          }
+        ]
+      }]
+    };
+    const fakeApi = api({
+      getRuntime: vi.fn()
+        .mockResolvedValueOnce(runtime())
+        .mockResolvedValueOnce(refreshedRuntime)
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    selectValue(dom, 'agentsV2AgentModel', 'new-model');
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.getRuntime).toHaveBeenCalledTimes(2);
+    expect(fakeApi.updateAgent).toHaveBeenCalledWith('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', expect.objectContaining({
+      model: { providerId: 'codex', modelId: 'new-model', effortId: 'xhigh' }
+    }));
+  });
+
   it('new Agent modal keeps provider model and effort blank after runtime loads', async () => {
     const { dom, page } = await openedProject();
 
@@ -323,6 +401,26 @@ describe('Agent projects page', () => {
     await flushAsync();
     expect(fakeApi.updateAgent).not.toHaveBeenCalled();
     expect(dom.window.document.getElementById('agentsV2AgentModalError')?.textContent).toContain('Select a current ready model.');
+  });
+
+  it('editing Agent can replace a stale saved model with a current model', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'old-model', effortId: 'xhigh' }
+    };
+    const fakeApi = api({
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+    selectValue(dom, 'agentsV2AgentModel', 'discovered-model');
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.updateAgent).toHaveBeenCalledWith(staleAgent.id, expect.objectContaining({
+      model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'medium' }
+    }));
   });
 
   it('effort tone helper maps known intensity ids and falls back neutrally', () => {

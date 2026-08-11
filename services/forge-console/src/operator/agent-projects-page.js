@@ -387,11 +387,6 @@ export class AgentProjectsPage {
   }
 
   async loadRuntimeForAgentModal() {
-    if (this.state.runtime) {
-      this.ensureInitialModelSelection();
-      this.renderModelPicker();
-      return;
-    }
     this.renderModelPickerLoading();
     await this.loadRuntimeCatalog(this.state.selectedProjectId, this.projectLoadSequence, { showModalError: true });
     this.ensureInitialModelSelection();
