@@ -42,12 +42,20 @@ final class CodexAppServerClient implements CodexRpcClient {
         this.closeCurrent();
         final StartedCodexAppServer started = this.processStarter.start();
         final CodexJsonRpcTransport next = new CodexJsonRpcTransport(this.objectMapper, started, this.properties);
+        this.transport = next;
+        this.codexVersion = null;
         try {
             this.codexVersion = this.initialize(next);
-            this.transport = next;
             return next;
         } catch (final RuntimeException e) {
-            next.close();
+            try {
+                this.closeCurrent();
+            } catch (final RuntimeException cleanupFailure) {
+                if (cleanupFailure != e) {
+                    cleanupFailure.addSuppressed(e);
+                }
+                throw cleanupFailure;
+            }
             throw e;
         }
     }
@@ -69,13 +77,22 @@ final class CodexAppServerClient implements CodexRpcClient {
 
     private String extractVersion(final JsonNode initializeResult) {
         if (initializeResult == null || !initializeResult.isObject()) {
-            return "unknown";
+            throw new CodexTransportException("Codex initialize response was not an object");
         }
         final JsonNode userAgent = initializeResult.path("userAgent");
-        if (userAgent.isTextual() && !userAgent.asText().isBlank()) {
-            return userAgent.asText().trim();
+        if (!userAgent.isTextual() || userAgent.asText().isBlank()) {
+            throw new CodexTransportException("Codex initialize response did not include a valid userAgent");
         }
-        return "unknown";
+        final String value = userAgent.asText().trim();
+        final int separator = value.indexOf('/');
+        if (separator <= 0 || separator != value.lastIndexOf('/') || separator == value.length() - 1) {
+            throw new CodexTransportException("Codex initialize response userAgent was malformed");
+        }
+        final String version = value.substring(separator + 1).trim();
+        if (version.isBlank()) {
+            throw new CodexTransportException("Codex initialize response userAgent was malformed");
+        }
+        return version;
     }
 
     private synchronized void invalidate(final CodexJsonRpcTransport current) {

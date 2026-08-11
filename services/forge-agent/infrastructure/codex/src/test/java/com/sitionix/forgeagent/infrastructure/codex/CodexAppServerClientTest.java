@@ -30,10 +30,46 @@ class CodexAppServerClientTest {
         process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex-cli/9.9.9\"}}");
         final JsonNode initialized = this.readRequest(process);
 
-        assertThat(version.get(1, TimeUnit.SECONDS)).isEqualTo("codex-cli/9.9.9");
+        assertThat(version.get(1, TimeUnit.SECONDS)).isEqualTo("9.9.9");
         assertThat(initialized.has("id")).isFalse();
         assertThat(initialized.path("method").asText()).isEqualTo("initialized");
         client.close();
+    }
+
+    @Test
+    void missingUserAgentFailsInitialization() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess();
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<String> version = CompletableFuture.supplyAsync(client::version);
+
+        final JsonNode initialize = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{}}");
+
+        assertThatThrownBy(() -> version.get(1, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
+    }
+
+    @Test
+    void blankUserAgentFailsInitialization() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess();
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<String> version = CompletableFuture.supplyAsync(client::version);
+
+        final JsonNode initialize = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"  \"}}");
+
+        assertThatThrownBy(() -> version.get(1, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
+    }
+
+    @Test
+    void malformedUserAgentFailsInitialization() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess();
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<String> version = CompletableFuture.supplyAsync(client::version);
+
+        final JsonNode initialize = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex-cli 9.9.9\"}}");
+
+        assertThatThrownBy(() -> version.get(1, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
     }
 
     @Test
@@ -41,7 +77,7 @@ class CodexAppServerClientTest {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final FakeStarter starter = new FakeStarter(process);
         final CodexAppServerClient client = this.client(starter, this.properties());
-        this.initialize(client, process, "codex/1");
+        this.initialize(client, process, "codex/1", "1");
 
         final CompletableFuture<JsonNode> response = CompletableFuture.supplyAsync(() -> client.request("model/list", this.objectMapper.createObjectNode()));
         final JsonNode request = this.readRequest(process);
@@ -60,7 +96,7 @@ class CodexAppServerClientTest {
         final CodexAppServerProperties properties = this.properties();
         properties.setRequestTimeout(Duration.ofMillis(40));
         final CodexAppServerClient client = this.client(starter, properties);
-        this.initialize(client, first, "codex/1");
+        this.initialize(client, first, "codex/1", "1");
 
         final CompletableFuture<JsonNode> timeout = CompletableFuture.supplyAsync(() -> client.request("slow", null));
         this.readRequest(first);
@@ -71,7 +107,7 @@ class CodexAppServerClientTest {
         second.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex/2\"}}");
         this.readRequest(second);
 
-        assertThat(version.get(1, TimeUnit.SECONDS)).isEqualTo("codex/2");
+        assertThat(version.get(1, TimeUnit.SECONDS)).isEqualTo("2");
         assertThat(starter.starts()).isEqualTo(2);
         client.close();
     }
@@ -83,7 +119,7 @@ class CodexAppServerClientTest {
         final CodexAppServerProperties properties = this.properties();
         properties.setRequestTimeout(Duration.ofMillis(40));
         final CodexAppServerClient client = this.client(starter, properties);
-        this.initialize(client, process, "codex/1");
+        this.initialize(client, process, "codex/1", "1");
 
         final CompletableFuture<JsonNode> timeout = CompletableFuture.supplyAsync(() -> client.request("slow", null));
         this.readRequest(process);
@@ -93,12 +129,47 @@ class CodexAppServerClientTest {
         process.terminateNow();
     }
 
-    private void initialize(final CodexAppServerClient client, final FakeCodexProcess process, final String version) throws Exception {
+    @Test
+    void failedInitializeWithIncompleteCleanupRetainsOwnershipUntilOldProcessLaterExits() throws Exception {
+        final FakeCodexProcess first = new FakeCodexProcess(false, false);
+        final FakeCodexProcess second = new FakeCodexProcess(false, true);
+        final FakeStarter starter = new FakeStarter(first, second);
+        final CodexAppServerProperties properties = this.properties();
+        properties.setRequestTimeout(Duration.ofMillis(40));
+        final CodexAppServerClient client = this.client(starter, properties);
+
+        final CompletableFuture<String> failedInitialize = CompletableFuture.supplyAsync(client::version);
+        assertThat(this.readRequest(first).path("method").asText()).isEqualTo("initialize");
+
+        assertThatThrownBy(() -> failedInitialize.get(1, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
+        assertThat(first.destroyed()).isTrue();
+        assertThat(first.forciblyDestroyed()).isTrue();
+        assertThat(first.isAlive()).isTrue();
+        assertThat(starter.starts()).isEqualTo(1);
+
+        assertThatThrownBy(client::version).isInstanceOf(CodexTransportException.class);
+        assertThat(starter.starts()).isEqualTo(1);
+
+        first.terminateNow();
+        final CompletableFuture<String> recoveredVersion = CompletableFuture.supplyAsync(client::version);
+        final JsonNode replacementInitialize = this.readRequest(second);
+        second.writeStdout("{\"id\":\"" + replacementInitialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex-cli/9.9.9\"}}");
+        this.readRequest(second);
+
+        assertThat(recoveredVersion.get(1, TimeUnit.SECONDS)).isEqualTo("9.9.9");
+        assertThat(starter.starts()).isEqualTo(2);
+        client.close();
+    }
+
+    private void initialize(final CodexAppServerClient client,
+                            final FakeCodexProcess process,
+                            final String userAgent,
+                            final String expectedVersion) throws Exception {
         final CompletableFuture<String> call = CompletableFuture.supplyAsync(client::version);
         final JsonNode initialize = this.readRequest(process);
-        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"" + version + "\"}}");
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"" + userAgent + "\"}}");
         this.readRequest(process);
-        assertThat(call.get(1, TimeUnit.SECONDS)).isEqualTo(version);
+        assertThat(call.get(1, TimeUnit.SECONDS)).isEqualTo(expectedVersion);
     }
 
     private CodexAppServerClient client(final FakeStarter starter, final CodexAppServerProperties properties) {

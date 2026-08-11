@@ -140,6 +140,18 @@ class CodexRuntimeAdapterTest {
     }
 
     @Test
+    void invalidInitializationReturnsUnavailable() {
+        final FakeClient client = new FakeClient("codex 1.2.3");
+        client.failVersion = true;
+
+        final var provider = this.adapter(client).getModels();
+
+        assertThat(provider.status()).isEqualTo(RuntimeProviderStatus.UNAVAILABLE);
+        assertThat(provider.version()).isNull();
+        assertThat(provider.models()).isEmpty();
+    }
+
+    @Test
     void modelListFailureAfterVersionReturnsDegraded() {
         final FakeClient client = new FakeClient("codex 1.2.3");
         client.failRequest = true;

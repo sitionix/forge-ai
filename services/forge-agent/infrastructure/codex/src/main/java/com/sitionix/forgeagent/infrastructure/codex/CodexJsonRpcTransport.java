@@ -304,14 +304,23 @@ final class CodexJsonRpcTransport implements AutoCloseable {
             if (this.cleanupComplete) {
                 return;
             }
+            final Process process = this.server.process();
             if (this.cleanupStarted) {
+                if (!process.isAlive()) {
+                    try {
+                        this.completeCleanup(process);
+                    } catch (final CodexTransportException e) {
+                        this.cleanupFailure = e;
+                        throw e;
+                    }
+                    return;
+                }
                 if (this.cleanupFailure != null) {
                     throw this.cleanupFailure;
                 }
                 return;
             }
             this.cleanupStarted = true;
-            final Process process = this.server.process();
             try {
                 this.closeStdin();
                 if (process.isAlive()) {
@@ -326,9 +335,7 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 if (process.isAlive()) {
                     throw new CodexTransportException("Codex app-server process cleanup incomplete");
                 }
-                this.joinReader(this.stdoutReaderThread, "stdout");
-                this.joinReader(this.stderrReaderThread, "stderr");
-                this.cleanupComplete = true;
+                this.completeCleanup(process);
             } catch (final InterruptedException e) {
                 Thread.currentThread().interrupt();
                 process.destroyForcibly();
@@ -339,6 +346,21 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 throw e;
             }
         }
+    }
+
+    private void completeCleanup(final Process process) {
+        if (process.isAlive()) {
+            throw new CodexTransportException("Codex app-server process cleanup incomplete");
+        }
+        try {
+            this.joinReader(this.stdoutReaderThread, "stdout");
+            this.joinReader(this.stderrReaderThread, "stderr");
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new CodexTransportException("Codex app-server cleanup interrupted", e);
+        }
+        this.cleanupFailure = null;
+        this.cleanupComplete = true;
     }
 
     private void closeStdin() {
