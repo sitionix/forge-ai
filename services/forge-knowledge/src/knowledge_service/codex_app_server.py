@@ -1133,6 +1133,7 @@ class CodexAppServerClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._close_task: asyncio.Task[None] | None = None
+        self._cancellation_cleanup_completed: concurrent.futures.Future[None] | None = None
 
     @property
     def version(self) -> str | None:
@@ -1193,7 +1194,7 @@ class CodexAppServerClient:
         cleanup_finished = False
         loop = self._loop
         if loop is not None and loop.is_running():
-            await self._await_threadsafe(lambda: self._close_inner())
+            await self._await_threadsafe(lambda: self._close_inner(), allow_pending_cleanup=True)
             cleanup_finished = True
         else:
             if self._transport is not None and self._transport.has_cleanup_process:
@@ -1211,7 +1212,7 @@ class CodexAppServerClient:
         try:
             loop = self._loop
             if loop is not None and loop.is_running():
-                cleanup_future = self._submit(lambda: self._close_inner(), allow_closing=True)
+                cleanup_future = self._submit(lambda: self._close_inner(), allow_closing=True, allow_pending_cleanup=True)
                 try:
                     cleanup_future.result(timeout=self._settings.sync_close_timeout_seconds)
                     cleanup_finished = True
@@ -1416,25 +1417,61 @@ class CodexAppServerClient:
         match = self._VERSION_PATTERN.match(user_agent)
         return match.group(1) if match else None
 
-    async def _await_threadsafe(self, coro_factory: Callable[[], Awaitable[Any]], *, cancel_cleanup: bool = False) -> Any:
+    async def _await_threadsafe(
+        self,
+        coro_factory: Callable[[], Awaitable[Any]],
+        *,
+        cancel_cleanup: bool = False,
+        allow_pending_cleanup: bool = False,
+    ) -> Any:
+        if not allow_pending_cleanup:
+            self._raise_if_cancellation_cleanup_pending()
         submitted = self._submit_tracked(coro_factory)
         try:
             return await asyncio.wrap_future(submitted.result)
         except asyncio.CancelledError:
+            self._register_cancellation_cleanup(submitted.completed)
             submitted.result.cancel()
             try:
                 await asyncio.wait_for(
-                    asyncio.wrap_future(submitted.completed),
+                    asyncio.shield(asyncio.wrap_future(submitted.completed)),
                     timeout=self._settings.cancellation_cleanup_timeout_seconds,
                 )
             except TimeoutError:
                 pass
+            self._clear_cancellation_cleanup_if_done(submitted.completed)
             if cancel_cleanup:
                 try:
-                    await asyncio.wrap_future(self._submit(lambda: self._close_inner()))
+                    await asyncio.wrap_future(
+                        self._submit(lambda: self._close_inner(), allow_closing=True, allow_pending_cleanup=True)
+                    )
                 except Exception as cleanup_exc:
                     LOGGER.debug("Codex app-server cancellation cleanup failed", exc_info=cleanup_exc)
             raise
+
+    def _register_cancellation_cleanup(self, completed: concurrent.futures.Future[None]) -> None:
+        with self._thread_lock:
+            current = self._cancellation_cleanup_completed
+            if current is None or current.done():
+                self._cancellation_cleanup_completed = completed
+                completed.add_done_callback(self._clear_cancellation_cleanup_if_done)
+
+    def _clear_cancellation_cleanup_if_done(self, completed: concurrent.futures.Future[None]) -> None:
+        if not completed.done():
+            return
+        with self._thread_lock:
+            if self._cancellation_cleanup_completed is completed:
+                self._cancellation_cleanup_completed = None
+
+    def _raise_if_cancellation_cleanup_pending(self) -> None:
+        with self._thread_lock:
+            completed = self._cancellation_cleanup_completed
+            if completed is None:
+                return
+            if completed.done():
+                self._cancellation_cleanup_completed = None
+                return
+        raise CodexAppServerLifecycleError("Codex app-server cancellation cleanup is still pending")
 
     def _submit_tracked(self, coro_factory: Callable[[], Awaitable[Any]]) -> _SubmittedCoroutine:
         self._raise_if_closed()
@@ -1477,12 +1514,20 @@ class CodexAppServerClient:
         loop.call_soon_threadsafe(start)
         return _SubmittedCoroutine(result=result_future, completed=completed_future)
 
-    def _submit(self, coro_factory: Callable[[], Awaitable[Any]], *, allow_closing: bool = False) -> concurrent.futures.Future[Any]:
+    def _submit(
+        self,
+        coro_factory: Callable[[], Awaitable[Any]],
+        *,
+        allow_closing: bool = False,
+        allow_pending_cleanup: bool = False,
+    ) -> concurrent.futures.Future[Any]:
         if allow_closing:
             if self._closed:
                 raise CodexAppServerTransportError("Codex app-server client is closed")
         else:
             self._raise_if_closed()
+        if not allow_pending_cleanup:
+            self._raise_if_cancellation_cleanup_pending()
         loop = self._ensure_loop_thread()
         return asyncio.run_coroutine_threadsafe(cast(Coroutine[Any, Any, Any], coro_factory()), loop)
 
