@@ -60,6 +60,20 @@ function runtime() {
   };
 }
 
+function unavailableCodexRuntime(status = 'UNAVAILABLE') {
+  return {
+    providers: [
+      {
+        providerId: 'codex',
+        displayName: 'Codex',
+        status,
+        version: null,
+        models: []
+      }
+    ]
+  };
+}
+
 function workflow(id = '33333333-3333-4333-8333-333333333333', nodes: any[] = [], projectId = project().id) {
   return { id, projectId, name: 'Full Testing', nodes, createdAt: '2026-08-04T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z' };
 }
@@ -401,6 +415,94 @@ describe('Agent projects page', () => {
     await flushAsync();
     expect(fakeApi.updateAgent).not.toHaveBeenCalled();
     expect(dom.window.document.getElementById('agentsV2AgentModalError')?.textContent).toContain('Select a current ready model.');
+  });
+
+  it('editing Agent shows unavailable provider as unavailable instead of stale', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'gpt-5.4-mini', effortId: 'medium' }
+    };
+    const fakeApi = api({
+      getRuntime: vi.fn(() => Promise.resolve(unavailableCodexRuntime())),
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+
+    const provider = dom.window.document.getElementById('agentsV2AgentProvider') as HTMLSelectElement;
+    const model = dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement;
+    const effort = dom.window.document.getElementById('agentsV2AgentEffort') as HTMLSelectElement;
+    expect(provider.textContent).toContain('Codex (unavailable)');
+    expect(provider.textContent).not.toContain('codex (stale)');
+    expect(model.value).toBe('gpt-5.4-mini');
+    expect(model.textContent).toContain('gpt-5.4-mini (unavailable)');
+    expect(effort.value).toBe('medium');
+    expect(effort.textContent).toContain('medium (unavailable)');
+    expect(dom.window.document.getElementById('agentsV2AgentRuntimeState')?.textContent).toContain('Codex runtime unavailable.');
+
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+    expect(fakeApi.updateAgent).not.toHaveBeenCalled();
+  });
+
+  it('editing Agent shows degraded provider as degraded instead of stale', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'gpt-5.4-mini', effortId: 'medium' }
+    };
+    const fakeApi = api({
+      getRuntime: vi.fn(() => Promise.resolve(unavailableCodexRuntime('DEGRADED'))),
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+
+    expect(dom.window.document.getElementById('agentsV2AgentProvider')?.textContent).toContain('Codex (degraded)');
+    expect(dom.window.document.getElementById('agentsV2AgentProvider')?.textContent).not.toContain('codex (stale)');
+    expect(dom.window.document.getElementById('agentsV2AgentRuntimeState')?.textContent).toContain('Codex runtime degraded.');
+  });
+
+  it('editing Agent still marks saved provider stale when provider is absent from runtime', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'gpt-5.4-mini', effortId: 'medium' }
+    };
+    const fakeApi = api({
+      getRuntime: vi.fn(() => Promise.resolve({ providers: [] })),
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+
+    expect(dom.window.document.getElementById('agentsV2AgentProvider')?.textContent).toContain('codex (stale)');
+    expect(dom.window.document.getElementById('agentsV2AgentRuntimeState')?.textContent).toContain('No ready model providers available.');
+  });
+
+  it('editing Agent refreshes from unavailable runtime to READY and makes current models selectable', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'gpt-5.4-mini', effortId: 'medium' }
+    };
+    const fakeApi = api({
+      getRuntime: vi.fn()
+        .mockResolvedValueOnce(unavailableCodexRuntime())
+        .mockResolvedValueOnce(runtime()),
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+
+    const provider = dom.window.document.getElementById('agentsV2AgentProvider') as HTMLSelectElement;
+    const model = dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement;
+    expect(provider.disabled).toBe(false);
+    expect(provider.textContent).toContain('Codex');
+    expect(model.disabled).toBe(false);
+    expect(model.textContent).toContain('Discovered Model');
+    expect(dom.window.document.getElementById('agentsV2AgentRuntimeState')?.textContent).toBe('');
   });
 
   it('editing Agent can replace a stale saved model with a current model', async () => {

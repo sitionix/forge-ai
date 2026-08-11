@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -33,6 +34,21 @@ class CodexAppServerClientTest {
         assertThat(version.get(1, TimeUnit.SECONDS)).isEqualTo("9.9.9");
         assertThat(initialized.has("id")).isFalse();
         assertThat(initialized.path("method").asText()).isEqualTo("initialized");
+        client.close();
+    }
+
+    @Test
+    void initializeExtractsVersionFromUserAgentWithTrailingRuntimeMetadata() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+
+        this.initialize(
+                client,
+                process,
+                "forge-agent-probe/0.147.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (forge-agent-probe; 0.0.0)",
+                "0.147.0"
+        );
+
         client.close();
     }
 
@@ -73,6 +89,18 @@ class CodexAppServerClientTest {
     }
 
     @Test
+    void blankUserAgentVersionTokenFailsInitialization() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess();
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<String> version = CompletableFuture.supplyAsync(client::version);
+
+        final JsonNode initialize = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex-cli/   metadata\"}}");
+
+        assertThatThrownBy(() -> version.get(1, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
+    }
+
+    @Test
     void healthyInitializedProcessIsReusedForModelRequests() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final FakeStarter starter = new FakeStarter(process);
@@ -84,6 +112,54 @@ class CodexAppServerClientTest {
         process.writeStdout("{\"id\":\"" + request.path("id").asText() + "\",\"result\":{\"data\":[]}}");
 
         assertThat(response.get(1, TimeUnit.SECONDS).path("data")).isEmpty();
+        assertThat(starter.starts()).isEqualTo(1);
+        client.close();
+    }
+
+    @Test
+    void remoteJsonRpcErrorDoesNotInvalidateHealthyInitializedProcess() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final FakeStarter starter = new FakeStarter(process);
+        final CodexAppServerClient client = this.client(starter, this.properties());
+        this.initialize(client, process, "codex/1", "1");
+
+        final CompletableFuture<JsonNode> failed = CompletableFuture.supplyAsync(() -> client.request("model/list", this.objectMapper.createObjectNode()));
+        final JsonNode firstRequest = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + firstRequest.path("id").asText() + "\",\"error\":{\"code\":-32000,\"message\":\"request scoped failure\"}}");
+
+        assertThatThrownBy(() -> failed.get(1, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexRemoteException.class);
+
+        final CompletableFuture<JsonNode> succeeded = CompletableFuture.supplyAsync(() -> client.request("model/list", this.objectMapper.createObjectNode()));
+        final JsonNode secondRequest = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + secondRequest.path("id").asText() + "\",\"result\":{\"data\":[]}}");
+
+        assertThat(succeeded.get(1, TimeUnit.SECONDS).path("data")).isEmpty();
+        assertThat(starter.starts()).isEqualTo(1);
+        client.close();
+    }
+
+    @Test
+    void runtimeAdapterDegradesOnRemoteModelListErrorAndNextDiscoveryReusesInitializedProcess() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final FakeStarter starter = new FakeStarter(process);
+        final CodexAppServerProperties properties = this.properties();
+        final CodexAppServerClient client = this.client(starter, properties);
+        final CodexRuntimeAdapter adapter = new CodexRuntimeAdapter(this.objectMapper, client, properties);
+
+        final CompletableFuture<RuntimeProviderStatus> firstStatus = CompletableFuture.supplyAsync(() -> adapter.getModels().status());
+        final JsonNode initialize = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex/1\"}}");
+        this.readRequest(process);
+        final JsonNode firstModelList = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + firstModelList.path("id").asText() + "\",\"error\":{\"code\":-32000,\"message\":\"request scoped failure\"}}");
+
+        assertThat(firstStatus.get(1, TimeUnit.SECONDS)).isEqualTo(RuntimeProviderStatus.DEGRADED);
+
+        final CompletableFuture<RuntimeProviderStatus> secondStatus = CompletableFuture.supplyAsync(() -> adapter.getModels().status());
+        final JsonNode secondModelList = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + secondModelList.path("id").asText() + "\",\"result\":{\"data\":[]}}");
+
+        assertThat(secondStatus.get(1, TimeUnit.SECONDS)).isEqualTo(RuntimeProviderStatus.READY);
         assertThat(starter.starts()).isEqualTo(1);
         client.close();
     }

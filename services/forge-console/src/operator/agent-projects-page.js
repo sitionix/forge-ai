@@ -415,6 +415,7 @@ export class AgentProjectsPage {
   }
 
   renderModelPickerLoading() {
+    this.showModelPickerState('');
     for (const id of ['agentsV2AgentProvider', 'agentsV2AgentModel', 'agentsV2AgentEffort']) {
       const select = this.byId(id);
       if (select) {
@@ -440,36 +441,42 @@ export class AgentProjectsPage {
     const selection = this.state.agentModelSelection || {};
     const readyProviders = this.readyProviders();
     const saved = this.state.savedAgentModelSelection;
+    const savedProvider = this.runtimeCatalogProvider(saved?.providerId);
+    const savedProviderReady = savedProvider?.status === 'READY';
     providerSelect.disabled = !readyProviders.length;
     providerSelect.innerHTML = [
       '<option value="">Select provider</option>',
       ...readyProviders.map((provider) => `<option value="${escapeHtml(provider.providerId)}">${escapeHtml(provider.displayName || provider.providerId)}</option>`),
-      saved?.providerId && !readyProviders.some((provider) => provider.providerId === saved.providerId)
-        ? `<option value="${escapeHtml(saved.providerId)}" disabled>${escapeHtml(saved.providerId)} (stale)</option>`
+      saved?.providerId && !savedProviderReady
+        ? `<option value="${escapeHtml(saved.providerId)}" disabled>${escapeHtml(this.savedProviderLabel(saved, savedProvider))}</option>`
         : ''
     ].join('');
     providerSelect.value = selection.providerId || '';
+    this.renderModelPickerState(readyProviders, savedProvider);
 
     const provider = this.runtimeProvider(selection.providerId);
     const models = provider?.models || [];
+    const selectedProvider = this.runtimeCatalogProvider(selection.providerId);
+    const modelQualifier = this.unavailableSelectionQualifier(selectedProvider);
     modelSelect.disabled = !provider || !models.length;
     modelSelect.innerHTML = [
       '<option value="">Select model</option>',
       ...models.map((model) => `<option value="${escapeHtml(model.modelId)}">${escapeHtml(model.displayName || model.modelId)}</option>`),
       saved?.modelId && selection.providerId === saved.providerId && !models.some((model) => model.modelId === saved.modelId)
-        ? `<option value="${escapeHtml(saved.modelId)}" disabled>${escapeHtml(saved.modelId)} (stale)</option>`
+        ? `<option value="${escapeHtml(saved.modelId)}" disabled>${escapeHtml(`${saved.modelId} (${modelQualifier})`)}</option>`
         : ''
     ].join('');
     modelSelect.value = selection.modelId || '';
 
     const model = models.find((candidate) => candidate.modelId === selection.modelId);
     const efforts = model?.efforts || [];
+    const effortQualifier = modelQualifier;
     effortSelect.disabled = !model || !efforts.length;
     effortSelect.innerHTML = [
       efforts.length ? '<option value="">Select effort</option>' : '<option value="">No effort</option>',
       ...efforts.map((effort) => `<option value="${escapeHtml(effort.effortId)}">${escapeHtml(this.formatEffortLabel(effort))}</option>`),
       saved?.effortId && selection.modelId === saved.modelId && !efforts.some((effort) => effort.effortId === saved.effortId)
-        ? `<option value="${escapeHtml(saved.effortId)}" disabled>${escapeHtml(saved.effortId)} (stale)</option>`
+        ? `<option value="${escapeHtml(saved.effortId)}" disabled>${escapeHtml(`${saved.effortId} (${effortQualifier})`)}</option>`
         : ''
     ].join('');
     effortSelect.value = selection.effortId || '';
@@ -529,8 +536,55 @@ export class AgentProjectsPage {
     return `${effort.effortId} - ${effort.description}`;
   }
 
+  renderModelPickerState(readyProviders, savedProvider) {
+    const element = this.byId('agentsV2AgentRuntimeState');
+    if (!element) {
+      return;
+    }
+    let message = '';
+    if (!readyProviders.length) {
+      if (savedProvider && savedProvider.status !== 'READY') {
+        message = `${savedProvider.displayName || savedProvider.providerId} runtime ${String(savedProvider.status || '').toLowerCase()}.`;
+      } else {
+        message = this.state.runtimeError || 'No ready model providers available.';
+      }
+    }
+    element.textContent = message;
+    element.classList.toggle('hidden', !message);
+  }
+
+  showModelPickerState(message) {
+    const element = this.byId('agentsV2AgentRuntimeState');
+    if (!element) {
+      return;
+    }
+    element.textContent = message;
+    element.classList.toggle('hidden', !message);
+  }
+
+  savedProviderLabel(saved, provider) {
+    if (provider) {
+      return `${provider.displayName || provider.providerId} (${String(provider.status || '').toLowerCase()})`;
+    }
+    return `${saved.providerId} (stale)`;
+  }
+
+  unavailableSelectionQualifier(provider) {
+    if (provider && provider.status !== 'READY') {
+      return String(provider.status || '').toLowerCase();
+    }
+    return 'stale';
+  }
+
   readyProviders() {
     return (this.state.runtime?.providers || []).filter((provider) => provider.status === 'READY');
+  }
+
+  runtimeCatalogProvider(providerId) {
+    if (!providerId) {
+      return null;
+    }
+    return (this.state.runtime?.providers || []).find((provider) => provider.providerId === providerId) || null;
   }
 
   runtimeProvider(providerId) {

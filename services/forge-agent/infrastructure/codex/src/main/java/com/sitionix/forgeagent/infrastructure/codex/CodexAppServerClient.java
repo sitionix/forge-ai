@@ -3,6 +3,8 @@ package com.sitionix.forgeagent.infrastructure.codex;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -11,6 +13,8 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 final class CodexAppServerClient implements CodexRpcClient {
+
+    private static final Pattern USER_AGENT_VERSION = Pattern.compile("^[^/]+/([^\\s]+).*");
 
     private final ObjectMapper objectMapper;
     private final CodexAppServerProcessStarter processStarter;
@@ -29,7 +33,7 @@ final class CodexAppServerClient implements CodexRpcClient {
         CodexJsonRpcTransport current = this.ensureInitialized();
         try {
             return current.request(method, params, this.properties.getRequestTimeout());
-        } catch (final CodexTransportException | CodexRemoteException e) {
+        } catch (final CodexTransportException e) {
             this.invalidate(current);
             throw e;
         }
@@ -84,11 +88,8 @@ final class CodexAppServerClient implements CodexRpcClient {
             throw new CodexTransportException("Codex initialize response did not include a valid userAgent");
         }
         final String value = userAgent.asText().trim();
-        final int separator = value.indexOf('/');
-        if (separator <= 0 || separator != value.lastIndexOf('/') || separator == value.length() - 1) {
-            throw new CodexTransportException("Codex initialize response userAgent was malformed");
-        }
-        final String version = value.substring(separator + 1).trim();
+        final Matcher matcher = USER_AGENT_VERSION.matcher(value);
+        final String version = matcher.matches() ? matcher.group(1).trim() : "";
         if (version.isBlank()) {
             throw new CodexTransportException("Codex initialize response userAgent was malformed");
         }
