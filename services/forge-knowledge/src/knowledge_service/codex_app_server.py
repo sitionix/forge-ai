@@ -193,6 +193,7 @@ class _ServerRequestHandlingResult:
 class _SubmittedCoroutine:
     result: concurrent.futures.Future[Any]
     completed: concurrent.futures.Future[None]
+    cancel: Callable[[], None]
 
 
 def _effective_timeout(timeout: float | None, configured_timeout: float) -> float:
@@ -1431,6 +1432,7 @@ class CodexAppServerClient:
             return await asyncio.wrap_future(submitted.result)
         except asyncio.CancelledError:
             self._register_cancellation_cleanup(submitted.completed)
+            submitted.cancel()
             submitted.result.cancel()
             try:
                 await asyncio.wait_for(
@@ -1478,6 +1480,19 @@ class CodexAppServerClient:
         loop = self._ensure_loop_thread()
         result_future: concurrent.futures.Future[Any] = concurrent.futures.Future()
         completed_future: concurrent.futures.Future[None] = concurrent.futures.Future()
+        cancel_requested = threading.Event()
+        task_ref: list[asyncio.Task[Any]] = []
+
+        def cancel_loop_task() -> None:
+            cancel_requested.set()
+
+            def cancel_task() -> None:
+                if task_ref:
+                    task = task_ref[0]
+                    if not task.done():
+                        task.cancel()
+
+            loop.call_soon_threadsafe(cancel_task)
 
         def start() -> None:
             try:
@@ -1487,6 +1502,10 @@ class CodexAppServerClient:
                     result_future.set_exception(exc)
                 completed_future.set_result(None)
                 return
+
+            task_ref.append(task)
+            if cancel_requested.is_set():
+                task.cancel()
 
             def cancel_task(_future: concurrent.futures.Future[Any]) -> None:
                 if _future.cancelled() and not task.done():
@@ -1512,7 +1531,7 @@ class CodexAppServerClient:
             task.add_done_callback(finish)
 
         loop.call_soon_threadsafe(start)
-        return _SubmittedCoroutine(result=result_future, completed=completed_future)
+        return _SubmittedCoroutine(result=result_future, completed=completed_future, cancel=cancel_loop_task)
 
     def _submit(
         self,
