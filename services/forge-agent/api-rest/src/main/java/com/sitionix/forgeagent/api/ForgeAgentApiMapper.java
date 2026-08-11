@@ -103,6 +103,7 @@ class ForgeAgentApiMapper {
                 agent.id(),
                 agent.projectId(),
                 agent.name(),
+                this.toResponse(agent.model()),
                 agent.createdAt(),
                 agent.updatedAt()
         );

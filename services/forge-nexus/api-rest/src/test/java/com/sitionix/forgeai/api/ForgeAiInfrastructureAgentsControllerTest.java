@@ -9,6 +9,8 @@ import static org.mockito.Mockito.when;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionListResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentRuntimeProviderResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentRuntimeResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
@@ -22,6 +24,9 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
@@ -154,9 +159,24 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     @Test
+    void getRuntime() {
+        final var runtime = new AgentRuntimeCatalog(List.of(new AgentRuntimeProvider("codex", "Codex", AgentRuntimeProviderStatus.READY, "codex/1", List.of())));
+        final var response = new AgentRuntimeResponse(List.of(new AgentRuntimeProviderResponse("codex", "Codex", AgentRuntimeProviderStatus.READY, "codex/1", List.of())));
+        when(this.getAgentRuntime.execute()).thenReturn(runtime);
+        when(this.mapper.toResponse(runtime)).thenReturn(response);
+
+        final var actual = this.controller.getRuntime();
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.getAgentRuntime).execute();
+        verify(this.mapper).toResponse(runtime);
+    }
+
+    @Test
     void listProjectAgents() {
-        final AgentDefinitionListItem item = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", NOW, NOW);
-        final AgentDefinitionListResponse response = new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", NOW, NOW);
+        final AgentDefinitionListItem item = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", null, NOW, NOW);
+        final AgentDefinitionListResponse response = new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", null, NOW, NOW);
         when(this.listProjectAgentDefinitions.execute(PROJECT_ID)).thenReturn(List.of(item));
         when(this.mapper.toResponse(item)).thenReturn(response);
 
@@ -362,19 +382,19 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     private AgentDefinitionRequest agentRequest() {
-        return new AgentDefinitionRequest("Backend", "Do work.", null);
+        return new AgentDefinitionRequest("Backend", "Do work.", null, null);
     }
 
     private SaveAgentDefinitionCommand agentCommand() {
-        return new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{}"));
+        return new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{}"), null);
     }
 
     private AgentDefinitionDetails agent() {
-        return new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), NOW, NOW);
+        return new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), null, NOW, NOW);
     }
 
     private AgentDefinitionResponse agentResponse() {
-        return new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, NOW, NOW);
+        return new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, null, NOW, NOW);
     }
 
     private AgentWorkflow workflow() {

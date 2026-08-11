@@ -32,6 +32,11 @@ declare module '../src/operator/agent-projects-page.js' {
   export const AgentProjectsPage: any;
 }
 
+declare module '../src/operator/project-workspace.js' {
+  export const ProjectWorkspace: any;
+  export const effortTone: any;
+}
+
 declare module '../src/operator/agent-projects-api.js' {
   export const createAgentProjectsApi: any;
   export const createAgentsV2Api: any;

@@ -11,7 +11,4 @@ public record AgentDefinitionRequest(
         @NotNull JsonNode outputSchema,
         AgentModelSelectionRequest model
 ) {
-    public AgentDefinitionRequest(final String name, final String instructions, final JsonNode outputSchema) {
-        this(name, instructions, outputSchema, null);
-    }
 }

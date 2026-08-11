@@ -3,29 +3,25 @@ package com.sitionix.forgeagent.infrastructure.codex;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 final class CodexAppServerClient implements CodexRpcClient {
 
     private final ObjectMapper objectMapper;
     private final CodexAppServerProcessStarter processStarter;
     private final CodexAppServerProperties properties;
     private CodexJsonRpcTransport transport;
-
-    CodexAppServerClient(final ObjectMapper objectMapper,
-                         final CodexAppServerProcessStarter processStarter,
-                         final CodexAppServerProperties properties) {
-        this.objectMapper = objectMapper;
-        this.processStarter = processStarter;
-        this.properties = properties;
-    }
+    private String codexVersion;
 
     @Override
     public synchronized String version() {
-        return this.ensureInitialized().codexVersion();
+        this.ensureInitialized();
+        return this.codexVersion;
     }
 
     @Override
@@ -47,7 +43,7 @@ final class CodexAppServerClient implements CodexRpcClient {
         final StartedCodexAppServer started = this.processStarter.start();
         final CodexJsonRpcTransport next = new CodexJsonRpcTransport(this.objectMapper, started, this.properties);
         try {
-            this.initialize(next);
+            this.codexVersion = this.initialize(next);
             this.transport = next;
             return next;
         } catch (final RuntimeException e) {
@@ -56,7 +52,7 @@ final class CodexAppServerClient implements CodexRpcClient {
         }
     }
 
-    private void initialize(final CodexJsonRpcTransport transport) {
+    private String initialize(final CodexJsonRpcTransport transport) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         final ObjectNode clientInfo = params.putObject("clientInfo");
         clientInfo.put("name", this.properties.getClientName());
@@ -65,8 +61,21 @@ final class CodexAppServerClient implements CodexRpcClient {
         final ObjectNode capabilities = params.putObject("capabilities");
         capabilities.put("experimentalApi", this.properties.isExperimentalApi());
         capabilities.put("requestAttestation", this.properties.isRequestAttestation());
-        transport.request("initialize", params, this.properties.getRequestTimeout());
+        final JsonNode response = transport.request("initialize", params, this.properties.getRequestTimeout());
+        final String version = this.extractVersion(response);
         transport.notify("initialized", this.objectMapper.createObjectNode());
+        return version;
+    }
+
+    private String extractVersion(final JsonNode initializeResult) {
+        if (initializeResult == null || !initializeResult.isObject()) {
+            return "unknown";
+        }
+        final JsonNode userAgent = initializeResult.path("userAgent");
+        if (userAgent.isTextual() && !userAgent.asText().isBlank()) {
+            return userAgent.asText().trim();
+        }
+        return "unknown";
     }
 
     private synchronized void invalidate(final CodexJsonRpcTransport current) {
@@ -77,8 +86,13 @@ final class CodexAppServerClient implements CodexRpcClient {
 
     private void closeCurrent() {
         if (this.transport != null) {
-            this.transport.close();
+            final CodexJsonRpcTransport current = this.transport;
+            current.close();
+            if (!current.cleanupComplete()) {
+                throw new CodexTransportException("Codex app-server process cleanup incomplete");
+            }
             this.transport = null;
+            this.codexVersion = null;
         }
     }
 

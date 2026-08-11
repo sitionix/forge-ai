@@ -64,7 +64,7 @@ class AgentUseCasesTest {
 
         final AgentDetails created = this.useCases.createAgent(
                 this.projectId,
-                new SaveAgentCommand(" Analyzer ", "Instructions", OUTPUT_SCHEMA)
+                new SaveAgentCommand(" Analyzer ", "Instructions", OUTPUT_SCHEMA, null)
         );
 
         assertThat(created.name()).isEqualTo("Analyzer");
@@ -79,7 +79,7 @@ class AgentUseCasesTest {
 
         final AgentDetails updated = this.useCases.updateAgent(
                 this.agentId,
-                new SaveAgentCommand("Analyzer Updated", "New instructions", OUTPUT_SCHEMA)
+                new SaveAgentCommand("Analyzer Updated", "New instructions", OUTPUT_SCHEMA, null)
         );
 
         assertThat(updated.name()).isEqualTo("Analyzer Updated");
@@ -149,7 +149,7 @@ class AgentUseCasesTest {
     void rejectsBlankAgentName() {
         when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.of(this.project()));
 
-        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand(" ", "Instructions", OUTPUT_SCHEMA)))
+        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand(" ", "Instructions", OUTPUT_SCHEMA, null)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessage("Agent name is required.");
     }
@@ -159,7 +159,7 @@ class AgentUseCasesTest {
         when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.of(this.project()));
         when(this.agentDefinitionRepository.existsByProjectIdAndNormalizedName(this.projectId, "analyzer")).thenReturn(true);
 
-        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA)))
+        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA, null)))
                 .isInstanceOf(ConflictException.class)
                 .extracting("code")
                 .isEqualTo("DUPLICATE_AGENT_NAME");
@@ -182,7 +182,7 @@ class AgentUseCasesTest {
     void missingProjectIsNotFound() {
         when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA)))
+        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA, null)))
                 .isInstanceOf(NotFoundException.class)
                 .extracting("code")
                 .isEqualTo("PROJECT_NOT_FOUND");
@@ -200,6 +200,7 @@ class AgentUseCasesTest {
                 name.toLowerCase(),
                 "Instructions",
                 OUTPUT_SCHEMA,
+                null,
                 Instant.parse("2026-08-03T00:00:00Z"),
                 Instant.parse("2026-08-03T00:00:00Z")
         );

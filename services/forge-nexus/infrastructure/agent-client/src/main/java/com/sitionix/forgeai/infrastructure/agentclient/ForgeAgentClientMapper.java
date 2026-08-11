@@ -48,17 +48,15 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import java.util.List;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public class ForgeAgentClientMapper {
 
     private final ObjectMapper objectMapper;
-
-    public ForgeAgentClientMapper(final ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
 
     AgentProjectRequest toRequest(final CreateAgentProjectCommand command) {
         return new AgentProjectRequest(command.name());
@@ -93,6 +91,7 @@ public class ForgeAgentClientMapper {
                 response.id(),
                 response.projectId(),
                 response.name(),
+                this.toDomain(response.model()),
                 response.createdAt(),
                 response.updatedAt()
         );

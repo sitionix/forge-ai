@@ -96,6 +96,39 @@ class CodexRuntimeAdapterTest {
     }
 
     @Test
+    void nonObjectModelListResponseDegradesProvider() {
+        final FakeClient client = new FakeClient("codex 1.2.3");
+        client.add("[]");
+
+        final var provider = this.adapter(client).getModels();
+
+        assertThat(provider.status()).isEqualTo(RuntimeProviderStatus.DEGRADED);
+        assertThat(provider.models()).isEmpty();
+    }
+
+    @Test
+    void missingDataListDegradesProvider() {
+        final FakeClient client = new FakeClient("codex 1.2.3");
+        client.add("{\"nextCursor\":\"later\"}");
+
+        final var provider = this.adapter(client).getModels();
+
+        assertThat(provider.status()).isEqualTo(RuntimeProviderStatus.DEGRADED);
+        assertThat(provider.models()).isEmpty();
+    }
+
+    @Test
+    void malformedModelEntryDegradesProvider() {
+        final FakeClient client = new FakeClient("codex 1.2.3");
+        client.add("{\"data\":[{\"displayName\":\"Missing id\"}]}");
+
+        final var provider = this.adapter(client).getModels();
+
+        assertThat(provider.status()).isEqualTo(RuntimeProviderStatus.DEGRADED);
+        assertThat(provider.models()).isEmpty();
+    }
+
+    @Test
     void startupFailureReturnsUnavailable() {
         final FakeClient client = new FakeClient("codex 1.2.3");
         client.failVersion = true;

@@ -148,7 +148,7 @@ class WorkflowUseCasesTest {
     }
 
     private AgentDefinition agent() {
-        return new AgentDefinition(this.agentId, this.projectId, "Agent", "agent", "Instructions", OUTPUT_SCHEMA, Instant.EPOCH, Instant.EPOCH);
+        return new AgentDefinition(this.agentId, this.projectId, "Agent", "agent", "Instructions", OUTPUT_SCHEMA, null, Instant.EPOCH, Instant.EPOCH);
     }
 
     private Workflow workflow(final List<Node> nodes) {

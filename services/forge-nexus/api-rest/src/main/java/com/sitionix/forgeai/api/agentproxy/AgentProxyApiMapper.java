@@ -79,6 +79,7 @@ public class AgentProxyApiMapper {
                 agent.id(),
                 agent.projectId(),
                 agent.name(),
+                this.toResponse(agent.model()),
                 agent.createdAt(),
                 agent.updatedAt()
         );

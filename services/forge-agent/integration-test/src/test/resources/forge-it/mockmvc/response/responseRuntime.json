@@ -1,0 +1,40 @@
+{
+  "providers": [
+    {
+      "providerId": "codex",
+      "displayName": "Codex",
+      "status": "READY",
+      "version": "codex-it/1.0.0",
+      "models": [
+        {
+          "modelId": "discovered-model",
+          "displayName": "Discovered Model",
+          "description": "Deterministic model",
+          "efforts": [
+            {
+              "effortId": "medium",
+              "description": "Balanced reasoning"
+            }
+          ]
+        },
+        {
+          "modelId": "model-b",
+          "displayName": "Model B",
+          "description": "Second deterministic model",
+          "efforts": [
+            {
+              "effortId": "xhigh",
+              "description": "Maximum reasoning"
+            }
+          ]
+        },
+        {
+          "modelId": "no-effort-model",
+          "displayName": "No Effort Model",
+          "description": "No effort model",
+          "efforts": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "code": "UNSUPPORTED_AGENT_MODEL_EFFORT",
+  "message": "Selected reasoning effort is not available for this model.",
+  "correlationId": null
+}

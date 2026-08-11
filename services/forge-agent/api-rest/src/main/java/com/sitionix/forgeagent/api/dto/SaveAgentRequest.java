@@ -11,7 +11,4 @@ public record SaveAgentRequest(
         @NotNull JsonNode outputSchema,
         AgentModelSelectionRequest model
 ) {
-    public SaveAgentRequest(final String name, final String instructions, final JsonNode outputSchema) {
-        this(name, instructions, outputSchema, null);
-    }
 }

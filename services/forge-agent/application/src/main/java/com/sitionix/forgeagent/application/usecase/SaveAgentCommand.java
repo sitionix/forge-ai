@@ -9,7 +9,4 @@ public record SaveAgentCommand(
         AgentOutputSchema outputSchema,
         AgentModelSelection model
 ) {
-    public SaveAgentCommand(final String name, final String instructions, final AgentOutputSchema outputSchema) {
-        this(name, instructions, outputSchema, null);
-    }
 }

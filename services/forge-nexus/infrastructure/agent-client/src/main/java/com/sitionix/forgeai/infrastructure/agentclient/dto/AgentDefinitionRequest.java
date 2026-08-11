@@ -8,7 +8,4 @@ public record AgentDefinitionRequest(
         JsonNode outputSchema,
         AgentModelSelectionDto model
 ) {
-    public AgentDefinitionRequest(final String name, final String instructions, final JsonNode outputSchema) {
-        this(name, instructions, outputSchema, null);
-    }
 }

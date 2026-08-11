@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
+import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
@@ -34,6 +35,7 @@ import com.sitionix.forgeagent.application.usecase.WorkflowUseCases;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
 import com.sitionix.forgeagent.domain.model.AgentListItem;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.AiRuntimeCatalog;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
@@ -129,9 +131,24 @@ class ForgeAgentControllerTest {
     }
 
     @Test
+    void getRuntime() {
+        final AiRuntimeCatalog catalog = new AiRuntimeCatalog(List.of());
+        final AiRuntimeResponse response = new AiRuntimeResponse(List.of());
+        when(this.getAiRuntime.execute()).thenReturn(catalog);
+        when(this.mapper.toResponse(catalog)).thenReturn(response);
+
+        final var actual = this.controller.getRuntime();
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.getAiRuntime).execute();
+        verify(this.mapper).toResponse(catalog);
+    }
+
+    @Test
     void listProjectAgents() {
-        final AgentListItem item = new AgentListItem(AGENT_ID, PROJECT_ID, "Backend", NOW, NOW);
-        final AgentListResponse response = new AgentListResponse(AGENT_ID, PROJECT_ID, "Backend", NOW, NOW);
+        final AgentListItem item = new AgentListItem(AGENT_ID, PROJECT_ID, "Backend", null, NOW, NOW);
+        final AgentListResponse response = new AgentListResponse(AGENT_ID, PROJECT_ID, "Backend", null, NOW, NOW);
         when(this.agentUseCases.listProjectAgents(PROJECT_ID)).thenReturn(List.of(item));
         when(this.mapper.toResponse(item)).thenReturn(response);
 
@@ -331,19 +348,19 @@ class ForgeAgentControllerTest {
     }
 
     private SaveAgentRequest agentRequest() throws Exception {
-        return new SaveAgentRequest("Backend", "Do work.", this.objectMapper.readTree("{}"));
+        return new SaveAgentRequest("Backend", "Do work.", this.objectMapper.readTree("{}"), null);
     }
 
     private SaveAgentCommand agentCommand() {
-        return new SaveAgentCommand("Backend", "Do work.", OUTPUT_SCHEMA);
+        return new SaveAgentCommand("Backend", "Do work.", OUTPUT_SCHEMA, null);
     }
 
     private AgentDetails agent() {
-        return new AgentDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", OUTPUT_SCHEMA, NOW, NOW);
+        return new AgentDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", OUTPUT_SCHEMA, null, NOW, NOW);
     }
 
     private AgentResponse agentResponse() throws Exception {
-        return new AgentResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", this.objectMapper.readTree("{}"), NOW, NOW);
+        return new AgentResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", this.objectMapper.readTree("{}"), null, NOW, NOW);
     }
 
     private Workflow workflow() {

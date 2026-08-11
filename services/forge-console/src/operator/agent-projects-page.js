@@ -118,7 +118,11 @@ export class AgentProjectsPage {
     this.byId('agentsV2Builder').classList.add('hidden');
     this.renderProjectWorkspace();
     this.workspace.renderLoading();
-    await Promise.all([this.loadAgents(projectId, loadSequence), this.loadWorkflows(projectId, loadSequence)]);
+    await Promise.all([
+      this.loadAgents(projectId, loadSequence),
+      this.loadWorkflows(projectId, loadSequence),
+      this.loadRuntimeCatalog(projectId, loadSequence)
+    ]);
     if (this.isCurrentProjectLoad(projectId, loadSequence)) {
       this.renderProjectWorkspace();
     }
@@ -192,7 +196,7 @@ export class AgentProjectsPage {
   }
 
   renderProjectWorkspace() {
-    this.workspace.render(this.currentProject(), this.state.agents, this.state.workflows, this.projectDataCurrent());
+    this.workspace.render(this.currentProject(), this.state.agents, this.state.workflows, this.projectDataCurrent(), this.state.runtime);
   }
 
   openProjectModal() {
@@ -232,8 +236,6 @@ export class AgentProjectsPage {
     this.byId('agentsV2AgentName').value = '';
     this.byId('agentsV2AgentInstructions').value = '';
     this.byId('agentsV2AgentOutputJson').value = JSON.stringify(DEFAULT_OUTPUT_SCHEMA, null, 2);
-    this.state.runtime = null;
-    this.state.runtimeError = '';
     this.state.agentModelSelection = null;
     this.state.savedAgentModelSelection = null;
     if (agentId) {
@@ -385,17 +387,36 @@ export class AgentProjectsPage {
   }
 
   async loadRuntimeForAgentModal() {
-    this.renderModelPickerLoading();
-    try {
-      this.state.runtime = await this.api.getRuntime();
-      this.state.runtimeError = '';
-    } catch (error) {
-      this.state.runtime = { providers: [] };
-      this.state.runtimeError = error.message || 'Runtime catalog failed to load.';
-      this.showError('agentsV2AgentModalError', this.state.runtimeError);
+    if (this.state.runtime) {
+      this.ensureInitialModelSelection();
+      this.renderModelPicker();
+      return;
     }
+    this.renderModelPickerLoading();
+    await this.loadRuntimeCatalog(this.state.selectedProjectId, this.projectLoadSequence, { showModalError: true });
     this.ensureInitialModelSelection();
     this.renderModelPicker();
+  }
+
+  async loadRuntimeCatalog(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence, options = {}) {
+    try {
+      const runtime = await this.api.getRuntime();
+      if (!this.isCurrentProjectLoad(projectId, loadSequence)) {
+        return;
+      }
+      this.state.runtime = runtime;
+      this.state.runtimeError = '';
+    } catch (error) {
+      if (!this.isCurrentProjectLoad(projectId, loadSequence)) {
+        return;
+      }
+      this.state.runtime = { providers: [] };
+      this.state.runtimeError = error.message || 'Runtime catalog failed to load.';
+      if (options.showModalError) {
+        this.showError('agentsV2AgentModalError', this.state.runtimeError);
+      }
+    }
+    this.renderProjectWorkspace();
   }
 
   renderModelPickerLoading() {
@@ -414,12 +435,7 @@ export class AgentProjectsPage {
       this.state.agentModelSelection = { ...saved };
       return;
     }
-    const provider = this.readyProviders()[0];
-    const model = provider?.models?.[0];
-    const effort = model?.efforts?.length === 1 ? model.efforts[0] : null;
-    this.state.agentModelSelection = provider && model
-      ? { providerId: provider.providerId, modelId: model.modelId, effortId: effort?.effortId || null }
-      : null;
+    this.state.agentModelSelection = null;
   }
 
   renderModelPicker() {
@@ -456,7 +472,7 @@ export class AgentProjectsPage {
     effortSelect.disabled = !model || !efforts.length;
     effortSelect.innerHTML = [
       efforts.length ? '<option value="">Select effort</option>' : '<option value="">No effort</option>',
-      ...efforts.map((effort) => `<option value="${escapeHtml(effort.effortId)}">${escapeHtml(effort.description || effort.effortId)}</option>`),
+      ...efforts.map((effort) => `<option value="${escapeHtml(effort.effortId)}">${escapeHtml(this.formatEffortLabel(effort))}</option>`),
       saved?.effortId && selection.modelId === saved.modelId && !efforts.some((effort) => effort.effortId === saved.effortId)
         ? `<option value="${escapeHtml(saved.effortId)}" disabled>${escapeHtml(saved.effortId)} (stale)</option>`
         : ''
@@ -466,12 +482,7 @@ export class AgentProjectsPage {
 
   onProviderChanged() {
     const providerId = this.byId('agentsV2AgentProvider').value || null;
-    const provider = this.runtimeProvider(providerId);
-    const model = provider?.models?.[0];
-    const effort = model?.efforts?.length === 1 ? model.efforts[0] : null;
-    this.state.agentModelSelection = provider && model
-      ? { providerId, modelId: model.modelId, effortId: effort?.effortId || null }
-      : null;
+    this.state.agentModelSelection = providerId ? { providerId, modelId: null, effortId: null } : null;
     this.renderModelPicker();
   }
 
@@ -514,6 +525,13 @@ export class AgentProjectsPage {
       return null;
     }
     return { providerId: selection.providerId, modelId: selection.modelId, effortId: selection.effortId };
+  }
+
+  formatEffortLabel(effort) {
+    if (!effort?.description || effort.description === effort.effortId) {
+      return effort?.effortId || '';
+    }
+    return `${effort.effortId} - ${effort.description}`;
   }
 
   readyProviders() {

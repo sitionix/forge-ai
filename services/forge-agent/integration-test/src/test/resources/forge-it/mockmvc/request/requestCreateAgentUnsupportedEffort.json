@@ -1,0 +1,12 @@
+{
+  "name": "Analyzer",
+  "instructions": "Analyze project context.",
+  "outputSchema": {
+    "type": "object"
+  },
+  "model": {
+    "providerId": "codex",
+    "modelId": "discovered-model",
+    "effortId": "xhigh"
+  }
+}

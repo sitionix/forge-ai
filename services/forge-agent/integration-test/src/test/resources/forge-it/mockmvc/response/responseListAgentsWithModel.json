@@ -1,0 +1,14 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000000",
+    "projectId": "10000000-0000-4000-8000-000000000001",
+    "name": "Analyzer",
+    "model": {
+      "providerId": "codex",
+      "modelId": "discovered-model",
+      "effortId": "medium"
+    },
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-01-01T00:00:00Z"
+  }
+]

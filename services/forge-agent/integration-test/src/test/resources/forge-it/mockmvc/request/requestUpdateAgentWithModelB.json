@@ -1,0 +1,17 @@
+{
+  "name": "Analyzer Updated",
+  "instructions": "Analyze project context with updated instructions.",
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "updated": {
+        "type": "boolean"
+      }
+    }
+  },
+  "model": {
+    "providerId": "codex",
+    "modelId": "model-b",
+    "effortId": "xhigh"
+  }
+}

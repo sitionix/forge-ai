@@ -6,6 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
+import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
+import com.sitionix.forgeagent.api.dto.CodexRuntimeEffortResponse;
+import com.sitionix.forgeagent.api.dto.CodexRuntimeModelResponse;
+import com.sitionix.forgeagent.api.dto.CodexRuntimeProviderResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
@@ -29,6 +33,10 @@ import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
 import com.sitionix.forgeagent.domain.model.AgentListItem;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.AiRuntimeCatalog;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeEffort;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeModel;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
@@ -40,6 +48,7 @@ import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
+import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -71,19 +80,21 @@ class ForgeAgentApiMapperTest {
         final SaveAgentRequest request = new SaveAgentRequest(
                 "Analyzer",
                 "Analyze changes.",
-                this.objectMapper.readTree("{\"type\":\"object\"}")
+                this.objectMapper.readTree("{\"type\":\"object\"}"),
+                null
         );
 
         assertThat(this.mapper.toCommand(request)).isEqualTo(new SaveAgentCommand(
                 "Analyzer",
                 "Analyze changes.",
-                AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}")
+                AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                null
         ));
     }
 
     @Test
     void rejectsOutputSchemaWithNonObjectRoot() throws Exception {
-        final SaveAgentRequest request = new SaveAgentRequest("Analyzer", "Analyze changes.", this.objectMapper.readTree("[]"));
+        final SaveAgentRequest request = new SaveAgentRequest("Analyzer", "Analyze changes.", this.objectMapper.readTree("[]"), null);
 
         assertThatThrownBy(() -> this.mapper.toCommand(request))
                 .isInstanceOf(ValidationException.class)
@@ -98,10 +109,10 @@ class ForgeAgentApiMapperTest {
 
     @Test
     void mapsAgentListItemToResponse() {
-        final var item = new AgentListItem(AGENT_ID, PROJECT_ID, "Analyzer", CREATED, UPDATED);
+        final var item = new AgentListItem(AGENT_ID, PROJECT_ID, "Analyzer", null, CREATED, UPDATED);
 
         assertThat(this.mapper.toResponse(item))
-                .isEqualTo(new AgentListResponse(AGENT_ID, PROJECT_ID, "Analyzer", CREATED, UPDATED));
+                .isEqualTo(new AgentListResponse(AGENT_ID, PROJECT_ID, "Analyzer", null, CREATED, UPDATED));
     }
 
     @Test
@@ -112,6 +123,7 @@ class ForgeAgentApiMapperTest {
                 "Analyzer",
                 "Analyze changes.",
                 AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                null,
                 CREATED,
                 UPDATED
         );
@@ -122,9 +134,39 @@ class ForgeAgentApiMapperTest {
                 "Analyzer",
                 "Analyze changes.",
                 this.objectMapper.readTree("{\"type\":\"object\"}"),
+                null,
                 CREATED,
                 UPDATED
         ));
+    }
+
+    @Test
+    void mapsRuntimeCatalogToResponse() {
+        final var catalog = new AiRuntimeCatalog(List.of(new CodexRuntimeProvider(
+                "codex",
+                "Codex",
+                RuntimeProviderStatus.READY,
+                "codex/1",
+                List.of(new CodexRuntimeModel(
+                        "discovered-model",
+                        "Discovered Model",
+                        "Live model",
+                        List.of(new CodexRuntimeEffort("xhigh", "Maximum reasoning"))
+                ))
+        )));
+
+        assertThat(this.mapper.toResponse(catalog)).isEqualTo(new AiRuntimeResponse(List.of(new CodexRuntimeProviderResponse(
+                "codex",
+                "Codex",
+                RuntimeProviderStatus.READY,
+                "codex/1",
+                List.of(new CodexRuntimeModelResponse(
+                        "discovered-model",
+                        "Discovered Model",
+                        "Live model",
+                        List.of(new CodexRuntimeEffortResponse("xhigh", "Maximum reasoning"))
+                ))
+        ))));
     }
 
     @Test

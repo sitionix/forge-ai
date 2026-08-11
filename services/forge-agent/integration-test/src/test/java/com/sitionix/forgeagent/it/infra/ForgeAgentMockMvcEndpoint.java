@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.it.infra;
 
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
+import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
@@ -30,6 +31,10 @@ public final class ForgeAgentMockMvcEndpoint {
 
     public static Endpoint<CreateProjectRequest, ForgeAgentErrorResponse> createProjectError() {
         return Endpoint.createContract("/api/v1/projects", HttpMethod.POST, CreateProjectRequest.class, ForgeAgentErrorResponse.class);
+    }
+
+    public static Endpoint<Void, AiRuntimeResponse> getRuntime() {
+        return Endpoint.createContract("/api/v1/runtime", HttpMethod.GET, Void.class, AiRuntimeResponse.class);
     }
 
     public static Endpoint<Void, AgentListResponse[]> listProjectAgents() {

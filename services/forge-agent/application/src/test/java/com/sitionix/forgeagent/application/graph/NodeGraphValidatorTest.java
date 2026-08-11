@@ -125,6 +125,6 @@ class NodeGraphValidatorTest {
     }
 
     private AgentDefinition agent(final UUID id, final UUID projectId) {
-        return new AgentDefinition(id, projectId, "Agent", "agent", "Instructions", OUTPUT_SCHEMA, Instant.EPOCH, Instant.EPOCH);
+        return new AgentDefinition(id, projectId, "Agent", "agent", "Instructions", OUTPUT_SCHEMA, null, Instant.EPOCH, Instant.EPOCH);
     }
 }

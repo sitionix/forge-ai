@@ -18,11 +18,12 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class AgentUseCases {
 
     private static final int MAX_NAME_LENGTH = 120;
@@ -31,29 +32,6 @@ public class AgentUseCases {
     private final AgentDefinitionRepository agentDefinitionRepository;
     private final CodexRuntimePort codexRuntimePort;
     private final Clock clock;
-
-    @Autowired
-    public AgentUseCases(final ProjectRepository projectRepository,
-                         final AgentDefinitionRepository agentDefinitionRepository,
-                         final CodexRuntimePort codexRuntimePort,
-                         final Clock clock) {
-        this.projectRepository = projectRepository;
-        this.agentDefinitionRepository = agentDefinitionRepository;
-        this.codexRuntimePort = codexRuntimePort;
-        this.clock = clock;
-    }
-
-    AgentUseCases(final ProjectRepository projectRepository,
-                  final AgentDefinitionRepository agentDefinitionRepository,
-                  final Clock clock) {
-        this(projectRepository, agentDefinitionRepository, () -> new CodexRuntimeProvider(
-                "codex",
-                "Codex",
-                RuntimeProviderStatus.UNAVAILABLE,
-                null,
-                List.of()
-        ), clock);
-    }
 
     @Transactional(readOnly = true)
     public List<AgentListItem> listProjectAgents(final UUID projectId) {
@@ -190,6 +168,7 @@ public class AgentUseCases {
                         agent.id(),
                         agent.projectId(),
                         agent.name(),
+                        agent.model(),
                         agent.createdAt(),
                         agent.updatedAt()
                 ))

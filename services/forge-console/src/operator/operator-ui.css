@@ -583,7 +583,7 @@ body.sidebar-collapsed .sidebar-link {
 
 .agents-v2-card {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;
   min-height: 150px;
   padding: 16px;
   border: 1px solid rgba(27, 36, 31, 0.12);
@@ -603,6 +603,56 @@ body.sidebar-collapsed .sidebar-link {
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.agents-v2-model-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.agents-v2-model-meta > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-v2-effort {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.agents-v2-effort-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #8a948d;
+}
+
+.agents-v2-effort-low .agents-v2-effort-dot {
+  background: #2f8f5b;
+}
+
+.agents-v2-effort-medium .agents-v2-effort-dot {
+  background: #b8941f;
+}
+
+.agents-v2-effort-high .agents-v2-effort-dot {
+  background: #d16b22;
+}
+
+.agents-v2-effort-maximum .agents-v2-effort-dot {
+  background: #c93d3d;
 }
 
 .agents-v2-card .button {

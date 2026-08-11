@@ -4,6 +4,7 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.AgentDefinitionEnt
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -16,6 +17,7 @@ import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createA
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createAgentError;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getAgent;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getAgentError;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getRuntime;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.listProjectAgents;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.listProjectAgentsError;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateAgent;
@@ -28,6 +30,23 @@ class ForgeAgentDefinitionIT {
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
+
+    @Autowired
+    private DeterministicCodexRuntimePort codexRuntimePort;
+
+    @BeforeEach
+    void resetRuntime() {
+        this.codexRuntimePort.ready();
+    }
+
+    @Test
+    void givenRuntimeEndpoint_whenGetRuntime_thenDeterministicCatalogIsReturned() {
+        this.forgeIt.mockMvc()
+                .ping(getRuntime())
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseRuntime.json")
+                .assertAndCreate();
+    }
 
     @Test
     void givenAgentRequest_whenCreateListGetAndUpdateAgent_thenJsonbSchemaRoundTrips() {
@@ -80,6 +99,114 @@ class ForgeAgentDefinitionIT {
                 .andExpected(entity -> "Analyzer Updated".equals(entity.getName()))
                 .andExpected(entity -> entity.getOutputSchema().contains("\"updated\""))
                 .assertEntity();
+    }
+
+    @Test
+    void givenAgentModelSelection_whenCreateListGetAndUpdateAgent_thenSelectionRoundTripsAndPersists() {
+        this.forgeIt.postgresql()
+                .create()
+                .to(PROJECT.withJson("project_alpha.json"))
+                .build();
+
+        this.forgeIt.mockMvc()
+                .ping(createAgent())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestCreateAgentWithModel.json")
+                .expectStatus(HttpStatus.CREATED)
+                .expectResponse("responseCreateAgentWithModel.json", "id", "createdAt", "updatedAt")
+                .assertAndCreate();
+
+        final AgentDefinitionEntity created = this.forgeIt.postgresql()
+                .get(AgentDefinitionEntity.class)
+                .singleElement()
+                .andExpected(entity -> "codex".equals(entity.getModelProviderId()))
+                .andExpected(entity -> "discovered-model".equals(entity.getModelId()))
+                .andExpected(entity -> "medium".equals(entity.getModelEffortId()))
+                .assertEntity();
+
+        this.forgeIt.mockMvc()
+                .ping(listProjectAgents())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseListAgentsWithModel.json", "id", "createdAt", "updatedAt")
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(getAgent())
+                .withPathParameters(PathParams.create().add("agentId", created.getId()))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseGetAgentWithModel.json", "id", "createdAt", "updatedAt")
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(updateAgent())
+                .withPathParameters(PathParams.create().add("agentId", created.getId()))
+                .withRequest("requestUpdateAgentWithModelB.json")
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseUpdateAgentWithModelB.json", "id", "createdAt", "updatedAt")
+                .assertAndCreate();
+
+        this.forgeIt.postgresql()
+                .get(AgentDefinitionEntity.class)
+                .singleElement()
+                .andExpected(entity -> "model-b".equals(entity.getModelId()))
+                .andExpected(entity -> "xhigh".equals(entity.getModelEffortId()))
+                .assertEntity();
+    }
+
+    @Test
+    void givenUnknownModel_whenCreateAgent_thenValidationErrorAndDatabaseUnchanged() {
+        this.forgeIt.postgresql()
+                .create()
+                .to(PROJECT.withJson("project_alpha.json"))
+                .build();
+
+        this.forgeIt.mockMvc()
+                .ping(createAgentError())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestCreateAgentUnknownModel.json")
+                .expectStatus(HttpStatus.BAD_REQUEST)
+                .expectResponse("responseUnknownAgentModelError.json")
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(AgentDefinitionEntity.class).getAll()).isEmpty();
+    }
+
+    @Test
+    void givenUnsupportedEffort_whenCreateAgent_thenValidationErrorAndDatabaseUnchanged() {
+        this.forgeIt.postgresql()
+                .create()
+                .to(PROJECT.withJson("project_alpha.json"))
+                .build();
+
+        this.forgeIt.mockMvc()
+                .ping(createAgentError())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestCreateAgentUnsupportedEffort.json")
+                .expectStatus(HttpStatus.BAD_REQUEST)
+                .expectResponse("responseUnsupportedAgentEffortError.json")
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(AgentDefinitionEntity.class).getAll()).isEmpty();
+    }
+
+    @Test
+    void givenUnavailableProvider_whenCreateAgent_thenValidationErrorAndDatabaseUnchanged() {
+        this.codexRuntimePort.unavailable();
+        this.forgeIt.postgresql()
+                .create()
+                .to(PROJECT.withJson("project_alpha.json"))
+                .build();
+
+        this.forgeIt.mockMvc()
+                .ping(createAgentError())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestCreateAgentWithModel.json")
+                .expectStatus(HttpStatus.BAD_REQUEST)
+                .expectResponse("responseAgentModelProviderUnavailableError.json")
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(AgentDefinitionEntity.class).getAll()).isEmpty();
     }
 
     @Test

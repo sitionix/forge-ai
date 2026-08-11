@@ -32,6 +32,19 @@ class ForgeAgentDefinitionsProxyIT extends AbstractForgeAiIT {
     private ProxyTestManager testManager;
 
     @Test
+    void givenRuntimeRequest_whenGetRuntime_thenPathIsForwarded() {
+        final var mapping = this.testManager.wiremock()
+                .createMapping(ForgeAgentProxyWireMockEndpoint.getRuntime())
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(ForgeAgentProxyMockMvcEndpoint.getRuntime())
+                .assertDefault();
+
+        mapping.verify();
+    }
+
+    @Test
     void givenProjectId_whenListAgents_thenPathIsForwarded() {
         final var mapping = this.testManager.wiremock()
                 .createMapping(ForgeAgentProxyWireMockEndpoint.listProjectAgents())

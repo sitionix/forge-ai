@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentModelSelection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
@@ -26,6 +27,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentModelSelectionDto;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
@@ -71,12 +73,14 @@ class ForgeAgentClientMapperTest {
         final var command = new SaveAgentDefinitionCommand(
                 "Backend Implementer",
                 "Do backend work.",
-                new AgentOutputSchemaDocument("{\"type\":\"object\"}")
+                new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
+                null
         );
         assertThat(this.mapper.toRequest(command)).isEqualTo(new AgentDefinitionRequest(
                 "Backend Implementer",
                 "Do backend work.",
-                this.objectMapper.readTree("{\"type\":\"object\"}")
+                this.objectMapper.readTree("{\"type\":\"object\"}"),
+                null
         ));
     }
 
@@ -85,8 +89,22 @@ class ForgeAgentClientMapperTest {
         assertThat(this.mapper.toDomain(new AgentProjectResponse(PROJECT_ID, "Sitionix", CREATED, UPDATED)))
                 .isEqualTo(new AgentProject(PROJECT_ID, "Sitionix", CREATED, UPDATED));
 
-        assertThat(this.mapper.toDomain(new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend Implementer", CREATED, UPDATED)))
-                .isEqualTo(new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend Implementer", CREATED, UPDATED));
+        assertThat(this.mapper.toDomain(new AgentDefinitionListResponse(
+                AGENT_ID,
+                PROJECT_ID,
+                "Backend Implementer",
+                new AgentModelSelectionDto("codex", "discovered-model", "xhigh"),
+                CREATED,
+                UPDATED
+        )))
+                .isEqualTo(new AgentDefinitionListItem(
+                        AGENT_ID,
+                        PROJECT_ID,
+                        "Backend Implementer",
+                        new AgentModelSelection("codex", "discovered-model", "xhigh"),
+                        CREATED,
+                        UPDATED
+                ));
 
         final var response = new AgentDefinitionResponse(
                 AGENT_ID,
@@ -94,6 +112,7 @@ class ForgeAgentClientMapperTest {
                 "Backend Implementer",
                 "Do backend work.",
                 this.objectMapper.readTree("{\"type\":\"object\"}"),
+                null,
                 CREATED,
                 UPDATED
         );
@@ -103,6 +122,7 @@ class ForgeAgentClientMapperTest {
                 "Backend Implementer",
                 "Do backend work.",
                 new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
+                null,
                 CREATED,
                 UPDATED
         ));
@@ -255,6 +275,7 @@ class ForgeAgentClientMapperTest {
                 "Backend Implementer",
                 "Do backend work.",
                 outputSchema,
+                null,
                 CREATED,
                 UPDATED
         );

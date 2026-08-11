@@ -6,9 +6,4 @@ public record SaveAgentDefinitionCommand(
         AgentOutputSchemaDocument outputSchema,
         AgentModelSelection model
 ) {
-    public SaveAgentDefinitionCommand(final String name,
-                                      final String instructions,
-                                      final AgentOutputSchemaDocument outputSchema) {
-        this(name, instructions, outputSchema, null);
-    }
 }

@@ -13,13 +13,4 @@ public record AgentDefinitionDetails(
         Instant createdAt,
         Instant updatedAt
 ) {
-    public AgentDefinitionDetails(final UUID id,
-                                  final UUID projectId,
-                                  final String name,
-                                  final String instructions,
-                                  final AgentOutputSchemaDocument outputSchema,
-                                  final Instant createdAt,
-                                  final Instant updatedAt) {
-        this(id, projectId, name, instructions, outputSchema, null, createdAt, updatedAt);
-    }
 }

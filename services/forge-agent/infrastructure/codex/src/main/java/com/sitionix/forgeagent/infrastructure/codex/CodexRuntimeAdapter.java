@@ -12,11 +12,13 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class CodexRuntimeAdapter implements CodexRuntimePort {
 
     private static final String PROVIDER_ID = "codex";
@@ -25,14 +27,6 @@ public class CodexRuntimeAdapter implements CodexRuntimePort {
     private final ObjectMapper objectMapper;
     private final CodexRpcClient client;
     private final CodexAppServerProperties properties;
-
-    public CodexRuntimeAdapter(final ObjectMapper objectMapper,
-                               final CodexRpcClient client,
-                               final CodexAppServerProperties properties) {
-        this.objectMapper = objectMapper;
-        this.client = client;
-        this.properties = properties;
-    }
 
     @Override
     public CodexRuntimeProvider getModels() {

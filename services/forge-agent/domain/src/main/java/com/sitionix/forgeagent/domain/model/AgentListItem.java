@@ -7,6 +7,7 @@ public record AgentListItem(
         UUID id,
         UUID projectId,
         String name,
+        AgentModelSelection model,
         Instant createdAt,
         Instant updatedAt
 ) {

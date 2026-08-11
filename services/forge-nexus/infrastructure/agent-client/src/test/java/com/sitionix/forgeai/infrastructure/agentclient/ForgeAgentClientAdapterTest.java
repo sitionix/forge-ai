@@ -10,6 +10,9 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
@@ -24,6 +27,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionReques
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeProviderResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
@@ -105,9 +110,24 @@ class ForgeAgentClientAdapterTest {
     }
 
     @Test
+    void getRuntimeExecutesTypedClientCallAndMapsResponse() {
+        final var upstreamResponse = new AgentRuntimeResponse(List.of(new AgentRuntimeProviderResponse("codex", "Codex", AgentRuntimeProviderStatus.READY, "codex/1", List.of())));
+        final var expected = new AgentRuntimeCatalog(List.of(new AgentRuntimeProvider("codex", "Codex", AgentRuntimeProviderStatus.READY, "codex/1", List.of())));
+        when(this.httpClient.getRuntime()).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.getRuntime()).isEqualTo(expected);
+
+        final InOrder inOrder = inOrder(this.executor, this.httpClient, this.mapper);
+        inOrder.verify(this.executor).execute(any());
+        inOrder.verify(this.httpClient).getRuntime();
+        inOrder.verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
     void listProjectAgentsExecutesTypedClientCallAndMapsResponse() {
-        final var upstreamResponse = new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED);
-        final var expected = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED);
+        final var upstreamResponse = new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", null, CREATED, UPDATED);
+        final var expected = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", null, CREATED, UPDATED);
         when(this.httpClient.listProjectAgents(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
         when(this.mapper.requireList(List.of(upstreamResponse), "agents")).thenReturn(List.of(upstreamResponse));
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
@@ -122,10 +142,10 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void createAgentMapsRequestExecutesTypedClientCallAndMapsResponse() {
-        final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{\"type\":\"object\"}"));
-        final var request = new AgentDefinitionRequest("Backend", "Do work.", null);
-        final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, CREATED, UPDATED);
-        final var expected = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), CREATED, UPDATED);
+        final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{\"type\":\"object\"}"), null);
+        final var request = new AgentDefinitionRequest("Backend", "Do work.", null, null);
+        final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, null, CREATED, UPDATED);
+        final var expected = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), null, CREATED, UPDATED);
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.createAgent(PROJECT_ID, request)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
@@ -140,8 +160,8 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void getAgentExecutesTypedClientCallAndMapsResponse() {
-        final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, CREATED, UPDATED);
-        final var expected = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), CREATED, UPDATED);
+        final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, null, CREATED, UPDATED);
+        final var expected = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), null, CREATED, UPDATED);
         when(this.httpClient.getAgent(AGENT_ID)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 
@@ -154,10 +174,10 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void updateAgentMapsRequestExecutesTypedClientCallAndMapsResponse() {
-        final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{\"type\":\"object\"}"));
-        final var request = new AgentDefinitionRequest("Backend", "Do work.", null);
-        final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, CREATED, UPDATED);
-        final var expected = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), CREATED, UPDATED);
+        final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{\"type\":\"object\"}"), null);
+        final var request = new AgentDefinitionRequest("Backend", "Do work.", null, null);
+        final var upstreamResponse = new AgentDefinitionResponse(AGENT_ID, PROJECT_ID, "Backend", "Do work.", null, null, CREATED, UPDATED);
+        final var expected = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), null, CREATED, UPDATED);
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.updateAgent(AGENT_ID, request)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);

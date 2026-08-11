@@ -7,6 +7,7 @@ public record AgentDefinitionListResponse(
         UUID id,
         UUID projectId,
         String name,
+        AgentModelSelectionResponse model,
         Instant createdAt,
         Instant updatedAt
 ) {
