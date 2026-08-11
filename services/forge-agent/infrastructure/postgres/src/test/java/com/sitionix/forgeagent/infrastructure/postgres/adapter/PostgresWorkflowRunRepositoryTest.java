@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeRun;
+import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
@@ -107,6 +108,9 @@ class PostgresWorkflowRunRepositoryTest {
         node.setOutput("{\"summary\":\"done\"}");
         node.setFailureCode("ERR");
         node.setFailureMessage("Failed");
+        node.setExecutionModelProviderId("codex");
+        node.setExecutionModelId("model-b");
+        node.setExecutionModelEffortId("xhigh");
         when(this.workflowRunRepository.findById(RUN_ID)).thenReturn(Optional.of(this.runEntity(RUN_ID, NOW)));
         when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of(node));
 
@@ -115,10 +119,12 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(run.id()).isEqualTo(RUN_ID);
         assertThat(run.nodeRuns()).singleElement().satisfies(nodeRun -> {
             assertThat(nodeRun.id()).isEqualTo(NODE_RUN_B);
+            assertThat(nodeRun.workflowRunId()).isEqualTo(RUN_ID);
             assertThat(nodeRun.dependsOnNodeRunIds()).containsExactly(NODE_RUN_A);
             assertThat(nodeRun.position()).isEqualTo(new NodePosition(3.0, 4.0));
             assertThat(nodeRun.output()).isEqualTo(new NodeRunOutput("{\"summary\":\"done\"}"));
             assertThat(nodeRun.failure()).isEqualTo(new NodeRunFailure("ERR", "Failed"));
+            assertThat(nodeRun.executionModel()).isEqualTo(new NodeRunExecutionModel("codex", "model-b", "xhigh"));
         });
         verify(this.nodeRunRepository).findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID);
     }
@@ -160,6 +166,7 @@ class PostgresWorkflowRunRepositoryTest {
         final double y = NODE_RUN_A.equals(id) ? 2.0 : 4.0;
         return new NodeRun(
                 id,
+                RUN_ID,
                 sourceNodeId,
                 sourceAgentId,
                 "Agent " + sourceAgentId,
@@ -170,6 +177,7 @@ class PostgresWorkflowRunRepositoryTest {
                 NodeRunStatus.PENDING,
                 output,
                 failure,
+                null,
                 NOW,
                 null,
                 null

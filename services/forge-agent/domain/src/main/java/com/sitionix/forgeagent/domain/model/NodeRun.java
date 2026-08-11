@@ -6,6 +6,7 @@ import java.util.UUID;
 
 public record NodeRun(
         UUID id,
+        UUID workflowRunId,
         UUID sourceNodeId,
         UUID sourceAgentId,
         String agentName,
@@ -16,6 +17,7 @@ public record NodeRun(
         NodeRunStatus status,
         NodeRunOutput output,
         NodeRunFailure failure,
+        NodeRunExecutionModel executionModel,
         Instant createdAt,
         Instant startedAt,
         Instant finishedAt

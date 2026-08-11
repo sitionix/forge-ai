@@ -218,6 +218,7 @@ class ForgeAgentApiMapperTest {
                 WorkflowRunStatus.QUEUED,
                 List.of(new NodeRun(
                         NODE_RUN_ID,
+                        RUN_ID,
                         NODE_A,
                         AGENT_ID,
                         "Analyzer",
@@ -228,6 +229,7 @@ class ForgeAgentApiMapperTest {
                         NodeRunStatus.PENDING,
                         new NodeRunOutput("{\"summary\":\"done\"}"),
                         new NodeRunFailure("ERR", "Failed"),
+                        null,
                         CREATED,
                         null,
                         null

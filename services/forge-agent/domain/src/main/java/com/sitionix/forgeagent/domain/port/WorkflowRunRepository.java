@@ -12,5 +12,9 @@ public interface WorkflowRunRepository {
 
     Optional<WorkflowRun> findById(UUID runId);
 
+    Optional<WorkflowRun> findByIdForUpdate(UUID runId);
+
     List<WorkflowRunSummary> findSummariesBySourceWorkflowId(UUID workflowId);
+
+    WorkflowRun saveLifecycle(WorkflowRun run);
 }
