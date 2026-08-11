@@ -3,6 +3,7 @@ package com.sitionix.forgeai.domain.port;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
@@ -19,6 +20,8 @@ public interface ForgeAgentClient {
     List<AgentProject> listProjects();
 
     AgentProject createProject(CreateAgentProjectCommand command);
+
+    AgentRuntimeCatalog getRuntime();
 
     List<AgentDefinitionListItem> listProjectAgents(UUID projectId);
 

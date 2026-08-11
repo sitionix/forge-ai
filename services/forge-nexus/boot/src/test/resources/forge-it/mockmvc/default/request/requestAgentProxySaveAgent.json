@@ -8,5 +8,10 @@
         "type": "string"
       }
     }
+  },
+  "model": {
+    "providerId": "codex",
+    "modelId": "discovered-model",
+    "effortId": "medium"
   }
 }

@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Size;
 public record AgentDefinitionRequest(
         @NotBlank @Size(max = 120) String name,
         @NotBlank String instructions,
-        @NotNull JsonNode outputSchema
+        @NotNull JsonNode outputSchema,
+        AgentModelSelectionRequest model
 ) {
 }

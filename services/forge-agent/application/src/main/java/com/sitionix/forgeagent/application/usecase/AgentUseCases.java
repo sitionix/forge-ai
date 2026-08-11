@@ -6,8 +6,13 @@ import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
 import com.sitionix.forgeagent.domain.model.AgentListItem;
+import com.sitionix.forgeagent.domain.model.AgentModelSelection;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeModel;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
 import com.sitionix.forgeagent.domain.model.NameNormalizer;
+import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
+import com.sitionix.forgeagent.domain.port.CodexRuntimePort;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import java.time.Clock;
 import java.time.Instant;
@@ -25,6 +30,7 @@ public class AgentUseCases {
 
     private final ProjectRepository projectRepository;
     private final AgentDefinitionRepository agentDefinitionRepository;
+    private final CodexRuntimePort codexRuntimePort;
     private final Clock clock;
 
     @Transactional(readOnly = true)
@@ -49,6 +55,7 @@ public class AgentUseCases {
             throw new ConflictException("DUPLICATE_AGENT_NAME", "An agent with this name already exists in this project.");
         }
         final String instructions = this.requireInstructions(command.instructions());
+        final AgentModelSelection model = this.validateModelSelection(command.model());
         final Instant now = Instant.now(this.clock);
         final AgentDefinition newAgent = new AgentDefinition(
                 UUID.randomUUID(),
@@ -57,6 +64,7 @@ public class AgentUseCases {
                 normalizedName,
                 instructions,
                 command.outputSchema(),
+                model,
                 now,
                 now
         );
@@ -80,6 +88,7 @@ public class AgentUseCases {
                 normalizedName,
                 this.requireInstructions(command.instructions()),
                 command.outputSchema(),
+                this.validateModelSelection(command.model()),
                 existing.createdAt(),
                 Instant.now(this.clock)
         );
@@ -110,12 +119,56 @@ public class AgentUseCases {
         return instructions;
     }
 
+    private AgentModelSelection validateModelSelection(final AgentModelSelection selection) {
+        if (selection == null) {
+            return null;
+        }
+        final String providerId = this.requireSelectionValue(selection.providerId(), "INVALID_AGENT_MODEL_PROVIDER", "Model provider is required.");
+        final String modelId = this.requireSelectionValue(selection.modelId(), "INVALID_AGENT_MODEL", "Model id is required.");
+        final String effortId = selection.effortId() == null || selection.effortId().trim().isBlank()
+                ? null
+                : selection.effortId().trim();
+
+        final CodexRuntimeProvider provider = this.codexRuntimePort.getModels();
+        if (!providerId.equals(provider.providerId())) {
+            throw new ValidationException("UNKNOWN_AGENT_MODEL_PROVIDER", "Selected model provider is not available.");
+        }
+        if (provider.status() != RuntimeProviderStatus.READY) {
+            throw new ValidationException("AGENT_MODEL_PROVIDER_UNAVAILABLE", "Selected model provider is not ready.");
+        }
+        final CodexRuntimeModel model = provider.models().stream()
+                .filter(candidate -> modelId.equals(candidate.modelId()))
+                .findFirst()
+                .orElseThrow(() -> new ValidationException("UNKNOWN_AGENT_MODEL", "Selected model is not available."));
+        if (model.efforts().isEmpty() && effortId != null) {
+            throw new ValidationException("UNSUPPORTED_AGENT_MODEL_EFFORT", "Selected model does not support reasoning efforts.");
+        }
+        if (!model.efforts().isEmpty()) {
+            if (effortId == null) {
+                throw new ValidationException("AGENT_MODEL_EFFORT_REQUIRED", "Selected model requires a reasoning effort.");
+            }
+            final boolean effortExists = model.efforts().stream().anyMatch(candidate -> effortId.equals(candidate.effortId()));
+            if (!effortExists) {
+                throw new ValidationException("UNSUPPORTED_AGENT_MODEL_EFFORT", "Selected reasoning effort is not available for this model.");
+            }
+        }
+        return new AgentModelSelection(providerId, modelId, effortId);
+    }
+
+    private String requireSelectionValue(final String value, final String code, final String message) {
+        if (value == null || value.trim().isBlank()) {
+            throw new ValidationException(code, message);
+        }
+        return value.trim();
+    }
+
     private List<AgentListItem> toListItems(final List<AgentDefinition> agents) {
         return agents.stream()
                 .map(agent -> new AgentListItem(
                         agent.id(),
                         agent.projectId(),
                         agent.name(),
+                        agent.model(),
                         agent.createdAt(),
                         agent.updatedAt()
                 ))
@@ -129,6 +182,7 @@ public class AgentUseCases {
                 agent.name(),
                 agent.instructions(),
                 agent.outputSchema(),
+                agent.model(),
                 agent.createdAt(),
                 agent.updatedAt()
         );

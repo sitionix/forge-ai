@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AgentProjectsPage } from '../src/operator/agent-projects-page.js';
 import { createAgentProjectsApi } from '../src/operator/agent-projects-api.js';
 import { bootstrapOperatorConsole } from '../src/operator/operator-bootstrap.js';
+import { effortTone } from '../src/operator/project-workspace.js';
 
 function agentProjectsDom() {
   return new JSDOM(readFileSync(join(process.cwd(), 'src', 'operator', 'agent-projects.html'), 'utf8'), {
@@ -30,8 +31,46 @@ function agent(id: string, name: string, projectId = project().id) {
     name,
     instructions: `${name} instructions`,
     outputSchema: { type: 'object' },
+    model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'medium' },
     createdAt: '2026-08-04T00:00:00Z',
     updatedAt: '2026-08-04T00:00:00Z'
+  };
+}
+
+function runtime() {
+  return {
+    providers: [
+      {
+        providerId: 'codex',
+        displayName: 'Codex',
+        status: 'READY',
+        version: 'codex 1.0.0',
+        models: [
+          {
+            modelId: 'discovered-model',
+            displayName: 'Discovered Model',
+            description: 'Live model',
+            efforts: [
+              { effortId: 'medium', description: 'Medium' }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+}
+
+function unavailableCodexRuntime(status = 'UNAVAILABLE') {
+  return {
+    providers: [
+      {
+        providerId: 'codex',
+        displayName: 'Codex',
+        status,
+        version: null,
+        models: []
+      }
+    ]
   };
 }
 
@@ -60,6 +99,7 @@ function api(overrides = {}) {
   return {
     listProjects: vi.fn(() => Promise.resolve([project()])),
     createProject: vi.fn(() => Promise.resolve(project('22222222-2222-4222-8222-222222222222', 'Forge AI'))),
+    getRuntime: vi.fn(() => Promise.resolve(runtime())),
     listProjectAgents: vi.fn(() => Promise.resolve(agents)),
     createAgent: vi.fn(() => Promise.resolve(agent('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'Analyzer'))),
     getAgent: vi.fn((agentId: string) => Promise.resolve(agents.find((item) => item.id === agentId) || agents[0])),
@@ -103,6 +143,12 @@ function setRandomUuids(dom: JSDOM, values: string[]) {
 
 function pointer(dom: JSDOM, type: string, x: number, y: number) {
   return new dom.window.MouseEvent(type, { clientX: x, clientY: y, bubbles: true, cancelable: true });
+}
+
+function selectValue(dom: JSDOM, id: string, value: string) {
+  const select = dom.window.document.getElementById(id) as HTMLSelectElement;
+  select.value = value;
+  select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
 }
 
 describe('Agent projects page', () => {
@@ -160,6 +206,8 @@ describe('Agent projects page', () => {
     await page.openAgentModal();
     (dom.window.document.getElementById('agentsV2AgentName') as HTMLInputElement).value = 'Analyzer';
     (dom.window.document.getElementById('agentsV2AgentInstructions') as HTMLTextAreaElement).value = 'Analyze changes.';
+    selectValue(dom, 'agentsV2AgentProvider', 'codex');
+    selectValue(dom, 'agentsV2AgentModel', 'discovered-model');
     dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
 
@@ -167,13 +215,323 @@ describe('Agent projects page', () => {
     expect(fakeApi.createAgent).toHaveBeenCalledWith(project().id, expect.objectContaining({
       name: 'Analyzer',
       instructions: 'Analyze changes.',
-      outputSchema: { type: 'object', properties: {} }
+      outputSchema: { type: 'object', properties: {} },
+      model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'medium' }
     }));
 
     await page.openAgentModal('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
     expect(fakeApi.updateAgent).toHaveBeenCalledWith('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', expect.not.objectContaining({ dependsOnAgentIds: expect.anything() }));
+  });
+
+  it('editing Agent can change the saved model selection', async () => {
+    const fakeApi = api({
+      getRuntime: vi.fn(() => Promise.resolve({
+        providers: [{
+          providerId: 'codex',
+          displayName: 'Codex',
+          status: 'READY',
+          version: 'codex 1.0.0',
+          models: [
+            {
+              modelId: 'discovered-model',
+              displayName: 'Discovered Model',
+              description: 'Current saved model',
+              efforts: [{ effortId: 'medium', description: 'Medium' }]
+            },
+            {
+              modelId: 'new-model',
+              displayName: 'New Model',
+              description: 'Replacement model',
+              efforts: [{ effortId: 'xhigh', description: 'Maximum reasoning' }]
+            }
+          ]
+        }]
+      }))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    selectValue(dom, 'agentsV2AgentModel', 'new-model');
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.updateAgent).toHaveBeenCalledWith('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', expect.objectContaining({
+      model: { providerId: 'codex', modelId: 'new-model', effortId: 'xhigh' }
+    }));
+  });
+
+  it('editing Agent refreshes runtime catalog so newly available models can be selected', async () => {
+    const refreshedRuntime = {
+      providers: [{
+        providerId: 'codex',
+        displayName: 'Codex',
+        status: 'READY',
+        version: 'codex 1.0.1',
+        models: [
+          {
+            modelId: 'discovered-model',
+            displayName: 'Discovered Model',
+            description: 'Current saved model',
+            efforts: [{ effortId: 'medium', description: 'Medium' }]
+          },
+          {
+            modelId: 'new-model',
+            displayName: 'New Model',
+            description: 'Model discovered after workspace load',
+            efforts: [{ effortId: 'xhigh', description: 'Maximum reasoning' }]
+          }
+        ]
+      }]
+    };
+    const fakeApi = api({
+      getRuntime: vi.fn()
+        .mockResolvedValueOnce(runtime())
+        .mockResolvedValueOnce(refreshedRuntime)
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    selectValue(dom, 'agentsV2AgentModel', 'new-model');
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.getRuntime).toHaveBeenCalledTimes(2);
+    expect(fakeApi.updateAgent).toHaveBeenCalledWith('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', expect.objectContaining({
+      model: { providerId: 'codex', modelId: 'new-model', effortId: 'xhigh' }
+    }));
+  });
+
+  it('new Agent modal keeps provider model and effort blank after runtime loads', async () => {
+    const { dom, page } = await openedProject();
+
+    await page.openAgentModal();
+    const provider = dom.window.document.getElementById('agentsV2AgentProvider') as HTMLSelectElement;
+    const model = dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement;
+    const effort = dom.window.document.getElementById('agentsV2AgentEffort') as HTMLSelectElement;
+
+    expect(provider.value).toBe('');
+    expect(model.value).toBe('');
+    expect(effort.value).toBe('');
+    expect(provider.disabled).toBe(false);
+    expect(model.disabled).toBe(true);
+    expect(effort.disabled).toBe(true);
+
+    selectValue(dom, 'agentsV2AgentProvider', 'codex');
+    expect(provider.value).toBe('codex');
+    expect(model.value).toBe('');
+    expect(model.disabled).toBe(false);
+    expect(effort.value).toBe('');
+    expect(effort.disabled).toBe(true);
+  });
+
+  it('effort picker renders effort id before description after explicit model selection', async () => {
+    const fakeApi = api({
+      getRuntime: vi.fn(() => Promise.resolve({
+        providers: [{
+          providerId: 'codex',
+          displayName: 'Codex',
+          status: 'READY',
+          version: 'codex 1.0.0',
+          models: [{
+            modelId: 'discovered-model',
+            displayName: 'Discovered Model',
+            description: 'Live model',
+            efforts: [{ effortId: 'xhigh', description: 'Maximum reasoning' }]
+          }]
+        }]
+      }))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal();
+    selectValue(dom, 'agentsV2AgentProvider', 'codex');
+    selectValue(dom, 'agentsV2AgentModel', 'discovered-model');
+
+    const effort = dom.window.document.getElementById('agentsV2AgentEffort') as HTMLSelectElement;
+    expect([...effort.options].map((option) => option.textContent || '')).toContain('xhigh - Maximum reasoning');
+    expect([...effort.options].some((option) => option.textContent === 'Maximum reasoning')).toBe(false);
+  });
+
+  it('Agent cards render saved model metadata and effort tone classes without detail N+1', async () => {
+    const agents = [
+      { ...agent('low-agent', 'Low'), model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'low' } },
+      { ...agent('medium-agent', 'Medium'), model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'medium' } },
+      { ...agent('high-agent', 'High'), model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'high' } },
+      { ...agent('xhigh-agent', 'XHigh'), model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'xhigh' } },
+      { ...agent('unknown-agent', 'Unknown'), model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'super-high' } },
+      { ...agent('legacy-agent', 'Legacy'), model: null }
+    ];
+    const fakeApi = api({
+      listProjectAgents: vi.fn(() => Promise.resolve(agents))
+    });
+    const { dom } = await openedProject(fakeApi);
+    const list = dom.window.document.getElementById('agentsV2AgentsList')!;
+
+    expect(list.textContent).toContain('Codex');
+    expect(list.textContent).toContain('Discovered Model');
+    expect(list.textContent).toContain('xhigh');
+    expect(list.textContent).toContain('No model selected');
+    expect(list.querySelector('[data-effort-tone="low"]')).not.toBeNull();
+    expect(list.querySelector('[data-effort-tone="medium"]')).not.toBeNull();
+    expect(list.querySelector('[data-effort-tone="high"]')).not.toBeNull();
+    expect(list.querySelector('[data-effort-tone="maximum"]')).not.toBeNull();
+    expect(list.querySelector('[data-effort-tone="neutral"]')).not.toBeNull();
+    expect(fakeApi.getAgent).not.toHaveBeenCalled();
+  });
+
+  it('Agent cards fall back to persisted ids when runtime catalog fails', async () => {
+    const fakeApi = api({
+      getRuntime: vi.fn(() => Promise.reject(new Error('Runtime unavailable')))
+    });
+    const { dom } = await openedProject(fakeApi);
+    const list = dom.window.document.getElementById('agentsV2AgentsList')!;
+
+    expect(list.textContent).toContain('codex');
+    expect(list.textContent).toContain('discovered-model');
+    expect(list.textContent).toContain('medium');
+  });
+
+  it('stale saved model selection remains visible and is not silently replaced', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'old-model', effortId: 'xhigh' }
+    };
+    const fakeApi = api({
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+
+    expect((dom.window.document.getElementById('agentsV2AgentProvider') as HTMLSelectElement).value).toBe('codex');
+    expect((dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement).value).toBe('old-model');
+    expect((dom.window.document.getElementById('agentsV2AgentEffort') as HTMLSelectElement).value).toBe('xhigh');
+    expect(dom.window.document.getElementById('agentsV2AgentModel')?.textContent).toContain('old-model (stale)');
+    expect(dom.window.document.getElementById('agentsV2AgentEffort')?.textContent).toContain('xhigh (stale)');
+
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+    expect(fakeApi.updateAgent).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('agentsV2AgentModalError')?.textContent).toContain('Select a current ready model.');
+  });
+
+  it('editing Agent shows unavailable provider as unavailable instead of stale', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'gpt-5.4-mini', effortId: 'medium' }
+    };
+    const fakeApi = api({
+      getRuntime: vi.fn(() => Promise.resolve(unavailableCodexRuntime())),
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+
+    const provider = dom.window.document.getElementById('agentsV2AgentProvider') as HTMLSelectElement;
+    const model = dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement;
+    const effort = dom.window.document.getElementById('agentsV2AgentEffort') as HTMLSelectElement;
+    expect(provider.textContent).toContain('Codex (unavailable)');
+    expect(provider.textContent).not.toContain('codex (stale)');
+    expect(model.value).toBe('gpt-5.4-mini');
+    expect(model.textContent).toContain('gpt-5.4-mini (unavailable)');
+    expect(effort.value).toBe('medium');
+    expect(effort.textContent).toContain('medium (unavailable)');
+    expect(dom.window.document.getElementById('agentsV2AgentRuntimeState')?.textContent).toContain('Codex runtime unavailable.');
+
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+    expect(fakeApi.updateAgent).not.toHaveBeenCalled();
+  });
+
+  it('editing Agent shows degraded provider as degraded instead of stale', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'gpt-5.4-mini', effortId: 'medium' }
+    };
+    const fakeApi = api({
+      getRuntime: vi.fn(() => Promise.resolve(unavailableCodexRuntime('DEGRADED'))),
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+
+    expect(dom.window.document.getElementById('agentsV2AgentProvider')?.textContent).toContain('Codex (degraded)');
+    expect(dom.window.document.getElementById('agentsV2AgentProvider')?.textContent).not.toContain('codex (stale)');
+    expect(dom.window.document.getElementById('agentsV2AgentRuntimeState')?.textContent).toContain('Codex runtime degraded.');
+  });
+
+  it('editing Agent still marks saved provider stale when provider is absent from runtime', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'gpt-5.4-mini', effortId: 'medium' }
+    };
+    const fakeApi = api({
+      getRuntime: vi.fn(() => Promise.resolve({ providers: [] })),
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+
+    expect(dom.window.document.getElementById('agentsV2AgentProvider')?.textContent).toContain('codex (stale)');
+    expect(dom.window.document.getElementById('agentsV2AgentRuntimeState')?.textContent).toContain('No ready model providers available.');
+  });
+
+  it('editing Agent refreshes from unavailable runtime to READY and makes current models selectable', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'gpt-5.4-mini', effortId: 'medium' }
+    };
+    const fakeApi = api({
+      getRuntime: vi.fn()
+        .mockResolvedValueOnce(unavailableCodexRuntime())
+        .mockResolvedValueOnce(runtime()),
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+
+    const provider = dom.window.document.getElementById('agentsV2AgentProvider') as HTMLSelectElement;
+    const model = dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement;
+    expect(provider.disabled).toBe(false);
+    expect(provider.textContent).toContain('Codex');
+    expect(model.disabled).toBe(false);
+    expect(model.textContent).toContain('Discovered Model');
+    expect(dom.window.document.getElementById('agentsV2AgentRuntimeState')?.textContent).toBe('');
+  });
+
+  it('editing Agent can replace a stale saved model with a current model', async () => {
+    const staleAgent = {
+      ...agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect'),
+      model: { providerId: 'codex', modelId: 'old-model', effortId: 'xhigh' }
+    };
+    const fakeApi = api({
+      getAgent: vi.fn(() => Promise.resolve(staleAgent))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openAgentModal(staleAgent.id);
+    selectValue(dom, 'agentsV2AgentModel', 'discovered-model');
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.updateAgent).toHaveBeenCalledWith(staleAgent.id, expect.objectContaining({
+      model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'medium' }
+    }));
+  });
+
+  it('effort tone helper maps known intensity ids and falls back neutrally', () => {
+    expect(effortTone('low')).toBe('low');
+    expect(effortTone('minimal')).toBe('low');
+    expect(effortTone('medium')).toBe('medium');
+    expect(effortTone('high')).toBe('high');
+    expect(effortTone('xhigh')).toBe('maximum');
+    expect(effortTone('super-high')).toBe('neutral');
   });
 
   it('rejects malformed and non-object Agent Output JSON without API calls', async () => {

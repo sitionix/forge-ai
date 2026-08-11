@@ -9,6 +9,7 @@ public record AgentDetails(
         String name,
         String instructions,
         AgentOutputSchema outputSchema,
+        AgentModelSelection model,
         Instant createdAt,
         Instant updatedAt
 ) {

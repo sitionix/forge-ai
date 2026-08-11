@@ -4,6 +4,7 @@ import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
@@ -36,6 +37,13 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "requestAgentProxyCreateProject.json",
                 HttpStatus.CREATED,
                 "responseAgentProxyCreateProject.json");
+    }
+
+    public static Endpoint<Void, AgentRuntimeResponse> getRuntime() {
+        return upstreamGet("/api/v1/runtime",
+                AgentRuntimeResponse.class,
+                HttpStatus.OK,
+                "responseAgentProxyRuntime.json");
     }
 
     public static Endpoint<Void, AgentDefinitionListResponse[]> listProjectAgents() {

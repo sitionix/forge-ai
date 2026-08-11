@@ -4,6 +4,7 @@ import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionListResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentRuntimeResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
@@ -36,6 +37,13 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                 "requestAgentProxyCreateProject.json",
                 HttpStatus.CREATED,
                 "responseAgentProxyCreateProject.json");
+    }
+
+    public static Endpoint<Void, AgentRuntimeResponse> getRuntime() {
+        return nexusGet("/api/v1/infrastructure/agents/runtime",
+                AgentRuntimeResponse.class,
+                HttpStatus.OK,
+                "responseAgentProxyRuntime.json");
     }
 
     public static Endpoint<Void, AgentDefinitionListResponse[]> listProjectAgents() {

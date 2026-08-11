@@ -10,6 +10,7 @@ public record AgentDefinition(
         String normalizedName,
         String instructions,
         AgentOutputSchema outputSchema,
+        AgentModelSelection model,
         Instant createdAt,
         Instant updatedAt
 ) {

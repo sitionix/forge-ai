@@ -10,6 +10,7 @@ public record AgentDefinitionResponse(
         String name,
         String instructions,
         JsonNode outputSchema,
+        AgentModelSelectionResponse model,
         Instant createdAt,
         Instant updatedAt
 ) {

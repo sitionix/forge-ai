@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.api;
 
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
+import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
@@ -12,6 +13,7 @@ import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
+import com.sitionix.forgeagent.application.usecase.GetAiRuntime;
 import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowUseCases;
@@ -34,9 +36,15 @@ public class ForgeAgentController {
 
     private final ProjectUseCases projectUseCases;
     private final AgentUseCases agentUseCases;
+    private final GetAiRuntime getAiRuntime;
     private final WorkflowUseCases workflowUseCases;
     private final WorkflowRunUseCases workflowRunUseCases;
     private final ForgeAgentApiMapper mapper;
+
+    @GetMapping("/api/v1/runtime")
+    public ResponseEntity<AiRuntimeResponse> getRuntime() {
+        return ResponseEntity.ok(this.mapper.toResponse(this.getAiRuntime.execute()));
+    }
 
     @GetMapping("/api/v1/projects")
     public ResponseEntity<List<ProjectResponse>> listProjects() {

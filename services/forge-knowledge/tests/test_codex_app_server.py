@@ -2085,6 +2085,7 @@ def test_submitted_request_cancellation_preserved_when_cleanup_fails_and_process
             await task
         with pytest.raises(CodexAppServerLifecycleError):
             await client.request(CodexProtocol.MODEL_LIST)
+        await _wait_for_cleanup_attempt(process)
         process.returncode = 0
         process._complete_wait()
         await client.aclose()
@@ -2097,6 +2098,111 @@ def test_submitted_request_cancellation_preserved_when_cleanup_fails_and_process
     assert process.terminated is True
     assert process.killed is True
     assert process.wait_calls >= 2
+    assert diagnostics == []
+
+
+def test_cancelled_submitted_request_blocks_followup_while_cleanup_handoff_is_pending(tmp_path: Path):
+    process = KillTimeoutProcess([result({"userAgent": "forge-knowledge/0.146.0"}), defer()])
+    created = 0
+
+    async def process_factory(command):
+        nonlocal created
+        created += 1
+        return process
+
+    client = CodexAppServerClient(
+        process_factory=process_factory,
+        settings=_settings(
+            tmp_path,
+            terminate_grace_seconds=0.01,
+            kill_grace_seconds=0.3,
+            cancellation_cleanup_timeout_seconds=0.03,
+        ),
+    )
+
+    async def exercise():
+        diagnostics: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        task = asyncio.create_task(client.request(CodexProtocol.RATE_LIMITS_READ))
+        await _wait_for_method(process, CodexProtocol.RATE_LIMITS_READ)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        with pytest.raises(CodexAppServerLifecycleError, match="cancellation cleanup"):
+            await client.request(CodexProtocol.MODEL_LIST)
+
+        await _wait_for_cleanup_attempt(process)
+        process.returncode = 0
+        process._complete_wait()
+        await _wait_for_cancellation_cleanup(client)
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return diagnostics
+
+    diagnostics = asyncio.run(exercise())
+
+    assert created == 1
+    assert process.terminated is True
+    assert process.killed is True
+    assert [sent.get("method") for sent in process.sent].count(CodexProtocol.MODEL_LIST) == 0
+    assert diagnostics == []
+
+
+def test_cancelled_submitted_request_recovers_after_owned_process_exits(tmp_path: Path):
+    stalled = KillTimeoutProcess([result({"userAgent": "forge-knowledge/0.146.0"}), defer()])
+    restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
+    processes = [stalled, restarted]
+    created = 0
+
+    async def process_factory(command):
+        nonlocal created
+        created += 1
+        return processes.pop(0)
+
+    client = CodexAppServerClient(
+        process_factory=process_factory,
+        settings=_settings(
+            tmp_path,
+            terminate_grace_seconds=0.01,
+            kill_grace_seconds=0.3,
+            cancellation_cleanup_timeout_seconds=0.03,
+        ),
+    )
+
+    async def exercise():
+        diagnostics: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: diagnostics.append(dict(context)))
+        task = asyncio.create_task(client.request(CodexProtocol.RATE_LIMITS_READ))
+        await _wait_for_method(stalled, CodexProtocol.RATE_LIMITS_READ)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        with pytest.raises(CodexAppServerLifecycleError):
+            await client.request(CodexProtocol.MODEL_LIST)
+        assert created == 1
+
+        await _wait_for_cleanup_attempt(stalled)
+        stalled.returncode = 0
+        stalled._complete_wait()
+        await _wait_for_cancellation_cleanup(client)
+        payload = await client.request(CodexProtocol.MODEL_LIST)
+
+        await client.aclose()
+        await _assert_no_codex_tasks()
+        return payload, diagnostics
+
+    payload, diagnostics = asyncio.run(exercise())
+
+    assert payload == {"ok": True}
+    assert created == 2
+    assert stalled.terminated is True
+    assert stalled.killed is True
+    assert [sent.get("method") for sent in stalled.sent].count(CodexProtocol.MODEL_LIST) == 0
+    assert restarted.by_method(CodexProtocol.MODEL_LIST)["method"] == CodexProtocol.MODEL_LIST
     assert diagnostics == []
 
 
@@ -2140,6 +2246,7 @@ def test_initialize_and_pre_registration_cancellation_preserved_when_cleanup_fai
             await task
         with pytest.raises(CodexAppServerLifecycleError):
             await client.request(CodexProtocol.MODEL_LIST)
+        await _wait_for_cleanup_attempt(process)
         process.returncode = 0
         process._complete_wait()
         await client.aclose()
@@ -2180,6 +2287,7 @@ def test_active_turn_cancellation_preserved_when_cleanup_fails_and_process_remai
             await task
         with pytest.raises(CodexAppServerLifecycleError):
             await client.request(CodexProtocol.MODEL_LIST)
+        await _wait_for_cleanup_attempt(process)
         process.returncode = 0
         process._complete_wait()
         await client.aclose()
@@ -2333,11 +2441,18 @@ def test_codex_provider_direct_timeout_is_rejected_not_clamped(tmp_path: Path, t
 
 
 class TerminateTimeoutProcess(FakeCodexProcess):
+    def __init__(self, scripted: Sequence[Mapping[str, Any]]) -> None:
+        super().__init__(scripted)
+        self.terminate_attempted = threading.Event()
+        self.kill_attempted = threading.Event()
+
     def terminate(self) -> None:
         self.terminated = True
+        self.terminate_attempted.set()
 
     def kill(self) -> None:
         self.killed = True
+        self.kill_attempted.set()
         self.returncode = 0
         self._complete_wait()
 
@@ -2352,6 +2467,7 @@ class TerminateTimeoutProcess(FakeCodexProcess):
 class KillTimeoutProcess(TerminateTimeoutProcess):
     def kill(self) -> None:
         self.killed = True
+        self.kill_attempted.set()
 
 
 class RaiseOnCancelStream(FakeStream):
@@ -2417,6 +2533,17 @@ async def _wait_for_method(process: FakeCodexProcess, method: str) -> None:
             return
         await asyncio.sleep(0)
     raise AssertionError(f"method not sent: {method}")
+
+
+async def _wait_for_cancellation_cleanup(client: CodexAppServerClient) -> None:
+    completed = getattr(client, "_cancellation_cleanup_completed")
+    if completed is not None:
+        await asyncio.wrap_future(completed)
+
+
+async def _wait_for_cleanup_attempt(process: TerminateTimeoutProcess) -> None:
+    assert await asyncio.to_thread(process.terminate_attempted.wait, 1.0) is True
+    assert await asyncio.to_thread(process.kill_attempted.wait, 1.0) is True
 
 
 def _complete_turn(process: FakeCodexProcess, turn_id: str, text: str) -> None:

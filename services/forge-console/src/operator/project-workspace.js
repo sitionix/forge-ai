@@ -16,12 +16,12 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateWorkflow')?.addEventListener('click', () => this.onNewWorkflow());
   }
 
-  render(project, agents, workflows, dataCurrent) {
+  render(project, agents, workflows, dataCurrent, runtimeCatalog = null) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2CreateAgent').disabled = !dataCurrent;
     this.byId('agentsV2CreateWorkflow').disabled = !dataCurrent;
-    this.renderAgents(agents);
+    this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
   }
 
@@ -32,7 +32,7 @@ export class ProjectWorkspace {
     this.byId('agentsV2WorkflowsList').innerHTML = '<div class="muted-state">Loading workflows...</div>';
   }
 
-  renderAgents(agents) {
+  renderAgents(agents, runtimeCatalog = null) {
     const list = this.byId('agentsV2AgentsList');
     if (!agents.length) {
       list.innerHTML = '<div class="muted-state">No agents yet.</div>';
@@ -42,12 +42,40 @@ export class ProjectWorkspace {
       <article class="agents-v2-card">
         <h3>${escapeHtml(agent.name)}</h3>
         <p>${escapeHtml(agent.instructions || 'Reusable agent definition')}</p>
+        ${this.renderAgentModelMeta(agent.model, runtimeCatalog)}
         <button class="button small secondary" type="button" data-agent-id="${escapeHtml(agent.id)}">Edit</button>
       </article>
     `).join('');
     list.querySelectorAll('[data-agent-id]').forEach((element) => {
       element.addEventListener('click', () => this.onEditAgent(element.dataset.agentId));
     });
+  }
+
+  renderAgentModelMeta(modelSelection, runtimeCatalog = null) {
+    if (!modelSelection?.providerId || !modelSelection?.modelId) {
+      return '<div class="agents-v2-model-meta muted">No model selected</div>';
+    }
+    const resolved = this.resolveRuntimeModel(modelSelection, runtimeCatalog);
+    const providerLabel = resolved.provider?.displayName || modelSelection.providerId;
+    const modelLabel = resolved.model?.displayName || modelSelection.modelId;
+    const effortId = modelSelection.effortId || 'No effort';
+    const tone = effortTone(modelSelection.effortId);
+    return `
+      <div class="agents-v2-model-meta">
+        <span>${escapeHtml(providerLabel)} · ${escapeHtml(modelLabel)}</span>
+        <span class="agents-v2-effort agents-v2-effort-${escapeHtml(tone)}" data-effort-tone="${escapeHtml(tone)}">
+          <span class="agents-v2-effort-dot" aria-hidden="true"></span>
+          ${escapeHtml(effortId)}
+        </span>
+      </div>
+    `;
+  }
+
+  resolveRuntimeModel(modelSelection, runtimeCatalog = null) {
+    const providers = runtimeCatalog?.providers || [];
+    const provider = providers.find((candidate) => candidate.providerId === modelSelection.providerId);
+    const model = provider?.models?.find((candidate) => candidate.modelId === modelSelection.modelId);
+    return { provider, model };
   }
 
   renderWorkflows(workflows) {
@@ -71,4 +99,21 @@ export class ProjectWorkspace {
   byId(id) {
     return this.document.getElementById(id);
   }
+}
+
+export function effortTone(effortId) {
+  const normalized = (effortId || '').toLowerCase();
+  if (normalized === 'minimal' || normalized === 'low') {
+    return 'low';
+  }
+  if (normalized === 'medium') {
+    return 'medium';
+  }
+  if (normalized === 'high') {
+    return 'high';
+  }
+  if (normalized === 'xhigh') {
+    return 'maximum';
+  }
+  return 'neutral';
 }

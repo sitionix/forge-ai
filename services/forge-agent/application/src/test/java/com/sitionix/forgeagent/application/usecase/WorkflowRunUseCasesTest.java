@@ -298,6 +298,6 @@ class WorkflowRunUseCasesTest {
                                   final String instructions,
                                   final AgentOutputSchema outputSchema,
                                   final UUID projectId) {
-        return new AgentDefinition(id, projectId, name, name.toLowerCase(), instructions, outputSchema, Instant.EPOCH, Instant.EPOCH);
+        return new AgentDefinition(id, projectId, name, name.toLowerCase(), instructions, outputSchema, null, Instant.EPOCH, Instant.EPOCH);
     }
 }

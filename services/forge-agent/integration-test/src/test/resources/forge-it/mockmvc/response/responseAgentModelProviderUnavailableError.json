@@ -1,0 +1,5 @@
+{
+  "code": "AGENT_MODEL_PROVIDER_UNAVAILABLE",
+  "message": "Selected model provider is not ready.",
+  "correlationId": null
+}

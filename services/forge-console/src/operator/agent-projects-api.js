@@ -7,6 +7,9 @@ export function createAgentProjectsApi(http) {
     createProject(request) {
       return http.post(`${root}/projects`, request);
     },
+    getRuntime() {
+      return http.get(`${root}/runtime`);
+    },
     listProjectAgents(projectId) {
       return http.get(`${root}/projects/${encodeURIComponent(projectId)}/agents`);
     },

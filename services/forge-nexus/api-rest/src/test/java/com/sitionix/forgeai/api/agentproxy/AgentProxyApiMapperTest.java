@@ -12,6 +12,11 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
@@ -50,18 +55,19 @@ class AgentProxyApiMapperTest {
 
     @Test
     void mapsAgentRequestToCommand() throws Exception {
-        final var request = new AgentDefinitionRequest("Backend", "Do work.", this.objectMapper.readTree("{\"type\":\"object\"}"));
+        final var request = new AgentDefinitionRequest("Backend", "Do work.", this.objectMapper.readTree("{\"type\":\"object\"}"), null);
 
         assertThat(this.mapper.toCommand(request)).isEqualTo(new SaveAgentDefinitionCommand(
                 "Backend",
                 "Do work.",
-                new AgentOutputSchemaDocument("{\"type\":\"object\"}")
+                new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
+                null
         ));
     }
 
     @Test
     void rejectsNonObjectOutputSchemaAsLocalInvalidRequest() throws Exception {
-        final var request = new AgentDefinitionRequest("Backend", "Do work.", this.objectMapper.readTree("[]"));
+        final var request = new AgentDefinitionRequest("Backend", "Do work.", this.objectMapper.readTree("[]"), null);
 
         assertThatThrownBy(() -> this.mapper.toCommand(request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -76,8 +82,8 @@ class AgentProxyApiMapperTest {
 
     @Test
     void mapsAgentListItemToTypedResponse() {
-        assertThat(this.mapper.toResponse(new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED)))
-                .isEqualTo(new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", CREATED, UPDATED));
+        assertThat(this.mapper.toResponse(new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", null, CREATED, UPDATED)))
+                .isEqualTo(new AgentDefinitionListResponse(AGENT_ID, PROJECT_ID, "Backend", null, CREATED, UPDATED));
     }
 
     @Test
@@ -88,6 +94,7 @@ class AgentProxyApiMapperTest {
                 "Backend",
                 "Do work.",
                 new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
+                null,
                 CREATED,
                 UPDATED
         );
@@ -98,9 +105,39 @@ class AgentProxyApiMapperTest {
                 "Backend",
                 "Do work.",
                 this.objectMapper.readTree("{\"type\":\"object\"}"),
+                null,
                 CREATED,
                 UPDATED
         ));
+    }
+
+    @Test
+    void mapsRuntimeCatalogToTypedResponse() {
+        final var runtime = new AgentRuntimeCatalog(List.of(new AgentRuntimeProvider(
+                "codex",
+                "Codex",
+                AgentRuntimeProviderStatus.READY,
+                "codex/1",
+                List.of(new AgentRuntimeModel(
+                        "discovered-model",
+                        "Discovered Model",
+                        "Live model",
+                        List.of(new AgentRuntimeEffort("xhigh", "Maximum reasoning"))
+                ))
+        )));
+
+        assertThat(this.mapper.toResponse(runtime)).isEqualTo(new AgentRuntimeResponse(List.of(new AgentRuntimeProviderResponse(
+                "codex",
+                "Codex",
+                AgentRuntimeProviderStatus.READY,
+                "codex/1",
+                List.of(new AgentRuntimeModelResponse(
+                        "discovered-model",
+                        "Discovered Model",
+                        "Live model",
+                        List.of(new AgentRuntimeEffortResponse("xhigh", "Maximum reasoning"))
+                ))
+        ))));
     }
 
     @Test

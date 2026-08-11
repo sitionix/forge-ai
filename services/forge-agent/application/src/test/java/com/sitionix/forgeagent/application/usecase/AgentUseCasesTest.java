@@ -10,9 +10,15 @@ import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
+import com.sitionix.forgeagent.domain.model.AgentModelSelection;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeEffort;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeModel;
+import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.Project;
+import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
+import com.sitionix.forgeagent.domain.port.CodexRuntimePort;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import java.time.Clock;
 import java.time.Instant;
@@ -41,11 +47,14 @@ class AgentUseCasesTest {
     @Mock
     private AgentDefinitionRepository agentDefinitionRepository;
 
+    @Mock
+    private CodexRuntimePort codexRuntimePort;
+
     private AgentUseCases useCases;
 
     @BeforeEach
     void setUp() {
-        this.useCases = new AgentUseCases(this.projectRepository, this.agentDefinitionRepository, CLOCK);
+        this.useCases = new AgentUseCases(this.projectRepository, this.agentDefinitionRepository, this.codexRuntimePort, CLOCK);
     }
 
     @Test
@@ -55,7 +64,7 @@ class AgentUseCasesTest {
 
         final AgentDetails created = this.useCases.createAgent(
                 this.projectId,
-                new SaveAgentCommand(" Analyzer ", "Instructions", OUTPUT_SCHEMA)
+                new SaveAgentCommand(" Analyzer ", "Instructions", OUTPUT_SCHEMA, null)
         );
 
         assertThat(created.name()).isEqualTo("Analyzer");
@@ -70,7 +79,7 @@ class AgentUseCasesTest {
 
         final AgentDetails updated = this.useCases.updateAgent(
                 this.agentId,
-                new SaveAgentCommand("Analyzer Updated", "New instructions", OUTPUT_SCHEMA)
+                new SaveAgentCommand("Analyzer Updated", "New instructions", OUTPUT_SCHEMA, null)
         );
 
         assertThat(updated.name()).isEqualTo("Analyzer Updated");
@@ -80,10 +89,67 @@ class AgentUseCasesTest {
     }
 
     @Test
+    void createsAgentWithValidatedModelSelection() {
+        when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.of(this.project()));
+        when(this.codexRuntimePort.getModels()).thenReturn(this.readyRuntime());
+        when(this.agentDefinitionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        final AgentModelSelection selection = new AgentModelSelection("codex", "discovered-model", "medium");
+        final AgentDetails created = this.useCases.createAgent(
+                this.projectId,
+                new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA, selection)
+        );
+
+        assertThat(created.model()).isEqualTo(selection);
+    }
+
+    @Test
+    void rejectsUnknownModelSelection() {
+        when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.of(this.project()));
+        when(this.codexRuntimePort.getModels()).thenReturn(this.readyRuntime());
+
+        assertThatThrownBy(() -> this.useCases.createAgent(
+                this.projectId,
+                new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA, new AgentModelSelection("codex", "missing", "medium"))
+        ))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("UNKNOWN_AGENT_MODEL");
+    }
+
+    @Test
+    void rejectsUnsupportedEffortSelection() {
+        when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.of(this.project()));
+        when(this.codexRuntimePort.getModels()).thenReturn(this.readyRuntime());
+
+        assertThatThrownBy(() -> this.useCases.createAgent(
+                this.projectId,
+                new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA, new AgentModelSelection("codex", "discovered-model", "high"))
+        ))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("UNSUPPORTED_AGENT_MODEL_EFFORT");
+    }
+
+    @Test
+    void rejectsUnavailableRuntimeForModelSelection() {
+        when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.of(this.project()));
+        when(this.codexRuntimePort.getModels()).thenReturn(new CodexRuntimeProvider("codex", "Codex", RuntimeProviderStatus.UNAVAILABLE, null, List.of()));
+
+        assertThatThrownBy(() -> this.useCases.createAgent(
+                this.projectId,
+                new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA, new AgentModelSelection("codex", "discovered-model", "medium"))
+        ))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("AGENT_MODEL_PROVIDER_UNAVAILABLE");
+    }
+
+    @Test
     void rejectsBlankAgentName() {
         when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.of(this.project()));
 
-        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand(" ", "Instructions", OUTPUT_SCHEMA)))
+        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand(" ", "Instructions", OUTPUT_SCHEMA, null)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessage("Agent name is required.");
     }
@@ -93,7 +159,7 @@ class AgentUseCasesTest {
         when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.of(this.project()));
         when(this.agentDefinitionRepository.existsByProjectIdAndNormalizedName(this.projectId, "analyzer")).thenReturn(true);
 
-        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA)))
+        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA, null)))
                 .isInstanceOf(ConflictException.class)
                 .extracting("code")
                 .isEqualTo("DUPLICATE_AGENT_NAME");
@@ -116,7 +182,7 @@ class AgentUseCasesTest {
     void missingProjectIsNotFound() {
         when(this.projectRepository.findById(this.projectId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA)))
+        assertThatThrownBy(() -> this.useCases.createAgent(this.projectId, new SaveAgentCommand("Analyzer", "Instructions", OUTPUT_SCHEMA, null)))
                 .isInstanceOf(NotFoundException.class)
                 .extracting("code")
                 .isEqualTo("PROJECT_NOT_FOUND");
@@ -134,8 +200,24 @@ class AgentUseCasesTest {
                 name.toLowerCase(),
                 "Instructions",
                 OUTPUT_SCHEMA,
+                null,
                 Instant.parse("2026-08-03T00:00:00Z"),
                 Instant.parse("2026-08-03T00:00:00Z")
+        );
+    }
+
+    private CodexRuntimeProvider readyRuntime() {
+        return new CodexRuntimeProvider(
+                "codex",
+                "Codex",
+                RuntimeProviderStatus.READY,
+                "codex 1.0.0",
+                List.of(new CodexRuntimeModel(
+                        "discovered-model",
+                        "Discovered Model",
+                        "Live model",
+                        List.of(new CodexRuntimeEffort("medium", "Medium"))
+                ))
         );
     }
 }

@@ -8,6 +8,9 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
@@ -60,8 +63,19 @@ class AgentProxyUseCaseTest {
     }
 
     @Test
+    void getRuntimeDelegatesToClient() {
+        final var runtime = new AgentRuntimeCatalog(List.of(new AgentRuntimeProvider("codex", "Codex", AgentRuntimeProviderStatus.READY, "codex/1", List.of())));
+        when(this.forgeAgentClient.getRuntime()).thenReturn(runtime);
+
+        final var actual = new GetAgentRuntimeUseCase(this.forgeAgentClient).execute();
+
+        assertThat(actual).isSameAs(runtime);
+        verify(this.forgeAgentClient).getRuntime();
+    }
+
+    @Test
     void listProjectAgentsDelegatesToClient() {
-        final var agent = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", NOW, NOW);
+        final var agent = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", null, NOW, NOW);
         when(this.forgeAgentClient.listProjectAgents(PROJECT_ID)).thenReturn(List.of(agent));
 
         final var actual = new ListProjectAgentDefinitionsUseCase(this.forgeAgentClient).execute(PROJECT_ID);
@@ -72,8 +86,8 @@ class AgentProxyUseCaseTest {
 
     @Test
     void agentDefinitionUseCasesDelegateToClient() {
-        final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{}"));
-        final var agent = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), NOW, NOW);
+        final var command = new SaveAgentDefinitionCommand("Backend", "Do work.", new AgentOutputSchemaDocument("{}"), null);
+        final var agent = new AgentDefinitionDetails(AGENT_ID, PROJECT_ID, "Backend", "Do work.", new AgentOutputSchemaDocument("{}"), null, NOW, NOW);
         when(this.forgeAgentClient.createAgent(PROJECT_ID, command)).thenReturn(agent);
         when(this.forgeAgentClient.getAgent(AGENT_ID)).thenReturn(agent);
         when(this.forgeAgentClient.updateAgent(AGENT_ID, command)).thenReturn(agent);
