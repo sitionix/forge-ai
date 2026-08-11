@@ -106,12 +106,14 @@ class WorkflowRunUseCasesTest {
         assertThat(run.nodeRuns()).extracting(NodeRun::sourceNodeId)
                 .containsExactly(this.nodeA, this.nodeB, this.nodeC, this.nodeD);
         assertThat(run.nodeRuns()).allSatisfy(nodeRun -> {
+            assertThat(nodeRun.workflowRunId()).isEqualTo(run.id());
             assertThat(nodeRun.status()).isEqualTo(NodeRunStatus.PENDING);
             assertThat(nodeRun.createdAt()).isEqualTo(NOW);
             assertThat(nodeRun.startedAt()).isNull();
             assertThat(nodeRun.finishedAt()).isNull();
             assertThat(nodeRun.output()).isNull();
             assertThat(nodeRun.failure()).isNull();
+            assertThat(nodeRun.executionModel()).isNull();
         });
         assertThat(this.nodeRun(run, this.nodeA).agentName()).isEqualTo("Analyzer");
         assertThat(this.nodeRun(run, this.nodeA).agentInstructions()).isEqualTo("Analyze v1");
@@ -171,6 +173,19 @@ class WorkflowRunUseCasesTest {
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
                 .isEqualTo("INVALID_WORKFLOW_RUN_INPUT");
+        verify(this.workflowRunRepository, never()).save(any());
+    }
+
+    @Test
+    void rejectsEmptyWorkflowRunCreation() {
+        final Workflow workflow = new Workflow(this.workflowId, this.projectId, "Draft", "draft", List.of(), Instant.EPOCH, Instant.EPOCH);
+        when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(workflow), Optional.of(workflow));
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
+
+        assertThatThrownBy(() -> this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run it")))
+                .isInstanceOf(ConflictException.class)
+                .extracting("code")
+                .isEqualTo("EMPTY_WORKFLOW");
         verify(this.workflowRunRepository, never()).save(any());
     }
 

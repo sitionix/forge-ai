@@ -1,0 +1,12 @@
+{
+  "name": "Agent A",
+  "instructions": "Do work for Agent A.",
+  "outputSchema": {
+    "type": "object"
+  },
+  "model": {
+    "providerId": "codex",
+    "modelId": "discovered-model",
+    "effortId": "medium"
+  }
+}

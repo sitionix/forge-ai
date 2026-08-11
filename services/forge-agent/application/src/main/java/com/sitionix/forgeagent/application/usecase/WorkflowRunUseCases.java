@@ -46,19 +46,23 @@ public class WorkflowRunUseCases {
                 .orElseThrow(() -> new NotFoundException("WORKFLOW_NOT_FOUND", "Workflow was not found."));
         final Workflow workflow = this.workflowRepository.findById(identity.id())
                 .orElseThrow(() -> new NotFoundException("WORKFLOW_NOT_FOUND", "Workflow was not found."));
+        if (workflow.nodes().isEmpty()) {
+            throw new ConflictException("EMPTY_WORKFLOW", "Workflow must contain at least one node before a run can be created.");
+        }
 
         final Map<UUID, AgentDefinition> agentsById = this.loadSnapshotAgents(workflow);
         final Map<UUID, UUID> nodeRunIdsBySourceNodeId = this.generateNodeRunIds(workflow.nodes());
         final Instant now = Instant.now(this.clock);
+        final UUID workflowRunId = UUID.randomUUID();
         final WorkflowRun run = new WorkflowRun(
-                UUID.randomUUID(),
+                workflowRunId,
                 workflow.projectId(),
                 workflow.id(),
                 workflow.name(),
                 input,
                 WorkflowRunStatus.QUEUED,
                 workflow.nodes().stream()
-                        .map(node -> this.toNodeRun(workflow, node, agentsById, nodeRunIdsBySourceNodeId, now))
+                        .map(node -> this.toNodeRun(workflowRunId, workflow, node, agentsById, nodeRunIdsBySourceNodeId, now))
                         .toList(),
                 now,
                 null,
@@ -106,7 +110,8 @@ public class WorkflowRunUseCases {
         return result;
     }
 
-    private NodeRun toNodeRun(final Workflow workflow,
+    private NodeRun toNodeRun(final UUID workflowRunId,
+                              final Workflow workflow,
                               final Node node,
                               final Map<UUID, AgentDefinition> agentsById,
                               final Map<UUID, UUID> nodeRunIdsBySourceNodeId,
@@ -117,6 +122,7 @@ public class WorkflowRunUseCases {
                 .toList();
         return new NodeRun(
                 nodeRunIdsBySourceNodeId.get(node.id()),
+                workflowRunId,
                 node.id(),
                 agent.id(),
                 agent.name(),
@@ -125,6 +131,7 @@ public class WorkflowRunUseCases {
                 dependsOnNodeRunIds,
                 node.position(),
                 NodeRunStatus.PENDING,
+                null,
                 null,
                 null,
                 now,

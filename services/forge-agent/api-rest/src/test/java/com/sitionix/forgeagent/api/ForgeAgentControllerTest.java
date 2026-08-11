@@ -396,6 +396,7 @@ class ForgeAgentControllerTest {
                 WorkflowRunStatus.QUEUED,
                 List.of(new NodeRun(
                         NODE_RUN_ID,
+                        RUN_ID,
                         NODE_ID,
                         AGENT_ID,
                         "Backend",
@@ -404,6 +405,7 @@ class ForgeAgentControllerTest {
                         List.of(),
                         new NodePosition(1.0, 2.0),
                         NodeRunStatus.PENDING,
+                        null,
                         null,
                         null,
                         NOW,

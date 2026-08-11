@@ -66,6 +66,15 @@ public class NodeRunEntity {
     @Column(name = "failure_message")
     private String failureMessage;
 
+    @Column(name = "execution_model_provider_id", length = 120)
+    private String executionModelProviderId;
+
+    @Column(name = "execution_model_id", length = 240)
+    private String executionModelId;
+
+    @Column(name = "execution_model_effort_id", length = 120)
+    private String executionModelEffortId;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

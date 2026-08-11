@@ -147,6 +147,22 @@ class ForgeAgentWorkflowRunIT {
     }
 
     @Test
+    void givenEmptyWorkflow_whenCreateRun_thenConflictAndNoSnapshotIsPersisted() {
+        this.seedProjectAgentsAndWorkflow();
+
+        this.forgeIt.mockMvc()
+                .ping(createWorkflowRunError())
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestCreateWorkflowRun.json")
+                .expectStatus(HttpStatus.CONFLICT)
+                .andExpectPath(jsonPath("$.code").value("EMPTY_WORKFLOW"))
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll()).isEmpty();
+        assertThat(this.forgeIt.postgresql().get(NodeRunEntity.class).getAll()).isEmpty();
+    }
+
+    @Test
     void givenSameAgentInMultipleNodes_whenCreateRun_thenDistinctNodeRunsAreCreated() {
         this.seedProjectAgentsAndWorkflow();
         this.updateWorkflow("requestUpdateWorkflowGraph.json");

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeRun;
+import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
@@ -107,6 +108,9 @@ class PostgresWorkflowRunRepositoryTest {
         node.setOutput("{\"summary\":\"done\"}");
         node.setFailureCode("ERR");
         node.setFailureMessage("Failed");
+        node.setExecutionModelProviderId("codex");
+        node.setExecutionModelId("model-b");
+        node.setExecutionModelEffortId("xhigh");
         when(this.workflowRunRepository.findById(RUN_ID)).thenReturn(Optional.of(this.runEntity(RUN_ID, NOW)));
         when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of(node));
 
@@ -115,12 +119,47 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(run.id()).isEqualTo(RUN_ID);
         assertThat(run.nodeRuns()).singleElement().satisfies(nodeRun -> {
             assertThat(nodeRun.id()).isEqualTo(NODE_RUN_B);
+            assertThat(nodeRun.workflowRunId()).isEqualTo(RUN_ID);
             assertThat(nodeRun.dependsOnNodeRunIds()).containsExactly(NODE_RUN_A);
             assertThat(nodeRun.position()).isEqualTo(new NodePosition(3.0, 4.0));
             assertThat(nodeRun.output()).isEqualTo(new NodeRunOutput("{\"summary\":\"done\"}"));
             assertThat(nodeRun.failure()).isEqualTo(new NodeRunFailure("ERR", "Failed"));
+            assertThat(nodeRun.executionModel()).isEqualTo(new NodeRunExecutionModel("codex", "model-b", "xhigh"));
         });
         verify(this.nodeRunRepository).findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID);
+    }
+
+    @Test
+    void findByIdReconstructsExecutionModelWithNullableEffort() {
+        final NodeRunEntity node = this.nodeEntity(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, List.of());
+        node.setExecutionModelProviderId("codex");
+        node.setExecutionModelId("model-without-effort");
+        node.setExecutionModelEffortId(null);
+        when(this.workflowRunRepository.findById(RUN_ID)).thenReturn(Optional.of(this.runEntity(RUN_ID, NOW)));
+        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of(node));
+
+        final WorkflowRun run = this.repository.findById(RUN_ID).orElseThrow();
+
+        assertThat(run.nodeRuns()).singleElement()
+                .extracting(NodeRun::executionModel)
+                .isEqualTo(new NodeRunExecutionModel("codex", "model-without-effort", null));
+    }
+
+    @Test
+    void savePersistsExecutionModelWithNullableEffort() {
+        when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
+
+        this.repository.save(this.run(List.of(this.withExecutionModel(
+                this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, List.of(), null, null),
+                new NodeRunExecutionModel("codex", "model-without-effort", null)
+        ))));
+
+        assertThat(this.savedNodes()).singleElement().satisfies(node -> {
+            assertThat(node.getExecutionModelProviderId()).isEqualTo("codex");
+            assertThat(node.getExecutionModelId()).isEqualTo("model-without-effort");
+            assertThat(node.getExecutionModelEffortId()).isNull();
+        });
     }
 
     @Test
@@ -160,6 +199,7 @@ class PostgresWorkflowRunRepositoryTest {
         final double y = NODE_RUN_A.equals(id) ? 2.0 : 4.0;
         return new NodeRun(
                 id,
+                RUN_ID,
                 sourceNodeId,
                 sourceAgentId,
                 "Agent " + sourceAgentId,
@@ -170,9 +210,31 @@ class PostgresWorkflowRunRepositoryTest {
                 NodeRunStatus.PENDING,
                 output,
                 failure,
+                null,
                 NOW,
                 null,
                 null
+        );
+    }
+
+    private NodeRun withExecutionModel(final NodeRun nodeRun, final NodeRunExecutionModel executionModel) {
+        return new NodeRun(
+                nodeRun.id(),
+                nodeRun.workflowRunId(),
+                nodeRun.sourceNodeId(),
+                nodeRun.sourceAgentId(),
+                nodeRun.agentName(),
+                nodeRun.agentInstructions(),
+                nodeRun.agentOutputSchema(),
+                nodeRun.dependsOnNodeRunIds(),
+                nodeRun.position(),
+                nodeRun.status(),
+                nodeRun.output(),
+                nodeRun.failure(),
+                executionModel,
+                nodeRun.createdAt(),
+                nodeRun.startedAt(),
+                nodeRun.finishedAt()
         );
     }
 
