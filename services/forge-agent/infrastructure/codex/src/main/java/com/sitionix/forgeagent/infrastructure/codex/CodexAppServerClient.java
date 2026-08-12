@@ -3,7 +3,6 @@ package com.sitionix.forgeagent.infrastructure.codex;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.sitionix.forgeagent.application.runtime.AgentExecutionException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -49,7 +48,7 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
     }
 
     @Override
-    public CodexTurnResult execute(final CodexTurnRequest request) {
+    public String execute(final CodexTurnRequest request) {
         final CodexExecution execution = this.startExecution(request);
         try {
             return this.awaitExecution(execution);
@@ -60,10 +59,6 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
 
     int activeTurnCountForTesting() {
         return this.turnStateTracker.activeTurnCount();
-    }
-
-    int bufferedNotificationCountForTesting() {
-        return this.turnStateTracker.bufferedNotificationCount();
     }
 
     private synchronized CodexJsonRpcTransport ensureInitialized() {
@@ -109,19 +104,30 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
 
     private CodexExecution startExecution(final CodexTurnRequest request) {
         final CodexJsonRpcTransport current = this.ensureInitialized();
+        CodexExecutionState state = null;
         try {
             final String threadId = this.startThread(current, request);
-            this.verifyNoMcpTools(current, threadId);
-            this.turnStateTracker.beginPreRegistration(threadId);
+            state = this.turnStateTracker.register(threadId);
             final String turnId = this.startTurn(current, threadId, request);
-            final CodexExecutionState state = this.turnStateTracker.register(threadId, turnId);
+            this.turnStateTracker.bindTurnId(state, turnId);
             this.verifyTransportStillHealthy(current, state);
             return new CodexExecution(current, state);
         } catch (final CodexTransportException e) {
+            if (state != null) {
+                this.turnStateTracker.remove(state);
+            }
             this.invalidate(current);
-            throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.", e);
+            throw new CodexTransportException("Codex execution failed.", e);
         } catch (final CodexRemoteException e) {
-            throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.", e);
+            if (state != null) {
+                this.turnStateTracker.remove(state);
+            }
+            throw new CodexTransportException("Codex execution failed.", e);
+        } catch (final RuntimeException e) {
+            if (state != null) {
+                this.turnStateTracker.remove(state);
+            }
+            throw e;
         }
     }
 
@@ -133,86 +139,54 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         ));
     }
 
-    private void verifyNoMcpTools(final CodexJsonRpcTransport transport, final String threadId) {
-        final ObjectNode params = this.objectMapper.createObjectNode();
-        params.putNull("cursor");
-        params.putNull("limit");
-        params.put("detail", "toolsAndAuthOnly");
-        params.put("threadId", threadId);
-        final JsonNode response = transport.request(
-                CodexProtocol.MCP_SERVER_STATUS_LIST,
-                params,
-                this.properties.getRequestTimeout()
-        );
-        if (this.hasMcpSurface(response)) {
-            throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.");
-        }
-    }
-
-    private boolean hasMcpSurface(final JsonNode response) {
-        for (final JsonNode server : response.path("data")) {
-            if (server.path("tools").size() > 0
-                    || server.path("resources").size() > 0
-                    || server.path("resourceTemplates").size() > 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private String startTurn(
             final CodexJsonRpcTransport transport,
             final String threadId,
             final CodexTurnRequest request
     ) {
-        try {
-            return this.turnStateTracker.requireTurnId(transport.request(
-                    CodexProtocol.TURN_START,
-                    this.turnStartParams(threadId, request),
-                    this.properties.getRequestTimeout()
-            ));
-        } catch (final RuntimeException exception) {
-            this.turnStateTracker.endPreRegistration(threadId);
-            throw exception;
-        }
+        return this.turnStateTracker.requireTurnId(transport.request(
+                CodexProtocol.TURN_START,
+                this.turnStartParams(threadId, request),
+                this.properties.getRequestTimeout()
+        ));
     }
 
     private void verifyTransportStillHealthy(final CodexJsonRpcTransport transport, final CodexExecutionState state) {
         if (!transport.healthy()) {
-            state.fail(new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed."));
+            state.fail(new CodexTransportException("Codex execution failed."));
         }
     }
 
-    private CodexTurnResult awaitExecution(final CodexExecution execution) {
+    private String awaitExecution(final CodexExecution execution) {
         try {
-            final String output = execution.state().result().get(this.properties.getTurnTimeout().toMillis(), TimeUnit.MILLISECONDS);
-            return new CodexTurnResult(execution.threadId(), execution.turnId(), output);
+            return execution.state().result().get(this.properties.getTurnTimeout().toMillis(), TimeUnit.MILLISECONDS);
         } catch (final TimeoutException e) {
             this.interrupt(execution);
-            throw new AgentExecutionException("CODEX_EXECUTION_TIMEOUT", "Codex execution timed out.", e);
+            throw new CodexTransportException("Codex execution timed out.", e);
         } catch (final InterruptedException e) {
             this.interrupt(execution);
             Thread.currentThread().interrupt();
-            throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.", e);
+            throw new CodexTransportException("Codex execution failed.", e);
         } catch (final ExecutionException e) {
-            if (execution.state().policyViolation()) {
+            if (execution.state().providerInterruptRequired()) {
                 this.interrupt(execution);
             }
             throw this.normalizeExecutionFailure(e.getCause());
         }
     }
 
-    private AgentExecutionException normalizeExecutionFailure(final Throwable cause) {
-        if (cause instanceof AgentExecutionException agentExecutionException) {
-            return agentExecutionException;
+    private RuntimeException normalizeExecutionFailure(final Throwable cause) {
+        if (cause instanceof RuntimeException runtimeException) {
+            return runtimeException;
         }
-        return new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.", cause);
+        return new CodexTransportException("Codex execution failed.", cause);
     }
 
     private void interrupt(final CodexExecution execution) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         params.put("threadId", execution.threadId());
         params.put("turnId", execution.turnId());
+        final boolean interrupted = Thread.interrupted();
         try {
             execution.transport().request(CodexProtocol.TURN_INTERRUPT, params, this.properties.getRequestTimeout());
         } catch (final RuntimeException exception) {
@@ -220,6 +194,10 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
                     execution.threadId(),
                     execution.turnId(),
                     exception.getClass().getName());
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -230,7 +208,7 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
     private ObjectNode threadStartParams(final CodexTurnRequest request) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         params.put("model", request.modelId());
-        params.put("developerInstructions", request.developerInstructions() == null ? "" : request.developerInstructions());
+        params.put("developerInstructions", request.developerInstructions());
         params.put("approvalPolicy", CodexProtocol.APPROVAL_POLICY_NEVER);
         params.put("sandbox", CodexProtocol.SANDBOX_READ_ONLY);
         params.put("cwd", this.effectiveRuntimeCwd());
@@ -244,7 +222,7 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         params.put("threadId", threadId);
         final ObjectNode input = this.objectMapper.createObjectNode();
         input.put("type", "text");
-        input.put("text", request.userInput() == null ? "" : request.userInput());
+        input.put("text", request.userInput());
         input.putArray("text_elements");
         params.putArray("input").add(input);
         params.put("model", request.modelId());
@@ -259,17 +237,8 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         final ObjectNode config = this.objectMapper.createObjectNode();
         final ObjectNode features = config.putObject("features");
         features.put("shell_tool", false);
-        features.put("multi_agent", false);
-        features.put("multi_agent_v2", false);
-        features.put("apps", false);
-        features.put("enable_mcp_apps", false);
-        features.put("plugins", false);
-        features.put("remote_plugin", false);
         final ObjectNode agents = config.putObject("agents");
         agents.put("enabled", false);
-        config.put("include_apps_instructions", false);
-        final ObjectNode orchestrator = config.putObject("orchestrator");
-        orchestrator.putObject("mcp").put("enabled", false);
         return config;
     }
 
@@ -281,13 +250,13 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         try {
             final String tempRoot = System.getProperty("java.io.tmpdir");
             if (tempRoot == null || tempRoot.isBlank()) {
-                throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.");
+                throw new CodexTransportException("Codex execution failed.");
             }
             final Path runtimeDir = Paths.get(tempRoot, "forge-agent-codex-runtime").toAbsolutePath().normalize();
             Files.createDirectories(runtimeDir);
             return runtimeDir.toString();
         } catch (final IOException e) {
-            throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.", e);
+            throw new CodexTransportException("Codex execution failed.", e);
         }
     }
 

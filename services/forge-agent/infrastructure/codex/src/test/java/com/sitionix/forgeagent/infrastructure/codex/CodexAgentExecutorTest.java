@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeagent.application.runtime.AgentExecutionException;
 import com.sitionix.forgeagent.application.runtime.NodeDependencyOutput;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
@@ -100,19 +99,15 @@ class CodexAgentExecutorTest {
         this.turnClient.outputText = "not-json";
 
         assertThatThrownBy(() -> this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "m", null), OUTPUT_SCHEMA)))
-                .isInstanceOfSatisfying(AgentExecutionException.class, exception -> {
-                    assertThat(exception.getCode()).isEqualTo("CODEX_OUTPUT_INVALID");
-                    assertThat(exception.getMessage()).isEqualTo("Codex output was not valid JSON.");
-                });
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Codex output was not valid JSON.");
     }
 
     @Test
     void unsupportedProviderFailsSafelyBeforeTurnExecution() {
         assertThatThrownBy(() -> this.executor.execute(this.claim(new NodeRunExecutionModel("other", "m", null), OUTPUT_SCHEMA)))
-                .isInstanceOfSatisfying(AgentExecutionException.class, exception -> {
-                    assertThat(exception.getCode()).isEqualTo("UNSUPPORTED_AGENT_PROVIDER");
-                    assertThat(exception.getMessage()).isEqualTo("Agent provider is not supported.");
-                });
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Agent provider is not supported.");
         assertThat(this.turnClient.request).isNull();
     }
 
@@ -121,10 +116,8 @@ class CodexAgentExecutorTest {
         final AgentOutputSchema malformed = AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\",\"bad\":}");
 
         assertThatThrownBy(() -> this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "m", null), malformed)))
-                .isInstanceOfSatisfying(AgentExecutionException.class, exception -> {
-                    assertThat(exception.getCode()).isEqualTo("INVALID_AGENT_OUTPUT_SCHEMA");
-                    assertThat(exception.getMessage()).isEqualTo("Agent output schema is invalid.");
-                });
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Agent output schema is invalid.");
         assertThat(this.turnClient.request).isNull();
     }
 
@@ -147,9 +140,9 @@ class CodexAgentExecutorTest {
         private String outputText = "{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}";
 
         @Override
-        public CodexTurnResult execute(final CodexTurnRequest request) {
+        public String execute(final CodexTurnRequest request) {
             this.request = request;
-            return new CodexTurnResult("thread-1", "turn-1", this.outputText);
+            return this.outputText;
         }
     }
 }

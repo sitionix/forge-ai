@@ -57,7 +57,7 @@ class ForgeAgentWorkflowRunIT {
     @Test
     void givenWorkflowGraph_whenCreateAndInspectRun_thenSnapshotIsPersistedAndRoundTrips() {
         this.seedProjectAgentsAndWorkflow();
-        this.UPDATE_WORKFLOW("requestUpdateWorkflowGraph.json");
+        this.updateWorkflow("requestUpdateWorkflowGraph.json");
 
         final WorkflowRunEntity created = this.createRun();
 
@@ -90,7 +90,7 @@ class ForgeAgentWorkflowRunIT {
     @Test
     void givenDefinitionsChangeAfterRun_whenRunIsRead_thenOldSnapshotRemainsImmutableAndNewRunUsesNewDefinition() {
         this.seedProjectAgentsAndWorkflow();
-        this.UPDATE_WORKFLOW("requestUpdateWorkflowGraph.json");
+        this.updateWorkflow("requestUpdateWorkflowGraph.json");
 
         final WorkflowRunEntity runOne = this.createRun();
 
@@ -100,7 +100,7 @@ class ForgeAgentWorkflowRunIT {
                 .withRequest("requestUpdateAgent.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
-        this.UPDATE_WORKFLOW("requestUpdateWorkflowRenamedMovedWithNewNode.json");
+        this.updateWorkflow("requestUpdateWorkflowRenamedMovedWithNewNode.json");
 
         this.assertGetThreeNodeGraphSnapshot(runOne.getId());
         assertThat(this.workflowRun(runOne.getId()).getWorkflowName()).isEqualTo("Full Testing");
@@ -130,7 +130,7 @@ class ForgeAgentWorkflowRunIT {
     @Test
     void givenFanInWorkflow_whenCreateRun_thenDependenciesUseNodeRunIds() {
         this.seedProjectAgentsAndWorkflow();
-        this.UPDATE_WORKFLOW("requestUpdateWorkflowFanInGraph.json");
+        this.updateWorkflow("requestUpdateWorkflowFanInGraph.json");
 
         final WorkflowRunEntity run = this.createRun("Full Testing", 4);
 
@@ -165,7 +165,7 @@ class ForgeAgentWorkflowRunIT {
     @Test
     void givenSameAgentInMultipleNodes_whenCreateRun_thenDistinctNodeRunsAreCreated() {
         this.seedProjectAgentsAndWorkflow();
-        this.UPDATE_WORKFLOW("requestUpdateWorkflowGraph.json");
+        this.updateWorkflow("requestUpdateWorkflowGraph.json");
 
         final WorkflowRunEntity run = this.createRun();
 
@@ -319,7 +319,7 @@ class ForgeAgentWorkflowRunIT {
                 .assertAndCreate();
     }
 
-    private void UPDATE_WORKFLOW(final String requestFixture) {
+    private void updateWorkflow(final String requestFixture) {
         this.forgeIt.mockMvc()
                 .ping(ForgeAgentMockMvcEndpoint.UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))

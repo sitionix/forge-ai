@@ -64,7 +64,7 @@ class ForgeAgentNodeRunRuntimeIT {
     void givenDiamondDag_whenWorkerPolls_thenBranchesExecuteIndependentlyAndWorkflowSucceeds() throws Exception {
         this.seedProjectAgentsAndWorkflow();
         this.configureAllAgentsWithModelA();
-        this.UPDATE_WORKFLOW("requestUpdateWorkflowFanInGraph.json");
+        this.updateWorkflow("requestUpdateWorkflowFanInGraph.json");
         final WorkflowRunEntity run = this.createRun(4);
         final Map<UUID, NodeRunEntity> initialNodes = this.nodeRunsBySourceNodeId(run.getId());
         assertThat(initialNodes.values()).extracting(NodeRunEntity::getStatus).containsOnly("PENDING");
@@ -127,7 +127,7 @@ class ForgeAgentNodeRunRuntimeIT {
     void givenChainDag_whenRootFails_thenDependentsBecomeBlockedAndNeverExecute() throws Exception {
         this.seedProjectAgentsAndWorkflow();
         this.configureAllAgentsWithModelA();
-        this.UPDATE_WORKFLOW("requestWorkflowChainABC.json");
+        this.updateWorkflow("requestWorkflowChainABC.json");
         final WorkflowRunEntity run = this.createRun(3);
         final Map<UUID, NodeRunEntity> nodes = this.nodeRunsBySourceNodeId(run.getId());
 
@@ -163,12 +163,12 @@ class ForgeAgentNodeRunRuntimeIT {
     @Test
     void givenAgentModelChangesAroundClaim_whenNodeRunStarts_thenExecutionModelIsCurrentAndSnapshotRemainsImmutable() throws Exception {
         this.seedProjectAgentsAndWorkflow();
-        this.UPDATE_AGENT(AGENT_A_ID, "requestUpdateAgentAWithModelA.json");
-        this.UPDATE_WORKFLOW("requestWorkflowSingleNodeA.json");
+        this.updateAgent(AGENT_A_ID, "requestUpdateAgentAWithModelA.json");
+        this.updateWorkflow("requestWorkflowSingleNodeA.json");
         final WorkflowRunEntity run = this.createRun(1);
         final NodeRunEntity nodeRun = this.nodeRunsBySourceNodeId(run.getId()).get(NODE_A_ID);
 
-        this.UPDATE_AGENT(AGENT_A_ID, "requestUpdateAgentWithModelB.json");
+        this.updateAgent(AGENT_A_ID, "requestUpdateAgentWithModelB.json");
 
         final DeterministicAgentExecutor agentExecutor = new DeterministicAgentExecutor();
         final TrackingExecutorService executorService = new TrackingExecutorService();
@@ -186,7 +186,7 @@ class ForgeAgentNodeRunRuntimeIT {
                 assertThat(started.getAgentOutputSchema()).contains("\"type\"").contains("\"object\"");
             });
 
-            this.UPDATE_AGENT(AGENT_A_ID, "requestUpdateAgentAWithModelA.json");
+            this.updateAgent(AGENT_A_ID, "requestUpdateAgentAWithModelA.json");
             assertThat(this.nodeRun(nodeRun.getId()).getExecutionModelId()).isEqualTo("model-b");
 
             agentExecutor.completeSuccess(nodeRun.getId(), "{\"node\":\"A\"}");
@@ -201,7 +201,7 @@ class ForgeAgentNodeRunRuntimeIT {
     @Test
     void givenAgentModelWithoutEffort_whenNodeRunStarts_thenNullableEffortPersists() throws Exception {
         this.seedProjectAgentAWithoutEffortAndWorkflow();
-        this.UPDATE_WORKFLOW("requestWorkflowSingleNodeA.json");
+        this.updateWorkflow("requestWorkflowSingleNodeA.json");
         final WorkflowRunEntity run = this.createRun(1);
         final UUID nodeRunId = this.nodeRunsBySourceNodeId(run.getId()).get(NODE_A_ID).getId();
 
@@ -234,8 +234,8 @@ class ForgeAgentNodeRunRuntimeIT {
     @Test
     void givenSamePendingNodeRun_whenTwoTryStartCallsRace_thenExactlyOneClaimPersistsRunningState() throws Exception {
         this.seedProjectAgentsAndWorkflow();
-        this.UPDATE_AGENT(AGENT_A_ID, "requestUpdateAgentAWithModelA.json");
-        this.UPDATE_WORKFLOW("requestWorkflowSingleNodeA.json");
+        this.updateAgent(AGENT_A_ID, "requestUpdateAgentAWithModelA.json");
+        this.updateWorkflow("requestWorkflowSingleNodeA.json");
         final WorkflowRunEntity run = this.createRun(1);
         final UUID nodeRunId = this.nodeRunsBySourceNodeId(run.getId()).get(NODE_A_ID).getId();
 
@@ -268,12 +268,12 @@ class ForgeAgentNodeRunRuntimeIT {
     }
 
     private void configureAllAgentsWithModelA() {
-        this.UPDATE_AGENT(AGENT_A_ID, "requestUpdateAgentAWithModelA.json");
-        this.UPDATE_AGENT(AGENT_B_ID, "requestUpdateAgentBWithModelA.json");
-        this.UPDATE_AGENT(AGENT_C_ID, "requestUpdateAgentCWithModelA.json");
+        this.updateAgent(AGENT_A_ID, "requestUpdateAgentAWithModelA.json");
+        this.updateAgent(AGENT_B_ID, "requestUpdateAgentBWithModelA.json");
+        this.updateAgent(AGENT_C_ID, "requestUpdateAgentCWithModelA.json");
     }
 
-    private void UPDATE_AGENT(final UUID agentId, final String requestFixture) {
+    private void updateAgent(final UUID agentId, final String requestFixture) {
         this.forgeIt.mockMvc()
                 .ping(ForgeAgentMockMvcEndpoint.UPDATE_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", agentId))
@@ -282,7 +282,7 @@ class ForgeAgentNodeRunRuntimeIT {
                 .assertAndCreate();
     }
 
-    private void UPDATE_WORKFLOW(final String requestFixture) {
+    private void updateWorkflow(final String requestFixture) {
         this.forgeIt.mockMvc()
                 .ping(ForgeAgentMockMvcEndpoint.UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))

@@ -2,12 +2,8 @@ package com.sitionix.forgeagent.infrastructure.codex;
 
 final class CodexProtocol {
 
-    static final String PROVIDER_ID = "codex";
-
     static final String INITIALIZE = "initialize";
     static final String INITIALIZED = "initialized";
-    static final String MODEL_LIST = "model/list";
-    static final String MCP_SERVER_STATUS_LIST = "mcpServerStatus/list";
     static final String THREAD_START = "thread/start";
     static final String TURN_START = "turn/start";
     static final String TURN_COMPLETED = "turn/completed";

@@ -21,6 +21,8 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class CodexRuntimeAdapter implements CodexRuntimePort {
 
+    private static final String PROVIDER_ID = "codex";
+    private static final String MODEL_LIST = "model/list";
     private static final String DISPLAY_NAME = "Codex";
 
     private final ObjectMapper objectMapper;
@@ -34,13 +36,13 @@ public class CodexRuntimeAdapter implements CodexRuntimePort {
             version = this.client.version();
         } catch (final RuntimeException e) {
             log.warn("Codex runtime unavailable during initialization errorType={}", e.getClass().getSimpleName());
-            return new CodexRuntimeProvider(CodexProtocol.PROVIDER_ID, DISPLAY_NAME, RuntimeProviderStatus.UNAVAILABLE, null, List.of());
+            return new CodexRuntimeProvider(PROVIDER_ID, DISPLAY_NAME, RuntimeProviderStatus.UNAVAILABLE, null, List.of());
         }
         try {
-            return new CodexRuntimeProvider(CodexProtocol.PROVIDER_ID, DISPLAY_NAME, RuntimeProviderStatus.READY, version, this.readAllModels());
+            return new CodexRuntimeProvider(PROVIDER_ID, DISPLAY_NAME, RuntimeProviderStatus.READY, version, this.readAllModels());
         } catch (final RuntimeException e) {
             log.warn("Codex runtime degraded during model discovery errorType={}", e.getClass().getSimpleName());
-            return new CodexRuntimeProvider(CodexProtocol.PROVIDER_ID, DISPLAY_NAME, RuntimeProviderStatus.DEGRADED, version, List.of());
+            return new CodexRuntimeProvider(PROVIDER_ID, DISPLAY_NAME, RuntimeProviderStatus.DEGRADED, version, List.of());
         }
     }
 
@@ -59,7 +61,7 @@ public class CodexRuntimeAdapter implements CodexRuntimePort {
             if (cursor != null) {
                 params.put("cursor", cursor);
             }
-            final JsonNode result = this.client.request(CodexProtocol.MODEL_LIST, params);
+            final JsonNode result = this.client.request(MODEL_LIST, params);
             if (!result.isObject()) {
                 throw new CodexTransportException("Codex model/list result was not an object");
             }
