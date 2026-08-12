@@ -5,6 +5,7 @@ import java.util.UUID;
 
 public record NodeDependencyOutput(
         UUID nodeRunId,
+        String agentName,
         NodeRunOutput output
 ) {
 }

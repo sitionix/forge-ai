@@ -24,7 +24,6 @@
         <module>api-rest</module>
         <module>infrastructure</module>
         <module>boot</module>
-        <module>integration-test</module>
     </modules>
 
     <properties>

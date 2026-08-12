@@ -17,6 +17,8 @@ import org.junit.jupiter.api.Test;
 
 class CodexAppServerClientTest {
 
+    private static final String MODEL_LIST = "model/list";
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
@@ -107,7 +109,7 @@ class CodexAppServerClientTest {
         final CodexAppServerClient client = this.client(starter, this.properties());
         this.initialize(client, process, "codex/1", "1");
 
-        final CompletableFuture<JsonNode> response = CompletableFuture.supplyAsync(() -> client.request("model/list", this.objectMapper.createObjectNode()));
+        final CompletableFuture<JsonNode> response = CompletableFuture.supplyAsync(() -> client.request(MODEL_LIST, this.objectMapper.createObjectNode()));
         final JsonNode request = this.readRequest(process);
         process.writeStdout("{\"id\":\"" + request.path("id").asText() + "\",\"result\":{\"data\":[]}}");
 
@@ -123,13 +125,13 @@ class CodexAppServerClientTest {
         final CodexAppServerClient client = this.client(starter, this.properties());
         this.initialize(client, process, "codex/1", "1");
 
-        final CompletableFuture<JsonNode> failed = CompletableFuture.supplyAsync(() -> client.request("model/list", this.objectMapper.createObjectNode()));
+        final CompletableFuture<JsonNode> failed = CompletableFuture.supplyAsync(() -> client.request(MODEL_LIST, this.objectMapper.createObjectNode()));
         final JsonNode firstRequest = this.readRequest(process);
         process.writeStdout("{\"id\":\"" + firstRequest.path("id").asText() + "\",\"error\":{\"code\":-32000,\"message\":\"request scoped failure\"}}");
 
         assertThatThrownBy(() -> failed.get(1, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexRemoteException.class);
 
-        final CompletableFuture<JsonNode> succeeded = CompletableFuture.supplyAsync(() -> client.request("model/list", this.objectMapper.createObjectNode()));
+        final CompletableFuture<JsonNode> succeeded = CompletableFuture.supplyAsync(() -> client.request(MODEL_LIST, this.objectMapper.createObjectNode()));
         final JsonNode secondRequest = this.readRequest(process);
         process.writeStdout("{\"id\":\"" + secondRequest.path("id").asText() + "\",\"result\":{\"data\":[]}}");
 

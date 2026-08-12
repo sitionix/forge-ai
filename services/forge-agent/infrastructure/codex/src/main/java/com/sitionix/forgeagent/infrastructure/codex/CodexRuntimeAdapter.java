@@ -22,6 +22,7 @@ import org.springframework.stereotype.Component;
 public class CodexRuntimeAdapter implements CodexRuntimePort {
 
     private static final String PROVIDER_ID = "codex";
+    private static final String MODEL_LIST = "model/list";
     private static final String DISPLAY_NAME = "Codex";
 
     private final ObjectMapper objectMapper;
@@ -60,7 +61,7 @@ public class CodexRuntimeAdapter implements CodexRuntimePort {
             if (cursor != null) {
                 params.put("cursor", cursor);
             }
-            final JsonNode result = this.client.request("model/list", params);
+            final JsonNode result = this.client.request(MODEL_LIST, params);
             if (!result.isObject()) {
                 throw new CodexTransportException("Codex model/list result was not an object");
             }

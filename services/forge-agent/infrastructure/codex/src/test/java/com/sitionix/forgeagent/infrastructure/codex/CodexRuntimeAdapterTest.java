@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 
 class CodexRuntimeAdapterTest {
 
+    private static final String MODEL_LIST = "model/list";
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
@@ -50,7 +52,7 @@ class CodexRuntimeAdapterTest {
             });
         });
         assertThat(client.requests()).singleElement().satisfies(request -> {
-            assertThat(request.method()).isEqualTo("model/list");
+            assertThat(request.method()).isEqualTo(MODEL_LIST);
             assertThat(request.params().path("includeHidden").asBoolean()).isFalse();
         });
     }

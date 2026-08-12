@@ -1,4 +1,4 @@
-package com.sitionix.forgeagent.it;
+package com.sitionix.forgeagent.it.tests;
 
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.AGENT_A_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.AGENT_B_ID;
@@ -8,7 +8,7 @@ import static com.sitionix.forgeagent.it.ForgeAgentFixtures.NODE_B_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.NODE_C_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_ALPHA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.WORKFLOW_ID;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createWorkflowRun;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_WORKFLOW_RUN;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW;
@@ -275,7 +275,7 @@ class ForgeAgentNodeRunRuntimeIT {
 
     private void updateAgent(final UUID agentId, final String requestFixture) {
         this.forgeIt.mockMvc()
-                .ping(ForgeAgentMockMvcEndpoint.updateAgent())
+                .ping(ForgeAgentMockMvcEndpoint.UPDATE_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", agentId))
                 .withRequest(requestFixture)
                 .expectStatus(HttpStatus.OK)
@@ -284,7 +284,7 @@ class ForgeAgentNodeRunRuntimeIT {
 
     private void updateWorkflow(final String requestFixture) {
         this.forgeIt.mockMvc()
-                .ping(ForgeAgentMockMvcEndpoint.updateWorkflow())
+                .ping(ForgeAgentMockMvcEndpoint.UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest(requestFixture)
                 .expectStatus(HttpStatus.OK)
@@ -293,7 +293,7 @@ class ForgeAgentNodeRunRuntimeIT {
 
     private WorkflowRunEntity createRun(final int expectedNodeRunCount) {
         this.forgeIt.mockMvc()
-                .ping(createWorkflowRun())
+                .ping(CREATE_WORKFLOW_RUN)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestCreateWorkflowRun.json")
                 .expectStatus(HttpStatus.CREATED)
