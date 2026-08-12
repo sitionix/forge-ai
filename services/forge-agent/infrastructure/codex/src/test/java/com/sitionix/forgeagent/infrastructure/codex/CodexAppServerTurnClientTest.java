@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
@@ -44,8 +45,30 @@ class CodexAppServerTurnClientTest {
         assertThat(neutralCwd.getFileName().toString()).isEqualTo("forge-agent-codex-runtime");
         assertThat(Files.isDirectory(neutralCwd)).isTrue();
         assertThat(threadStart.path("params").path("config"))
-                .isEqualTo(this.objectMapper.readTree("{\"features\":{\"shell_tool\":false}}"));
+                .isEqualTo(this.objectMapper.readTree("""
+                        {
+                          "features": {
+                            "shell_tool": false,
+                            "multi_agent": false,
+                            "multi_agent_v2": false,
+                            "apps": false,
+                            "enable_mcp_apps": false,
+                            "plugins": false,
+                            "remote_plugin": false
+                          },
+                          "agents": {
+                            "enabled": false
+                          },
+                          "include_apps_instructions": false,
+                          "orchestrator": {
+                            "mcp": {
+                              "enabled": false
+                            }
+                          }
+                        }
+                        """));
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
 
         final JsonNode turnStart = this.readRequest(process);
         assertThat(turnStart.path("method").asText()).isEqualTo("turn/start");
@@ -77,6 +100,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
 
         assertThat(turnStart.path("params").has("effort")).isFalse();
@@ -102,12 +126,56 @@ class CodexAppServerTurnClientTest {
         final JsonNode threadStart = this.readRequest(process);
         assertThat(threadStart.path("params").path("cwd").asText()).isEqualTo(configuredCwd.toAbsolutePath().normalize().toString());
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         this.replyTurn(process, turnStart, "turn-1");
         this.awaitActiveTurn(client);
         this.complete(process, "thread-1", "turn-1", "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
 
         assertThat(result.get(1, TimeUnit.SECONDS).outputText()).contains("OK");
+        client.close();
+    }
+
+    @Test
+    void configuredMcpInventoryFailsClosedBeforeTurnStart() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<CodexTurnResult> result = CompletableFuture.supplyAsync(() -> client.execute(
+                new CodexTurnRequest("Analyze auth.", "Instructions.", "gpt-5.6-luna", null, this.schemaUnchecked())
+        ));
+
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        process.writeStdout(this.threadStartResponse(threadStart.path("id").asText(), "thread-1"));
+        final JsonNode status = this.readMcpStatusRequest(process, "thread-1");
+        process.writeStdout(this.compactJson("""
+                {
+                  "id": "%s",
+                  "result": {
+                    "data": [
+                      {
+                        "name": "configured-mcp",
+                        "serverInfo": null,
+                        "tools": {
+                          "lookup": {
+                            "name": "lookup",
+                            "description": "Look up data.",
+                            "inputSchema": {}
+                          }
+                        },
+                        "resources": [],
+                        "resourceTemplates": [],
+                        "authStatus": "unsupported"
+                      }
+                    ],
+                    "nextCursor": null
+                  }
+                }
+                """.formatted(status.path("id").asText())));
+
+        assertAgentExecutionFailure(result, "CODEX_EXECUTION_FAILED");
+        assertThat(client.activeTurnCountForTesting()).isZero();
+        assertThat(client.bufferedNotificationCountForTesting()).isZero();
         client.close();
     }
 
@@ -253,6 +321,7 @@ class CodexAppServerTurnClientTest {
         final JsonNode threadTwo = this.readRequest(process);
         this.replyThread(process, threadOne);
         this.replyThread(process, threadTwo);
+        this.replyNoMcpStatuses(process, "thread-b", "thread-c");
         final JsonNode turnOne = this.readRequest(process);
         final JsonNode turnTwo = this.readRequest(process);
         this.replyTurn(process, turnOne);
@@ -319,6 +388,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         this.replyTurn(process, turnStart, "turn-1");
         process.terminateNow();
@@ -350,6 +420,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         this.agentMessage(process, "thread-1", "turn-1", "final_answer", "{\"summary\":\"Early\",\"riskLevel\":\"LOW\"}");
         this.turnCompleted(process, "thread-1", "turn-1", "completed");
@@ -370,6 +441,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         process.writeStdout("{\"id\":\"unsupported-pre\",\"method\":\"item/unsupported/requestApproval\",\"params\":{}}");
         final JsonNode unsupportedResponse = this.readRequest(process);
@@ -396,6 +468,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         this.complete(process, "thread-1", "turn-1", "{\"summary\":\"Buffered\",\"riskLevel\":\"LOW\"}");
         for (int index = 0; index < 31; index++) {
@@ -421,6 +494,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         this.complete(process, "thread-1", "turn-orphan", "{\"summary\":\"Orphan\",\"riskLevel\":\"HIGH\"}");
         this.complete(process, "thread-1", "turn-1", "{\"summary\":\"Actual\",\"riskLevel\":\"LOW\"}");
@@ -446,6 +520,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         this.replyTurn(process, turnStart, "turn-1");
         final JsonNode interrupt = this.readRequest(process);
@@ -482,6 +557,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         this.replyTurn(process, turnStart, "turn-1");
         this.awaitActiveTurn(client);
@@ -513,6 +589,7 @@ class CodexAppServerTurnClientTest {
         final JsonNode threadTwo = this.readRequest(process);
         this.replyThread(process, threadOne);
         this.replyThread(process, threadTwo);
+        this.replyNoMcpStatuses(process, "thread-b", "thread-c");
         final JsonNode turnOne = this.readRequest(process);
         final JsonNode turnTwo = this.readRequest(process);
         this.replyTurn(process, turnOne);
@@ -545,6 +622,7 @@ class CodexAppServerTurnClientTest {
         final JsonNode threadTwo = this.readRequest(process);
         this.replyThread(process, threadOne);
         this.replyThread(process, threadTwo);
+        this.replyNoMcpStatuses(process, "thread-b", "thread-c");
         final JsonNode turnOne = this.readRequest(process);
         final JsonNode turnTwo = this.readRequest(process);
         this.agentMessage(process, "thread-b", "turn-b", "final_answer", "{\"summary\":\"B early\",\"riskLevel\":\"LOW\"}");
@@ -572,6 +650,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
         this.replyThread(process, threadStart, "thread-1");
+        this.replyNoMcpStatus(process, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         this.replyTurn(process, turnStart, "turn-1");
         this.awaitActiveTurn(client);
@@ -633,6 +712,45 @@ class CodexAppServerTurnClientTest {
 
     private void replyThread(final FakeCodexProcess process, final JsonNode request, final String threadId) {
         process.writeStdout(this.threadStartResponse(request.path("id").asText(), threadId));
+    }
+
+    private void replyNoMcpStatus(final FakeCodexProcess process, final String threadId) throws Exception {
+        final JsonNode status = this.readMcpStatusRequest(process, threadId);
+        process.writeStdout("{\"id\":\"" + status.path("id").asText() + "\",\"result\":{\"data\":[],\"nextCursor\":null}}");
+    }
+
+    private void replyNoMcpStatuses(final FakeCodexProcess process, final String... threadIds) throws Exception {
+        final List<String> expected = new ArrayList<>(List.of(threadIds));
+        final List<JsonNode> statuses = new ArrayList<>();
+        for (int index = 0; index < threadIds.length; index++) {
+            final JsonNode status = this.readMcpStatusRequest(process);
+            assertThat(expected.remove(status.path("params").path("threadId").asText())).isTrue();
+            statuses.add(status);
+        }
+        assertThat(expected).isEmpty();
+        for (final JsonNode status : statuses) {
+            process.writeStdout("{\"id\":\"" + status.path("id").asText() + "\",\"result\":{\"data\":[],\"nextCursor\":null}}");
+        }
+    }
+
+    private JsonNode readMcpStatusRequest(final FakeCodexProcess process, final String threadId) throws Exception {
+        final JsonNode status = this.readRequest(process);
+        assertThat(status.path("params").path("threadId").asText()).isEqualTo(threadId);
+        this.assertMcpStatusRequest(status);
+        return status;
+    }
+
+    private JsonNode readMcpStatusRequest(final FakeCodexProcess process) throws Exception {
+        final JsonNode status = this.readRequest(process);
+        this.assertMcpStatusRequest(status);
+        return status;
+    }
+
+    private void assertMcpStatusRequest(final JsonNode status) {
+        assertThat(status.path("method").asText()).isEqualTo("mcpServerStatus/list");
+        assertThat(status.path("params").path("detail").asText()).isEqualTo("toolsAndAuthOnly");
+        assertThat(status.path("params").path("cursor").isNull()).isTrue();
+        assertThat(status.path("params").path("limit").isNull()).isTrue();
     }
 
     private void replyTurn(final FakeCodexProcess process, final JsonNode request) {

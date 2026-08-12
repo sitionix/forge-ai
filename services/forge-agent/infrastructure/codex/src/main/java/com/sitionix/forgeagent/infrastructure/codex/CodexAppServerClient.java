@@ -111,6 +111,7 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         final CodexJsonRpcTransport current = this.ensureInitialized();
         try {
             final String threadId = this.startThread(current, request);
+            this.verifyNoMcpTools(current, threadId);
             this.turnStateTracker.beginPreRegistration(threadId);
             final String turnId = this.startTurn(current, threadId, request);
             final CodexExecutionState state = this.turnStateTracker.register(threadId, turnId);
@@ -132,7 +133,38 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         ));
     }
 
-    private String startTurn(final CodexJsonRpcTransport transport, final String threadId, final CodexTurnRequest request) {
+    private void verifyNoMcpTools(final CodexJsonRpcTransport transport, final String threadId) {
+        final ObjectNode params = this.objectMapper.createObjectNode();
+        params.putNull("cursor");
+        params.putNull("limit");
+        params.put("detail", "toolsAndAuthOnly");
+        params.put("threadId", threadId);
+        final JsonNode response = transport.request(
+                CodexProtocol.MCP_SERVER_STATUS_LIST,
+                params,
+                this.properties.getRequestTimeout()
+        );
+        if (this.hasMcpSurface(response)) {
+            throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.");
+        }
+    }
+
+    private boolean hasMcpSurface(final JsonNode response) {
+        for (final JsonNode server : response.path("data")) {
+            if (server.path("tools").size() > 0
+                    || server.path("resources").size() > 0
+                    || server.path("resourceTemplates").size() > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String startTurn(
+            final CodexJsonRpcTransport transport,
+            final String threadId,
+            final CodexTurnRequest request
+    ) {
         try {
             return this.turnStateTracker.requireTurnId(transport.request(
                     CodexProtocol.TURN_START,
@@ -227,6 +259,17 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         final ObjectNode config = this.objectMapper.createObjectNode();
         final ObjectNode features = config.putObject("features");
         features.put("shell_tool", false);
+        features.put("multi_agent", false);
+        features.put("multi_agent_v2", false);
+        features.put("apps", false);
+        features.put("enable_mcp_apps", false);
+        features.put("plugins", false);
+        features.put("remote_plugin", false);
+        final ObjectNode agents = config.putObject("agents");
+        agents.put("enabled", false);
+        config.put("include_apps_instructions", false);
+        final ObjectNode orchestrator = config.putObject("orchestrator");
+        orchestrator.putObject("mcp").put("enabled", false);
         return config;
     }
 
@@ -236,9 +279,11 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
             return Paths.get(configured.trim()).toAbsolutePath().normalize().toString();
         }
         try {
-            final Path probe = Files.createTempFile("forge-agent-codex-runtime", ".probe");
-            final Path runtimeDir = probe.getParent().resolve("forge-agent-codex-runtime").toAbsolutePath().normalize();
-            Files.deleteIfExists(probe);
+            final String tempRoot = System.getProperty("java.io.tmpdir");
+            if (tempRoot == null || tempRoot.isBlank()) {
+                throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.");
+            }
+            final Path runtimeDir = Paths.get(tempRoot, "forge-agent-codex-runtime").toAbsolutePath().normalize();
             Files.createDirectories(runtimeDir);
             return runtimeDir.toString();
         } catch (final IOException e) {
