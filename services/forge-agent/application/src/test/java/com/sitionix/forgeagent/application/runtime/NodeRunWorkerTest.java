@@ -127,6 +127,23 @@ class NodeRunWorkerTest {
     }
 
     @Test
+    void agentExecutionExceptionPersistsSafeCodeAndMessage() {
+        when(this.nodeRunRepository.findPendingIds()).thenReturn(List.of(NODE_RUN_A));
+        when(this.lifecycle.tryStart(NODE_RUN_A)).thenReturn(Optional.of(this.claim(NODE_RUN_A)));
+        when(this.agentExecutor.execute(this.claim(NODE_RUN_A)))
+                .thenThrow(new AgentExecutionException("CODEX_OUTPUT_INVALID", "Codex output was not valid JSON."));
+
+        this.worker.poll();
+        this.executorService.close();
+
+        verify(this.lifecycle).fail(
+                NODE_RUN_A,
+                new NodeRunFailure("CODEX_OUTPUT_INVALID", "Codex output was not valid JSON.")
+        );
+        verify(this.lifecycle, never()).succeed(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void executorNullOutputFailsNodeRun() {
         when(this.nodeRunRepository.findPendingIds()).thenReturn(List.of(NODE_RUN_A));
         when(this.lifecycle.tryStart(NODE_RUN_A)).thenReturn(Optional.of(this.claim(NODE_RUN_A)));

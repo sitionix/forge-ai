@@ -19,6 +19,7 @@ public class CodexAppServerProperties {
     private boolean experimentalApi = true;
     private boolean requestAttestation = false;
     private Duration requestTimeout = Duration.ofSeconds(15);
+    private Duration turnTimeout = Duration.ofMinutes(5);
     private int stdioFrameLimitBytes = 4 * 1024 * 1024;
     private int modelListMaxPages = 20;
     private Duration gracefulTerminateTimeout = Duration.ofSeconds(2);

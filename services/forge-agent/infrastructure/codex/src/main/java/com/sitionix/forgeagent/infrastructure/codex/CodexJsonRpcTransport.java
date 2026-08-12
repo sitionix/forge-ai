@@ -34,6 +34,7 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     private final StartedCodexAppServer server;
     private final CodexAppServerProperties properties;
     private final CodexServerRequestHandler serverRequestHandler;
+    private final CodexTransportEventHandler eventHandler;
     private final Writer writer;
     private final AtomicLong requestIds = new AtomicLong(1L);
     private final Map<String, PendingRequest> pending = new ConcurrentHashMap<>();
@@ -56,10 +57,19 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                           final StartedCodexAppServer server,
                           final CodexAppServerProperties properties,
                           final CodexServerRequestHandler serverRequestHandler) {
+        this(objectMapper, server, properties, serverRequestHandler, CodexTransportEventHandler.noop());
+    }
+
+    CodexJsonRpcTransport(final ObjectMapper objectMapper,
+                          final StartedCodexAppServer server,
+                          final CodexAppServerProperties properties,
+                          final CodexServerRequestHandler serverRequestHandler,
+                          final CodexTransportEventHandler eventHandler) {
         this.objectMapper = objectMapper;
         this.server = server;
         this.properties = properties;
         this.serverRequestHandler = serverRequestHandler;
+        this.eventHandler = eventHandler;
         this.writer = new OutputStreamWriter(server.process().getOutputStream(), StandardCharsets.UTF_8);
         this.stdoutReaderThread = Thread.ofVirtual().name("forge-agent-codex-stdout-" + server.process().pid()).start(this::readStdout);
         this.stderrReaderThread = Thread.ofVirtual().name("forge-agent-codex-stderr-" + server.process().pid()).start(this::drainStderr);
@@ -188,7 +198,7 @@ final class CodexJsonRpcTransport implements AutoCloseable {
             return;
         }
         if (!message.has("id") && message.hasNonNull("method")) {
-            log.debug("Ignoring Codex JSON-RPC notification method={}", message.path("method").asText(""));
+            this.eventHandler.handleNotification(message.path("method").asText(""), message.path("params"));
             return;
         }
         throw new CodexTransportException("Codex app-server emitted malformed JSON-RPC message");
@@ -288,14 +298,17 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 : new CodexTransportException(reason, cause);
         this.pending.forEach((id, request) -> request.future().completeExceptionally(failure));
         this.pending.clear();
+        this.eventHandler.transportFailed(failure);
         this.closeProcess();
     }
 
     @Override
     public void close() {
         this.invalid.set(true);
-        this.pending.forEach((id, request) -> request.future().completeExceptionally(new CodexTransportException("Codex app-server transport closed")));
+        final CodexTransportException failure = new CodexTransportException("Codex app-server transport closed");
+        this.pending.forEach((id, request) -> request.future().completeExceptionally(failure));
         this.pending.clear();
+        this.eventHandler.transportFailed(failure);
         this.closeProcess();
     }
 

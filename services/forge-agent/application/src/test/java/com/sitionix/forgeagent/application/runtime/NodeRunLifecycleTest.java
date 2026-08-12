@@ -103,7 +103,7 @@ class NodeRunLifecycleTest {
 
         assertThat(claim).isPresent();
         assertThat(this.nodeRuns.get(NODE_RUN_B).status()).isEqualTo(NodeRunStatus.RUNNING);
-        assertThat(claim.orElseThrow().dependencies()).containsExactly(new NodeDependencyOutput(NODE_RUN_A, outputA));
+        assertThat(claim.orElseThrow().dependencies()).containsExactly(new NodeDependencyOutput(NODE_RUN_A, "Snapshot Agent", outputA));
     }
 
     @Test

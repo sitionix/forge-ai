@@ -226,7 +226,11 @@ public class NodeRunLifecycle {
         return dependencyIds.stream()
                 .map(dependencyId -> {
                     final NodeRun dependency = dependenciesById.get(dependencyId);
-                    return new NodeDependencyOutput(dependencyId, dependency == null ? null : dependency.output());
+                    return new NodeDependencyOutput(
+                            dependencyId,
+                            dependency == null ? null : dependency.agentName(),
+                            dependency == null ? null : dependency.output()
+                    );
                 })
                 .toList();
     }

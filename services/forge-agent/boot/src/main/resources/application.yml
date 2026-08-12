@@ -30,7 +30,10 @@ forge:
         command: ${FORGE_AGENT_CODEX_COMMAND:codex,app-server,--stdio}
         runtime-cwd: ${FORGE_AGENT_CODEX_RUNTIME_CWD:}
         request-timeout: ${FORGE_AGENT_CODEX_REQUEST_TIMEOUT:15s}
+        turn-timeout: ${FORGE_AGENT_CODEX_TURN_TIMEOUT:5m}
         stdio-frame-limit-bytes: ${FORGE_AGENT_CODEX_STDIO_FRAME_LIMIT_BYTES:4194304}
         model-list-max-pages: ${FORGE_AGENT_CODEX_MODEL_LIST_MAX_PAGES:20}
         graceful-terminate-timeout: ${FORGE_AGENT_CODEX_GRACEFUL_TERMINATE_TIMEOUT:2s}
         force-kill-timeout: ${FORGE_AGENT_CODEX_FORCE_KILL_TIMEOUT:2s}
+    worker:
+      scheduling-enabled: ${FORGE_AGENT_WORKER_SCHEDULING_ENABLED:true}
