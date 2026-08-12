@@ -156,6 +156,53 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
+    void lateScopedServerRequestForRemovedTurnDoesNotFailUnrelatedActiveTurn() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final FakeStarter starter = new FakeStarter(process);
+        final CodexAppServerClient client = this.client(starter, this.properties());
+        final JsonNode schema = this.schema();
+        final CompletableFuture<CodexTurnResult> a = CompletableFuture.supplyAsync(() -> client.execute(
+                new CodexTurnRequest("Prompt A", "model-b", null, schema)
+        ));
+        final CompletableFuture<CodexTurnResult> b = CompletableFuture.supplyAsync(() -> client.execute(
+                new CodexTurnRequest("Prompt B", "model-c", null, schema)
+        ));
+
+        this.initialize(process);
+        final JsonNode threadOne = this.readRequest(process);
+        final JsonNode threadTwo = this.readRequest(process);
+        this.replyThread(process, threadOne);
+        this.replyThread(process, threadTwo);
+        final JsonNode turnOne = this.readRequest(process);
+        final JsonNode turnTwo = this.readRequest(process);
+        this.replyTurn(process, turnOne);
+        this.replyTurn(process, turnTwo);
+        this.awaitActiveTurns(client, 2);
+
+        process.writeStdout("{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-b\",\"turnId\":\"turn-b\",\"item\":{\"type\":\"commandExecution\"}}}");
+        this.assertInterrupt(process, "thread-b", "turn-b");
+        assertAgentExecutionFailure(a, "CODEX_EXECUTION_FAILED");
+        assertThat(client.activeTurnCountForTesting()).isEqualTo(1);
+
+        process.writeStdout("{\"id\":\"approval-late\",\"method\":\"item/commandExecution/requestApproval\",\"params\":{\"threadId\":\"thread-b\",\"turnId\":\"turn-b\"}}");
+        final JsonNode lateApprovalResponse = this.readRequest(process);
+        assertThat(lateApprovalResponse.path("id").asText()).isEqualTo("approval-late");
+        assertThat(lateApprovalResponse.path("result").path("decision").asText()).isEqualTo("decline");
+        process.writeStdout("{\"id\":\"unknown-late\",\"method\":\"item/unsupported/requestApproval\",\"params\":{\"threadId\":\"thread-b\",\"turnId\":\"turn-b\"}}");
+        final JsonNode lateUnknownResponse = this.readRequest(process);
+        assertThat(lateUnknownResponse.path("id").asText()).isEqualTo("unknown-late");
+        assertThat(lateUnknownResponse.path("error").path("code").asInt()).isEqualTo(-32601);
+
+        this.complete(process, "thread-c", "turn-c", "{\"summary\":\"B\",\"riskLevel\":\"LOW\"}");
+
+        assertThat(b.get(1, TimeUnit.SECONDS)).isEqualTo(new CodexTurnResult("thread-c", "turn-c", "{\"summary\":\"B\",\"riskLevel\":\"LOW\"}"));
+        assertThat(client.activeTurnCountForTesting()).isZero();
+        assertThat(client.bufferedNotificationCountForTesting()).isZero();
+        assertThat(starter.starts()).isEqualTo(1);
+        client.close();
+    }
+
+    @Test
     void lateNotificationsAfterPolicyViolationCannotResurrectTurnOrBufferOrphans() throws Exception {
         final TurnHarness harness = this.startedTurn();
 
@@ -229,6 +276,79 @@ class CodexAppServerTurnClientTest {
         process.writeStdout("{\"id\":\"" + turnStart.path("id").asText() + "\",\"result\":{\"turnId\":\"turn-1\"}}");
 
         assertThat(result.get(1, TimeUnit.SECONDS).outputText()).isEqualTo("{\"summary\":\"Early\",\"riskLevel\":\"LOW\"}");
+        client.close();
+    }
+
+    @Test
+    void preRegistrationUnscopedServerRequestFailureWinsOverBufferedSuccess() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<CodexTurnResult> result = CompletableFuture.supplyAsync(() -> client.execute(
+                new CodexTurnRequest("Race.", "model-a", null, this.schemaUnchecked())
+        ));
+
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + threadStart.path("id").asText() + "\",\"result\":{\"threadId\":\"thread-1\"}}");
+        final JsonNode turnStart = this.readRequest(process);
+        process.writeStdout("{\"id\":\"unsupported-pre\",\"method\":\"item/unsupported/requestApproval\",\"params\":{}}");
+        final JsonNode unsupportedResponse = this.readRequest(process);
+        assertThat(unsupportedResponse.path("id").asText()).isEqualTo("unsupported-pre");
+        assertThat(unsupportedResponse.path("error").path("code").asInt()).isEqualTo(-32601);
+        this.complete(process, "thread-1", "turn-1", "{\"summary\":\"Buffered\",\"riskLevel\":\"LOW\"}");
+        process.writeStdout("{\"id\":\"" + turnStart.path("id").asText() + "\",\"result\":{\"turnId\":\"turn-1\"}}");
+        this.assertInterrupt(process, "thread-1", "turn-1");
+
+        assertAgentExecutionFailure(result, "CODEX_EXECUTION_FAILED");
+        assertThat(client.activeTurnCountForTesting()).isZero();
+        assertThat(client.bufferedNotificationCountForTesting()).isZero();
+        client.close();
+    }
+
+    @Test
+    void preRegistrationBufferOverflowFailureWinsOverBufferedSuccess() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<CodexTurnResult> result = CompletableFuture.supplyAsync(() -> client.execute(
+                new CodexTurnRequest("Overflow.", "model-a", null, this.schemaUnchecked())
+        ));
+
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + threadStart.path("id").asText() + "\",\"result\":{\"threadId\":\"thread-1\"}}");
+        final JsonNode turnStart = this.readRequest(process);
+        this.complete(process, "thread-1", "turn-1", "{\"summary\":\"Buffered\",\"riskLevel\":\"LOW\"}");
+        for (int index = 0; index < 31; index++) {
+            process.writeStdout("{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-1\",\"item\":{\"type\":\"plan\"}}}");
+        }
+        process.writeStdout("{\"id\":\"" + turnStart.path("id").asText() + "\",\"result\":{\"turnId\":\"turn-1\"}}");
+        this.assertInterrupt(process, "thread-1", "turn-1");
+
+        assertAgentExecutionFailure(result, "CODEX_EXECUTION_FAILED");
+        assertThat(client.activeTurnCountForTesting()).isZero();
+        assertThat(client.bufferedNotificationCountForTesting()).isZero();
+        client.close();
+    }
+
+    @Test
+    void registrationDiscardsMismatchedPreRegistrationTurnBuffersForSameThread() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<CodexTurnResult> result = CompletableFuture.supplyAsync(() -> client.execute(
+                new CodexTurnRequest("Mismatched.", "model-a", null, this.schemaUnchecked())
+        ));
+
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + threadStart.path("id").asText() + "\",\"result\":{\"threadId\":\"thread-1\"}}");
+        final JsonNode turnStart = this.readRequest(process);
+        this.complete(process, "thread-1", "turn-orphan", "{\"summary\":\"Orphan\",\"riskLevel\":\"HIGH\"}");
+        this.complete(process, "thread-1", "turn-1", "{\"summary\":\"Actual\",\"riskLevel\":\"LOW\"}");
+        process.writeStdout("{\"id\":\"" + turnStart.path("id").asText() + "\",\"result\":{\"turnId\":\"turn-1\"}}");
+
+        assertThat(result.get(1, TimeUnit.SECONDS).outputText()).isEqualTo("{\"summary\":\"Actual\",\"riskLevel\":\"LOW\"}");
+        assertThat(client.activeTurnCountForTesting()).isZero();
+        assertThat(client.bufferedNotificationCountForTesting()).isZero();
         client.close();
     }
 
