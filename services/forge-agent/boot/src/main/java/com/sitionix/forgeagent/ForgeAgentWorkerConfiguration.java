@@ -6,6 +6,7 @@ import com.sitionix.forgeagent.application.runtime.NodeRunWorker;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -39,13 +40,10 @@ class ForgeAgentWorkerConfiguration {
         return new NodeRunPollingScheduler(worker);
     }
 
+    @RequiredArgsConstructor
     static final class NodeRunPollingScheduler {
 
         private final NodeRunWorker worker;
-
-        private NodeRunPollingScheduler(final NodeRunWorker worker) {
-            this.worker = worker;
-        }
 
         @Scheduled(
                 initialDelayString = "${forge.agent.worker.poll-delay:10s}",

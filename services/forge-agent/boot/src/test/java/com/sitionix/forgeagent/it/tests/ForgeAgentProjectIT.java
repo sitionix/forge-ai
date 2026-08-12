@@ -1,4 +1,4 @@
-package com.sitionix.forgeagent.it;
+package com.sitionix.forgeagent.it.tests;
 
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectEntity;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
@@ -8,9 +8,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createProject;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createProjectError;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.listProjects;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_PROJECT;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_PROJECT_ERROR;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_PROJECTS;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,7 +31,7 @@ class ForgeAgentProjectIT {
         assertThat(this.environment.getProperty("spring.flyway.enabled", Boolean.class)).isTrue();
 
         this.forgeIt.mockMvc()
-                .ping(createProject())
+                .ping(CREATE_PROJECT)
                 .withRequest("requestCreateProject.json")
                 .expectStatus(HttpStatus.CREATED)
                 .expectResponse("responseCreateProject.json", "id", "createdAt", "updatedAt")
@@ -54,7 +54,7 @@ class ForgeAgentProjectIT {
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(listProjects())
+                .ping(LIST_PROJECTS)
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListProjects.json")
                 .assertAndCreate();
@@ -67,13 +67,13 @@ class ForgeAgentProjectIT {
     @Test
     void givenDuplicateNormalizedProjectName_whenCreateProject_thenConflictIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(createProject())
+                .ping(CREATE_PROJECT)
                 .withRequest("requestCreateProject.json")
                 .expectStatus(HttpStatus.CREATED)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(createProjectError())
+                .ping(CREATE_PROJECT_ERROR)
                 .withRequest("requestCreateProjectLowercase.json")
                 .expectStatus(HttpStatus.CONFLICT)
                 .expectResponse("responseDuplicateProjectError.json")

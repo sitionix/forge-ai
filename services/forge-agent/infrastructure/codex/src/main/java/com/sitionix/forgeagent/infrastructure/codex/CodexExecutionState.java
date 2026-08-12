@@ -1,7 +1,5 @@
 package com.sitionix.forgeagent.infrastructure.codex;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -9,7 +7,8 @@ final class CodexExecutionState {
 
     private final CodexTurnKey key;
     private final CompletableFuture<String> result = new CompletableFuture<>();
-    private final List<String> agentMessages = new ArrayList<>();
+    private String latestFinalAnswer;
+    private String latestCompatibilityAnswer;
     private volatile boolean policyViolation;
 
     CodexExecutionState(final CodexTurnKey key) {
@@ -24,15 +23,18 @@ final class CodexExecutionState {
         return this.result;
     }
 
-    synchronized void addAgentMessage(final String message) {
-        this.agentMessages.add(message);
+    synchronized void addAgentMessage(final String message, final String phase) {
+        if ("final_answer".equals(phase)) {
+            this.latestFinalAnswer = message;
+            return;
+        }
+        if (phase == null) {
+            this.latestCompatibilityAnswer = message;
+        }
     }
 
     synchronized Optional<String> finalAgentMessage() {
-        if (this.agentMessages.isEmpty()) {
-            return Optional.empty();
-        }
-        return Optional.of(this.agentMessages.get(this.agentMessages.size() - 1));
+        return Optional.ofNullable(this.latestFinalAnswer == null ? this.latestCompatibilityAnswer : this.latestFinalAnswer);
     }
 
     void complete(final String output) {

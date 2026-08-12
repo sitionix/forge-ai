@@ -1,4 +1,4 @@
-package com.sitionix.forgeagent.it;
+package com.sitionix.forgeagent.it.tests;
 
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.AGENT_A_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.AGENT_B_ID;
@@ -9,14 +9,14 @@ import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_ALPHA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_BETA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.UNKNOWN_WORKFLOW_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.WORKFLOW_ID;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createWorkflow;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createWorkflowError;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getWorkflow;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getWorkflowError;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.listProjectWorkflows;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateAgent;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateWorkflow;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateWorkflowError;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_WORKFLOW;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_WORKFLOW_ERROR;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_WORKFLOW;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_WORKFLOW_ERROR;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_PROJECT_WORKFLOWS;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.UPDATE_AGENT;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.UPDATE_WORKFLOW;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.UPDATE_WORKFLOW_ERROR;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW;
@@ -51,7 +51,7 @@ class ForgeAgentWorkflowIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(createWorkflow())
+                .ping(CREATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateWorkflow.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -59,7 +59,7 @@ class ForgeAgentWorkflowIT {
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(listProjectWorkflows())
+                .ping(LIST_PROJECT_WORKFLOWS)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListWorkflows.json", "id", "createdAt", "updatedAt")
@@ -78,7 +78,7 @@ class ForgeAgentWorkflowIT {
         this.seedProjectAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(createWorkflowError())
+                .ping(CREATE_WORKFLOW_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateWorkflowLowercase.json")
                 .expectStatus(HttpStatus.CONFLICT)
@@ -91,7 +91,7 @@ class ForgeAgentWorkflowIT {
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(updateWorkflow())
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
@@ -99,7 +99,7 @@ class ForgeAgentWorkflowIT {
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(getWorkflow())
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowGraph.json", "updatedAt")
@@ -128,13 +128,13 @@ class ForgeAgentWorkflowIT {
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(updateWorkflow())
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(updateWorkflow())
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestMoveWorkflowNodes.json")
                 .expectStatus(HttpStatus.OK)
@@ -142,7 +142,7 @@ class ForgeAgentWorkflowIT {
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(getWorkflow())
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseMovedWorkflowGraph.json", "updatedAt")
@@ -163,13 +163,13 @@ class ForgeAgentWorkflowIT {
         this.forgeIt.postgresql().create().to(WORKFLOW.withEntity(secondWorkflow)).build();
 
         this.forgeIt.mockMvc()
-                .ping(updateWorkflow())
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(updateWorkflow())
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", secondWorkflowId))
                 .withRequest("requestSecondWorkflowSameNodeId.json")
                 .expectStatus(HttpStatus.OK)
@@ -177,13 +177,13 @@ class ForgeAgentWorkflowIT {
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(getWorkflow())
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowGraph.json", "updatedAt")
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(getWorkflow())
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", secondWorkflowId))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseSecondWorkflowSameNodeId.json", "updatedAt")
@@ -216,21 +216,21 @@ class ForgeAgentWorkflowIT {
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(updateWorkflow())
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(updateAgent())
+                .ping(UPDATE_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", AGENT_A_ID))
                 .withRequest("requestUpdateAgent.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(getWorkflow())
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowGraph.json", "updatedAt")
@@ -267,7 +267,7 @@ class ForgeAgentWorkflowIT {
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(updateWorkflow())
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
@@ -276,7 +276,7 @@ class ForgeAgentWorkflowIT {
         this.expectWorkflowError("requestDirectCycleWorkflow.json", HttpStatus.CONFLICT, "responseWorkflowCycleError.json");
 
         this.forgeIt.mockMvc()
-                .ping(getWorkflow())
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowGraph.json", "updatedAt")
@@ -286,7 +286,7 @@ class ForgeAgentWorkflowIT {
     @Test
     void givenMissingWorkflow_whenGetWorkflow_thenNotFoundIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(getWorkflowError())
+                .ping(GET_WORKFLOW_ERROR)
                 .withPathParameters(PathParams.create().add("workflowId", UNKNOWN_WORKFLOW_ID))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .expectResponse("responseWorkflowNotFoundError.json")
@@ -300,7 +300,7 @@ class ForgeAgentWorkflowIT {
         this.runConcurrently(
                 () -> {
                     this.forgeIt.mockMvc()
-                            .ping(updateWorkflow())
+                            .ping(UPDATE_WORKFLOW)
                             .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                             .withRequest("requestWorkflowADependsOnB.json")
                             .expectStatus(HttpStatus.OK)
@@ -309,7 +309,7 @@ class ForgeAgentWorkflowIT {
                 },
                 () -> {
                     this.forgeIt.mockMvc()
-                            .ping(updateWorkflow())
+                            .ping(UPDATE_WORKFLOW)
                             .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                             .withRequest("requestWorkflowBDependsOnA.json")
                             .expectStatus(HttpStatus.OK)
@@ -348,7 +348,7 @@ class ForgeAgentWorkflowIT {
         this.runConcurrently(
                 () -> {
                     this.forgeIt.mockMvc()
-                            .ping(updateWorkflow())
+                            .ping(UPDATE_WORKFLOW)
                             .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                             .withRequest("requestMoveWorkflowNodes.json")
                             .expectStatus(HttpStatus.OK)
@@ -357,7 +357,7 @@ class ForgeAgentWorkflowIT {
                 },
                 () -> {
                     this.forgeIt.mockMvc()
-                            .ping(updateWorkflow())
+                            .ping(UPDATE_WORKFLOW)
                             .withPathParameters(PathParams.create().add("workflowId", secondWorkflow.getId()))
                             .withRequest("requestBetaWorkflowSingleNode.json")
                             .expectStatus(HttpStatus.OK)
@@ -399,7 +399,7 @@ class ForgeAgentWorkflowIT {
 
     private void expectWorkflowError(final String requestFixture, final HttpStatus status, final String responseFixture) {
         this.forgeIt.mockMvc()
-                .ping(updateWorkflowError())
+                .ping(UPDATE_WORKFLOW_ERROR)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest(requestFixture)
                 .expectStatus(status)

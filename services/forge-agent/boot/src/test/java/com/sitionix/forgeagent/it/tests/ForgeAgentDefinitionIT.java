@@ -1,6 +1,7 @@
-package com.sitionix.forgeagent.it;
+package com.sitionix.forgeagent.it.tests;
 
 import com.sitionix.forgeagent.infrastructure.postgres.entity.AgentDefinitionEntity;
+import com.sitionix.forgeagent.it.DeterministicCodexRuntimePort;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
@@ -13,14 +14,14 @@ import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_ALPHA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_BETA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_GAMMA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.UNKNOWN_AGENT_ID;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createAgent;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createAgentError;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getAgent;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getAgentError;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getRuntime;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.listProjectAgents;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.listProjectAgentsError;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateAgent;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_AGENT;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_AGENT_ERROR;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_AGENT;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_AGENT_ERROR;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_RUNTIME;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_PROJECT_AGENTS;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_PROJECT_AGENTS_ERROR;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.UPDATE_AGENT;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,7 +43,7 @@ class ForgeAgentDefinitionIT {
     @Test
     void givenRuntimeEndpoint_whenGetRuntime_thenDeterministicCatalogIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(getRuntime())
+                .ping(GET_RUNTIME)
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseRuntime.json")
                 .assertAndCreate();
@@ -56,7 +57,7 @@ class ForgeAgentDefinitionIT {
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(createAgent())
+                .ping(CREATE_AGENT)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgent.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -72,21 +73,21 @@ class ForgeAgentDefinitionIT {
                 .assertEntity();
 
         this.forgeIt.mockMvc()
-                .ping(listProjectAgents())
+                .ping(LIST_PROJECT_AGENTS)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListAgents.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(getAgent())
+                .ping(GET_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", created.getId()))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseGetAgent.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(updateAgent())
+                .ping(UPDATE_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", created.getId()))
                 .withRequest("requestUpdateAgent.json")
                 .expectStatus(HttpStatus.OK)
@@ -109,7 +110,7 @@ class ForgeAgentDefinitionIT {
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(createAgent())
+                .ping(CREATE_AGENT)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentWithModel.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -125,21 +126,21 @@ class ForgeAgentDefinitionIT {
                 .assertEntity();
 
         this.forgeIt.mockMvc()
-                .ping(listProjectAgents())
+                .ping(LIST_PROJECT_AGENTS)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListAgentsWithModel.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(getAgent())
+                .ping(GET_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", created.getId()))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseGetAgentWithModel.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(updateAgent())
+                .ping(UPDATE_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", created.getId()))
                 .withRequest("requestUpdateAgentWithModelB.json")
                 .expectStatus(HttpStatus.OK)
@@ -162,7 +163,7 @@ class ForgeAgentDefinitionIT {
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(createAgentError())
+                .ping(CREATE_AGENT_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentUnknownModel.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -180,7 +181,7 @@ class ForgeAgentDefinitionIT {
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(createAgentError())
+                .ping(CREATE_AGENT_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentUnsupportedEffort.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -199,7 +200,7 @@ class ForgeAgentDefinitionIT {
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(createAgentError())
+                .ping(CREATE_AGENT_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentWithModel.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -213,21 +214,21 @@ class ForgeAgentDefinitionIT {
     void givenDuplicateAgentNameInSameProject_whenCreateAgent_thenConflictIsReturned() {
         this.seedTwoProjects();
         this.forgeIt.mockMvc()
-                .ping(createAgent())
+                .ping(CREATE_AGENT)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgent.json")
                 .expectStatus(HttpStatus.CREATED)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(createAgentError())
+                .ping(CREATE_AGENT_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentLowercase.json")
                 .expectStatus(HttpStatus.CONFLICT)
                 .expectResponse("responseDuplicateAgentError.json")
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(createAgent())
+                .ping(CREATE_AGENT)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_BETA_ID))
                 .withRequest("requestCreateAgent.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -241,7 +242,7 @@ class ForgeAgentDefinitionIT {
     @Test
     void givenMissingProject_whenListProjectAgents_thenProjectNotFoundIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(listProjectAgentsError())
+                .ping(LIST_PROJECT_AGENTS_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_GAMMA_ID))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .expectResponse("responseProjectNotFoundError.json")
@@ -251,7 +252,7 @@ class ForgeAgentDefinitionIT {
     @Test
     void givenMissingAgent_whenGetAgent_thenAgentNotFoundIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(getAgentError())
+                .ping(GET_AGENT_ERROR)
                 .withPathParameters(PathParams.create().add("agentId", UNKNOWN_AGENT_ID))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .expectResponse("responseAgentNotFoundError.json")

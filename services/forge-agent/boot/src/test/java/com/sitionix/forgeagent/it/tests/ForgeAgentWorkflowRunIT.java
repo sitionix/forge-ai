@@ -1,4 +1,4 @@
-package com.sitionix.forgeagent.it;
+package com.sitionix.forgeagent.it.tests;
 
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.AGENT_A_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.AGENT_B_ID;
@@ -9,11 +9,11 @@ import static com.sitionix.forgeagent.it.ForgeAgentFixtures.OTHER_PROJECT_AGENT_
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_ALPHA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_BETA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.WORKFLOW_ID;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createWorkflowRun;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.createWorkflowRunError;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.getWorkflowRun;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.listWorkflowRuns;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.updateAgent;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_WORKFLOW_RUN;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_WORKFLOW_RUN_ERROR;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_WORKFLOW_RUN;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_WORKFLOW_RUNS;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.UPDATE_AGENT;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW;
@@ -57,7 +57,7 @@ class ForgeAgentWorkflowRunIT {
     @Test
     void givenWorkflowGraph_whenCreateAndInspectRun_thenSnapshotIsPersistedAndRoundTrips() {
         this.seedProjectAgentsAndWorkflow();
-        this.updateWorkflow("requestUpdateWorkflowGraph.json");
+        this.UPDATE_WORKFLOW("requestUpdateWorkflowGraph.json");
 
         final WorkflowRunEntity created = this.createRun();
 
@@ -90,17 +90,17 @@ class ForgeAgentWorkflowRunIT {
     @Test
     void givenDefinitionsChangeAfterRun_whenRunIsRead_thenOldSnapshotRemainsImmutableAndNewRunUsesNewDefinition() {
         this.seedProjectAgentsAndWorkflow();
-        this.updateWorkflow("requestUpdateWorkflowGraph.json");
+        this.UPDATE_WORKFLOW("requestUpdateWorkflowGraph.json");
 
         final WorkflowRunEntity runOne = this.createRun();
 
         this.forgeIt.mockMvc()
-                .ping(updateAgent())
+                .ping(UPDATE_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", AGENT_A_ID))
                 .withRequest("requestUpdateAgent.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
-        this.updateWorkflow("requestUpdateWorkflowRenamedMovedWithNewNode.json");
+        this.UPDATE_WORKFLOW("requestUpdateWorkflowRenamedMovedWithNewNode.json");
 
         this.assertGetThreeNodeGraphSnapshot(runOne.getId());
         assertThat(this.workflowRun(runOne.getId()).getWorkflowName()).isEqualTo("Full Testing");
@@ -109,7 +109,7 @@ class ForgeAgentWorkflowRunIT {
 
         final WorkflowRunEntity runTwo = this.createRun("Full Verification", 2);
         this.forgeIt.mockMvc()
-                .ping(getWorkflowRun())
+                .ping(GET_WORKFLOW_RUN)
                 .withPathParameters(PathParams.create().add("runId", runTwo.getId()))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$.id").value(runTwo.getId().toString()))
@@ -130,7 +130,7 @@ class ForgeAgentWorkflowRunIT {
     @Test
     void givenFanInWorkflow_whenCreateRun_thenDependenciesUseNodeRunIds() {
         this.seedProjectAgentsAndWorkflow();
-        this.updateWorkflow("requestUpdateWorkflowFanInGraph.json");
+        this.UPDATE_WORKFLOW("requestUpdateWorkflowFanInGraph.json");
 
         final WorkflowRunEntity run = this.createRun("Full Testing", 4);
 
@@ -151,7 +151,7 @@ class ForgeAgentWorkflowRunIT {
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(createWorkflowRunError())
+                .ping(CREATE_WORKFLOW_RUN_ERROR)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestCreateWorkflowRun.json")
                 .expectStatus(HttpStatus.CONFLICT)
@@ -165,7 +165,7 @@ class ForgeAgentWorkflowRunIT {
     @Test
     void givenSameAgentInMultipleNodes_whenCreateRun_thenDistinctNodeRunsAreCreated() {
         this.seedProjectAgentsAndWorkflow();
-        this.updateWorkflow("requestUpdateWorkflowGraph.json");
+        this.UPDATE_WORKFLOW("requestUpdateWorkflowGraph.json");
 
         final WorkflowRunEntity run = this.createRun();
 
@@ -190,7 +190,7 @@ class ForgeAgentWorkflowRunIT {
         this.forgeIt.postgresql().create().to(WORKFLOW_NODE.withEntity(corruptNode)).build();
 
         this.forgeIt.mockMvc()
-                .ping(createWorkflowRunError())
+                .ping(CREATE_WORKFLOW_RUN_ERROR)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestCreateWorkflowRun.json")
                 .expectStatus(HttpStatus.CONFLICT)
@@ -213,7 +213,7 @@ class ForgeAgentWorkflowRunIT {
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(listWorkflowRuns())
+                .ping(LIST_WORKFLOW_RUNS)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$", hasSize(2)))
@@ -239,7 +239,7 @@ class ForgeAgentWorkflowRunIT {
 
     private WorkflowRunEntity createRun(final String expectedWorkflowName, final int expectedNodeRunCount) {
         var builder = this.forgeIt.mockMvc()
-                .ping(createWorkflowRun())
+                .ping(CREATE_WORKFLOW_RUN)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestCreateWorkflowRun.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -280,7 +280,7 @@ class ForgeAgentWorkflowRunIT {
         final NodeRunEntity nodeA = this.nodeRun(runId, NODE_A_ID);
         final NodeRunEntity nodeB = this.nodeRun(runId, NODE_B_ID);
         this.forgeIt.mockMvc()
-                .ping(getWorkflowRun())
+                .ping(GET_WORKFLOW_RUN)
                 .withPathParameters(PathParams.create().add("runId", runId))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$.id").value(runId.toString()))
@@ -319,9 +319,9 @@ class ForgeAgentWorkflowRunIT {
                 .assertAndCreate();
     }
 
-    private void updateWorkflow(final String requestFixture) {
+    private void UPDATE_WORKFLOW(final String requestFixture) {
         this.forgeIt.mockMvc()
-                .ping(ForgeAgentMockMvcEndpoint.updateWorkflow())
+                .ping(ForgeAgentMockMvcEndpoint.UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest(requestFixture)
                 .expectStatus(HttpStatus.OK)

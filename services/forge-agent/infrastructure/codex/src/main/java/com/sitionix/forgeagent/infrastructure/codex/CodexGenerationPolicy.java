@@ -14,25 +14,12 @@ final class CodexGenerationPolicy {
             "plan",
             "contextCompaction"
     );
-    private static final Set<String> FORBIDDEN_ITEM_TYPES = Set.of(
-            "commandExecution",
-            "fileChange",
-            "mcpToolCall",
-            "dynamicToolCall",
-            "webSearch",
-            "collabToolCall",
-            "imageView"
-    );
-
     private CodexGenerationPolicy() {
     }
 
     static AgentExecutionException violationFor(final String itemType) {
         if (itemType != null && SAFE_ITEM_TYPES.contains(itemType)) {
             return null;
-        }
-        if (itemType != null && FORBIDDEN_ITEM_TYPES.contains(itemType)) {
-            return executionFailed();
         }
         return executionFailed();
     }

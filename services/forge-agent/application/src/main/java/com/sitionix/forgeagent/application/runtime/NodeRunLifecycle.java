@@ -228,8 +228,8 @@ public class NodeRunLifecycle {
                     final NodeRun dependency = dependenciesById.get(dependencyId);
                     return new NodeDependencyOutput(
                             dependencyId,
-                            dependency == null ? null : dependency.agentName(),
-                            dependency == null ? null : dependency.output()
+                            dependency.agentName(),
+                            dependency.output()
                     );
                 })
                 .toList();

@@ -50,7 +50,7 @@ class CodexRuntimeAdapterTest {
             });
         });
         assertThat(client.requests()).singleElement().satisfies(request -> {
-            assertThat(request.method()).isEqualTo("model/list");
+            assertThat(request.method()).isEqualTo(CodexProtocol.MODEL_LIST);
             assertThat(request.params().path("includeHidden").asBoolean()).isFalse();
         });
     }

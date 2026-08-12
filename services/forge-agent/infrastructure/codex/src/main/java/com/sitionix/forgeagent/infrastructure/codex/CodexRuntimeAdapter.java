@@ -59,7 +59,7 @@ public class CodexRuntimeAdapter implements CodexRuntimePort {
             if (cursor != null) {
                 params.put("cursor", cursor);
             }
-            final JsonNode result = this.client.request("model/list", params);
+            final JsonNode result = this.client.request(CodexProtocol.MODEL_LIST, params);
             if (!result.isObject()) {
                 throw new CodexTransportException("Codex model/list result was not an object");
             }

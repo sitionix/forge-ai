@@ -107,7 +107,7 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
     private CodexExecution startExecution(final CodexTurnRequest request) {
         final CodexJsonRpcTransport current = this.ensureInitialized();
         try {
-            final String threadId = this.startThread(current, request.modelId());
+            final String threadId = this.startThread(current, request);
             this.turnStateTracker.beginPreRegistration(threadId);
             final String turnId = this.startTurn(current, threadId, request);
             final CodexExecutionState state = this.turnStateTracker.register(threadId, turnId);
@@ -121,10 +121,10 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         }
     }
 
-    private String startThread(final CodexJsonRpcTransport transport, final String modelId) {
+    private String startThread(final CodexJsonRpcTransport transport, final CodexTurnRequest request) {
         return this.turnStateTracker.requireThreadId(transport.request(
                 CodexProtocol.THREAD_START,
-                this.threadStartParams(modelId),
+                this.threadStartParams(request),
                 this.properties.getRequestTimeout()
         ));
     }
@@ -156,6 +156,7 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
             this.interrupt(execution);
             throw new AgentExecutionException("CODEX_EXECUTION_TIMEOUT", "Codex execution timed out.", e);
         } catch (final InterruptedException e) {
+            this.interrupt(execution);
             Thread.currentThread().interrupt();
             throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.", e);
         } catch (final ExecutionException e) {
@@ -191,9 +192,10 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         this.turnStateTracker.remove(execution.state());
     }
 
-    private ObjectNode threadStartParams(final String modelId) {
+    private ObjectNode threadStartParams(final CodexTurnRequest request) {
         final ObjectNode params = this.objectMapper.createObjectNode();
-        params.put("model", modelId);
+        params.put("model", request.modelId());
+        params.put("developerInstructions", request.developerInstructions() == null ? "" : request.developerInstructions());
         params.put("approvalPolicy", CodexProtocol.APPROVAL_POLICY_NEVER);
         params.put("sandbox", CodexProtocol.SANDBOX_READ_ONLY);
         params.put("cwd", this.effectiveRuntimeCwd());
@@ -206,7 +208,7 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         params.put("threadId", threadId);
         final ObjectNode input = this.objectMapper.createObjectNode();
         input.put("type", "text");
-        input.put("text", request.prompt() == null ? "" : request.prompt());
+        input.put("text", request.userInput() == null ? "" : request.userInput());
         params.putArray("input").add(input);
         params.put("model", request.modelId());
         if (request.effortId() != null) {

@@ -18,102 +18,55 @@ import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 
 public final class ForgeAgentMockMvcEndpoint {
 
+    public static final Endpoint<Void, ProjectResponse[]> LIST_PROJECTS =
+            Endpoint.createContract("/api/v1/projects", HttpMethod.GET, Void.class, ProjectResponse[].class);
+    public static final Endpoint<CreateProjectRequest, ProjectResponse> CREATE_PROJECT =
+            Endpoint.createContract("/api/v1/projects", HttpMethod.POST, CreateProjectRequest.class, ProjectResponse.class);
+    public static final Endpoint<CreateProjectRequest, ForgeAgentErrorResponse> CREATE_PROJECT_ERROR =
+            Endpoint.createContract("/api/v1/projects", HttpMethod.POST, CreateProjectRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, AiRuntimeResponse> GET_RUNTIME =
+            Endpoint.createContract("/api/v1/runtime", HttpMethod.GET, Void.class, AiRuntimeResponse.class);
+    public static final Endpoint<Void, AgentListResponse[]> LIST_PROJECT_AGENTS =
+            Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.GET, Void.class, AgentListResponse[].class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> LIST_PROJECT_AGENTS_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<SaveAgentRequest, AgentResponse> CREATE_AGENT =
+            Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.POST, SaveAgentRequest.class, AgentResponse.class);
+    public static final Endpoint<SaveAgentRequest, ForgeAgentErrorResponse> CREATE_AGENT_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.POST, SaveAgentRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, AgentResponse> GET_AGENT =
+            Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.GET, Void.class, AgentResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> GET_AGENT_ERROR =
+            Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<SaveAgentRequest, AgentResponse> UPDATE_AGENT =
+            Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.PUT, SaveAgentRequest.class, AgentResponse.class);
+    public static final Endpoint<SaveAgentRequest, ForgeAgentErrorResponse> UPDATE_AGENT_ERROR =
+            Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.PUT, SaveAgentRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, WorkflowResponse[]> LIST_PROJECT_WORKFLOWS =
+            Endpoint.createContract("/api/v1/projects/{projectId}/workflows", HttpMethod.GET, Void.class, WorkflowResponse[].class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> LIST_PROJECT_WORKFLOWS_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/workflows", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<CreateWorkflowRequest, WorkflowResponse> CREATE_WORKFLOW =
+            Endpoint.createContract("/api/v1/projects/{projectId}/workflows", HttpMethod.POST, CreateWorkflowRequest.class, WorkflowResponse.class);
+    public static final Endpoint<CreateWorkflowRequest, ForgeAgentErrorResponse> CREATE_WORKFLOW_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/workflows", HttpMethod.POST, CreateWorkflowRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, WorkflowResponse> GET_WORKFLOW =
+            Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.GET, Void.class, WorkflowResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> GET_WORKFLOW_ERROR =
+            Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<SaveWorkflowRequest, WorkflowResponse> UPDATE_WORKFLOW =
+            Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.PUT, SaveWorkflowRequest.class, WorkflowResponse.class);
+    public static final Endpoint<SaveWorkflowRequest, ForgeAgentErrorResponse> UPDATE_WORKFLOW_ERROR =
+            Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.PUT, SaveWorkflowRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<CreateWorkflowRunRequest, WorkflowRunResponse> CREATE_WORKFLOW_RUN =
+            Endpoint.createContract("/api/v1/workflows/{workflowId}/runs", HttpMethod.POST, CreateWorkflowRunRequest.class, WorkflowRunResponse.class);
+    public static final Endpoint<CreateWorkflowRunRequest, ForgeAgentErrorResponse> CREATE_WORKFLOW_RUN_ERROR =
+            Endpoint.createContract("/api/v1/workflows/{workflowId}/runs", HttpMethod.POST, CreateWorkflowRunRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, WorkflowRunSummaryResponse[]> LIST_WORKFLOW_RUNS =
+            Endpoint.createContract("/api/v1/workflows/{workflowId}/runs", HttpMethod.GET, Void.class, WorkflowRunSummaryResponse[].class);
+    public static final Endpoint<Void, WorkflowRunResponse> GET_WORKFLOW_RUN =
+            Endpoint.createContract("/api/v1/workflow-runs/{runId}", HttpMethod.GET, Void.class, WorkflowRunResponse.class);
+
     private ForgeAgentMockMvcEndpoint() {
-    }
-
-    public static Endpoint<Void, ProjectResponse[]> listProjects() {
-        return Endpoint.createContract("/api/v1/projects", HttpMethod.GET, Void.class, ProjectResponse[].class);
-    }
-
-    public static Endpoint<CreateProjectRequest, ProjectResponse> createProject() {
-        return Endpoint.createContract("/api/v1/projects", HttpMethod.POST, CreateProjectRequest.class, ProjectResponse.class);
-    }
-
-    public static Endpoint<CreateProjectRequest, ForgeAgentErrorResponse> createProjectError() {
-        return Endpoint.createContract("/api/v1/projects", HttpMethod.POST, CreateProjectRequest.class, ForgeAgentErrorResponse.class);
-    }
-
-    public static Endpoint<Void, AiRuntimeResponse> getRuntime() {
-        return Endpoint.createContract("/api/v1/runtime", HttpMethod.GET, Void.class, AiRuntimeResponse.class);
-    }
-
-    public static Endpoint<Void, AgentListResponse[]> listProjectAgents() {
-        return Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.GET, Void.class, AgentListResponse[].class);
-    }
-
-    public static Endpoint<Void, ForgeAgentErrorResponse> listProjectAgentsError() {
-        return Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
-    }
-
-    public static Endpoint<SaveAgentRequest, AgentResponse> createAgent() {
-        return Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.POST, SaveAgentRequest.class, AgentResponse.class);
-    }
-
-    public static Endpoint<SaveAgentRequest, ForgeAgentErrorResponse> createAgentError() {
-        return Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.POST, SaveAgentRequest.class, ForgeAgentErrorResponse.class);
-    }
-
-    public static Endpoint<Void, AgentResponse> getAgent() {
-        return Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.GET, Void.class, AgentResponse.class);
-    }
-
-    public static Endpoint<Void, ForgeAgentErrorResponse> getAgentError() {
-        return Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
-    }
-
-    public static Endpoint<SaveAgentRequest, AgentResponse> updateAgent() {
-        return Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.PUT, SaveAgentRequest.class, AgentResponse.class);
-    }
-
-    public static Endpoint<SaveAgentRequest, ForgeAgentErrorResponse> updateAgentError() {
-        return Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.PUT, SaveAgentRequest.class, ForgeAgentErrorResponse.class);
-    }
-
-    public static Endpoint<Void, WorkflowResponse[]> listProjectWorkflows() {
-        return Endpoint.createContract("/api/v1/projects/{projectId}/workflows", HttpMethod.GET, Void.class, WorkflowResponse[].class);
-    }
-
-    public static Endpoint<Void, ForgeAgentErrorResponse> listProjectWorkflowsError() {
-        return Endpoint.createContract("/api/v1/projects/{projectId}/workflows", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
-    }
-
-    public static Endpoint<CreateWorkflowRequest, WorkflowResponse> createWorkflow() {
-        return Endpoint.createContract("/api/v1/projects/{projectId}/workflows", HttpMethod.POST, CreateWorkflowRequest.class, WorkflowResponse.class);
-    }
-
-    public static Endpoint<CreateWorkflowRequest, ForgeAgentErrorResponse> createWorkflowError() {
-        return Endpoint.createContract("/api/v1/projects/{projectId}/workflows", HttpMethod.POST, CreateWorkflowRequest.class, ForgeAgentErrorResponse.class);
-    }
-
-    public static Endpoint<Void, WorkflowResponse> getWorkflow() {
-        return Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.GET, Void.class, WorkflowResponse.class);
-    }
-
-    public static Endpoint<Void, ForgeAgentErrorResponse> getWorkflowError() {
-        return Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
-    }
-
-    public static Endpoint<SaveWorkflowRequest, WorkflowResponse> updateWorkflow() {
-        return Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.PUT, SaveWorkflowRequest.class, WorkflowResponse.class);
-    }
-
-    public static Endpoint<SaveWorkflowRequest, ForgeAgentErrorResponse> updateWorkflowError() {
-        return Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.PUT, SaveWorkflowRequest.class, ForgeAgentErrorResponse.class);
-    }
-
-    public static Endpoint<CreateWorkflowRunRequest, WorkflowRunResponse> createWorkflowRun() {
-        return Endpoint.createContract("/api/v1/workflows/{workflowId}/runs", HttpMethod.POST, CreateWorkflowRunRequest.class, WorkflowRunResponse.class);
-    }
-
-    public static Endpoint<CreateWorkflowRunRequest, ForgeAgentErrorResponse> createWorkflowRunError() {
-        return Endpoint.createContract("/api/v1/workflows/{workflowId}/runs", HttpMethod.POST, CreateWorkflowRunRequest.class, ForgeAgentErrorResponse.class);
-    }
-
-    public static Endpoint<Void, WorkflowRunSummaryResponse[]> listWorkflowRuns() {
-        return Endpoint.createContract("/api/v1/workflows/{workflowId}/runs", HttpMethod.GET, Void.class, WorkflowRunSummaryResponse[].class);
-    }
-
-    public static Endpoint<Void, WorkflowRunResponse> getWorkflowRun() {
-        return Endpoint.createContract("/api/v1/workflow-runs/{runId}", HttpMethod.GET, Void.class, WorkflowRunResponse.class);
     }
 }

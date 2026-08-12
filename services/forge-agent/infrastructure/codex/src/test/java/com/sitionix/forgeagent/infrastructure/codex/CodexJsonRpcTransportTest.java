@@ -51,7 +51,7 @@ class CodexJsonRpcTransportTest {
     void notificationDoesNotCorruptPendingRequest() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexJsonRpcTransport transport = this.transport(process);
-        final CompletableFuture<JsonNode> call = CompletableFuture.supplyAsync(() -> transport.request("model/list", null, Duration.ofSeconds(2)));
+        final CompletableFuture<JsonNode> call = CompletableFuture.supplyAsync(() -> transport.request(CodexProtocol.MODEL_LIST, null, Duration.ofSeconds(2)));
         final JsonNode request = this.readRequest(process);
 
         process.writeStdout("{\"method\":\"status/update\",\"params\":{\"state\":\"working\"}}");
@@ -78,7 +78,7 @@ class CodexJsonRpcTransportTest {
     void malformedJsonInvalidatesTransportAndPendingCallers() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexJsonRpcTransport transport = this.transport(process);
-        final CompletableFuture<JsonNode> call = CompletableFuture.supplyAsync(() -> transport.request("model/list", null, Duration.ofSeconds(2)));
+        final CompletableFuture<JsonNode> call = CompletableFuture.supplyAsync(() -> transport.request(CodexProtocol.MODEL_LIST, null, Duration.ofSeconds(2)));
         this.readRequest(process);
 
         process.writeStdout("{not-json");
@@ -92,7 +92,7 @@ class CodexJsonRpcTransportTest {
     void unexpectedEofInvalidatesTransportAndPendingCallers() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexJsonRpcTransport transport = this.transport(process);
-        final CompletableFuture<JsonNode> call = CompletableFuture.supplyAsync(() -> transport.request("model/list", null, Duration.ofSeconds(2)));
+        final CompletableFuture<JsonNode> call = CompletableFuture.supplyAsync(() -> transport.request(CodexProtocol.MODEL_LIST, null, Duration.ofSeconds(2)));
         this.readRequest(process);
 
         process.closeStdout();
@@ -106,7 +106,7 @@ class CodexJsonRpcTransportTest {
     void eofMidFrameInvalidatesTransport() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexJsonRpcTransport transport = this.transport(process);
-        final CompletableFuture<JsonNode> call = CompletableFuture.supplyAsync(() -> transport.request("model/list", null, Duration.ofSeconds(2)));
+        final CompletableFuture<JsonNode> call = CompletableFuture.supplyAsync(() -> transport.request(CodexProtocol.MODEL_LIST, null, Duration.ofSeconds(2)));
         this.readRequest(process);
 
         process.writeStdoutWithoutNewline("{\"id\":\"1\"");

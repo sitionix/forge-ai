@@ -4,10 +4,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionException;
-import com.sitionix.forgeagent.application.runtime.AgentExecutionPromptBuilder;
 import com.sitionix.forgeagent.application.runtime.AgentExecutor;
+import com.sitionix.forgeagent.application.runtime.NodeDependencyOutput;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -18,7 +19,6 @@ import org.springframework.stereotype.Component;
 public final class CodexAgentExecutor implements AgentExecutor {
 
     private final ObjectMapper objectMapper;
-    private final AgentExecutionPromptBuilder promptBuilder;
     private final CodexTurnClient turnClient;
 
     @Override
@@ -26,10 +26,10 @@ public final class CodexAgentExecutor implements AgentExecutor {
         if (claim.executionModel() == null || !CodexProtocol.PROVIDER_ID.equals(claim.executionModel().providerId())) {
             throw new AgentExecutionException("UNSUPPORTED_AGENT_PROVIDER", "Agent provider is not supported.");
         }
-        final String prompt = this.promptBuilder.build(claim);
         final JsonNode outputSchema = this.parseOutputSchema(claim);
         final CodexTurnResult result = this.turnClient.execute(new CodexTurnRequest(
-                prompt,
+                this.userInput(claim),
+                claim.agentInstructions(),
                 claim.executionModel().modelId(),
                 claim.executionModel().effortId(),
                 outputSchema
@@ -41,6 +41,37 @@ public final class CodexAgentExecutor implements AgentExecutor {
                 result.turnId(),
                 claim.executionModel().modelId());
         return new NodeRunOutput(this.canonicalizeOutput(result.outputText()));
+    }
+
+    private String userInput(final NodeExecutionClaim claim) {
+        try {
+            return this.objectMapper.writeValueAsString(new CodexAgentInput(
+                    claim.workflowInput(),
+                    this.dependencyInputs(claim.dependencies())
+            ));
+        } catch (final JsonProcessingException e) {
+            throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.", e);
+        }
+    }
+
+    private List<CodexDependencyInput> dependencyInputs(final List<NodeDependencyOutput> dependencies) {
+        if (dependencies == null || dependencies.isEmpty()) {
+            return List.of();
+        }
+        return dependencies.stream()
+                .map(dependency -> new CodexDependencyInput(
+                        dependency.agentName(),
+                        this.parseDependencyOutput(dependency)
+                ))
+                .toList();
+    }
+
+    private JsonNode parseDependencyOutput(final NodeDependencyOutput dependency) {
+        try {
+            return this.objectMapper.readTree(dependency.output().jsonValue());
+        } catch (final JsonProcessingException e) {
+            throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.", e);
+        }
     }
 
     private JsonNode parseOutputSchema(final NodeExecutionClaim claim) {
@@ -67,5 +98,11 @@ public final class CodexAgentExecutor implements AgentExecutor {
         } catch (final JsonProcessingException e) {
             throw new AgentExecutionException("CODEX_OUTPUT_INVALID", "Codex output was not valid JSON.", e);
         }
+    }
+
+    private record CodexAgentInput(String workflowInput, List<CodexDependencyInput> dependencyResults) {
+    }
+
+    private record CodexDependencyInput(String agentName, JsonNode output) {
     }
 }

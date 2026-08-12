@@ -5,65 +5,71 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
 final class CodexTurnStateTracker {
 
     private static final int MAX_BUFFERED_PRE_REGISTRATION_NOTIFICATIONS = 32;
 
-    private final Map<CodexTurnKey, CodexExecutionState> activeTurns = new ConcurrentHashMap<>();
-    private final Map<String, PreRegistrationTurn> preRegistrationTurns = new ConcurrentHashMap<>();
+    private final Map<CodexTurnKey, CodexExecutionState> activeTurns = new HashMap<>();
+    private final Map<String, PreRegistrationTurn> preRegistrationTurns = new HashMap<>();
 
-    void beginPreRegistration(final String threadId) {
+    synchronized void beginPreRegistration(final String threadId) {
         this.preRegistrationTurns.put(threadId, new PreRegistrationTurn());
     }
 
-    void endPreRegistration(final String threadId) {
+    synchronized void endPreRegistration(final String threadId) {
         this.preRegistrationTurns.remove(threadId);
     }
 
-    CodexExecutionState register(final String threadId, final String turnId) {
+    synchronized CodexExecutionState register(final String threadId, final String turnId) {
         final CodexTurnKey key = new CodexTurnKey(threadId, turnId);
         final CodexExecutionState execution = new CodexExecutionState(key);
         this.activeTurns.put(key, execution);
 
-        final PreRegistrationTurn preRegistration = this.preRegistrationTurns.remove(threadId);
-        if (preRegistration == null) {
+        try {
+            final PreRegistrationTurn preRegistration = this.preRegistrationTurns.remove(threadId);
+            if (preRegistration == null) {
+                return execution;
+            }
+            if (preRegistration.failure() != null) {
+                execution.failPolicyViolation(preRegistration.failure());
+                return execution;
+            }
+            preRegistration.notificationsFor(turnId).forEach(notification ->
+                    this.handleNotification(notification.method(), notification.params()));
             return execution;
+        } catch (final RuntimeException exception) {
+            this.activeTurns.remove(key, execution);
+            execution.fail(exception);
+            throw exception;
         }
-        if (preRegistration.failure() != null) {
-            execution.failPolicyViolation(preRegistration.failure());
-            return execution;
-        }
-        preRegistration.notificationsFor(turnId).forEach(notification ->
-                this.handleNotification(notification.method(), notification.params()));
-        return execution;
     }
 
-    void remove(final CodexExecutionState execution) {
+    synchronized void remove(final CodexExecutionState execution) {
         this.activeTurns.remove(execution.key(), execution);
     }
 
-    void failAll(final RuntimeException exception) {
+    synchronized void failAll(final RuntimeException exception) {
         this.activeTurns.values().forEach(active -> active.fail(exception));
         this.activeTurns.clear();
         this.preRegistrationTurns.clear();
     }
 
-    int activeTurnCount() {
+    synchronized int activeTurnCount() {
         return this.activeTurns.size();
     }
 
-    int bufferedNotificationCount() {
+    synchronized int bufferedNotificationCount() {
         return this.preRegistrationTurns.values().stream()
                 .mapToInt(PreRegistrationTurn::bufferedNotificationCount)
                 .sum();
     }
 
-    void handleNotification(final String method, final JsonNode params) {
+    synchronized void handleNotification(final String method, final JsonNode params) {
         if (CodexProtocol.ITEM_STARTED.equals(method)) {
             this.handleGenerationItem(params, method, false);
             return;
@@ -77,7 +83,7 @@ final class CodexTurnStateTracker {
         }
     }
 
-    JsonNode handleServerRequest(final String method, final JsonNode params) {
+    synchronized JsonNode handleServerRequest(final String method, final JsonNode params) {
         if (CodexProtocol.COMMAND_APPROVAL.equals(method) || CodexProtocol.FILE_CHANGE_APPROVAL.equals(method)) {
             this.failServerRequestOwner(params);
             return this.decline();
@@ -119,7 +125,7 @@ final class CodexTurnStateTracker {
             return;
         }
         if (captureAgentMessage && CodexGenerationPolicy.capturesFinalOutput(itemType)) {
-            this.extractText(item).ifPresent(execution::addAgentMessage);
+            this.extractText(item).ifPresent(text -> execution.addAgentMessage(text, this.resolvePhase(item)));
         }
     }
 
@@ -240,6 +246,13 @@ final class CodexTurnStateTracker {
         );
     }
 
+    private String resolvePhase(final JsonNode item) {
+        if (!item.has("phase") || item.path("phase").isNull()) {
+            return null;
+        }
+        return this.nonBlank(item.path("phase"));
+    }
+
     private String resolveIdentity(final String requiredMessage, final String... values) {
         String resolved = null;
         for (final String value : values) {
@@ -327,7 +340,7 @@ final class CodexTurnStateTracker {
         private final List<BufferedNotification> bufferedNotifications = new ArrayList<>();
         private RuntimeException failure;
 
-        synchronized void buffer(final BufferedNotification notification) {
+        void buffer(final BufferedNotification notification) {
             if (this.failure != null) {
                 return;
             }
@@ -338,22 +351,22 @@ final class CodexTurnStateTracker {
             this.bufferedNotifications.add(notification);
         }
 
-        synchronized List<BufferedNotification> notificationsFor(final String turnId) {
+        List<BufferedNotification> notificationsFor(final String turnId) {
             return this.bufferedNotifications.stream()
                     .filter(notification -> turnId.equals(notification.turnId()))
                     .toList();
         }
 
-        synchronized void fail(final RuntimeException exception) {
+        void fail(final RuntimeException exception) {
             this.failure = exception;
             this.bufferedNotifications.clear();
         }
 
-        synchronized RuntimeException failure() {
+        RuntimeException failure() {
             return this.failure;
         }
 
-        synchronized int bufferedNotificationCount() {
+        int bufferedNotificationCount() {
             return this.bufferedNotifications.size();
         }
     }

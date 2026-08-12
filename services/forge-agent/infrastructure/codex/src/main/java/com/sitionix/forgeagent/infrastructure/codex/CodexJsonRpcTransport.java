@@ -12,8 +12,6 @@ import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -27,9 +25,6 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 final class CodexJsonRpcTransport implements AutoCloseable {
 
-    private static final int STDERR_MAX_LINES = 50;
-    private static final int STDERR_MAX_CHARS = 512;
-
     private final ObjectMapper objectMapper;
     private final StartedCodexAppServer server;
     private final CodexAppServerProperties properties;
@@ -38,7 +33,6 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     private final Writer writer;
     private final AtomicLong requestIds = new AtomicLong(1L);
     private final Map<String, PendingRequest> pending = new ConcurrentHashMap<>();
-    private final List<String> stderrTail = new ArrayList<>();
     private final AtomicBoolean invalid = new AtomicBoolean();
     private final Object lifecycleLock = new Object();
     private volatile boolean cleanupStarted;
@@ -258,28 +252,11 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 if (frame == null) {
                     return;
                 }
-                this.recordStderr(frame);
+                log.debug("Codex app-server stderr line drained pid={}", this.server.process().pid());
             }
         } catch (final Exception ignored) {
             // Diagnostics only. Never fail a healthy transport from stderr noise.
         }
-    }
-
-    private void recordStderr(final String line) {
-        synchronized (this.stderrTail) {
-            if (this.stderrTail.size() >= STDERR_MAX_LINES) {
-                this.stderrTail.remove(0);
-            }
-            this.stderrTail.add(this.truncate(line));
-        }
-        log.debug("Codex app-server stderr line captured pid={}", this.server.process().pid());
-    }
-
-    private String truncate(final String value) {
-        if (value == null || value.length() <= STDERR_MAX_CHARS) {
-            return value;
-        }
-        return value.substring(0, STDERR_MAX_CHARS) + "...";
     }
 
     private void requireHealthy(final String method) {
