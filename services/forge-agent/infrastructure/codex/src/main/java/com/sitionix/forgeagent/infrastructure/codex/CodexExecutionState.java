@@ -23,7 +23,7 @@ final class CodexExecutionState {
         return this.result;
     }
 
-    synchronized void addAgentMessage(final String message, final String phase) {
+    void addAgentMessage(final String message, final String phase) {
         if ("final_answer".equals(phase)) {
             this.latestFinalAnswer = message;
             return;
@@ -33,7 +33,7 @@ final class CodexExecutionState {
         }
     }
 
-    synchronized Optional<String> finalAgentMessage() {
+    Optional<String> finalAgentMessage() {
         return Optional.ofNullable(this.latestFinalAnswer == null ? this.latestCompatibilityAnswer : this.latestFinalAnswer);
     }
 

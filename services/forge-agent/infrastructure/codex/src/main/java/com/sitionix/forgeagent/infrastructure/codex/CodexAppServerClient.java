@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionException;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -200,6 +203,7 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         params.put("sandbox", CodexProtocol.SANDBOX_READ_ONLY);
         params.put("cwd", this.effectiveRuntimeCwd());
         params.put("ephemeral", true);
+        params.set("config", this.generationOnlyConfig());
         return params;
     }
 
@@ -209,6 +213,7 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         final ObjectNode input = this.objectMapper.createObjectNode();
         input.put("type", "text");
         input.put("text", request.userInput() == null ? "" : request.userInput());
+        input.putArray("text_elements");
         params.putArray("input").add(input);
         params.put("model", request.modelId());
         if (request.effortId() != null) {
@@ -218,16 +223,27 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         return params;
     }
 
+    private ObjectNode generationOnlyConfig() {
+        final ObjectNode config = this.objectMapper.createObjectNode();
+        final ObjectNode features = config.putObject("features");
+        features.put("shell_tool", false);
+        return config;
+    }
+
     private String effectiveRuntimeCwd() {
         final String configured = this.properties.getRuntimeCwd();
         if (configured != null && !configured.isBlank()) {
             return Paths.get(configured.trim()).toAbsolutePath().normalize().toString();
         }
-        final String userDir = System.getProperty("user.dir");
-        if (userDir != null && !userDir.isBlank()) {
-            return Paths.get(userDir).toAbsolutePath().normalize().toString();
+        try {
+            final Path probe = Files.createTempFile("forge-agent-codex-runtime", ".probe");
+            final Path runtimeDir = probe.getParent().resolve("forge-agent-codex-runtime").toAbsolutePath().normalize();
+            Files.deleteIfExists(probe);
+            Files.createDirectories(runtimeDir);
+            return runtimeDir.toString();
+        } catch (final IOException e) {
+            throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.", e);
         }
-        return Paths.get("").toAbsolutePath().normalize().toString();
     }
 
     private String initialize(final CodexJsonRpcTransport transport) {

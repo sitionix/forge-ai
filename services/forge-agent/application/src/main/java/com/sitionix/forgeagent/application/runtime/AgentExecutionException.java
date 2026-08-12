@@ -16,12 +16,4 @@ public final class AgentExecutionException extends RuntimeException {
         super(safeMessage, cause);
         this.code = code;
     }
-
-    public String code() {
-        return this.getCode();
-    }
-
-    public String safeMessage() {
-        return this.getMessage();
-    }
 }

@@ -101,8 +101,8 @@ class CodexAgentExecutorTest {
 
         assertThatThrownBy(() -> this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "m", null), OUTPUT_SCHEMA)))
                 .isInstanceOfSatisfying(AgentExecutionException.class, exception -> {
-                    assertThat(exception.code()).isEqualTo("CODEX_OUTPUT_INVALID");
-                    assertThat(exception.safeMessage()).isEqualTo("Codex output was not valid JSON.");
+                    assertThat(exception.getCode()).isEqualTo("CODEX_OUTPUT_INVALID");
+                    assertThat(exception.getMessage()).isEqualTo("Codex output was not valid JSON.");
                 });
     }
 
@@ -110,8 +110,8 @@ class CodexAgentExecutorTest {
     void unsupportedProviderFailsSafelyBeforeTurnExecution() {
         assertThatThrownBy(() -> this.executor.execute(this.claim(new NodeRunExecutionModel("other", "m", null), OUTPUT_SCHEMA)))
                 .isInstanceOfSatisfying(AgentExecutionException.class, exception -> {
-                    assertThat(exception.code()).isEqualTo("UNSUPPORTED_AGENT_PROVIDER");
-                    assertThat(exception.safeMessage()).isEqualTo("Agent provider is not supported.");
+                    assertThat(exception.getCode()).isEqualTo("UNSUPPORTED_AGENT_PROVIDER");
+                    assertThat(exception.getMessage()).isEqualTo("Agent provider is not supported.");
                 });
         assertThat(this.turnClient.request).isNull();
     }
@@ -122,8 +122,8 @@ class CodexAgentExecutorTest {
 
         assertThatThrownBy(() -> this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "m", null), malformed)))
                 .isInstanceOfSatisfying(AgentExecutionException.class, exception -> {
-                    assertThat(exception.code()).isEqualTo("INVALID_AGENT_OUTPUT_SCHEMA");
-                    assertThat(exception.safeMessage()).isEqualTo("Agent output schema is invalid.");
+                    assertThat(exception.getCode()).isEqualTo("INVALID_AGENT_OUTPUT_SCHEMA");
+                    assertThat(exception.getMessage()).isEqualTo("Agent output schema is invalid.");
                 });
         assertThat(this.turnClient.request).isNull();
     }

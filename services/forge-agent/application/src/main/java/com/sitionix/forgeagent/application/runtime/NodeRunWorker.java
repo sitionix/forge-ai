@@ -30,7 +30,7 @@ public class NodeRunWorker {
             try {
                 output = this.agentExecutor.execute(claim);
             } catch (final AgentExecutionException exception) {
-                this.lifecycle.fail(claim.nodeRunId(), new NodeRunFailure(exception.code(), exception.safeMessage()));
+                this.lifecycle.fail(claim.nodeRunId(), new NodeRunFailure(exception.getCode(), exception.getMessage()));
                 return;
             } catch (final RuntimeException exception) {
                 this.lifecycle.fail(claim.nodeRunId(), new NodeRunFailure(AGENT_EXECUTOR_FAILED, "Agent execution failed."));

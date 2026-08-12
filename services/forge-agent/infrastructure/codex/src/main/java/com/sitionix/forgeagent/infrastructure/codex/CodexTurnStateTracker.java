@@ -94,27 +94,36 @@ final class CodexTurnStateTracker {
 
     String requireThreadId(final JsonNode payload) {
         this.requireObject(payload, "thread/start result");
-        return this.resolveThreadId(payload, true);
+        final String threadId = this.value(payload.path("thread"), "id");
+        if (threadId == null) {
+            throw this.executionFailed();
+        }
+        return threadId;
     }
 
     String requireTurnId(final JsonNode payload) {
         this.requireObject(payload, "turn/start result");
-        return this.resolveTurnId(payload, "turn/start", true);
+        final String turnId = this.value(payload.path("turn"), "id");
+        if (turnId == null) {
+            throw this.executionFailed();
+        }
+        return turnId;
     }
 
     private void handleGenerationItem(final JsonNode params, final String method, final boolean captureAgentMessage) {
         this.requireObject(params, method + " params");
-        final String turnId = this.resolveTurnId(params, method, false);
-        if (turnId == null) {
+        final String threadId = this.notificationThreadId(params);
+        final String turnId = this.notificationTurnId(params);
+        if (threadId == null || turnId == null) {
             throw this.executionFailed();
         }
-        final JsonNode item = params.has("item") ? params.path("item") : params;
+        final JsonNode item = params.path("item");
         this.requireObject(item, method + " item");
         final String itemType = this.nonBlank(item.path("type"));
         final AgentExecutionException violation = CodexGenerationPolicy.violationFor(itemType);
-        final CodexExecutionState execution = this.findActive(params, turnId);
+        final CodexExecutionState execution = this.findActive(threadId, turnId);
         if (execution == null) {
-            this.bufferPreRegistration(params, method, turnId, violation);
+            this.bufferPreRegistration(threadId, params, method, turnId, violation);
             return;
         }
         if (execution.done()) {
@@ -131,11 +140,15 @@ final class CodexTurnStateTracker {
 
     private void handleTurnCompleted(final JsonNode params) {
         this.requireObject(params, CodexProtocol.TURN_COMPLETED + " params");
-        final String turnId = this.resolveTurnId(params, CodexProtocol.TURN_COMPLETED, true);
+        final String threadId = this.notificationThreadId(params);
+        final String turnId = this.value(params.path("turn"), "id");
         final String status = this.resolveStatus(params);
-        final CodexExecutionState execution = this.findActive(params, turnId);
+        if (threadId == null || turnId == null) {
+            throw this.executionFailed();
+        }
+        final CodexExecutionState execution = this.findActive(threadId, turnId);
         if (execution == null) {
-            this.bufferPreRegistration(params, CodexProtocol.TURN_COMPLETED, turnId, null);
+            this.bufferPreRegistration(threadId, params, CodexProtocol.TURN_COMPLETED, turnId, null);
             return;
         }
         if (execution.done()) {
@@ -162,8 +175,8 @@ final class CodexTurnStateTracker {
     }
 
     private void failServerRequestOwner(final JsonNode params) {
-        final String threadId = this.resolveThreadId(params, false);
-        final String turnId = this.resolveTurnId(params, "server request", false);
+        final String threadId = this.notificationThreadId(params);
+        final String turnId = this.notificationTurnId(params);
         final AgentExecutionException failure = this.executionFailed();
 
         if (threadId != null && turnId != null) {
@@ -191,22 +204,15 @@ final class CodexTurnStateTracker {
         this.activeTurns.values().forEach(execution -> execution.failPolicyViolation(failure));
     }
 
-    private CodexExecutionState findActive(final JsonNode params, final String turnId) {
-        final String threadId = this.resolveThreadId(params, false);
-        if (threadId == null) {
-            return null;
-        }
+    private CodexExecutionState findActive(final String threadId, final String turnId) {
         return this.activeTurns.get(new CodexTurnKey(threadId, turnId));
     }
 
-    private void bufferPreRegistration(final JsonNode params,
+    private void bufferPreRegistration(final String threadId,
+                                       final JsonNode params,
                                        final String method,
                                        final String turnId,
                                        final AgentExecutionException violation) {
-        final String threadId = this.resolveThreadId(params, false);
-        if (threadId == null) {
-            return;
-        }
         final PreRegistrationTurn preRegistration = this.preRegistrationTurns.get(threadId);
         if (preRegistration == null) {
             return;
@@ -218,32 +224,20 @@ final class CodexTurnStateTracker {
         preRegistration.buffer(new BufferedNotification(turnId, method, params.deepCopy()));
     }
 
-    private String resolveThreadId(final JsonNode params, final boolean required) {
-        return this.resolveIdentity(
-                required ? "Codex result omitted threadId" : null,
-                this.value(params, "threadId"),
-                this.value(params == null ? null : params.path("thread"), "id"),
-                this.value(params == null ? null : params.path("thread"), "sessionId")
-        );
+    private String notificationThreadId(final JsonNode params) {
+        return this.value(params, "threadId");
     }
 
-    private String resolveTurnId(final JsonNode params, final String context, final boolean required) {
-        final JsonNode item = params == null ? null : params.path("item");
-        return this.resolveIdentity(
-                required ? "Codex " + context + " omitted turnId" : null,
-                this.value(params, "turnId"),
-                this.value(params == null ? null : params.path("turn"), "id"),
-                this.value(item, "turnId"),
-                this.value(item == null ? null : item.path("turn"), "id")
-        );
+    private String notificationTurnId(final JsonNode params) {
+        return this.value(params, "turnId");
     }
 
     private String resolveStatus(final JsonNode params) {
-        return this.resolveIdentity(
-                "Codex turn/completed omitted status",
-                this.value(params, "status"),
-                this.value(params.path("turn"), "status")
-        );
+        final String status = this.value(params.path("turn"), "status");
+        if (status == null) {
+            throw this.executionFailed();
+        }
+        return status;
     }
 
     private String resolvePhase(final JsonNode item) {
@@ -251,24 +245,6 @@ final class CodexTurnStateTracker {
             return null;
         }
         return this.nonBlank(item.path("phase"));
-    }
-
-    private String resolveIdentity(final String requiredMessage, final String... values) {
-        String resolved = null;
-        for (final String value : values) {
-            if (value == null) {
-                continue;
-            }
-            if (resolved == null) {
-                resolved = value;
-            } else if (!resolved.equals(value)) {
-                throw this.executionFailed();
-            }
-        }
-        if (resolved == null && requiredMessage != null) {
-            throw this.executionFailed();
-        }
-        return resolved;
     }
 
     private String value(final JsonNode node, final String field) {
@@ -289,32 +265,6 @@ final class CodexTurnStateTracker {
     private Optional<String> extractText(final JsonNode payload) {
         if (payload.has("text") && payload.path("text").isTextual()) {
             return Optional.of(payload.path("text").asText());
-        }
-        if (payload.has("content")) {
-            final JsonNode content = payload.path("content");
-            if (content.isTextual()) {
-                return Optional.of(content.asText());
-            }
-            if (content.isArray()) {
-                final StringBuilder text = new StringBuilder();
-                content.forEach(part -> {
-                    if (part.isObject() && part.path("text").isTextual()) {
-                        text.append(part.path("text").asText());
-                    }
-                });
-                if (!text.isEmpty()) {
-                    return Optional.of(text.toString());
-                }
-            }
-        }
-        if (payload.has("message")) {
-            final JsonNode message = payload.path("message");
-            if (message.isTextual()) {
-                return Optional.of(message.asText());
-            }
-            if (message.isObject()) {
-                return this.extractText(message);
-            }
         }
         return Optional.empty();
     }

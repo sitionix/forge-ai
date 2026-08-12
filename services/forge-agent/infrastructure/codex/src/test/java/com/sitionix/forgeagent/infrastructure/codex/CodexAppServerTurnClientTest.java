@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -38,13 +40,18 @@ class CodexAppServerTurnClientTest {
         assertThat(threadStart.path("params").path("approvalPolicy").asText()).isEqualTo("never");
         assertThat(threadStart.path("params").path("sandbox").asText()).isEqualTo("read-only");
         assertThat(threadStart.path("params").path("ephemeral").asBoolean()).isTrue();
-        assertThat(threadStart.path("params").path("cwd").asText()).isNotBlank();
+        final Path neutralCwd = Path.of(threadStart.path("params").path("cwd").asText());
+        assertThat(neutralCwd.getFileName().toString()).isEqualTo("forge-agent-codex-runtime");
+        assertThat(Files.isDirectory(neutralCwd)).isTrue();
+        assertThat(threadStart.path("params").path("config"))
+                .isEqualTo(this.objectMapper.readTree("{\"features\":{\"shell_tool\":false}}"));
         this.replyThread(process, threadStart, "thread-1");
 
         final JsonNode turnStart = this.readRequest(process);
         assertThat(turnStart.path("method").asText()).isEqualTo("turn/start");
         assertThat(turnStart.path("params").path("threadId").asText()).isEqualTo("thread-1");
-        assertThat(turnStart.path("params").path("input")).isEqualTo(this.objectMapper.readTree("[{\"type\":\"text\",\"text\":\"Analyze auth.\"}]"));
+        assertThat(turnStart.path("params").path("input"))
+                .isEqualTo(this.objectMapper.readTree("[{\"type\":\"text\",\"text\":\"Analyze auth.\",\"text_elements\":[]}]"));
         assertThat(turnStart.path("params").path("model").asText()).isEqualTo("gpt-5.6-luna");
         assertThat(turnStart.path("params").path("effort").asText()).isEqualTo("high");
         assertThat(turnStart.path("params").path("outputSchema")).isEqualTo(schema);
@@ -76,6 +83,30 @@ class CodexAppServerTurnClientTest {
         this.replyTurn(process, turnStart, "turn-1");
         this.awaitActiveTurn(client);
         this.complete(process, "thread-1", "turn-1", "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
+        assertThat(result.get(1, TimeUnit.SECONDS).outputText()).contains("OK");
+        client.close();
+    }
+
+    @Test
+    void configuredRuntimeCwdOverridesNeutralDefault() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerProperties properties = this.properties();
+        final Path configuredCwd = Files.createTempDirectory("forge-agent-codex-configured-cwd");
+        properties.setRuntimeCwd(configuredCwd.toString());
+        final CodexAppServerClient client = this.client(new FakeStarter(process), properties);
+        final CompletableFuture<CodexTurnResult> result = CompletableFuture.supplyAsync(() -> client.execute(
+                new CodexTurnRequest("Analyze auth.", "Instructions.", "gpt-5.6-luna", null, this.schemaUnchecked())
+        ));
+
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        assertThat(threadStart.path("params").path("cwd").asText()).isEqualTo(configuredCwd.toAbsolutePath().normalize().toString());
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+        this.replyTurn(process, turnStart, "turn-1");
+        this.awaitActiveTurn(client);
+        this.complete(process, "thread-1", "turn-1", "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
+
         assertThat(result.get(1, TimeUnit.SECONDS).outputText()).contains("OK");
         client.close();
     }
@@ -170,7 +201,7 @@ class CodexAppServerTurnClientTest {
     void forbiddenToolItemFailsSafely() throws Exception {
         final TurnHarness harness = this.startedTurn();
 
-        harness.process().writeStdout("{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-1\",\"completedAtMs\":1,\"item\":{\"type\":\"commandExecution\",\"text\":\"nope\"}}}");
+        harness.process().writeStdout(this.itemCompletedNotification("thread-1", "turn-1", "commandExecution", "\"text\":\"nope\""));
         this.assertInterrupt(harness.process(), "thread-1", "turn-1");
 
         assertAgentExecutionFailure(harness.result(), "CODEX_EXECUTION_FAILED");
@@ -181,7 +212,7 @@ class CodexAppServerTurnClientTest {
     void forbiddenStartedToolItemInterruptsTurnAndFailsSafely() throws Exception {
         final TurnHarness harness = this.startedTurn();
 
-        harness.process().writeStdout("{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-1\",\"item\":{\"type\":\"commandExecution\"}}}");
+        harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "commandExecution"));
         this.assertInterrupt(harness.process(), "thread-1", "turn-1");
 
         assertAgentExecutionFailure(harness.result(), "CODEX_EXECUTION_FAILED");
@@ -228,7 +259,7 @@ class CodexAppServerTurnClientTest {
         this.replyTurn(process, turnTwo);
         this.awaitActiveTurns(client, 2);
 
-        process.writeStdout("{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-b\",\"turnId\":\"turn-b\",\"item\":{\"type\":\"commandExecution\"}}}");
+        process.writeStdout(this.itemStartedNotification("thread-b", "turn-b", "commandExecution"));
         this.assertInterrupt(process, "thread-b", "turn-b");
         assertAgentExecutionFailure(a, "CODEX_EXECUTION_FAILED");
         assertThat(client.activeTurnCountForTesting()).isEqualTo(1);
@@ -255,7 +286,7 @@ class CodexAppServerTurnClientTest {
     void lateNotificationsAfterPolicyViolationCannotResurrectTurnOrBufferOrphans() throws Exception {
         final TurnHarness harness = this.startedTurn();
 
-        harness.process().writeStdout("{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-1\",\"item\":{\"type\":\"commandExecution\"}}}");
+        harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "commandExecution"));
         this.assertInterrupt(harness.process(), "thread-1", "turn-1");
         assertAgentExecutionFailure(harness.result(), "CODEX_EXECUTION_FAILED");
 
@@ -368,7 +399,7 @@ class CodexAppServerTurnClientTest {
         final JsonNode turnStart = this.readRequest(process);
         this.complete(process, "thread-1", "turn-1", "{\"summary\":\"Buffered\",\"riskLevel\":\"LOW\"}");
         for (int index = 0; index < 31; index++) {
-            process.writeStdout("{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-1\",\"item\":{\"type\":\"plan\"}}}");
+            process.writeStdout(this.itemStartedNotification("thread-1", "turn-1", "plan"));
         }
         this.replyTurn(process, turnStart, "turn-1");
         this.assertInterrupt(process, "thread-1", "turn-1");
@@ -444,7 +475,7 @@ class CodexAppServerTurnClientTest {
                 failureCode.complete("SUCCEEDED");
             } catch (final AgentExecutionException exception) {
                 interruptFlag.complete(Thread.currentThread().isInterrupted());
-                failureCode.complete(exception.code());
+                failureCode.complete(exception.getCode());
             }
         });
 
@@ -579,13 +610,11 @@ class CodexAppServerTurnClientTest {
                               final String output) {
         final String escaped = output.replace("\\", "\\\\").replace("\"", "\\\"");
         final String phaseJson = phase == null ? "null" : "\"" + phase + "\"";
-        process.writeStdout("{\"method\":\"item/completed\",\"params\":{\"threadId\":\"" + threadId + "\",\"turnId\":\"" + turnId
-                + "\",\"completedAtMs\":1,\"item\":{\"type\":\"agentMessage\",\"phase\":" + phaseJson + ",\"text\":\"" + escaped + "\"}}}");
+        process.writeStdout(this.itemCompletedNotification(threadId, turnId, "agentMessage", "\"phase\":" + phaseJson + ",\"text\":\"" + escaped + "\""));
     }
 
     private void turnCompleted(final FakeCodexProcess process, final String threadId, final String turnId, final String status) {
-        process.writeStdout("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"" + threadId
-                + "\",\"turn\":{\"id\":\"" + turnId + "\",\"status\":\"" + status + "\"}}}");
+        process.writeStdout(this.turnCompletedNotification(threadId, turnId, status));
     }
 
     private void assertInterrupt(final FakeCodexProcess process, final String threadId, final String turnId) throws Exception {
@@ -603,7 +632,7 @@ class CodexAppServerTurnClientTest {
     }
 
     private void replyThread(final FakeCodexProcess process, final JsonNode request, final String threadId) {
-        process.writeStdout("{\"id\":\"" + request.path("id").asText() + "\",\"result\":{\"thread\":{\"id\":\"" + threadId + "\"}}}");
+        process.writeStdout(this.threadStartResponse(request.path("id").asText(), threadId));
     }
 
     private void replyTurn(final FakeCodexProcess process, final JsonNode request) {
@@ -613,8 +642,103 @@ class CodexAppServerTurnClientTest {
     }
 
     private void replyTurn(final FakeCodexProcess process, final JsonNode request, final String turnId) {
-        process.writeStdout("{\"id\":\"" + request.path("id").asText() + "\",\"result\":{\"turn\":{\"id\":\"" + turnId
-                + "\",\"status\":\"inProgress\"}}}");
+        process.writeStdout(this.turnStartResponse(request.path("id").asText(), turnId));
+    }
+
+    private String threadStartResponse(final String requestId, final String threadId) {
+        return this.compactJson("""
+                {
+                  "id": "%s",
+                  "result": {
+                    "thread": {
+                      "id": "%s",
+                      "extra": null,
+                      "sessionId": "session-%s",
+                      "forkedFromId": null,
+                      "parentThreadId": null,
+                      "preview": "",
+                      "ephemeral": true,
+                      "section": null,
+                      "sectionEnteredAt": null,
+                      "historyMode": "legacy",
+                      "modelProvider": "openai",
+                      "createdAt": 1,
+                      "updatedAt": 1,
+                      "recencyAt": null,
+                      "status": "idle",
+                      "path": null,
+                      "cwd": "/tmp/forge-agent-codex-runtime",
+                      "cliVersion": "0.147.0",
+                      "source": "appServer",
+                      "canAcceptDirectInput": true,
+                      "threadSource": null,
+                      "agentNickname": null,
+                      "agentRole": null,
+                      "gitInfo": null,
+                      "name": null,
+                      "turns": []
+                    },
+                    "model": "gpt-5.6-luna",
+                    "modelProvider": "openai",
+                    "serviceTier": null,
+                    "cwd": "/tmp/forge-agent-codex-runtime",
+                    "runtimeWorkspaceRoots": [],
+                    "instructionSources": [],
+                    "approvalPolicy": "never",
+                    "approvalsReviewer": "user",
+                    "sandbox": {},
+                    "activePermissionProfile": null,
+                    "reasoningEffort": null,
+                    "multiAgentMode": "explicitRequestOnly"
+                  }
+                }
+                """.formatted(requestId, threadId, threadId));
+    }
+
+    private String turnStartResponse(final String requestId, final String turnId) {
+        return this.compactJson("""
+                {
+                  "id": "%s",
+                  "result": {
+                    "turn": {
+                      "id": "%s",
+                      "items": [],
+                      "itemsView": "full",
+                      "status": "inProgress",
+                      "error": null,
+                      "startedAt": 1,
+                      "completedAt": null,
+                      "durationMs": null
+                    }
+                  }
+                }
+                """.formatted(requestId, turnId));
+    }
+
+    private String itemCompletedNotification(final String threadId,
+                                             final String turnId,
+                                             final String itemType,
+                                             final String itemFields) {
+        return "{\"method\":\"item/completed\",\"params\":{\"threadId\":\"" + threadId + "\",\"turnId\":\"" + turnId
+                + "\",\"completedAtMs\":1,\"item\":{\"type\":\"" + itemType + "\"," + itemFields + "}}}";
+    }
+
+    private String itemStartedNotification(final String threadId, final String turnId, final String itemType) {
+        return "{\"method\":\"item/started\",\"params\":{\"threadId\":\"" + threadId + "\",\"turnId\":\"" + turnId
+                + "\",\"item\":{\"type\":\"" + itemType + "\"}}}";
+    }
+
+    private String turnCompletedNotification(final String threadId, final String turnId, final String status) {
+        return "{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"" + threadId
+                + "\",\"turn\":{\"id\":\"" + turnId + "\",\"status\":\"" + status + "\"}}}";
+    }
+
+    private String compactJson(final String json) {
+        try {
+            return this.objectMapper.writeValueAsString(this.objectMapper.readTree(json));
+        } catch (final Exception exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 
     private JsonNode schema() throws Exception {
@@ -676,8 +800,8 @@ class CodexAppServerTurnClientTest {
                 .isInstanceOf(java.util.concurrent.ExecutionException.class)
                 .satisfies(throwable -> assertThat(throwable.getCause())
                         .isInstanceOfSatisfying(AgentExecutionException.class, exception -> {
-                            assertThat(exception.code()).isEqualTo(code);
-                            assertThat(exception.safeMessage()).isNotBlank();
+                            assertThat(exception.getCode()).isEqualTo(code);
+                            assertThat(exception.getMessage()).isNotBlank();
                         }));
     }
 
