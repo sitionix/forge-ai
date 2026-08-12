@@ -20,7 +20,7 @@ class AgentExecutionPromptBuilderTest {
             {"type":"object","description":"Technical analysis result.","properties":{"summary":{"type":"string","description":"Concise summary."},"riskLevel":{"type":"string","description":"Technical risk level.","enum":["LOW","MEDIUM","HIGH"]}},"required":["summary","riskLevel"],"additionalProperties":false}
             """);
 
-    private final AgentExecutionPromptBuilder builder = new AgentExecutionPromptBuilder();
+    private final AgentExecutionPromptBuilder builder = new AgentExecutionPromptBuilder(new AgentDependencyContextRenderer());
 
     @Test
     void noDependenciesUsesStableInstructionAndInputSections() {

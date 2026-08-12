@@ -17,15 +17,13 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public final class CodexAgentExecutor implements AgentExecutor {
 
-    private static final String PROVIDER_ID = "codex";
-
     private final ObjectMapper objectMapper;
     private final AgentExecutionPromptBuilder promptBuilder;
     private final CodexTurnClient turnClient;
 
     @Override
     public NodeRunOutput execute(final NodeExecutionClaim claim) {
-        if (claim.executionModel() == null || !PROVIDER_ID.equals(claim.executionModel().providerId())) {
+        if (claim.executionModel() == null || !CodexProtocol.PROVIDER_ID.equals(claim.executionModel().providerId())) {
             throw new AgentExecutionException("UNSUPPORTED_AGENT_PROVIDER", "Agent provider is not supported.");
         }
         final String prompt = this.promptBuilder.build(claim);

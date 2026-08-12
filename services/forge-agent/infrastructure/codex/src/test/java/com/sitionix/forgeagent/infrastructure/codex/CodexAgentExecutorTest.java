@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeagent.application.runtime.AgentDependencyContextRenderer;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionException;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionPromptBuilder;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
@@ -27,7 +28,7 @@ class CodexAgentExecutorTest {
     private final RecordingTurnClient turnClient = new RecordingTurnClient();
     private final CodexAgentExecutor executor = new CodexAgentExecutor(
             this.objectMapper,
-            new AgentExecutionPromptBuilder(),
+            new AgentExecutionPromptBuilder(new AgentDependencyContextRenderer()),
             this.turnClient
     );
 
