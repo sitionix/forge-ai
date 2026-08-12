@@ -13,10 +13,12 @@ import java.util.concurrent.ConcurrentHashMap;
 final class CodexTurnStateTracker {
 
     private static final String ITEM_COMPLETED = "item/completed";
+    private static final String ITEM_STARTED = "item/started";
     private static final String TURN_COMPLETED = "turn/completed";
     private static final String COMMAND_APPROVAL = "item/commandExecution/requestApproval";
     private static final String FILE_CHANGE_APPROVAL = "item/fileChange/requestApproval";
     private static final String FAIL_CLOSED_SERVER_REQUEST = "server-request/unsupported-side-effect";
+    private static final int MAX_BUFFERED_PRE_REGISTRATION_NOTIFICATIONS = 32;
     private static final Map<String, Boolean> SAFE_ITEM_TYPES = Map.of(
             "userMessage", true,
             "reasoning", true,
@@ -37,12 +39,32 @@ final class CodexTurnStateTracker {
     private final Map<CodexTurnKey, ActiveTurn> activeByKey = new ConcurrentHashMap<>();
     private final Map<String, ActiveTurn> activeByTurnId = new ConcurrentHashMap<>();
     private final Map<String, List<BufferedNotification>> bufferedByTurnId = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> preRegistrationThreadIds = new ConcurrentHashMap<>();
+    private final Map<String, RuntimeException> failedPreRegistrationThreadIds = new ConcurrentHashMap<>();
+
+    void beginPreRegistration(final String threadId) {
+        this.preRegistrationThreadIds.put(threadId, true);
+    }
+
+    void endPreRegistration(final String threadId) {
+        this.preRegistrationThreadIds.remove(threadId);
+        this.bufferedByTurnId.entrySet().removeIf(entry -> entry.getValue().stream()
+                .map(BufferedNotification::params)
+                .map(params -> this.resolveThreadId(params, false))
+                .anyMatch(threadId::equals));
+        this.failedPreRegistrationThreadIds.remove(threadId);
+    }
 
     ActiveTurn register(final String threadId, final String turnId) {
         final ActiveTurn active = new ActiveTurn(new CodexTurnKey(threadId, turnId));
         this.activeByKey.put(active.key(), active);
         this.activeByTurnId.put(turnId, active);
+        this.preRegistrationThreadIds.remove(threadId);
         this.replayBuffered(active);
+        final RuntimeException preRegistrationFailure = this.failedPreRegistrationThreadIds.remove(threadId);
+        if (preRegistrationFailure != null && !active.done()) {
+            active.failPolicyViolation(preRegistrationFailure);
+        }
         return active;
     }
 
@@ -57,13 +79,23 @@ final class CodexTurnStateTracker {
         this.activeByKey.clear();
         this.activeByTurnId.clear();
         this.bufferedByTurnId.clear();
+        this.preRegistrationThreadIds.clear();
+        this.failedPreRegistrationThreadIds.clear();
     }
 
     int activeTurnCount() {
         return this.activeByKey.size();
     }
 
+    int bufferedNotificationCount() {
+        return this.bufferedByTurnId.values().stream().mapToInt(List::size).sum();
+    }
+
     void handleNotification(final String method, final JsonNode params) {
+        if (ITEM_STARTED.equals(method)) {
+            this.handleItemStarted(params);
+            return;
+        }
         if (ITEM_COMPLETED.equals(method)) {
             this.handleItemCompleted(params);
             return;
@@ -82,26 +114,37 @@ final class CodexTurnStateTracker {
         throw new UnsupportedOperationException("Unsupported Codex server request method=" + method);
     }
 
+    private void handleItemStarted(final JsonNode params) {
+        this.handleGenerationItem(params, ITEM_STARTED, false);
+    }
+
     private void handleItemCompleted(final JsonNode params) {
-        this.requireObject(params, ITEM_COMPLETED + " params");
-        final String turnId = this.resolveTurnId(params, ITEM_COMPLETED, false);
+        this.handleGenerationItem(params, ITEM_COMPLETED, true);
+    }
+
+    private void handleGenerationItem(final JsonNode params, final String method, final boolean captureAgentMessage) {
+        this.requireObject(params, method + " params");
+        final String turnId = this.resolveTurnId(params, method, false);
         if (turnId == null) {
-            throw this.protocolFailure("Codex item/completed omitted turnId");
+            throw this.protocolFailure("Codex " + method + " omitted turnId");
         }
         final JsonNode item = params.has("item") ? params.path("item") : params;
-        this.requireObject(item, ITEM_COMPLETED + " item");
+        this.requireObject(item, method + " item");
         final String itemType = this.nonBlank(item.path("type"));
         final AgentExecutionException violation = this.itemTypeViolation(itemType);
         final ActiveTurn active = this.findActive(params, turnId);
-        if (active == null || active.done()) {
-            this.buffer(turnId, ITEM_COMPLETED, params);
+        if (active == null) {
+            this.bufferPreRegistrationOnly(turnId, method, params);
+            return;
+        }
+        if (active.done()) {
             return;
         }
         if (violation != null) {
-            active.fail(violation);
+            active.failPolicyViolation(violation);
             return;
         }
-        if ("agentMessage".equals(itemType)) {
+        if (captureAgentMessage && "agentMessage".equals(itemType)) {
             this.extractText(item).ifPresent(active::addAgentMessage);
         }
     }
@@ -111,8 +154,11 @@ final class CodexTurnStateTracker {
         final String turnId = this.resolveTurnId(params, TURN_COMPLETED, true);
         final String status = this.resolveStatus(params);
         final ActiveTurn active = this.findActive(params, turnId);
-        if (active == null || active.done()) {
-            this.buffer(turnId, TURN_COMPLETED, params);
+        if (active == null) {
+            this.bufferPreRegistrationOnly(turnId, TURN_COMPLETED, params);
+            return;
+        }
+        if (active.done()) {
             return;
         }
         this.complete(active, status);
@@ -146,7 +192,7 @@ final class CodexTurnStateTracker {
         }
         for (final BufferedNotification notification : buffered) {
             if (FAIL_CLOSED_SERVER_REQUEST.equals(notification.method())) {
-                active.fail(new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed."));
+                active.failPolicyViolation(new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed."));
             } else {
                 this.handleNotification(notification.method(), notification.params());
             }
@@ -156,15 +202,30 @@ final class CodexTurnStateTracker {
     private void failRequestTurn(final JsonNode params) {
         final String turnId = this.resolveTurnId(params, "server request", false);
         if (turnId == null) {
-            this.activeByKey.values().forEach(active -> active.fail(new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.")));
+            final String threadId = this.resolveThreadId(params, false);
+            final AgentExecutionException failure = new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.");
+            if (threadId != null && this.preRegistrationThreadIds.containsKey(threadId)) {
+                this.failedPreRegistrationThreadIds.put(threadId, failure);
+                return;
+            }
+            this.preRegistrationThreadIds.keySet().forEach(preRegistrationThreadId ->
+                    this.failedPreRegistrationThreadIds.put(preRegistrationThreadId, failure));
+            this.activeByKey.values().forEach(active -> active.failPolicyViolation(failure));
             return;
         }
         final ActiveTurn active = this.findActive(params, turnId);
-        if (active == null || active.done()) {
-            this.buffer(turnId, FAIL_CLOSED_SERVER_REQUEST, params);
+        if (active == null) {
+            if (!this.bufferPreRegistrationOnly(turnId, FAIL_CLOSED_SERVER_REQUEST, params)) {
+                this.preRegistrationThreadIds.keySet().forEach(preRegistrationThreadId ->
+                        this.failedPreRegistrationThreadIds.put(preRegistrationThreadId, new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.")));
+                this.activeByKey.values().forEach(turn -> turn.failPolicyViolation(new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.")));
+            }
             return;
         }
-        active.fail(new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed."));
+        if (active.done()) {
+            return;
+        }
+        active.failPolicyViolation(new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed."));
     }
 
     private ActiveTurn findActive(final JsonNode params, final String turnId) {
@@ -175,12 +236,21 @@ final class CodexTurnStateTracker {
         return this.activeByTurnId.get(turnId);
     }
 
-    private void buffer(final String turnId, final String method, final JsonNode params) {
+    private boolean bufferPreRegistrationOnly(final String turnId, final String method, final JsonNode params) {
+        final String threadId = this.resolveThreadId(params, false);
+        if (threadId == null || !this.preRegistrationThreadIds.containsKey(threadId)) {
+            return false;
+        }
         this.bufferedByTurnId.compute(turnId, (ignored, existing) -> {
             final List<BufferedNotification> next = existing == null ? new ArrayList<>() : existing;
-            next.add(new BufferedNotification(method, params.deepCopy()));
+            if (next.size() < MAX_BUFFERED_PRE_REGISTRATION_NOTIFICATIONS) {
+                next.add(new BufferedNotification(method, params.deepCopy()));
+            } else {
+                this.failedPreRegistrationThreadIds.put(threadId, new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed."));
+            }
             return next;
         });
+        return true;
     }
 
     private AgentExecutionException itemTypeViolation(final String itemType) {
@@ -341,6 +411,10 @@ final class CodexTurnStateTracker {
             this.future.completeExceptionally(exception);
         }
 
+        void failPolicyViolation(final RuntimeException exception) {
+            this.future.completeExceptionally(new PolicyViolationException(exception));
+        }
+
         boolean done() {
             return this.future.isDone();
         }
@@ -358,5 +432,12 @@ final class CodexTurnStateTracker {
     }
 
     private record BufferedNotification(String method, JsonNode params) {
+    }
+
+    static final class PolicyViolationException extends RuntimeException {
+
+        private PolicyViolationException(final RuntimeException cause) {
+            super(cause);
+        }
     }
 }

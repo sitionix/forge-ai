@@ -55,12 +55,22 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
                     this.threadStartParams(request.modelId()),
                     this.properties.getRequestTimeout()
             ));
-            final String turnId = this.turnStateTracker.requireTurnId(current.request(
-                    "turn/start",
-                    this.turnStartParams(threadId, request),
-                    this.properties.getRequestTimeout()
-            ));
+            this.turnStateTracker.beginPreRegistration(threadId);
+            final String turnId;
+            try {
+                turnId = this.turnStateTracker.requireTurnId(current.request(
+                        "turn/start",
+                        this.turnStartParams(threadId, request),
+                        this.properties.getRequestTimeout()
+                ));
+            } catch (final RuntimeException e) {
+                this.turnStateTracker.endPreRegistration(threadId);
+                throw e;
+            }
             active = this.turnStateTracker.register(threadId, turnId);
+            if (!current.healthy()) {
+                active.fail(new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed."));
+            }
             final String output = active.future().get(this.properties.getTurnTimeout().toMillis(), TimeUnit.MILLISECONDS);
             return new CodexTurnResult(threadId, turnId, output);
         } catch (final TimeoutException e) {
@@ -80,6 +90,16 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
                 this.turnStateTracker.remove(active);
             }
             final Throwable cause = e.getCause();
+            if (cause instanceof CodexTurnStateTracker.PolicyViolationException policyViolationException) {
+                if (active != null) {
+                    this.bestEffortInterrupt(current, active);
+                }
+                final Throwable policyCause = policyViolationException.getCause();
+                if (policyCause instanceof AgentExecutionException agentExecutionException) {
+                    throw agentExecutionException;
+                }
+                throw new AgentExecutionException("CODEX_EXECUTION_FAILED", "Codex execution failed.", policyCause);
+            }
             if (cause instanceof AgentExecutionException agentExecutionException) {
                 throw agentExecutionException;
             }
@@ -98,6 +118,10 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
 
     int activeTurnCountForTesting() {
         return this.turnStateTracker.activeTurnCount();
+    }
+
+    int bufferedNotificationCountForTesting() {
+        return this.turnStateTracker.bufferedNotificationCount();
     }
 
     private synchronized CodexJsonRpcTransport ensureInitialized() {
