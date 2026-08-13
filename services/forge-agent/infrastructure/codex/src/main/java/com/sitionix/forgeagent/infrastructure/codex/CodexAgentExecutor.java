@@ -3,9 +3,12 @@ package com.sitionix.forgeagent.infrastructure.codex;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeagent.application.runtime.AgentExecutor;
 import com.sitionix.forgeagent.application.runtime.NodeDependencyOutput;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -38,13 +41,26 @@ public final class CodexAgentExecutor implements AgentExecutor {
 
     private String userInput(final NodeExecutionClaim claim) {
         try {
-            return this.objectMapper.writeValueAsString(new CodexAgentInput(
-                    claim.workflowInput(),
-                    this.dependencyInputs(claim.dependencies())
-            ));
+            final ObjectNode input = this.objectMapper.createObjectNode();
+            final List<CodexDependencyInput> dependencyInputs = this.dependencyInputs(claim.dependencies());
+            if (this.shouldIncludeWorkflowInput(claim, dependencyInputs)) {
+                input.put("workflowInput", claim.workflowInput());
+            }
+            final ArrayNode dependencyResults = input.putArray("dependencyResults");
+            for (final CodexDependencyInput dependencyInput : dependencyInputs) {
+                final ObjectNode dependency = this.objectMapper.createObjectNode();
+                dependency.put("agentName", dependencyInput.agentName());
+                dependency.set("output", dependencyInput.output());
+                dependencyResults.add(dependency);
+            }
+            return this.objectMapper.writeValueAsString(input);
         } catch (final JsonProcessingException e) {
             throw new IllegalStateException("Codex execution failed.", e);
         }
+    }
+
+    private boolean shouldIncludeWorkflowInput(final NodeExecutionClaim claim, final List<CodexDependencyInput> dependencies) {
+        return dependencies.isEmpty() || claim.inputMode() == NodeInputMode.TASK_AND_DEPENDENCIES;
     }
 
     private List<CodexDependencyInput> dependencyInputs(final List<NodeDependencyOutput> dependencies) {
@@ -91,9 +107,6 @@ public final class CodexAgentExecutor implements AgentExecutor {
         } catch (final JsonProcessingException e) {
             throw new IllegalStateException("Codex output was not valid JSON.", e);
         }
-    }
-
-    private record CodexAgentInput(String workflowInput, List<CodexDependencyInput> dependencyResults) {
     }
 
     private record CodexDependencyInput(String agentName, JsonNode output) {

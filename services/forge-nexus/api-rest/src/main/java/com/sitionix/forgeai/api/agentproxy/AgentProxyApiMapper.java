@@ -23,6 +23,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskComman
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
+import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
@@ -222,6 +223,7 @@ public class AgentProxyApiMapper {
                 request.id(),
                 request.targetId(),
                 request.dependsOnNodeIds() == null ? List.of() : request.dependsOnNodeIds(),
+                inputMode(request.inputMode()),
                 request.position() == null ? new NodePosition(0.0, 0.0) : new NodePosition(request.position().x(), request.position().y())
         );
     }
@@ -231,6 +233,7 @@ public class AgentProxyApiMapper {
                 node.id(),
                 node.targetId(),
                 node.dependsOnNodeIds(),
+                inputMode(node.inputMode()).name(),
                 new NodePositionResponse(node.position().x(), node.position().y())
         );
     }
@@ -245,6 +248,7 @@ public class AgentProxyApiMapper {
                     nodeRun.agentInstructions(),
                     this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
                     nodeRun.dependsOnNodeRunIds(),
+                    nodeRunInputMode(nodeRun.inputMode()).name(),
                     new NodePositionResponse(nodeRun.position().x(), nodeRun.position().y()),
                     nodeRun.status(),
                     nodeRun.output() == null ? null : this.objectMapper.readTree(nodeRun.output().jsonValue()),
@@ -260,5 +264,24 @@ public class AgentProxyApiMapper {
 
     private AgentNodeRunFailureResponse toResponse(final AgentNodeRunFailure failure) {
         return new AgentNodeRunFailureResponse(failure.code(), failure.message());
+    }
+
+    private static NodeInputMode inputMode(final NodeInputMode inputMode) {
+        return inputMode == null ? NodeInputMode.DEPENDENCIES_ONLY : inputMode;
+    }
+
+    private static NodeInputMode nodeRunInputMode(final NodeInputMode inputMode) {
+        return inputMode == null ? NodeInputMode.TASK_AND_DEPENDENCIES : inputMode;
+    }
+
+    private static NodeInputMode inputMode(final String inputMode) {
+        if (inputMode == null || inputMode.isBlank()) {
+            return NodeInputMode.DEPENDENCIES_ONLY;
+        }
+        try {
+            return NodeInputMode.valueOf(inputMode);
+        } catch (final IllegalArgumentException exception) {
+            throw new IllegalArgumentException("Workflow node input mode is invalid.", exception);
+        }
     }
 }

@@ -53,6 +53,9 @@ public class NodeRunEntity {
     @Column(name = "position_y", nullable = false)
     private double positionY;
 
+    @Column(name = "input_mode", nullable = false, length = 32)
+    private String inputMode = "DEPENDENCIES_ONLY";
+
     @Column(nullable = false, length = 32)
     private String status;
 

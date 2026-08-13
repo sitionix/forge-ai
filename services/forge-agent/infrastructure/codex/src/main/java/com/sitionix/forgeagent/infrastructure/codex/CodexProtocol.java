@@ -15,6 +15,7 @@ final class CodexProtocol {
 
     static final String APPROVAL_POLICY_NEVER = "never";
     static final String SANDBOX_READ_ONLY = "read-only";
+    static final String SANDBOX_WORKSPACE_WRITE = "workspace-write";
 
     private CodexProtocol() {
     }

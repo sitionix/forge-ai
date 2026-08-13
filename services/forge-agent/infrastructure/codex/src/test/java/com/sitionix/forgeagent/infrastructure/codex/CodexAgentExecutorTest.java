@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.runtime.NodeDependencyOutput;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import java.util.List;
@@ -55,6 +56,7 @@ class CodexAgentExecutorTest {
                 "Analyze the requested change.",
                 OUTPUT_SCHEMA,
                 new NodeRunExecutionModel("codex", "gpt-5.6-luna", null),
+                NodeInputMode.TASK_AND_DEPENDENCIES,
                 List.of(new NodeDependencyOutput(
                         UUID.fromString("40000000-0000-4000-8000-000000000001"),
                         "Security Review",
@@ -80,10 +82,38 @@ class CodexAgentExecutorTest {
     }
 
     @Test
+    void dependencyOnlyInputModeOmitsWorkflowInputWhenDependenciesExist() throws Exception {
+        final NodeExecutionClaim claim = new NodeExecutionClaim(
+                WORKFLOW_RUN_ID,
+                NODE_RUN_ID,
+                AGENT_ID,
+                "Review auth changes.",
+                "Analyzer",
+                "Analyze the requested change.",
+                OUTPUT_SCHEMA,
+                new NodeRunExecutionModel("codex", "gpt-5.6-luna", null),
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodeDependencyOutput(
+                        UUID.fromString("40000000-0000-4000-8000-000000000001"),
+                        "Security Review",
+                        new NodeRunOutput("{\"risk\":\"LOW\"}")
+                ))
+        );
+
+        this.executor.execute(claim);
+
+        final JsonNode userInput = this.objectMapper.readTree(this.turnClient.request.userInput());
+        assertThat(userInput.has("workflowInput")).isFalse();
+        assertThat(userInput.path("dependencyResults")).hasSize(1);
+        assertThat(userInput.path("dependencyResults").get(0).path("output")).isEqualTo(this.objectMapper.readTree("{\"risk\":\"LOW\"}"));
+    }
+
+    @Test
     void noDependenciesAreSerializedAsEmptyArray() throws Exception {
         this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", null), OUTPUT_SCHEMA));
 
         final JsonNode userInput = this.objectMapper.readTree(this.turnClient.request.userInput());
+        assertThat(userInput.path("workflowInput").asText()).isEqualTo("Review auth changes.");
         assertThat(userInput.path("dependencyResults")).isEmpty();
     }
 

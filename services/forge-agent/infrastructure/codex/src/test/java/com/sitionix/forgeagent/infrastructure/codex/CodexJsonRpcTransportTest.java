@@ -25,8 +25,15 @@ class CodexJsonRpcTransportTest {
         final CompletableFuture<JsonNode> first = CompletableFuture.supplyAsync(() -> transport.request("first", this.objectMapper.createObjectNode(), Duration.ofSeconds(2)));
         final CompletableFuture<JsonNode> second = CompletableFuture.supplyAsync(() -> transport.request("second", this.objectMapper.createObjectNode(), Duration.ofSeconds(2)));
 
-        final JsonNode firstRequest = this.readRequest(process);
-        final JsonNode secondRequest = this.readRequest(process);
+        final List<JsonNode> requests = List.of(this.readRequest(process), this.readRequest(process));
+        final JsonNode firstRequest = requests.stream()
+                .filter(request -> request.path("method").asText().equals("first"))
+                .findFirst()
+                .orElseThrow();
+        final JsonNode secondRequest = requests.stream()
+                .filter(request -> request.path("method").asText().equals("second"))
+                .findFirst()
+                .orElseThrow();
         process.writeStdout("{\"id\":\"" + secondRequest.path("id").asText() + "\",\"result\":{\"value\":\"second\"}}");
         process.writeStdout("{\"id\":\"" + firstRequest.path("id").asText() + "\",\"result\":{\"value\":\"first\"}}");
 

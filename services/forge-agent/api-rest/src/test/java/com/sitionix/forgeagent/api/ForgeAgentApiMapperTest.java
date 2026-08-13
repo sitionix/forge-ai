@@ -42,6 +42,7 @@ import com.sitionix.forgeagent.domain.model.CodexRuntimeEffort;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeModel;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
@@ -253,7 +254,7 @@ class ForgeAgentApiMapperTest {
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new NodeResponse(NODE_B, AGENT_ID, List.of(NODE_A), new NodePositionResponse(3.0, 4.0))),
+                List.of(new NodeResponse(NODE_B, AGENT_ID, List.of(NODE_A), NodeInputMode.DEPENDENCIES_ONLY.name(), new NodePositionResponse(3.0, 4.0))),
                 CREATED,
                 UPDATED
         ));
@@ -281,6 +282,7 @@ class ForgeAgentApiMapperTest {
                         "Analyze changes.",
                         AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
                         List.of(),
+                        NodeInputMode.DEPENDENCIES_ONLY,
                         new NodePosition(1.0, 2.0),
                         NodeRunStatus.PENDING,
                         new NodeRunOutput("{\"summary\":\"done\"}"),
@@ -330,6 +332,7 @@ class ForgeAgentApiMapperTest {
                         "Analyze changes.",
                         this.objectMapper.readTree("{\"type\":\"object\"}"),
                         List.of(),
+                        NodeInputMode.DEPENDENCIES_ONLY.name(),
                         new NodePositionResponse(1.0, 2.0),
                         NodeRunStatus.PENDING,
                         this.objectMapper.readTree("{\"summary\":\"done\"}"),

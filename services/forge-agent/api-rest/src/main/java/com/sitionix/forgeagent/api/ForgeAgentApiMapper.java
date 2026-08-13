@@ -44,6 +44,7 @@ import com.sitionix.forgeagent.domain.model.CodexRuntimeEffort;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeModel;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
@@ -211,6 +212,7 @@ class ForgeAgentApiMapper {
                 request.id(),
                 request.targetId(),
                 request.dependsOnNodeIds() == null ? List.of() : request.dependsOnNodeIds(),
+                inputMode(request.inputMode()),
                 position
         );
     }
@@ -220,6 +222,7 @@ class ForgeAgentApiMapper {
                 node.id(),
                 node.targetId(),
                 node.dependsOnNodeIds(),
+                inputMode(node.inputMode()).name(),
                 new NodePositionResponse(node.position().x(), node.position().y())
         );
     }
@@ -234,6 +237,7 @@ class ForgeAgentApiMapper {
                     nodeRun.agentInstructions(),
                     this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
                     nodeRun.dependsOnNodeRunIds(),
+                    inputMode(nodeRun.inputMode()).name(),
                     new NodePositionResponse(nodeRun.position().x(), nodeRun.position().y()),
                     nodeRun.status(),
                     nodeRun.output() == null ? null : this.objectMapper.readTree(nodeRun.output().jsonValue()),
@@ -286,5 +290,20 @@ class ForgeAgentApiMapper {
             return null;
         }
         return new AgentModelSelectionResponse(selection.providerId(), selection.modelId(), selection.effortId());
+    }
+
+    private static NodeInputMode inputMode(final NodeInputMode inputMode) {
+        return inputMode == null ? NodeInputMode.DEPENDENCIES_ONLY : inputMode;
+    }
+
+    private static NodeInputMode inputMode(final String inputMode) {
+        if (inputMode == null || inputMode.isBlank()) {
+            return NodeInputMode.DEPENDENCIES_ONLY;
+        }
+        try {
+            return NodeInputMode.valueOf(inputMode);
+        } catch (final IllegalArgumentException exception) {
+            throw new ValidationException("INVALID_NODE_INPUT_MODE", "Workflow node input mode is invalid.");
+        }
     }
 }

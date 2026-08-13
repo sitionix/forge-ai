@@ -885,6 +885,33 @@ body.sidebar-collapsed .sidebar-link {
   -webkit-line-clamp: 2;
 }
 
+.workflow-node-input-mode {
+  display: grid;
+  gap: 4px;
+}
+
+.workflow-node-input-mode span,
+.workflow-node-input-note {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.workflow-node-input-mode select {
+  width: 100%;
+  min-height: 28px;
+  border: 1px solid rgba(27, 36, 31, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--ink);
+  font: 700 10px/1.2 var(--mono);
+}
+
+.workflow-node-input-mode select:disabled {
+  opacity: 0.58;
+}
+
 .node-handle,
 .node-delete {
   border: 1px solid rgba(27, 36, 31, 0.14);

@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.port.WorkflowRepository;
@@ -80,6 +81,7 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
             entity.setWorkflowId(workflow.id());
             entity.setTargetId(node.targetId());
             entity.setDependsOnNodeIds(node.dependsOnNodeIds().toArray(UUID[]::new));
+            entity.setInputMode(inputMode(node.inputMode()).name());
             entity.setPositionX(node.position().x());
             entity.setPositionY(node.position().y());
             desiredEntities.add(entity);
@@ -106,8 +108,20 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
                 entity.getId(),
                 entity.getTargetId(),
                 entity.getDependsOnNodeIds() == null ? List.of() : Arrays.asList(entity.getDependsOnNodeIds()),
+                inputMode(entity.getInputMode()),
                 new NodePosition(entity.getPositionX(), entity.getPositionY())
         );
+    }
+
+    private static NodeInputMode inputMode(final NodeInputMode inputMode) {
+        return inputMode == null ? NodeInputMode.DEPENDENCIES_ONLY : inputMode;
+    }
+
+    private static NodeInputMode inputMode(final String inputMode) {
+        if (inputMode == null || inputMode.isBlank()) {
+            return NodeInputMode.DEPENDENCIES_ONLY;
+        }
+        return NodeInputMode.valueOf(inputMode);
     }
 
     private WorkflowEntity toEntity(final Workflow workflow) {

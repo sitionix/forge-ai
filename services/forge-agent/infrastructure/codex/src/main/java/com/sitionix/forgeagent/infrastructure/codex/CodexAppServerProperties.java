@@ -13,6 +13,8 @@ public class CodexAppServerProperties {
 
     private List<String> command = List.of("codex", "app-server", "--stdio");
     private String runtimeCwd;
+    private String sandbox = CodexProtocol.SANDBOX_READ_ONLY;
+    private boolean shellToolEnabled = false;
     private String clientName = "forge_agent";
     private String clientTitle = "Forge Agent";
     private String clientVersion = "0.0.1";

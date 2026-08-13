@@ -106,6 +106,35 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
+    void configuredWorkspaceWriteExecutionEnablesShellToolAndScopedWorkspaceRoot() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerProperties properties = this.properties();
+        final Path configuredCwd = Files.createTempDirectory("forge-agent-codex-file-work");
+        properties.setRuntimeCwd(configuredCwd.toString());
+        properties.setSandbox("workspace-write");
+        properties.setShellToolEnabled(true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), properties);
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.execute(
+                new CodexTurnRequest("Create a file.", "Instructions.", "gpt-5.6-spark", null, this.schemaUnchecked())
+        ));
+
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        assertThat(threadStart.path("params").path("sandbox").asText()).isEqualTo("workspace-write");
+        assertThat(threadStart.path("params").path("cwd").asText()).isEqualTo(configuredCwd.toAbsolutePath().normalize().toString());
+        assertThat(threadStart.path("params").path("runtimeWorkspaceRoots"))
+                .isEqualTo(this.objectMapper.readTree("[\"" + configuredCwd.toAbsolutePath().normalize() + "\"]"));
+        assertThat(threadStart.path("params").path("config").path("features").path("shell_tool").asBoolean()).isTrue();
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+        this.replyTurn(process, turnStart, "turn-1");
+        this.complete(process, "thread-1", "turn-1", "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
+
+        assertThat(result.get(1, TimeUnit.SECONDS)).contains("OK");
+        client.close();
+    }
+
+    @Test
     void latestFinalAnswerWinsOverCommentary() throws Exception {
         final TurnHarness harness = this.startedTurn();
 
@@ -223,6 +252,19 @@ class CodexAppServerTurnClientTest {
         assertExecutionFailure(harness.result());
         this.complete(harness.process(), "thread-1", "turn-1", "{\"summary\":\"Late\",\"riskLevel\":\"LOW\"}");
         assertThat(harness.client().activeTurnCountForTesting()).isZero();
+        harness.client().close();
+    }
+
+    @Test
+    void shellEnabledExecutionAllowsCommandGenerationItems() throws Exception {
+        final CodexAppServerProperties properties = this.properties();
+        properties.setShellToolEnabled(true);
+        final TurnHarness harness = this.startedTurn("medium", properties);
+
+        harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "commandExecution"));
+        this.complete(harness.process(), "thread-1", "turn-1", "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
+
+        assertThat(harness.result().get(1, TimeUnit.SECONDS)).contains("OK");
         harness.client().close();
     }
 
@@ -439,8 +481,12 @@ class CodexAppServerTurnClientTest {
     }
 
     private TurnHarness startedTurn(final String effortId) throws Exception {
+        return this.startedTurn(effortId, this.properties());
+    }
+
+    private TurnHarness startedTurn(final String effortId, final CodexAppServerProperties properties) throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
-        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CodexAppServerClient client = this.client(new FakeStarter(process), properties);
         final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.execute(
                 new CodexTurnRequest("Analyze auth.", "Instructions.", "model-a", effortId, this.schemaUnchecked())
         ));

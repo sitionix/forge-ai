@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -188,6 +190,20 @@ class CodexAppServerClientTest {
         assertThat(version.get(1, TimeUnit.SECONDS)).isEqualTo("2");
         assertThat(starter.starts()).isEqualTo(2);
         client.close();
+    }
+
+    @Test
+    void defaultStarterCreatesConfiguredRuntimeCwdBeforeStartingProcess() throws Exception {
+        final CodexAppServerProperties properties = this.properties();
+        final Path runtimeCwd = Files.createTempDirectory("forge-agent-codex-starter").resolve("runtime");
+        properties.setRuntimeCwd(runtimeCwd.toString());
+        properties.setCommand(List.of("true"));
+        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties);
+
+        final StartedCodexAppServer started = starter.start();
+
+        assertThat(Files.isDirectory(runtimeCwd)).isTrue();
+        assertThat(started.process().waitFor(1, TimeUnit.SECONDS)).isTrue();
     }
 
     @Test

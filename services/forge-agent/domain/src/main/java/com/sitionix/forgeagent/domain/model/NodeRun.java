@@ -13,6 +13,7 @@ public record NodeRun(
         String agentInstructions,
         AgentOutputSchema agentOutputSchema,
         List<UUID> dependsOnNodeRunIds,
+        NodeInputMode inputMode,
         NodePosition position,
         NodeRunStatus status,
         NodeRunOutput output,
@@ -22,4 +23,40 @@ public record NodeRun(
         Instant startedAt,
         Instant finishedAt
 ) {
+    public NodeRun(final UUID id,
+                   final UUID workflowRunId,
+                   final UUID sourceNodeId,
+                   final UUID sourceAgentId,
+                   final String agentName,
+                   final String agentInstructions,
+                   final AgentOutputSchema agentOutputSchema,
+                   final List<UUID> dependsOnNodeRunIds,
+                   final NodePosition position,
+                   final NodeRunStatus status,
+                   final NodeRunOutput output,
+                   final NodeRunFailure failure,
+                   final NodeRunExecutionModel executionModel,
+                   final Instant createdAt,
+                   final Instant startedAt,
+                   final Instant finishedAt) {
+        this(
+                id,
+                workflowRunId,
+                sourceNodeId,
+                sourceAgentId,
+                agentName,
+                agentInstructions,
+                agentOutputSchema,
+                dependsOnNodeRunIds,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                position,
+                status,
+                output,
+                failure,
+                executionModel,
+                createdAt,
+                startedAt,
+                finishedAt
+        );
+    }
 }

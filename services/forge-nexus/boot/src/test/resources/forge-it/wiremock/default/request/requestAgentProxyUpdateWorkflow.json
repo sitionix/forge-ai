@@ -5,6 +5,7 @@
       "id": "44444444-4444-4444-8444-444444444444",
       "targetId": "22222222-2222-4222-8222-222222222222",
       "dependsOnNodeIds": [],
+      "inputMode": "DEPENDENCIES_ONLY",
       "position": {
         "x": 120,
         "y": 100
@@ -16,6 +17,7 @@
       "dependsOnNodeIds": [
         "44444444-4444-4444-8444-444444444444"
       ],
+      "inputMode": "DEPENDENCIES_ONLY",
       "position": {
         "x": 420,
         "y": 100

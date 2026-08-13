@@ -28,6 +28,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskComman
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
+import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
@@ -189,18 +190,18 @@ class AgentProxyApiMapperTest {
         assertThat(this.mapper.toCommand(new AgentWorkflowRequest("Full Testing")))
                 .isEqualTo(new CreateAgentWorkflowCommand("Full Testing"));
 
-        final var nodeRequest = new NodeRequest(NODE_ID, AGENT_ID, List.of(), new NodePositionRequest(1.0, 2.0));
+        final var nodeRequest = new NodeRequest(NODE_ID, AGENT_ID, List.of(), NodeInputMode.TASK_AND_DEPENDENCIES.name(), new NodePositionRequest(1.0, 2.0));
         assertThat(this.mapper.toCommand(new SaveAgentWorkflowRequest("Full Testing", List.of(nodeRequest))))
                 .isEqualTo(new SaveAgentWorkflowCommand(
                         "Full Testing",
-                        List.of(new Node(NODE_ID, AGENT_ID, List.of(), new NodePosition(1.0, 2.0)))
+                        List.of(new Node(NODE_ID, AGENT_ID, List.of(), NodeInputMode.TASK_AND_DEPENDENCIES, new NodePosition(1.0, 2.0)))
                 ));
 
         final var workflow = new AgentWorkflow(
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new Node(NODE_ID, AGENT_ID, List.of(), new NodePosition(1.0, 2.0))),
+                List.of(new Node(NODE_ID, AGENT_ID, List.of(), NodeInputMode.DEPENDENCIES_ONLY, new NodePosition(1.0, 2.0))),
                 CREATED,
                 UPDATED
         );
@@ -208,7 +209,7 @@ class AgentProxyApiMapperTest {
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new NodeResponse(NODE_ID, AGENT_ID, List.of(), new NodePositionResponse(1.0, 2.0))),
+                List.of(new NodeResponse(NODE_ID, AGENT_ID, List.of(), NodeInputMode.DEPENDENCIES_ONLY.name(), new NodePositionResponse(1.0, 2.0))),
                 CREATED,
                 UPDATED
         ));
@@ -255,6 +256,7 @@ class AgentProxyApiMapperTest {
                         "Analyze changes.",
                         new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
                         List.of(),
+                        NodeInputMode.DEPENDENCIES_ONLY,
                         new NodePosition(1.0, 2.0),
                         AgentNodeRunStatus.PENDING,
                         new AgentNodeRunOutputDocument("{\"summary\":\"done\"}"),
@@ -283,6 +285,7 @@ class AgentProxyApiMapperTest {
                         "Analyze changes.",
                         this.objectMapper.readTree("{\"type\":\"object\"}"),
                         List.of(),
+                        NodeInputMode.DEPENDENCIES_ONLY.name(),
                         new NodePositionResponse(1.0, 2.0),
                         AgentNodeRunStatus.PENDING,
                         this.objectMapper.readTree("{\"summary\":\"done\"}"),

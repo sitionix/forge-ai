@@ -13,17 +13,23 @@ final class CodexGenerationPolicy {
             "plan",
             "contextCompaction"
     );
-    private CodexGenerationPolicy() {
+    private final boolean sideEffectsAllowed;
+
+    CodexGenerationPolicy(final boolean sideEffectsAllowed) {
+        this.sideEffectsAllowed = sideEffectsAllowed;
     }
 
-    static RuntimeException violationFor(final String itemType) {
+    RuntimeException violationFor(final String itemType) {
+        if (this.sideEffectsAllowed) {
+            return null;
+        }
         if (itemType != null && SAFE_ITEM_TYPES.contains(itemType)) {
             return null;
         }
         return executionFailed();
     }
 
-    private static RuntimeException executionFailed() {
+    private RuntimeException executionFailed() {
         return new CodexTransportException("Codex execution failed.");
     }
 

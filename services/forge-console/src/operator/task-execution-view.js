@@ -355,6 +355,7 @@ export class TaskExecutionView {
       <div class="node-run-details-grid">
         ${this.detailRow('Agent', nodeRun.agentName || 'Unknown agent')}
         ${this.detailRow('Status', nodeRun.status || 'PENDING')}
+        ${this.detailRow('Input mode', this.formatInputMode(nodeRun.inputMode))}
         ${this.detailRow('Instructions', nodeRun.agentInstructions || '')}
         ${this.detailRow('Started', this.formatDate(nodeRun.startedAt))}
         ${this.detailRow('Finished', this.formatDate(nodeRun.finishedAt))}
@@ -380,6 +381,16 @@ export class TaskExecutionView {
         <strong>${escapeHtml(value || '-')}</strong>
       </div>
     `;
+  }
+
+  formatInputMode(inputMode) {
+    if (inputMode === 'TASK_AND_DEPENDENCIES') {
+      return 'Original task + previous outputs';
+    }
+    if (inputMode === 'DEPENDENCIES_ONLY') {
+      return 'Previous outputs only';
+    }
+    return 'Unknown';
   }
 
   selectedNodeRun() {

@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
@@ -26,6 +27,7 @@ final class PostgresNodeRunMapper {
                 entity.getAgentInstructions(),
                 AgentOutputSchema.ofCanonicalJsonObject(entity.getAgentOutputSchema()),
                 entity.getDependsOnNodeRunIds() == null ? List.of() : Arrays.asList(entity.getDependsOnNodeRunIds()),
+                inputMode(entity.getInputMode()),
                 new NodePosition(entity.getPositionX(), entity.getPositionY()),
                 NodeRunStatus.valueOf(entity.getStatus()),
                 entity.getOutput() == null ? null : new NodeRunOutput(entity.getOutput()),
@@ -49,6 +51,7 @@ final class PostgresNodeRunMapper {
         entity.setAgentInstructions(nodeRun.agentInstructions());
         entity.setAgentOutputSchema(nodeRun.agentOutputSchema().jsonObject());
         entity.setDependsOnNodeRunIds(nodeRun.dependsOnNodeRunIds().toArray(java.util.UUID[]::new));
+        entity.setInputMode(inputMode(nodeRun.inputMode()).name());
         entity.setPositionX(nodeRun.position().x());
         entity.setPositionY(nodeRun.position().y());
         entity.setStatus(nodeRun.status().name());
@@ -75,5 +78,16 @@ final class PostgresNodeRunMapper {
                 entity.getExecutionModelId(),
                 entity.getExecutionModelEffortId()
         );
+    }
+
+    private static NodeInputMode inputMode(final NodeInputMode inputMode) {
+        return inputMode == null ? NodeInputMode.DEPENDENCIES_ONLY : inputMode;
+    }
+
+    private static NodeInputMode inputMode(final String inputMode) {
+        if (inputMode == null || inputMode.isBlank()) {
+            return NodeInputMode.TASK_AND_DEPENDENCIES;
+        }
+        return NodeInputMode.valueOf(inputMode);
     }
 }

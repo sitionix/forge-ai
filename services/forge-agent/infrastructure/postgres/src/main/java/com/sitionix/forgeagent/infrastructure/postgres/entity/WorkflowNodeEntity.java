@@ -32,6 +32,9 @@ public class WorkflowNodeEntity {
     @Column(name = "depends_on_node_ids", nullable = false, columnDefinition = "uuid[]")
     private UUID[] dependsOnNodeIds;
 
+    @Column(name = "input_mode", nullable = false, length = 32)
+    private String inputMode = "DEPENDENCIES_ONLY";
+
     @Column(name = "position_x", nullable = false)
     private double positionX;
 

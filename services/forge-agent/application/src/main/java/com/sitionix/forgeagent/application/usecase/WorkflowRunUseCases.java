@@ -142,6 +142,7 @@ public class WorkflowRunUseCases {
                 agent.instructions(),
                 agent.outputSchema(),
                 dependsOnNodeRunIds,
+                node.inputMode(),
                 node.position(),
                 NodeRunStatus.PENDING,
                 null,

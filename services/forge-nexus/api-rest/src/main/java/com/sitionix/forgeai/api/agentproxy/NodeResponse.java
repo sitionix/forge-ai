@@ -7,6 +7,13 @@ public record NodeResponse(
         UUID id,
         UUID targetId,
         List<UUID> dependsOnNodeIds,
+        String inputMode,
         NodePositionResponse position
 ) {
+    public NodeResponse(final UUID id,
+                        final UUID targetId,
+                        final List<UUID> dependsOnNodeIds,
+                        final NodePositionResponse position) {
+        this(id, targetId, dependsOnNodeIds, null, position);
+    }
 }

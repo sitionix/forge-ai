@@ -10,6 +10,11 @@ import java.util.Optional;
 final class CodexTurnStateTracker {
 
     private final Map<String, CodexExecutionState> executionsByThreadId = new HashMap<>();
+    private final CodexGenerationPolicy generationPolicy;
+
+    CodexTurnStateTracker(final boolean sideEffectsAllowed) {
+        this.generationPolicy = new CodexGenerationPolicy(sideEffectsAllowed);
+    }
 
     synchronized CodexExecutionState register(final String threadId) {
         final CodexExecutionState state = new CodexExecutionState(threadId);
@@ -96,7 +101,7 @@ final class CodexTurnStateTracker {
         final JsonNode item = params.path("item");
         this.requireObject(item);
         final String itemType = this.nonBlank(item.path("type"));
-        final RuntimeException violation = CodexGenerationPolicy.violationFor(itemType);
+        final RuntimeException violation = this.generationPolicy.violationFor(itemType);
         if (violation != null) {
             execution.failPolicyViolation(violation);
             return;

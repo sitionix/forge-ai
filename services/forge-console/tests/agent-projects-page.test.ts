@@ -136,6 +136,7 @@ function nodeRun(
     agentInstructions: `${agentName} instructions`,
     agentOutputSchema: { type: 'object' },
     dependsOnNodeRunIds,
+    inputMode: 'DEPENDENCIES_ONLY',
     position: { x, y },
     status,
     output,
@@ -159,8 +160,8 @@ function workflowRunDetail(id: string, status: string, nodeRuns: any[] = [], wor
   };
 }
 
-function node(id: string, targetId: string, dependsOnNodeIds: string[] = [], x = 10, y = 20) {
-  return { id, targetId, dependsOnNodeIds, position: { x, y } };
+function node(id: string, targetId: string, dependsOnNodeIds: string[] = [], x = 10, y = 20, inputMode = 'DEPENDENCIES_ONLY') {
+  return { id, targetId, dependsOnNodeIds, inputMode, position: { x, y } };
 }
 
 function deferred<T>() {
@@ -417,7 +418,10 @@ describe('Agent projects page', () => {
     const nodeRuns = [
       nodeRun('pending-node', 'Planner', 'PENDING', [], 20, 30),
       nodeRun('running-node', 'Analyzer', 'RUNNING', ['pending-node'], 280, 30),
-      nodeRun('success-node', 'Backend Implementer', 'SUCCEEDED', ['running-node'], 540, 30, { count: 8, valid: true }),
+      {
+        ...nodeRun('success-node', 'Backend Implementer', 'SUCCEEDED', ['running-node'], 540, 30, { count: 8, valid: true }),
+        inputMode: 'TASK_AND_DEPENDENCIES'
+      },
       nodeRun('failed-node', 'Reviewer', 'FAILED', ['success-node'], 800, 30, null, { code: 'ASSERTION_FAILED', message: 'Expected count to match.' }),
       nodeRun('blocked-node', 'Release', 'BLOCKED', ['failed-node'], 1060, 30),
       nodeRun('cancelled-node', 'Cleanup', 'CANCELLED', ['blocked-node'], 1320, 30)
@@ -447,6 +451,7 @@ describe('Agent projects page', () => {
     expect(details.textContent).toContain('Backend Implementer');
     expect(details.textContent).toContain('Backend Implementer instructions');
     expect(details.textContent).toContain('SUCCEEDED');
+    expect(details.textContent).toContain('Original task + previous outputs');
     expect(details.querySelector('pre')?.textContent).toContain('"count": 8');
 
     dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="failed-node"]')?.click();
@@ -1711,6 +1716,7 @@ describe('Agent projects page', () => {
         id: 'node-1',
         targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         dependsOnNodeIds: [],
+        inputMode: 'DEPENDENCIES_ONLY',
         position: { x: 80, y: 90 }
       }]
     });
@@ -1718,6 +1724,45 @@ describe('Agent projects page', () => {
 
     await page.workflowBuilder.save();
     expect(dom.window.document.getElementById('agentsV2WorkflowBuilderError')?.textContent).toContain('WORKFLOW_GRAPH_CYCLE');
+  });
+
+  it('Workflow Builder saves dependency input mode per Node', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      node('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', ['node-1'], 260, 20)
+    ]))) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const startSelect = dom.window.document.querySelector<HTMLSelectElement>('[data-node-input-mode="node-1"]')!;
+    const dependentSelect = dom.window.document.querySelector<HTMLSelectElement>('[data-node-input-mode="node-2"]')!;
+
+    expect(startSelect.disabled).toBe(true);
+    expect(startSelect.value).toBe('DEPENDENCIES_ONLY');
+    expect(dom.window.document.querySelector('[data-node-id="node-1"]')?.textContent).toContain('Starts from task');
+    expect(dependentSelect.disabled).toBe(false);
+
+    dependentSelect.value = 'TASK_AND_DEPENDENCIES';
+    dependentSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    await page.workflowBuilder.save();
+
+    expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', {
+      name: 'Full Testing',
+      nodes: [
+        {
+          id: 'node-1',
+          targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          dependsOnNodeIds: [],
+          inputMode: 'DEPENDENCIES_ONLY',
+          position: { x: 10, y: 20 }
+        },
+        {
+          id: 'node-2',
+          targetId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          dependsOnNodeIds: ['node-1'],
+          inputMode: 'TASK_AND_DEPENDENCIES',
+          position: { x: 260, y: 20 }
+        }
+      ]
+    });
   });
 
   it('UUID fallback produces valid UUIDs and missing crypto fails clearly', async () => {

@@ -7,6 +7,13 @@ public record NodeRequest(
         UUID id,
         UUID targetId,
         List<UUID> dependsOnNodeIds,
+        String inputMode,
         NodePositionRequest position
 ) {
+    public NodeRequest(final UUID id,
+                       final UUID targetId,
+                       final List<UUID> dependsOnNodeIds,
+                       final NodePositionRequest position) {
+        this(id, targetId, dependsOnNodeIds, null, position);
+    }
 }
