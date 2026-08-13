@@ -12,6 +12,7 @@ import com.sitionix.forgeagent.api.dto.CodexRuntimeEffortResponse;
 import com.sitionix.forgeagent.api.dto.CodexRuntimeModelResponse;
 import com.sitionix.forgeagent.api.dto.CodexRuntimeProviderResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.NodeRunFailureResponse;
@@ -20,6 +21,8 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
@@ -27,6 +30,7 @@ import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
+import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
@@ -43,6 +47,8 @@ import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
+import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
+import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
@@ -94,6 +100,10 @@ class ForgeAgentApiMapper {
         return new CreateWorkflowRunCommand(request.input());
     }
 
+    CreateProjectTaskCommand toCommand(final CreateProjectTaskRequest request) {
+        return new CreateProjectTaskCommand(request.title(), request.input(), request.workflowId());
+    }
+
     ProjectResponse toResponse(final Project project) {
         return new ProjectResponse(project.id(), project.name(), project.createdAt(), project.updatedAt());
     }
@@ -141,6 +151,7 @@ class ForgeAgentApiMapper {
         return new WorkflowRunSummaryResponse(
                 run.id(),
                 run.sourceWorkflowId(),
+                run.taskId(),
                 run.workflowName(),
                 run.status(),
                 run.createdAt(),
@@ -154,6 +165,7 @@ class ForgeAgentApiMapper {
                 run.id(),
                 run.projectId(),
                 run.sourceWorkflowId(),
+                run.taskId(),
                 run.workflowName(),
                 run.input(),
                 run.status(),
@@ -161,6 +173,33 @@ class ForgeAgentApiMapper {
                 run.createdAt(),
                 run.startedAt(),
                 run.finishedAt()
+        );
+    }
+
+    ProjectTaskSummaryResponse toResponse(final ProjectTaskSummary task) {
+        return new ProjectTaskSummaryResponse(
+                task.id(),
+                task.projectId(),
+                task.title(),
+                task.workflowId(),
+                task.workflowName(),
+                task.latestWorkflowRunId(),
+                task.executionStatus(),
+                task.createdAt(),
+                task.updatedAt()
+        );
+    }
+
+    ProjectTaskResponse toResponse(final ProjectTaskDetails task) {
+        return new ProjectTaskResponse(
+                task.id(),
+                task.projectId(),
+                task.title(),
+                task.input(),
+                task.workflowId(),
+                task.runs().stream().map(this::toSummaryResponse).toList(),
+                task.createdAt(),
+                task.updatedAt()
         );
     }
 

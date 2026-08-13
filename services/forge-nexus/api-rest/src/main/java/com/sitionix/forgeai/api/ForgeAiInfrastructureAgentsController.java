@@ -5,6 +5,8 @@ import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProxyApiMapper;
@@ -12,16 +14,20 @@ import com.sitionix.forgeai.api.agentproxy.AgentRuntimeResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse;
 import com.sitionix.forgeai.api.agentproxy.CreateAgentWorkflowRunRequest;
+import com.sitionix.forgeai.api.agentproxy.CreateAgentProjectTaskRequest;
 import com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.domain.usecase.CreateAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
+import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.GetAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.GetAgentRuntime;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflowRun;
+import com.sitionix.forgeai.domain.usecase.GetAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.ListAgentProjects;
+import com.sitionix.forgeai.domain.usecase.ListAgentProjectTasks;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflowRuns;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflows;
 import com.sitionix.forgeai.domain.usecase.ListProjectAgentDefinitions;
@@ -46,6 +52,9 @@ public class ForgeAiInfrastructureAgentsController {
 
     private final ListAgentProjects listAgentProjects;
     private final CreateAgentProject createAgentProject;
+    private final CreateAgentProjectTask createAgentProjectTask;
+    private final ListAgentProjectTasks listAgentProjectTasks;
+    private final GetAgentProjectTask getAgentProjectTask;
     private final GetAgentRuntime getAgentRuntime;
     private final ListProjectAgentDefinitions listProjectAgentDefinitions;
     private final CreateAgentDefinition createAgentDefinition;
@@ -71,6 +80,27 @@ public class ForgeAiInfrastructureAgentsController {
     public ResponseEntity<AgentProjectResponse> createProject(@Valid @RequestBody final AgentProjectRequest request) {
         final AgentProjectResponse response = this.mapper.toResponse(this.createAgentProject.execute(this.mapper.toCommand(request)));
         return ResponseEntity.created(URI.create("/api/v1/infrastructure/agents/projects/" + response.id())).body(response);
+    }
+
+    @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/tasks")
+    public ResponseEntity<AgentProjectTaskResponse> createProjectTask(@PathVariable final UUID projectId,
+                                                                      @Valid @RequestBody final CreateAgentProjectTaskRequest request) {
+        final AgentProjectTaskResponse response = this.mapper.toResponse(
+                this.createAgentProjectTask.execute(projectId, this.mapper.toCommand(request))
+        );
+        return ResponseEntity.created(URI.create("/api/v1/infrastructure/agents/tasks/" + response.id())).body(response);
+    }
+
+    @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/tasks")
+    public ResponseEntity<List<AgentProjectTaskSummaryResponse>> listProjectTasks(@PathVariable final UUID projectId) {
+        return ResponseEntity.ok(this.listAgentProjectTasks.execute(projectId).stream()
+                .map(this.mapper::toResponse)
+                .toList());
+    }
+
+    @GetMapping("/api/v1/infrastructure/agents/tasks/{taskId}")
+    public ResponseEntity<AgentProjectTaskResponse> getProjectTask(@PathVariable final UUID taskId) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.getAgentProjectTask.execute(taskId)));
     }
 
     @GetMapping("/api/v1/infrastructure/agents/runtime")

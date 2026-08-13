@@ -8,6 +8,7 @@ public record AgentWorkflowRun(
         UUID id,
         UUID projectId,
         UUID sourceWorkflowId,
+        UUID taskId,
         String workflowName,
         String input,
         AgentWorkflowRunStatus status,

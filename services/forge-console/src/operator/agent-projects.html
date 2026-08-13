@@ -55,6 +55,18 @@
         <div id="agentsV2WorkflowsError" class="error-box hidden"></div>
         <div id="agentsV2WorkflowsList" class="agents-v2-card-grid" aria-live="polite"></div>
       </section>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head">
+          <div>
+            <h2>Tasks</h2>
+            <p>Run project work through an agent workflow.</p>
+          </div>
+          <button id="agentsV2CreateTask" class="button small secondary" type="button" disabled>New Task</button>
+        </div>
+        <div id="agentsV2TasksError" class="error-box hidden"></div>
+        <div id="agentsV2TasksList" class="agents-v2-card-grid" aria-live="polite"></div>
+      </section>
     </section>
 
     <section id="agentsV2Builder" class="panel agents-v2-builder hidden" aria-label="Workflow builder">
@@ -136,6 +148,25 @@
         <div class="modal-actions">
           <button id="agentsV2WorkflowCancel" class="button secondary" type="button">Cancel</button>
           <button id="agentsV2WorkflowCreateSave" class="button" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="agentsV2TaskDialog" class="modal-dialog">
+      <form id="agentsV2TaskForm" method="dialog" class="modal-form">
+        <div class="modal-head">
+          <h2>Create Task</h2>
+        </div>
+        <div id="agentsV2TaskModalError" class="error-box hidden"></div>
+        <label class="field-label" for="agentsV2TaskTitle">Title</label>
+        <input id="agentsV2TaskTitle" class="text-input" type="text" required maxlength="120">
+        <label class="field-label" for="agentsV2TaskInput">Task</label>
+        <textarea id="agentsV2TaskInput" class="agent-modal-textarea" required></textarea>
+        <label class="field-label" for="agentsV2TaskWorkflow">Workflow</label>
+        <select id="agentsV2TaskWorkflow" class="text-input" required></select>
+        <div class="modal-actions">
+          <button id="agentsV2TaskCancel" class="button secondary" type="button">Cancel</button>
+          <button id="agentsV2TaskCreateSave" class="button" type="submit">Create</button>
         </div>
       </form>
     </dialog>

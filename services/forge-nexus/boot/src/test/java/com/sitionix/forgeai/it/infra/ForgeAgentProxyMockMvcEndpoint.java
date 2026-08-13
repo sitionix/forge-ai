@@ -5,6 +5,8 @@ import com.sitionix.forgeai.api.agentproxy.AgentDefinitionListResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentRuntimeResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
@@ -12,6 +14,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse;
 import com.sitionix.forgeai.api.agentproxy.CreateAgentWorkflowRunRequest;
+import com.sitionix.forgeai.api.agentproxy.CreateAgentProjectTaskRequest;
 import com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
@@ -37,6 +40,47 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                 "requestAgentProxyCreateProject.json",
                 HttpStatus.CREATED,
                 "responseAgentProxyCreateProject.json");
+    }
+
+    public static Endpoint<CreateAgentProjectTaskRequest, AgentProjectTaskResponse> createProjectTask() {
+        return nexusPost("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
+                CreateAgentProjectTaskRequest.class,
+                AgentProjectTaskResponse.class,
+                "requestAgentProxyCreateProjectTask.json",
+                HttpStatus.CREATED,
+                "responseAgentProxyProjectTask.json");
+    }
+
+    public static Endpoint<CreateAgentProjectTaskRequest, InfrastructureErrorResponse> createProjectTaskLocalInvalid() {
+        return nexusPost("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
+                CreateAgentProjectTaskRequest.class,
+                InfrastructureErrorResponse.class,
+                "requestAgentProxyInvalidProjectTask.json",
+                HttpStatus.BAD_REQUEST,
+                "responseAgentProxyLocalInvalidRequest.json");
+    }
+
+    public static Endpoint<CreateAgentProjectTaskRequest, InfrastructureErrorResponse> createProjectTaskEmptyWorkflow() {
+        return nexusPost("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
+                CreateAgentProjectTaskRequest.class,
+                InfrastructureErrorResponse.class,
+                "requestAgentProxyCreateProjectTask.json",
+                HttpStatus.CONFLICT,
+                "responseAgentProxyEmptyWorkflow.json");
+    }
+
+    public static Endpoint<Void, AgentProjectTaskSummaryResponse[]> listProjectTasks() {
+        return nexusGet("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
+                AgentProjectTaskSummaryResponse[].class,
+                HttpStatus.OK,
+                "responseAgentProxyProjectTasks.json");
+    }
+
+    public static Endpoint<Void, AgentProjectTaskResponse> getProjectTask() {
+        return nexusGet("/api/v1/infrastructure/agents/tasks/{taskId}",
+                AgentProjectTaskResponse.class,
+                HttpStatus.OK,
+                "responseAgentProxyProjectTask.json");
     }
 
     public static Endpoint<Void, AgentRuntimeResponse> getRuntime() {

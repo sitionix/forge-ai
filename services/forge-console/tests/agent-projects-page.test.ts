@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentProjectsPage } from '../src/operator/agent-projects-page.js';
 import { createAgentProjectsApi } from '../src/operator/agent-projects-api.js';
 import { bootstrapOperatorConsole } from '../src/operator/operator-bootstrap.js';
@@ -78,6 +78,26 @@ function workflow(id = '33333333-3333-4333-8333-333333333333', nodes: any[] = []
   return { id, projectId, name: 'Full Testing', nodes, createdAt: '2026-08-04T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z' };
 }
 
+function task(
+  id = '55555555-5555-4555-8555-555555555555',
+  executionStatus = 'SUCCEEDED',
+  projectId = project().id,
+  workflowId = workflow().id,
+  workflowName = workflow().name
+) {
+  return {
+    id,
+    projectId,
+    title: 'Check calculation',
+    workflowId,
+    workflowName,
+    latestWorkflowRunId: '66666666-6666-4666-8666-666666666666',
+    executionStatus,
+    createdAt: '2026-08-04T01:02:03Z',
+    updatedAt: '2026-08-04T01:02:03Z'
+  };
+}
+
 function node(id: string, targetId: string, dependsOnNodeIds: string[] = [], x = 10, y = 20) {
   return { id, targetId, dependsOnNodeIds, position: { x, y } };
 }
@@ -108,6 +128,10 @@ function api(overrides = {}) {
     createWorkflow: vi.fn(() => Promise.resolve(workflow('44444444-4444-4444-8444-444444444444'))),
     getWorkflow: vi.fn((workflowId: string) => Promise.resolve(workflow(workflowId))),
     updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes))),
+    listProjectTasks: vi.fn((projectId: string) => Promise.resolve([task(undefined, 'SUCCEEDED', projectId)])),
+    createProjectTask: vi.fn(() => Promise.resolve(task('77777777-7777-4777-8777-777777777777', 'QUEUED'))),
+    getProjectTask: vi.fn((taskId: string) => Promise.resolve({ ...task(taskId), input: 'Count the letters.', runs: [] })),
+    createWorkflowRun: vi.fn(() => Promise.resolve({})),
     ...overrides
   };
 }
@@ -151,7 +175,16 @@ function selectValue(dom: JSDOM, id: string, value: string) {
   select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
 }
 
+function useFakeWindowTimers(dom: JSDOM) {
+  dom.window.setTimeout = globalThis.setTimeout as typeof dom.window.setTimeout;
+  dom.window.clearTimeout = globalThis.clearTimeout as typeof dom.window.clearTimeout;
+}
+
 describe('Agent projects page', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('navigation exposes Projects as primary and keeps Agent Runtime separate', () => {
     const dom = agentProjectsDom();
     bootstrapOperatorConsole({ document: dom.window.document, window: dom.window, http: { get: vi.fn(), post: vi.fn(), put: vi.fn() } });
@@ -194,10 +227,395 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2ProjectCrumbs')?.textContent).toBe('Projects / Sitionix');
     expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Architect');
     expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
 
     page.showProjectsIndex();
     expect(page.state.selectedProjectId).toBeNull();
     expect(dom.window.document.getElementById('agentsV2ProjectsView')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('opening Project loads Tasks and renders title workflow status and created date', async () => {
+    const fakeApi = api({
+      listProjectTasks: vi.fn((projectId: string) => Promise.resolve([
+        task('task-1', 'RUNNING', projectId, workflow().id, 'Simple Analysis')
+      ]))
+    });
+    const { dom } = await openedProject(fakeApi);
+    const list = dom.window.document.getElementById('agentsV2TasksList')!;
+
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledWith(project().id);
+    expect(list.textContent).toContain('Check calculation');
+    expect(list.textContent).toContain('Workflow: Simple Analysis');
+    expect(list.textContent).toContain('RUNNING');
+    expect(list.textContent).toContain('Created:');
+    expect(list.querySelector('[data-task-status="RUNNING"]')).not.toBeNull();
+  });
+
+  it('empty Task state renders under Tasks without hiding the section', async () => {
+    const fakeApi = api({
+      listProjectTasks: vi.fn(() => Promise.resolve([]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2CreateTask')).not.toBeNull();
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('No tasks yet.');
+  });
+
+  it('New Task is disabled and explains that a Workflow is required when Project has no Workflows', async () => {
+    const fakeApi = api({
+      listProjectWorkflows: vi.fn(() => Promise.resolve([])),
+      listProjectTasks: vi.fn(() => Promise.resolve([]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect((dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(true);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Create a workflow before creating a task.');
+  });
+
+  it('Task loading failure remains scoped to Tasks', async () => {
+    const fakeApi = api({
+      listProjectTasks: vi.fn(() => Promise.reject(new Error('Tasks unavailable')))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Architect');
+    expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
+    expect(dom.window.document.getElementById('agentsV2TasksError')?.textContent).toContain('Tasks unavailable');
+    expect((dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('Agents loading failure does not block New Task when Workflows and Tasks are current', async () => {
+    const fakeApi = api({
+      listProjectAgents: vi.fn(() => Promise.reject(new Error('Agents unavailable'))),
+      listProjectWorkflows: vi.fn(() => Promise.resolve([workflow()])),
+      listProjectTasks: vi.fn(() => Promise.resolve([task('task-1', 'SUCCEEDED', project().id, workflow().id, 'Full Testing')]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2AgentsError')?.textContent).toContain('Agents unavailable');
+    expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
+    expect((dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('Workflow loading failure keeps existing Task summaries visible but disables New Task', async () => {
+    const fakeApi = api({
+      listProjectWorkflows: vi.fn(() => Promise.reject(new Error('Workflows unavailable'))),
+      listProjectTasks: vi.fn(() => Promise.resolve([task('task-1', 'RUNNING', project().id, workflow().id, 'Snapshot Flow')]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2WorkflowsError')?.textContent).toContain('Workflows unavailable');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Workflow: Snapshot Flow');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('RUNNING');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).not.toContain('Create a workflow before creating a task.');
+    expect((dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('stale Project Task responses are ignored after switching Projects', async () => {
+    const dom = agentProjectsDom();
+    const projectOne = project();
+    const projectTwo = project('22222222-2222-4222-8222-222222222222', 'Forge AI');
+    const firstTasks = deferred<any[]>();
+    const secondTasks = deferred<any[]>();
+    const fakeApi = api({
+      listProjects: vi.fn(() => Promise.resolve([projectOne, projectTwo])),
+      listProjectAgents: vi.fn((projectId: string) => Promise.resolve([agent(`agent-${projectId}`, projectId === projectOne.id ? 'Architect' : 'Backend', projectId)])),
+      listProjectWorkflows: vi.fn((projectId: string) => Promise.resolve([workflow(projectId === projectOne.id ? 'wf-1' : 'wf-2', [], projectId)])),
+      listProjectTasks: vi.fn((projectId: string) => projectId === projectOne.id ? firstTasks.promise : secondTasks.promise)
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+
+    const firstOpen = page.openProject(projectOne.id);
+    const secondOpen = page.openProject(projectTwo.id);
+    secondTasks.resolve([task('task-2', 'SUCCEEDED', projectTwo.id, 'wf-2', 'Second Flow')]);
+    await secondOpen;
+    firstTasks.resolve([task('task-1', 'SUCCEEDED', projectOne.id, 'wf-1', 'First Flow')]);
+    await firstOpen;
+    await flushAsync();
+
+    expect(page.state.selectedProjectId).toBe(projectTwo.id);
+    expect(page.state.tasksProjectId).toBe(projectTwo.id);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Second Flow');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).not.toContain('First Flow');
+  });
+
+  it('New Task modal sends title input and workflowId through createProjectTask only', async () => {
+    const workflows = [
+      workflow('wf-1', [], project().id),
+      { ...workflow('wf-2', [], project().id), name: 'Deploy Review' }
+    ];
+    const fakeApi = api({
+      listProjectWorkflows: vi.fn(() => Promise.resolve(workflows)),
+      listProjectTasks: vi.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([task('task-created', 'QUEUED', project().id, 'wf-2', 'Deploy Review')])
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    const newTask = dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement;
+    expect(newTask.disabled).toBe(false);
+    newTask.click();
+    const workflowSelect = dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement;
+    expect([...workflowSelect.options].map((option) => option.textContent)).toEqual(['Full Testing', 'Deploy Review']);
+    (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = '  Test chain  ';
+    (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = '  Find X and pass the result forward  ';
+    workflowSelect.value = 'wf-2';
+    dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.createProjectTask).toHaveBeenCalledWith(project().id, {
+      title: 'Test chain',
+      input: 'Find X and pass the result forward',
+      workflowId: 'wf-2'
+    });
+    expect(fakeApi.createWorkflowRun).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(false);
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Deploy Review');
+  });
+
+  it('failed Task creation keeps modal open and shows the controlled error', async () => {
+    const fakeApi = api({
+      createProjectTask: vi.fn(() => Promise.reject(new Error('EMPTY_WORKFLOW: Workflow must contain at least one node.')))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    dom.window.document.getElementById('agentsV2CreateTask')?.click();
+    (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = 'Check calculation';
+    (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Count letters.';
+    (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+    dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(true);
+    expect(dom.window.document.getElementById('agentsV2TaskModalError')?.textContent).toContain('EMPTY_WORKFLOW');
+  });
+
+  it('invalid Task modal input is rejected locally without creating a Task', async () => {
+    const { dom, fakeApi } = await openedProject();
+
+    dom.window.document.getElementById('agentsV2CreateTask')?.click();
+    (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = ' ';
+    (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Count letters.';
+    (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+    dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.createProjectTask).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('agentsV2TaskModalError')?.textContent).toContain('Enter a title, task, and workflow.');
+    expect(dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(true);
+  });
+
+  it('active Task polling uses runtime config and stops after RUNNING becomes SUCCEEDED', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const fakeApi = api({
+      listProjectTasks: vi.fn()
+        .mockResolvedValueOnce([task('task-1', 'RUNNING')])
+        .mockResolvedValueOnce([task('task-1', 'SUCCEEDED')])
+    });
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: fakeApi,
+      runtimeConfig: { activeJobPollIntervalMs: 1234 }
+    });
+    page.mount();
+    await flushAsync();
+
+    await page.openProject(project().id);
+    await flushAsync();
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('RUNNING');
+
+    await vi.advanceTimersByTimeAsync(1233);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('SUCCEEDED');
+
+    await vi.advanceTimersByTimeAsync(2468);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it('background Task polling failure keeps last good RUNNING state and next success can stop polling', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const fakeApi = api({
+      listProjectTasks: vi.fn()
+        .mockResolvedValueOnce([task('task-1', 'RUNNING')])
+        .mockRejectedValueOnce(new Error('Tasks refresh failed'))
+        .mockResolvedValueOnce([task('task-1', 'SUCCEEDED')])
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('RUNNING');
+    expect(dom.window.document.getElementById('agentsV2TasksError')?.textContent).toContain('Tasks refresh failed');
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(3);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('SUCCEEDED');
+    expect(dom.window.document.getElementById('agentsV2TasksError')?.textContent).toBe('');
+
+    await vi.advanceTimersByTimeAsync(4000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(3);
+  });
+
+  it('dispose while a Task request is running ignores the late response and schedules no polling', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const pendingTasks = deferred<any[]>();
+    const fakeApi = api({
+      listProjectTasks: vi.fn(() => pendingTasks.promise)
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+
+    const open = page.openProject(project().id);
+    await flushAsync();
+    page.dispose();
+    pendingTasks.resolve([task('task-1', 'RUNNING')]);
+    await open;
+    await flushAsync();
+
+    expect(page.state.tasksProjectId).toBeNull();
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).not.toContain('RUNNING');
+    await vi.advanceTimersByTimeAsync(4000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it('Task polling stops when leaving Project or opening Workflow builder', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const fakeApi = api({
+      listProjectTasks: vi.fn(() => Promise.resolve([task('task-1', 'RUNNING')]))
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+
+    page.showProjectsIndex();
+    await vi.advanceTimersByTimeAsync(2000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(1);
+
+    await page.openProject(project().id);
+    await flushAsync();
+    await page.openWorkflowBuilder(workflow().id);
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(2000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it('Task polling does not overlap and stale poll results cannot overwrite a switched Project', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const projectOne = project();
+    const projectTwo = project('22222222-2222-4222-8222-222222222222', 'Forge AI');
+    const projectOnePoll = deferred<any[]>();
+    let projectOneTaskCalls = 0;
+    const fakeApi = api({
+      listProjects: vi.fn(() => Promise.resolve([projectOne, projectTwo])),
+      listProjectAgents: vi.fn((projectId: string) => Promise.resolve([agent(`agent-${projectId}`, projectId === projectOne.id ? 'Architect' : 'Backend', projectId)])),
+      listProjectWorkflows: vi.fn((projectId: string) => Promise.resolve([workflow(projectId === projectOne.id ? 'wf-1' : 'wf-2', [], projectId)])),
+      listProjectTasks: vi.fn((projectId: string) => {
+        if (projectId === projectOne.id) {
+          projectOneTaskCalls += 1;
+          return projectOneTaskCalls === 1
+            ? Promise.resolve([task('task-1', 'RUNNING', projectOne.id, 'wf-1', 'First Flow')])
+            : projectOnePoll.promise;
+        }
+        return Promise.resolve([task('task-2', 'SUCCEEDED', projectTwo.id, 'wf-2', 'Second Flow')]);
+      })
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+    await page.openProject(projectOne.id);
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(4000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+
+    const secondOpen = page.openProject(projectTwo.id);
+    await flushAsync();
+    projectOnePoll.resolve([task('task-1', 'RUNNING', projectOne.id, 'wf-1', 'First Flow')]);
+    await secondOpen;
+    await flushAsync();
+
+    expect(page.state.selectedProjectId).toBe(projectTwo.id);
+    expect(page.state.tasksProjectId).toBe(projectTwo.id);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Second Flow');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).not.toContain('First Flow');
+  });
+
+  it('creating a Task during an existing refresh waits for it then performs one fresh list load', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const runningRefresh = deferred<any[]>();
+    const fakeApi = api({
+      listProjectTasks: vi.fn()
+        .mockResolvedValueOnce([task('task-1', 'RUNNING', project().id, workflow().id, 'Full Testing')])
+        .mockReturnValueOnce(runningRefresh.promise)
+        .mockResolvedValueOnce([{ ...task('task-created', 'QUEUED', project().id, workflow().id, 'Full Testing'), title: 'Fresh task' }])
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+
+    dom.window.document.getElementById('agentsV2CreateTask')?.click();
+    (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = 'Fresh task';
+    (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Run this now.';
+    (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+    dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+    expect(fakeApi.createProjectTask).toHaveBeenCalledTimes(1);
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+
+    runningRefresh.resolve([task('task-1', 'RUNNING', project().id, workflow().id, 'Full Testing')]);
+    await flushAsync();
+
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(3);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Fresh task');
+    expect(fakeApi.createWorkflowRun).not.toHaveBeenCalled();
   });
 
   it('creates and edits agents without dependency fields in payloads', async () => {
@@ -809,9 +1227,19 @@ describe('Agent projects page', () => {
     client.createWorkflow(project().id, { name: 'Full Testing' });
     client.getWorkflow('33333333-3333-4333-8333-333333333333');
     client.updateWorkflow('33333333-3333-4333-8333-333333333333', { name: 'Full Testing', nodes: [] });
+    client.listProjectTasks(project().id);
+    client.createProjectTask(project().id, { title: 'Check calculation', input: 'Count letters.', workflowId: '33333333-3333-4333-8333-333333333333' });
+    client.getProjectTask('55555555-5555-4555-8555-555555555555');
 
     const calls = [...http.get.mock.calls, ...http.post.mock.calls, ...http.put.mock.calls].map(([path]) => path);
     expect(calls.every((path) => path.startsWith('/agents'))).toBe(true);
+    expect(http.get).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks`);
+    expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks`, {
+      title: 'Check calculation',
+      input: 'Count letters.',
+      workflowId: '33333333-3333-4333-8333-333333333333'
+    });
+    expect(http.get).toHaveBeenCalledWith('/agents/tasks/55555555-5555-4555-8555-555555555555');
     expect(consoleSourceText()).not.toContain('7091');
     expect(consoleSourceText()).not.toContain('FORGE_AGENT');
     expect(JSON.stringify(http.post.mock.calls)).not.toContain('dependsOnAgentIds');

@@ -44,6 +44,7 @@ class NodeRunLifecycleTest {
     private static final UUID OTHER_WORKFLOW_RUN_ID = UUID.fromString("10000000-0000-4000-8000-000000000101");
     private static final UUID PROJECT_ID = UUID.fromString("10000000-0000-4000-8000-000000000002");
     private static final UUID WORKFLOW_ID = UUID.fromString("10000000-0000-4000-8000-000000000003");
+    private static final UUID TASK_ID = UUID.fromString("10000000-0000-4000-8000-000000000004");
     private static final UUID AGENT_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
     private static final UUID NODE_RUN_A = UUID.fromString("30000000-0000-4000-8000-000000000001");
     private static final UUID NODE_RUN_B = UUID.fromString("30000000-0000-4000-8000-000000000002");
@@ -91,6 +92,18 @@ class NodeRunLifecycleTest {
             assertThat(execution.outputSchema()).isEqualTo(SNAPSHOT_SCHEMA);
             assertThat(execution.dependencies()).isEmpty();
         });
+    }
+
+    @Test
+    void startingTaskAssociatedWorkflowRunPreservesTaskId() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.QUEUED, TASK_ID, null, null);
+        this.nodeRuns.put(NODE_RUN_A, this.nodeRun(NODE_RUN_A, List.of(), NodeRunStatus.PENDING));
+
+        final Optional<NodeExecutionClaim> claim = this.lifecycle.tryStart(NODE_RUN_A);
+
+        assertThat(claim).isPresent();
+        assertThat(this.workflowRun.status()).isEqualTo(WorkflowRunStatus.RUNNING);
+        assertThat(this.workflowRun.taskId()).isEqualTo(TASK_ID);
     }
 
     @Test
@@ -286,6 +299,18 @@ class NodeRunLifecycleTest {
     }
 
     @Test
+    void successfulTaskAssociatedWorkflowRunReconciliationPreservesTaskId() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.RUNNING, TASK_ID, NOW, null);
+        this.nodeRuns.put(NODE_RUN_A, this.withOutput(this.nodeRun(NODE_RUN_A, List.of(), NodeRunStatus.SUCCEEDED), new NodeRunOutput("{\"a\":true}")));
+        this.nodeRuns.put(NODE_RUN_B, this.nodeRun(NODE_RUN_B, List.of(NODE_RUN_A), NodeRunStatus.RUNNING));
+
+        this.lifecycle.succeed(NODE_RUN_B, new NodeRunOutput("{\"b\":true}"));
+
+        assertThat(this.workflowRun.status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+        assertThat(this.workflowRun.taskId()).isEqualTo(TASK_ID);
+    }
+
+    @Test
     void reconciliationFailsWorkflowWhenTerminalGraphContainsFailedOrBlockedNode() {
         this.workflowRun = this.workflowRun(WorkflowRunStatus.RUNNING, NOW, null);
         this.nodeRuns.put(NODE_RUN_A, this.withFailure(
@@ -299,6 +324,21 @@ class NodeRunLifecycleTest {
         assertThat(this.nodeRuns.get(NODE_RUN_B).status()).isEqualTo(NodeRunStatus.BLOCKED);
         assertThat(this.workflowRun.status()).isEqualTo(WorkflowRunStatus.FAILED);
         assertThat(this.workflowRun.finishedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void failedTaskAssociatedWorkflowRunReconciliationPreservesTaskId() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.RUNNING, TASK_ID, NOW, null);
+        this.nodeRuns.put(NODE_RUN_A, this.withFailure(
+                this.nodeRun(NODE_RUN_A, List.of(), NodeRunStatus.FAILED),
+                new NodeRunFailure("EXECUTION_FAILED", "Executor failed.")
+        ));
+        this.nodeRuns.put(NODE_RUN_B, this.nodeRun(NODE_RUN_B, List.of(NODE_RUN_A), NodeRunStatus.PENDING));
+
+        this.lifecycle.tryStart(NODE_RUN_B);
+
+        assertThat(this.workflowRun.status()).isEqualTo(WorkflowRunStatus.FAILED);
+        assertThat(this.workflowRun.taskId()).isEqualTo(TASK_ID);
     }
 
     private void assertDependencyNoOp(final NodeRunStatus dependencyStatus) {
@@ -349,10 +389,15 @@ class NodeRunLifecycleTest {
     }
 
     private WorkflowRun workflowRun(final WorkflowRunStatus status, final Instant startedAt, final Instant finishedAt) {
+        return this.workflowRun(status, null, startedAt, finishedAt);
+    }
+
+    private WorkflowRun workflowRun(final WorkflowRunStatus status, final UUID taskId, final Instant startedAt, final Instant finishedAt) {
         return new WorkflowRun(
                 WORKFLOW_RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                taskId,
                 "Full Testing",
                 "Review auth changes.",
                 status,

@@ -47,6 +47,13 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     }
 
     @Override
+    public List<WorkflowRunSummary> findSummariesByTaskId(final UUID taskId) {
+        return this.workflowRunRepository.findByTaskIdOrderByCreatedAtDescIdDesc(taskId).stream()
+                .map(this::toSummary)
+                .toList();
+    }
+
+    @Override
     public WorkflowRun saveLifecycle(final WorkflowRun run) {
         return this.toLifecycleDomain(this.workflowRunRepository.save(this.toEntity(run)));
     }
@@ -55,6 +62,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         return new WorkflowRunSummary(
                 entity.getId(),
                 entity.getSourceWorkflowId(),
+                entity.getTaskId(),
                 entity.getWorkflowName(),
                 WorkflowRunStatus.valueOf(entity.getStatus()),
                 entity.getCreatedAt(),
@@ -68,6 +76,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getId(),
                 entity.getProjectId(),
                 entity.getSourceWorkflowId(),
+                entity.getTaskId(),
                 entity.getWorkflowName(),
                 entity.getInput(),
                 WorkflowRunStatus.valueOf(entity.getStatus()),
@@ -85,6 +94,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getId(),
                 entity.getProjectId(),
                 entity.getSourceWorkflowId(),
+                entity.getTaskId(),
                 entity.getWorkflowName(),
                 entity.getInput(),
                 WorkflowRunStatus.valueOf(entity.getStatus()),
@@ -100,6 +110,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         entity.setId(run.id());
         entity.setProjectId(run.projectId());
         entity.setSourceWorkflowId(run.sourceWorkflowId());
+        entity.setTaskId(run.taskId());
         entity.setWorkflowName(run.workflowName());
         entity.setInput(run.input());
         entity.setStatus(run.status().name());

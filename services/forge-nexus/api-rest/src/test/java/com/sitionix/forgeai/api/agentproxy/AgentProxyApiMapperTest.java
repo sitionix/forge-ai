@@ -12,6 +12,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
@@ -22,6 +24,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
@@ -41,6 +44,7 @@ class AgentProxyApiMapperTest {
     private static final UUID NODE_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID NODE_RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
+    private static final UUID TASK_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -51,6 +55,46 @@ class AgentProxyApiMapperTest {
     void mapsProjectRequestToCommand() {
         assertThat(this.mapper.toCommand(new AgentProjectRequest("Sitionix")))
                 .isEqualTo(new CreateAgentProjectCommand("Sitionix"));
+    }
+
+    @Test
+    void mapsProjectTaskRequestsAndResponses() {
+        assertThat(this.mapper.toCommand(new CreateAgentProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID)))
+                .isEqualTo(new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID));
+
+        final var summary = new AgentProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, CREATED, UPDATED);
+        assertThat(this.mapper.toResponse(summary)).isEqualTo(new AgentProjectTaskSummaryResponse(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                WORKFLOW_ID,
+                "Full Testing",
+                RUN_ID,
+                AgentWorkflowRunStatus.QUEUED,
+                CREATED,
+                UPDATED
+        ));
+
+        final var task = new AgentProjectTask(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                "Count letters.",
+                WORKFLOW_ID,
+                List.of(new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null)),
+                CREATED,
+                UPDATED
+        );
+        assertThat(this.mapper.toResponse(task)).isEqualTo(new AgentProjectTaskResponse(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                "Count letters.",
+                WORKFLOW_ID,
+                List.of(new AgentWorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null)),
+                CREATED,
+                UPDATED
+        ));
     }
 
     @Test
@@ -178,6 +222,7 @@ class AgentProxyApiMapperTest {
         assertThat(this.mapper.toResponse(new AgentWorkflowRunSummary(
                 RUN_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 AgentWorkflowRunStatus.QUEUED,
                 CREATED,
@@ -186,6 +231,7 @@ class AgentProxyApiMapperTest {
         ))).isEqualTo(new AgentWorkflowRunSummaryResponse(
                 RUN_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 AgentWorkflowRunStatus.QUEUED,
                 CREATED,
@@ -197,6 +243,7 @@ class AgentProxyApiMapperTest {
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 "Review auth changes.",
                 AgentWorkflowRunStatus.QUEUED,
@@ -224,6 +271,7 @@ class AgentProxyApiMapperTest {
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 "Review auth changes.",
                 AgentWorkflowRunStatus.QUEUED,

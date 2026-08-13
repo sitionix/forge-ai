@@ -1,0 +1,5 @@
+{
+  "code": "EMPTY_WORKFLOW",
+  "message": "Workflow must contain at least one node before a run can be created.",
+  "correlationId": "corr-empty-workflow"
+}

@@ -9,6 +9,7 @@ import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.NodeRunResponse;
@@ -17,6 +18,8 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
@@ -24,10 +27,12 @@ import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
+import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.GetAiRuntime;
 import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
+import com.sitionix.forgeagent.application.usecase.ProjectTaskUseCases;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
@@ -41,6 +46,8 @@ import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
+import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
+import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
@@ -64,6 +71,7 @@ class ForgeAgentControllerTest {
     private static final UUID NODE_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID NODE_RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
+    private static final UUID TASK_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
     private static final AgentOutputSchema OUTPUT_SCHEMA = AgentOutputSchema.ofCanonicalJsonObject("{}");
 
@@ -78,6 +86,8 @@ class ForgeAgentControllerTest {
     @Mock
     private WorkflowRunUseCases workflowRunUseCases;
     @Mock
+    private ProjectTaskUseCases projectTaskUseCases;
+    @Mock
     private ForgeAgentApiMapper mapper;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -91,6 +101,7 @@ class ForgeAgentControllerTest {
                 this.getAiRuntime,
                 this.workflowUseCases,
                 this.workflowRunUseCases,
+                this.projectTaskUseCases,
                 this.mapper
         );
     }
@@ -128,6 +139,56 @@ class ForgeAgentControllerTest {
         verify(this.mapper).toCommand(request);
         verify(this.projectUseCases).createProject(command);
         verify(this.mapper).toResponse(project);
+    }
+
+    @Test
+    void createProjectTask() {
+        final CreateProjectTaskRequest request = new CreateProjectTaskRequest("Check calculation", "Count the letters in Sitionix.", WORKFLOW_ID);
+        final CreateProjectTaskCommand command = new CreateProjectTaskCommand("Check calculation", "Count the letters in Sitionix.", WORKFLOW_ID);
+        final ProjectTaskDetails task = this.taskDetails();
+        final ProjectTaskResponse response = this.taskResponse();
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.projectTaskUseCases.createProjectTask(PROJECT_ID, command)).thenReturn(task);
+        when(this.mapper.toResponse(task)).thenReturn(response);
+
+        final var actual = this.controller.createProjectTask(PROJECT_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(actual.getHeaders().getLocation().toString()).isEqualTo("/api/v1/tasks/" + TASK_ID);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
+        verify(this.projectTaskUseCases).createProjectTask(PROJECT_ID, command);
+        verify(this.mapper).toResponse(task);
+    }
+
+    @Test
+    void listProjectTasks() {
+        final ProjectTaskSummary task = new ProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, WorkflowRunStatus.QUEUED, NOW, NOW);
+        final ProjectTaskSummaryResponse response = new ProjectTaskSummaryResponse(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, WorkflowRunStatus.QUEUED, NOW, NOW);
+        when(this.projectTaskUseCases.listProjectTasks(PROJECT_ID)).thenReturn(List.of(task));
+        when(this.mapper.toResponse(task)).thenReturn(response);
+
+        final var actual = this.controller.listProjectTasks(PROJECT_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).containsExactly(response);
+        verify(this.projectTaskUseCases).listProjectTasks(PROJECT_ID);
+        verify(this.mapper).toResponse(task);
+    }
+
+    @Test
+    void getProjectTask() {
+        final ProjectTaskDetails task = this.taskDetails();
+        final ProjectTaskResponse response = this.taskResponse();
+        when(this.projectTaskUseCases.getProjectTask(TASK_ID)).thenReturn(task);
+        when(this.mapper.toResponse(task)).thenReturn(response);
+
+        final var actual = this.controller.getProjectTask(TASK_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.projectTaskUseCases).getProjectTask(TASK_ID);
+        verify(this.mapper).toResponse(task);
     }
 
     @Test
@@ -311,8 +372,8 @@ class ForgeAgentControllerTest {
 
     @Test
     void listWorkflowRuns() {
-        final WorkflowRunSummary run = new WorkflowRunSummary(RUN_ID, WORKFLOW_ID, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null);
-        final WorkflowRunSummaryResponse response = new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null);
+        final WorkflowRunSummary run = new WorkflowRunSummary(RUN_ID, WORKFLOW_ID, null, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null);
+        final WorkflowRunSummaryResponse response = new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, null, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null);
         when(this.workflowRunUseCases.listWorkflowRuns(WORKFLOW_ID)).thenReturn(List.of(run));
         when(this.mapper.toSummaryResponse(run)).thenReturn(response);
 
@@ -391,6 +452,7 @@ class ForgeAgentControllerTest {
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 "Review auth changes.",
                 WorkflowRunStatus.QUEUED,
@@ -423,6 +485,7 @@ class ForgeAgentControllerTest {
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 "Review auth changes.",
                 WorkflowRunStatus.QUEUED,
@@ -445,6 +508,32 @@ class ForgeAgentControllerTest {
                 NOW,
                 null,
                 null
+        );
+    }
+
+    private ProjectTaskDetails taskDetails() {
+        return new ProjectTaskDetails(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                "Count the letters in Sitionix.",
+                WORKFLOW_ID,
+                List.of(new WorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null)),
+                NOW,
+                NOW
+        );
+    }
+
+    private ProjectTaskResponse taskResponse() {
+        return new ProjectTaskResponse(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                "Count the letters in Sitionix.",
+                WORKFLOW_ID,
+                List.of(new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null)),
+                NOW,
+                NOW
         );
     }
 }

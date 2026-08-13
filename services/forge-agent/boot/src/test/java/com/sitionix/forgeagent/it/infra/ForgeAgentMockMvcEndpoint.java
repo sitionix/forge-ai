@@ -4,10 +4,13 @@ import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.ForgeAgentErrorResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
@@ -24,6 +27,14 @@ public final class ForgeAgentMockMvcEndpoint {
             Endpoint.createContract("/api/v1/projects", HttpMethod.POST, CreateProjectRequest.class, ProjectResponse.class);
     public static final Endpoint<CreateProjectRequest, ForgeAgentErrorResponse> CREATE_PROJECT_ERROR =
             Endpoint.createContract("/api/v1/projects", HttpMethod.POST, CreateProjectRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<CreateProjectTaskRequest, ProjectTaskResponse> CREATE_PROJECT_TASK =
+            Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.POST, CreateProjectTaskRequest.class, ProjectTaskResponse.class);
+    public static final Endpoint<CreateProjectTaskRequest, ForgeAgentErrorResponse> CREATE_PROJECT_TASK_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.POST, CreateProjectTaskRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, ProjectTaskSummaryResponse[]> LIST_PROJECT_TASKS =
+            Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.GET, Void.class, ProjectTaskSummaryResponse[].class);
+    public static final Endpoint<Void, ProjectTaskResponse> GET_PROJECT_TASK =
+            Endpoint.createContract("/api/v1/tasks/{taskId}", HttpMethod.GET, Void.class, ProjectTaskResponse.class);
     public static final Endpoint<Void, AiRuntimeResponse> GET_RUNTIME =
             Endpoint.createContract("/api/v1/runtime", HttpMethod.GET, Void.class, AiRuntimeResponse.class);
     public static final Endpoint<Void, AgentListResponse[]> LIST_PROJECT_AGENTS =

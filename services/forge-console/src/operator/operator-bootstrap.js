@@ -33,7 +33,7 @@ export function bootstrapOperatorConsole(options = {}) {
     knowledge: () => new KnowledgeOverviewPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
     'knowledge-graph': () => new KnowledgeGraphPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
     jarvis: () => new JarvisPage({ document: documentRef, http, runtimeConfig }),
-    'agent-projects': () => new AgentProjectsPage({ document: documentRef, window: windowRef, http })
+    'agent-projects': () => new AgentProjectsPage({ document: documentRef, window: windowRef, http, runtimeConfig })
   };
   const router = new OperatorRouter(registry, { document: documentRef });
   const mountedPage = router.mount(pageName);

@@ -95,6 +95,7 @@ class WorkflowRunUseCasesTest {
         assertThat(run.id()).isNotNull();
         assertThat(run.projectId()).isEqualTo(this.projectId);
         assertThat(run.sourceWorkflowId()).isEqualTo(this.workflowId);
+        assertThat(run.taskId()).isNull();
         assertThat(run.workflowName()).isEqualTo("Full Testing");
         assertThat(run.input()).isEqualTo("Review auth changes.");
         assertThat(run.status()).isEqualTo(WorkflowRunStatus.QUEUED);
@@ -290,11 +291,11 @@ class WorkflowRunUseCasesTest {
     }
 
     private WorkflowRun run(final UUID runId, final Instant createdAt) {
-        return new WorkflowRun(runId, this.projectId, this.workflowId, "Full Testing", "Run it", WorkflowRunStatus.QUEUED, List.of(), createdAt, null, null);
+        return new WorkflowRun(runId, this.projectId, this.workflowId, null, "Full Testing", "Run it", WorkflowRunStatus.QUEUED, List.of(), createdAt, null, null);
     }
 
     private WorkflowRunSummary summary(final UUID runId, final Instant createdAt) {
-        return new WorkflowRunSummary(runId, this.workflowId, "Full Testing", WorkflowRunStatus.QUEUED, createdAt, null, null);
+        return new WorkflowRunSummary(runId, this.workflowId, null, "Full Testing", WorkflowRunStatus.QUEUED, createdAt, null, null);
     }
 
     private NodeRun nodeRun(final WorkflowRun run, final UUID sourceNodeId) {

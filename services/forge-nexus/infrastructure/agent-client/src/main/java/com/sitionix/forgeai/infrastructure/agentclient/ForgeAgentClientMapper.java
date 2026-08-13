@@ -10,6 +10,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
@@ -18,6 +20,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
@@ -37,6 +40,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunFailureResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionRequest;
@@ -44,6 +48,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import java.util.List;
@@ -60,6 +66,10 @@ public class ForgeAgentClientMapper {
 
     AgentProjectRequest toRequest(final CreateAgentProjectCommand command) {
         return new AgentProjectRequest(command.name());
+    }
+
+    CreateProjectTaskRequest toRequest(final CreateAgentProjectTaskCommand command) {
+        return new CreateProjectTaskRequest(command.title(), command.input(), command.workflowId());
     }
 
     AgentDefinitionRequest toRequest(final SaveAgentDefinitionCommand command) {
@@ -80,6 +90,51 @@ public class ForgeAgentClientMapper {
         this.requireId(response.id(), "project.id");
         this.requireText(response.name(), "project.name");
         return new AgentProject(response.id(), response.name(), response.createdAt(), response.updatedAt());
+    }
+
+    AgentProjectTaskSummary toDomain(final ProjectTaskSummaryResponse response) {
+        this.requireResponse(response, "project task summary");
+        this.requireId(response.id(), "task.id");
+        this.requireId(response.projectId(), "task.projectId");
+        this.requireText(response.title(), "task.title");
+        this.requireId(response.workflowId(), "task.workflowId");
+        this.requireText(response.workflowName(), "task.workflowName");
+        this.requireId(response.latestWorkflowRunId(), "task.latestWorkflowRunId");
+        if (response.executionStatus() == null) {
+            throw this.invalid("task.executionStatus must not be null");
+        }
+        return new AgentProjectTaskSummary(
+                response.id(),
+                response.projectId(),
+                response.title(),
+                response.workflowId(),
+                response.workflowName(),
+                response.latestWorkflowRunId(),
+                response.executionStatus(),
+                response.createdAt(),
+                response.updatedAt()
+        );
+    }
+
+    AgentProjectTask toDomain(final ProjectTaskResponse response) {
+        this.requireResponse(response, "project task");
+        this.requireId(response.id(), "task.id");
+        this.requireId(response.projectId(), "task.projectId");
+        this.requireText(response.title(), "task.title");
+        this.requireText(response.input(), "task.input");
+        this.requireId(response.workflowId(), "task.workflowId");
+        return new AgentProjectTask(
+                response.id(),
+                response.projectId(),
+                response.title(),
+                response.input(),
+                response.workflowId(),
+                this.requireList(response.runs(), "task.runs").stream()
+                        .map(this::toDomain)
+                        .toList(),
+                response.createdAt(),
+                response.updatedAt()
+        );
     }
 
     AgentDefinitionListItem toDomain(final AgentDefinitionListResponse response) {
@@ -167,6 +222,7 @@ public class ForgeAgentClientMapper {
         return new AgentWorkflowRunSummary(
                 response.id(),
                 response.sourceWorkflowId(),
+                response.taskId(),
                 response.workflowName(),
                 response.status(),
                 response.createdAt(),
@@ -189,6 +245,7 @@ public class ForgeAgentClientMapper {
                 response.id(),
                 response.projectId(),
                 response.sourceWorkflowId(),
+                response.taskId(),
                 response.workflowName(),
                 response.input(),
                 response.status(),

@@ -9,6 +9,9 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
@@ -28,6 +31,15 @@ public interface ForgeAgentHttpClient {
 
     @PostExchange(value = "/api/v1/projects", contentType = MediaType.APPLICATION_JSON_VALUE)
     AgentProjectResponse createProject(@RequestBody AgentProjectRequest request);
+
+    @PostExchange(value = "/api/v1/projects/{projectId}/tasks", contentType = MediaType.APPLICATION_JSON_VALUE)
+    ProjectTaskResponse createProjectTask(@PathVariable UUID projectId, @RequestBody CreateProjectTaskRequest request);
+
+    @GetExchange("/api/v1/projects/{projectId}/tasks")
+    List<ProjectTaskSummaryResponse> listProjectTasks(@PathVariable UUID projectId);
+
+    @GetExchange("/api/v1/tasks/{taskId}")
+    ProjectTaskResponse getProjectTask(@PathVariable UUID taskId);
 
     @GetExchange("/api/v1/runtime")
     AgentRuntimeResponse getRuntime();
