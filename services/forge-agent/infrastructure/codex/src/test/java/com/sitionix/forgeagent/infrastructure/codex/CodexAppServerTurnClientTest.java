@@ -231,11 +231,15 @@ class CodexAppServerTurnClientTest {
         final TurnHarness harness = this.startedTurn();
 
         harness.process().writeStdout("{\"id\":\"approval-1\",\"method\":\"item/commandExecution/requestApproval\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-1\"}}");
-        final JsonNode approvalResponse = this.readRequest(harness.process());
+        final JsonNode first = this.readRequest(harness.process());
+        final JsonNode second = this.readRequest(harness.process());
+        final JsonNode approvalResponse = this.approvalResponse(first) ? first : second;
+        final JsonNode interrupt = "turn/interrupt".equals(first.path("method").asText()) ? first : second;
 
         assertThat(approvalResponse.path("id").asText()).isEqualTo("approval-1");
         assertThat(approvalResponse.path("result").path("decision").asText()).isEqualTo("decline");
-        this.assertInterrupt(harness.process(), "thread-1", "turn-1");
+        this.assertInterrupt(interrupt, "thread-1", "turn-1");
+        harness.process().writeStdout("{\"id\":\"" + interrupt.path("id").asText() + "\",\"result\":{}}");
         assertExecutionFailure(harness.result());
         harness.client().close();
     }
@@ -498,10 +502,14 @@ class CodexAppServerTurnClientTest {
 
     private void assertInterrupt(final FakeCodexProcess process, final String threadId, final String turnId) throws Exception {
         final JsonNode interrupt = this.readRequest(process);
+        this.assertInterrupt(interrupt, threadId, turnId);
+        process.writeStdout("{\"id\":\"" + interrupt.path("id").asText() + "\",\"result\":{}}");
+    }
+
+    private void assertInterrupt(final JsonNode interrupt, final String threadId, final String turnId) {
         assertThat(interrupt.path("method").asText()).isEqualTo("turn/interrupt");
         assertThat(interrupt.path("params").path("threadId").asText()).isEqualTo(threadId);
         assertThat(interrupt.path("params").path("turnId").asText()).isEqualTo(turnId);
-        process.writeStdout("{\"id\":\"" + interrupt.path("id").asText() + "\",\"result\":{}}");
     }
 
     private void replyThread(final FakeCodexProcess process, final JsonNode request) {
@@ -662,6 +670,10 @@ class CodexAppServerTurnClientTest {
 
     private JsonNode readRequest(final FakeCodexProcess process) throws Exception {
         return this.objectMapper.readTree(process.readRequest());
+    }
+
+    private boolean approvalResponse(final JsonNode response) {
+        return "decline".equals(response.path("result").path("decision").asText());
     }
 
     private static void assertExecutionFailure(final CompletableFuture<String> result) {
