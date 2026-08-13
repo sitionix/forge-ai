@@ -165,6 +165,45 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
+    void failedTurnPreservesProviderErrorMessage() throws Exception {
+        final TurnHarness harness = this.startedTurn();
+
+        this.turnCompleted(harness.process(), "thread-1", "turn-1", "failed", "Test provider failure.");
+
+        assertExecutionFailure(harness.result(), "Test provider failure.");
+        harness.client().close();
+    }
+
+    @Test
+    void failedTurnWithoutUsefulProviderErrorUsesGenericMessage() throws Exception {
+        final TurnHarness harness = this.startedTurn();
+
+        this.turnCompleted(harness.process(), "thread-1", "turn-1", "failed", " ");
+
+        assertExecutionFailure(harness.result(), "Codex execution failed.");
+        harness.client().close();
+    }
+
+    @Test
+    void turnStartJsonRpcErrorPreservesRemoteMessage() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.execute(
+                new CodexTurnRequest("Analyze auth.", "Instructions.", "model-a", null, this.schemaUnchecked())
+        ));
+
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + turnStart.path("id").asText()
+                + "\",\"error\":{\"code\":-32602,\"message\":\"Invalid schema for response format.\"}}");
+
+        assertExecutionFailure(result, "Invalid schema for response format.");
+        client.close();
+    }
+
+    @Test
     void completedWithoutAgentMessageFailsSafely() throws Exception {
         final TurnHarness harness = this.startedTurn();
 
@@ -449,6 +488,14 @@ class CodexAppServerTurnClientTest {
         process.writeStdout(this.turnCompletedNotification(threadId, turnId, status));
     }
 
+    private void turnCompleted(final FakeCodexProcess process,
+                               final String threadId,
+                               final String turnId,
+                               final String status,
+                               final String errorMessage) {
+        process.writeStdout(this.turnCompletedNotification(threadId, turnId, status, errorMessage));
+    }
+
     private void assertInterrupt(final FakeCodexProcess process, final String threadId, final String turnId) throws Exception {
         final JsonNode interrupt = this.readRequest(process);
         assertThat(interrupt.path("method").asText()).isEqualTo("turn/interrupt");
@@ -544,8 +591,15 @@ class CodexAppServerTurnClientTest {
     }
 
     private String turnCompletedNotification(final String threadId, final String turnId, final String status) {
+        return this.turnCompletedNotification(threadId, turnId, status, null);
+    }
+
+    private String turnCompletedNotification(final String threadId, final String turnId, final String status, final String errorMessage) {
+        final String errorJson = errorMessage == null
+                ? ""
+                : ",\"error\":{\"message\":\"" + errorMessage.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";
         return "{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"" + threadId
-                + "\",\"turn\":{\"id\":\"" + turnId + "\",\"status\":\"" + status + "\"}}}";
+                + "\",\"turn\":{\"id\":\"" + turnId + "\",\"status\":\"" + status + "\"" + errorJson + "}}}";
     }
 
     private String compactJson(final String json) {
@@ -614,6 +668,14 @@ class CodexAppServerTurnClientTest {
         assertThatThrownBy(() -> result.get(3, TimeUnit.SECONDS))
                 .isInstanceOf(java.util.concurrent.ExecutionException.class)
                 .satisfies(throwable -> assertThat(throwable.getCause()).isInstanceOf(RuntimeException.class));
+    }
+
+    private static void assertExecutionFailure(final CompletableFuture<String> result, final String message) {
+        assertThatThrownBy(() -> result.get(3, TimeUnit.SECONDS))
+                .isInstanceOf(java.util.concurrent.ExecutionException.class)
+                .satisfies(throwable -> assertThat(throwable.getCause())
+                        .isInstanceOf(RuntimeException.class)
+                        .hasMessageContaining(message));
     }
 
     private record TurnHarness(CodexAppServerClient client, FakeCodexProcess process, JsonNode turnStart, CompletableFuture<String> result) {

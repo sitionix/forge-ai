@@ -563,6 +563,11 @@ export class AgentProjectsPage {
   }
 
   async closeTaskExecution() {
+    const projectId = this.state.selectedProjectId;
+    const loadSequence = this.projectLoadSequence;
+    const inFlightTasks = this.taskPollProjectId === projectId && this.taskPollLoadSequence === loadSequence
+      ? this.taskPollInFlight
+      : null;
     this.taskExecutionView.close();
     this.state.view = 'project';
     this.state.openTaskId = null;
@@ -571,8 +576,14 @@ export class AgentProjectsPage {
     this.byId('agentsV2ProjectsView').classList.add('hidden');
     this.byId('agentsV2Workspace').classList.remove('hidden');
     this.renderProjectWorkspace();
-    if (this.state.selectedProjectId) {
-      await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { force: true });
+    if (inFlightTasks) {
+      await inFlightTasks;
+    }
+    if (this.disposed || this.state.view !== 'project' || !this.isCurrentProjectLoad(projectId, loadSequence)) {
+      return;
+    }
+    if (projectId) {
+      await this.loadTasks(projectId, loadSequence, { force: true });
     } else {
       this.syncTaskPolling();
     }

@@ -215,7 +215,7 @@ export class TaskExecutionView {
       summary.innerHTML = '';
       return;
     }
-    const workflowName = this.state.workflowRun?.workflowName || this.selectedRunSummary()?.workflowName || this.state.task.workflowName || 'Unknown workflow';
+    const workflowName = this.state.workflowRun?.workflowName || this.selectedRunSummary()?.workflowName || 'Unknown workflow';
     const runStatus = this.state.workflowRun?.status || this.selectedRunSummary()?.status || 'UNKNOWN';
     summary.innerHTML = `
       <div class="task-execution-summary-grid">
@@ -399,7 +399,7 @@ export class TaskExecutionView {
         if (leftTime !== rightTime) {
           return rightTime - leftTime;
         }
-        return right.index - left.index;
+        return left.index - right.index;
       })
       .map((entry) => entry.run);
   }
@@ -491,15 +491,6 @@ export class TaskExecutionView {
       taskError: '',
       executionError: '',
       refreshError: ''
-    };
-  }
-
-  testApi() {
-    return {
-      open: (taskId, project) => this.open(taskId, project),
-      selectRun: (runId) => this.selectRun(runId),
-      close: () => this.close(),
-      state: this.state
     };
   }
 }

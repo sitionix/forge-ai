@@ -117,12 +117,12 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
                 this.turnStateTracker.remove(state);
             }
             this.invalidate(current);
-            throw new CodexTransportException("Codex execution failed.", e);
+            throw this.executionFailed(e);
         } catch (final CodexRemoteException e) {
             if (state != null) {
                 this.turnStateTracker.remove(state);
             }
-            throw new CodexTransportException("Codex execution failed.", e);
+            throw this.executionFailed(e);
         } catch (final RuntimeException e) {
             if (state != null) {
                 this.turnStateTracker.remove(state);
@@ -180,6 +180,11 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
             return runtimeException;
         }
         return new CodexTransportException("Codex execution failed.", cause);
+    }
+
+    private CodexTransportException executionFailed(final RuntimeException cause) {
+        final String message = cause.getMessage();
+        return new CodexTransportException(message == null || message.isBlank() ? "Codex execution failed." : message, cause);
     }
 
     private void interrupt(final CodexExecution execution) {

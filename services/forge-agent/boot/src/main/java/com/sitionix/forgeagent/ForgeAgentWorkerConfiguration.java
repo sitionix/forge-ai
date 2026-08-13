@@ -46,8 +46,8 @@ class ForgeAgentWorkerConfiguration {
         private final NodeRunWorker worker;
 
         @Scheduled(
-                initialDelayString = "${forge.agent.worker.poll-delay:10000}",
-                fixedDelayString = "${forge.agent.worker.poll-delay:10000}"
+                initialDelayString = "${forge.agent.worker.poll-delay:10s}",
+                fixedDelayString = "${forge.agent.worker.poll-delay:10s}"
         )
         void poll() {
             this.worker.poll();

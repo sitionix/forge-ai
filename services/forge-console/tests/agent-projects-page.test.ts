@@ -391,6 +391,28 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2ExecutionNodes')?.textContent).toContain('Old Agent');
   });
 
+  it('Execution history preserves backend ordering when run timestamps tie', async () => {
+    const runs = [
+      taskRun('run-a', 'FAILED', '2026-08-13T10:00:00Z', 'First Snapshot'),
+      taskRun('run-b', 'SUCCEEDED', '2026-08-13T10:00:00Z', 'Second Snapshot')
+    ];
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', runs))),
+      getWorkflowRun: vi.fn((runId: string) => Promise.resolve(workflowRunDetail(runId, runId === 'run-a' ? 'FAILED' : 'SUCCEEDED', [
+        nodeRun(runId === 'run-a' ? 'node-a' : 'node-b', runId === 'run-a' ? 'First Agent' : 'Second Agent', 'SUCCEEDED')
+      ], runId === 'run-a' ? 'First Snapshot' : 'Second Snapshot')))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const historyRows = [...dom.window.document.querySelectorAll<HTMLElement>('.execution-history-row')];
+    expect(historyRows.map((row) => row.dataset.runId)).toEqual(['run-a', 'run-b']);
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledWith('run-a');
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('First Snapshot');
+  });
+
   it('Execution graph renders NodeRun snapshot positions, dependencies, statuses, and node details', async () => {
     const nodeRuns = [
       nodeRun('pending-node', 'Planner', 'PENDING', [], 20, 30),
@@ -563,6 +585,59 @@ describe('Agent projects page', () => {
     await vi.advanceTimersByTimeAsync(3000);
     await flushAsync();
     expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(2);
+  });
+
+  it('Back to Project waits for in-flight Task polling before one fresh Task refresh wins', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const stalePoll = deferred<any[]>();
+    const calls: string[] = [];
+    const fakeApi = api({
+      listProjectTasks: vi.fn(() => {
+        calls.push(`list-${calls.length + 1}`);
+        if (calls.length === 1) {
+          return Promise.resolve([task('task-1', 'RUNNING')]);
+        }
+        if (calls.length === 2) {
+          return stalePoll.promise;
+        }
+        return Promise.resolve([task('task-1', 'FAILED')]);
+      }),
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [
+        nodeRun('node-a', 'Analyzer', 'RUNNING')
+      ])))
+    });
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: fakeApi,
+      runtimeConfig: { activeJobPollIntervalMs: 1000 }
+    });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+    const back = page.closeTaskExecution();
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+
+    stalePoll.resolve([task('task-1', 'RUNNING')]);
+    await back;
+    await flushAsync();
+
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(3);
+    expect(calls).toEqual(['list-1', 'list-2', 'list-3']);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('FAILED');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).not.toContain('RUNNING');
   });
 
   it('stale Task and Run responses cannot overwrite the current execution selection', async () => {
