@@ -51,6 +51,24 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                 "responseAgentProxyProjectTask.json");
     }
 
+    public static Endpoint<CreateAgentProjectTaskRequest, InfrastructureErrorResponse> createProjectTaskLocalInvalid() {
+        return nexusPost("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
+                CreateAgentProjectTaskRequest.class,
+                InfrastructureErrorResponse.class,
+                "requestAgentProxyInvalidProjectTask.json",
+                HttpStatus.BAD_REQUEST,
+                "responseAgentProxyLocalInvalidRequest.json");
+    }
+
+    public static Endpoint<CreateAgentProjectTaskRequest, InfrastructureErrorResponse> createProjectTaskEmptyWorkflow() {
+        return nexusPost("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
+                CreateAgentProjectTaskRequest.class,
+                InfrastructureErrorResponse.class,
+                "requestAgentProxyCreateProjectTask.json",
+                HttpStatus.CONFLICT,
+                "responseAgentProxyEmptyWorkflow.json");
+    }
+
     public static Endpoint<Void, AgentProjectTaskSummaryResponse[]> listProjectTasks() {
         return nexusGet("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
                 AgentProjectTaskSummaryResponse[].class,

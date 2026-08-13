@@ -51,6 +51,15 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "responseAgentProxyProjectTask.json");
     }
 
+    public static Endpoint<CreateProjectTaskRequest, InfrastructureErrorResponse> createProjectTaskEmptyWorkflow() {
+        return upstreamPost("/api/v1/projects/{projectId}/tasks",
+                CreateProjectTaskRequest.class,
+                InfrastructureErrorResponse.class,
+                "requestAgentProxyCreateProjectTask.json",
+                HttpStatus.CONFLICT,
+                "responseAgentProxyEmptyWorkflow.json");
+    }
+
     public static Endpoint<Void, ProjectTaskSummaryResponse[]> listProjectTasks() {
         return upstreamGet("/api/v1/projects/{projectId}/tasks",
                 ProjectTaskSummaryResponse[].class,

@@ -152,7 +152,7 @@ class ProjectTaskUseCasesTest {
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
                 .isEqualTo("INVALID_PROJECT_TASK_TITLE");
-        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand(" ", "Input", WORKFLOW_ID)))
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand("a".repeat(121), "Input", WORKFLOW_ID)))
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
                 .isEqualTo("INVALID_PROJECT_TASK_TITLE");
