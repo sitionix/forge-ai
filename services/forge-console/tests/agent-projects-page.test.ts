@@ -98,6 +98,67 @@ function task(
   };
 }
 
+function taskRun(id: string, status: string, createdAt: string, workflowName = 'Full Testing') {
+  return {
+    id,
+    taskId: task().id,
+    workflowName,
+    status,
+    createdAt,
+    startedAt: createdAt,
+    finishedAt: null
+  };
+}
+
+function taskDetail(id = task().id, runs: any[] = [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]) {
+  return {
+    ...task(id, runs[0]?.status || 'SUCCEEDED'),
+    input: 'Count the letters in Sitionix.',
+    runs
+  };
+}
+
+function nodeRun(
+  id: string,
+  agentName: string,
+  status: string,
+  dependsOnNodeRunIds: string[] = [],
+  x = 10,
+  y = 20,
+  output: any = null,
+  failure: any = null
+) {
+  return {
+    id,
+    sourceNodeId: `source-${id}`,
+    sourceAgentId: `agent-${id}`,
+    agentName,
+    agentInstructions: `${agentName} instructions`,
+    agentOutputSchema: { type: 'object' },
+    dependsOnNodeRunIds,
+    position: { x, y },
+    status,
+    output,
+    failure,
+    createdAt: '2026-08-13T10:00:00Z',
+    startedAt: status === 'PENDING' || status === 'BLOCKED' ? null : '2026-08-13T10:01:00Z',
+    finishedAt: status === 'SUCCEEDED' || status === 'FAILED' || status === 'CANCELLED' ? '2026-08-13T10:02:00Z' : null
+  };
+}
+
+function workflowRunDetail(id: string, status: string, nodeRuns: any[] = [], workflowName = 'Full Testing') {
+  return {
+    id,
+    taskId: task().id,
+    workflowName,
+    status,
+    nodeRuns,
+    createdAt: '2026-08-13T10:00:00Z',
+    startedAt: '2026-08-13T10:00:02Z',
+    finishedAt: status === 'RUNNING' || status === 'QUEUED' ? null : '2026-08-13T10:03:00Z'
+  };
+}
+
 function node(id: string, targetId: string, dependsOnNodeIds: string[] = [], x = 10, y = 20) {
   return { id, targetId, dependsOnNodeIds, position: { x, y } };
 }
@@ -131,6 +192,7 @@ function api(overrides = {}) {
     listProjectTasks: vi.fn((projectId: string) => Promise.resolve([task(undefined, 'SUCCEEDED', projectId)])),
     createProjectTask: vi.fn(() => Promise.resolve(task('77777777-7777-4777-8777-777777777777', 'QUEUED'))),
     getProjectTask: vi.fn((taskId: string) => Promise.resolve({ ...task(taskId), input: 'Count the letters.', runs: [] })),
+    getWorkflowRun: vi.fn((runId: string) => Promise.resolve(workflowRunDetail(runId, 'SUCCEEDED'))),
     createWorkflowRun: vi.fn(() => Promise.resolve({})),
     ...overrides
   };
@@ -249,6 +311,329 @@ describe('Agent projects page', () => {
     expect(list.textContent).toContain('RUNNING');
     expect(list.textContent).toContain('Created:');
     expect(list.querySelector('[data-task-status="RUNNING"]')).not.toBeNull();
+    expect(list.querySelector('[data-task-id="task-1"]')?.textContent).toBe('Open');
+  });
+
+  it('Task card Open switches to execution view, loads newest run, and Back refreshes Tasks', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const runs = [
+      taskRun('run-old', 'FAILED', '2026-08-12T10:00:00Z'),
+      taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')
+    ];
+    const fakeApi = api({
+      listProjectTasks: vi.fn(() => Promise.resolve([task('task-1', 'RUNNING')])),
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', runs))),
+      getWorkflowRun: vi.fn((runId: string) => Promise.resolve(workflowRunDetail(runId, 'RUNNING', [
+        nodeRun('node-a', 'Analyzer', 'RUNNING', [], 30, 40)
+      ], 'Snapshot Workflow')))
+    });
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: fakeApi,
+      runtimeConfig: { activeJobPollIntervalMs: 5000 }
+    });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+
+    dom.window.document.querySelector<HTMLElement>('[data-task-id="task-1"]')?.click();
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('agentsV2Workspace')?.classList.contains('hidden')).toBe(true);
+    expect(dom.window.document.getElementById('agentsV2TaskExecution')?.classList.contains('hidden')).toBe(false);
+    expect(fakeApi.getProjectTask).toHaveBeenCalledWith('task-1');
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledWith('run-new');
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionTitle')?.textContent).toContain('Check calculation');
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Count the letters in Sitionix.');
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Snapshot Workflow');
+
+    await vi.advanceTimersByTimeAsync(4999);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(1);
+
+    dom.window.document.getElementById('agentsV2TaskExecutionBack')?.click();
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('agentsV2TaskExecution')?.classList.contains('hidden')).toBe(true);
+    expect(dom.window.document.getElementById('agentsV2Workspace')?.classList.contains('hidden')).toBe(false);
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it('Execution history is newest first and selecting an older run loads that snapshot', async () => {
+    const runs = [
+      taskRun('run-old', 'FAILED', '2026-08-12T10:00:00Z'),
+      taskRun('run-new', 'SUCCEEDED', '2026-08-13T10:00:00Z')
+    ];
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', runs))),
+      getWorkflowRun: vi.fn((runId: string) => Promise.resolve(workflowRunDetail(runId, runId === 'run-old' ? 'FAILED' : 'SUCCEEDED', [
+        nodeRun(runId === 'run-old' ? 'old-node' : 'new-node', runId === 'run-old' ? 'Old Agent' : 'New Agent', 'SUCCEEDED')
+      ], runId === 'run-old' ? 'Older Snapshot' : 'Newer Snapshot')))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const historyRows = [...dom.window.document.querySelectorAll<HTMLElement>('.execution-history-row')];
+    expect(historyRows.map((row) => row.dataset.runId)).toEqual(['run-new', 'run-old']);
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Newer Snapshot');
+
+    historyRows[1]!.click();
+    await flushAsync();
+
+    expect(fakeApi.getWorkflowRun).toHaveBeenLastCalledWith('run-old');
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Older Snapshot');
+    expect(dom.window.document.getElementById('agentsV2ExecutionNodes')?.textContent).toContain('Old Agent');
+  });
+
+  it('Execution graph renders NodeRun snapshot positions, dependencies, statuses, and node details', async () => {
+    const nodeRuns = [
+      nodeRun('pending-node', 'Planner', 'PENDING', [], 20, 30),
+      nodeRun('running-node', 'Analyzer', 'RUNNING', ['pending-node'], 280, 30),
+      nodeRun('success-node', 'Backend Implementer', 'SUCCEEDED', ['running-node'], 540, 30, { count: 8, valid: true }),
+      nodeRun('failed-node', 'Reviewer', 'FAILED', ['success-node'], 800, 30, null, { code: 'ASSERTION_FAILED', message: 'Expected count to match.' }),
+      nodeRun('blocked-node', 'Release', 'BLOCKED', ['failed-node'], 1060, 30),
+      nodeRun('cancelled-node', 'Cleanup', 'CANCELLED', ['blocked-node'], 1320, 30)
+    ];
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'FAILED', nodeRuns, 'Snapshot Only Flow')))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    expect(fakeApi.getWorkflow).not.toHaveBeenCalled();
+    expect(fakeApi.getAgent).not.toHaveBeenCalled();
+    for (const status of ['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'BLOCKED', 'CANCELLED']) {
+      expect(dom.window.document.querySelector(`[data-node-status="${status}"]`)).not.toBeNull();
+    }
+    const successNode = dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="success-node"]')!;
+    expect(successNode.getAttribute('style')).toContain('left:540px');
+    expect(successNode.getAttribute('style')).toContain('top:30px');
+    expect(dom.window.document.querySelector('[data-edge-source="running-node"][data-edge-target="success-node"]')).not.toBeNull();
+
+    successNode.click();
+    await flushAsync();
+    const details = dom.window.document.getElementById('agentsV2NodeRunDetails')!;
+    expect(details.textContent).toContain('Backend Implementer');
+    expect(details.textContent).toContain('Backend Implementer instructions');
+    expect(details.textContent).toContain('SUCCEEDED');
+    expect(details.querySelector('pre')?.textContent).toContain('"count": 8');
+
+    dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="failed-node"]')?.click();
+    await flushAsync();
+    expect(details.textContent).toContain('ASSERTION_FAILED');
+    expect(details.textContent).toContain('Expected count to match.');
+
+    dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="pending-node"]')?.click();
+    await flushAsync();
+    expect(details.textContent).toContain('No output yet.');
+  });
+
+  it('active WorkflowRun polling refreshes node output and stops at terminal status', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(workflowRunDetail('run-new', 'RUNNING', [
+          nodeRun('node-a', 'Analyzer', 'RUNNING')
+        ]))
+        .mockResolvedValueOnce(workflowRunDetail('run-new', 'RUNNING', [
+          nodeRun('node-a', 'Analyzer', 'SUCCEEDED', [], 10, 20, { answer: 8 }),
+          nodeRun('node-b', 'Reviewer', 'RUNNING', ['node-a'], 260, 20)
+        ]))
+        .mockResolvedValueOnce(workflowRunDetail('run-new', 'FAILED', [
+          nodeRun('node-a', 'Analyzer', 'SUCCEEDED', [], 10, 20, { answer: 8 }),
+          nodeRun('node-b', 'Reviewer', 'FAILED', ['node-a'], 260, 20, null, { code: 'BAD_RESULT', message: 'Review failed.' })
+        ]))
+    });
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: fakeApi,
+      runtimeConfig: { activeJobPollIntervalMs: 1000 }
+    });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushAsync();
+    expect(dom.window.document.querySelector('[data-execution-node-id="node-a"]')?.textContent).toContain('SUCCEEDED');
+    dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="node-a"]')?.click();
+    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('"answer": 8');
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushAsync();
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('FAILED');
+    dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="node-b"]')?.click();
+    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('BAD_RESULT');
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushAsync();
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(3);
+  });
+
+  it('transient polling failure keeps last graph visible, retries, and heals after success', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(workflowRunDetail('run-new', 'RUNNING', [
+          nodeRun('node-a', 'Analyzer', 'RUNNING')
+        ]))
+        .mockRejectedValueOnce(new Error('Refresh unavailable'))
+        .mockResolvedValueOnce(workflowRunDetail('run-new', 'SUCCEEDED', [
+          nodeRun('node-a', 'Analyzer', 'SUCCEEDED', [], 10, 20, { answer: 8 })
+        ]))
+    });
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: fakeApi,
+      runtimeConfig: { activeJobPollIntervalMs: 1000 }
+    });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushAsync();
+    expect(dom.window.document.getElementById('agentsV2ExecutionNodes')?.textContent).toContain('Analyzer');
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionRefreshError')?.textContent).toContain('Refresh unavailable');
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushAsync();
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionRefreshError')?.textContent).toBe('');
+    expect(dom.window.document.querySelector('[data-execution-node-id="node-a"]')?.textContent).toContain('SUCCEEDED');
+  });
+
+  it('WorkflowRun polling does not overlap and leaving Task stops execution polling', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const poll = deferred<any>();
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(workflowRunDetail('run-new', 'RUNNING', [nodeRun('node-a', 'Analyzer', 'RUNNING')]))
+        .mockReturnValueOnce(poll.promise),
+      listProjectTasks: vi.fn(() => Promise.resolve([task('task-1', 'RUNNING')]))
+    });
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: fakeApi,
+      runtimeConfig: { activeJobPollIntervalMs: 1000 }
+    });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(4000);
+    await flushAsync();
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(2);
+
+    const back = page.closeTaskExecution();
+    poll.resolve(workflowRunDetail('run-new', 'RUNNING', [nodeRun('node-a', 'Analyzer', 'SUCCEEDED')]));
+    await back;
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushAsync();
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(2);
+  });
+
+  it('stale Task and Run responses cannot overwrite the current execution selection', async () => {
+    const taskA = deferred<any>();
+    const runA = deferred<any>();
+    const fakeApi = api({
+      getProjectTask: vi.fn((taskId: string) => taskId === 'task-a'
+        ? taskA.promise
+        : Promise.resolve(taskDetail('task-b', [taskRun('run-b', 'SUCCEEDED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn((runId: string) => runId === 'run-a'
+        ? runA.promise
+        : Promise.resolve(workflowRunDetail(runId, 'SUCCEEDED', [nodeRun('node-b', 'Current Agent', 'SUCCEEDED')], 'Current Snapshot')))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    const staleTaskOpen = page.openTaskExecution('task-a');
+    await flushAsync();
+    const currentTaskOpen = page.openTaskExecution('task-b');
+    await currentTaskOpen;
+    taskA.resolve(taskDetail('task-a', [taskRun('run-a', 'SUCCEEDED', '2026-08-13T11:00:00Z')]));
+    await staleTaskOpen;
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionTitle')?.textContent).toContain('Check calculation');
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Current Snapshot');
+    expect(dom.window.document.getElementById('agentsV2ExecutionNodes')?.textContent).toContain('Current Agent');
+
+    const staleRunSelect = page.taskExecutionView.selectRun('run-a');
+    await flushAsync();
+    const currentRunSelect = page.taskExecutionView.selectRun('run-b');
+    await currentRunSelect;
+    runA.resolve(workflowRunDetail('run-a', 'FAILED', [nodeRun('node-a', 'Stale Agent', 'FAILED')], 'Stale Snapshot'));
+    await staleRunSelect;
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Current Snapshot');
+    expect(dom.window.document.getElementById('agentsV2ExecutionNodes')?.textContent).toContain('Current Agent');
+    expect(dom.window.document.getElementById('agentsV2ExecutionNodes')?.textContent).not.toContain('Stale Agent');
+  });
+
+  it('dispose during in-flight WorkflowRun request ignores late response and schedules no timer', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const pendingRun = deferred<any>();
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => pendingRun.promise)
+    });
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: fakeApi,
+      runtimeConfig: { activeJobPollIntervalMs: 1000 }
+    });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+    const open = page.openTaskExecution('task-1');
+    await flushAsync();
+
+    page.dispose();
+    pendingRun.resolve(workflowRunDetail('run-new', 'RUNNING', [nodeRun('node-a', 'Analyzer', 'RUNNING')]));
+    await open;
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('agentsV2ExecutionNodes')?.textContent).not.toContain('Analyzer');
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(1);
   });
 
   it('empty Task state renders under Tasks without hiding the section', async () => {
@@ -1230,6 +1615,7 @@ describe('Agent projects page', () => {
     client.listProjectTasks(project().id);
     client.createProjectTask(project().id, { title: 'Check calculation', input: 'Count letters.', workflowId: '33333333-3333-4333-8333-333333333333' });
     client.getProjectTask('55555555-5555-4555-8555-555555555555');
+    client.getWorkflowRun('66666666-6666-4666-8666-666666666666');
 
     const calls = [...http.get.mock.calls, ...http.post.mock.calls, ...http.put.mock.calls].map(([path]) => path);
     expect(calls.every((path) => path.startsWith('/agents'))).toBe(true);
@@ -1240,6 +1626,7 @@ describe('Agent projects page', () => {
       workflowId: '33333333-3333-4333-8333-333333333333'
     });
     expect(http.get).toHaveBeenCalledWith('/agents/tasks/55555555-5555-4555-8555-555555555555');
+    expect(http.get).toHaveBeenCalledWith('/agents/workflow-runs/66666666-6666-4666-8666-666666666666');
     expect(consoleSourceText()).not.toContain('7091');
     expect(consoleSourceText()).not.toContain('FORGE_AGENT');
     expect(JSON.stringify(http.post.mock.calls)).not.toContain('dependsOnAgentIds');

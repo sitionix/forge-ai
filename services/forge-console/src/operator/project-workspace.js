@@ -9,6 +9,7 @@ export class ProjectWorkspace {
     this.onNewWorkflow = options.onNewWorkflow;
     this.onOpenWorkflow = options.onOpenWorkflow;
     this.onNewTask = options.onNewTask;
+    this.onOpenTask = options.onOpenTask;
   }
 
   bind() {
@@ -123,8 +124,12 @@ export class ProjectWorkspace {
             </span>
             <span>Created: ${escapeHtml(this.formatDate(task.createdAt))}</span>
           </div>
+          <button class="button small secondary" type="button" data-task-id="${escapeHtml(task.id)}">Open</button>
         </article>
       `).join('');
+      list.querySelectorAll('[data-task-id]').forEach((element) => {
+        element.addEventListener('click', () => this.onOpenTask(element.dataset.taskId));
+      });
       return;
     }
     if (workflowsCurrent && !hasWorkflows) {
@@ -180,6 +185,12 @@ export function statusTone(status) {
   }
   if (normalized === 'failed') {
     return 'failed';
+  }
+  if (normalized === 'blocked') {
+    return 'blocked';
+  }
+  if (normalized === 'pending') {
+    return 'pending';
   }
   if (normalized === 'cancelled') {
     return 'cancelled';

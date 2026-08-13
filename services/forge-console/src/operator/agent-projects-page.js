@@ -1,6 +1,7 @@
 import { createAgentProjectsApi } from './agent-projects-api.js';
 import { escapeHtml } from './dom-render-helpers.js';
 import { ProjectWorkspace } from './project-workspace.js';
+import { TaskExecutionView } from './task-execution-view.js';
 import { WorkflowBuilder } from './workflow-builder.js';
 
 const DEFAULT_OUTPUT_SCHEMA = { type: 'object', properties: {} };
@@ -31,6 +32,7 @@ export class AgentProjectsPage {
       runtimeError: '',
       agentModelSelection: null,
       savedAgentModelSelection: null,
+      openTaskId: null,
       saving: false
     };
     this.projectLoadSequence = 0;
@@ -46,7 +48,15 @@ export class AgentProjectsPage {
       onEditAgent: (agentId) => this.openAgentModal(agentId),
       onNewWorkflow: () => this.openWorkflowModal(),
       onOpenWorkflow: (workflowId) => this.openWorkflowBuilder(workflowId),
-      onNewTask: () => this.openTaskModal()
+      onNewTask: () => this.openTaskModal(),
+      onOpenTask: (taskId) => this.openTaskExecution(taskId)
+    });
+    this.taskExecutionView = new TaskExecutionView({
+      document: this.document,
+      window: this.window,
+      api: this.api,
+      runtimeConfig: this.runtimeConfig,
+      onBack: () => this.closeTaskExecution()
     });
     this.workflowBuilder = new WorkflowBuilder({
       document: this.document,
@@ -61,6 +71,7 @@ export class AgentProjectsPage {
     this.disposed = false;
     this.bind();
     this.workspace.bind();
+    this.taskExecutionView.bind();
     this.workflowBuilder.bind();
     this.showProjectsIndex({ preserveProjects: true });
     this.loadProjects();
@@ -69,6 +80,7 @@ export class AgentProjectsPage {
   dispose() {
     this.disposed = true;
     this.stopTaskPolling();
+    this.taskExecutionView.dispose();
     this.workflowBuilder.dispose();
   }
 
@@ -113,10 +125,13 @@ export class AgentProjectsPage {
     this.state.tasksProjectId = null;
     this.state.tasksLoadFailed = false;
     this.state.openWorkflowId = null;
+    this.state.openTaskId = null;
+    this.taskExecutionView.close();
     this.workflowBuilder.close();
     this.byId('agentsV2ProjectsView').classList.remove('hidden');
     this.byId('agentsV2Workspace').classList.add('hidden');
     this.byId('agentsV2Builder').classList.add('hidden');
+    this.byId('agentsV2TaskExecution').classList.add('hidden');
     if (!options.preserveProjects) {
       this.renderProjects();
     }
@@ -137,10 +152,13 @@ export class AgentProjectsPage {
     this.state.tasksProjectId = null;
     this.state.tasksLoadFailed = false;
     this.state.openWorkflowId = null;
+    this.state.openTaskId = null;
+    this.taskExecutionView.close();
     this.workflowBuilder.close();
     this.byId('agentsV2ProjectsView').classList.add('hidden');
     this.byId('agentsV2Workspace').classList.remove('hidden');
     this.byId('agentsV2Builder').classList.add('hidden');
+    this.byId('agentsV2TaskExecution').classList.add('hidden');
     this.renderProjectWorkspace();
     this.workspace.renderLoading();
     await Promise.all([
@@ -483,6 +501,7 @@ export class AgentProjectsPage {
       return;
     }
     this.stopTaskPolling();
+    this.taskExecutionView.close();
     const selectedProjectId = this.state.selectedProjectId;
     const projectSequence = this.projectLoadSequence;
     const workflowSequence = this.workflowLoadSequence + 1;
@@ -500,9 +519,11 @@ export class AgentProjectsPage {
       }
       this.state.view = 'workflow';
       this.state.openWorkflowId = workflow.id;
+      this.state.openTaskId = null;
       this.byId('agentsV2ProjectsView').classList.add('hidden');
       this.byId('agentsV2Workspace').classList.add('hidden');
       this.byId('agentsV2Builder').classList.remove('hidden');
+      this.byId('agentsV2TaskExecution').classList.add('hidden');
       this.workflowBuilder.open(workflow, this.currentProject(), this.state.agents);
     } catch (error) {
       if (this.workflowLoadSequence === workflowSequence) {
@@ -517,10 +538,44 @@ export class AgentProjectsPage {
     this.state.openWorkflowId = null;
     this.workflowBuilder.close();
     this.byId('agentsV2Builder').classList.add('hidden');
+    this.byId('agentsV2TaskExecution').classList.add('hidden');
     this.byId('agentsV2ProjectsView').classList.add('hidden');
     this.byId('agentsV2Workspace').classList.remove('hidden');
     this.renderProjectWorkspace();
     this.syncTaskPolling();
+  }
+
+  async openTaskExecution(taskId) {
+    if (!this.state.selectedProjectId || !taskId) {
+      return;
+    }
+    this.stopTaskPolling();
+    this.workflowLoadSequence += 1;
+    this.state.view = 'task';
+    this.state.openTaskId = taskId;
+    this.state.openWorkflowId = null;
+    this.workflowBuilder.close();
+    this.byId('agentsV2ProjectsView').classList.add('hidden');
+    this.byId('agentsV2Workspace').classList.add('hidden');
+    this.byId('agentsV2Builder').classList.add('hidden');
+    this.byId('agentsV2TaskExecution').classList.remove('hidden');
+    await this.taskExecutionView.open(taskId, this.currentProject());
+  }
+
+  async closeTaskExecution() {
+    this.taskExecutionView.close();
+    this.state.view = 'project';
+    this.state.openTaskId = null;
+    this.byId('agentsV2TaskExecution').classList.add('hidden');
+    this.byId('agentsV2Builder').classList.add('hidden');
+    this.byId('agentsV2ProjectsView').classList.add('hidden');
+    this.byId('agentsV2Workspace').classList.remove('hidden');
+    this.renderProjectWorkspace();
+    if (this.state.selectedProjectId) {
+      await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { force: true });
+    } else {
+      this.syncTaskPolling();
+    }
   }
 
   syncTaskPolling() {
@@ -856,6 +911,8 @@ export class AgentProjectsPage {
       showProjectsIndex: () => this.showProjectsIndex(),
       openAgentModal: (agentId) => this.openAgentModal(agentId),
       openTaskModal: () => this.openTaskModal(),
+      openTaskExecution: (taskId) => this.openTaskExecution(taskId),
+      closeTaskExecution: () => this.closeTaskExecution(),
       loadTasks: () => this.loadTasks(),
       openWorkflowBuilder: (workflowId) => this.openWorkflowBuilder(workflowId),
       addNode: (agentId) => this.workflowBuilder.addNode(agentId),
@@ -864,6 +921,7 @@ export class AgentProjectsPage {
       saveWorkflow: () => this.workflowBuilder.save(),
       parseOutputSchema: () => this.parseOutputSchema(),
       state: this.state,
+      taskExecutionView: this.taskExecutionView,
       workflowBuilder: this.workflowBuilder
     };
   }
