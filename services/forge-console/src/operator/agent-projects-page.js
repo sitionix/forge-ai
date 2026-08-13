@@ -293,6 +293,7 @@ export class AgentProjectsPage {
       this.state.workflows,
       this.state.tasks,
       this.projectDataCurrent(),
+      this.workflowsDataCurrent(),
       this.tasksDataCurrent(),
       this.state.tasksLoadFailed,
       this.state.runtime
@@ -788,13 +789,21 @@ export class AgentProjectsPage {
       && this.state.workflowsProjectId === this.state.selectedProjectId;
   }
 
+  workflowsDataCurrent() {
+    return Boolean(this.state.selectedProjectId)
+      && this.state.workflowsProjectId === this.state.selectedProjectId;
+  }
+
   tasksDataCurrent() {
     return Boolean(this.state.selectedProjectId)
       && this.state.tasksProjectId === this.state.selectedProjectId;
   }
 
   canCreateTask() {
-    return this.projectDataCurrent() && this.tasksDataCurrent() && this.state.workflows.length > 0;
+    return Boolean(this.state.selectedProjectId)
+      && this.workflowsDataCurrent()
+      && this.tasksDataCurrent()
+      && this.state.workflows.length > 0;
   }
 
   isCurrentProjectLoad(projectId, loadSequence) {

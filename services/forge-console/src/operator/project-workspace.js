@@ -18,15 +18,15 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, agents, workflows, tasks, dataCurrent, tasksCurrent, tasksLoadFailed, runtimeCatalog = null) {
+  render(project, agents, workflows, tasks, dataCurrent, workflowsCurrent, tasksCurrent, tasksLoadFailed, runtimeCatalog = null) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2CreateAgent').disabled = !dataCurrent;
     this.byId('agentsV2CreateWorkflow').disabled = !dataCurrent;
-    this.byId('agentsV2CreateTask').disabled = !dataCurrent || !tasksCurrent || !workflows.length;
+    this.byId('agentsV2CreateTask').disabled = !project || !workflowsCurrent || !tasksCurrent || !workflows.length;
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
-    this.renderTasks(tasks, workflows, tasksCurrent, tasksLoadFailed);
+    this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed);
   }
 
   renderLoading() {
@@ -102,7 +102,7 @@ export class ProjectWorkspace {
     });
   }
 
-  renderTasks(tasks, workflows, tasksCurrent, tasksLoadFailed) {
+  renderTasks(tasks, workflowsCurrent, hasWorkflows, tasksCurrent, tasksLoadFailed) {
     const list = this.byId('agentsV2TasksList');
     if (tasksLoadFailed) {
       list.innerHTML = '';
@@ -112,26 +112,26 @@ export class ProjectWorkspace {
       list.innerHTML = '<div class="muted-state">Loading tasks...</div>';
       return;
     }
-    if (!workflows.length) {
+    if (tasks.length) {
+      list.innerHTML = tasks.map((task) => `
+        <article class="agents-v2-card task-card">
+          <h3>${escapeHtml(task.title)}</h3>
+          <p>Workflow: ${escapeHtml(task.workflowName || 'Unknown workflow')}</p>
+          <div class="agents-v2-task-meta">
+            <span class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(task.executionStatus))}" data-task-status="${escapeHtml(task.executionStatus || 'UNKNOWN')}">
+              ${escapeHtml(task.executionStatus || 'UNKNOWN')}
+            </span>
+            <span>Created: ${escapeHtml(this.formatDate(task.createdAt))}</span>
+          </div>
+        </article>
+      `).join('');
+      return;
+    }
+    if (workflowsCurrent && !hasWorkflows) {
       list.innerHTML = '<div class="muted-state">Create a workflow before creating a task.</div>';
       return;
     }
-    if (!tasks.length) {
-      list.innerHTML = '<div class="muted-state">No tasks yet.</div>';
-      return;
-    }
-    list.innerHTML = tasks.map((task) => `
-      <article class="agents-v2-card task-card">
-        <h3>${escapeHtml(task.title)}</h3>
-        <p>Workflow: ${escapeHtml(task.workflowName || 'Unknown workflow')}</p>
-        <div class="agents-v2-task-meta">
-          <span class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(task.executionStatus))}" data-task-status="${escapeHtml(task.executionStatus || 'UNKNOWN')}">
-            ${escapeHtml(task.executionStatus || 'UNKNOWN')}
-          </span>
-          <span>Created: ${escapeHtml(this.formatDate(task.createdAt))}</span>
-        </div>
-      </article>
-    `).join('');
+    list.innerHTML = '<div class="muted-state">No tasks yet.</div>';
   }
 
   formatDate(value) {

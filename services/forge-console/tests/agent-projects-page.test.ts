@@ -284,6 +284,35 @@ describe('Agent projects page', () => {
     expect((dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('Agents loading failure does not block New Task when Workflows and Tasks are current', async () => {
+    const fakeApi = api({
+      listProjectAgents: vi.fn(() => Promise.reject(new Error('Agents unavailable'))),
+      listProjectWorkflows: vi.fn(() => Promise.resolve([workflow()])),
+      listProjectTasks: vi.fn(() => Promise.resolve([task('task-1', 'SUCCEEDED', project().id, workflow().id, 'Full Testing')]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2AgentsError')?.textContent).toContain('Agents unavailable');
+    expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
+    expect((dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('Workflow loading failure keeps existing Task summaries visible but disables New Task', async () => {
+    const fakeApi = api({
+      listProjectWorkflows: vi.fn(() => Promise.reject(new Error('Workflows unavailable'))),
+      listProjectTasks: vi.fn(() => Promise.resolve([task('task-1', 'RUNNING', project().id, workflow().id, 'Snapshot Flow')]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2WorkflowsError')?.textContent).toContain('Workflows unavailable');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Workflow: Snapshot Flow');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('RUNNING');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).not.toContain('Create a workflow before creating a task.');
+    expect((dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('stale Project Task responses are ignored after switching Projects', async () => {
     const dom = agentProjectsDom();
     const projectOne = project();
