@@ -29,8 +29,6 @@ forge:
       app-server:
         command: ${FORGE_AGENT_CODEX_COMMAND:codex,app-server,--stdio}
         runtime-cwd: ${FORGE_AGENT_CODEX_RUNTIME_CWD:}
-        sandbox: ${FORGE_AGENT_CODEX_SANDBOX:read-only}
-        shell-tool-enabled: ${FORGE_AGENT_CODEX_SHELL_TOOL_ENABLED:false}
         request-timeout: ${FORGE_AGENT_CODEX_REQUEST_TIMEOUT:15s}
         turn-timeout: ${FORGE_AGENT_CODEX_TURN_TIMEOUT:30m}
         stdio-frame-limit-bytes: ${FORGE_AGENT_CODEX_STDIO_FRAME_LIMIT_BYTES:4194304}

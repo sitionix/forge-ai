@@ -37,13 +37,13 @@ class CodexAppServerTurnClientTest {
         assertThat(threadStart.path("params").path("developerInstructions").asText()).isEqualTo("Instructions.");
         assertThat(threadStart.path("params").has("baseInstructions")).isFalse();
         assertThat(threadStart.path("params").path("approvalPolicy").asText()).isEqualTo("never");
-        assertThat(threadStart.path("params").path("sandbox").asText()).isEqualTo("read-only");
+        assertThat(threadStart.path("params").path("sandbox").asText()).isEqualTo("workspace-write");
         assertThat(threadStart.path("params").path("ephemeral").asBoolean()).isTrue();
         assertThat(threadStart.path("params").path("config"))
                 .isEqualTo(this.objectMapper.readTree("""
                         {
                           "features": {
-                            "shell_tool": false
+                            "shell_tool": true
                           },
                           "agents": {
                             "enabled": false
@@ -53,6 +53,8 @@ class CodexAppServerTurnClientTest {
         final Path neutralCwd = Path.of(threadStart.path("params").path("cwd").asText());
         assertThat(neutralCwd.getFileName().toString()).isEqualTo("forge-agent-codex-runtime");
         assertThat(Files.isDirectory(neutralCwd)).isTrue();
+        assertThat(threadStart.path("params").path("runtimeWorkspaceRoots"))
+                .isEqualTo(this.objectMapper.readTree("[\"" + neutralCwd.toAbsolutePath().normalize() + "\"]"));
         this.replyThread(process, threadStart, "thread-1");
 
         final JsonNode turnStart = this.readRequest(process);
@@ -106,13 +108,11 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
-    void configuredWorkspaceWriteExecutionEnablesShellToolAndScopedWorkspaceRoot() throws Exception {
+    void configuredRuntimeCwdScopesWorkspaceWriteRoot() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerProperties properties = this.properties();
         final Path configuredCwd = Files.createTempDirectory("forge-agent-codex-file-work");
         properties.setRuntimeCwd(configuredCwd.toString());
-        properties.setSandbox("workspace-write");
-        properties.setShellToolEnabled(true);
         final CodexAppServerClient client = this.client(new FakeStarter(process), properties);
         final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.execute(
                 new CodexTurnRequest("Create a file.", "Instructions.", "gpt-5.6-spark", null, this.schemaUnchecked())
@@ -243,10 +243,10 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
-    void forbiddenGenerationItemFailsExactTurnAndInterrupts() throws Exception {
+    void mcpToolCallGenerationItemFailsExactTurnAndInterrupts() throws Exception {
         final TurnHarness harness = this.startedTurn();
 
-        harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "commandExecution"));
+        harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "mcpToolCall"));
         this.assertInterrupt(harness.process(), "thread-1", "turn-1");
 
         assertExecutionFailure(harness.result());
@@ -256,12 +256,35 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
-    void shellEnabledExecutionAllowsCommandGenerationItems() throws Exception {
-        final CodexAppServerProperties properties = this.properties();
-        properties.setShellToolEnabled(true);
-        final TurnHarness harness = this.startedTurn("medium", properties);
+    void unknownGenerationItemFailsExactTurnAndInterrupts() throws Exception {
+        final TurnHarness harness = this.startedTurn();
+
+        harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "unknownNewItem"));
+        this.assertInterrupt(harness.process(), "thread-1", "turn-1");
+
+        assertExecutionFailure(harness.result());
+        harness.client().close();
+    }
+
+    @Test
+    void fileOperationGenerationItemsAreAllowedByDefault() throws Exception {
+        final TurnHarness harness = this.startedTurn();
 
         harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "commandExecution"));
+        harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "fileChange"));
+        this.complete(harness.process(), "thread-1", "turn-1", "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
+
+        assertThat(harness.result().get(1, TimeUnit.SECONDS)).contains("OK");
+        harness.client().close();
+    }
+
+    @Test
+    void normalSafeGenerationItemsRemainAllowed() throws Exception {
+        final TurnHarness harness = this.startedTurn();
+
+        for (final String itemType : List.of("userMessage", "reasoning", "plan", "contextCompaction")) {
+            harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", itemType));
+        }
         this.complete(harness.process(), "thread-1", "turn-1", "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
 
         assertThat(harness.result().get(1, TimeUnit.SECONDS)).contains("OK");
@@ -310,7 +333,7 @@ class CodexAppServerTurnClientTest {
         this.replyTurn(process, turnTwo);
         this.awaitActiveTurns(client, 2);
 
-        process.writeStdout(this.itemStartedNotification("thread-b", "turn-b", "commandExecution"));
+        process.writeStdout(this.itemStartedNotification("thread-b", "turn-b", "mcpToolCall"));
         this.assertInterrupt(process, "thread-b", "turn-b");
         assertExecutionFailure(a);
         assertThat(client.activeTurnCountForTesting()).isEqualTo(1);

@@ -6,24 +6,18 @@ final class CodexGenerationPolicy {
 
     static final String AGENT_MESSAGE = "agentMessage";
 
-    private static final Set<String> SAFE_ITEM_TYPES = Set.of(
+    private static final Set<String> ALLOWED_ITEM_TYPES = Set.of(
             "userMessage",
             "reasoning",
             AGENT_MESSAGE,
             "plan",
-            "contextCompaction"
+            "contextCompaction",
+            "commandExecution",
+            "fileChange"
     );
-    private final boolean sideEffectsAllowed;
-
-    CodexGenerationPolicy(final boolean sideEffectsAllowed) {
-        this.sideEffectsAllowed = sideEffectsAllowed;
-    }
 
     RuntimeException violationFor(final String itemType) {
-        if (this.sideEffectsAllowed) {
-            return null;
-        }
-        if (itemType != null && SAFE_ITEM_TYPES.contains(itemType)) {
+        if (itemType != null && ALLOWED_ITEM_TYPES.contains(itemType)) {
             return null;
         }
         return executionFailed();

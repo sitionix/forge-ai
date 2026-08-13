@@ -454,14 +454,19 @@ describe('Agent projects page', () => {
     expect(details.textContent).toContain('Original task + previous outputs');
     expect(details.querySelector('pre')?.textContent).toContain('"count": 8');
 
+    dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="pending-node"]')?.click();
+    await flushAsync();
+    expect(details.textContent).toContain('Original task');
+    expect(details.textContent).toContain('No output yet.');
+
+    dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="running-node"]')?.click();
+    await flushAsync();
+    expect(details.textContent).toContain('Previous outputs only');
+
     dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="failed-node"]')?.click();
     await flushAsync();
     expect(details.textContent).toContain('ASSERTION_FAILED');
     expect(details.textContent).toContain('Expected count to match.');
-
-    dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="pending-node"]')?.click();
-    await flushAsync();
-    expect(details.textContent).toContain('No output yet.');
   });
 
   it('active WorkflowRun polling refreshes node output and stops at terminal status', async () => {

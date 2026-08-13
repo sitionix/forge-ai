@@ -115,9 +115,6 @@ _app-start:
         FORGE_AGENT_DB_USERNAME="forge_agent" \
         FORGE_AGENT_DB_PASSWORD="forge_agent" \
         FORGE_AGENT_PORT="7091" \
-        FORGE_AGENT_CODEX_RUNTIME_CWD="{{root}}/var/agent-workspace" \
-        FORGE_AGENT_CODEX_SANDBOX="workspace-write" \
-        FORGE_AGENT_CODEX_SHELL_TOOL_ENABLED="true" \
         java -jar services/forge-agent/boot/target/boot-0.0.1-SNAPSHOT.jar \
         --spring.docker.compose.enabled=false
     sleep 1

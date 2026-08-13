@@ -10,11 +10,7 @@ import java.util.Optional;
 final class CodexTurnStateTracker {
 
     private final Map<String, CodexExecutionState> executionsByThreadId = new HashMap<>();
-    private final CodexGenerationPolicy generationPolicy;
-
-    CodexTurnStateTracker(final boolean sideEffectsAllowed) {
-        this.generationPolicy = new CodexGenerationPolicy(sideEffectsAllowed);
-    }
+    private final CodexGenerationPolicy generationPolicy = new CodexGenerationPolicy();
 
     synchronized CodexExecutionState register(final String threadId) {
         final CodexExecutionState state = new CodexExecutionState(threadId);
