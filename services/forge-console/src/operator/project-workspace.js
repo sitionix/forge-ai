@@ -8,28 +8,34 @@ export class ProjectWorkspace {
     this.onEditAgent = options.onEditAgent;
     this.onNewWorkflow = options.onNewWorkflow;
     this.onOpenWorkflow = options.onOpenWorkflow;
+    this.onNewTask = options.onNewTask;
   }
 
   bind() {
     this.byId('agentsV2WorkspaceBack')?.addEventListener('click', () => this.onBack());
     this.byId('agentsV2CreateAgent')?.addEventListener('click', () => this.onNewAgent());
     this.byId('agentsV2CreateWorkflow')?.addEventListener('click', () => this.onNewWorkflow());
+    this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, agents, workflows, dataCurrent, runtimeCatalog = null) {
+  render(project, agents, workflows, tasks, dataCurrent, tasksCurrent, tasksLoadFailed, runtimeCatalog = null) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2CreateAgent').disabled = !dataCurrent;
     this.byId('agentsV2CreateWorkflow').disabled = !dataCurrent;
+    this.byId('agentsV2CreateTask').disabled = !dataCurrent || !tasksCurrent || !workflows.length;
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
+    this.renderTasks(tasks, workflows, tasksCurrent, tasksLoadFailed);
   }
 
   renderLoading() {
     this.byId('agentsV2CreateAgent').disabled = true;
     this.byId('agentsV2CreateWorkflow').disabled = true;
+    this.byId('agentsV2CreateTask').disabled = true;
     this.byId('agentsV2AgentsList').innerHTML = '<div class="muted-state">Loading agents...</div>';
     this.byId('agentsV2WorkflowsList').innerHTML = '<div class="muted-state">Loading workflows...</div>';
+    this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
   }
 
   renderAgents(agents, runtimeCatalog = null) {
@@ -96,6 +102,53 @@ export class ProjectWorkspace {
     });
   }
 
+  renderTasks(tasks, workflows, tasksCurrent, tasksLoadFailed) {
+    const list = this.byId('agentsV2TasksList');
+    if (tasksLoadFailed) {
+      list.innerHTML = '';
+      return;
+    }
+    if (!tasksCurrent) {
+      list.innerHTML = '<div class="muted-state">Loading tasks...</div>';
+      return;
+    }
+    if (!workflows.length) {
+      list.innerHTML = '<div class="muted-state">Create a workflow before creating a task.</div>';
+      return;
+    }
+    if (!tasks.length) {
+      list.innerHTML = '<div class="muted-state">No tasks yet.</div>';
+      return;
+    }
+    list.innerHTML = tasks.map((task) => `
+      <article class="agents-v2-card task-card">
+        <h3>${escapeHtml(task.title)}</h3>
+        <p>Workflow: ${escapeHtml(task.workflowName || this.workflowName(task.workflowId, workflows))}</p>
+        <div class="agents-v2-task-meta">
+          <span class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(task.executionStatus))}" data-task-status="${escapeHtml(task.executionStatus || 'UNKNOWN')}">
+            ${escapeHtml(task.executionStatus || 'UNKNOWN')}
+          </span>
+          <span>Created: ${escapeHtml(this.formatDate(task.createdAt))}</span>
+        </div>
+      </article>
+    `).join('');
+  }
+
+  workflowName(workflowId, workflows) {
+    return workflows.find((workflow) => workflow.id === workflowId)?.name || workflowId || 'Workflow';
+  }
+
+  formatDate(value) {
+    if (!value) {
+      return '';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString();
+  }
+
   byId(id) {
     return this.document.getElementById(id);
   }
@@ -116,4 +169,24 @@ export function effortTone(effortId) {
     return 'maximum';
   }
   return 'neutral';
+}
+
+export function statusTone(status) {
+  const normalized = (status || '').toLowerCase();
+  if (normalized === 'queued') {
+    return 'queued';
+  }
+  if (normalized === 'running') {
+    return 'running';
+  }
+  if (normalized === 'succeeded') {
+    return 'succeeded';
+  }
+  if (normalized === 'failed') {
+    return 'failed';
+  }
+  if (normalized === 'cancelled') {
+    return 'cancelled';
+  }
+  return 'unknown';
 }

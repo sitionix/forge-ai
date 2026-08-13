@@ -33,6 +33,15 @@ export function createAgentProjectsApi(http) {
     },
     updateWorkflow(workflowId, request) {
       return http.put(`${root}/workflows/${encodeURIComponent(workflowId)}`, request);
+    },
+    listProjectTasks(projectId) {
+      return http.get(`${root}/projects/${encodeURIComponent(projectId)}/tasks`);
+    },
+    createProjectTask(projectId, request) {
+      return http.post(`${root}/projects/${encodeURIComponent(projectId)}/tasks`, request);
+    },
+    getProjectTask(taskId) {
+      return http.get(`${root}/tasks/${encodeURIComponent(taskId)}`);
     }
   };
 }

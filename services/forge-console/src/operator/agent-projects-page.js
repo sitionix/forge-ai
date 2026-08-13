@@ -4,6 +4,8 @@ import { ProjectWorkspace } from './project-workspace.js';
 import { WorkflowBuilder } from './workflow-builder.js';
 
 const DEFAULT_OUTPUT_SCHEMA = { type: 'object', properties: {} };
+const TASK_REFRESH_INTERVAL_MS = 2000;
+const ACTIVE_TASK_STATUSES = new Set(['QUEUED', 'RUNNING']);
 
 export class AgentProjectsPage {
   constructor(options = {}) {
@@ -15,9 +17,12 @@ export class AgentProjectsPage {
       projects: [],
       agents: [],
       workflows: [],
+      tasks: [],
       selectedProjectId: null,
       agentsProjectId: null,
       workflowsProjectId: null,
+      tasksProjectId: null,
+      tasksLoadFailed: false,
       editingAgentId: null,
       openWorkflowId: null,
       runtime: null,
@@ -28,13 +33,18 @@ export class AgentProjectsPage {
     };
     this.projectLoadSequence = 0;
     this.workflowLoadSequence = 0;
+    this.tasksPollTimer = null;
+    this.tasksRequestInFlight = null;
+    this.tasksRequestProjectId = null;
+    this.tasksRequestLoadSequence = null;
     this.workspace = new ProjectWorkspace({
       document: this.document,
       onBack: () => this.showProjectsIndex(),
       onNewAgent: () => this.openAgentModal(),
       onEditAgent: (agentId) => this.openAgentModal(agentId),
       onNewWorkflow: () => this.openWorkflowModal(),
-      onOpenWorkflow: (workflowId) => this.openWorkflowBuilder(workflowId)
+      onOpenWorkflow: (workflowId) => this.openWorkflowBuilder(workflowId),
+      onNewTask: () => this.openTaskModal()
     });
     this.workflowBuilder = new WorkflowBuilder({
       document: this.document,
@@ -54,6 +64,7 @@ export class AgentProjectsPage {
   }
 
   dispose() {
+    this.stopTaskPolling();
     this.workflowBuilder.dispose();
   }
 
@@ -68,6 +79,8 @@ export class AgentProjectsPage {
     this.byId('agentsV2AgentEffort')?.addEventListener('change', () => this.onEffortChanged());
     this.byId('agentsV2WorkflowCancel')?.addEventListener('click', () => this.closeDialog('agentsV2WorkflowDialog'));
     this.byId('agentsV2WorkflowForm')?.addEventListener('submit', (event) => this.submitWorkflow(event));
+    this.byId('agentsV2TaskCancel')?.addEventListener('click', () => this.closeDialog('agentsV2TaskDialog'));
+    this.byId('agentsV2TaskForm')?.addEventListener('submit', (event) => this.submitTask(event));
   }
 
   async loadProjects() {
@@ -85,12 +98,16 @@ export class AgentProjectsPage {
   showProjectsIndex(options = {}) {
     this.projectLoadSequence += 1;
     this.workflowLoadSequence += 1;
+    this.stopTaskPolling();
     this.state.view = 'projects';
     this.state.selectedProjectId = null;
     this.state.agents = [];
     this.state.workflows = [];
+    this.state.tasks = [];
     this.state.agentsProjectId = null;
     this.state.workflowsProjectId = null;
+    this.state.tasksProjectId = null;
+    this.state.tasksLoadFailed = false;
     this.state.openWorkflowId = null;
     this.workflowBuilder.close();
     this.byId('agentsV2ProjectsView').classList.remove('hidden');
@@ -105,12 +122,16 @@ export class AgentProjectsPage {
     const loadSequence = this.projectLoadSequence + 1;
     this.projectLoadSequence = loadSequence;
     this.workflowLoadSequence += 1;
+    this.stopTaskPolling();
     this.state.view = 'project';
     this.state.selectedProjectId = projectId;
     this.state.agents = [];
     this.state.workflows = [];
+    this.state.tasks = [];
     this.state.agentsProjectId = null;
     this.state.workflowsProjectId = null;
+    this.state.tasksProjectId = null;
+    this.state.tasksLoadFailed = false;
     this.state.openWorkflowId = null;
     this.workflowBuilder.close();
     this.byId('agentsV2ProjectsView').classList.add('hidden');
@@ -121,6 +142,7 @@ export class AgentProjectsPage {
     await Promise.all([
       this.loadAgents(projectId, loadSequence),
       this.loadWorkflows(projectId, loadSequence),
+      this.loadTasks(projectId, loadSequence),
       this.loadRuntimeCatalog(projectId, loadSequence)
     ]);
     if (this.isCurrentProjectLoad(projectId, loadSequence)) {
@@ -177,6 +199,61 @@ export class AgentProjectsPage {
     }
   }
 
+  async loadTasks(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence, options = {}) {
+    if (!projectId) {
+      return [];
+    }
+    if (this.tasksRequestInFlight && this.tasksRequestProjectId === projectId && this.tasksRequestLoadSequence === loadSequence) {
+      return this.tasksRequestInFlight;
+    }
+    if (!options.silent) {
+      this.showError('agentsV2TasksError', '');
+    }
+    this.state.tasksLoadFailed = false;
+    const request = this.fetchTasks(projectId, loadSequence, options);
+    this.tasksRequestInFlight = request;
+    this.tasksRequestProjectId = projectId;
+    this.tasksRequestLoadSequence = loadSequence;
+    request.finally(() => {
+      if (this.tasksRequestInFlight === request) {
+        this.tasksRequestInFlight = null;
+        this.tasksRequestProjectId = null;
+        this.tasksRequestLoadSequence = null;
+        if (this.isCurrentProjectLoad(projectId, loadSequence)) {
+          this.syncTaskPolling();
+        }
+      }
+    });
+    return request;
+  }
+
+  async fetchTasks(projectId, loadSequence, options = {}) {
+    try {
+      const tasks = await this.api.listProjectTasks(projectId);
+      if (!this.isCurrentProjectLoad(projectId, loadSequence)) {
+        return [];
+      }
+      this.state.tasks = tasks;
+      this.state.tasksProjectId = projectId;
+      this.state.tasksLoadFailed = false;
+      this.showError('agentsV2TasksError', '');
+      this.renderProjectWorkspace();
+      return tasks;
+    } catch (error) {
+      if (!this.isCurrentProjectLoad(projectId, loadSequence)) {
+        return [];
+      }
+      this.state.tasks = [];
+      this.state.tasksProjectId = projectId;
+      this.state.tasksLoadFailed = true;
+      this.byId('agentsV2TasksList').innerHTML = '';
+      this.showError('agentsV2TasksError', error.message || 'Tasks failed to load.');
+      this.renderProjectWorkspace();
+      this.stopTaskPolling();
+      return [];
+    }
+  }
+
   renderProjects() {
     const list = this.byId('agentsV2ProjectsList');
     if (!this.state.projects.length) {
@@ -196,7 +273,16 @@ export class AgentProjectsPage {
   }
 
   renderProjectWorkspace() {
-    this.workspace.render(this.currentProject(), this.state.agents, this.state.workflows, this.projectDataCurrent(), this.state.runtime);
+    this.workspace.render(
+      this.currentProject(),
+      this.state.agents,
+      this.state.workflows,
+      this.state.tasks,
+      this.projectDataCurrent(),
+      this.tasksDataCurrent(),
+      this.state.tasksLoadFailed,
+      this.state.runtime
+    );
   }
 
   openProjectModal() {
@@ -328,10 +414,57 @@ export class AgentProjectsPage {
     }
   }
 
+  openTaskModal() {
+    if (!this.canCreateTask()) {
+      return;
+    }
+    this.showError('agentsV2TaskModalError', '');
+    this.byId('agentsV2TaskTitle').value = '';
+    this.byId('agentsV2TaskInput').value = '';
+    this.renderTaskWorkflowSelect();
+    this.openDialog('agentsV2TaskDialog');
+  }
+
+  renderTaskWorkflowSelect() {
+    const select = this.byId('agentsV2TaskWorkflow');
+    select.innerHTML = this.state.workflows
+      .map((workflow) => `<option value="${escapeHtml(workflow.id)}">${escapeHtml(workflow.name)}</option>`)
+      .join('');
+    select.disabled = !this.state.workflows.length;
+  }
+
+  async submitTask(event) {
+    event.preventDefault();
+    if (this.state.saving || !this.canCreateTask()) {
+      return;
+    }
+    const title = this.byId('agentsV2TaskTitle').value.trim();
+    const input = this.byId('agentsV2TaskInput').value.trim();
+    const workflowId = this.byId('agentsV2TaskWorkflow').value;
+    if (!title || title.length > 120 || !input || !workflowId) {
+      this.showError('agentsV2TaskModalError', 'Enter a title, task, and workflow.');
+      return;
+    }
+    this.state.saving = true;
+    this.byId('agentsV2TaskCreateSave').disabled = true;
+    this.showError('agentsV2TaskModalError', '');
+    try {
+      await this.api.createProjectTask(this.state.selectedProjectId, { title, input, workflowId });
+      this.closeDialog('agentsV2TaskDialog');
+      await this.loadTasks();
+    } catch (error) {
+      this.showError('agentsV2TaskModalError', error.message || 'Task could not be created.');
+    } finally {
+      this.state.saving = false;
+      this.byId('agentsV2TaskCreateSave').disabled = false;
+    }
+  }
+
   async openWorkflowBuilder(workflowId) {
     if (!this.projectDataCurrent()) {
       return;
     }
+    this.stopTaskPolling();
     const selectedProjectId = this.state.selectedProjectId;
     const projectSequence = this.projectLoadSequence;
     const workflowSequence = this.workflowLoadSequence + 1;
@@ -369,6 +502,47 @@ export class AgentProjectsPage {
     this.byId('agentsV2ProjectsView').classList.add('hidden');
     this.byId('agentsV2Workspace').classList.remove('hidden');
     this.renderProjectWorkspace();
+    this.syncTaskPolling();
+  }
+
+  syncTaskPolling() {
+    if (this.shouldPollTasks()) {
+      this.scheduleTaskPolling();
+      return;
+    }
+    this.stopTaskPolling();
+  }
+
+  scheduleTaskPolling() {
+    if (this.tasksPollTimer || this.tasksRequestInFlight) {
+      return;
+    }
+    this.tasksPollTimer = this.window.setTimeout(() => {
+      this.tasksPollTimer = null;
+      this.pollTasks();
+    }, TASK_REFRESH_INTERVAL_MS);
+  }
+
+  async pollTasks() {
+    if (!this.shouldPollTasks() || this.tasksRequestInFlight) {
+      this.syncTaskPolling();
+      return;
+    }
+    await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { silent: true });
+    this.syncTaskPolling();
+  }
+
+  stopTaskPolling() {
+    if (this.tasksPollTimer) {
+      this.window.clearTimeout(this.tasksPollTimer);
+      this.tasksPollTimer = null;
+    }
+  }
+
+  shouldPollTasks() {
+    return this.state.view === 'project'
+      && this.tasksDataCurrent()
+      && this.state.tasks.some((task) => ACTIVE_TASK_STATUSES.has(task.executionStatus));
   }
 
   parseOutputSchema() {
@@ -597,6 +771,15 @@ export class AgentProjectsPage {
       && this.state.workflowsProjectId === this.state.selectedProjectId;
   }
 
+  tasksDataCurrent() {
+    return Boolean(this.state.selectedProjectId)
+      && this.state.tasksProjectId === this.state.selectedProjectId;
+  }
+
+  canCreateTask() {
+    return this.projectDataCurrent() && this.tasksDataCurrent() && this.state.workflows.length > 0;
+  }
+
   isCurrentProjectLoad(projectId, loadSequence) {
     return this.state.selectedProjectId === projectId && this.projectLoadSequence === loadSequence;
   }
@@ -646,6 +829,8 @@ export class AgentProjectsPage {
       selectProject: (projectId) => this.openProject(projectId),
       showProjectsIndex: () => this.showProjectsIndex(),
       openAgentModal: (agentId) => this.openAgentModal(agentId),
+      openTaskModal: () => this.openTaskModal(),
+      loadTasks: () => this.loadTasks(),
       openWorkflowBuilder: (workflowId) => this.openWorkflowBuilder(workflowId),
       addNode: (agentId) => this.workflowBuilder.addNode(agentId),
       removeConnection: (sourceNodeId, targetNodeId) => this.workflowBuilder.removeConnection(sourceNodeId, targetNodeId),
