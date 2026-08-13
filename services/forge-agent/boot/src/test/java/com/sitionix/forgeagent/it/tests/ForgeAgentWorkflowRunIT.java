@@ -62,6 +62,7 @@ class ForgeAgentWorkflowRunIT {
         final WorkflowRunEntity created = this.createRun();
 
         assertThat(created.getStatus()).isEqualTo("QUEUED");
+        assertThat(created.getTaskId()).isNull();
         assertThat(created.getInput()).isEqualTo("Review the authentication service changes.");
         assertThat(created.getWorkflowName()).isEqualTo("Full Testing");
         assertThat(this.nodeRuns(created.getId())).hasSize(3).allSatisfy(nodeRun -> {
@@ -247,6 +248,7 @@ class ForgeAgentWorkflowRunIT {
                 .andExpectPath(jsonPath("$.id").isNotEmpty())
                 .andExpectPath(jsonPath("$.projectId").value(PROJECT_ALPHA_ID.toString()))
                 .andExpectPath(jsonPath("$.sourceWorkflowId").value(WORKFLOW_ID.toString()))
+                .andExpectPath(jsonPath("$.taskId").value(nullValue()))
                 .andExpectPath(jsonPath("$.workflowName").value(expectedWorkflowName))
                 .andExpectPath(jsonPath("$.input").value("Review the authentication service changes."))
                 .andExpectPath(jsonPath("$.status").value("QUEUED"))
@@ -286,6 +288,7 @@ class ForgeAgentWorkflowRunIT {
                 .andExpectPath(jsonPath("$.id").value(runId.toString()))
                 .andExpectPath(jsonPath("$.projectId").value(PROJECT_ALPHA_ID.toString()))
                 .andExpectPath(jsonPath("$.sourceWorkflowId").value(WORKFLOW_ID.toString()))
+                .andExpectPath(jsonPath("$.taskId").value(nullValue()))
                 .andExpectPath(jsonPath("$.workflowName").value("Full Testing"))
                 .andExpectPath(jsonPath("$.input").value("Review the authentication service changes."))
                 .andExpectPath(jsonPath("$.status").value("QUEUED"))

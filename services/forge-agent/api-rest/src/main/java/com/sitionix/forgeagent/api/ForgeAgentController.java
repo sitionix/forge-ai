@@ -4,9 +4,12 @@ import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
@@ -15,6 +18,7 @@ import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
 import com.sitionix.forgeagent.application.usecase.GetAiRuntime;
 import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
+import com.sitionix.forgeagent.application.usecase.ProjectTaskUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowUseCases;
 import jakarta.validation.Valid;
@@ -39,6 +43,7 @@ public class ForgeAgentController {
     private final GetAiRuntime getAiRuntime;
     private final WorkflowUseCases workflowUseCases;
     private final WorkflowRunUseCases workflowRunUseCases;
+    private final ProjectTaskUseCases projectTaskUseCases;
     private final ForgeAgentApiMapper mapper;
 
     @GetMapping("/api/v1/runtime")
@@ -57,6 +62,27 @@ public class ForgeAgentController {
     public ResponseEntity<ProjectResponse> createProject(@Valid @RequestBody final CreateProjectRequest request) {
         final ProjectResponse response = this.mapper.toResponse(this.projectUseCases.createProject(this.mapper.toCommand(request)));
         return ResponseEntity.created(URI.create("/api/v1/projects/" + response.id())).body(response);
+    }
+
+    @PostMapping("/api/v1/projects/{projectId}/tasks")
+    public ResponseEntity<ProjectTaskResponse> createProjectTask(@PathVariable final UUID projectId,
+                                                                 @Valid @RequestBody final CreateProjectTaskRequest request) {
+        final ProjectTaskResponse response = this.mapper.toResponse(
+                this.projectTaskUseCases.createProjectTask(projectId, this.mapper.toCommand(request))
+        );
+        return ResponseEntity.created(URI.create("/api/v1/tasks/" + response.id())).body(response);
+    }
+
+    @GetMapping("/api/v1/projects/{projectId}/tasks")
+    public ResponseEntity<List<ProjectTaskSummaryResponse>> listProjectTasks(@PathVariable final UUID projectId) {
+        return ResponseEntity.ok(this.projectTaskUseCases.listProjectTasks(projectId).stream()
+                .map(this.mapper::toResponse)
+                .toList());
+    }
+
+    @GetMapping("/api/v1/tasks/{taskId}")
+    public ResponseEntity<ProjectTaskResponse> getProjectTask(@PathVariable final UUID taskId) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.projectTaskUseCases.getProjectTask(taskId)));
     }
 
     @GetMapping("/api/v1/projects/{projectId}/agents")

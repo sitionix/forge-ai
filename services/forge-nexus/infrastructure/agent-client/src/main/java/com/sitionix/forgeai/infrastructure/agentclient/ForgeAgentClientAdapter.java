@@ -3,11 +3,14 @@ package com.sitionix.forgeai.infrastructure.agentclient;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
@@ -17,6 +20,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionReques
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import java.util.List;
 import java.util.UUID;
@@ -42,6 +46,24 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     public AgentProject createProject(final CreateAgentProjectCommand command) {
         final AgentProjectRequest request = this.mapper.toRequest(command);
         return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createProject(request)));
+    }
+
+    @Override
+    public AgentProjectTask createProjectTask(final UUID projectId, final CreateAgentProjectTaskCommand command) {
+        final CreateProjectTaskRequest request = this.mapper.toRequest(command);
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createProjectTask(projectId, request)));
+    }
+
+    @Override
+    public List<AgentProjectTaskSummary> listProjectTasks(final UUID projectId) {
+        return this.mapper.requireList(this.clientCallExecutor.execute(() -> this.httpClient.listProjectTasks(projectId)), "project tasks").stream()
+                .map(this.mapper::toDomain)
+                .toList();
+    }
+
+    @Override
+    public AgentProjectTask getProjectTask(final UUID taskId) {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.getProjectTask(taskId)));
     }
 
     @Override

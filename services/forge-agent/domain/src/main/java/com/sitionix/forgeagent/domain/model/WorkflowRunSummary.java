@@ -6,6 +6,7 @@ import java.util.UUID;
 public record WorkflowRunSummary(
         UUID id,
         UUID sourceWorkflowId,
+        UUID taskId,
         String workflowName,
         WorkflowRunStatus status,
         Instant createdAt,

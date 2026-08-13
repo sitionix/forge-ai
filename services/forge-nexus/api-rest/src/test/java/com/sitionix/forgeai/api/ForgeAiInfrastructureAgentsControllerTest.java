@@ -15,15 +15,20 @@ import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProxyApiMapper;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse;
 import com.sitionix.forgeai.api.agentproxy.CreateAgentWorkflowRunRequest;
+import com.sitionix.forgeai.api.agentproxy.CreateAgentProjectTaskRequest;
 import com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus;
@@ -32,19 +37,23 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.usecase.CreateAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
+import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.GetAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.GetAgentRuntime;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflowRun;
+import com.sitionix.forgeai.domain.usecase.GetAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.ListAgentProjects;
+import com.sitionix.forgeai.domain.usecase.ListAgentProjectTasks;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflowRuns;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflows;
 import com.sitionix.forgeai.domain.usecase.ListProjectAgentDefinitions;
@@ -67,12 +76,19 @@ class ForgeAiInfrastructureAgentsControllerTest {
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID RUN_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
+    private static final UUID TASK_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
 
     @Mock
     private ListAgentProjects listAgentProjects;
     @Mock
     private CreateAgentProject createAgentProject;
+    @Mock
+    private CreateAgentProjectTask createAgentProjectTask;
+    @Mock
+    private ListAgentProjectTasks listAgentProjectTasks;
+    @Mock
+    private GetAgentProjectTask getAgentProjectTask;
     @Mock
     private GetAgentRuntime getAgentRuntime;
     @Mock
@@ -107,6 +123,9 @@ class ForgeAiInfrastructureAgentsControllerTest {
         this.controller = new ForgeAiInfrastructureAgentsController(
                 this.listAgentProjects,
                 this.createAgentProject,
+                this.createAgentProjectTask,
+                this.listAgentProjectTasks,
+                this.getAgentProjectTask,
                 this.getAgentRuntime,
                 this.listProjectAgentDefinitions,
                 this.createAgentDefinition,
@@ -156,6 +175,56 @@ class ForgeAiInfrastructureAgentsControllerTest {
         verify(this.mapper).toCommand(request);
         verify(this.createAgentProject).execute(command);
         verify(this.mapper).toResponse(project);
+    }
+
+    @Test
+    void createProjectTask() {
+        final var request = new CreateAgentProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID);
+        final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID);
+        final var task = this.task();
+        final var response = this.taskResponse();
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.createAgentProjectTask.execute(PROJECT_ID, command)).thenReturn(task);
+        when(this.mapper.toResponse(task)).thenReturn(response);
+
+        final var actual = this.controller.createProjectTask(PROJECT_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(actual.getHeaders().getLocation().toString()).isEqualTo("/api/v1/infrastructure/agents/tasks/" + TASK_ID);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
+        verify(this.createAgentProjectTask).execute(PROJECT_ID, command);
+        verify(this.mapper).toResponse(task);
+    }
+
+    @Test
+    void listProjectTasks() {
+        final var task = new AgentProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, NOW, NOW);
+        final var response = new AgentProjectTaskSummaryResponse(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, NOW, NOW);
+        when(this.listAgentProjectTasks.execute(PROJECT_ID)).thenReturn(List.of(task));
+        when(this.mapper.toResponse(task)).thenReturn(response);
+
+        final var actual = this.controller.listProjectTasks(PROJECT_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).containsExactly(response);
+        verify(this.listAgentProjectTasks).execute(PROJECT_ID);
+        verify(this.mapper).toResponse(task);
+    }
+
+    @Test
+    void getProjectTask() {
+        final var task = this.task();
+        final var response = this.taskResponse();
+        when(this.getAgentProjectTask.execute(TASK_ID)).thenReturn(task);
+        when(this.mapper.toResponse(task)).thenReturn(response);
+
+        final var actual = this.controller.getProjectTask(TASK_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.getAgentProjectTask).execute(TASK_ID);
+        verify(this.mapper).toResponse(task);
     }
 
     @Test
@@ -345,8 +414,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
 
     @Test
     void listWorkflowRuns() {
-        final AgentWorkflowRunSummary run = new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, NOW, null, null);
-        final AgentWorkflowRunSummaryResponse response = new AgentWorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, NOW, null, null);
+        final AgentWorkflowRunSummary run = new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, null, "Full Testing", AgentWorkflowRunStatus.QUEUED, NOW, null, null);
+        final AgentWorkflowRunSummaryResponse response = new AgentWorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, null, "Full Testing", AgentWorkflowRunStatus.QUEUED, NOW, null, null);
         when(this.listAgentWorkflowRuns.execute(WORKFLOW_ID)).thenReturn(List.of(run));
         when(this.mapper.toResponse(run)).thenReturn(response);
 
@@ -406,10 +475,36 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     private AgentWorkflowRun workflowRun() {
-        return new AgentWorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), NOW, null, null);
+        return new AgentWorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), NOW, null, null);
     }
 
     private AgentWorkflowRunResponse workflowRunResponse() {
-        return new AgentWorkflowRunResponse(RUN_ID, PROJECT_ID, WORKFLOW_ID, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), NOW, null, null);
+        return new AgentWorkflowRunResponse(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), NOW, null, null);
+    }
+
+    private AgentProjectTask task() {
+        return new AgentProjectTask(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                "Count letters.",
+                WORKFLOW_ID,
+                List.of(new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, NOW, null, null)),
+                NOW,
+                NOW
+        );
+    }
+
+    private AgentProjectTaskResponse taskResponse() {
+        return new AgentProjectTaskResponse(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                "Count letters.",
+                WORKFLOW_ID,
+                List.of(new AgentWorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, NOW, null, null)),
+                NOW,
+                NOW
+        );
     }
 }

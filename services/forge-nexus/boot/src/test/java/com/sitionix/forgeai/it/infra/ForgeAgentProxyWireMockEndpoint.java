@@ -5,6 +5,9 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListRe
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
@@ -37,6 +40,29 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "requestAgentProxyCreateProject.json",
                 HttpStatus.CREATED,
                 "responseAgentProxyCreateProject.json");
+    }
+
+    public static Endpoint<CreateProjectTaskRequest, ProjectTaskResponse> createProjectTask() {
+        return upstreamPost("/api/v1/projects/{projectId}/tasks",
+                CreateProjectTaskRequest.class,
+                ProjectTaskResponse.class,
+                "requestAgentProxyCreateProjectTask.json",
+                HttpStatus.CREATED,
+                "responseAgentProxyProjectTask.json");
+    }
+
+    public static Endpoint<Void, ProjectTaskSummaryResponse[]> listProjectTasks() {
+        return upstreamGet("/api/v1/projects/{projectId}/tasks",
+                ProjectTaskSummaryResponse[].class,
+                HttpStatus.OK,
+                "responseAgentProxyProjectTasks.json");
+    }
+
+    public static Endpoint<Void, ProjectTaskResponse> getProjectTask() {
+        return upstreamGet("/api/v1/tasks/{taskId}",
+                ProjectTaskResponse.class,
+                HttpStatus.OK,
+                "responseAgentProxyProjectTask.json");
     }
 
     public static Endpoint<Void, AgentRuntimeResponse> getRuntime() {

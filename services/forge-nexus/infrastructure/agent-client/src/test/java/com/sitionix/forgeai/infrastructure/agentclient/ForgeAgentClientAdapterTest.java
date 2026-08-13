@@ -10,6 +10,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus;
@@ -18,6 +20,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
@@ -31,7 +34,10 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeProviderR
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
@@ -54,6 +60,7 @@ class ForgeAgentClientAdapterTest {
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID RUN_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
+    private static final UUID TASK_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -107,6 +114,54 @@ class ForgeAgentClientAdapterTest {
         inOrder.verify(this.executor).execute(any());
         inOrder.verify(this.httpClient).createProject(request);
         inOrder.verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void createProjectTaskMapsRequestExecutesTypedClientCallAndMapsResponse() {
+        final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID);
+        final var request = new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID);
+        final var upstreamResponse = new ProjectTaskResponse(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), CREATED, UPDATED);
+        final var expected = new AgentProjectTask(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), CREATED, UPDATED);
+        when(this.mapper.toRequest(command)).thenReturn(request);
+        when(this.httpClient.createProjectTask(PROJECT_ID, request)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.createProjectTask(PROJECT_ID, command)).isEqualTo(expected);
+
+        verify(this.mapper).toRequest(command);
+        verify(this.executor).execute(any());
+        verify(this.httpClient).createProjectTask(PROJECT_ID, request);
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void listProjectTasksExecutesTypedClientCallAndMapsResponse() {
+        final var upstreamResponse = new ProjectTaskSummaryResponse(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, CREATED, UPDATED);
+        final var expected = new AgentProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, CREATED, UPDATED);
+        when(this.httpClient.listProjectTasks(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
+        when(this.mapper.requireList(List.of(upstreamResponse), "project tasks")).thenReturn(List.of(upstreamResponse));
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.listProjectTasks(PROJECT_ID)).containsExactly(expected);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).listProjectTasks(PROJECT_ID);
+        verify(this.mapper).requireList(List.of(upstreamResponse), "project tasks");
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void getProjectTaskExecutesTypedClientCallAndMapsResponse() {
+        final var upstreamResponse = new ProjectTaskResponse(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), CREATED, UPDATED);
+        final var expected = new AgentProjectTask(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), CREATED, UPDATED);
+        when(this.httpClient.getProjectTask(TASK_ID)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.getProjectTask(TASK_ID)).isEqualTo(expected);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).getProjectTask(TASK_ID);
+        verify(this.mapper).toDomain(upstreamResponse);
     }
 
     @Test
@@ -260,8 +315,8 @@ class ForgeAgentClientAdapterTest {
     void createWorkflowRunMapsRequestExecutesTypedClientCallAndMapsResponse() {
         final var command = new CreateAgentWorkflowRunCommand("Review auth changes.");
         final var request = new CreateWorkflowRunRequest("Review auth changes.");
-        final var upstreamResponse = new WorkflowRunResponse(RUN_ID, PROJECT_ID, WORKFLOW_ID, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
-        final var expected = new AgentWorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
+        final var upstreamResponse = new WorkflowRunResponse(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
+        final var expected = new AgentWorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.createWorkflowRun(WORKFLOW_ID, request)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
@@ -276,8 +331,8 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void listWorkflowRunsExecutesTypedClientCallAndMapsResponse() {
-        final var upstreamResponse = new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null);
-        final var expected = new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null);
+        final var upstreamResponse = new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, null, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null);
+        final var expected = new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, null, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null);
         when(this.httpClient.listWorkflowRuns(WORKFLOW_ID)).thenReturn(List.of(upstreamResponse));
         when(this.mapper.requireList(List.of(upstreamResponse), "workflow runs")).thenReturn(List.of(upstreamResponse));
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
@@ -292,8 +347,8 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void getWorkflowRunExecutesTypedClientCallAndMapsResponse() {
-        final var upstreamResponse = new WorkflowRunResponse(RUN_ID, PROJECT_ID, WORKFLOW_ID, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
-        final var expected = new AgentWorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
+        final var upstreamResponse = new WorkflowRunResponse(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
+        final var expected = new AgentWorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
         when(this.httpClient.getWorkflowRun(RUN_ID)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 

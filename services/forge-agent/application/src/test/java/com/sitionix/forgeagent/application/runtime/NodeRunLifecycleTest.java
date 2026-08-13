@@ -353,6 +353,7 @@ class NodeRunLifecycleTest {
                 WORKFLOW_RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 "Review auth changes.",
                 status,

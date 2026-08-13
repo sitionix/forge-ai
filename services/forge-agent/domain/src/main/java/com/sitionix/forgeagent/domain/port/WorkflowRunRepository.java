@@ -16,5 +16,7 @@ public interface WorkflowRunRepository {
 
     List<WorkflowRunSummary> findSummariesBySourceWorkflowId(UUID workflowId);
 
+    List<WorkflowRunSummary> findSummariesByTaskId(UUID taskId);
+
     WorkflowRun saveLifecycle(WorkflowRun run);
 }

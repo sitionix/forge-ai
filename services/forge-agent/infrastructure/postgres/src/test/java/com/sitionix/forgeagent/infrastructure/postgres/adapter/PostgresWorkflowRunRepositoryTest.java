@@ -38,6 +38,7 @@ class PostgresWorkflowRunRepositoryTest {
     private static final UUID PROJECT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final UUID WORKFLOW_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID RUN_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+    private static final UUID TASK_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
     private static final UUID NODE_RUN_A = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     private static final UUID NODE_RUN_B = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     private static final UUID SOURCE_NODE_A = UUID.fromString("40000000-0000-4000-8000-000000000001");
@@ -72,6 +73,7 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(savedRun.getId()).isEqualTo(RUN_ID);
         assertThat(savedRun.getProjectId()).isEqualTo(PROJECT_ID);
         assertThat(savedRun.getSourceWorkflowId()).isEqualTo(WORKFLOW_ID);
+        assertThat(savedRun.getTaskId()).isEqualTo(TASK_ID);
         assertThat(savedRun.getWorkflowName()).isEqualTo("Full Testing");
         assertThat(savedRun.getInput()).isEqualTo("Review auth changes.");
         assertThat(savedRun.getStatus()).isEqualTo("QUEUED");
@@ -117,6 +119,7 @@ class PostgresWorkflowRunRepositoryTest {
         final WorkflowRun run = this.repository.findById(RUN_ID).orElseThrow();
 
         assertThat(run.id()).isEqualTo(RUN_ID);
+        assertThat(run.taskId()).isEqualTo(TASK_ID);
         assertThat(run.nodeRuns()).singleElement().satisfies(nodeRun -> {
             assertThat(nodeRun.id()).isEqualTo(NODE_RUN_B);
             assertThat(nodeRun.workflowRunId()).isEqualTo(RUN_ID);
@@ -175,6 +178,7 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(runs).extracting(WorkflowRunSummary::id).containsExactly(RUN_ID, olderRunId);
         assertThat(runs).first().satisfies(summary -> {
             assertThat(summary.sourceWorkflowId()).isEqualTo(WORKFLOW_ID);
+            assertThat(summary.taskId()).isEqualTo(TASK_ID);
             assertThat(summary.workflowName()).isEqualTo("Full Testing");
             assertThat(summary.status()).isEqualTo(WorkflowRunStatus.QUEUED);
             assertThat(summary.createdAt()).isEqualTo(Instant.parse("2026-08-10T12:01:00Z"));
@@ -185,8 +189,24 @@ class PostgresWorkflowRunRepositoryTest {
         verifyNoInteractions(this.nodeRunRepository);
     }
 
+    @Test
+    void taskHistoryUsesDeterministicRepositoryOrderingAndDoesNotLoadNodeRuns() {
+        final UUID olderRunId = UUID.fromString("33333333-3333-4333-8333-333333333332");
+        when(this.workflowRunRepository.findByTaskIdOrderByCreatedAtDescIdDesc(TASK_ID)).thenReturn(List.of(
+                this.runEntity(RUN_ID, Instant.parse("2026-08-10T12:01:00Z")),
+                this.runEntity(olderRunId, Instant.parse("2026-08-10T12:00:00Z"))
+        ));
+
+        final List<WorkflowRunSummary> runs = this.repository.findSummariesByTaskId(TASK_ID);
+
+        assertThat(runs).extracting(WorkflowRunSummary::id).containsExactly(RUN_ID, olderRunId);
+        assertThat(runs).extracting(WorkflowRunSummary::taskId).containsOnly(TASK_ID);
+        verify(this.workflowRunRepository).findByTaskIdOrderByCreatedAtDescIdDesc(TASK_ID);
+        verifyNoInteractions(this.nodeRunRepository);
+    }
+
     private WorkflowRun run(final List<NodeRun> nodeRuns) {
-        return new WorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, "Full Testing", "Review auth changes.", WorkflowRunStatus.QUEUED, nodeRuns, NOW, null, null);
+        return new WorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, TASK_ID, "Full Testing", "Review auth changes.", WorkflowRunStatus.QUEUED, nodeRuns, NOW, null, null);
     }
 
     private NodeRun nodeRun(final UUID id,
@@ -243,6 +263,7 @@ class PostgresWorkflowRunRepositoryTest {
         entity.setId(runId);
         entity.setProjectId(PROJECT_ID);
         entity.setSourceWorkflowId(WORKFLOW_ID);
+        entity.setTaskId(TASK_ID);
         entity.setWorkflowName("Full Testing");
         entity.setInput("Review auth changes.");
         entity.setStatus("QUEUED");

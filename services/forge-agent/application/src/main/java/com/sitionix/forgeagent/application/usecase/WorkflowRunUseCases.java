@@ -39,6 +39,18 @@ public class WorkflowRunUseCases {
 
     @Transactional
     public WorkflowRun createWorkflowRun(final UUID workflowId, final CreateWorkflowRunCommand command) {
+        return this.createWorkflowRun(workflowId, command, null);
+    }
+
+    @Transactional
+    public WorkflowRun createWorkflowRunForTask(final UUID workflowId, final CreateWorkflowRunCommand command, final UUID taskId) {
+        if (taskId == null) {
+            throw new ValidationException("INVALID_WORKFLOW_RUN_TASK", "Workflow run taskId is required.");
+        }
+        return this.createWorkflowRun(workflowId, command, taskId);
+    }
+
+    private WorkflowRun createWorkflowRun(final UUID workflowId, final CreateWorkflowRunCommand command, final UUID taskId) {
         final String input = this.requireInput(command == null ? null : command.input());
         final Workflow identity = this.workflowRepository.findById(workflowId)
                 .orElseThrow(() -> new NotFoundException("WORKFLOW_NOT_FOUND", "Workflow was not found."));
@@ -58,6 +70,7 @@ public class WorkflowRunUseCases {
                 workflowRunId,
                 workflow.projectId(),
                 workflow.id(),
+                taskId,
                 workflow.name(),
                 input,
                 WorkflowRunStatus.QUEUED,

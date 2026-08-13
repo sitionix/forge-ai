@@ -9,6 +9,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
@@ -17,6 +19,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
@@ -35,6 +38,10 @@ public class AgentProxyApiMapper {
 
     public CreateAgentProjectCommand toCommand(final AgentProjectRequest request) {
         return new CreateAgentProjectCommand(request.name());
+    }
+
+    public CreateAgentProjectTaskCommand toCommand(final CreateAgentProjectTaskRequest request) {
+        return new CreateAgentProjectTaskCommand(request.title(), request.input(), request.workflowId());
     }
 
     public SaveAgentDefinitionCommand toCommand(final AgentDefinitionRequest request) {
@@ -72,6 +79,33 @@ public class AgentProxyApiMapper {
 
     public AgentProjectResponse toResponse(final AgentProject project) {
         return new AgentProjectResponse(project.id(), project.name(), project.createdAt(), project.updatedAt());
+    }
+
+    public AgentProjectTaskSummaryResponse toResponse(final AgentProjectTaskSummary task) {
+        return new AgentProjectTaskSummaryResponse(
+                task.id(),
+                task.projectId(),
+                task.title(),
+                task.workflowId(),
+                task.workflowName(),
+                task.latestWorkflowRunId(),
+                task.executionStatus(),
+                task.createdAt(),
+                task.updatedAt()
+        );
+    }
+
+    public AgentProjectTaskResponse toResponse(final AgentProjectTask task) {
+        return new AgentProjectTaskResponse(
+                task.id(),
+                task.projectId(),
+                task.title(),
+                task.input(),
+                task.workflowId(),
+                task.runs().stream().map(this::toResponse).toList(),
+                task.createdAt(),
+                task.updatedAt()
+        );
     }
 
     public AgentDefinitionListResponse toResponse(final AgentDefinitionListItem agent) {
@@ -158,6 +192,7 @@ public class AgentProxyApiMapper {
         return new AgentWorkflowRunSummaryResponse(
                 run.id(),
                 run.sourceWorkflowId(),
+                run.taskId(),
                 run.workflowName(),
                 run.status(),
                 run.createdAt(),
@@ -171,6 +206,7 @@ public class AgentProxyApiMapper {
                 run.id(),
                 run.projectId(),
                 run.sourceWorkflowId(),
+                run.taskId(),
                 run.workflowName(),
                 run.input(),
                 run.status(),

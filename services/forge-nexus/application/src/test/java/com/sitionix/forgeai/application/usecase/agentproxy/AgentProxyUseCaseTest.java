@@ -8,16 +8,20 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
 import java.time.Instant;
 import java.util.List;
@@ -34,6 +38,8 @@ class AgentProxyUseCaseTest {
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID NODE_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
+    private static final UUID TASK_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
+    private static final UUID RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
 
     @Mock
@@ -60,6 +66,23 @@ class AgentProxyUseCaseTest {
 
         assertThat(actual).isSameAs(project);
         verify(this.forgeAgentClient).createProject(command);
+    }
+
+    @Test
+    void projectTaskUseCasesDelegateToClient() {
+        final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID);
+        final var summary = new AgentProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, NOW, NOW);
+        final var task = new AgentProjectTask(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), NOW, NOW);
+        when(this.forgeAgentClient.createProjectTask(PROJECT_ID, command)).thenReturn(task);
+        when(this.forgeAgentClient.listProjectTasks(PROJECT_ID)).thenReturn(List.of(summary));
+        when(this.forgeAgentClient.getProjectTask(TASK_ID)).thenReturn(task);
+
+        assertThat(new CreateAgentProjectTaskUseCase(this.forgeAgentClient).execute(PROJECT_ID, command)).isSameAs(task);
+        assertThat(new ListAgentProjectTasksUseCase(this.forgeAgentClient).execute(PROJECT_ID)).containsExactly(summary);
+        assertThat(new GetAgentProjectTaskUseCase(this.forgeAgentClient).execute(TASK_ID)).isSameAs(task);
+        verify(this.forgeAgentClient).createProjectTask(PROJECT_ID, command);
+        verify(this.forgeAgentClient).listProjectTasks(PROJECT_ID);
+        verify(this.forgeAgentClient).getProjectTask(TASK_ID);
     }
 
     @Test

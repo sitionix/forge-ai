@@ -13,11 +13,14 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
@@ -33,6 +36,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunFailureResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionRequest;
@@ -40,6 +44,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import java.time.Instant;
@@ -56,6 +62,7 @@ class ForgeAgentClientMapperTest {
     private static final UUID NODE_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID NODE_RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
+    private static final UUID TASK_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -66,6 +73,38 @@ class ForgeAgentClientMapperTest {
     void projectCommandMapsToRequest() {
         assertThat(this.mapper.toRequest(new CreateAgentProjectCommand("Sitionix")))
                 .isEqualTo(new AgentProjectRequest("Sitionix"));
+    }
+
+    @Test
+    void projectTaskCommandsAndResponsesMapSuccessfully() {
+        assertThat(this.mapper.toRequest(new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID)))
+                .isEqualTo(new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID));
+
+        final var summaryResponse = new ProjectTaskSummaryResponse(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, CREATED, UPDATED);
+        assertThat(this.mapper.toDomain(summaryResponse)).isEqualTo(new AgentProjectTaskSummary(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                WORKFLOW_ID,
+                "Full Testing",
+                RUN_ID,
+                AgentWorkflowRunStatus.QUEUED,
+                CREATED,
+                UPDATED
+        ));
+
+        final var run = new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null);
+        final var taskResponse = new ProjectTaskResponse(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(run), CREATED, UPDATED);
+        assertThat(this.mapper.toDomain(taskResponse)).isEqualTo(new AgentProjectTask(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                "Count letters.",
+                WORKFLOW_ID,
+                List.of(new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null)),
+                CREATED,
+                UPDATED
+        ));
     }
 
     @Test
@@ -157,6 +196,7 @@ class ForgeAgentClientMapperTest {
         assertThat(this.mapper.toDomain(new WorkflowRunSummaryResponse(
                 RUN_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 AgentWorkflowRunStatus.QUEUED,
                 CREATED,
@@ -165,6 +205,7 @@ class ForgeAgentClientMapperTest {
         ))).isEqualTo(new AgentWorkflowRunSummary(
                 RUN_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 AgentWorkflowRunStatus.QUEUED,
                 CREATED,
@@ -192,6 +233,7 @@ class ForgeAgentClientMapperTest {
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 "Review auth changes.",
                 AgentWorkflowRunStatus.QUEUED,
@@ -203,6 +245,7 @@ class ForgeAgentClientMapperTest {
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 "Review auth changes.",
                 AgentWorkflowRunStatus.QUEUED,
@@ -256,6 +299,7 @@ class ForgeAgentClientMapperTest {
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 "Review auth changes.",
                 AgentWorkflowRunStatus.QUEUED,

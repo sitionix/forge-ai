@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.it.infra.db;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.AgentDefinitionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodeEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
@@ -29,6 +30,11 @@ public final class ForgeAgentDbContracts {
 
     public static final DbContract<WorkflowRunEntity> WORKFLOW_RUN =
             DbContractsDsl.entity(WorkflowRunEntity.class)
+                    .cleanupPolicy(CleanupPolicy.DELETE_ALL)
+                    .build();
+
+    public static final DbContract<ProjectTaskEntity> PROJECT_TASK =
+            DbContractsDsl.entity(ProjectTaskEntity.class)
                     .cleanupPolicy(CleanupPolicy.DELETE_ALL)
                     .build();
 

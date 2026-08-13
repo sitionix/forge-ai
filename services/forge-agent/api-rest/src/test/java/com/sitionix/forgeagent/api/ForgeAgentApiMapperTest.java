@@ -11,6 +11,7 @@ import com.sitionix.forgeagent.api.dto.CodexRuntimeEffortResponse;
 import com.sitionix.forgeagent.api.dto.CodexRuntimeModelResponse;
 import com.sitionix.forgeagent.api.dto.CodexRuntimeProviderResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
+import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.NodeRunResponse;
@@ -19,12 +20,15 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
+import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
@@ -44,6 +48,8 @@ import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
+import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
+import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
@@ -63,6 +69,7 @@ class ForgeAgentApiMapperTest {
     private static final UUID NODE_B = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     private static final UUID RUN_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID NODE_RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
+    private static final UUID TASK_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -105,6 +112,54 @@ class ForgeAgentApiMapperTest {
     void mapsProjectToResponse() {
         assertThat(this.mapper.toResponse(new Project(PROJECT_ID, "Sitionix", "sitionix", CREATED, UPDATED)))
                 .isEqualTo(new ProjectResponse(PROJECT_ID, "Sitionix", CREATED, UPDATED));
+    }
+
+    @Test
+    void mapsProjectTaskRequestsAndResponses() {
+        assertThat(this.mapper.toCommand(new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID)))
+                .isEqualTo(new CreateProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID));
+
+        final WorkflowRunSummary run = new WorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", WorkflowRunStatus.QUEUED, CREATED, null, null);
+        assertThat(this.mapper.toResponse(new ProjectTaskSummary(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                WORKFLOW_ID,
+                "Full Testing",
+                RUN_ID,
+                WorkflowRunStatus.QUEUED,
+                CREATED,
+                UPDATED
+        ))).isEqualTo(new ProjectTaskSummaryResponse(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                WORKFLOW_ID,
+                "Full Testing",
+                RUN_ID,
+                WorkflowRunStatus.QUEUED,
+                CREATED,
+                UPDATED
+        ));
+        assertThat(this.mapper.toResponse(new ProjectTaskDetails(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                "Count letters.",
+                WORKFLOW_ID,
+                List.of(run),
+                CREATED,
+                UPDATED
+        ))).isEqualTo(new ProjectTaskResponse(
+                TASK_ID,
+                PROJECT_ID,
+                "Check calculation",
+                "Count letters.",
+                WORKFLOW_ID,
+                List.of(new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", WorkflowRunStatus.QUEUED, CREATED, null, null)),
+                CREATED,
+                UPDATED
+        ));
     }
 
     @Test
@@ -213,6 +268,7 @@ class ForgeAgentApiMapperTest {
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 "Review auth changes.",
                 WorkflowRunStatus.QUEUED,
@@ -242,6 +298,7 @@ class ForgeAgentApiMapperTest {
         assertThat(this.mapper.toSummaryResponse(new WorkflowRunSummary(
                 RUN_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 WorkflowRunStatus.QUEUED,
                 CREATED,
@@ -250,6 +307,7 @@ class ForgeAgentApiMapperTest {
         ))).isEqualTo(new WorkflowRunSummaryResponse(
                 RUN_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 WorkflowRunStatus.QUEUED,
                 CREATED,
@@ -260,6 +318,7 @@ class ForgeAgentApiMapperTest {
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
+                null,
                 "Full Testing",
                 "Review auth changes.",
                 WorkflowRunStatus.QUEUED,

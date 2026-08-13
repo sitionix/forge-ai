@@ -24,6 +24,9 @@ public class WorkflowRunEntity {
     @Column(name = "source_workflow_id", nullable = false)
     private UUID sourceWorkflowId;
 
+    @Column(name = "task_id")
+    private UUID taskId;
+
     @Column(name = "workflow_name", nullable = false, length = 120)
     private String workflowName;
 
