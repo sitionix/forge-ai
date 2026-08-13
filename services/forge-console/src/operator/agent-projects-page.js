@@ -4,7 +4,6 @@ import { ProjectWorkspace } from './project-workspace.js';
 import { WorkflowBuilder } from './workflow-builder.js';
 
 const DEFAULT_OUTPUT_SCHEMA = { type: 'object', properties: {} };
-const TASK_REFRESH_INTERVAL_MS = 2000;
 const ACTIVE_TASK_STATUSES = new Set(['QUEUED', 'RUNNING']);
 
 export class AgentProjectsPage {
@@ -12,6 +11,9 @@ export class AgentProjectsPage {
     this.document = options.document || document;
     this.window = options.window || this.document.defaultView || window;
     this.api = options.api || createAgentProjectsApi(options.http);
+    this.runtimeConfig = options.runtimeConfig || {};
+    this.taskPollIntervalMs = Number(this.runtimeConfig.activeJobPollIntervalMs) || 2000;
+    this.disposed = false;
     this.state = {
       view: 'projects',
       projects: [],
@@ -33,10 +35,10 @@ export class AgentProjectsPage {
     };
     this.projectLoadSequence = 0;
     this.workflowLoadSequence = 0;
-    this.tasksPollTimer = null;
-    this.tasksRequestInFlight = null;
-    this.tasksRequestProjectId = null;
-    this.tasksRequestLoadSequence = null;
+    this.taskPollTimer = null;
+    this.taskPollInFlight = null;
+    this.taskPollProjectId = null;
+    this.taskPollLoadSequence = null;
     this.workspace = new ProjectWorkspace({
       document: this.document,
       onBack: () => this.showProjectsIndex(),
@@ -56,6 +58,7 @@ export class AgentProjectsPage {
   }
 
   mount() {
+    this.disposed = false;
     this.bind();
     this.workspace.bind();
     this.workflowBuilder.bind();
@@ -64,6 +67,7 @@ export class AgentProjectsPage {
   }
 
   dispose() {
+    this.disposed = true;
     this.stopTaskPolling();
     this.workflowBuilder.dispose();
   }
@@ -145,7 +149,7 @@ export class AgentProjectsPage {
       this.loadTasks(projectId, loadSequence),
       this.loadRuntimeCatalog(projectId, loadSequence)
     ]);
-    if (this.isCurrentProjectLoad(projectId, loadSequence)) {
+    if (!this.disposed && this.isCurrentProjectLoad(projectId, loadSequence)) {
       this.renderProjectWorkspace();
     }
   }
@@ -200,26 +204,31 @@ export class AgentProjectsPage {
   }
 
   async loadTasks(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence, options = {}) {
-    if (!projectId) {
+    if (!projectId || this.disposed) {
       return [];
     }
-    if (this.tasksRequestInFlight && this.tasksRequestProjectId === projectId && this.tasksRequestLoadSequence === loadSequence) {
-      return this.tasksRequestInFlight;
+    if (
+      !options.force
+      && this.taskPollInFlight
+      && this.taskPollProjectId === projectId
+      && this.taskPollLoadSequence === loadSequence
+    ) {
+      return this.taskPollInFlight;
     }
-    if (!options.silent) {
+    if (!options.background) {
       this.showError('agentsV2TasksError', '');
+      this.state.tasksLoadFailed = false;
     }
-    this.state.tasksLoadFailed = false;
     const request = this.fetchTasks(projectId, loadSequence, options);
-    this.tasksRequestInFlight = request;
-    this.tasksRequestProjectId = projectId;
-    this.tasksRequestLoadSequence = loadSequence;
+    this.taskPollInFlight = request;
+    this.taskPollProjectId = projectId;
+    this.taskPollLoadSequence = loadSequence;
     request.finally(() => {
-      if (this.tasksRequestInFlight === request) {
-        this.tasksRequestInFlight = null;
-        this.tasksRequestProjectId = null;
-        this.tasksRequestLoadSequence = null;
-        if (this.isCurrentProjectLoad(projectId, loadSequence)) {
+      if (this.taskPollInFlight === request) {
+        this.taskPollInFlight = null;
+        this.taskPollProjectId = null;
+        this.taskPollLoadSequence = null;
+        if (!this.disposed && this.isCurrentProjectLoad(projectId, loadSequence)) {
           this.syncTaskPolling();
         }
       }
@@ -230,7 +239,7 @@ export class AgentProjectsPage {
   async fetchTasks(projectId, loadSequence, options = {}) {
     try {
       const tasks = await this.api.listProjectTasks(projectId);
-      if (!this.isCurrentProjectLoad(projectId, loadSequence)) {
+      if (this.disposed || !this.isCurrentProjectLoad(projectId, loadSequence)) {
         return [];
       }
       this.state.tasks = tasks;
@@ -240,8 +249,13 @@ export class AgentProjectsPage {
       this.renderProjectWorkspace();
       return tasks;
     } catch (error) {
-      if (!this.isCurrentProjectLoad(projectId, loadSequence)) {
+      if (this.disposed || !this.isCurrentProjectLoad(projectId, loadSequence)) {
         return [];
+      }
+      if (options.background && this.state.tasksProjectId === projectId && this.state.tasks.length) {
+        this.showError('agentsV2TasksError', error.message || 'Tasks refresh failed.');
+        this.renderProjectWorkspace();
+        return this.state.tasks;
       }
       this.state.tasks = [];
       this.state.tasksProjectId = projectId;
@@ -451,7 +465,10 @@ export class AgentProjectsPage {
     try {
       await this.api.createProjectTask(this.state.selectedProjectId, { title, input, workflowId });
       this.closeDialog('agentsV2TaskDialog');
-      await this.loadTasks();
+      if (this.taskPollInFlight) {
+        await this.taskPollInFlight;
+      }
+      await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { force: true });
     } catch (error) {
       this.showError('agentsV2TaskModalError', error.message || 'Task could not be created.');
     } finally {
@@ -514,33 +531,33 @@ export class AgentProjectsPage {
   }
 
   scheduleTaskPolling() {
-    if (this.tasksPollTimer || this.tasksRequestInFlight) {
+    if (this.disposed || this.taskPollTimer || this.taskPollInFlight) {
       return;
     }
-    this.tasksPollTimer = this.window.setTimeout(() => {
-      this.tasksPollTimer = null;
+    this.taskPollTimer = this.window.setTimeout(() => {
+      this.taskPollTimer = null;
       this.pollTasks();
-    }, TASK_REFRESH_INTERVAL_MS);
+    }, this.taskPollIntervalMs);
   }
 
   async pollTasks() {
-    if (!this.shouldPollTasks() || this.tasksRequestInFlight) {
+    if (this.disposed || !this.shouldPollTasks() || this.taskPollInFlight) {
       this.syncTaskPolling();
       return;
     }
-    await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { silent: true });
-    this.syncTaskPolling();
+    await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { background: true });
   }
 
   stopTaskPolling() {
-    if (this.tasksPollTimer) {
-      this.window.clearTimeout(this.tasksPollTimer);
-      this.tasksPollTimer = null;
+    if (this.taskPollTimer) {
+      this.window.clearTimeout(this.taskPollTimer);
+      this.taskPollTimer = null;
     }
   }
 
   shouldPollTasks() {
-    return this.state.view === 'project'
+    return !this.disposed
+      && this.state.view === 'project'
       && this.tasksDataCurrent()
       && this.state.tasks.some((task) => ACTIVE_TASK_STATUSES.has(task.executionStatus));
   }

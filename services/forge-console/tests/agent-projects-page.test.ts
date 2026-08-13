@@ -381,37 +381,99 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(true);
   });
 
-  it('active Task polling refreshes QUEUED and RUNNING tasks then stops on terminal status', async () => {
+  it('active Task polling uses runtime config and stops after RUNNING becomes SUCCEEDED', async () => {
     vi.useFakeTimers();
     const dom = agentProjectsDom();
     useFakeWindowTimers(dom);
     const fakeApi = api({
       listProjectTasks: vi.fn()
-        .mockResolvedValueOnce([task('task-1', 'QUEUED')])
         .mockResolvedValueOnce([task('task-1', 'RUNNING')])
         .mockResolvedValueOnce([task('task-1', 'SUCCEEDED')])
     });
-    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: fakeApi,
+      runtimeConfig: { activeJobPollIntervalMs: 1234 }
+    });
     page.mount();
     await flushAsync();
 
     await page.openProject(project().id);
     await flushAsync();
-    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('QUEUED');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('RUNNING');
+
+    await vi.advanceTimersByTimeAsync(1233);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('SUCCEEDED');
+
+    await vi.advanceTimersByTimeAsync(2468);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it('background Task polling failure keeps last good RUNNING state and next success can stop polling', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const fakeApi = api({
+      listProjectTasks: vi.fn()
+        .mockResolvedValueOnce([task('task-1', 'RUNNING')])
+        .mockRejectedValueOnce(new Error('Tasks refresh failed'))
+        .mockResolvedValueOnce([task('task-1', 'SUCCEEDED')])
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
 
     await vi.advanceTimersByTimeAsync(2000);
     await flushAsync();
     expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('RUNNING');
+    expect(dom.window.document.getElementById('agentsV2TasksError')?.textContent).toContain('Tasks refresh failed');
 
     await vi.advanceTimersByTimeAsync(2000);
     await flushAsync();
     expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(3);
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('SUCCEEDED');
+    expect(dom.window.document.getElementById('agentsV2TasksError')?.textContent).toBe('');
 
     await vi.advanceTimersByTimeAsync(4000);
     await flushAsync();
     expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(3);
+  });
+
+  it('dispose while a Task request is running ignores the late response and schedules no polling', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const pendingTasks = deferred<any[]>();
+    const fakeApi = api({
+      listProjectTasks: vi.fn(() => pendingTasks.promise)
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+
+    const open = page.openProject(project().id);
+    await flushAsync();
+    page.dispose();
+    pendingTasks.resolve([task('task-1', 'RUNNING')]);
+    await open;
+    await flushAsync();
+
+    expect(page.state.tasksProjectId).toBeNull();
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).not.toContain('RUNNING');
+    await vi.advanceTimersByTimeAsync(4000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(1);
   });
 
   it('Task polling stops when leaving Project or opening Workflow builder', async () => {
@@ -487,6 +549,44 @@ describe('Agent projects page', () => {
     expect(page.state.tasksProjectId).toBe(projectTwo.id);
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Second Flow');
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).not.toContain('First Flow');
+  });
+
+  it('creating a Task during an existing refresh waits for it then performs one fresh list load', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const runningRefresh = deferred<any[]>();
+    const fakeApi = api({
+      listProjectTasks: vi.fn()
+        .mockResolvedValueOnce([task('task-1', 'RUNNING', project().id, workflow().id, 'Full Testing')])
+        .mockReturnValueOnce(runningRefresh.promise)
+        .mockResolvedValueOnce([{ ...task('task-created', 'QUEUED', project().id, workflow().id, 'Full Testing'), title: 'Fresh task' }])
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await flushAsync();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+
+    dom.window.document.getElementById('agentsV2CreateTask')?.click();
+    (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = 'Fresh task';
+    (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Run this now.';
+    (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+    dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+    expect(fakeApi.createProjectTask).toHaveBeenCalledTimes(1);
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+
+    runningRefresh.resolve([task('task-1', 'RUNNING', project().id, workflow().id, 'Full Testing')]);
+    await flushAsync();
+
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(3);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Fresh task');
+    expect(fakeApi.createWorkflowRun).not.toHaveBeenCalled();
   });
 
   it('creates and edits agents without dependency fields in payloads', async () => {

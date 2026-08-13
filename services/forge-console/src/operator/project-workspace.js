@@ -123,7 +123,7 @@ export class ProjectWorkspace {
     list.innerHTML = tasks.map((task) => `
       <article class="agents-v2-card task-card">
         <h3>${escapeHtml(task.title)}</h3>
-        <p>Workflow: ${escapeHtml(task.workflowName || this.workflowName(task.workflowId, workflows))}</p>
+        <p>Workflow: ${escapeHtml(task.workflowName || 'Unknown workflow')}</p>
         <div class="agents-v2-task-meta">
           <span class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(task.executionStatus))}" data-task-status="${escapeHtml(task.executionStatus || 'UNKNOWN')}">
             ${escapeHtml(task.executionStatus || 'UNKNOWN')}
@@ -132,10 +132,6 @@ export class ProjectWorkspace {
         </div>
       </article>
     `).join('');
-  }
-
-  workflowName(workflowId, workflows) {
-    return workflows.find((workflow) => workflow.id === workflowId)?.name || workflowId || 'Workflow';
   }
 
   formatDate(value) {
