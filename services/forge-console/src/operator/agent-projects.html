@@ -166,7 +166,14 @@
         <input id="agentsV2AgentName" class="text-input" type="text" required maxlength="120">
         <label class="field-label" for="agentsV2AgentInstructions">Instructions</label>
         <textarea id="agentsV2AgentInstructions" class="agent-modal-textarea" required></textarea>
-        <label class="field-label" for="agentsV2AgentOutputJson">Output JSON</label>
+        <div class="field-label-row">
+          <label class="field-label" for="agentsV2AgentOutputJson">Output JSON Schema</label>
+          <div class="field-label-actions">
+            <button id="agentsV2AgentOutputFormat" class="button tiny secondary" type="button">Format</button>
+            <button id="agentsV2AgentOutputTemplate" class="button tiny secondary" type="button">Template</button>
+          </div>
+        </div>
+        <p class="field-hint">Use real JSON Schema. Shorthand like {"summ":"int"} will fail; use {"type":"object","properties":{"summ":{"type":"integer"}}}.</p>
         <textarea id="agentsV2AgentOutputJson" class="agent-modal-textarea code" required spellcheck="false"></textarea>
         <div id="agentsV2AgentJsonError" class="field-error hidden"></div>
         <div class="agent-model-picker">

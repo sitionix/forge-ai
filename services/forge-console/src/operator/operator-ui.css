@@ -324,6 +324,12 @@ body.sidebar-collapsed .sidebar-link {
   font-size: 11px;
 }
 
+.button.tiny {
+  padding: 6px 9px;
+  font-size: 10px;
+  box-shadow: none;
+}
+
 .button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -1212,6 +1218,27 @@ body.sidebar-collapsed .sidebar-link {
 
 .agent-modal-textarea.code {
   min-height: 150px;
+  tab-size: 2;
+}
+
+.field-label-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.field-label-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-hint {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .field-error {

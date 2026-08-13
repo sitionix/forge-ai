@@ -4,8 +4,16 @@ import { ProjectWorkspace } from './project-workspace.js';
 import { TaskExecutionView } from './task-execution-view.js';
 import { WorkflowBuilder } from './workflow-builder.js';
 
-const DEFAULT_OUTPUT_SCHEMA = { type: 'object', properties: {} };
+const DEFAULT_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    result: { type: 'string' }
+  },
+  required: ['result'],
+  additionalProperties: false
+};
 const ACTIVE_TASK_STATUSES = new Set(['QUEUED', 'RUNNING']);
+const JSON_SCHEMA_TYPES = new Set(['object', 'array', 'string', 'number', 'integer', 'boolean', 'null']);
 
 export class AgentProjectsPage {
   constructor(options = {}) {
@@ -90,6 +98,9 @@ export class AgentProjectsPage {
     this.byId('agentsV2ProjectForm')?.addEventListener('submit', (event) => this.submitProject(event));
     this.byId('agentsV2AgentCancel')?.addEventListener('click', () => this.closeDialog('agentsV2AgentDialog'));
     this.byId('agentsV2AgentForm')?.addEventListener('submit', (event) => this.submitAgent(event));
+    this.byId('agentsV2AgentOutputJson')?.addEventListener('input', () => this.showFieldError(''));
+    this.byId('agentsV2AgentOutputFormat')?.addEventListener('click', () => this.formatOutputSchemaJson());
+    this.byId('agentsV2AgentOutputTemplate')?.addEventListener('click', () => this.applyOutputSchemaTemplate());
     this.byId('agentsV2AgentProvider')?.addEventListener('change', () => this.onProviderChanged());
     this.byId('agentsV2AgentModel')?.addEventListener('change', () => this.onModelChanged());
     this.byId('agentsV2AgentEffort')?.addEventListener('change', () => this.onEffortChanged());
@@ -634,14 +645,55 @@ export class AgentProjectsPage {
     try {
       const parsed = JSON.parse(this.byId('agentsV2AgentOutputJson').value);
       if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-        this.showFieldError('Output JSON must be a JSON object.');
+        this.showFieldError('Output schema must be a JSON Schema object.');
         return null;
       }
+      const schemaError = this.validateOutputSchema(parsed);
+      if (schemaError) {
+        this.showFieldError(schemaError);
+        return null;
+      }
+      this.byId('agentsV2AgentOutputJson').value = JSON.stringify(parsed, null, 2);
       return parsed;
     } catch (_) {
-      this.showFieldError('Output JSON is not valid JSON.');
+      this.showFieldError('Output schema is not valid JSON.');
       return null;
     }
+  }
+
+  validateOutputSchema(schema) {
+    if (typeof schema.type !== 'string' || !schema.type.trim()) {
+      return 'Output schema must be JSON Schema with a top-level "type" key. Example: {"type":"object","properties":{"summ":{"type":"integer"}}}.';
+    }
+    if (!JSON_SCHEMA_TYPES.has(schema.type)) {
+      return 'Output schema "type" must be one of: object, array, string, number, integer, boolean, null.';
+    }
+    if (schema.type === 'object') {
+      if (schema.properties !== undefined && (!schema.properties || Array.isArray(schema.properties) || typeof schema.properties !== 'object')) {
+        return 'Object output schema "properties" must be a JSON object.';
+      }
+      if (schema.required !== undefined && (!Array.isArray(schema.required) || schema.required.some((item) => typeof item !== 'string' || !item.trim()))) {
+        return 'Object output schema "required" must be an array of property names.';
+      }
+      const properties = schema.properties || {};
+      const invalidProperty = Object.entries(properties).find(([, value]) => !value || Array.isArray(value) || typeof value !== 'object');
+      if (invalidProperty) {
+        return `Property "${invalidProperty[0]}" must be a JSON Schema object, for example {"type":"string"}.`;
+      }
+    }
+    if (schema.type === 'array' && schema.items !== undefined && (!schema.items || Array.isArray(schema.items) || typeof schema.items !== 'object')) {
+      return 'Array output schema "items" must be a JSON Schema object.';
+    }
+    return '';
+  }
+
+  formatOutputSchemaJson() {
+    this.parseOutputSchema();
+  }
+
+  applyOutputSchemaTemplate() {
+    this.byId('agentsV2AgentOutputJson').value = JSON.stringify(DEFAULT_OUTPUT_SCHEMA, null, 2);
+    this.showFieldError('');
   }
 
   async loadRuntimeForAgentModal() {

@@ -1093,7 +1093,14 @@ describe('Agent projects page', () => {
     expect(fakeApi.createAgent).toHaveBeenCalledWith(project().id, expect.objectContaining({
       name: 'Analyzer',
       instructions: 'Analyze changes.',
-      outputSchema: { type: 'object', properties: {} },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          result: { type: 'string' }
+        },
+        required: ['result'],
+        additionalProperties: false
+      },
       model: { providerId: 'codex', modelId: 'discovered-model', effortId: 'medium' }
     }));
 
@@ -1412,7 +1419,48 @@ describe('Agent projects page', () => {
     expect(effortTone('super-high')).toBe('neutral');
   });
 
-  it('rejects malformed and non-object Agent Output JSON without API calls', async () => {
+  it('Agent Output JSON Schema starts with a valid editable template', async () => {
+    const { dom, page } = await openedProject();
+    await page.openAgentModal();
+
+    const output = dom.window.document.getElementById('agentsV2AgentOutputJson') as HTMLTextAreaElement;
+    expect(dom.window.document.querySelector('label[for="agentsV2AgentOutputJson"]')?.textContent).toBe('Output JSON Schema');
+    expect(dom.window.document.querySelector('.field-hint')?.textContent).toContain('{"summ":"int"}');
+    expect(JSON.parse(output.value)).toEqual({
+      type: 'object',
+      properties: {
+        result: { type: 'string' }
+      },
+      required: ['result'],
+      additionalProperties: false
+    });
+
+    output.value = '{"type":"object","properties":{"summ":{"type":"integer"}}}';
+    dom.window.document.getElementById('agentsV2AgentOutputTemplate')?.click();
+    expect(JSON.parse(output.value)).toEqual({
+      type: 'object',
+      properties: {
+        result: { type: 'string' }
+      },
+      required: ['result'],
+      additionalProperties: false
+    });
+  });
+
+  it('formats valid Agent Output JSON Schema locally', async () => {
+    const { dom, page } = await openedProject();
+    await page.openAgentModal();
+
+    const output = dom.window.document.getElementById('agentsV2AgentOutputJson') as HTMLTextAreaElement;
+    output.value = '{"type":"object","properties":{"summ":{"type":"integer"}},"required":["summ"],"additionalProperties":false}';
+    dom.window.document.getElementById('agentsV2AgentOutputFormat')?.click();
+
+    expect(output.value).toContain('\n  "type": "object"');
+    expect(output.value).toContain('"summ": {');
+    expect(dom.window.document.getElementById('agentsV2AgentJsonError')?.textContent).toBe('');
+  });
+
+  it('rejects malformed non-object and shorthand Agent Output JSON Schema without API calls', async () => {
     const { dom, page, fakeApi } = await openedProject();
     await page.openAgentModal();
 
@@ -1426,7 +1474,19 @@ describe('Agent projects page', () => {
     dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
     expect(fakeApi.createAgent).not.toHaveBeenCalled();
-    expect(dom.window.document.getElementById('agentsV2AgentJsonError')?.textContent).toBe('Output JSON must be a JSON object.');
+    expect(dom.window.document.getElementById('agentsV2AgentJsonError')?.textContent).toBe('Output schema must be a JSON Schema object.');
+
+    (dom.window.document.getElementById('agentsV2AgentOutputJson') as HTMLTextAreaElement).value = '{"summ":"int"}';
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+    expect(fakeApi.createAgent).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('agentsV2AgentJsonError')?.textContent).toContain('top-level "type" key');
+
+    (dom.window.document.getElementById('agentsV2AgentOutputJson') as HTMLTextAreaElement).value = '{"type":"object","properties":{"summ":"int"}}';
+    dom.window.document.getElementById('agentsV2AgentForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+    expect(fakeApi.createAgent).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('agentsV2AgentJsonError')?.textContent).toContain('Property "summ" must be a JSON Schema object');
   });
 
   it('creates Workflow from Project and opens the dedicated builder', async () => {
