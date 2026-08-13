@@ -9,10 +9,12 @@ import static com.sitionix.forgeagent.it.ForgeAgentFixtures.NODE_C_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_ALPHA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.WORKFLOW_ID;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_WORKFLOW_RUN;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_WORKFLOW_RUN;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
@@ -39,6 +41,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -141,7 +144,7 @@ class ForgeAgentNodeRunRuntimeIT {
 
             worker.poll();
             agentExecutor.awaitStarted(nodeRunA);
-            agentExecutor.completeFailure(nodeRunA, "Root failed.");
+            agentExecutor.completeFailure(nodeRunA, "Root failed because test executor rejected the request.");
             executorService.awaitCompletedCount(1);
 
             worker.poll();
@@ -150,10 +153,20 @@ class ForgeAgentNodeRunRuntimeIT {
             }
 
             assertThat(this.nodeRun(nodeRunA).getStatus()).isEqualTo("FAILED");
+            assertThat(this.nodeRun(nodeRunA).getFailureCode()).isEqualTo("AGENT_EXECUTOR_FAILED");
+            assertThat(this.nodeRun(nodeRunA).getFailureMessage()).isEqualTo("Root failed because test executor rejected the request.");
             assertThat(this.nodeRun(nodeRunB).getStatus()).isEqualTo("BLOCKED");
             assertThat(this.nodeRun(nodeRunC).getStatus()).isEqualTo("BLOCKED");
             assertThat(this.workflowRun(run.getId()).getStatus()).isEqualTo("FAILED");
             assertThat(agentExecutor.startedNodeRunIds()).containsExactly(nodeRunA);
+            this.forgeIt.mockMvc()
+                    .ping(GET_WORKFLOW_RUN)
+                    .withPathParameters(PathParams.create().add("runId", run.getId()))
+                    .expectStatus(HttpStatus.OK)
+                    .andExpectPath(jsonPath("$.nodeRuns[?(@.sourceNodeId == '%s')].failure.code".formatted(NODE_A_ID)).value(contains("AGENT_EXECUTOR_FAILED")))
+                    .andExpectPath(jsonPath("$.nodeRuns[?(@.sourceNodeId == '%s')].failure.message".formatted(NODE_A_ID))
+                            .value(contains("Root failed because test executor rejected the request.")))
+                    .assertAndCreate();
         } finally {
             agentExecutor.completeAll();
             executorService.shutdownNow();
@@ -366,6 +379,11 @@ class ForgeAgentNodeRunRuntimeIT {
             } catch (final InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("Interrupted while waiting for deterministic result.", exception);
+            } catch (final ExecutionException exception) {
+                if (exception.getCause() instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                throw new IllegalStateException(exception.getMessage(), exception);
             } catch (final Exception exception) {
                 throw new IllegalStateException(exception.getMessage(), exception);
             }

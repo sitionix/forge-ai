@@ -1,6 +1,8 @@
 import { escapeHtml } from './dom-render-helpers.js';
 const NODE_WIDTH = 204;
 const NODE_MID_Y = 52;
+const DEFAULT_INPUT_MODE = 'DEPENDENCIES_ONLY';
+const TASK_AND_DEPENDENCIES_INPUT_MODE = 'TASK_AND_DEPENDENCIES';
 
 export class WorkflowBuilder {
   constructor(options) {
@@ -91,6 +93,7 @@ export class WorkflowBuilder {
       id: nodeId,
       targetId: agentId,
       dependsOnNodeIds: [],
+      inputMode: DEFAULT_INPUT_MODE,
       position: { x: 120 + (index % 3) * 240, y: 90 + Math.floor(index / 3) * 160 }
     });
     this.render();
@@ -152,16 +155,29 @@ export class WorkflowBuilder {
     nodesLayer.querySelectorAll('[data-node-output]').forEach((element) => {
       element.addEventListener('pointerdown', (event) => this.startConnectionDrag(event, element.dataset.nodeOutput));
     });
+    nodesLayer.querySelectorAll('[data-node-input-mode]').forEach((element) => {
+      element.addEventListener('change', () => this.setNodeInputMode(element.dataset.nodeInputMode, element.value));
+    });
   }
 
   renderNode(node) {
     const agent = this.agentById(node.targetId);
+    const hasDependencies = Boolean((node.dependsOnNodeIds || []).length);
+    const inputMode = this.nodeInputMode(node);
     return `
       <article class="workflow-node" data-node-id="${escapeHtml(node.id)}" style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px;">
         <button class="node-handle input" type="button" title="Input" data-node-input="${escapeHtml(node.id)}" aria-label="Input for ${escapeHtml(agent?.name || 'node')}"></button>
         <div class="workflow-node-content">
           <strong>${escapeHtml(agent?.name || 'Unknown agent')}</strong>
           <span>${escapeHtml(agent?.instructions || 'Reusable agent')}</span>
+          <label class="workflow-node-input-mode">
+            <span>Input</span>
+            <select data-node-input-mode="${escapeHtml(node.id)}" ${hasDependencies ? '' : 'disabled'}>
+              <option value="${DEFAULT_INPUT_MODE}" ${inputMode === DEFAULT_INPUT_MODE ? 'selected' : ''}>Previous outputs</option>
+              <option value="${TASK_AND_DEPENDENCIES_INPUT_MODE}" ${inputMode === TASK_AND_DEPENDENCIES_INPUT_MODE ? 'selected' : ''}>Task + previous</option>
+            </select>
+          </label>
+          ${hasDependencies ? '' : '<small class="workflow-node-input-note">Starts from task</small>'}
         </div>
         <button class="node-delete" type="button" title="Remove node" data-node-remove="${escapeHtml(node.id)}" aria-label="Remove node">×</button>
         <button class="node-handle output" type="button" title="Output" data-node-output="${escapeHtml(node.id)}" aria-label="Output from ${escapeHtml(agent?.name || 'node')}"></button>
@@ -214,7 +230,7 @@ export class WorkflowBuilder {
   }
 
   onNodePointerDown(event, nodeId) {
-    if (event.target.closest('button, .node-handle')) {
+    if (event.target.closest('button, select, .node-handle')) {
       return;
     }
     const node = this.workflow?.nodes.find((candidate) => candidate.id === nodeId);
@@ -268,6 +284,7 @@ export class WorkflowBuilder {
     if (targetNodeId && this.canConnect(this.connectionDrag.sourceNodeId, targetNodeId)) {
       const target = this.workflow.nodes.find((node) => node.id === targetNodeId);
       target.dependsOnNodeIds = [...(target.dependsOnNodeIds || []), this.connectionDrag.sourceNodeId];
+      target.inputMode = this.nodeInputMode(target);
       this.connectionDrag = null;
       this.clearConnectionTargetClasses();
       this.render();
@@ -335,6 +352,14 @@ export class WorkflowBuilder {
     const sourceExists = this.workflow.nodes.some((node) => node.id === sourceNodeId);
     const target = this.workflow.nodes.find((node) => node.id === targetNodeId);
     return Boolean(sourceExists && target && !(target.dependsOnNodeIds || []).includes(sourceNodeId));
+  }
+
+  setNodeInputMode(nodeId, inputMode) {
+    const node = this.workflow?.nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) {
+      return;
+    }
+    node.inputMode = this.normalizeInputMode(inputMode);
   }
 
   applyConnectionTargetClasses() {
@@ -422,6 +447,7 @@ export class WorkflowBuilder {
         id: node.id,
         targetId: node.targetId,
         dependsOnNodeIds: [...(node.dependsOnNodeIds || [])],
+        inputMode: this.nodeInputMode(node),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
       }))
     };
@@ -461,9 +487,18 @@ export class WorkflowBuilder {
         id: node.id,
         targetId: node.targetId,
         dependsOnNodeIds: [...(node.dependsOnNodeIds || [])],
+        inputMode: this.nodeInputMode(node),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
       }))
     };
+  }
+
+  nodeInputMode(node) {
+    return this.normalizeInputMode(node?.inputMode);
+  }
+
+  normalizeInputMode(inputMode) {
+    return inputMode === TASK_AND_DEPENDENCIES_INPUT_MODE ? TASK_AND_DEPENDENCIES_INPUT_MODE : DEFAULT_INPUT_MODE;
   }
 
   agentById(agentId) {

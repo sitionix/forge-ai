@@ -93,6 +93,54 @@
       </div>
     </section>
 
+    <section id="agentsV2TaskExecution" class="task-execution-view hidden" aria-label="Task execution">
+      <header class="panel task-execution-header">
+        <div class="panel-head compact">
+          <div>
+            <p id="agentsV2TaskExecutionCrumbs" class="agents-v2-crumbs">Projects / Tasks</p>
+            <h1 id="agentsV2TaskExecutionTitle">Task execution</h1>
+          </div>
+          <button id="agentsV2TaskExecutionBack" class="button small secondary" type="button">← Back to Project</button>
+        </div>
+      </header>
+
+      <section class="panel task-execution-summary-panel">
+        <div id="agentsV2TaskExecutionTaskError" class="error-box hidden"></div>
+        <div id="agentsV2TaskExecutionSummary"></div>
+      </section>
+
+      <section class="task-execution-layout">
+        <aside class="panel task-execution-sidebar">
+          <div class="agents-v2-pane-head">
+            <div>
+              <h2>Executions</h2>
+            </div>
+          </div>
+          <div id="agentsV2ExecutionHistory" class="execution-history" aria-live="polite"></div>
+        </aside>
+
+        <section class="panel task-execution-main">
+          <div id="agentsV2TaskExecutionError" class="error-box hidden"></div>
+          <div id="agentsV2TaskExecutionRefreshError" class="error-box hidden"></div>
+          <div id="agentsV2ExecutionState"></div>
+          <div class="task-execution-content">
+            <div id="agentsV2ExecutionCanvas" class="workflow-canvas execution-canvas">
+              <svg id="agentsV2ExecutionEdges" class="workflow-edges execution-edges" aria-hidden="true"></svg>
+              <div id="agentsV2ExecutionNodes" class="workflow-nodes execution-nodes"></div>
+            </div>
+            <aside class="node-run-details-panel">
+              <div class="agents-v2-pane-head">
+                <div>
+                  <h2>Node details</h2>
+                </div>
+              </div>
+              <div id="agentsV2NodeRunDetails"></div>
+            </aside>
+          </div>
+        </section>
+      </section>
+    </section>
+
     <dialog id="agentsV2ProjectDialog" class="modal-dialog">
       <form id="agentsV2ProjectForm" method="dialog" class="modal-form">
         <div class="modal-head">
@@ -118,7 +166,14 @@
         <input id="agentsV2AgentName" class="text-input" type="text" required maxlength="120">
         <label class="field-label" for="agentsV2AgentInstructions">Instructions</label>
         <textarea id="agentsV2AgentInstructions" class="agent-modal-textarea" required></textarea>
-        <label class="field-label" for="agentsV2AgentOutputJson">Output JSON</label>
+        <div class="field-label-row">
+          <label class="field-label" for="agentsV2AgentOutputJson">Output JSON Schema</label>
+          <div class="field-label-actions">
+            <button id="agentsV2AgentOutputFormat" class="button tiny secondary" type="button">Format</button>
+            <button id="agentsV2AgentOutputTemplate" class="button tiny secondary" type="button">Template</button>
+          </div>
+        </div>
+        <p class="field-hint">Use real JSON Schema. Shorthand like {"summ":"int"} will fail; use {"type":"object","properties":{"summ":{"type":"integer"}}}.</p>
         <textarea id="agentsV2AgentOutputJson" class="agent-modal-textarea code" required spellcheck="false"></textarea>
         <div id="agentsV2AgentJsonError" class="field-error hidden"></div>
         <div class="agent-model-picker">

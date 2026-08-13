@@ -6,24 +6,24 @@ final class CodexGenerationPolicy {
 
     static final String AGENT_MESSAGE = "agentMessage";
 
-    private static final Set<String> SAFE_ITEM_TYPES = Set.of(
+    private static final Set<String> ALLOWED_ITEM_TYPES = Set.of(
             "userMessage",
             "reasoning",
             AGENT_MESSAGE,
             "plan",
-            "contextCompaction"
+            "contextCompaction",
+            "commandExecution",
+            "fileChange"
     );
-    private CodexGenerationPolicy() {
-    }
 
-    static RuntimeException violationFor(final String itemType) {
-        if (itemType != null && SAFE_ITEM_TYPES.contains(itemType)) {
+    RuntimeException violationFor(final String itemType) {
+        if (itemType != null && ALLOWED_ITEM_TYPES.contains(itemType)) {
             return null;
         }
         return executionFailed();
     }
 
-    private static RuntimeException executionFailed() {
+    private RuntimeException executionFailed() {
         return new CodexTransportException("Codex execution failed.");
     }
 

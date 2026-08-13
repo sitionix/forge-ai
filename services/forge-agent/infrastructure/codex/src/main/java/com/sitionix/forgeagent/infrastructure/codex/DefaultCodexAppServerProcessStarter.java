@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.infrastructure.codex;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -19,7 +20,9 @@ final class DefaultCodexAppServerProcessStarter implements CodexAppServerProcess
         try {
             final ProcessBuilder builder = new ProcessBuilder(command);
             if (this.properties.getRuntimeCwd() != null && !this.properties.getRuntimeCwd().isBlank()) {
-                builder.directory(Path.of(this.properties.getRuntimeCwd()).toFile());
+                final Path runtimeCwd = Path.of(this.properties.getRuntimeCwd()).toAbsolutePath().normalize();
+                Files.createDirectories(runtimeCwd);
+                builder.directory(runtimeCwd.toFile());
             }
             final Process process = builder.start();
             return new StartedCodexAppServer(process, command, Instant.now());

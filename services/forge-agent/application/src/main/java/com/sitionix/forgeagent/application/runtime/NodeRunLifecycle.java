@@ -126,6 +126,7 @@ public class NodeRunLifecycle {
                 running.agentInstructions(),
                 running.agentOutputSchema(),
                 running.executionModel(),
+                running.inputMode(),
                 this.dependencyOutputs(running.dependsOnNodeRunIds(), dependencies)
         ));
     }
@@ -310,6 +311,7 @@ public class NodeRunLifecycle {
                 nodeRun.agentInstructions(),
                 nodeRun.agentOutputSchema(),
                 nodeRun.dependsOnNodeRunIds(),
+                nodeRun.inputMode(),
                 nodeRun.position(),
                 NodeRunStatus.RUNNING,
                 nodeRun.output(),
@@ -331,6 +333,7 @@ public class NodeRunLifecycle {
                 nodeRun.agentInstructions(),
                 nodeRun.agentOutputSchema(),
                 nodeRun.dependsOnNodeRunIds(),
+                nodeRun.inputMode(),
                 nodeRun.position(),
                 NodeRunStatus.SUCCEEDED,
                 output,
@@ -352,6 +355,7 @@ public class NodeRunLifecycle {
                 nodeRun.agentInstructions(),
                 nodeRun.agentOutputSchema(),
                 nodeRun.dependsOnNodeRunIds(),
+                nodeRun.inputMode(),
                 nodeRun.position(),
                 NodeRunStatus.FAILED,
                 nodeRun.output(),
@@ -373,6 +377,7 @@ public class NodeRunLifecycle {
                 nodeRun.agentInstructions(),
                 nodeRun.agentOutputSchema(),
                 nodeRun.dependsOnNodeRunIds(),
+                nodeRun.inputMode(),
                 nodeRun.position(),
                 NodeRunStatus.BLOCKED,
                 nodeRun.output(),

@@ -24,6 +24,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskComman
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
+import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
@@ -175,7 +176,7 @@ class ForgeAgentClientMapperTest {
         assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand("Full Testing", List.of(node))))
                 .isEqualTo(new SaveAgentWorkflowRequest(
                         "Full Testing",
-                        List.of(new NodeRequest(NODE_ID, AGENT_ID, List.of(), new NodePositionRequest(1.0, 2.0)))
+                        List.of(new NodeRequest(NODE_ID, AGENT_ID, List.of(), NodeInputMode.DEPENDENCIES_ONLY.name(), new NodePositionRequest(1.0, 2.0)))
                 ));
 
         assertThat(this.mapper.toDomain(new AgentWorkflowResponse(
@@ -257,6 +258,7 @@ class ForgeAgentClientMapperTest {
                         "Analyze changes.",
                         new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
                         List.of(),
+                        NodeInputMode.TASK_AND_DEPENDENCIES,
                         new NodePosition(1.0, 2.0),
                         AgentNodeRunStatus.PENDING,
                         new AgentNodeRunOutputDocument("{\"summary\":\"done\"}"),

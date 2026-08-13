@@ -10,6 +10,7 @@ import java.util.Optional;
 final class CodexTurnStateTracker {
 
     private final Map<String, CodexExecutionState> executionsByThreadId = new HashMap<>();
+    private final CodexGenerationPolicy generationPolicy = new CodexGenerationPolicy();
 
     synchronized CodexExecutionState register(final String threadId) {
         final CodexExecutionState state = new CodexExecutionState(threadId);
@@ -96,7 +97,7 @@ final class CodexTurnStateTracker {
         final JsonNode item = params.path("item");
         this.requireObject(item);
         final String itemType = this.nonBlank(item.path("type"));
-        final RuntimeException violation = CodexGenerationPolicy.violationFor(itemType);
+        final RuntimeException violation = this.generationPolicy.violationFor(itemType);
         if (violation != null) {
             execution.failPolicyViolation(violation);
             return;
@@ -118,10 +119,10 @@ final class CodexTurnStateTracker {
             return;
         }
         execution.bindTurnId(turnId);
-        this.complete(execution, this.resolveStatus(params));
+        this.complete(execution, this.resolveStatus(params), this.providerFailure(params));
     }
 
-    private void complete(final CodexExecutionState execution, final String status) {
+    private void complete(final CodexExecutionState execution, final String status, final String providerFailure) {
         if ("completed".equals(status)) {
             final Optional<String> output = execution.finalAgentMessage();
             if (output.isEmpty() || output.get().isBlank()) {
@@ -131,7 +132,7 @@ final class CodexTurnStateTracker {
             execution.complete(output.get());
             return;
         }
-        execution.fail(this.executionFailed());
+        execution.fail(this.executionFailed(providerFailure));
     }
 
     private void failRequestOwner(final JsonNode params) {
@@ -168,6 +169,10 @@ final class CodexTurnStateTracker {
             throw this.executionFailed();
         }
         return status;
+    }
+
+    private String providerFailure(final JsonNode params) {
+        return this.nonBlank(params.path("turn").path("error").path("message"));
     }
 
     private String resolvePhase(final JsonNode item) {
@@ -212,6 +217,10 @@ final class CodexTurnStateTracker {
     }
 
     private CodexTransportException executionFailed() {
-        return new CodexTransportException("Codex execution failed.");
+        return this.executionFailed(null);
+    }
+
+    private CodexTransportException executionFailed(final String message) {
+        return new CodexTransportException(message == null || message.isBlank() ? "Codex execution failed." : message);
     }
 }

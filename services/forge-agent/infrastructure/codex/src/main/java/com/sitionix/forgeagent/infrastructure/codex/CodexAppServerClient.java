@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.infrastructure.codex;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -117,12 +118,12 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
                 this.turnStateTracker.remove(state);
             }
             this.invalidate(current);
-            throw new CodexTransportException("Codex execution failed.", e);
+            throw this.executionFailed(e);
         } catch (final CodexRemoteException e) {
             if (state != null) {
                 this.turnStateTracker.remove(state);
             }
-            throw new CodexTransportException("Codex execution failed.", e);
+            throw this.executionFailed(e);
         } catch (final RuntimeException e) {
             if (state != null) {
                 this.turnStateTracker.remove(state);
@@ -182,6 +183,11 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         return new CodexTransportException("Codex execution failed.", cause);
     }
 
+    private CodexTransportException executionFailed(final RuntimeException cause) {
+        final String message = cause.getMessage();
+        return new CodexTransportException(message == null || message.isBlank() ? "Codex execution failed." : message, cause);
+    }
+
     private void interrupt(final CodexExecution execution) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         params.put("threadId", execution.threadId());
@@ -210,10 +216,12 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         params.put("model", request.modelId());
         params.put("developerInstructions", request.developerInstructions());
         params.put("approvalPolicy", CodexProtocol.APPROVAL_POLICY_NEVER);
-        params.put("sandbox", CodexProtocol.SANDBOX_READ_ONLY);
-        params.put("cwd", this.effectiveRuntimeCwd());
+        params.put("sandbox", CodexProtocol.SANDBOX_WORKSPACE_WRITE);
+        final String runtimeCwd = this.effectiveRuntimeCwd();
+        params.put("cwd", runtimeCwd);
+        params.set("runtimeWorkspaceRoots", this.runtimeWorkspaceRoots(runtimeCwd));
         params.put("ephemeral", true);
-        params.set("config", this.generationOnlyConfig());
+        params.set("config", this.codexConfig());
         return params;
     }
 
@@ -233,10 +241,10 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         return params;
     }
 
-    private ObjectNode generationOnlyConfig() {
+    private ObjectNode codexConfig() {
         final ObjectNode config = this.objectMapper.createObjectNode();
         final ObjectNode features = config.putObject("features");
-        features.put("shell_tool", false);
+        features.put("shell_tool", true);
         final ObjectNode agents = config.putObject("agents");
         agents.put("enabled", false);
         return config;
@@ -245,19 +253,29 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
     private String effectiveRuntimeCwd() {
         final String configured = this.properties.getRuntimeCwd();
         if (configured != null && !configured.isBlank()) {
-            return Paths.get(configured.trim()).toAbsolutePath().normalize().toString();
+            return this.ensureDirectory(Paths.get(configured.trim()).toAbsolutePath().normalize());
         }
+        final String tempRoot = System.getProperty("java.io.tmpdir");
+        if (tempRoot == null || tempRoot.isBlank()) {
+            throw new CodexTransportException("Codex execution failed.");
+        }
+        final Path runtimeDir = Paths.get(tempRoot, "forge-agent-codex-runtime").toAbsolutePath().normalize();
+        return this.ensureDirectory(runtimeDir);
+    }
+
+    private String ensureDirectory(final Path path) {
         try {
-            final String tempRoot = System.getProperty("java.io.tmpdir");
-            if (tempRoot == null || tempRoot.isBlank()) {
-                throw new CodexTransportException("Codex execution failed.");
-            }
-            final Path runtimeDir = Paths.get(tempRoot, "forge-agent-codex-runtime").toAbsolutePath().normalize();
-            Files.createDirectories(runtimeDir);
-            return runtimeDir.toString();
+            Files.createDirectories(path);
+            return path.toString();
         } catch (final IOException e) {
             throw new CodexTransportException("Codex execution failed.", e);
         }
+    }
+
+    private ArrayNode runtimeWorkspaceRoots(final String runtimeCwd) {
+        final ArrayNode roots = this.objectMapper.createArrayNode();
+        roots.add(runtimeCwd);
+        return roots;
     }
 
     private String initialize(final CodexJsonRpcTransport transport) {

@@ -24,6 +24,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskComman
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
+import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
@@ -319,6 +320,7 @@ public class ForgeAgentClientMapper {
                 node.id(),
                 node.targetId(),
                 node.dependsOnNodeIds() == null ? List.of() : node.dependsOnNodeIds(),
+                inputMode(node.inputMode()).name(),
                 node.position() == null ? new NodePositionRequest(0.0, 0.0) : new NodePositionRequest(node.position().x(), node.position().y())
         );
     }
@@ -335,6 +337,7 @@ public class ForgeAgentClientMapper {
                 response.id(),
                 response.targetId(),
                 this.requireList(response.dependsOnNodeIds(), "node.dependsOnNodeIds"),
+                inputMode(response.inputMode(), "node.inputMode"),
                 new NodePosition(position.x(), position.y())
         );
     }
@@ -364,6 +367,7 @@ public class ForgeAgentClientMapper {
                     response.agentInstructions(),
                     new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(response.agentOutputSchema())),
                     this.requireList(response.dependsOnNodeRunIds(), "nodeRun.dependsOnNodeRunIds"),
+                    nodeRunInputMode(response.inputMode()),
                     new NodePosition(response.position().x(), response.position().y()),
                     response.status(),
                     response.output() == null ? null : new AgentNodeRunOutputDocument(this.objectMapper.writeValueAsString(response.output())),
@@ -411,5 +415,31 @@ public class ForgeAgentClientMapper {
 
     private HttpMessageConversionException invalid(final String message) {
         return new HttpMessageConversionException("Forge Agent response contract violation: " + message);
+    }
+
+    private static NodeInputMode inputMode(final NodeInputMode inputMode) {
+        return inputMode == null ? NodeInputMode.DEPENDENCIES_ONLY : inputMode;
+    }
+
+    private static NodeInputMode nodeRunInputMode(final String inputMode) {
+        if (inputMode == null || inputMode.isBlank()) {
+            return NodeInputMode.TASK_AND_DEPENDENCIES;
+        }
+        try {
+            return NodeInputMode.valueOf(inputMode);
+        } catch (final IllegalArgumentException exception) {
+            throw new HttpMessageConversionException("Forge Agent response contract violation: nodeRun.inputMode is invalid", exception);
+        }
+    }
+
+    private static NodeInputMode inputMode(final String inputMode, final String field) {
+        if (inputMode == null || inputMode.isBlank()) {
+            return NodeInputMode.DEPENDENCIES_ONLY;
+        }
+        try {
+            return NodeInputMode.valueOf(inputMode);
+        } catch (final IllegalArgumentException exception) {
+            throw new HttpMessageConversionException("Forge Agent response contract violation: " + field + " is invalid", exception);
+        }
     }
 }

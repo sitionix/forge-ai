@@ -4,6 +4,7 @@ import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -67,7 +68,8 @@ public class NodeGraphValidator {
         final List<UUID> dependencies = node.dependsOnNodeIds() == null
                 ? List.of()
                 : new ArrayList<>(new LinkedHashSet<>(node.dependsOnNodeIds()));
-        return new Node(node.id(), node.targetId(), dependencies, position);
+        final NodeInputMode inputMode = node.inputMode() == null ? NodeInputMode.DEPENDENCIES_ONLY : node.inputMode();
+        return new Node(node.id(), node.targetId(), dependencies, inputMode, position);
     }
 
     private void rejectCycles(final List<Node> nodes) {

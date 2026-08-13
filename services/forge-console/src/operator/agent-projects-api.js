@@ -42,6 +42,9 @@ export function createAgentProjectsApi(http) {
     },
     getProjectTask(taskId) {
       return http.get(`${root}/tasks/${encodeURIComponent(taskId)}`);
+    },
+    getWorkflowRun(runId) {
+      return http.get(`${root}/workflow-runs/${encodeURIComponent(runId)}`);
     }
   };
 }

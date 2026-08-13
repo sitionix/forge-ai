@@ -14,6 +14,7 @@ public record NodeRunResponse(
         String agentInstructions,
         JsonNode agentOutputSchema,
         List<UUID> dependsOnNodeRunIds,
+        String inputMode,
         NodePositionResponse position,
         NodeRunStatus status,
         JsonNode output,
@@ -22,4 +23,36 @@ public record NodeRunResponse(
         Instant startedAt,
         Instant finishedAt
 ) {
+    public NodeRunResponse(final UUID id,
+                           final UUID sourceNodeId,
+                           final UUID sourceAgentId,
+                           final String agentName,
+                           final String agentInstructions,
+                           final JsonNode agentOutputSchema,
+                           final List<UUID> dependsOnNodeRunIds,
+                           final NodePositionResponse position,
+                           final NodeRunStatus status,
+                           final JsonNode output,
+                           final NodeRunFailureResponse failure,
+                           final Instant createdAt,
+                           final Instant startedAt,
+                           final Instant finishedAt) {
+        this(
+                id,
+                sourceNodeId,
+                sourceAgentId,
+                agentName,
+                agentInstructions,
+                agentOutputSchema,
+                dependsOnNodeRunIds,
+                null,
+                position,
+                status,
+                output,
+                failure,
+                createdAt,
+                startedAt,
+                finishedAt
+        );
+    }
 }

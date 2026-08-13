@@ -16,6 +16,7 @@
         "type": "object"
       },
       "dependsOnNodeRunIds": [],
+      "inputMode": "DEPENDENCIES_ONLY",
       "position": {
         "x": 1,
         "y": 2

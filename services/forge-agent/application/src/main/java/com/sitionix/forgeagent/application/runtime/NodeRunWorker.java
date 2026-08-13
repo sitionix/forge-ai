@@ -6,7 +6,9 @@ import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @RequiredArgsConstructor
 public class NodeRunWorker {
 
@@ -30,7 +32,17 @@ public class NodeRunWorker {
             try {
                 output = this.agentExecutor.execute(claim);
             } catch (final RuntimeException exception) {
-                this.lifecycle.fail(claim.nodeRunId(), new NodeRunFailure(AGENT_EXECUTOR_FAILED, "Agent execution failed."));
+                log.error(
+                        "Agent executor failed nodeRunId={} workflowRunId={} agentId={} agentName={} providerId={} modelId={}",
+                        claim.nodeRunId(),
+                        claim.workflowRunId(),
+                        claim.sourceAgentId(),
+                        claim.agentName(),
+                        claim.executionModel().providerId(),
+                        claim.executionModel().modelId(),
+                        exception
+                );
+                this.lifecycle.fail(claim.nodeRunId(), new NodeRunFailure(AGENT_EXECUTOR_FAILED, this.failureMessage(exception)));
                 return;
             }
             if (output == null) {
@@ -39,5 +51,10 @@ public class NodeRunWorker {
             }
             this.lifecycle.succeed(claim.nodeRunId(), output);
         });
+    }
+
+    private String failureMessage(final RuntimeException exception) {
+        final String message = exception.getMessage();
+        return message == null || message.isBlank() ? "Agent execution failed." : message;
     }
 }
