@@ -281,10 +281,11 @@ export class AgentProjectsPage {
       if (this.disposed || !this.isCurrentProjectLoad(projectId, loadSequence)) {
         return [];
       }
-      if (options.background && this.state.tasksProjectId === projectId && this.state.tasks.length) {
+      const currentTasks = Array.isArray(this.state.tasks) ? this.state.tasks : [];
+      if (options.background && this.state.tasksProjectId === projectId && currentTasks.length) {
         this.showError('agentsV2TasksError', error.message || 'Tasks refresh failed.');
         this.renderProjectWorkspace();
-        return this.state.tasks;
+        return currentTasks;
       }
       this.state.tasks = [];
       this.state.tasksProjectId = projectId;
@@ -637,6 +638,7 @@ export class AgentProjectsPage {
     return !this.disposed
       && this.state.view === 'project'
       && this.tasksDataCurrent()
+      && Array.isArray(this.state.tasks)
       && this.state.tasks.some((task) => ACTIVE_TASK_STATUSES.has(task.executionStatus));
   }
 
