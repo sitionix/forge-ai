@@ -11,6 +11,7 @@ import static com.sitionix.forgeagent.it.ForgeAgentFixtures.UNKNOWN_WORKFLOW_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.WORKFLOW_ID;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_WORKFLOW;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_WORKFLOW_ERROR;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.DELETE_WORKFLOW;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_WORKFLOW;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_WORKFLOW_ERROR;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_PROJECT_WORKFLOWS;
@@ -24,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodeEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodePortEntity;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
@@ -121,6 +123,80 @@ class ForgeAgentWorkflowIT {
         assertThat(reviewerAgain.getPositionX()).isEqualTo(720.0);
         assertThat(reviewerAgain.getPositionY()).isEqualTo(120.0);
         assertThat(reviewerAgain.getWorkflowId()).isEqualTo(WORKFLOW_ID);
+    }
+
+    @Test
+    void givenWorkflowWithPorts_whenPutGetUpdateAndDelete_thenPortsPersistByStableId() {
+        this.seedProjectAgentsAndWorkflow();
+
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestWorkflowWithPorts.json")
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseWorkflowWithPorts.json", "updatedAt")
+                .assertAndCreate();
+        this.forgeIt.mockMvc()
+                .ping(GET_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseWorkflowWithPorts.json", "updatedAt")
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(WorkflowNodePortEntity.class).getAll())
+                .hasSize(4)
+                .extracting(WorkflowNodePortEntity::getId, WorkflowNodePortEntity::getDirection, WorkflowNodePortEntity::getName, WorkflowNodePortEntity::getPortOrder)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(UUID.fromString("60000000-0000-4000-8000-000000000001"), "INPUT", "Review feedback", 0),
+                        org.assertj.core.groups.Tuple.tuple(UUID.fromString("60000000-0000-4000-8000-000000000002"), "INPUT", "Context", 1),
+                        org.assertj.core.groups.Tuple.tuple(UUID.fromString("70000000-0000-4000-8000-000000000001"), "OUTPUT", "Approved", 0),
+                        org.assertj.core.groups.Tuple.tuple(UUID.fromString("70000000-0000-4000-8000-000000000002"), "OUTPUT", "Return", 1)
+                );
+
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestWorkflowWithPortsUpdated.json")
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseWorkflowWithPortsUpdated.json", "updatedAt")
+                .assertAndCreate();
+        this.forgeIt.mockMvc()
+                .ping(GET_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseWorkflowWithPortsUpdated.json", "updatedAt")
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(WorkflowNodePortEntity.class).getAll())
+                .hasSize(4)
+                .extracting(WorkflowNodePortEntity::getId, WorkflowNodePortEntity::getName, WorkflowNodePortEntity::getDescription, WorkflowNodePortEntity::getPortOrder)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(UUID.fromString("60000000-0000-4000-8000-000000000001"), "Review feedback", "Updated feedback description.", 0),
+                        org.assertj.core.groups.Tuple.tuple(UUID.fromString("60000000-0000-4000-8000-000000000003"), "Test result", "Latest automated test result.", 1),
+                        org.assertj.core.groups.Tuple.tuple(UUID.fromString("70000000-0000-4000-8000-000000000001"), "Ready", "Continue when ready for testing.", 0),
+                        org.assertj.core.groups.Tuple.tuple(UUID.fromString("70000000-0000-4000-8000-000000000003"), "Reject", "Reject when the implementation cannot proceed.", 1)
+                );
+
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestWorkflowNoNodes.json")
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+        assertThat(this.forgeIt.postgresql().get(WorkflowNodePortEntity.class).getAll()).isEmpty();
+
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestWorkflowWithPorts.json")
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+        this.forgeIt.mockMvc()
+                .ping(DELETE_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .expectStatus(HttpStatus.NO_CONTENT)
+                .assertAndCreate();
+        assertThat(this.forgeIt.postgresql().get(WorkflowNodePortEntity.class).getAll()).isEmpty();
     }
 
     @Test
@@ -258,6 +334,9 @@ class ForgeAgentWorkflowIT {
         this.expectWorkflowError("requestUnknownNodeDependency.json", HttpStatus.BAD_REQUEST, "responseUnknownNodeDependencyError.json");
         this.expectWorkflowError("requestSelfNodeDependency.json", HttpStatus.BAD_REQUEST, "responseSelfNodeDependencyError.json");
         this.expectWorkflowError("requestDuplicateNodeIdWorkflow.json", HttpStatus.BAD_REQUEST, "responseDuplicateNodeIdError.json");
+        this.expectWorkflowError("requestWorkflowDuplicatePortName.json", HttpStatus.BAD_REQUEST, "responseDuplicateNodePortNameError.json");
+        this.expectWorkflowError("requestWorkflowPortOrderGap.json", HttpStatus.BAD_REQUEST, "responseInvalidNodePortOrderError.json");
+        this.expectWorkflowError("requestWorkflowBlankPortField.json", HttpStatus.BAD_REQUEST, "responseInvalidNodePortError.json");
         this.expectWorkflowError("requestDirectCycleWorkflow.json", HttpStatus.CONFLICT, "responseWorkflowCycleError.json");
         this.expectWorkflowError("requestIndirectCycleWorkflow.json", HttpStatus.CONFLICT, "responseWorkflowCycleError.json");
     }

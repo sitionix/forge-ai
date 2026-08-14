@@ -3,6 +3,7 @@ const NODE_WIDTH = 204;
 const NODE_MID_Y = 52;
 const DEFAULT_INPUT_MODE = 'DEPENDENCIES_ONLY';
 const TASK_AND_DEPENDENCIES_INPUT_MODE = 'TASK_AND_DEPENDENCIES';
+const NODE_DRAG_THRESHOLD = 3;
 
 export class WorkflowBuilder {
   constructor(options) {
@@ -16,6 +17,9 @@ export class WorkflowBuilder {
     this.agents = [];
     this.nodeDrag = null;
     this.connectionDrag = null;
+    this.nodeEditorNodeId = null;
+    this.nodeEditorDraft = null;
+    this.nodeEditorEditingPortKey = null;
     this.saving = false;
   }
 
@@ -34,6 +38,10 @@ export class WorkflowBuilder {
     this.document.addEventListener('keydown', this.handleKeyDown);
     this.byId('agentsV2BuilderBack')?.addEventListener('click', () => this.onBack());
     this.byId('agentsV2WorkflowSave')?.addEventListener('click', () => this.save());
+    this.byId('agentsV2NodeEditorCancel')?.addEventListener('click', () => this.closeNodeEditor());
+    this.byId('agentsV2NodeEditorClose')?.addEventListener('click', () => this.closeNodeEditor());
+    this.byId('agentsV2NodeEditorSave')?.addEventListener('click', () => this.saveNodeEditor());
+    this.byId('agentsV2NodeEditorBody')?.addEventListener('click', (event) => this.onNodeEditorClick(event));
   }
 
   dispose() {
@@ -49,6 +57,9 @@ export class WorkflowBuilder {
     this.agents = agents || [];
     this.nodeDrag = null;
     this.connectionDrag = null;
+    this.nodeEditorNodeId = null;
+    this.nodeEditorDraft = null;
+    this.nodeEditorEditingPortKey = null;
     this.showError('');
     this.byId('agentsV2BuilderTitle').textContent = workflow.name;
     this.byId('agentsV2BuilderCrumbs').textContent = `Projects / ${project?.name || ''} / Workflows / ${workflow.name}`;
@@ -60,6 +71,7 @@ export class WorkflowBuilder {
     this.project = null;
     this.nodeDrag = null;
     this.connectionDrag = null;
+    this.closeNodeEditor();
     this.clearConnectionTargetClasses();
   }
 
@@ -94,6 +106,8 @@ export class WorkflowBuilder {
       targetId: agentId,
       dependsOnNodeIds: [],
       inputMode: DEFAULT_INPUT_MODE,
+      inputs: [],
+      outputs: [],
       position: { x: 120 + (index % 3) * 240, y: 90 + Math.floor(index / 3) * 160 }
     });
     this.render();
@@ -155,34 +169,38 @@ export class WorkflowBuilder {
     nodesLayer.querySelectorAll('[data-node-output]').forEach((element) => {
       element.addEventListener('pointerdown', (event) => this.startConnectionDrag(event, element.dataset.nodeOutput));
     });
-    nodesLayer.querySelectorAll('[data-node-input-mode]').forEach((element) => {
-      element.addEventListener('change', () => this.setNodeInputMode(element.dataset.nodeInputMode, element.value));
-    });
   }
 
   renderNode(node) {
     const agent = this.agentById(node.targetId);
-    const hasDependencies = Boolean((node.dependsOnNodeIds || []).length);
-    const inputMode = this.nodeInputMode(node);
+    const inputs = this.nodePorts(node.inputs);
+    const outputs = this.nodePorts(node.outputs);
+    const portRows = Math.max(inputs.length, outputs.length, 1);
     return `
-      <article class="workflow-node" data-node-id="${escapeHtml(node.id)}" style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px;">
+      <article class="workflow-node" data-node-id="${escapeHtml(node.id)}" style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px; --workflow-node-port-rows:${portRows};">
         <button class="node-handle input" type="button" title="Input" data-node-input="${escapeHtml(node.id)}" aria-label="Input for ${escapeHtml(agent?.name || 'node')}"></button>
+        <div class="workflow-node-port-list input" aria-label="Configured inputs">
+          ${this.renderCompactPorts(inputs)}
+        </div>
         <div class="workflow-node-content">
           <strong>${escapeHtml(agent?.name || 'Unknown agent')}</strong>
           <span>${escapeHtml(agent?.instructions || 'Reusable agent')}</span>
-          <label class="workflow-node-input-mode">
-            <span>Input</span>
-            <select data-node-input-mode="${escapeHtml(node.id)}" ${hasDependencies ? '' : 'disabled'}>
-              <option value="${DEFAULT_INPUT_MODE}" ${inputMode === DEFAULT_INPUT_MODE ? 'selected' : ''}>Previous outputs</option>
-              <option value="${TASK_AND_DEPENDENCIES_INPUT_MODE}" ${inputMode === TASK_AND_DEPENDENCIES_INPUT_MODE ? 'selected' : ''}>Task + previous</option>
-            </select>
-          </label>
-          ${hasDependencies ? '' : '<small class="workflow-node-input-note">Starts from task</small>'}
         </div>
         <button class="node-delete" type="button" title="Remove node" data-node-remove="${escapeHtml(node.id)}" aria-label="Remove node">×</button>
+        <div class="workflow-node-port-list output" aria-label="Configured outputs">
+          ${this.renderCompactPorts(outputs)}
+        </div>
         <button class="node-handle output" type="button" title="Output" data-node-output="${escapeHtml(node.id)}" aria-label="Output from ${escapeHtml(agent?.name || 'node')}"></button>
       </article>
     `;
+  }
+
+  renderCompactPorts(ports) {
+    return ports.map((port) => `
+      <div class="workflow-node-port" title="${escapeHtml(port.name)}">
+        <span>${escapeHtml(port.name)}</span>
+      </div>
+    `).join('');
   }
 
   renderEdges() {
@@ -242,7 +260,8 @@ export class WorkflowBuilder {
       startX: event.clientX,
       startY: event.clientY,
       originalX: Number(node.position?.x || 0),
-      originalY: Number(node.position?.y || 0)
+      originalY: Number(node.position?.y || 0),
+      moved: false
     };
     this.byNodeId(nodeId)?.classList.add('dragging');
   }
@@ -273,8 +292,13 @@ export class WorkflowBuilder {
 
   onPointerUp(event) {
     if (this.nodeDrag) {
+      const nodeId = this.nodeDrag.nodeId;
+      const openedEditor = !this.nodeDrag.moved;
       this.byNodeId(this.nodeDrag.nodeId)?.classList.remove('dragging');
       this.nodeDrag = null;
+      if (openedEditor) {
+        this.openNodeEditor(nodeId);
+      }
       return;
     }
     if (!this.connectionDrag) {
@@ -298,9 +322,15 @@ export class WorkflowBuilder {
     if (!node) {
       return;
     }
+    const deltaX = event.clientX - this.nodeDrag.startX;
+    const deltaY = event.clientY - this.nodeDrag.startY;
+    if (!this.nodeDrag.moved && Math.max(Math.abs(deltaX), Math.abs(deltaY)) < NODE_DRAG_THRESHOLD) {
+      return;
+    }
+    this.nodeDrag.moved = true;
     node.position = {
-      x: Math.max(0, this.nodeDrag.originalX + event.clientX - this.nodeDrag.startX),
-      y: Math.max(0, this.nodeDrag.originalY + event.clientY - this.nodeDrag.startY)
+      x: Math.max(0, this.nodeDrag.originalX + deltaX),
+      y: Math.max(0, this.nodeDrag.originalY + deltaY)
     };
     const element = this.byNodeId(node.id);
     if (element) {
@@ -354,12 +384,255 @@ export class WorkflowBuilder {
     return Boolean(sourceExists && target && !(target.dependsOnNodeIds || []).includes(sourceNodeId));
   }
 
-  setNodeInputMode(nodeId, inputMode) {
+  openNodeEditor(nodeId) {
     const node = this.workflow?.nodes.find((candidate) => candidate.id === nodeId);
     if (!node) {
       return;
     }
-    node.inputMode = this.normalizeInputMode(inputMode);
+    this.nodeEditorNodeId = nodeId;
+    this.nodeEditorDraft = this.cloneNode(node);
+    this.nodeEditorEditingPortKey = null;
+    this.renderNodeEditor();
+    this.showNodeEditorError('');
+    const dialog = this.byId('agentsV2NodeEditorDialog');
+    if (dialog?.showModal) {
+      dialog.showModal();
+    } else {
+      dialog?.setAttribute('open', 'open');
+    }
+  }
+
+  closeNodeEditor() {
+    this.nodeEditorNodeId = null;
+    this.nodeEditorDraft = null;
+    this.nodeEditorEditingPortKey = null;
+    this.showNodeEditorError('');
+    const dialog = this.byId('agentsV2NodeEditorDialog');
+    if (dialog?.close) {
+      dialog.close();
+    } else {
+      dialog?.removeAttribute('open');
+    }
+  }
+
+  renderNodeEditor() {
+    const node = this.nodeEditorDraft;
+    if (!node) {
+      return;
+    }
+    const agent = this.agentById(node.targetId);
+    this.byId('agentsV2NodeEditorTitle').textContent = agent?.name || 'Unknown agent';
+    this.byId('agentsV2NodeEditorAgent').textContent = `Agent: ${agent?.name || 'Unknown agent'}`;
+    this.byId('agentsV2NodeEditorBody').innerHTML = `
+      <div class="node-editor-port-columns">
+        ${this.renderNodeEditorPorts('inputs', 'INPUTS', '+ Add Input')}
+        ${this.renderNodeEditorPorts('outputs', 'OUTPUTS', '+ Add Output')}
+      </div>
+      <div class="node-editor-input-mode">
+        <label class="field-label" for="agentsV2NodeEditorInputMode">Input content</label>
+        ${this.renderNodeEditorInputMode(node)}
+      </div>
+    `;
+  }
+
+  renderNodeEditorPorts(direction, title, addLabel) {
+    const ports = this.nodePorts(this.nodeEditorDraft?.[direction]);
+    return `
+      <section class="node-editor-port-section" data-node-editor-direction="${direction}">
+        <div class="node-editor-section-head">
+          <h3>${escapeHtml(title)}</h3>
+          <button class="button tiny secondary" type="button" data-node-editor-add="${direction}">${escapeHtml(addLabel)}</button>
+        </div>
+        <div class="node-editor-port-list">
+          ${ports.map((port, index) => this.renderNodeEditorPort(direction, port, index)).join('') || '<div class="muted-state compact">No ports configured.</div>'}
+        </div>
+      </section>
+    `;
+  }
+
+  renderNodeEditorPort(direction, port, index) {
+    if (!this.isNodeEditorPortEditing(direction, port.id)) {
+      return this.renderNodeEditorCompactPort(direction, port);
+    }
+    return `
+      <div class="node-editor-port-row editing" data-node-editor-port="${escapeHtml(port.id)}" data-node-editor-port-direction="${escapeHtml(direction)}">
+        <div class="node-editor-port-row-head">
+          <strong>${index + 1}.</strong>
+          <button class="node-editor-port-remove" type="button" title="Remove port" aria-label="Remove port" data-node-editor-remove="${escapeHtml(port.id)}" data-node-editor-remove-direction="${escapeHtml(direction)}">×</button>
+        </div>
+        <label class="field-label" for="node-editor-${escapeHtml(direction)}-${escapeHtml(port.id)}-name">Name</label>
+        <input id="node-editor-${escapeHtml(direction)}-${escapeHtml(port.id)}-name" class="text-input" type="text" value="${escapeHtml(port.name || '')}" data-node-editor-port-name>
+        <label class="field-label" for="node-editor-${escapeHtml(direction)}-${escapeHtml(port.id)}-description">Description</label>
+        <textarea id="node-editor-${escapeHtml(direction)}-${escapeHtml(port.id)}-description" class="agent-modal-textarea node-editor-description" data-node-editor-port-description>${escapeHtml(port.description || '')}</textarea>
+      </div>
+    `;
+  }
+
+  renderNodeEditorCompactPort(direction, port) {
+    return `
+      <div class="node-editor-port-row compact" data-node-editor-port="${escapeHtml(port.id)}" data-node-editor-port-direction="${escapeHtml(direction)}" data-node-editor-edit="${escapeHtml(port.id)}" data-node-editor-edit-direction="${escapeHtml(direction)}">
+        <div class="node-editor-port-summary">
+          <strong>${escapeHtml(port.name || 'Untitled port')}</strong>
+          <p>${escapeHtml(port.description || '')}</p>
+        </div>
+        <div class="node-editor-port-actions">
+          <button class="button tiny secondary" type="button" data-node-editor-edit="${escapeHtml(port.id)}" data-node-editor-edit-direction="${escapeHtml(direction)}">Edit</button>
+          <button class="node-editor-port-remove" type="button" title="Remove port" aria-label="Remove port" data-node-editor-remove="${escapeHtml(port.id)}" data-node-editor-remove-direction="${escapeHtml(direction)}">×</button>
+        </div>
+      </div>
+    `;
+  }
+
+  renderNodeEditorInputMode(node) {
+    const hasDependencies = Boolean((node.dependsOnNodeIds || []).length);
+    if (!hasDependencies) {
+      return '<div class="node-editor-readonly-input" data-node-editor-root-input>Original task</div>';
+    }
+    const inputMode = this.nodeInputMode(node);
+    return `
+      <select id="agentsV2NodeEditorInputMode" class="text-input" data-node-editor-input-mode>
+        <option value="${DEFAULT_INPUT_MODE}" ${inputMode === DEFAULT_INPUT_MODE ? 'selected' : ''}>Dependencies only</option>
+        <option value="${TASK_AND_DEPENDENCIES_INPUT_MODE}" ${inputMode === TASK_AND_DEPENDENCIES_INPUT_MODE ? 'selected' : ''}>Task + dependencies</option>
+      </select>
+    `;
+  }
+
+  onNodeEditorClick(event) {
+    const addButton = event.target.closest?.('[data-node-editor-add]');
+    if (addButton) {
+      this.addNodeEditorPort(addButton.dataset.nodeEditorAdd);
+      return;
+    }
+    const removeButton = event.target.closest?.('[data-node-editor-remove]');
+    if (removeButton) {
+      this.removeNodeEditorPort(removeButton.dataset.nodeEditorRemoveDirection, removeButton.dataset.nodeEditorRemove);
+      return;
+    }
+    const editTarget = event.target.closest?.('[data-node-editor-edit]');
+    if (editTarget) {
+      this.editNodeEditorPort(editTarget.dataset.nodeEditorEditDirection, editTarget.dataset.nodeEditorEdit);
+    }
+  }
+
+  addNodeEditorPort(direction) {
+    if (!this.nodeEditorDraft || !['inputs', 'outputs'].includes(direction)) {
+      return;
+    }
+    this.syncNodeEditorDraftFromDom();
+    let id;
+    try {
+      id = this.randomUuid();
+    } catch (error) {
+      this.showNodeEditorError(error.message || 'Port UUID generation unavailable.');
+      return;
+    }
+    const ports = this.nodePorts(this.nodeEditorDraft[direction]);
+    ports.push({ id, name: '', description: '', order: ports.length });
+    this.nodeEditorDraft[direction] = ports;
+    this.nodeEditorEditingPortKey = this.nodeEditorPortKey(direction, id);
+    this.renderNodeEditor();
+  }
+
+  removeNodeEditorPort(direction, portId) {
+    if (!this.nodeEditorDraft || !['inputs', 'outputs'].includes(direction)) {
+      return;
+    }
+    this.syncNodeEditorDraftFromDom();
+    this.nodeEditorDraft[direction] = this.reindexPorts(
+      this.nodePorts(this.nodeEditorDraft[direction]).filter((port) => port.id !== portId)
+    );
+    if (this.nodeEditorEditingPortKey === this.nodeEditorPortKey(direction, portId)) {
+      this.nodeEditorEditingPortKey = null;
+    }
+    this.renderNodeEditor();
+  }
+
+  editNodeEditorPort(direction, portId) {
+    if (!this.nodeEditorDraft || !['inputs', 'outputs'].includes(direction)) {
+      return;
+    }
+    this.syncNodeEditorDraftFromDom();
+    this.nodeEditorEditingPortKey = this.nodeEditorPortKey(direction, portId);
+    this.renderNodeEditor();
+  }
+
+  syncNodeEditorDraftFromDom() {
+    if (!this.nodeEditorDraft) {
+      return;
+    }
+    for (const direction of ['inputs', 'outputs']) {
+      const portsById = new Map(this.nodePorts(this.nodeEditorDraft[direction]).map((port) => [port.id, { ...port }]));
+      this.byId('agentsV2NodeEditorBody').querySelectorAll(`[data-node-editor-port-direction="${direction}"]`).forEach((row) => {
+        const port = portsById.get(row.dataset.nodeEditorPort);
+        if (!port) {
+          return;
+        }
+        const nameInput = row.querySelector('[data-node-editor-port-name]');
+        const descriptionInput = row.querySelector('[data-node-editor-port-description]');
+        if (nameInput) {
+          port.name = nameInput.value || '';
+        }
+        if (descriptionInput) {
+          port.description = descriptionInput.value || '';
+        }
+      });
+      this.nodeEditorDraft[direction] = this.reindexPorts([...portsById.values()]);
+    }
+    const inputMode = this.byId('agentsV2NodeEditorBody').querySelector('[data-node-editor-input-mode]')?.value;
+    if (inputMode) {
+      this.nodeEditorDraft.inputMode = this.normalizeInputMode(inputMode);
+    }
+  }
+
+  saveNodeEditor() {
+    if (!this.workflow || !this.nodeEditorDraft || !this.nodeEditorNodeId) {
+      return;
+    }
+    this.syncNodeEditorDraftFromDom();
+    const validation = this.validateNodeEditorDraft();
+    if (validation) {
+      this.showNodeEditorError(validation);
+      return;
+    }
+    const savedNode = {
+      ...this.nodeEditorDraft,
+      inputMode: this.nodeInputMode(this.nodeEditorDraft),
+      inputs: this.reindexPorts(this.nodeEditorDraft.inputs).map((port) => this.normalizedPort(port)),
+      outputs: this.reindexPorts(this.nodeEditorDraft.outputs).map((port) => this.normalizedPort(port))
+    };
+    this.workflow.nodes = this.workflow.nodes.map((node) => node.id === this.nodeEditorNodeId ? savedNode : node);
+    this.closeNodeEditor();
+    this.render();
+  }
+
+  validateNodeEditorDraft() {
+    for (const [direction, label] of [['inputs', 'Input'], ['outputs', 'Output']]) {
+      const names = new Set();
+      for (const port of this.nodePorts(this.nodeEditorDraft[direction])) {
+        const name = String(port.name || '').trim();
+        const description = String(port.description || '').trim();
+        if (!name) {
+          return `${label} port name is required.`;
+        }
+        if (!description) {
+          return `${label} port description is required.`;
+        }
+        if (names.has(name)) {
+          return `${label} port names must be unique.`;
+        }
+        names.add(name);
+      }
+    }
+    return '';
+  }
+
+  showNodeEditorError(message) {
+    const element = this.byId('agentsV2NodeEditorError');
+    if (!element) {
+      return;
+    }
+    element.textContent = message;
+    element.classList.toggle('hidden', !message);
   }
 
   applyConnectionTargetClasses() {
@@ -448,6 +721,8 @@ export class WorkflowBuilder {
         targetId: node.targetId,
         dependsOnNodeIds: [...(node.dependsOnNodeIds || [])],
         inputMode: this.nodeInputMode(node),
+        inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
+        outputs: this.reindexPorts(node.outputs).map((port) => this.normalizedPort(port)),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
       }))
     };
@@ -488,8 +763,22 @@ export class WorkflowBuilder {
         targetId: node.targetId,
         dependsOnNodeIds: [...(node.dependsOnNodeIds || [])],
         inputMode: this.nodeInputMode(node),
+        inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
+        outputs: this.reindexPorts(node.outputs).map((port) => this.normalizedPort(port)),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
       }))
+    };
+  }
+
+  cloneNode(node) {
+    return {
+      id: node.id,
+      targetId: node.targetId,
+      dependsOnNodeIds: [...(node.dependsOnNodeIds || [])],
+      inputMode: this.nodeInputMode(node),
+      inputs: this.reindexPorts(node.inputs).map((port) => ({ ...port })),
+      outputs: this.reindexPorts(node.outputs).map((port) => ({ ...port })),
+      position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
     };
   }
 
@@ -499,6 +788,31 @@ export class WorkflowBuilder {
 
   normalizeInputMode(inputMode) {
     return inputMode === TASK_AND_DEPENDENCIES_INPUT_MODE ? TASK_AND_DEPENDENCIES_INPUT_MODE : DEFAULT_INPUT_MODE;
+  }
+
+  nodePorts(ports) {
+    return [...(ports || [])].sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+  }
+
+  reindexPorts(ports) {
+    return this.nodePorts(ports).map((port, index) => ({ ...port, order: index }));
+  }
+
+  normalizedPort(port) {
+    return {
+      id: port.id,
+      name: String(port.name || '').trim(),
+      description: String(port.description || '').trim(),
+      order: Number(port.order || 0)
+    };
+  }
+
+  isNodeEditorPortEditing(direction, portId) {
+    return this.nodeEditorEditingPortKey === this.nodeEditorPortKey(direction, portId);
+  }
+
+  nodeEditorPortKey(direction, portId) {
+    return `${direction}:${portId}`;
   }
 
   agentById(agentId) {

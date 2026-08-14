@@ -1,0 +1,43 @@
+{
+  "name": "Full Testing",
+  "nodes": [
+    {
+      "id": "40000000-0000-4000-8000-000000000001",
+      "targetId": "20000000-0000-4000-8000-000000000001",
+      "dependsOnNodeIds": [],
+      "inputMode": "DEPENDENCIES_ONLY",
+      "inputs": [
+        {
+          "id": "60000000-0000-4000-8000-000000000001",
+          "name": "Review feedback",
+          "description": "Updated feedback description.",
+          "order": 0
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000000003",
+          "name": "Test result",
+          "description": "Latest automated test result.",
+          "order": 1
+        }
+      ],
+      "outputs": [
+        {
+          "id": "70000000-0000-4000-8000-000000000001",
+          "name": "Ready",
+          "description": "Continue when ready for testing.",
+          "order": 0
+        },
+        {
+          "id": "70000000-0000-4000-8000-000000000003",
+          "name": "Reject",
+          "description": "Reject when the implementation cannot proceed.",
+          "order": 1
+        }
+      ],
+      "position": {
+        "x": 120,
+        "y": 100
+      }
+    }
+  ]
+}

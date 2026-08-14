@@ -25,6 +25,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
+import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
@@ -235,6 +236,8 @@ public class AgentProxyApiMapper {
                 request.targetId(),
                 request.dependsOnNodeIds() == null ? List.of() : request.dependsOnNodeIds(),
                 inputMode(request.inputMode()),
+                request.inputs() == null ? List.of() : request.inputs().stream().map(this::toDomain).toList(),
+                request.outputs() == null ? List.of() : request.outputs().stream().map(this::toDomain).toList(),
                 request.position() == null ? new NodePosition(0.0, 0.0) : new NodePosition(request.position().x(), request.position().y())
         );
     }
@@ -245,8 +248,21 @@ public class AgentProxyApiMapper {
                 node.targetId(),
                 node.dependsOnNodeIds(),
                 inputMode(node.inputMode()).name(),
+                node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
+                node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
                 new NodePositionResponse(node.position().x(), node.position().y())
         );
+    }
+
+    private NodePort toDomain(final NodePortRequest request) {
+        if (request == null) {
+            return null;
+        }
+        return new NodePort(request.id(), request.name(), request.description(), request.order());
+    }
+
+    private NodePortResponse toResponse(final NodePort port) {
+        return new NodePortResponse(port.id(), port.name(), port.description(), port.order());
     }
 
     private AgentNodeRunResponse toResponse(final AgentNodeRun nodeRun) {

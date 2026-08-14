@@ -26,6 +26,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
+import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
@@ -43,6 +44,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunFailureRespons
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePortRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePortResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
@@ -63,6 +66,8 @@ class ForgeAgentClientMapperTest {
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID NODE_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
+    private static final UUID INPUT_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
+    private static final UUID OUTPUT_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
     private static final UUID RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID NODE_RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final UUID TASK_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
@@ -191,20 +196,46 @@ class ForgeAgentClientMapperTest {
 
     @Test
     void workflowCommandsAndResponsesMapSuccessfully() {
-        final var node = new Node(NODE_ID, AGENT_ID, List.of(), new NodePosition(1.0, 2.0));
+        final var input = new NodePort(INPUT_ID, "Review feedback", "Feedback produced by review.", 0);
+        final var output = new NodePort(OUTPUT_ID, "Approved", "Continue when accepted.", 0);
+        final var node = new Node(
+                NODE_ID,
+                AGENT_ID,
+                List.of(),
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(input),
+                List.of(output),
+                new NodePosition(1.0, 2.0)
+        );
         assertThat(this.mapper.toRequest(new CreateAgentWorkflowCommand("Full Testing")))
                 .isEqualTo(new AgentWorkflowRequest("Full Testing"));
         assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand("Full Testing", List.of(node))))
                 .isEqualTo(new SaveAgentWorkflowRequest(
                         "Full Testing",
-                        List.of(new NodeRequest(NODE_ID, AGENT_ID, List.of(), NodeInputMode.DEPENDENCIES_ONLY.name(), new NodePositionRequest(1.0, 2.0)))
+                        List.of(new NodeRequest(
+                                NODE_ID,
+                                AGENT_ID,
+                                List.of(),
+                                NodeInputMode.DEPENDENCIES_ONLY.name(),
+                                List.of(new NodePortRequest(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
+                                List.of(new NodePortRequest(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
+                                new NodePositionRequest(1.0, 2.0)
+                        ))
                 ));
 
         assertThat(this.mapper.toDomain(new AgentWorkflowResponse(
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new NodeResponse(NODE_ID, AGENT_ID, List.of(), new NodePositionResponse(1.0, 2.0))),
+                List.of(new NodeResponse(
+                        NODE_ID,
+                        AGENT_ID,
+                        List.of(),
+                        NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        List.of(new NodePortResponse(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
+                        List.of(new NodePortResponse(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
+                        new NodePositionResponse(1.0, 2.0)
+                )),
                 CREATED,
                 UPDATED
         ))).isEqualTo(new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(node), CREATED, UPDATED));

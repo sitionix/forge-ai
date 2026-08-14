@@ -1,0 +1,5 @@
+{
+  "code": "DUPLICATE_NODE_PORT_NAME",
+  "message": "Workflow node port names must be unique per direction.",
+  "correlationId": null
+}

@@ -26,6 +26,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
+import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
@@ -336,6 +337,8 @@ public class ForgeAgentClientMapper {
                 node.targetId(),
                 node.dependsOnNodeIds() == null ? List.of() : node.dependsOnNodeIds(),
                 inputMode(node.inputMode()).name(),
+                node.inputs() == null ? List.of() : node.inputs().stream().map(this::toRequest).toList(),
+                node.outputs() == null ? List.of() : node.outputs().stream().map(this::toRequest).toList(),
                 node.position() == null ? new NodePositionRequest(0.0, 0.0) : new NodePositionRequest(node.position().x(), node.position().y())
         );
     }
@@ -353,8 +356,27 @@ public class ForgeAgentClientMapper {
                 response.targetId(),
                 this.requireList(response.dependsOnNodeIds(), "node.dependsOnNodeIds"),
                 inputMode(response.inputMode(), "node.inputMode"),
+                response.inputs() == null ? List.of() : response.inputs().stream().map(this::toDomain).toList(),
+                response.outputs() == null ? List.of() : response.outputs().stream().map(this::toDomain).toList(),
                 new NodePosition(position.x(), position.y())
         );
+    }
+
+    private com.sitionix.forgeai.infrastructure.agentclient.dto.NodePortRequest toRequest(final NodePort port) {
+        return new com.sitionix.forgeai.infrastructure.agentclient.dto.NodePortRequest(
+                port.id(),
+                port.name(),
+                port.description(),
+                port.order()
+        );
+    }
+
+    private NodePort toDomain(final com.sitionix.forgeai.infrastructure.agentclient.dto.NodePortResponse response) {
+        this.requireResponse(response, "workflow node port");
+        this.requireId(response.id(), "nodePort.id");
+        this.requireText(response.name(), "nodePort.name");
+        this.requireText(response.description(), "nodePort.description");
+        return new NodePort(response.id(), response.name(), response.description(), response.order());
     }
 
     private AgentNodeRun toDomain(final NodeRunResponse response) {
