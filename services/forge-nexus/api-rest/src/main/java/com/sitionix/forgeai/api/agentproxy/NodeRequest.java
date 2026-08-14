@@ -6,7 +6,6 @@ import java.util.UUID;
 public record NodeRequest(
         UUID id,
         UUID targetId,
-        List<UUID> dependsOnNodeIds,
         String inputMode,
         List<NodePortRequest> inputs,
         List<NodePortRequest> outputs,
@@ -14,16 +13,14 @@ public record NodeRequest(
 ) {
     public NodeRequest(final UUID id,
                        final UUID targetId,
-                       final List<UUID> dependsOnNodeIds,
                        final String inputMode,
                        final NodePositionRequest position) {
-        this(id, targetId, dependsOnNodeIds, inputMode, null, null, position);
+        this(id, targetId, inputMode, null, null, position);
     }
 
     public NodeRequest(final UUID id,
                        final UUID targetId,
-                       final List<UUID> dependsOnNodeIds,
                        final NodePositionRequest position) {
-        this(id, targetId, dependsOnNodeIds, null, null, null, position);
+        this(id, targetId, null, null, null, position);
     }
 }

@@ -9,6 +9,7 @@ public record WorkflowResponse(
         UUID projectId,
         String name,
         List<NodeResponse> nodes,
+        List<WorkflowConnectionResponse> connections,
         Instant createdAt,
         Instant updatedAt
 ) {

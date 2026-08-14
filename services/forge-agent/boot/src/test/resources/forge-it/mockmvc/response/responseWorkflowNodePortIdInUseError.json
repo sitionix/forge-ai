@@ -1,0 +1,5 @@
+{
+  "code": "WORKFLOW_NODE_PORT_ID_IN_USE",
+  "message": "Workflow node port ID is already owned by another workflow.",
+  "correlationId": null
+}

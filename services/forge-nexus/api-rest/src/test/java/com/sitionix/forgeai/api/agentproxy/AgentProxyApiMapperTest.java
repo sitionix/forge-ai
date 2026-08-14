@@ -33,6 +33,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -46,6 +47,7 @@ class AgentProxyApiMapperTest {
     private static final UUID NODE_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID INPUT_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
     private static final UUID OUTPUT_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
+    private static final UUID CONNECTION_ID = UUID.fromString("30000000-0000-4000-8000-000000000001");
     private static final UUID RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID NODE_RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final UUID TASK_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
@@ -195,29 +197,30 @@ class AgentProxyApiMapperTest {
 
         final var inputRequest = new NodePortRequest(INPUT_ID, "Review feedback", "Feedback produced by review.", 0);
         final var outputRequest = new NodePortRequest(OUTPUT_ID, "Approved", "Continue when accepted.", 0);
+        final var connectionRequest = new WorkflowConnectionRequest(CONNECTION_ID, OUTPUT_ID, INPUT_ID);
         final var input = new NodePort(INPUT_ID, "Review feedback", "Feedback produced by review.", 0);
         final var output = new NodePort(OUTPUT_ID, "Approved", "Continue when accepted.", 0);
+        final var connection = new WorkflowConnection(CONNECTION_ID, OUTPUT_ID, INPUT_ID);
         final var nodeRequest = new NodeRequest(
                 NODE_ID,
                 AGENT_ID,
-                List.of(),
                 NodeInputMode.TASK_AND_DEPENDENCIES.name(),
                 List.of(inputRequest),
                 List.of(outputRequest),
                 new NodePositionRequest(1.0, 2.0)
         );
-        assertThat(this.mapper.toCommand(new SaveAgentWorkflowRequest("Full Testing", List.of(nodeRequest))))
+        assertThat(this.mapper.toCommand(new SaveAgentWorkflowRequest("Full Testing", List.of(nodeRequest), List.of(connectionRequest))))
                 .isEqualTo(new SaveAgentWorkflowCommand(
                         "Full Testing",
                         List.of(new Node(
                                 NODE_ID,
                                 AGENT_ID,
-                                List.of(),
                                 NodeInputMode.TASK_AND_DEPENDENCIES,
                                 List.of(input),
                                 List.of(output),
                                 new NodePosition(1.0, 2.0)
-                        ))
+                        )),
+                        List.of(connection)
                 ));
 
         final var workflow = new AgentWorkflow(
@@ -227,12 +230,12 @@ class AgentProxyApiMapperTest {
                 List.of(new Node(
                         NODE_ID,
                         AGENT_ID,
-                        List.of(),
                         NodeInputMode.DEPENDENCIES_ONLY,
                         List.of(input),
                         List.of(output),
                         new NodePosition(1.0, 2.0)
                 )),
+                List.of(connection),
                 CREATED,
                 UPDATED
         );
@@ -243,12 +246,12 @@ class AgentProxyApiMapperTest {
                 List.of(new NodeResponse(
                         NODE_ID,
                         AGENT_ID,
-                        List.of(),
                         NodeInputMode.DEPENDENCIES_ONLY.name(),
                         List.of(new NodePortResponse(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                         List.of(new NodePortResponse(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
                         new NodePositionResponse(1.0, 2.0)
                 )),
+                List.of(new WorkflowConnectionResponse(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
                 CREATED,
                 UPDATED
         ));

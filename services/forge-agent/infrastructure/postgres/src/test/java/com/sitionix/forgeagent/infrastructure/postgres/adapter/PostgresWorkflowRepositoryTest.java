@@ -1,23 +1,32 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Workflow;
+import com.sitionix.forgeagent.domain.model.WorkflowConnection;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodeEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodePortEntity;
-import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowNodeRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowConnectionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowNodePortRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowNodeRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRepository;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,10 +45,12 @@ class PostgresWorkflowRepositoryTest {
     private static final UUID AGENT_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID NODE_A = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     private static final UUID NODE_B = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-    private static final UUID NODE_C = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
-    private static final UUID PORT_A = UUID.fromString("10000000-0000-4000-8000-000000000001");
-    private static final UUID PORT_B = UUID.fromString("10000000-0000-4000-8000-000000000002");
-    private static final UUID PORT_C = UUID.fromString("10000000-0000-4000-8000-000000000003");
+    private static final UUID INPUT_A = UUID.fromString("10000000-0000-4000-8000-000000000001");
+    private static final UUID INPUT_B = UUID.fromString("10000000-0000-4000-8000-000000000002");
+    private static final UUID OUTPUT_A = UUID.fromString("20000000-0000-4000-8000-000000000001");
+    private static final UUID OUTPUT_B = UUID.fromString("20000000-0000-4000-8000-000000000002");
+    private static final UUID CONNECTION_AB = UUID.fromString("30000000-0000-4000-8000-000000000001");
+    private static final UUID CONNECTION_BA = UUID.fromString("30000000-0000-4000-8000-000000000002");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
 
     @Mock
@@ -48,174 +59,207 @@ class PostgresWorkflowRepositoryTest {
     private SpringDataWorkflowNodeRepository nodeRepository;
     @Mock
     private SpringDataWorkflowNodePortRepository portRepository;
+    @Mock
+    private SpringDataWorkflowConnectionRepository connectionRepository;
 
     private PostgresWorkflowRepository repository;
 
     @BeforeEach
     void setUp() {
-        this.repository = new PostgresWorkflowRepository(this.workflowRepository, this.nodeRepository, this.portRepository);
-        when(this.workflowRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(this.nodeRepository.findByWorkflowIdOrderByIdAsc(WORKFLOW_ID)).thenReturn(List.of());
-        when(this.portRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of());
-        when(this.portRepository.findByWorkflowIdOrderByNodeIdAscPortOrderAsc(WORKFLOW_ID)).thenReturn(List.of());
+        this.repository = new PostgresWorkflowRepository(this.workflowRepository, this.nodeRepository, this.portRepository, this.connectionRepository);
+        lenient().when(this.workflowRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        lenient().when(this.nodeRepository.findByWorkflowIdOrderByIdAsc(WORKFLOW_ID)).thenReturn(List.of());
+        lenient().when(this.portRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of());
+        lenient().when(this.portRepository.findByWorkflowIdOrderByNodeIdAscPortOrderAsc(WORKFLOW_ID)).thenReturn(List.of());
+        lenient().when(this.portRepository.findAllById(any())).thenReturn(List.of());
+        lenient().when(this.connectionRepository.findAllById(any())).thenReturn(List.of());
     }
 
     @Test
-    void existingNodeIsRetainedAndReconciledWhenStillDesired() {
-        final WorkflowNodeEntity currentA = this.entity(WORKFLOW_ID, NODE_A, AGENT_ID, List.of(), 1.0, 2.0);
-        when(this.nodeRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(currentA));
+    void savesNodesPortsAndConnectionsByStableId() {
+        final Workflow workflow = this.workflow(List.of(this.nodeA(), this.nodeB()), List.of(new WorkflowConnection(CONNECTION_AB, OUTPUT_A, INPUT_B)));
+        when(this.nodeRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of());
 
-        this.repository.save(this.workflow(List.of(this.node(NODE_A, List.of(), 10.0, 20.0))));
+        this.repository.save(workflow);
 
-        verify(this.nodeRepository, never()).deleteAll(any());
-        final List<WorkflowNodeEntity> saved = this.savedNodes();
-        assertThat(saved).hasSize(1);
-        final WorkflowNodeEntity savedA = saved.get(0);
-        assertThat(savedA).isSameAs(currentA);
-        assertThat(savedA.getWorkflowId()).isEqualTo(WORKFLOW_ID);
-        assertThat(savedA.getId()).isEqualTo(NODE_A);
-        assertThat(savedA.getTargetId()).isEqualTo(AGENT_ID);
-        assertThat(savedA.getDependsOnNodeIds()).isEmpty();
-        assertThat(savedA.getPositionX()).isEqualTo(10.0);
-        assertThat(savedA.getPositionY()).isEqualTo(20.0);
+        assertThat(this.savedNodes()).extracting(WorkflowNodeEntity::getId).containsExactly(NODE_A, NODE_B);
+        assertThat(this.savedPorts()).extracting(WorkflowNodePortEntity::getId).containsExactly(INPUT_A, OUTPUT_A, INPUT_B, OUTPUT_B);
+        assertThat(this.savedConnections())
+                .extracting(WorkflowConnectionEntity::getId, WorkflowConnectionEntity::getSourceOutputPortId, WorkflowConnectionEntity::getTargetInputPortId)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(CONNECTION_AB, OUTPUT_A, INPUT_B));
     }
 
     @Test
-    void removedNodeIsDeletedWithoutDeletingRetainedNode() {
-        final WorkflowNodeEntity currentA = this.entity(WORKFLOW_ID, NODE_A, AGENT_ID, List.of(), 1.0, 2.0);
-        final WorkflowNodeEntity currentB = this.entity(WORKFLOW_ID, NODE_B, AGENT_ID, List.of(NODE_A), 3.0, 4.0);
+    void reconcilesRemovedConnectionAndPreservesExistingConnectionIdentity() {
+        final WorkflowConnectionEntity current = this.connectionEntity(CONNECTION_AB, OUTPUT_A, INPUT_B);
+        when(this.nodeRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(this.nodeEntity(NODE_A), this.nodeEntity(NODE_B)));
+        when(this.portRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(
+                this.portEntity(INPUT_A, NODE_A, "INPUT", "Input", "Input.", 0),
+                this.portEntity(OUTPUT_A, NODE_A, "OUTPUT", "Output", "Output.", 0),
+                this.portEntity(INPUT_B, NODE_B, "INPUT", "Input", "Input.", 0),
+                this.portEntity(OUTPUT_B, NODE_B, "OUTPUT", "Output", "Output.", 0)
+        ));
+        when(this.connectionRepository.findBySourceOutputPortIdIn(any())).thenReturn(List.of(current));
+
+        this.repository.save(this.workflow(List.of(this.nodeA(), this.nodeB()), List.of(new WorkflowConnection(CONNECTION_BA, OUTPUT_B, INPUT_A))));
+
+        verify(this.connectionRepository).deleteAll(List.of(current));
+        assertThat(this.savedConnections())
+                .extracting(WorkflowConnectionEntity::getId, WorkflowConnectionEntity::getSourceOutputPortId, WorkflowConnectionEntity::getTargetInputPortId)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(CONNECTION_BA, OUTPUT_B, INPUT_A));
+    }
+
+    @Test
+    void loadsWorkflowWithNodesPortsAndConnections() {
+        final WorkflowEntity workflowEntity = new WorkflowEntity();
+        workflowEntity.setId(WORKFLOW_ID);
+        workflowEntity.setProjectId(PROJECT_ID);
+        workflowEntity.setName("Full Testing");
+        workflowEntity.setNormalizedName("full testing");
+        workflowEntity.setCreatedAt(NOW);
+        workflowEntity.setUpdatedAt(NOW);
+        when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(workflowEntity));
+        when(this.nodeRepository.findByWorkflowIdOrderByIdAsc(WORKFLOW_ID)).thenReturn(List.of(this.nodeEntity(NODE_A), this.nodeEntity(NODE_B)));
+        when(this.portRepository.findByWorkflowIdOrderByNodeIdAscPortOrderAsc(WORKFLOW_ID)).thenReturn(List.of(
+                this.portEntity(INPUT_A, NODE_A, "INPUT", "Input", "Input.", 0),
+                this.portEntity(OUTPUT_A, NODE_A, "OUTPUT", "Output", "Output.", 0),
+                this.portEntity(INPUT_B, NODE_B, "INPUT", "Input", "Input.", 0),
+                this.portEntity(OUTPUT_B, NODE_B, "OUTPUT", "Output", "Output.", 0)
+        ));
+        when(this.connectionRepository.findBySourceOutputPortIdIn(any())).thenReturn(List.of(this.connectionEntity(CONNECTION_AB, OUTPUT_A, INPUT_B)));
+
+        final Workflow loaded = this.repository.findById(WORKFLOW_ID).orElseThrow();
+
+        assertThat(loaded.nodes()).hasSize(2);
+        assertThat(loaded.connections()).containsExactly(new WorkflowConnection(CONNECTION_AB, OUTPUT_A, INPUT_B));
+    }
+
+    @Test
+    void removedNodeIsDeletedAndConnectionDeletionIsLeftToCascadeWhenNoDesiredConnectionRemains() {
+        final WorkflowNodeEntity currentA = this.nodeEntity(NODE_A);
+        final WorkflowNodeEntity currentB = this.nodeEntity(NODE_B);
         when(this.nodeRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(currentA, currentB));
 
-        this.repository.save(this.workflow(List.of(this.node(NODE_A, List.of(), 1.0, 2.0))));
+        this.repository.save(this.workflow(List.of(this.nodeA()), List.of()));
 
         verify(this.nodeRepository).deleteAll(List.of(currentB));
-        assertThat(this.savedNodes()).containsExactly(currentA);
+        verify(this.connectionRepository, never()).deleteAll(any());
     }
 
     @Test
-    void addedNodeIsPersistedWithWorkflowOwnershipAndGraphFields() {
-        final WorkflowNodeEntity currentA = this.entity(WORKFLOW_ID, NODE_A, AGENT_ID, List.of(), 1.0, 2.0);
-        when(this.nodeRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(currentA));
+    void existingSameWorkflowPortUuidIsAllowed() {
+        when(this.portRepository.findAllById(any())).thenReturn(List.of(this.portEntity(INPUT_A, WORKFLOW_ID, NODE_A, "INPUT", "Ready", "Ready.", 0)));
 
-        this.repository.save(this.workflow(List.of(
-                this.node(NODE_A, List.of(), 1.0, 2.0),
-                this.node(NODE_C, List.of(NODE_A), 5.0, 6.0)
-        )));
+        this.repository.save(this.workflow(List.of(this.nodeA()), List.of()));
 
-        final List<WorkflowNodeEntity> saved = this.savedNodes();
-        assertThat(saved).hasSize(2);
-        final WorkflowNodeEntity savedC = saved.stream()
-                .filter(node -> node.getId().equals(NODE_C))
-                .findFirst()
-                .orElseThrow();
-        assertThat(savedC.getWorkflowId()).isEqualTo(WORKFLOW_ID);
-        assertThat(savedC.getId()).isEqualTo(NODE_C);
-        assertThat(savedC.getTargetId()).isEqualTo(AGENT_ID);
-        assertThat(savedC.getDependsOnNodeIds()).containsExactly(NODE_A);
-        assertThat(savedC.getPositionX()).isEqualTo(5.0);
-        assertThat(savedC.getPositionY()).isEqualTo(6.0);
+        assertThat(this.savedPorts())
+                .extracting(WorkflowNodePortEntity::getId, WorkflowNodePortEntity::getWorkflowId)
+                .contains(org.assertj.core.groups.Tuple.tuple(INPUT_A, WORKFLOW_ID));
+        verify(this.portRepository).findAllById(Set.of(INPUT_A, OUTPUT_A));
     }
 
     @Test
-    void mixedReplacementDeletesRemovedRetainsChangedAndInsertsNew() {
-        final WorkflowNodeEntity currentA = this.entity(WORKFLOW_ID, NODE_A, AGENT_ID, List.of(), 1.0, 2.0);
-        final WorkflowNodeEntity currentB = this.entity(WORKFLOW_ID, NODE_B, AGENT_ID, List.of(NODE_A), 3.0, 4.0);
-        when(this.nodeRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(currentA, currentB));
+    void existingDifferentWorkflowPortUuidIsRejectedBeforeChildMutation() {
+        when(this.portRepository.findAllById(any())).thenReturn(List.of(this.portEntity(INPUT_A, OTHER_WORKFLOW_ID, NODE_A, "INPUT", "Input", "Input.", 0)));
 
-        this.repository.save(this.workflow(List.of(
-                this.node(NODE_A, List.of(NODE_C), 10.0, 20.0),
-                this.node(NODE_C, List.of(), 30.0, 40.0)
-        )));
+        assertThatThrownBy(() -> this.repository.save(this.workflow(List.of(this.nodeA()), List.of())))
+                .isInstanceOf(ConflictException.class)
+                .extracting("code")
+                .isEqualTo("WORKFLOW_NODE_PORT_ID_IN_USE");
 
-        verify(this.nodeRepository).deleteAll(List.of(currentB));
-        final List<WorkflowNodeEntity> saved = this.savedNodes();
-        assertThat(saved).hasSize(2);
-        assertThat(saved).anySatisfy(node -> {
-            assertThat(node).isSameAs(currentA);
-            assertThat(node.getDependsOnNodeIds()).containsExactly(NODE_C);
-            assertThat(node.getPositionX()).isEqualTo(10.0);
-            assertThat(node.getPositionY()).isEqualTo(20.0);
-        });
-        assertThat(saved).anySatisfy(node -> {
-            assertThat(node.getId()).isEqualTo(NODE_C);
-            assertThat(node.getWorkflowId()).isEqualTo(WORKFLOW_ID);
-            assertThat(node.getPositionX()).isEqualTo(30.0);
-            assertThat(node.getPositionY()).isEqualTo(40.0);
-        });
+        verify(this.portRepository).findAllById(Set.of(INPUT_A, OUTPUT_A));
+        verify(this.nodeRepository, never()).findByWorkflowId(WORKFLOW_ID);
+        verify(this.nodeRepository, never()).saveAll(any());
+        verify(this.portRepository, never()).saveAll(any());
+        verify(this.connectionRepository, never()).saveAll(any());
     }
 
     @Test
-    void reconciliationUsesCurrentWorkflowOwnershipForNodeIdentity() {
-        when(this.nodeRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(
-                this.entity(WORKFLOW_ID, NODE_A, AGENT_ID, List.of(), 1.0, 2.0)
-        ));
+    void existingSameWorkflowConnectionUuidIsAllowed() {
+        final WorkflowConnectionEntity connection = this.connectionEntity(CONNECTION_AB, OUTPUT_A, INPUT_B);
+        when(this.connectionRepository.findAllById(any())).thenReturn(List.of(connection));
+        when(this.portRepository.findAllById(any()))
+                .thenReturn(List.of())
+                .thenReturn(List.of(
+                        this.portEntity(OUTPUT_A, WORKFLOW_ID, NODE_A, "OUTPUT", "Output", "Output.", 0),
+                        this.portEntity(INPUT_B, WORKFLOW_ID, NODE_B, "INPUT", "Input", "Input.", 0)
+                ));
 
-        this.repository.save(this.workflow(List.of(this.node(NODE_A, List.of(), 7.0, 8.0))));
+        this.repository.save(this.workflow(List.of(this.nodeA(), this.nodeB()), List.of(new WorkflowConnection(CONNECTION_AB, OUTPUT_B, INPUT_A))));
 
-        verify(this.nodeRepository).findByWorkflowId(WORKFLOW_ID);
-        verify(this.nodeRepository, never()).findByWorkflowId(OTHER_WORKFLOW_ID);
-        this.savedNodes().forEach(node -> assertThat(node.getWorkflowId()).isEqualTo(WORKFLOW_ID));
+        verify(this.connectionRepository).findAllById(Set.of(CONNECTION_AB));
+        verify(this.portRepository).findAllById(Set.of(OUTPUT_A, INPUT_B));
+        assertThat(this.savedConnections())
+                .extracting(WorkflowConnectionEntity::getId, WorkflowConnectionEntity::getSourceOutputPortId, WorkflowConnectionEntity::getTargetInputPortId)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(CONNECTION_AB, OUTPUT_B, INPUT_A));
     }
 
     @Test
-    void portsAreReconciledByStableIdAcrossRenameAddAndDelete() {
-        final WorkflowNodePortEntity currentA = this.portEntity(PORT_A, NODE_A, "OUTPUT", "Approved", "Accepted.", 0);
-        final WorkflowNodePortEntity currentB = this.portEntity(PORT_B, NODE_A, "OUTPUT", "Return", "Needs changes.", 1);
-        when(this.nodeRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(
-                this.entity(WORKFLOW_ID, NODE_A, AGENT_ID, List.of(), 1.0, 2.0)
-        ));
-        when(this.portRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(currentA, currentB));
+    void existingConnectionUuidOwnedByAnotherWorkflowIsRejectedBeforeChildMutation() {
+        final WorkflowConnectionEntity connection = this.connectionEntity(CONNECTION_AB, OUTPUT_A, INPUT_B);
+        when(this.connectionRepository.findAllById(any())).thenReturn(List.of(connection));
+        when(this.portRepository.findAllById(any()))
+                .thenReturn(List.of())
+                .thenReturn(List.of(
+                        this.portEntity(OUTPUT_A, OTHER_WORKFLOW_ID, NODE_A, "OUTPUT", "Output", "Output.", 0),
+                        this.portEntity(INPUT_B, OTHER_WORKFLOW_ID, NODE_B, "INPUT", "Input", "Input.", 0)
+                ));
 
-        this.repository.save(this.workflow(List.of(new Node(
-                NODE_A,
-                AGENT_ID,
-                List.of(),
-                com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
-                List.of(new NodePort(PORT_C, "Review", "Review feedback.", 0)),
-                List.of(new NodePort(PORT_A, "Ready", "Ready for testing.", 0)),
-                new NodePosition(1.0, 2.0)
-        ))));
+        assertThatThrownBy(() -> this.repository.save(this.workflow(List.of(this.nodeA(), this.nodeB()), List.of(new WorkflowConnection(CONNECTION_AB, OUTPUT_B, INPUT_A)))))
+                .isInstanceOf(ConflictException.class)
+                .extracting("code")
+                .isEqualTo("WORKFLOW_CONNECTION_ID_IN_USE");
 
-        verify(this.portRepository).deleteAll(List.of(currentB));
-        final List<WorkflowNodePortEntity> saved = this.savedPorts();
-        assertThat(saved).hasSize(2);
-        assertThat(saved).anySatisfy(port -> {
-            assertThat(port).isSameAs(currentA);
-            assertThat(port.getId()).isEqualTo(PORT_A);
-            assertThat(port.getDirection()).isEqualTo("OUTPUT");
-            assertThat(port.getName()).isEqualTo("Ready");
-            assertThat(port.getDescription()).isEqualTo("Ready for testing.");
-            assertThat(port.getPortOrder()).isZero();
-        });
-        assertThat(saved).anySatisfy(port -> {
-            assertThat(port.getId()).isEqualTo(PORT_C);
-            assertThat(port.getDirection()).isEqualTo("INPUT");
-            assertThat(port.getName()).isEqualTo("Review");
-            assertThat(port.getPortOrder()).isZero();
-        });
+        verify(this.connectionRepository).findAllById(Set.of(CONNECTION_AB));
+        verify(this.portRepository).findAllById(Set.of(OUTPUT_A, INPUT_B));
+        verify(this.nodeRepository, never()).findByWorkflowId(WORKFLOW_ID);
+        verify(this.nodeRepository, never()).saveAll(any());
+        verify(this.portRepository, never()).saveAll(any());
+        verify(this.connectionRepository, never()).saveAll(any());
     }
 
-    private Workflow workflow(final List<Node> nodes) {
-        return new Workflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", "full testing", nodes, NOW, NOW);
+    private Workflow workflow(final List<Node> nodes, final List<WorkflowConnection> connections) {
+        return this.workflow(WORKFLOW_ID, nodes, connections);
     }
 
-    private Node node(final UUID id, final List<UUID> dependsOnNodeIds, final double x, final double y) {
-        return new Node(id, AGENT_ID, dependsOnNodeIds, new NodePosition(x, y));
+    private Workflow workflow(final UUID workflowId, final List<Node> nodes, final List<WorkflowConnection> connections) {
+        return new Workflow(workflowId, PROJECT_ID, "Full Testing", "full testing", nodes, connections, NOW, NOW);
     }
 
-    private WorkflowNodeEntity entity(final UUID workflowId,
-                                      final UUID id,
-                                      final UUID targetId,
-                                      final List<UUID> dependsOnNodeIds,
-                                      final double x,
-                                      final double y) {
+    private Node nodeA() {
+        return new Node(NODE_A, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodePort(INPUT_A, "Input", "Input.", 0)),
+                List.of(new NodePort(OUTPUT_A, "Output", "Output.", 0)),
+                new NodePosition(1.0, 2.0));
+    }
+
+    private Node nodeB() {
+        return new Node(NODE_B, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodePort(INPUT_B, "Input", "Input.", 0)),
+                List.of(new NodePort(OUTPUT_B, "Output", "Output.", 0)),
+                new NodePosition(3.0, 4.0));
+    }
+
+    private WorkflowNodeEntity nodeEntity(final UUID id) {
         final WorkflowNodeEntity entity = new WorkflowNodeEntity();
-        entity.setWorkflowId(workflowId);
+        entity.setWorkflowId(WORKFLOW_ID);
         entity.setId(id);
-        entity.setTargetId(targetId);
-        entity.setDependsOnNodeIds(dependsOnNodeIds.toArray(UUID[]::new));
-        entity.setPositionX(x);
-        entity.setPositionY(y);
+        entity.setTargetId(AGENT_ID);
+        entity.setInputMode(NodeInputMode.DEPENDENCIES_ONLY.name());
+        entity.setPositionX(1.0);
+        entity.setPositionY(2.0);
+        return entity;
+    }
+
+    private WorkflowNodePortEntity portEntity(final UUID id,
+                                              final UUID workflowId,
+                                              final UUID nodeId,
+                                              final String direction,
+                                              final String name,
+                                              final String description,
+                                              final int order) {
+        final WorkflowNodePortEntity entity = this.portEntity(id, nodeId, direction, name, description, order);
+        entity.setWorkflowId(workflowId);
         return entity;
     }
 
@@ -236,6 +280,14 @@ class PostgresWorkflowRepositoryTest {
         return entity;
     }
 
+    private WorkflowConnectionEntity connectionEntity(final UUID id, final UUID sourceOutputPortId, final UUID targetInputPortId) {
+        final WorkflowConnectionEntity entity = new WorkflowConnectionEntity();
+        entity.setId(id);
+        entity.setSourceOutputPortId(sourceOutputPortId);
+        entity.setTargetInputPortId(targetInputPortId);
+        return entity;
+    }
+
     private List<WorkflowNodeEntity> savedNodes() {
         @SuppressWarnings("unchecked")
         final ArgumentCaptor<Iterable<WorkflowNodeEntity>> captor = ArgumentCaptor.forClass(Iterable.class);
@@ -247,6 +299,13 @@ class PostgresWorkflowRepositoryTest {
         @SuppressWarnings("unchecked")
         final ArgumentCaptor<Iterable<WorkflowNodePortEntity>> captor = ArgumentCaptor.forClass(Iterable.class);
         verify(this.portRepository).saveAll(captor.capture());
+        return StreamSupport.stream(captor.getValue().spliterator(), false).toList();
+    }
+
+    private List<WorkflowConnectionEntity> savedConnections() {
+        @SuppressWarnings("unchecked")
+        final ArgumentCaptor<Iterable<WorkflowConnectionEntity>> captor = ArgumentCaptor.forClass(Iterable.class);
+        verify(this.connectionRepository).saveAll(captor.capture());
         return StreamSupport.stream(captor.getValue().spliterator(), false).toList();
     }
 }

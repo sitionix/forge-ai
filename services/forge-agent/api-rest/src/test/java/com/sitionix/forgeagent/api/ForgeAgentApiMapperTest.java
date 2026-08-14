@@ -26,6 +26,8 @@ import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
+import com.sitionix.forgeagent.api.dto.WorkflowConnectionRequest;
+import com.sitionix.forgeagent.api.dto.WorkflowConnectionResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
 import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
@@ -52,6 +54,7 @@ import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
+import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
@@ -232,13 +235,15 @@ class ForgeAgentApiMapperTest {
 
         final SaveWorkflowRequest saveRequest = new SaveWorkflowRequest(
                 "Full Testing",
-                List.of(new NodeRequest(NODE_A, AGENT_ID, List.of(), new NodePositionRequest(1.0, 2.0)),
-                        new NodeRequest(NODE_B, AGENT_ID, List.of(NODE_A), new NodePositionRequest(3.0, 4.0)))
+                List.of(new NodeRequest(NODE_A, AGENT_ID, new NodePositionRequest(1.0, 2.0)),
+                        new NodeRequest(NODE_B, AGENT_ID, new NodePositionRequest(3.0, 4.0))),
+                List.of(new WorkflowConnectionRequest(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B))
         );
         assertThat(this.mapper.toCommand(saveRequest)).isEqualTo(new SaveWorkflowCommand(
                 "Full Testing",
-                List.of(new Node(NODE_A, AGENT_ID, List.of(), new NodePosition(1.0, 2.0)),
-                        new Node(NODE_B, AGENT_ID, List.of(NODE_A), new NodePosition(3.0, 4.0)))
+                List.of(new Node(NODE_A, AGENT_ID, new NodePosition(1.0, 2.0)),
+                        new Node(NODE_B, AGENT_ID, new NodePosition(3.0, 4.0))),
+                List.of(new WorkflowConnection(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B))
         ));
 
         final Workflow workflow = new Workflow(
@@ -246,7 +251,8 @@ class ForgeAgentApiMapperTest {
                 PROJECT_ID,
                 "Full Testing",
                 "full testing",
-                List.of(new Node(NODE_B, AGENT_ID, List.of(NODE_A), new NodePosition(3.0, 4.0))),
+                List.of(new Node(NODE_B, AGENT_ID, new NodePosition(3.0, 4.0))),
+                List.of(new WorkflowConnection(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
                 CREATED,
                 UPDATED
         );
@@ -254,7 +260,8 @@ class ForgeAgentApiMapperTest {
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new NodeResponse(NODE_B, AGENT_ID, List.of(NODE_A), NodeInputMode.DEPENDENCIES_ONLY.name(), new NodePositionResponse(3.0, 4.0))),
+                List.of(new NodeResponse(NODE_B, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(), new NodePositionResponse(3.0, 4.0))),
+                List.of(new WorkflowConnectionResponse(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
                 CREATED,
                 UPDATED
         ));

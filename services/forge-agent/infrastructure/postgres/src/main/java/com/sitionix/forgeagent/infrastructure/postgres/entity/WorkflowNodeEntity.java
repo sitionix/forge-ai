@@ -8,8 +8,6 @@ import jakarta.persistence.Table;
 import java.util.UUID;
 import lombok.Getter;
 import lombok.Setter;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "workflow_nodes")
@@ -27,10 +25,6 @@ public class WorkflowNodeEntity {
 
     @Column(name = "target_id", nullable = false)
     private UUID targetId;
-
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "depends_on_node_ids", nullable = false, columnDefinition = "uuid[]")
-    private UUID[] dependsOnNodeIds;
 
     @Column(name = "input_mode", nullable = false, length = 32)
     private String inputMode = "DEPENDENCIES_ONLY";

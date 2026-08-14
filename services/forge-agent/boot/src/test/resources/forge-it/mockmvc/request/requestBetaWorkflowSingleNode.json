@@ -4,11 +4,28 @@
     {
       "id": "40000000-0000-4000-8000-000000000004",
       "targetId": "20000000-0000-4000-8000-000000000005",
-      "dependsOnNodeIds": [],
       "position": {
         "x": 80,
         "y": 90
-      }
+      },
+      "inputMode": "DEPENDENCIES_ONLY",
+      "inputs": [
+        {
+          "id": "61000000-0000-4000-8000-000000000004",
+          "name": "Input",
+          "description": "Default workflow input.",
+          "order": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "71000000-0000-4000-8000-000000000004",
+          "name": "Output",
+          "description": "Default workflow output.",
+          "order": 0
+        }
+      ]
     }
-  ]
+  ],
+  "connections": []
 }

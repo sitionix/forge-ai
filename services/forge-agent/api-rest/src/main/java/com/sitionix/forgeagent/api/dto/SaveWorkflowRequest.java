@@ -6,6 +6,7 @@ import java.util.List;
 
 public record SaveWorkflowRequest(
         @NotBlank @Size(max = 120) String name,
-        List<NodeRequest> nodes
+        List<NodeRequest> nodes,
+        List<WorkflowConnectionRequest> connections
 ) {
 }

@@ -1,0 +1,62 @@
+{
+  "name": "Second Workflow Updated",
+  "nodes": [
+    {
+      "id": "40000000-0000-4000-8000-000000000004",
+      "targetId": "20000000-0000-4000-8000-000000000001",
+      "position": {
+        "x": 80,
+        "y": 90
+      },
+      "inputMode": "DEPENDENCIES_ONLY",
+      "inputs": [
+        {
+          "id": "61000000-0000-4000-8000-000000000004",
+          "name": "Input",
+          "description": "Default workflow input.",
+          "order": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "71000000-0000-4000-8000-000000000004",
+          "name": "Output",
+          "description": "Default workflow output.",
+          "order": 0
+        }
+      ]
+    },
+    {
+      "id": "40000000-0000-4000-8000-000000000005",
+      "targetId": "20000000-0000-4000-8000-000000000002",
+      "position": {
+        "x": 420,
+        "y": 90
+      },
+      "inputMode": "DEPENDENCIES_ONLY",
+      "inputs": [
+        {
+          "id": "61000000-0000-4000-8000-000000000005",
+          "name": "Input",
+          "description": "Default workflow input.",
+          "order": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "71000000-0000-4000-8000-000000000005",
+          "name": "Output",
+          "description": "Default workflow output.",
+          "order": 0
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "81000000-0000-4000-8000-000000000002",
+      "sourceOutputPortId": "71000000-0000-4000-8000-000000000004",
+      "targetInputPortId": "61000000-0000-4000-8000-000000000005"
+    }
+  ]
+}

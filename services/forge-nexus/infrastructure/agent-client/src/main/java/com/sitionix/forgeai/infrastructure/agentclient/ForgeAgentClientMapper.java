@@ -30,6 +30,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
@@ -203,6 +204,9 @@ public class ForgeAgentClientMapper {
                 command.name(),
                 command.nodes() == null ? List.of() : command.nodes().stream()
                         .map(this::toRequest)
+                        .toList(),
+                command.connections() == null ? List.of() : command.connections().stream()
+                        .map(this::toRequest)
                         .toList()
         );
     }
@@ -221,6 +225,9 @@ public class ForgeAgentClientMapper {
                 response.projectId(),
                 response.name(),
                 this.requireList(response.nodes(), "workflow.nodes").stream()
+                        .map(this::toDomain)
+                        .toList(),
+                this.requireList(response.connections(), "workflow.connections").stream()
                         .map(this::toDomain)
                         .toList(),
                 response.createdAt(),
@@ -335,7 +342,6 @@ public class ForgeAgentClientMapper {
         return new NodeRequest(
                 node.id(),
                 node.targetId(),
-                node.dependsOnNodeIds() == null ? List.of() : node.dependsOnNodeIds(),
                 inputMode(node.inputMode()).name(),
                 node.inputs() == null ? List.of() : node.inputs().stream().map(this::toRequest).toList(),
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toRequest).toList(),
@@ -354,12 +360,27 @@ public class ForgeAgentClientMapper {
         return new Node(
                 response.id(),
                 response.targetId(),
-                this.requireList(response.dependsOnNodeIds(), "node.dependsOnNodeIds"),
                 inputMode(response.inputMode(), "node.inputMode"),
                 response.inputs() == null ? List.of() : response.inputs().stream().map(this::toDomain).toList(),
                 response.outputs() == null ? List.of() : response.outputs().stream().map(this::toDomain).toList(),
                 new NodePosition(position.x(), position.y())
         );
+    }
+
+    private com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowConnectionRequest toRequest(final WorkflowConnection connection) {
+        return new com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowConnectionRequest(
+                connection.id(),
+                connection.sourceOutputPortId(),
+                connection.targetInputPortId()
+        );
+    }
+
+    private WorkflowConnection toDomain(final com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowConnectionResponse response) {
+        this.requireResponse(response, "workflow connection");
+        this.requireId(response.id(), "connection.id");
+        this.requireId(response.sourceOutputPortId(), "connection.sourceOutputPortId");
+        this.requireId(response.targetInputPortId(), "connection.targetInputPortId");
+        return new WorkflowConnection(response.id(), response.sourceOutputPortId(), response.targetInputPortId());
     }
 
     private com.sitionix.forgeai.infrastructure.agentclient.dto.NodePortRequest toRequest(final NodePort port) {

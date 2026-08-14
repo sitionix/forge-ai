@@ -1,0 +1,5 @@
+{
+  "code": "SELF_NODE_CONNECTION",
+  "message": "A workflow node cannot connect to itself.",
+  "correlationId": null
+}

@@ -217,7 +217,7 @@ class ProjectTaskUseCasesTest {
     }
 
     private Workflow workflow(final UUID projectId) {
-        return new Workflow(WORKFLOW_ID, projectId, "Full Testing", "full testing", List.of(), Instant.EPOCH, Instant.EPOCH);
+        return new Workflow(WORKFLOW_ID, projectId, "Full Testing", "full testing", List.of(), List.of(), Instant.EPOCH, Instant.EPOCH);
     }
 
     private ProjectTask task(final String title, final String input) {

@@ -1,6 +1,6 @@
 package com.sitionix.forgeagent.application.usecase;
 
-import com.sitionix.forgeagent.application.graph.NodeGraphValidator;
+import com.sitionix.forgeagent.application.graph.WorkflowGraphValidator;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
@@ -8,6 +8,7 @@ import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.NameNormalizer;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.Workflow;
+import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import com.sitionix.forgeagent.domain.port.ProjectTaskRepository;
@@ -35,7 +36,7 @@ public class WorkflowUseCases {
     private final WorkflowRepository workflowRepository;
     private final ProjectTaskRepository projectTaskRepository;
     private final WorkflowRunRepository workflowRunRepository;
-    private final NodeGraphValidator nodeGraphValidator;
+    private final WorkflowGraphValidator workflowGraphValidator;
     private final Clock clock;
 
     @Transactional(readOnly = true)
@@ -65,6 +66,7 @@ public class WorkflowUseCases {
                 name,
                 normalizedName,
                 List.of(),
+                List.of(),
                 now,
                 now
         ));
@@ -84,9 +86,11 @@ public class WorkflowUseCases {
             throw new ConflictException("DUPLICATE_WORKFLOW_NAME", "A workflow with this name already exists in this project.");
         }
         final List<Node> requestedNodes = command.nodes() == null ? List.of() : command.nodes();
-        final List<Node> normalizedNodes = this.nodeGraphValidator.validateAndNormalize(
+        final List<WorkflowConnection> requestedConnections = command.connections() == null ? List.of() : command.connections();
+        final WorkflowGraphValidator.ValidatedGraph graph = this.workflowGraphValidator.validateAndNormalize(
                 current.projectId(),
                 requestedNodes,
+                requestedConnections,
                 this.agentDefinitionRepository.findByIds(targetIds(requestedNodes))
         );
         return this.workflowRepository.save(new Workflow(
@@ -94,7 +98,8 @@ public class WorkflowUseCases {
                 current.projectId(),
                 name,
                 normalizedName,
-                normalizedNodes,
+                graph.nodes(),
+                graph.connections(),
                 current.createdAt(),
                 Instant.now(this.clock)
         ));

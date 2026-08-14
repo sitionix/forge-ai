@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodeEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
 import com.sitionix.forgeit.core.contract.ForgeDbContracts;
@@ -20,6 +21,11 @@ public final class ForgeAgentDbContracts {
 
     public static final DbContract<WorkflowNodeEntity> WORKFLOW_NODE =
             DbContractsDsl.entity(WorkflowNodeEntity.class)
+                    .cleanupPolicy(CleanupPolicy.DELETE_ALL)
+                    .build();
+
+    public static final DbContract<WorkflowConnectionEntity> WORKFLOW_CONNECTION =
+            DbContractsDsl.entity(WorkflowConnectionEntity.class)
                     .cleanupPolicy(CleanupPolicy.DELETE_ALL)
                     .build();
 
