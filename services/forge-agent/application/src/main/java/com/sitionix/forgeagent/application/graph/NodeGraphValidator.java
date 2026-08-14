@@ -5,9 +5,11 @@ import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -31,10 +33,13 @@ public class NodeGraphValidator {
         final Map<UUID, AgentDefinition> targetsById = targets.stream()
                 .collect(Collectors.toMap(AgentDefinition::id, Function.identity()));
         final Set<UUID> nodeIds = new HashSet<>();
+        final Set<UUID> portIds = new HashSet<>();
         for (final Node node : normalizedNodes) {
             if (!nodeIds.add(node.id())) {
                 throw new ValidationException("DUPLICATE_NODE_ID", "Workflow node IDs must be unique.");
             }
+            this.rejectDuplicatePortIds(node.inputs(), portIds);
+            this.rejectDuplicatePortIds(node.outputs(), portIds);
             final AgentDefinition target = targetsById.get(node.targetId());
             if (target == null) {
                 throw new ValidationException("UNKNOWN_NODE_TARGET", "Workflow nodes must target existing agents.");
@@ -69,7 +74,60 @@ public class NodeGraphValidator {
                 ? List.of()
                 : new ArrayList<>(new LinkedHashSet<>(node.dependsOnNodeIds()));
         final NodeInputMode inputMode = node.inputMode() == null ? NodeInputMode.DEPENDENCIES_ONLY : node.inputMode();
-        return new Node(node.id(), node.targetId(), dependencies, inputMode, position);
+        return new Node(
+                node.id(),
+                node.targetId(),
+                dependencies,
+                inputMode,
+                this.normalizePorts(node.inputs()),
+                this.normalizePorts(node.outputs()),
+                position
+        );
+    }
+
+    private List<NodePort> normalizePorts(final List<NodePort> ports) {
+        if (ports == null) {
+            return List.of();
+        }
+        final Set<String> names = new HashSet<>();
+        final Set<Integer> orders = new HashSet<>();
+        final List<NodePort> normalized = new ArrayList<>();
+        for (final NodePort port : ports) {
+            if (port == null || port.id() == null) {
+                throw new ValidationException("INVALID_NODE_PORT", "Workflow node ports must have an ID.");
+            }
+            final String name = port.name() == null ? null : port.name().trim();
+            if (name == null || name.isBlank()) {
+                throw new ValidationException("INVALID_NODE_PORT", "Workflow node port names must not be blank.");
+            }
+            final String description = port.description() == null ? null : port.description().trim();
+            if (description == null || description.isBlank()) {
+                throw new ValidationException("INVALID_NODE_PORT", "Workflow node port descriptions must not be blank.");
+            }
+            if (!names.add(name)) {
+                throw new ValidationException("DUPLICATE_NODE_PORT_NAME", "Workflow node port names must be unique per direction.");
+            }
+            if (port.order() < 0 || !orders.add(port.order())) {
+                throw new ValidationException("INVALID_NODE_PORT_ORDER", "Workflow node port order must be unique and non-negative per direction.");
+            }
+            normalized.add(new NodePort(port.id(), name, description, port.order()));
+        }
+        for (int index = 0; index < normalized.size(); index += 1) {
+            if (!orders.contains(index)) {
+                throw new ValidationException("INVALID_NODE_PORT_ORDER", "Workflow node port order must be contiguous from zero.");
+            }
+        }
+        return normalized.stream()
+                .sorted(Comparator.comparingInt(NodePort::order))
+                .toList();
+    }
+
+    private void rejectDuplicatePortIds(final List<NodePort> ports, final Set<UUID> portIds) {
+        for (final NodePort port : ports) {
+            if (!portIds.add(port.id())) {
+                throw new ValidationException("DUPLICATE_NODE_PORT_ID", "Workflow node port IDs must be unique in the workflow.");
+            }
+        }
     }
 
     private void rejectCycles(final List<Node> nodes) {

@@ -8,6 +8,8 @@ import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import java.time.Instant;
 import java.util.List;
@@ -26,6 +28,12 @@ class NodeGraphValidatorTest {
     private final UUID nodeC = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
     private final UUID agentA = UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
     private final UUID agentB = UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+    private final UUID inputA = UUID.fromString("10000000-0000-4000-8000-000000000001");
+    private final UUID inputB = UUID.fromString("10000000-0000-4000-8000-000000000002");
+    private final UUID inputC = UUID.fromString("10000000-0000-4000-8000-000000000003");
+    private final UUID outputA = UUID.fromString("20000000-0000-4000-8000-000000000001");
+    private final UUID outputB = UUID.fromString("20000000-0000-4000-8000-000000000002");
+    private final UUID outputC = UUID.fromString("20000000-0000-4000-8000-000000000003");
 
     @Test
     void normalizesDuplicateDependencies() {
@@ -37,6 +45,106 @@ class NodeGraphValidatorTest {
         );
 
         assertThat(normalized.getFirst().dependsOnNodeIds()).containsExactly(this.nodeA);
+    }
+
+    @Test
+    void nullPortListsNormalizeToEmptyLists() {
+        final Node node = new Node(this.nodeA, this.agentA, List.of(), NodeInputMode.DEPENDENCIES_ONLY, null, null, new NodePosition(1.0, 2.0));
+
+        final List<Node> normalized = this.validator.validateAndNormalize(
+                this.projectId,
+                List.of(node),
+                List.of(this.agent(this.agentA, this.projectId))
+        );
+
+        assertThat(normalized.getFirst().inputs()).isEmpty();
+        assertThat(normalized.getFirst().outputs()).isEmpty();
+    }
+
+    @Test
+    void validatesMultipleInputsAndOutputsWithIndependentNamesAndOrders() {
+        final Node node = new Node(
+                this.nodeA,
+                this.agentA,
+                List.of(),
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(this.port(this.inputB, " Context ", " Context description. ", 1),
+                        this.port(this.inputA, "Result", "Input result.", 0)),
+                List.of(this.port(this.outputA, "Result", "Output result.", 0),
+                        this.port(this.outputB, "Return", "Needs changes.", 1),
+                        this.port(this.outputC, "Reject", "Reject the work.", 2)),
+                new NodePosition(1.0, 2.0)
+        );
+
+        final List<Node> normalized = this.validator.validateAndNormalize(
+                this.projectId,
+                List.of(node),
+                List.of(this.agent(this.agentA, this.projectId))
+        );
+
+        assertThat(normalized.getFirst().inputs())
+                .extracting(NodePort::id, NodePort::name, NodePort::description, NodePort::order)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(this.inputA, "Result", "Input result.", 0),
+                        org.assertj.core.groups.Tuple.tuple(this.inputB, "Context", "Context description.", 1)
+                );
+        assertThat(normalized.getFirst().outputs())
+                .extracting(NodePort::name, NodePort::order)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("Result", 0),
+                        org.assertj.core.groups.Tuple.tuple("Return", 1),
+                        org.assertj.core.groups.Tuple.tuple("Reject", 2)
+                );
+    }
+
+    @Test
+    void rejectsInvalidPorts() {
+        this.expectPortError(
+                new Node(this.nodeA, this.agentA, List.of(), NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(this.inputA, "Approved", "One.", 0), this.port(this.inputB, "Approved", "Two.", 1)),
+                        List.of(), new NodePosition(0, 0)),
+                "DUPLICATE_NODE_PORT_NAME"
+        );
+        this.expectPortError(
+                new Node(this.nodeA, this.agentA, List.of(), NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(), List.of(this.port(this.outputA, "Approved", "One.", 0), this.port(this.outputB, "Approved", "Two.", 1)),
+                        new NodePosition(0, 0)),
+                "DUPLICATE_NODE_PORT_NAME"
+        );
+        this.expectPortError(
+                new Node(this.nodeA, this.agentA, List.of(), NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(this.inputA, "Review", "One.", 0)),
+                        List.of(this.port(this.inputA, "Approved", "Two.", 0)),
+                        new NodePosition(0, 0)),
+                "DUPLICATE_NODE_PORT_ID"
+        );
+        this.expectPortError(
+                new Node(this.nodeA, this.agentA, List.of(), NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(this.inputA, " ", "Description.", 0)), List.of(), new NodePosition(0, 0)),
+                "INVALID_NODE_PORT"
+        );
+        this.expectPortError(
+                new Node(this.nodeA, this.agentA, List.of(), NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(this.inputA, "Review", " ", 0)), List.of(), new NodePosition(0, 0)),
+                "INVALID_NODE_PORT"
+        );
+        this.expectPortError(
+                new Node(this.nodeA, this.agentA, List.of(), NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(this.inputA, "Review", "Description.", -1)), List.of(), new NodePosition(0, 0)),
+                "INVALID_NODE_PORT_ORDER"
+        );
+        this.expectPortError(
+                new Node(this.nodeA, this.agentA, List.of(), NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(this.inputA, "Review", "One.", 0), this.port(this.inputB, "Context", "Two.", 0)),
+                        List.of(), new NodePosition(0, 0)),
+                "INVALID_NODE_PORT_ORDER"
+        );
+        this.expectPortError(
+                new Node(this.nodeA, this.agentA, List.of(), NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(this.inputA, "Review", "One.", 0), this.port(this.inputB, "Context", "Two.", 2)),
+                        List.of(), new NodePosition(0, 0)),
+                "INVALID_NODE_PORT_ORDER"
+        );
     }
 
     @Test
@@ -126,5 +234,20 @@ class NodeGraphValidatorTest {
 
     private AgentDefinition agent(final UUID id, final UUID projectId) {
         return new AgentDefinition(id, projectId, "Agent", "agent", "Instructions", OUTPUT_SCHEMA, null, Instant.EPOCH, Instant.EPOCH);
+    }
+
+    private NodePort port(final UUID id, final String name, final String description, final int order) {
+        return new NodePort(id, name, description, order);
+    }
+
+    private void expectPortError(final Node node, final String code) {
+        assertThatThrownBy(() -> this.validator.validateAndNormalize(
+                this.projectId,
+                List.of(node),
+                List.of(this.agent(this.agentA, this.projectId))
+        ))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo(code);
     }
 }

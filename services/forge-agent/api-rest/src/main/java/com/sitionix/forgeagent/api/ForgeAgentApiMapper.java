@@ -17,6 +17,8 @@ import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.NodeRunFailureResponse;
 import com.sitionix.forgeagent.api.dto.NodeRunResponse;
+import com.sitionix.forgeagent.api.dto.NodePortRequest;
+import com.sitionix.forgeagent.api.dto.NodePortResponse;
 import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
@@ -46,6 +48,7 @@ import com.sitionix.forgeagent.domain.model.CodexRuntimeModel;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
@@ -225,6 +228,8 @@ class ForgeAgentApiMapper {
                 request.targetId(),
                 request.dependsOnNodeIds() == null ? List.of() : request.dependsOnNodeIds(),
                 inputMode(request.inputMode()),
+                request.inputs() == null ? List.of() : request.inputs().stream().map(this::toNodePort).toList(),
+                request.outputs() == null ? List.of() : request.outputs().stream().map(this::toNodePort).toList(),
                 position
         );
     }
@@ -235,8 +240,21 @@ class ForgeAgentApiMapper {
                 node.targetId(),
                 node.dependsOnNodeIds(),
                 inputMode(node.inputMode()).name(),
+                node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
+                node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
                 new NodePositionResponse(node.position().x(), node.position().y())
         );
+    }
+
+    private NodePort toNodePort(final NodePortRequest request) {
+        if (request == null) {
+            return null;
+        }
+        return new NodePort(request.id(), request.name(), request.description(), request.order());
+    }
+
+    private NodePortResponse toResponse(final NodePort port) {
+        return new NodePortResponse(port.id(), port.name(), port.description(), port.order());
     }
 
     private NodeRunResponse toResponse(final NodeRun nodeRun) {

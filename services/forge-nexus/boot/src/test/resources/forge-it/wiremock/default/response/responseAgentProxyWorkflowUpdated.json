@@ -8,6 +8,22 @@
       "targetId": "22222222-2222-4222-8222-222222222222",
       "dependsOnNodeIds": [],
       "inputMode": "DEPENDENCIES_ONLY",
+      "inputs": [
+        {
+          "id": "10000000-0000-4000-8000-000000000001",
+          "name": "Review feedback",
+          "description": "Feedback produced by review.",
+          "order": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "20000000-0000-4000-8000-000000000001",
+          "name": "Approved",
+          "description": "Continue when accepted.",
+          "order": 0
+        }
+      ],
       "position": {
         "x": 120,
         "y": 100
@@ -19,7 +35,16 @@
       "dependsOnNodeIds": [
         "44444444-4444-4444-8444-444444444444"
       ],
-      "inputMode": "DEPENDENCIES_ONLY",
+      "inputMode": "TASK_AND_DEPENDENCIES",
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "20000000-0000-4000-8000-000000000002",
+          "name": "Return",
+          "description": "Return when changes are required.",
+          "order": 0
+        }
+      ],
       "position": {
         "x": 420,
         "y": 100

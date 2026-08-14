@@ -7,11 +7,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodeEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodePortEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowNodeRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowNodePortRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRepository;
 import java.time.Instant;
 import java.util.List;
@@ -34,20 +37,27 @@ class PostgresWorkflowRepositoryTest {
     private static final UUID NODE_A = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     private static final UUID NODE_B = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     private static final UUID NODE_C = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    private static final UUID PORT_A = UUID.fromString("10000000-0000-4000-8000-000000000001");
+    private static final UUID PORT_B = UUID.fromString("10000000-0000-4000-8000-000000000002");
+    private static final UUID PORT_C = UUID.fromString("10000000-0000-4000-8000-000000000003");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
 
     @Mock
     private SpringDataWorkflowRepository workflowRepository;
     @Mock
     private SpringDataWorkflowNodeRepository nodeRepository;
+    @Mock
+    private SpringDataWorkflowNodePortRepository portRepository;
 
     private PostgresWorkflowRepository repository;
 
     @BeforeEach
     void setUp() {
-        this.repository = new PostgresWorkflowRepository(this.workflowRepository, this.nodeRepository);
+        this.repository = new PostgresWorkflowRepository(this.workflowRepository, this.nodeRepository, this.portRepository);
         when(this.workflowRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.nodeRepository.findByWorkflowIdOrderByIdAsc(WORKFLOW_ID)).thenReturn(List.of());
+        when(this.portRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of());
+        when(this.portRepository.findByWorkflowIdOrderByNodeIdAscPortOrderAsc(WORKFLOW_ID)).thenReturn(List.of());
     }
 
     @Test
@@ -147,6 +157,44 @@ class PostgresWorkflowRepositoryTest {
         this.savedNodes().forEach(node -> assertThat(node.getWorkflowId()).isEqualTo(WORKFLOW_ID));
     }
 
+    @Test
+    void portsAreReconciledByStableIdAcrossRenameAddAndDelete() {
+        final WorkflowNodePortEntity currentA = this.portEntity(PORT_A, NODE_A, "OUTPUT", "Approved", "Accepted.", 0);
+        final WorkflowNodePortEntity currentB = this.portEntity(PORT_B, NODE_A, "OUTPUT", "Return", "Needs changes.", 1);
+        when(this.nodeRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(
+                this.entity(WORKFLOW_ID, NODE_A, AGENT_ID, List.of(), 1.0, 2.0)
+        ));
+        when(this.portRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of(currentA, currentB));
+
+        this.repository.save(this.workflow(List.of(new Node(
+                NODE_A,
+                AGENT_ID,
+                List.of(),
+                com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodePort(PORT_C, "Review", "Review feedback.", 0)),
+                List.of(new NodePort(PORT_A, "Ready", "Ready for testing.", 0)),
+                new NodePosition(1.0, 2.0)
+        ))));
+
+        verify(this.portRepository).deleteAll(List.of(currentB));
+        final List<WorkflowNodePortEntity> saved = this.savedPorts();
+        assertThat(saved).hasSize(2);
+        assertThat(saved).anySatisfy(port -> {
+            assertThat(port).isSameAs(currentA);
+            assertThat(port.getId()).isEqualTo(PORT_A);
+            assertThat(port.getDirection()).isEqualTo("OUTPUT");
+            assertThat(port.getName()).isEqualTo("Ready");
+            assertThat(port.getDescription()).isEqualTo("Ready for testing.");
+            assertThat(port.getPortOrder()).isZero();
+        });
+        assertThat(saved).anySatisfy(port -> {
+            assertThat(port.getId()).isEqualTo(PORT_C);
+            assertThat(port.getDirection()).isEqualTo("INPUT");
+            assertThat(port.getName()).isEqualTo("Review");
+            assertThat(port.getPortOrder()).isZero();
+        });
+    }
+
     private Workflow workflow(final List<Node> nodes) {
         return new Workflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", "full testing", nodes, NOW, NOW);
     }
@@ -171,10 +219,34 @@ class PostgresWorkflowRepositoryTest {
         return entity;
     }
 
+    private WorkflowNodePortEntity portEntity(final UUID id,
+                                              final UUID nodeId,
+                                              final String direction,
+                                              final String name,
+                                              final String description,
+                                              final int order) {
+        final WorkflowNodePortEntity entity = new WorkflowNodePortEntity();
+        entity.setId(id);
+        entity.setWorkflowId(WORKFLOW_ID);
+        entity.setNodeId(nodeId);
+        entity.setDirection(direction);
+        entity.setName(name);
+        entity.setDescription(description);
+        entity.setPortOrder(order);
+        return entity;
+    }
+
     private List<WorkflowNodeEntity> savedNodes() {
         @SuppressWarnings("unchecked")
         final ArgumentCaptor<Iterable<WorkflowNodeEntity>> captor = ArgumentCaptor.forClass(Iterable.class);
         verify(this.nodeRepository).saveAll(captor.capture());
+        return StreamSupport.stream(captor.getValue().spliterator(), false).toList();
+    }
+
+    private List<WorkflowNodePortEntity> savedPorts() {
+        @SuppressWarnings("unchecked")
+        final ArgumentCaptor<Iterable<WorkflowNodePortEntity>> captor = ArgumentCaptor.forClass(Iterable.class);
+        verify(this.portRepository).saveAll(captor.capture());
         return StreamSupport.stream(captor.getValue().spliterator(), false).toList();
     }
 }

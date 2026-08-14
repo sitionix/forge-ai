@@ -961,10 +961,10 @@ body.sidebar-collapsed .sidebar-link {
 .workflow-node {
   position: absolute;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 26px 18px;
+  grid-template-columns: 18px 72px minmax(92px, 1fr) 26px 72px 18px;
   gap: 8px;
   align-items: center;
-  width: 180px;
+  width: 320px;
   min-height: 104px;
   padding: 12px;
   border: 1px solid rgba(27, 36, 31, 0.18);
@@ -985,6 +985,7 @@ body.sidebar-collapsed .sidebar-link {
   display: grid;
   gap: 6px;
   min-width: 0;
+  text-align: center;
 }
 
 .workflow-node-content strong {
@@ -1003,33 +1004,6 @@ body.sidebar-collapsed .sidebar-link {
   line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.workflow-node-input-mode {
-  display: grid;
-  gap: 4px;
-}
-
-.workflow-node-input-mode span,
-.workflow-node-input-note {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.workflow-node-input-mode select {
-  width: 100%;
-  min-height: 28px;
-  border: 1px solid rgba(27, 36, 31, 0.14);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.62);
-  color: var(--ink);
-  font: 700 10px/1.2 var(--mono);
-}
-
-.workflow-node-input-mode select:disabled {
-  opacity: 0.58;
 }
 
 .node-handle,
@@ -1075,6 +1049,53 @@ body.sidebar-collapsed .sidebar-link {
 
 .node-handle.invalid-target {
   opacity: 0.42;
+}
+
+.workflow-node-port-list {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.workflow-node-port-list.input {
+  justify-items: end;
+}
+
+.workflow-node-port-list.output {
+  justify-items: start;
+}
+
+.workflow-node-port {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px;
+  gap: 5px;
+  align-items: center;
+  max-width: 72px;
+  color: var(--ink);
+  font: 800 10px/1.2 var(--mono);
+}
+
+.workflow-node-port-list.output .workflow-node-port {
+  grid-template-columns: 8px minmax(0, 1fr);
+}
+
+.workflow-node-port-list.output .workflow-node-port i {
+  order: -1;
+}
+
+.workflow-node-port span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-node-port i {
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(27, 36, 31, 0.28);
+  border-radius: 50%;
+  background: #f6b84b;
 }
 
 .workflow-builder-actions {
@@ -1340,6 +1361,108 @@ body.sidebar-collapsed .sidebar-link {
   font-family: var(--display);
   font-size: 28px;
   text-transform: uppercase;
+}
+
+.node-editor-form {
+  gap: 14px;
+}
+
+.node-editor-head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.node-editor-head .field-hint {
+  margin: 4px 0 0;
+}
+
+.node-editor-close,
+.node-editor-port-remove {
+  border: 1px solid rgba(27, 36, 31, 0.14);
+  background: rgba(27, 36, 31, 0.08);
+  color: var(--ink);
+  cursor: pointer;
+  font: 900 14px/1 var(--mono);
+}
+
+.node-editor-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+.node-editor-body {
+  display: grid;
+  gap: 16px;
+}
+
+.node-editor-port-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.node-editor-port-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.node-editor-section-head,
+.node-editor-port-row-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.node-editor-section-head h3 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.node-editor-port-list {
+  display: grid;
+  gap: 10px;
+}
+
+.node-editor-port-row {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.node-editor-port-remove {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+}
+
+.node-editor-description {
+  min-height: 76px;
+}
+
+.node-editor-input-mode {
+  display: grid;
+  gap: 7px;
+  max-width: 320px;
+}
+
+.node-editor-readonly-input {
+  min-height: 40px;
+  padding: 10px;
+  border: 1px solid rgba(27, 36, 31, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.42);
+  color: var(--muted);
+  font: 800 12px/1.4 var(--mono);
 }
 
 .text-input,
