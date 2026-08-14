@@ -91,6 +91,21 @@ class ForgeAgentWorkflowsProxyIT extends AbstractForgeAiIT {
         mapping.verify();
     }
 
+    @Test
+    void givenWorkflowId_whenDeleteWorkflow_thenDeletePathIsForwarded() {
+        final var mapping = this.testManager.wiremock()
+                .createMapping(ForgeAgentProxyWireMockEndpoint.deleteWorkflow())
+                .pathPattern(workflowWireMockPathParams())
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(ForgeAgentProxyMockMvcEndpoint.deleteWorkflow())
+                .withPathParameters(workflowMockMvcPathParams())
+                .assertDefault();
+
+        mapping.verify();
+    }
+
     private static PathParams projectMockMvcPathParams() {
         return PathParams.create().add("projectId", PROJECT_ID);
     }

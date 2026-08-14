@@ -17,6 +17,11 @@ import org.springframework.stereotype.Repository;
 @RequiredArgsConstructor
 public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
 
+    private static final List<String> ACTIVE_STATUSES = List.of(
+            WorkflowRunStatus.QUEUED.name(),
+            WorkflowRunStatus.RUNNING.name()
+    );
+
     private final SpringDataWorkflowRunRepository workflowRunRepository;
     private final SpringDataNodeRunRepository nodeRunRepository;
 
@@ -56,6 +61,21 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     @Override
     public WorkflowRun saveLifecycle(final WorkflowRun run) {
         return this.toLifecycleDomain(this.workflowRunRepository.save(this.toEntity(run)));
+    }
+
+    @Override
+    public boolean existsActiveByProjectId(final UUID projectId) {
+        return this.workflowRunRepository.existsByProjectIdAndStatusIn(projectId, ACTIVE_STATUSES);
+    }
+
+    @Override
+    public boolean existsActiveByTaskId(final UUID taskId) {
+        return this.workflowRunRepository.existsByTaskIdAndStatusIn(taskId, ACTIVE_STATUSES);
+    }
+
+    @Override
+    public boolean existsActiveBySourceWorkflowId(final UUID workflowId) {
+        return this.workflowRunRepository.existsBySourceWorkflowIdAndStatusIn(workflowId, ACTIVE_STATUSES);
     }
 
     private WorkflowRunSummary toSummary(final WorkflowRunEntity entity) {

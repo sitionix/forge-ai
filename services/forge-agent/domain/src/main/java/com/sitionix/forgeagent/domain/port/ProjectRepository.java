@@ -14,4 +14,6 @@ public interface ProjectRepository {
     boolean existsByNormalizedName(String normalizedName);
 
     Project save(Project project);
+
+    void deleteById(UUID projectId);
 }

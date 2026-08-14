@@ -8,6 +8,7 @@ import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
@@ -28,9 +29,11 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -64,6 +67,12 @@ public class ForgeAgentController {
         return ResponseEntity.created(URI.create("/api/v1/projects/" + response.id())).body(response);
     }
 
+    @DeleteMapping("/api/v1/projects/{projectId}")
+    public ResponseEntity<Void> deleteProject(@PathVariable final UUID projectId) {
+        this.projectUseCases.deleteProject(projectId);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/api/v1/projects/{projectId}/tasks")
     public ResponseEntity<ProjectTaskResponse> createProjectTask(@PathVariable final UUID projectId,
                                                                  @Valid @RequestBody final CreateProjectTaskRequest request) {
@@ -74,15 +83,21 @@ public class ForgeAgentController {
     }
 
     @GetMapping("/api/v1/projects/{projectId}/tasks")
-    public ResponseEntity<List<ProjectTaskSummaryResponse>> listProjectTasks(@PathVariable final UUID projectId) {
-        return ResponseEntity.ok(this.projectTaskUseCases.listProjectTasks(projectId).stream()
-                .map(this.mapper::toResponse)
-                .toList());
+    public ResponseEntity<ProjectTaskPageResponse> listProjectTasks(@PathVariable final UUID projectId,
+                                                                    @RequestParam(defaultValue = "0") final int page,
+                                                                    @RequestParam(defaultValue = "20") final int size) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.projectTaskUseCases.listProjectTasks(projectId, page, size)));
     }
 
     @GetMapping("/api/v1/tasks/{taskId}")
     public ResponseEntity<ProjectTaskResponse> getProjectTask(@PathVariable final UUID taskId) {
         return ResponseEntity.ok(this.mapper.toResponse(this.projectTaskUseCases.getProjectTask(taskId)));
+    }
+
+    @DeleteMapping("/api/v1/tasks/{taskId}")
+    public ResponseEntity<Void> deleteProjectTask(@PathVariable final UUID taskId) {
+        this.projectTaskUseCases.deleteProjectTask(taskId);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/api/v1/projects/{projectId}/agents")
@@ -102,6 +117,12 @@ public class ForgeAgentController {
     @GetMapping("/api/v1/agents/{agentId}")
     public ResponseEntity<AgentResponse> getAgent(@PathVariable final UUID agentId) {
         return ResponseEntity.ok(this.mapper.toResponse(this.agentUseCases.getAgent(agentId)));
+    }
+
+    @DeleteMapping("/api/v1/agents/{agentId}")
+    public ResponseEntity<Void> deleteAgent(@PathVariable final UUID agentId) {
+        this.agentUseCases.deleteAgent(agentId);
+        return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/api/v1/agents/{agentId}")
@@ -127,6 +148,12 @@ public class ForgeAgentController {
     @GetMapping("/api/v1/workflows/{workflowId}")
     public ResponseEntity<WorkflowResponse> getWorkflow(@PathVariable final UUID workflowId) {
         return ResponseEntity.ok(this.mapper.toResponse(this.workflowUseCases.getWorkflow(workflowId)));
+    }
+
+    @DeleteMapping("/api/v1/workflows/{workflowId}")
+    public ResponseEntity<Void> deleteWorkflow(@PathVariable final UUID workflowId) {
+        this.workflowUseCases.deleteWorkflow(workflowId);
+        return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/api/v1/workflows/{workflowId}")

@@ -64,6 +64,11 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
         return this.toDomain(savedWorkflow);
     }
 
+    @Override
+    public void deleteById(final UUID workflowId) {
+        this.workflowRepository.deleteById(workflowId);
+    }
+
     private void reconcileNodes(final Workflow workflow) {
         final Map<UUID, WorkflowNodeEntity> currentById = this.nodeRepository.findByWorkflowId(workflow.id()).stream()
                 .collect(Collectors.toMap(WorkflowNodeEntity::getId, Function.identity()));

@@ -11,6 +11,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
@@ -19,6 +20,8 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.service.annotation.DeleteExchange;
 import org.springframework.web.service.annotation.GetExchange;
 import org.springframework.web.service.annotation.PostExchange;
 import org.springframework.web.service.annotation.PutExchange;
@@ -32,14 +35,20 @@ public interface ForgeAgentHttpClient {
     @PostExchange(value = "/api/v1/projects", contentType = MediaType.APPLICATION_JSON_VALUE)
     AgentProjectResponse createProject(@RequestBody AgentProjectRequest request);
 
+    @DeleteExchange("/api/v1/projects/{projectId}")
+    void deleteProject(@PathVariable UUID projectId);
+
     @PostExchange(value = "/api/v1/projects/{projectId}/tasks", contentType = MediaType.APPLICATION_JSON_VALUE)
     ProjectTaskResponse createProjectTask(@PathVariable UUID projectId, @RequestBody CreateProjectTaskRequest request);
 
     @GetExchange("/api/v1/projects/{projectId}/tasks")
-    List<ProjectTaskSummaryResponse> listProjectTasks(@PathVariable UUID projectId);
+    ProjectTaskPageResponse listProjectTasks(@PathVariable UUID projectId, @RequestParam int page, @RequestParam int size);
 
     @GetExchange("/api/v1/tasks/{taskId}")
     ProjectTaskResponse getProjectTask(@PathVariable UUID taskId);
+
+    @DeleteExchange("/api/v1/tasks/{taskId}")
+    void deleteProjectTask(@PathVariable UUID taskId);
 
     @GetExchange("/api/v1/runtime")
     AgentRuntimeResponse getRuntime();
@@ -56,6 +65,9 @@ public interface ForgeAgentHttpClient {
     @PutExchange(value = "/api/v1/agents/{agentId}", contentType = MediaType.APPLICATION_JSON_VALUE)
     AgentDefinitionResponse updateAgent(@PathVariable UUID agentId, @RequestBody AgentDefinitionRequest request);
 
+    @DeleteExchange("/api/v1/agents/{agentId}")
+    void deleteAgent(@PathVariable UUID agentId);
+
     @GetExchange("/api/v1/projects/{projectId}/workflows")
     List<AgentWorkflowResponse> listProjectWorkflows(@PathVariable UUID projectId);
 
@@ -67,6 +79,9 @@ public interface ForgeAgentHttpClient {
 
     @PutExchange(value = "/api/v1/workflows/{workflowId}", contentType = MediaType.APPLICATION_JSON_VALUE)
     AgentWorkflowResponse updateWorkflow(@PathVariable UUID workflowId, @RequestBody SaveAgentWorkflowRequest request);
+
+    @DeleteExchange("/api/v1/workflows/{workflowId}")
+    void deleteWorkflow(@PathVariable UUID workflowId);
 
     @PostExchange(value = "/api/v1/workflows/{workflowId}/runs", contentType = MediaType.APPLICATION_JSON_VALUE)
     WorkflowRunResponse createWorkflowRun(@PathVariable UUID workflowId, @RequestBody CreateWorkflowRunRequest request);

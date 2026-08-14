@@ -6,7 +6,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentRuntimeResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskResponse;
-import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskSummaryResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
@@ -42,6 +42,10 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                 "responseAgentProxyCreateProject.json");
     }
 
+    public static Endpoint<Void, Void> deleteProject() {
+        return nexusDelete("/api/v1/infrastructure/agents/projects/{projectId}");
+    }
+
     public static Endpoint<CreateAgentProjectTaskRequest, AgentProjectTaskResponse> createProjectTask() {
         return nexusPost("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
                 CreateAgentProjectTaskRequest.class,
@@ -69,9 +73,9 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                 "responseAgentProxyEmptyWorkflow.json");
     }
 
-    public static Endpoint<Void, AgentProjectTaskSummaryResponse[]> listProjectTasks() {
+    public static Endpoint<Void, AgentProjectTaskPageResponse> listProjectTasks() {
         return nexusGet("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
-                AgentProjectTaskSummaryResponse[].class,
+                AgentProjectTaskPageResponse.class,
                 HttpStatus.OK,
                 "responseAgentProxyProjectTasks.json");
     }
@@ -81,6 +85,10 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                 AgentProjectTaskResponse.class,
                 HttpStatus.OK,
                 "responseAgentProxyProjectTask.json");
+    }
+
+    public static Endpoint<Void, Void> deleteProjectTask() {
+        return nexusDelete("/api/v1/infrastructure/agents/tasks/{taskId}");
     }
 
     public static Endpoint<Void, AgentRuntimeResponse> getRuntime() {
@@ -120,6 +128,10 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                 "requestAgentProxySaveAgent.json",
                 HttpStatus.OK,
                 "responseAgentProxyAgentUpdated.json");
+    }
+
+    public static Endpoint<Void, Void> deleteAgent() {
+        return nexusDelete("/api/v1/infrastructure/agents/definitions/{agentId}");
     }
 
     public static Endpoint<AgentDefinitionRequest, InfrastructureErrorResponse> createAgentValidationError() {
@@ -184,6 +196,10 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                 "requestAgentProxyUpdateWorkflow.json",
                 HttpStatus.OK,
                 "responseAgentProxyWorkflowUpdated.json");
+    }
+
+    public static Endpoint<Void, Void> deleteWorkflow() {
+        return nexusDelete("/api/v1/infrastructure/agents/workflows/{workflowId}");
     }
 
     public static Endpoint<CreateAgentWorkflowRunRequest, AgentWorkflowRunResponse> createWorkflowRun() {
@@ -252,5 +268,11 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                         .withRequest(requestFixture)
                         .expectStatus(status.value())
                         .expectResponse(responseFixture));
+    }
+
+    private static Endpoint<Void, Void> nexusDelete(final String path) {
+        return Endpoint.createContract(path, HttpMethod.DELETE, Void.class, Void.class,
+                (MockmvcDefault) context -> context
+                        .expectStatus(HttpStatus.NO_CONTENT.value()));
     }
 }

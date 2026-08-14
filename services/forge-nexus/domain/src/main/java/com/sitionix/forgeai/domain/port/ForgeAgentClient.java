@@ -4,6 +4,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
@@ -24,11 +25,15 @@ public interface ForgeAgentClient {
 
     AgentProject createProject(CreateAgentProjectCommand command);
 
+    void deleteProject(UUID projectId);
+
     AgentProjectTask createProjectTask(UUID projectId, CreateAgentProjectTaskCommand command);
 
-    List<AgentProjectTaskSummary> listProjectTasks(UUID projectId);
+    AgentProjectTaskPage listProjectTasks(UUID projectId, int page, int size);
 
     AgentProjectTask getProjectTask(UUID taskId);
+
+    void deleteProjectTask(UUID taskId);
 
     AgentRuntimeCatalog getRuntime();
 
@@ -40,6 +45,8 @@ public interface ForgeAgentClient {
 
     AgentDefinitionDetails updateAgent(UUID agentId, SaveAgentDefinitionCommand command);
 
+    void deleteAgent(UUID agentId);
+
     List<AgentWorkflow> listProjectWorkflows(UUID projectId);
 
     AgentWorkflow createWorkflow(UUID projectId, CreateAgentWorkflowCommand command);
@@ -47,6 +54,8 @@ public interface ForgeAgentClient {
     AgentWorkflow getWorkflow(UUID workflowId);
 
     AgentWorkflow updateWorkflow(UUID workflowId, SaveAgentWorkflowCommand command);
+
+    void deleteWorkflow(UUID workflowId);
 
     AgentWorkflowRun createWorkflowRun(UUID workflowId, CreateAgentWorkflowRunCommand command);
 

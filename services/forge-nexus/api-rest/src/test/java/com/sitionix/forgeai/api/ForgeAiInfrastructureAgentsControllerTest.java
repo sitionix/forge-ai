@@ -15,6 +15,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProxyApiMapper;
@@ -28,6 +29,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
@@ -47,6 +49,10 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
+import com.sitionix.forgeai.domain.usecase.DeleteAgentDefinition;
+import com.sitionix.forgeai.domain.usecase.DeleteAgentProject;
+import com.sitionix.forgeai.domain.usecase.DeleteAgentProjectTask;
+import com.sitionix.forgeai.domain.usecase.DeleteAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.GetAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.GetAgentRuntime;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflow;
@@ -84,11 +90,15 @@ class ForgeAiInfrastructureAgentsControllerTest {
     @Mock
     private CreateAgentProject createAgentProject;
     @Mock
+    private DeleteAgentProject deleteAgentProject;
+    @Mock
     private CreateAgentProjectTask createAgentProjectTask;
     @Mock
     private ListAgentProjectTasks listAgentProjectTasks;
     @Mock
     private GetAgentProjectTask getAgentProjectTask;
+    @Mock
+    private DeleteAgentProjectTask deleteAgentProjectTask;
     @Mock
     private GetAgentRuntime getAgentRuntime;
     @Mock
@@ -100,6 +110,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
     @Mock
     private UpdateAgentDefinition updateAgentDefinition;
     @Mock
+    private DeleteAgentDefinition deleteAgentDefinition;
+    @Mock
     private ListAgentWorkflows listAgentWorkflows;
     @Mock
     private CreateAgentWorkflow createAgentWorkflow;
@@ -107,6 +119,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
     private GetAgentWorkflow getAgentWorkflow;
     @Mock
     private UpdateAgentWorkflow updateAgentWorkflow;
+    @Mock
+    private DeleteAgentWorkflow deleteAgentWorkflow;
     @Mock
     private CreateAgentWorkflowRun createAgentWorkflowRun;
     @Mock
@@ -123,18 +137,22 @@ class ForgeAiInfrastructureAgentsControllerTest {
         this.controller = new ForgeAiInfrastructureAgentsController(
                 this.listAgentProjects,
                 this.createAgentProject,
+                this.deleteAgentProject,
                 this.createAgentProjectTask,
                 this.listAgentProjectTasks,
                 this.getAgentProjectTask,
+                this.deleteAgentProjectTask,
                 this.getAgentRuntime,
                 this.listProjectAgentDefinitions,
                 this.createAgentDefinition,
                 this.getAgentDefinition,
                 this.updateAgentDefinition,
+                this.deleteAgentDefinition,
                 this.listAgentWorkflows,
                 this.createAgentWorkflow,
                 this.getAgentWorkflow,
                 this.updateAgentWorkflow,
+                this.deleteAgentWorkflow,
                 this.createAgentWorkflowRun,
                 this.listAgentWorkflowRuns,
                 this.getAgentWorkflowRun,
@@ -201,15 +219,17 @@ class ForgeAiInfrastructureAgentsControllerTest {
     void listProjectTasks() {
         final var task = new AgentProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, NOW, NOW);
         final var response = new AgentProjectTaskSummaryResponse(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, NOW, NOW);
-        when(this.listAgentProjectTasks.execute(PROJECT_ID)).thenReturn(List.of(task));
-        when(this.mapper.toResponse(task)).thenReturn(response);
+        final var page = new AgentProjectTaskPage(List.of(task), 1, 10, 11, 2);
+        final var pageResponse = new AgentProjectTaskPageResponse(List.of(response), 1, 10, 11, 2);
+        when(this.listAgentProjectTasks.execute(PROJECT_ID, 1, 10)).thenReturn(page);
+        when(this.mapper.toResponse(page)).thenReturn(pageResponse);
 
-        final var actual = this.controller.listProjectTasks(PROJECT_ID);
+        final var actual = this.controller.listProjectTasks(PROJECT_ID, 1, 10);
 
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(actual.getBody()).containsExactly(response);
-        verify(this.listAgentProjectTasks).execute(PROJECT_ID);
-        verify(this.mapper).toResponse(task);
+        assertThat(actual.getBody()).isSameAs(pageResponse);
+        verify(this.listAgentProjectTasks).execute(PROJECT_ID, 1, 10);
+        verify(this.mapper).toResponse(page);
     }
 
     @Test

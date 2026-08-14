@@ -19,6 +19,7 @@ import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
 import com.sitionix.forgeagent.domain.port.CodexRuntimePort;
+import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import java.time.Clock;
 import java.time.Instant;
@@ -48,13 +49,16 @@ class AgentUseCasesTest {
     private AgentDefinitionRepository agentDefinitionRepository;
 
     @Mock
+    private NodeRunRepository nodeRunRepository;
+
+    @Mock
     private CodexRuntimePort codexRuntimePort;
 
     private AgentUseCases useCases;
 
     @BeforeEach
     void setUp() {
-        this.useCases = new AgentUseCases(this.projectRepository, this.agentDefinitionRepository, this.codexRuntimePort, CLOCK);
+        this.useCases = new AgentUseCases(this.projectRepository, this.agentDefinitionRepository, this.nodeRunRepository, this.codexRuntimePort, CLOCK);
     }
 
     @Test

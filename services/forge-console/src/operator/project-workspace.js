@@ -8,8 +8,12 @@ export class ProjectWorkspace {
     this.onEditAgent = options.onEditAgent;
     this.onNewWorkflow = options.onNewWorkflow;
     this.onOpenWorkflow = options.onOpenWorkflow;
+    this.onDeleteAgent = options.onDeleteAgent;
+    this.onDeleteWorkflow = options.onDeleteWorkflow;
     this.onNewTask = options.onNewTask;
     this.onOpenTask = options.onOpenTask;
+    this.onDeleteTask = options.onDeleteTask;
+    this.onTaskPage = options.onTaskPage;
   }
 
   bind() {
@@ -19,7 +23,7 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, agents, workflows, tasks, dataCurrent, workflowsCurrent, tasksCurrent, tasksLoadFailed, runtimeCatalog = null) {
+  render(project, agents, workflows, tasks, dataCurrent, workflowsCurrent, tasksCurrent, tasksLoadFailed, runtimeCatalog = null, taskPage = null) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2CreateAgent').disabled = !dataCurrent;
@@ -27,7 +31,7 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateTask').disabled = !project || !workflowsCurrent || !tasksCurrent || !workflows.length;
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
-    this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed);
+    this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed, taskPage);
   }
 
   renderLoading() {
@@ -50,11 +54,17 @@ export class ProjectWorkspace {
         <h3>${escapeHtml(agent.name)}</h3>
         <p>${escapeHtml(agent.instructions || 'Reusable agent definition')}</p>
         ${this.renderAgentModelMeta(agent.model, runtimeCatalog)}
-        <button class="button small secondary" type="button" data-agent-id="${escapeHtml(agent.id)}">Edit</button>
+        <div class="agents-v2-card-actions">
+          <button class="button small secondary" type="button" data-agent-id="${escapeHtml(agent.id)}">Edit</button>
+          <button class="button small danger" type="button" data-delete-agent-id="${escapeHtml(agent.id)}">Delete</button>
+        </div>
       </article>
     `).join('');
     list.querySelectorAll('[data-agent-id]').forEach((element) => {
       element.addEventListener('click', () => this.onEditAgent(element.dataset.agentId));
+    });
+    list.querySelectorAll('[data-delete-agent-id]').forEach((element) => {
+      element.addEventListener('click', () => this.onDeleteAgent(element.dataset.deleteAgentId));
     });
   }
 
@@ -95,15 +105,21 @@ export class ProjectWorkspace {
       <article class="agents-v2-card">
         <h3>${escapeHtml(workflow.name)}</h3>
         <p>${(workflow.nodes || []).length} nodes</p>
-        <button class="button small secondary" type="button" data-workflow-id="${escapeHtml(workflow.id)}">Open</button>
+        <div class="agents-v2-card-actions">
+          <button class="button small secondary" type="button" data-workflow-id="${escapeHtml(workflow.id)}">Open</button>
+          <button class="button small danger" type="button" data-delete-workflow-id="${escapeHtml(workflow.id)}">Delete</button>
+        </div>
       </article>
     `).join('');
     list.querySelectorAll('[data-workflow-id]').forEach((element) => {
       element.addEventListener('click', () => this.onOpenWorkflow(element.dataset.workflowId));
     });
+    list.querySelectorAll('[data-delete-workflow-id]').forEach((element) => {
+      element.addEventListener('click', () => this.onDeleteWorkflow(element.dataset.deleteWorkflowId));
+    });
   }
 
-  renderTasks(tasks, workflowsCurrent, hasWorkflows, tasksCurrent, tasksLoadFailed) {
+  renderTasks(tasks, workflowsCurrent, hasWorkflows, tasksCurrent, tasksLoadFailed, taskPage = null) {
     const list = this.byId('agentsV2TasksList');
     if (tasksLoadFailed) {
       list.innerHTML = '';
@@ -114,22 +130,39 @@ export class ProjectWorkspace {
       return;
     }
     if (tasks.length) {
-      list.innerHTML = tasks.map((task) => `
-        <article class="agents-v2-card task-card">
-          <h3>${escapeHtml(task.title)}</h3>
-          <p>Workflow: ${escapeHtml(task.workflowName || 'Unknown workflow')}</p>
-          <div class="agents-v2-task-meta">
-            <span class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(task.executionStatus))}" data-task-status="${escapeHtml(task.executionStatus || 'UNKNOWN')}">
-              ${escapeHtml(task.executionStatus || 'UNKNOWN')}
-            </span>
-            <span>Created: ${escapeHtml(this.formatDate(task.createdAt))}</span>
+      list.innerHTML = `
+        <div class="agents-v2-task-table" role="table" aria-label="Tasks">
+          <div class="agents-v2-task-row agents-v2-task-row-head" role="row">
+            <span>Title</span>
+            <span>Workflow</span>
+            <span>Status</span>
+            <span>Created</span>
+            <span>Actions</span>
           </div>
-          <button class="button small secondary" type="button" data-task-id="${escapeHtml(task.id)}">Open</button>
-        </article>
-      `).join('');
+          ${tasks.map((task) => `
+            <div class="agents-v2-task-row" role="row" data-task-row-id="${escapeHtml(task.id)}">
+              <strong>${escapeHtml(task.title)}</strong>
+              <span>${escapeHtml(task.workflowName || 'Unknown workflow')}</span>
+              <span class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(task.executionStatus))}" data-task-status="${escapeHtml(task.executionStatus || 'UNKNOWN')}">
+                ${escapeHtml(task.executionStatus || 'UNKNOWN')}
+              </span>
+              <span>${escapeHtml(this.formatDate(task.createdAt))}</span>
+              <span class="agents-v2-task-actions">
+                <button class="button tiny secondary" type="button" data-task-id="${escapeHtml(task.id)}">Open</button>
+                <button class="button tiny danger" type="button" data-delete-task-id="${escapeHtml(task.id)}">Delete</button>
+              </span>
+            </div>
+          `).join('')}
+        </div>
+        ${this.renderTaskPagination(taskPage)}
+      `;
       list.querySelectorAll('[data-task-id]').forEach((element) => {
         element.addEventListener('click', () => this.onOpenTask(element.dataset.taskId));
       });
+      list.querySelectorAll('[data-delete-task-id]').forEach((element) => {
+        element.addEventListener('click', () => this.onDeleteTask(element.dataset.deleteTaskId));
+      });
+      this.bindTaskPagination(list, taskPage);
       return;
     }
     if (workflowsCurrent && !hasWorkflows) {
@@ -137,6 +170,30 @@ export class ProjectWorkspace {
       return;
     }
     list.innerHTML = '<div class="muted-state">No tasks yet.</div>';
+  }
+
+  renderTaskPagination(taskPage) {
+    if (!taskPage || taskPage.totalPages <= 1) {
+      return '';
+    }
+    const page = Number(taskPage.page) || 0;
+    const totalPages = Number(taskPage.totalPages) || 1;
+    return `
+      <div class="agents-v2-pagination">
+        <button class="button tiny secondary" type="button" data-task-page="prev" ${page <= 0 ? 'disabled' : ''}>Previous</button>
+        <span>Page ${escapeHtml(String(page + 1))} of ${escapeHtml(String(totalPages))}</span>
+        <button class="button tiny secondary" type="button" data-task-page="next" ${page >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+      </div>
+    `;
+  }
+
+  bindTaskPagination(list, taskPage) {
+    if (!taskPage || taskPage.totalPages <= 1) {
+      return;
+    }
+    const page = Number(taskPage.page) || 0;
+    list.querySelector('[data-task-page="prev"]')?.addEventListener('click', () => this.onTaskPage(page - 1));
+    list.querySelector('[data-task-page="next"]')?.addEventListener('click', () => this.onTaskPage(page + 1));
   }
 
   formatDate(value) {

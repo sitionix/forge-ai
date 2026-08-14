@@ -6,8 +6,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionReques
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
-import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
@@ -42,6 +42,10 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "responseAgentProxyCreateProject.json");
     }
 
+    public static Endpoint<Void, Void> deleteProject() {
+        return upstreamDelete("/api/v1/projects/{projectId}");
+    }
+
     public static Endpoint<CreateProjectTaskRequest, ProjectTaskResponse> createProjectTask() {
         return upstreamPost("/api/v1/projects/{projectId}/tasks",
                 CreateProjectTaskRequest.class,
@@ -60,9 +64,9 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "responseAgentProxyEmptyWorkflow.json");
     }
 
-    public static Endpoint<Void, ProjectTaskSummaryResponse[]> listProjectTasks() {
+    public static Endpoint<Void, ProjectTaskPageResponse> listProjectTasks() {
         return upstreamGet("/api/v1/projects/{projectId}/tasks",
-                ProjectTaskSummaryResponse[].class,
+                ProjectTaskPageResponse.class,
                 HttpStatus.OK,
                 "responseAgentProxyProjectTasks.json");
     }
@@ -72,6 +76,10 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 ProjectTaskResponse.class,
                 HttpStatus.OK,
                 "responseAgentProxyProjectTask.json");
+    }
+
+    public static Endpoint<Void, Void> deleteProjectTask() {
+        return upstreamDelete("/api/v1/tasks/{taskId}");
     }
 
     public static Endpoint<Void, AgentRuntimeResponse> getRuntime() {
@@ -111,6 +119,10 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "requestAgentProxySaveAgent.json",
                 HttpStatus.OK,
                 "responseAgentProxyAgentUpdated.json");
+    }
+
+    public static Endpoint<Void, Void> deleteAgent() {
+        return upstreamDelete("/api/v1/agents/{agentId}");
     }
 
     public static Endpoint<AgentDefinitionRequest, InfrastructureErrorResponse> createAgentValidationError() {
@@ -159,6 +171,10 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "requestAgentProxyUpdateWorkflow.json",
                 HttpStatus.OK,
                 "responseAgentProxyWorkflowUpdated.json");
+    }
+
+    public static Endpoint<Void, Void> deleteWorkflow() {
+        return upstreamDelete("/api/v1/workflows/{workflowId}");
     }
 
     public static Endpoint<CreateWorkflowRunRequest, WorkflowRunResponse> createWorkflowRun() {
@@ -230,5 +246,12 @@ public final class ForgeAgentProxyWireMockEndpoint {
                         .matchesJson(requestFixture)
                         .responseStatus(status.value())
                         .responseBody(responseFixture));
+    }
+
+    private static Endpoint<Void, Void> upstreamDelete(final String path) {
+        return Endpoint.createContract(path, HttpMethod.DELETE, Void.class, Void.class,
+                (WiremockDefault) context -> context
+                        .plainUrl()
+                        .responseStatus(HttpStatus.NO_CONTENT.value()));
     }
 }

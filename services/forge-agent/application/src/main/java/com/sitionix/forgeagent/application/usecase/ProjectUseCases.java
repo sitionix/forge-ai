@@ -1,10 +1,12 @@
 package com.sitionix.forgeagent.application.usecase;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
+import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.NameNormalizer;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
+import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -20,6 +22,7 @@ public class ProjectUseCases {
     private static final int MAX_NAME_LENGTH = 120;
 
     private final ProjectRepository projectRepository;
+    private final WorkflowRunRepository workflowRunRepository;
     private final Clock clock;
 
     @Transactional(readOnly = true)
@@ -36,6 +39,16 @@ public class ProjectUseCases {
         }
         final Instant now = Instant.now(this.clock);
         return this.projectRepository.save(new Project(UUID.randomUUID(), name, normalizedName, now, now));
+    }
+
+    @Transactional
+    public void deleteProject(final UUID projectId) {
+        this.projectRepository.findById(projectId)
+                .orElseThrow(() -> new NotFoundException("PROJECT_NOT_FOUND", "Project was not found."));
+        if (this.workflowRunRepository.existsActiveByProjectId(projectId)) {
+            throw new ConflictException("PROJECT_HAS_ACTIVE_EXECUTIONS", "Project cannot be deleted while an execution is active.");
+        }
+        this.projectRepository.deleteById(projectId);
     }
 
     private String requireName(final String candidate) {

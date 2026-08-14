@@ -10,7 +10,9 @@ import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
+import com.sitionix.forgeagent.domain.port.ProjectTaskRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRepository;
+import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Collection;
@@ -31,6 +33,8 @@ public class WorkflowUseCases {
     private final ProjectRepository projectRepository;
     private final AgentDefinitionRepository agentDefinitionRepository;
     private final WorkflowRepository workflowRepository;
+    private final ProjectTaskRepository projectTaskRepository;
+    private final WorkflowRunRepository workflowRunRepository;
     private final NodeGraphValidator nodeGraphValidator;
     private final Clock clock;
 
@@ -94,6 +98,17 @@ public class WorkflowUseCases {
                 current.createdAt(),
                 Instant.now(this.clock)
         ));
+    }
+
+    @Transactional
+    public void deleteWorkflow(final UUID workflowId) {
+        this.workflowRepository.findById(workflowId)
+                .orElseThrow(() -> new NotFoundException("WORKFLOW_NOT_FOUND", "Workflow was not found."));
+        if (this.projectTaskRepository.existsByWorkflowId(workflowId)
+                || this.workflowRunRepository.existsActiveBySourceWorkflowId(workflowId)) {
+            throw new ConflictException("WORKFLOW_IN_USE", "Workflow is used by a task.");
+        }
+        this.workflowRepository.deleteById(workflowId);
     }
 
     private void requireProject(final UUID projectId) {

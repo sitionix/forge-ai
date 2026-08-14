@@ -16,6 +16,12 @@ public interface SpringDataWorkflowRunRepository extends JpaRepository<WorkflowR
 
     List<WorkflowRunEntity> findByTaskIdOrderByCreatedAtDescIdDesc(UUID taskId);
 
+    boolean existsByProjectIdAndStatusIn(UUID projectId, List<String> statuses);
+
+    boolean existsByTaskIdAndStatusIn(UUID taskId, List<String> statuses);
+
+    boolean existsBySourceWorkflowIdAndStatusIn(UUID sourceWorkflowId, List<String> statuses);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select w from WorkflowRunEntity w where w.id = :id")
     Optional<WorkflowRunEntity> findByIdForUpdate(@Param("id") UUID id);

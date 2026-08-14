@@ -12,6 +12,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -64,17 +67,24 @@ class PostgresProjectTaskRepositoryTest {
     }
 
     @Test
-    void listsProjectTasksUsingDeterministicHistoryRepositoryMethod() {
+    void listsProjectTasksUsingPagedDeterministicHistoryRepositoryMethod() {
         final UUID olderTaskId = UUID.fromString("33333333-3333-4333-8333-333333333332");
-        when(this.taskRepository.findByProjectIdOrderByCreatedAtDescIdDesc(PROJECT_ID)).thenReturn(List.of(
-                this.entity(TASK_ID, Instant.parse("2026-08-10T12:01:00Z")),
-                this.entity(olderTaskId, Instant.parse("2026-08-10T12:00:00Z"))
+        final PageRequest pageRequest = PageRequest.of(1, 2, Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
+        when(this.taskRepository.findByProjectId(PROJECT_ID, pageRequest)).thenReturn(new PageImpl<>(
+                List.of(
+                        this.entity(TASK_ID, Instant.parse("2026-08-10T12:01:00Z")),
+                        this.entity(olderTaskId, Instant.parse("2026-08-10T12:00:00Z"))
+                ),
+                pageRequest,
+                5
         ));
 
-        final List<ProjectTask> tasks = this.repository.findByProjectId(PROJECT_ID);
+        final var tasks = this.repository.findPageByProjectId(PROJECT_ID, 1, 2);
 
-        assertThat(tasks).extracting(ProjectTask::id).containsExactly(TASK_ID, olderTaskId);
-        verify(this.taskRepository).findByProjectIdOrderByCreatedAtDescIdDesc(PROJECT_ID);
+        assertThat(tasks.items()).extracting(ProjectTask::id).containsExactly(TASK_ID, olderTaskId);
+        assertThat(tasks.totalItems()).isEqualTo(5);
+        assertThat(tasks.totalPages()).isEqualTo(3);
+        verify(this.taskRepository).findByProjectId(PROJECT_ID, pageRequest);
     }
 
     private ProjectTask task(final UUID taskId, final Instant createdAt) {

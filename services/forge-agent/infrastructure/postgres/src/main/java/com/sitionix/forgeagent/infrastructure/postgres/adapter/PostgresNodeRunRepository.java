@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.NodeRun;
+import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataNodeRunRepository;
 import java.util.Collection;
@@ -13,6 +14,11 @@ import org.springframework.stereotype.Repository;
 @Repository
 @RequiredArgsConstructor
 public class PostgresNodeRunRepository implements NodeRunRepository {
+
+    private static final List<String> ACTIVE_STATUSES = List.of(
+            NodeRunStatus.PENDING.name(),
+            NodeRunStatus.RUNNING.name()
+    );
 
     private final SpringDataNodeRunRepository repository;
 
@@ -56,5 +62,10 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     @Override
     public NodeRun save(final NodeRun nodeRun) {
         return PostgresNodeRunMapper.toDomain(this.repository.save(PostgresNodeRunMapper.toEntity(nodeRun)));
+    }
+
+    @Override
+    public boolean existsActiveBySourceAgentId(final UUID agentId) {
+        return this.repository.existsBySourceAgentIdAndStatusIn(agentId, ACTIVE_STATUSES);
     }
 }

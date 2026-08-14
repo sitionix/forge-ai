@@ -1,7 +1,7 @@
 package com.sitionix.forgeagent.domain.port;
 
 import com.sitionix.forgeagent.domain.model.ProjectTask;
-import java.util.List;
+import com.sitionix.forgeagent.domain.model.ProjectTaskPage;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -11,5 +11,9 @@ public interface ProjectTaskRepository {
 
     Optional<ProjectTask> findById(UUID taskId);
 
-    List<ProjectTask> findByProjectId(UUID projectId);
+    ProjectTaskPage findPageByProjectId(UUID projectId, int page, int size);
+
+    boolean existsByWorkflowId(UUID workflowId);
+
+    void deleteById(UUID taskId);
 }

@@ -10,6 +10,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
@@ -93,6 +94,16 @@ public class AgentProxyApiMapper {
                 task.executionStatus(),
                 task.createdAt(),
                 task.updatedAt()
+        );
+    }
+
+    public AgentProjectTaskPageResponse toResponse(final AgentProjectTaskPage page) {
+        return new AgentProjectTaskPageResponse(
+                page.items().stream().map(this::toResponse).toList(),
+                page.page(),
+                page.size(),
+                page.totalItems(),
+                page.totalPages()
         );
     }
 

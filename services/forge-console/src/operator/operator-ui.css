@@ -665,6 +665,17 @@ body.sidebar-collapsed .sidebar-link {
   justify-self: end;
 }
 
+.agents-v2-card-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.agents-v2-card-actions .button {
+  justify-self: auto;
+}
+
 .agents-v2-task-meta {
   display: flex;
   flex-wrap: wrap;
@@ -721,6 +732,60 @@ body.sidebar-collapsed .sidebar-link {
 .agents-v2-status-unknown {
   border-color: rgba(95, 83, 67, 0.28);
   color: #625647;
+}
+
+.agents-v2-task-table {
+  display: grid;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.agents-v2-task-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.7fr) minmax(120px, 1fr) minmax(96px, 0.7fr) minmax(140px, 0.9fr) minmax(108px, 0.7fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 46px;
+  padding: 9px 12px;
+  border-top: 1px solid rgba(27, 36, 31, 0.1);
+  font-size: 12px;
+}
+
+.agents-v2-task-row:first-child {
+  border-top: 0;
+}
+
+.agents-v2-task-row strong,
+.agents-v2-task-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-v2-task-row-head {
+  min-height: 36px;
+  background: rgba(27, 36, 31, 0.07);
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.agents-v2-task-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.agents-v2-pagination {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .agents-v2-builder {

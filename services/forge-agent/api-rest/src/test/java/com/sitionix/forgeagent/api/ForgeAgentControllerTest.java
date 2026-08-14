@@ -18,6 +18,7 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
@@ -47,6 +48,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
+import com.sitionix.forgeagent.domain.model.ProjectTaskSummaryPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
@@ -165,15 +167,17 @@ class ForgeAgentControllerTest {
     void listProjectTasks() {
         final ProjectTaskSummary task = new ProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, WorkflowRunStatus.QUEUED, NOW, NOW);
         final ProjectTaskSummaryResponse response = new ProjectTaskSummaryResponse(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, WorkflowRunStatus.QUEUED, NOW, NOW);
-        when(this.projectTaskUseCases.listProjectTasks(PROJECT_ID)).thenReturn(List.of(task));
-        when(this.mapper.toResponse(task)).thenReturn(response);
+        final ProjectTaskSummaryPage page = new ProjectTaskSummaryPage(List.of(task), 1, 10, 11, 2);
+        final ProjectTaskPageResponse pageResponse = new ProjectTaskPageResponse(List.of(response), 1, 10, 11, 2);
+        when(this.projectTaskUseCases.listProjectTasks(PROJECT_ID, 1, 10)).thenReturn(page);
+        when(this.mapper.toResponse(page)).thenReturn(pageResponse);
 
-        final var actual = this.controller.listProjectTasks(PROJECT_ID);
+        final var actual = this.controller.listProjectTasks(PROJECT_ID, 1, 10);
 
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(actual.getBody()).containsExactly(response);
-        verify(this.projectTaskUseCases).listProjectTasks(PROJECT_ID);
-        verify(this.mapper).toResponse(task);
+        assertThat(actual.getBody()).isSameAs(pageResponse);
+        verify(this.projectTaskUseCases).listProjectTasks(PROJECT_ID, 1, 10);
+        verify(this.mapper).toResponse(page);
     }
 
     @Test

@@ -21,6 +21,7 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
@@ -49,6 +50,7 @@ import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
+import com.sitionix.forgeagent.domain.model.ProjectTaskSummaryPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
@@ -188,6 +190,16 @@ class ForgeAgentApiMapper {
                 task.executionStatus(),
                 task.createdAt(),
                 task.updatedAt()
+        );
+    }
+
+    ProjectTaskPageResponse toResponse(final ProjectTaskSummaryPage page) {
+        return new ProjectTaskPageResponse(
+                page.items().stream().map(this::toResponse).toList(),
+                page.page(),
+                page.size(),
+                page.totalItems(),
+                page.totalPages()
         );
     }
 

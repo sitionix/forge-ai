@@ -11,6 +11,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
@@ -49,6 +50,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
@@ -114,6 +116,19 @@ public class ForgeAgentClientMapper {
                 response.executionStatus(),
                 response.createdAt(),
                 response.updatedAt()
+        );
+    }
+
+    AgentProjectTaskPage toDomain(final ProjectTaskPageResponse response) {
+        this.requireResponse(response, "project task page");
+        return new AgentProjectTaskPage(
+                this.requireList(response.items(), "taskPage.items").stream()
+                        .map(this::toDomain)
+                        .toList(),
+                response.page(),
+                response.size(),
+                response.totalItems(),
+                response.totalPages()
         );
     }
 

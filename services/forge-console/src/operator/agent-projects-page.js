@@ -29,6 +29,11 @@ export class AgentProjectsPage {
       agents: [],
       workflows: [],
       tasks: [],
+      tasksPage: 0,
+      tasksPageSize: 20,
+      tasksLoadedPage: null,
+      tasksTotalItems: 0,
+      tasksTotalPages: 0,
       selectedProjectId: null,
       agentsProjectId: null,
       workflowsProjectId: null,
@@ -49,6 +54,7 @@ export class AgentProjectsPage {
     this.taskPollInFlight = null;
     this.taskPollProjectId = null;
     this.taskPollLoadSequence = null;
+    this.taskPollPage = null;
     this.workspace = new ProjectWorkspace({
       document: this.document,
       onBack: () => this.showProjectsIndex(),
@@ -56,8 +62,12 @@ export class AgentProjectsPage {
       onEditAgent: (agentId) => this.openAgentModal(agentId),
       onNewWorkflow: () => this.openWorkflowModal(),
       onOpenWorkflow: (workflowId) => this.openWorkflowBuilder(workflowId),
+      onDeleteAgent: (agentId) => this.deleteAgent(agentId),
+      onDeleteWorkflow: (workflowId) => this.deleteWorkflow(workflowId),
       onNewTask: () => this.openTaskModal(),
-      onOpenTask: (taskId) => this.openTaskExecution(taskId)
+      onOpenTask: (taskId) => this.openTaskExecution(taskId),
+      onDeleteTask: (taskId) => this.deleteProjectTask(taskId),
+      onTaskPage: (page) => this.goToTaskPage(page)
     });
     this.taskExecutionView = new TaskExecutionView({
       document: this.document,
@@ -131,6 +141,7 @@ export class AgentProjectsPage {
     this.state.agents = [];
     this.state.workflows = [];
     this.state.tasks = [];
+    this.resetTaskPage();
     this.state.agentsProjectId = null;
     this.state.workflowsProjectId = null;
     this.state.tasksProjectId = null;
@@ -158,6 +169,7 @@ export class AgentProjectsPage {
     this.state.agents = [];
     this.state.workflows = [];
     this.state.tasks = [];
+    this.resetTaskPage();
     this.state.agentsProjectId = null;
     this.state.workflowsProjectId = null;
     this.state.tasksProjectId = null;
@@ -175,7 +187,7 @@ export class AgentProjectsPage {
     await Promise.all([
       this.loadAgents(projectId, loadSequence),
       this.loadWorkflows(projectId, loadSequence),
-      this.loadTasks(projectId, loadSequence),
+      this.loadTasks(projectId, loadSequence, { page: 0 }),
       this.loadRuntimeCatalog(projectId, loadSequence)
     ]);
     if (!this.disposed && this.isCurrentProjectLoad(projectId, loadSequence)) {
@@ -236,11 +248,13 @@ export class AgentProjectsPage {
     if (!projectId || this.disposed) {
       return [];
     }
+    const page = options.page ?? this.state.tasksPage;
     if (
       !options.force
       && this.taskPollInFlight
       && this.taskPollProjectId === projectId
       && this.taskPollLoadSequence === loadSequence
+      && this.taskPollPage === page
     ) {
       return this.taskPollInFlight;
     }
@@ -252,11 +266,13 @@ export class AgentProjectsPage {
     this.taskPollInFlight = request;
     this.taskPollProjectId = projectId;
     this.taskPollLoadSequence = loadSequence;
+    this.taskPollPage = page;
     request.finally(() => {
       if (this.taskPollInFlight === request) {
         this.taskPollInFlight = null;
         this.taskPollProjectId = null;
         this.taskPollLoadSequence = null;
+        this.taskPollPage = null;
         if (!this.disposed && this.isCurrentProjectLoad(projectId, loadSequence)) {
           this.syncTaskPolling();
         }
@@ -267,28 +283,36 @@ export class AgentProjectsPage {
 
   async fetchTasks(projectId, loadSequence, options = {}) {
     try {
-      const tasks = await this.api.listProjectTasks(projectId);
-      if (this.disposed || !this.isCurrentProjectLoad(projectId, loadSequence)) {
+      const page = options.page ?? this.state.tasksPage;
+      const tasksPage = await this.api.listProjectTasks(projectId, page, this.state.tasksPageSize);
+      if (this.disposed || !this.isCurrentTaskLoad(projectId, loadSequence, page)) {
         return [];
       }
-      this.state.tasks = tasks;
+      this.state.tasks = tasksPage.items || [];
       this.state.tasksProjectId = projectId;
+      this.state.tasksLoadedPage = page;
+      this.state.tasksTotalItems = Number(tasksPage.totalItems) || 0;
+      this.state.tasksTotalPages = Number(tasksPage.totalPages) || 0;
       this.state.tasksLoadFailed = false;
       this.showError('agentsV2TasksError', '');
       this.renderProjectWorkspace();
-      return tasks;
+      return this.state.tasks;
     } catch (error) {
-      if (this.disposed || !this.isCurrentProjectLoad(projectId, loadSequence)) {
+      const page = options.page ?? this.state.tasksPage;
+      if (this.disposed || !this.isCurrentTaskLoad(projectId, loadSequence, page)) {
         return [];
       }
       const currentTasks = Array.isArray(this.state.tasks) ? this.state.tasks : [];
-      if (options.background && this.state.tasksProjectId === projectId && currentTasks.length) {
+      if (options.background && this.state.tasksProjectId === projectId && this.state.tasksLoadedPage === page && currentTasks.length) {
         this.showError('agentsV2TasksError', error.message || 'Tasks refresh failed.');
         this.renderProjectWorkspace();
         return currentTasks;
       }
       this.state.tasks = [];
       this.state.tasksProjectId = projectId;
+      this.state.tasksLoadedPage = page;
+      this.state.tasksTotalItems = 0;
+      this.state.tasksTotalPages = 0;
       this.state.tasksLoadFailed = true;
       this.byId('agentsV2TasksList').innerHTML = '';
       this.showError('agentsV2TasksError', error.message || 'Tasks failed to load.');
@@ -308,11 +332,17 @@ export class AgentProjectsPage {
       <article class="agents-v2-card project-card">
         <h3>${escapeHtml(project.name)}</h3>
         <p>Project agent configuration</p>
-        <button class="button small secondary" type="button" data-project-id="${escapeHtml(project.id)}">Open project →</button>
+        <div class="agents-v2-card-actions">
+          <button class="button small secondary" type="button" data-project-id="${escapeHtml(project.id)}">Open project →</button>
+          <button class="button small danger" type="button" data-delete-project-id="${escapeHtml(project.id)}">Delete</button>
+        </div>
       </article>
     `).join('');
     list.querySelectorAll('[data-project-id]').forEach((element) => {
       element.addEventListener('click', () => this.openProject(element.dataset.projectId));
+    });
+    list.querySelectorAll('[data-delete-project-id]').forEach((element) => {
+      element.addEventListener('click', () => this.deleteProject(element.dataset.deleteProjectId));
     });
   }
 
@@ -326,7 +356,8 @@ export class AgentProjectsPage {
       this.workflowsDataCurrent(),
       this.tasksDataCurrent(),
       this.state.tasksLoadFailed,
-      this.state.runtime
+      this.state.runtime,
+      this.currentTaskPage()
     );
   }
 
@@ -496,16 +527,113 @@ export class AgentProjectsPage {
     try {
       await this.api.createProjectTask(this.state.selectedProjectId, { title, input, workflowId });
       this.closeDialog('agentsV2TaskDialog');
+      this.state.tasksPage = 0;
       if (this.taskPollInFlight) {
         await this.taskPollInFlight;
       }
-      await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { force: true });
+      await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { force: true, page: 0 });
     } catch (error) {
       this.showError('agentsV2TaskModalError', error.message || 'Task could not be created.');
     } finally {
       this.state.saving = false;
       this.byId('agentsV2TaskCreateSave').disabled = false;
     }
+  }
+
+  async deleteProject(projectId) {
+    const project = this.state.projects.find((candidate) => candidate.id === projectId);
+    const name = project?.name || 'Project';
+    if (!this.window.confirm(`Delete project "${name}"?\nIts agents, workflows, tasks and execution history will be deleted.`)) {
+      return;
+    }
+    this.showError('agentsV2ProjectsError', '');
+    try {
+      await this.api.deleteProject(projectId);
+      if (this.state.selectedProjectId === projectId) {
+        this.showProjectsIndex({ preserveProjects: true });
+      }
+      await this.loadProjects();
+    } catch (error) {
+      this.showError('agentsV2ProjectsError', error.message || 'Project could not be deleted.');
+    }
+  }
+
+  async deleteAgent(agentId) {
+    const agent = this.state.agents.find((candidate) => candidate.id === agentId);
+    const name = agent?.name || 'Agent';
+    if (!this.window.confirm(`Delete agent "${name}"?`)) {
+      return;
+    }
+    this.showError('agentsV2AgentsError', '');
+    try {
+      await this.api.deleteAgent(agentId);
+      if (this.state.editingAgentId === agentId) {
+        this.closeDialog('agentsV2AgentDialog');
+        this.state.editingAgentId = null;
+      }
+      await this.loadAgents();
+    } catch (error) {
+      this.showError('agentsV2AgentsError', error.message || 'Agent could not be deleted.');
+    }
+  }
+
+  async deleteWorkflow(workflowId) {
+    const workflow = this.state.workflows.find((candidate) => candidate.id === workflowId);
+    const name = workflow?.name || 'Workflow';
+    if (!this.window.confirm(`Delete workflow "${name}"?`)) {
+      return;
+    }
+    this.showError('agentsV2WorkflowsError', '');
+    try {
+      await this.api.deleteWorkflow(workflowId);
+      if (this.state.openWorkflowId === workflowId) {
+        this.closeWorkflowBuilder();
+      }
+      await this.loadWorkflows();
+      await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { force: true, page: this.state.tasksPage });
+    } catch (error) {
+      this.showError('agentsV2WorkflowsError', error.message || 'Workflow could not be deleted.');
+    }
+  }
+
+  async deleteProjectTask(taskId) {
+    const task = this.state.tasks.find((candidate) => candidate.id === taskId);
+    const title = task?.title || 'Task';
+    if (!this.window.confirm(`Delete task "${title}"?`)) {
+      return;
+    }
+    const projectId = this.state.selectedProjectId;
+    const loadSequence = this.projectLoadSequence;
+    const page = this.state.tasksPage;
+    this.showError('agentsV2TasksError', '');
+    try {
+      await this.api.deleteProjectTask(taskId);
+      if (this.taskPollInFlight && this.taskPollProjectId === projectId && this.taskPollLoadSequence === loadSequence && this.taskPollPage === page) {
+        await this.taskPollInFlight;
+      }
+      const currentPageItems = await this.loadTasks(projectId, loadSequence, { force: true, page });
+      if (!this.disposed && this.state.view === 'project' && this.isCurrentTaskLoad(projectId, loadSequence, page)
+          && page > 0 && currentPageItems.length === 0) {
+        this.state.tasksPage = page - 1;
+        await this.loadTasks(projectId, loadSequence, { force: true, page: this.state.tasksPage });
+      }
+    } catch (error) {
+      this.showError('agentsV2TasksError', error.message || 'Task could not be deleted.');
+      this.renderProjectWorkspace();
+    }
+  }
+
+  async goToTaskPage(page) {
+    if (!this.state.selectedProjectId || this.disposed) {
+      return;
+    }
+    const totalPages = Number(this.state.tasksTotalPages) || 0;
+    if (page < 0 || (totalPages > 0 && page >= totalPages) || page === this.state.tasksPage) {
+      return;
+    }
+    this.state.tasksPage = page;
+    this.renderProjectWorkspace();
+    await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { force: true, page });
   }
 
   async openWorkflowBuilder(workflowId) {
@@ -577,7 +705,10 @@ export class AgentProjectsPage {
   async closeTaskExecution() {
     const projectId = this.state.selectedProjectId;
     const loadSequence = this.projectLoadSequence;
-    const inFlightTasks = this.taskPollProjectId === projectId && this.taskPollLoadSequence === loadSequence
+    const page = this.state.tasksPage;
+    const inFlightTasks = this.taskPollProjectId === projectId
+      && this.taskPollLoadSequence === loadSequence
+      && this.taskPollPage === page
       ? this.taskPollInFlight
       : null;
     this.taskExecutionView.close();
@@ -595,7 +726,7 @@ export class AgentProjectsPage {
       return;
     }
     if (projectId) {
-      await this.loadTasks(projectId, loadSequence, { force: true });
+      await this.loadTasks(projectId, loadSequence, { force: true, page });
     } else {
       this.syncTaskPolling();
     }
@@ -624,7 +755,7 @@ export class AgentProjectsPage {
       this.syncTaskPolling();
       return;
     }
-    await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { background: true });
+    await this.loadTasks(this.state.selectedProjectId, this.projectLoadSequence, { background: true, page: this.state.tasksPage });
   }
 
   stopTaskPolling() {
@@ -916,7 +1047,8 @@ export class AgentProjectsPage {
 
   tasksDataCurrent() {
     return Boolean(this.state.selectedProjectId)
-      && this.state.tasksProjectId === this.state.selectedProjectId;
+      && this.state.tasksProjectId === this.state.selectedProjectId
+      && this.state.tasksLoadedPage === this.state.tasksPage;
   }
 
   canCreateTask() {
@@ -928,6 +1060,26 @@ export class AgentProjectsPage {
 
   isCurrentProjectLoad(projectId, loadSequence) {
     return this.state.selectedProjectId === projectId && this.projectLoadSequence === loadSequence;
+  }
+
+  isCurrentTaskLoad(projectId, loadSequence, page) {
+    return this.isCurrentProjectLoad(projectId, loadSequence) && this.state.tasksPage === page;
+  }
+
+  resetTaskPage() {
+    this.state.tasksPage = 0;
+    this.state.tasksLoadedPage = null;
+    this.state.tasksTotalItems = 0;
+    this.state.tasksTotalPages = 0;
+  }
+
+  currentTaskPage() {
+    return {
+      page: this.state.tasksLoadedPage ?? this.state.tasksPage,
+      size: this.state.tasksPageSize,
+      totalItems: this.state.tasksTotalItems,
+      totalPages: this.state.tasksTotalPages
+    };
   }
 
   currentProject() {
@@ -979,6 +1131,11 @@ export class AgentProjectsPage {
       openTaskExecution: (taskId) => this.openTaskExecution(taskId),
       closeTaskExecution: () => this.closeTaskExecution(),
       loadTasks: () => this.loadTasks(),
+      goToTaskPage: (page) => this.goToTaskPage(page),
+      deleteProject: (projectId) => this.deleteProject(projectId),
+      deleteAgent: (agentId) => this.deleteAgent(agentId),
+      deleteWorkflow: (workflowId) => this.deleteWorkflow(workflowId),
+      deleteProjectTask: (taskId) => this.deleteProjectTask(taskId),
       openWorkflowBuilder: (workflowId) => this.openWorkflowBuilder(workflowId),
       addNode: (agentId) => this.workflowBuilder.addNode(agentId),
       removeConnection: (sourceNodeId, targetNodeId) => this.workflowBuilder.removeConnection(sourceNodeId, targetNodeId),

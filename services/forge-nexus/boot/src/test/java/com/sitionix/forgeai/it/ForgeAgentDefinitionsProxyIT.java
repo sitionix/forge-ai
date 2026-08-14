@@ -104,6 +104,21 @@ class ForgeAgentDefinitionsProxyIT extends AbstractForgeAiIT {
         mapping.verify();
     }
 
+    @Test
+    void givenAgentId_whenDeleteAgent_thenDeletePathIsForwarded() {
+        final var mapping = this.testManager.wiremock()
+                .createMapping(ForgeAgentProxyWireMockEndpoint.deleteAgent())
+                .pathPattern(agentWireMockPathParams())
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(ForgeAgentProxyMockMvcEndpoint.deleteAgent())
+                .withPathParameters(agentMockMvcPathParams())
+                .assertDefault();
+
+        mapping.verify();
+    }
+
     private static PathParams projectMockMvcPathParams() {
         return PathParams.create().add("projectId", PROJECT_ID);
     }

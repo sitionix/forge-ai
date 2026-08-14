@@ -6,6 +6,7 @@ import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.AgentDefinitionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataAgentDefinitionRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowNodeRepository;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Repository;
 public class PostgresAgentDefinitionRepository implements AgentDefinitionRepository {
 
     private final SpringDataAgentDefinitionRepository repository;
+    private final SpringDataWorkflowNodeRepository workflowNodeRepository;
 
     @Override
     public Optional<AgentDefinition> findById(final UUID agentId) {
@@ -54,6 +56,16 @@ public class PostgresAgentDefinitionRepository implements AgentDefinitionReposit
     @Override
     public AgentDefinition save(final AgentDefinition agentDefinition) {
         return this.toDomain(this.repository.save(this.toEntity(agentDefinition)));
+    }
+
+    @Override
+    public boolean existsWorkflowNodeByAgentId(final UUID agentId) {
+        return this.workflowNodeRepository.existsByTargetId(agentId);
+    }
+
+    @Override
+    public void deleteById(final UUID agentId) {
+        this.repository.deleteById(agentId);
     }
 
     private AgentDefinition toDomain(final AgentDefinitionEntity entity) {
