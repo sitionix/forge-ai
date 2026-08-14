@@ -19,4 +19,8 @@ public interface AgentDefinitionRepository {
     boolean existsByProjectIdAndNormalizedNameExcludingId(UUID projectId, String normalizedName, UUID excludedAgentId);
 
     AgentDefinition save(AgentDefinition agentDefinition);
+
+    boolean existsWorkflowNodeByAgentId(UUID agentId);
+
+    void deleteById(UUID agentId);
 }

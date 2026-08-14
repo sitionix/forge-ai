@@ -10,6 +10,7 @@ import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
+import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -28,11 +29,14 @@ class ProjectUseCasesTest {
     @Mock
     private ProjectRepository projectRepository;
 
+    @Mock
+    private WorkflowRunRepository workflowRunRepository;
+
     private ProjectUseCases useCases;
 
     @BeforeEach
     void setUp() {
-        this.useCases = new ProjectUseCases(this.projectRepository, CLOCK);
+        this.useCases = new ProjectUseCases(this.projectRepository, this.workflowRunRepository, CLOCK);
     }
 
     @Test

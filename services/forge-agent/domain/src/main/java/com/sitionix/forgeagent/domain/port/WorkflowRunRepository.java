@@ -19,4 +19,10 @@ public interface WorkflowRunRepository {
     List<WorkflowRunSummary> findSummariesByTaskId(UUID taskId);
 
     WorkflowRun saveLifecycle(WorkflowRun run);
+
+    boolean existsActiveByProjectId(UUID projectId);
+
+    boolean existsActiveByTaskId(UUID taskId);
+
+    boolean existsActiveBySourceWorkflowId(UUID workflowId);
 }

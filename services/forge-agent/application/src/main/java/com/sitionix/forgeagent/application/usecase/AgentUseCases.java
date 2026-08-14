@@ -13,6 +13,7 @@ import com.sitionix.forgeagent.domain.model.NameNormalizer;
 import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
 import com.sitionix.forgeagent.domain.port.CodexRuntimePort;
+import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import java.time.Clock;
 import java.time.Instant;
@@ -30,6 +31,7 @@ public class AgentUseCases {
 
     private final ProjectRepository projectRepository;
     private final AgentDefinitionRepository agentDefinitionRepository;
+    private final NodeRunRepository nodeRunRepository;
     private final CodexRuntimePort codexRuntimePort;
     private final Clock clock;
 
@@ -93,6 +95,17 @@ public class AgentUseCases {
                 Instant.now(this.clock)
         );
         return this.toDetails(this.agentDefinitionRepository.save(updated));
+    }
+
+    @Transactional
+    public void deleteAgent(final UUID agentId) {
+        this.agentDefinitionRepository.findById(agentId)
+                .orElseThrow(() -> new NotFoundException("AGENT_NOT_FOUND", "Agent was not found."));
+        if (this.agentDefinitionRepository.existsWorkflowNodeByAgentId(agentId)
+                || this.nodeRunRepository.existsActiveBySourceAgentId(agentId)) {
+            throw new ConflictException("AGENT_IN_USE", "Agent is used by a workflow.");
+        }
+        this.agentDefinitionRepository.deleteById(agentId);
     }
 
     private void requireProject(final UUID projectId) {

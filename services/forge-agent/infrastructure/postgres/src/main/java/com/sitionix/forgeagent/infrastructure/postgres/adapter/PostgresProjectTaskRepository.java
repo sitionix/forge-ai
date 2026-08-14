@@ -1,13 +1,16 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.ProjectTask;
+import com.sitionix.forgeagent.domain.model.ProjectTaskPage;
 import com.sitionix.forgeagent.domain.port.ProjectTaskRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataProjectTaskRepository;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -27,10 +30,28 @@ public class PostgresProjectTaskRepository implements ProjectTaskRepository {
     }
 
     @Override
-    public List<ProjectTask> findByProjectId(final UUID projectId) {
-        return this.taskRepository.findByProjectIdOrderByCreatedAtDescIdDesc(projectId).stream()
-                .map(this::toDomain)
-                .toList();
+    public ProjectTaskPage findPageByProjectId(final UUID projectId, final int page, final int size) {
+        final Page<ProjectTaskEntity> result = this.taskRepository.findByProjectId(
+                projectId,
+                PageRequest.of(page, size, Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")))
+        );
+        return new ProjectTaskPage(
+                result.getContent().stream().map(this::toDomain).toList(),
+                page,
+                size,
+                result.getTotalElements(),
+                result.getTotalPages()
+        );
+    }
+
+    @Override
+    public boolean existsByWorkflowId(final UUID workflowId) {
+        return this.taskRepository.existsByWorkflowId(workflowId);
+    }
+
+    @Override
+    public void deleteById(final UUID taskId) {
+        this.taskRepository.deleteById(taskId);
     }
 
     private ProjectTask toDomain(final ProjectTaskEntity entity) {

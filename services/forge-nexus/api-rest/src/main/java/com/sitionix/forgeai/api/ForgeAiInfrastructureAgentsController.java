@@ -5,8 +5,8 @@ import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskResponse;
-import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProxyApiMapper;
@@ -21,6 +21,10 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
+import com.sitionix.forgeai.domain.usecase.DeleteAgentDefinition;
+import com.sitionix.forgeai.domain.usecase.DeleteAgentProject;
+import com.sitionix.forgeai.domain.usecase.DeleteAgentProjectTask;
+import com.sitionix.forgeai.domain.usecase.DeleteAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.GetAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.GetAgentRuntime;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflow;
@@ -39,11 +43,13 @@ import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -52,18 +58,22 @@ public class ForgeAiInfrastructureAgentsController {
 
     private final ListAgentProjects listAgentProjects;
     private final CreateAgentProject createAgentProject;
+    private final DeleteAgentProject deleteAgentProject;
     private final CreateAgentProjectTask createAgentProjectTask;
     private final ListAgentProjectTasks listAgentProjectTasks;
     private final GetAgentProjectTask getAgentProjectTask;
+    private final DeleteAgentProjectTask deleteAgentProjectTask;
     private final GetAgentRuntime getAgentRuntime;
     private final ListProjectAgentDefinitions listProjectAgentDefinitions;
     private final CreateAgentDefinition createAgentDefinition;
     private final GetAgentDefinition getAgentDefinition;
     private final UpdateAgentDefinition updateAgentDefinition;
+    private final DeleteAgentDefinition deleteAgentDefinition;
     private final ListAgentWorkflows listAgentWorkflows;
     private final CreateAgentWorkflow createAgentWorkflow;
     private final GetAgentWorkflow getAgentWorkflow;
     private final UpdateAgentWorkflow updateAgentWorkflow;
+    private final DeleteAgentWorkflow deleteAgentWorkflow;
     private final CreateAgentWorkflowRun createAgentWorkflowRun;
     private final ListAgentWorkflowRuns listAgentWorkflowRuns;
     private final GetAgentWorkflowRun getAgentWorkflowRun;
@@ -82,6 +92,12 @@ public class ForgeAiInfrastructureAgentsController {
         return ResponseEntity.created(URI.create("/api/v1/infrastructure/agents/projects/" + response.id())).body(response);
     }
 
+    @DeleteMapping("/api/v1/infrastructure/agents/projects/{projectId}")
+    public ResponseEntity<Void> deleteProject(@PathVariable final UUID projectId) {
+        this.deleteAgentProject.execute(projectId);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/tasks")
     public ResponseEntity<AgentProjectTaskResponse> createProjectTask(@PathVariable final UUID projectId,
                                                                       @Valid @RequestBody final CreateAgentProjectTaskRequest request) {
@@ -92,15 +108,21 @@ public class ForgeAiInfrastructureAgentsController {
     }
 
     @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/tasks")
-    public ResponseEntity<List<AgentProjectTaskSummaryResponse>> listProjectTasks(@PathVariable final UUID projectId) {
-        return ResponseEntity.ok(this.listAgentProjectTasks.execute(projectId).stream()
-                .map(this.mapper::toResponse)
-                .toList());
+    public ResponseEntity<AgentProjectTaskPageResponse> listProjectTasks(@PathVariable final UUID projectId,
+                                                                         @RequestParam(defaultValue = "0") final int page,
+                                                                         @RequestParam(defaultValue = "20") final int size) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.listAgentProjectTasks.execute(projectId, page, size)));
     }
 
     @GetMapping("/api/v1/infrastructure/agents/tasks/{taskId}")
     public ResponseEntity<AgentProjectTaskResponse> getProjectTask(@PathVariable final UUID taskId) {
         return ResponseEntity.ok(this.mapper.toResponse(this.getAgentProjectTask.execute(taskId)));
+    }
+
+    @DeleteMapping("/api/v1/infrastructure/agents/tasks/{taskId}")
+    public ResponseEntity<Void> deleteProjectTask(@PathVariable final UUID taskId) {
+        this.deleteAgentProjectTask.execute(taskId);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/api/v1/infrastructure/agents/runtime")
@@ -129,6 +151,12 @@ public class ForgeAiInfrastructureAgentsController {
         return ResponseEntity.ok(this.mapper.toResponse(this.getAgentDefinition.execute(agentId)));
     }
 
+    @DeleteMapping("/api/v1/infrastructure/agents/definitions/{agentId}")
+    public ResponseEntity<Void> deleteAgent(@PathVariable final UUID agentId) {
+        this.deleteAgentDefinition.execute(agentId);
+        return ResponseEntity.noContent().build();
+    }
+
     @PutMapping("/api/v1/infrastructure/agents/definitions/{agentId}")
     public ResponseEntity<AgentDefinitionResponse> updateAgent(@PathVariable final UUID agentId,
                                                                @Valid @RequestBody final AgentDefinitionRequest request) {
@@ -154,6 +182,12 @@ public class ForgeAiInfrastructureAgentsController {
     @GetMapping("/api/v1/infrastructure/agents/workflows/{workflowId}")
     public ResponseEntity<AgentWorkflowResponse> getWorkflow(@PathVariable final UUID workflowId) {
         return ResponseEntity.ok(this.mapper.toResponse(this.getAgentWorkflow.execute(workflowId)));
+    }
+
+    @DeleteMapping("/api/v1/infrastructure/agents/workflows/{workflowId}")
+    public ResponseEntity<Void> deleteWorkflow(@PathVariable final UUID workflowId) {
+        this.deleteAgentWorkflow.execute(workflowId);
+        return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/api/v1/infrastructure/agents/workflows/{workflowId}")

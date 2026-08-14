@@ -9,8 +9,8 @@ import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.ForgeAgentErrorResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
-import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
@@ -27,14 +27,24 @@ public final class ForgeAgentMockMvcEndpoint {
             Endpoint.createContract("/api/v1/projects", HttpMethod.POST, CreateProjectRequest.class, ProjectResponse.class);
     public static final Endpoint<CreateProjectRequest, ForgeAgentErrorResponse> CREATE_PROJECT_ERROR =
             Endpoint.createContract("/api/v1/projects", HttpMethod.POST, CreateProjectRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, Void> DELETE_PROJECT =
+            Endpoint.createContract("/api/v1/projects/{projectId}", HttpMethod.DELETE, Void.class, Void.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> DELETE_PROJECT_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}", HttpMethod.DELETE, Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<CreateProjectTaskRequest, ProjectTaskResponse> CREATE_PROJECT_TASK =
             Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.POST, CreateProjectTaskRequest.class, ProjectTaskResponse.class);
     public static final Endpoint<CreateProjectTaskRequest, ForgeAgentErrorResponse> CREATE_PROJECT_TASK_ERROR =
             Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.POST, CreateProjectTaskRequest.class, ForgeAgentErrorResponse.class);
-    public static final Endpoint<Void, ProjectTaskSummaryResponse[]> LIST_PROJECT_TASKS =
-            Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.GET, Void.class, ProjectTaskSummaryResponse[].class);
+    public static final Endpoint<Void, ProjectTaskPageResponse> LIST_PROJECT_TASKS =
+            Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.GET, Void.class, ProjectTaskPageResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> LIST_PROJECT_TASKS_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, ProjectTaskResponse> GET_PROJECT_TASK =
             Endpoint.createContract("/api/v1/tasks/{taskId}", HttpMethod.GET, Void.class, ProjectTaskResponse.class);
+    public static final Endpoint<Void, Void> DELETE_PROJECT_TASK =
+            Endpoint.createContract("/api/v1/tasks/{taskId}", HttpMethod.DELETE, Void.class, Void.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> DELETE_PROJECT_TASK_ERROR =
+            Endpoint.createContract("/api/v1/tasks/{taskId}", HttpMethod.DELETE, Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, AiRuntimeResponse> GET_RUNTIME =
             Endpoint.createContract("/api/v1/runtime", HttpMethod.GET, Void.class, AiRuntimeResponse.class);
     public static final Endpoint<Void, AgentListResponse[]> LIST_PROJECT_AGENTS =
@@ -47,6 +57,10 @@ public final class ForgeAgentMockMvcEndpoint {
             Endpoint.createContract("/api/v1/projects/{projectId}/agents", HttpMethod.POST, SaveAgentRequest.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, AgentResponse> GET_AGENT =
             Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.GET, Void.class, AgentResponse.class);
+    public static final Endpoint<Void, Void> DELETE_AGENT =
+            Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.DELETE, Void.class, Void.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> DELETE_AGENT_ERROR =
+            Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.DELETE, Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, ForgeAgentErrorResponse> GET_AGENT_ERROR =
             Endpoint.createContract("/api/v1/agents/{agentId}", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<SaveAgentRequest, AgentResponse> UPDATE_AGENT =
@@ -63,6 +77,10 @@ public final class ForgeAgentMockMvcEndpoint {
             Endpoint.createContract("/api/v1/projects/{projectId}/workflows", HttpMethod.POST, CreateWorkflowRequest.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, WorkflowResponse> GET_WORKFLOW =
             Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.GET, Void.class, WorkflowResponse.class);
+    public static final Endpoint<Void, Void> DELETE_WORKFLOW =
+            Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.DELETE, Void.class, Void.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> DELETE_WORKFLOW_ERROR =
+            Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.DELETE, Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, ForgeAgentErrorResponse> GET_WORKFLOW_ERROR =
             Endpoint.createContract("/api/v1/workflows/{workflowId}", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<SaveWorkflowRequest, WorkflowResponse> UPDATE_WORKFLOW =

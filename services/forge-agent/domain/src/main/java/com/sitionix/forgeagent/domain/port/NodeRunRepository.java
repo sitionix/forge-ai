@@ -21,4 +21,6 @@ public interface NodeRunRepository {
     List<NodeRun> findByWorkflowRunId(UUID workflowRunId);
 
     NodeRun save(NodeRun nodeRun);
+
+    boolean existsActiveBySourceAgentId(UUID agentId);
 }

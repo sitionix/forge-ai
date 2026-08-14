@@ -14,6 +14,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
@@ -45,6 +46,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
@@ -93,6 +95,25 @@ class ForgeAgentClientMapperTest {
                 CREATED,
                 UPDATED
         ));
+
+        assertThat(this.mapper.toDomain(new ProjectTaskPageResponse(List.of(summaryResponse), 2, 10, 21, 3)))
+                .isEqualTo(new AgentProjectTaskPage(
+                        List.of(new AgentProjectTaskSummary(
+                                TASK_ID,
+                                PROJECT_ID,
+                                "Check calculation",
+                                WORKFLOW_ID,
+                                "Full Testing",
+                                RUN_ID,
+                                AgentWorkflowRunStatus.QUEUED,
+                                CREATED,
+                                UPDATED
+                        )),
+                        2,
+                        10,
+                        21,
+                        3
+                ));
 
         final var run = new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null);
         final var taskResponse = new ProjectTaskResponse(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(run), CREATED, UPDATED);

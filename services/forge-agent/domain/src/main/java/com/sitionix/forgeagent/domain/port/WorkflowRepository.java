@@ -18,4 +18,6 @@ public interface WorkflowRepository {
     boolean existsByProjectIdAndNormalizedNameExcludingId(UUID projectId, String normalizedName, UUID excludedWorkflowId);
 
     Workflow save(Workflow workflow);
+
+    void deleteById(UUID workflowId);
 }

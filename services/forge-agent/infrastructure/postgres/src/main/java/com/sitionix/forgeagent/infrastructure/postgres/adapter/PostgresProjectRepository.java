@@ -38,6 +38,11 @@ public class PostgresProjectRepository implements ProjectRepository {
         return this.toDomain(this.repository.save(this.toEntity(project)));
     }
 
+    @Override
+    public void deleteById(final UUID projectId) {
+        this.repository.deleteById(projectId);
+    }
+
     private Project toDomain(final ProjectEntity entity) {
         return new Project(entity.getId(), entity.getName(), entity.getNormalizedName(), entity.getCreatedAt(), entity.getUpdatedAt());
     }

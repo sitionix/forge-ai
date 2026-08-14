@@ -11,4 +11,6 @@ public interface SpringDataWorkflowNodeRepository extends JpaRepository<Workflow
     List<WorkflowNodeEntity> findByWorkflowIdOrderByIdAsc(UUID workflowId);
 
     List<WorkflowNodeEntity> findByWorkflowId(UUID workflowId);
+
+    boolean existsByTargetId(UUID targetId);
 }

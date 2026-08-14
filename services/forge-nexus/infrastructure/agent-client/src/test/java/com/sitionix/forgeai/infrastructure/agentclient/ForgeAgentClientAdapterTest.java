@@ -11,6 +11,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
@@ -37,6 +38,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
@@ -117,6 +119,14 @@ class ForgeAgentClientAdapterTest {
     }
 
     @Test
+    void deleteProjectExecutesTypedClientCall() {
+        this.adapter.deleteProject(PROJECT_ID);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).deleteProject(PROJECT_ID);
+    }
+
+    @Test
     void createProjectTaskMapsRequestExecutesTypedClientCallAndMapsResponse() {
         final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID);
         final var request = new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID);
@@ -136,17 +146,17 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void listProjectTasksExecutesTypedClientCallAndMapsResponse() {
-        final var upstreamResponse = new ProjectTaskSummaryResponse(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, CREATED, UPDATED);
+        final var summaryResponse = new ProjectTaskSummaryResponse(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, CREATED, UPDATED);
+        final var upstreamResponse = new ProjectTaskPageResponse(List.of(summaryResponse), 2, 10, 21, 3);
         final var expected = new AgentProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, CREATED, UPDATED);
-        when(this.httpClient.listProjectTasks(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
-        when(this.mapper.requireList(List.of(upstreamResponse), "project tasks")).thenReturn(List.of(upstreamResponse));
-        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+        final var expectedPage = new AgentProjectTaskPage(List.of(expected), 2, 10, 21, 3);
+        when(this.httpClient.listProjectTasks(PROJECT_ID, 2, 10)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expectedPage);
 
-        assertThat(this.adapter.listProjectTasks(PROJECT_ID)).containsExactly(expected);
+        assertThat(this.adapter.listProjectTasks(PROJECT_ID, 2, 10)).isEqualTo(expectedPage);
 
         verify(this.executor).execute(any());
-        verify(this.httpClient).listProjectTasks(PROJECT_ID);
-        verify(this.mapper).requireList(List.of(upstreamResponse), "project tasks");
+        verify(this.httpClient).listProjectTasks(PROJECT_ID, 2, 10);
         verify(this.mapper).toDomain(upstreamResponse);
     }
 
@@ -162,6 +172,14 @@ class ForgeAgentClientAdapterTest {
         verify(this.executor).execute(any());
         verify(this.httpClient).getProjectTask(TASK_ID);
         verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void deleteProjectTaskExecutesTypedClientCall() {
+        this.adapter.deleteProjectTask(TASK_ID);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).deleteProjectTask(TASK_ID);
     }
 
     @Test
@@ -246,6 +264,14 @@ class ForgeAgentClientAdapterTest {
     }
 
     @Test
+    void deleteAgentExecutesTypedClientCall() {
+        this.adapter.deleteAgent(AGENT_ID);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).deleteAgent(AGENT_ID);
+    }
+
+    @Test
     void listProjectWorkflowsExecutesTypedClientCallAndMapsResponse() {
         final var upstreamResponse = new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
         final var expected = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), CREATED, UPDATED);
@@ -309,6 +335,14 @@ class ForgeAgentClientAdapterTest {
         verify(this.executor).execute(any());
         verify(this.httpClient).updateWorkflow(WORKFLOW_ID, request);
         verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void deleteWorkflowExecutesTypedClientCall() {
+        this.adapter.deleteWorkflow(WORKFLOW_ID);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).deleteWorkflow(WORKFLOW_ID);
     }
 
     @Test

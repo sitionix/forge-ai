@@ -4,6 +4,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
@@ -49,21 +50,35 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     }
 
     @Override
+    public void deleteProject(final UUID projectId) {
+        this.clientCallExecutor.execute(() -> {
+            this.httpClient.deleteProject(projectId);
+            return null;
+        });
+    }
+
+    @Override
     public AgentProjectTask createProjectTask(final UUID projectId, final CreateAgentProjectTaskCommand command) {
         final CreateProjectTaskRequest request = this.mapper.toRequest(command);
         return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.createProjectTask(projectId, request)));
     }
 
     @Override
-    public List<AgentProjectTaskSummary> listProjectTasks(final UUID projectId) {
-        return this.mapper.requireList(this.clientCallExecutor.execute(() -> this.httpClient.listProjectTasks(projectId)), "project tasks").stream()
-                .map(this.mapper::toDomain)
-                .toList();
+    public AgentProjectTaskPage listProjectTasks(final UUID projectId, final int page, final int size) {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.listProjectTasks(projectId, page, size)));
     }
 
     @Override
     public AgentProjectTask getProjectTask(final UUID taskId) {
         return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.getProjectTask(taskId)));
+    }
+
+    @Override
+    public void deleteProjectTask(final UUID taskId) {
+        this.clientCallExecutor.execute(() -> {
+            this.httpClient.deleteProjectTask(taskId);
+            return null;
+        });
     }
 
     @Override
@@ -96,6 +111,14 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     }
 
     @Override
+    public void deleteAgent(final UUID agentId) {
+        this.clientCallExecutor.execute(() -> {
+            this.httpClient.deleteAgent(agentId);
+            return null;
+        });
+    }
+
+    @Override
     public List<AgentWorkflow> listProjectWorkflows(final UUID projectId) {
         return this.mapper.requireList(this.clientCallExecutor.execute(() -> this.httpClient.listProjectWorkflows(projectId)), "workflows").stream()
                 .map(this.mapper::toDomain)
@@ -117,6 +140,14 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     public AgentWorkflow updateWorkflow(final UUID workflowId, final SaveAgentWorkflowCommand command) {
         final SaveAgentWorkflowRequest request = this.mapper.toRequest(command);
         return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.updateWorkflow(workflowId, request)));
+    }
+
+    @Override
+    public void deleteWorkflow(final UUID workflowId) {
+        this.clientCallExecutor.execute(() -> {
+            this.httpClient.deleteWorkflow(workflowId);
+            return null;
+        });
     }
 
     @Override

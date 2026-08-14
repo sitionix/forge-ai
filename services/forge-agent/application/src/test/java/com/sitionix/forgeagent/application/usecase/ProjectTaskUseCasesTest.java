@@ -13,6 +13,7 @@ import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectTask;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
+import com.sitionix.forgeagent.domain.model.ProjectTaskPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
@@ -187,10 +188,10 @@ class ProjectTaskUseCasesTest {
         final WorkflowRunSummary older = this.summary(UUID.fromString("44444444-4444-4444-8444-444444444441"), TASK_ID, Instant.parse("2026-08-10T12:00:00Z"), WorkflowRunStatus.FAILED);
         final WorkflowRunSummary latest = this.summary(UUID.fromString("44444444-4444-4444-8444-444444444442"), TASK_ID, Instant.parse("2026-08-10T12:01:00Z"), WorkflowRunStatus.QUEUED);
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project(PROJECT_ID)));
-        when(this.projectTaskRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(task));
+        when(this.projectTaskRepository.findPageByProjectId(PROJECT_ID, 0, 20)).thenReturn(new ProjectTaskPage(List.of(task), 0, 20, 1, 1));
         when(this.workflowRunRepository.findSummariesByTaskId(TASK_ID)).thenReturn(List.of(latest, older));
 
-        final List<ProjectTaskSummary> summaries = this.useCases.listProjectTasks(PROJECT_ID);
+        final List<ProjectTaskSummary> summaries = this.useCases.listProjectTasks(PROJECT_ID, 0, 20).items();
 
         assertThat(summaries).singleElement().satisfies(summary -> {
             assertThat(summary.latestWorkflowRunId()).isEqualTo(latest.id());

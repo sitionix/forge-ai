@@ -9,7 +9,9 @@ import com.sitionix.forgeai.it.infra.ForgeAgentProxyWireMockEndpoint;
 import com.sitionix.forgeai.it.infra.ProxyTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
+import com.sitionix.forgeit.mockmvc.api.QueryParams;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
+import com.sitionix.forgeit.wiremock.api.WireMockQueryParams;
 import com.sitionix.forgeit.wiremock.api.WireMockPathParams;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
@@ -75,15 +77,17 @@ class ForgeAgentProjectTasksProxyIT extends AbstractForgeAiIT {
     }
 
     @Test
-    void givenProjectId_whenListTasks_thenPathIsForwarded() {
+    void givenProjectId_whenListTasks_thenPathAndPaginationAreForwarded() {
         final var mapping = this.testManager.wiremock()
                 .createMapping(ForgeAgentProxyWireMockEndpoint.listProjectTasks())
                 .pathPattern(projectWireMockPathParams())
+                .urlWithQueryParam(taskPageWireMockQueryParams())
                 .createDefault();
 
         this.testManager.mockMvc()
                 .ping(ForgeAgentProxyMockMvcEndpoint.listProjectTasks())
                 .withPathParameters(projectMockMvcPathParams())
+                .withQueryParameters(taskPageMockMvcQueryParams())
                 .assertDefault();
 
         mapping.verify();
@@ -104,6 +108,21 @@ class ForgeAgentProjectTasksProxyIT extends AbstractForgeAiIT {
         mapping.verify();
     }
 
+    @Test
+    void givenTaskId_whenDeleteTask_thenDeletePathIsForwarded() {
+        final var mapping = this.testManager.wiremock()
+                .createMapping(ForgeAgentProxyWireMockEndpoint.deleteProjectTask())
+                .pathPattern(taskWireMockPathParams())
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(ForgeAgentProxyMockMvcEndpoint.deleteProjectTask())
+                .withPathParameters(taskMockMvcPathParams())
+                .assertDefault();
+
+        mapping.verify();
+    }
+
     private static PathParams projectMockMvcPathParams() {
         return PathParams.create().add("projectId", PROJECT_ID);
     }
@@ -118,6 +137,18 @@ class ForgeAgentProjectTasksProxyIT extends AbstractForgeAiIT {
 
     private static WireMockPathParams taskWireMockPathParams() {
         return WireMockPathParams.create().add("taskId", equalTo(TASK_ID.toString()));
+    }
+
+    private static QueryParams taskPageMockMvcQueryParams() {
+        return QueryParams.create()
+                .add("page", "2")
+                .add("size", "10");
+    }
+
+    private static WireMockQueryParams taskPageWireMockQueryParams() {
+        return WireMockQueryParams.create()
+                .add("page", equalTo("2"))
+                .add("size", equalTo("10"));
     }
 
     private void assertNoMatchingUpstreamRequest(final Endpoint<?, ?> endpoint) {

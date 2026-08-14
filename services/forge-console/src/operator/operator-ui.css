@@ -588,6 +588,7 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .agents-v2-card {
+  position: relative;
   display: grid;
   grid-template-rows: auto 1fr auto auto;
   min-height: 150px;
@@ -599,6 +600,7 @@ body.sidebar-collapsed .sidebar-link {
 
 .agents-v2-card h3 {
   margin: 0;
+  padding-right: 28px;
   overflow-wrap: anywhere;
   font-size: 16px;
 }
@@ -665,6 +667,56 @@ body.sidebar-collapsed .sidebar-link {
   justify-self: end;
 }
 
+.agents-v2-card-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.agents-v2-card-actions .button {
+  justify-self: auto;
+}
+
+.entity-delete-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(27, 36, 31, 0.46);
+  cursor: pointer;
+  font: 800 18px/1 var(--mono);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.entity-delete-control:hover,
+.entity-delete-control:focus-visible {
+  background: rgba(201, 61, 61, 0.09);
+  color: #b12f2f;
+  outline: none;
+}
+
+.agents-v2-deletable .entity-delete-control {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.agents-v2-deletable:hover .entity-delete-control,
+.agents-v2-deletable:focus-within .entity-delete-control,
+.agents-v2-task-row:hover .entity-delete-control,
+.agents-v2-task-row:focus-within .entity-delete-control {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .agents-v2-task-meta {
   display: flex;
   flex-wrap: wrap;
@@ -721,6 +773,74 @@ body.sidebar-collapsed .sidebar-link {
 .agents-v2-status-unknown {
   border-color: rgba(95, 83, 67, 0.28);
   color: #625647;
+}
+
+.agents-v2-task-list {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.agents-v2-task-table {
+  display: grid;
+  width: 100%;
+  min-width: 720px;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.agents-v2-task-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(140px, 220px) minmax(92px, 116px) minmax(150px, 180px) minmax(84px, 96px);
+  gap: 12px;
+  align-items: center;
+  min-height: 46px;
+  padding: 9px 12px;
+  border-top: 1px solid rgba(27, 36, 31, 0.1);
+  font-size: 12px;
+}
+
+.agents-v2-task-row:first-child {
+  border-top: 0;
+}
+
+.agents-v2-task-row strong,
+.agents-v2-task-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-v2-task-row-head {
+  min-height: 36px;
+  background: rgba(27, 36, 31, 0.07);
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.agents-v2-task-actions {
+  display: grid;
+  grid-template-columns: auto 24px;
+  gap: 6px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.agents-v2-task-actions .entity-delete-control {
+  justify-self: end;
+}
+
+.agents-v2-pagination {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .agents-v2-builder {

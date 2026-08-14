@@ -18,7 +18,9 @@ import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
+import com.sitionix.forgeagent.domain.port.ProjectTaskRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRepository;
+import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -53,6 +55,12 @@ class WorkflowUseCasesTest {
     @Mock
     private WorkflowRepository workflowRepository;
 
+    @Mock
+    private ProjectTaskRepository projectTaskRepository;
+
+    @Mock
+    private WorkflowRunRepository workflowRunRepository;
+
     private WorkflowUseCases useCases;
 
     @BeforeEach
@@ -61,6 +69,8 @@ class WorkflowUseCasesTest {
                 this.projectRepository,
                 this.agentDefinitionRepository,
                 this.workflowRepository,
+                this.projectTaskRepository,
+                this.workflowRunRepository,
                 new NodeGraphValidator(),
                 CLOCK
         );

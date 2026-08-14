@@ -7,6 +7,9 @@ export function createAgentProjectsApi(http) {
     createProject(request) {
       return http.post(`${root}/projects`, request);
     },
+    deleteProject(projectId) {
+      return http.delete(`${root}/projects/${encodeURIComponent(projectId)}`);
+    },
     getRuntime() {
       return http.get(`${root}/runtime`);
     },
@@ -22,6 +25,9 @@ export function createAgentProjectsApi(http) {
     updateAgent(agentId, request) {
       return http.put(`${root}/definitions/${encodeURIComponent(agentId)}`, request);
     },
+    deleteAgent(agentId) {
+      return http.delete(`${root}/definitions/${encodeURIComponent(agentId)}`);
+    },
     listProjectWorkflows(projectId) {
       return http.get(`${root}/projects/${encodeURIComponent(projectId)}/workflows`);
     },
@@ -34,14 +40,21 @@ export function createAgentProjectsApi(http) {
     updateWorkflow(workflowId, request) {
       return http.put(`${root}/workflows/${encodeURIComponent(workflowId)}`, request);
     },
-    listProjectTasks(projectId) {
-      return http.get(`${root}/projects/${encodeURIComponent(projectId)}/tasks`);
+    deleteWorkflow(workflowId) {
+      return http.delete(`${root}/workflows/${encodeURIComponent(workflowId)}`);
+    },
+    listProjectTasks(projectId, page = 0, size = 20) {
+      const query = new URLSearchParams({ page: String(page), size: String(size) });
+      return http.get(`${root}/projects/${encodeURIComponent(projectId)}/tasks?${query.toString()}`);
     },
     createProjectTask(projectId, request) {
       return http.post(`${root}/projects/${encodeURIComponent(projectId)}/tasks`, request);
     },
     getProjectTask(taskId) {
       return http.get(`${root}/tasks/${encodeURIComponent(taskId)}`);
+    },
+    deleteProjectTask(taskId) {
+      return http.delete(`${root}/tasks/${encodeURIComponent(taskId)}`);
     },
     getWorkflowRun(runId) {
       return http.get(`${root}/workflow-runs/${encodeURIComponent(runId)}`);

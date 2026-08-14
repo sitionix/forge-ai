@@ -9,6 +9,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
@@ -63,26 +64,31 @@ class AgentProxyUseCaseTest {
         when(this.forgeAgentClient.createProject(command)).thenReturn(project);
 
         final var actual = new CreateAgentProjectUseCase(this.forgeAgentClient).execute(command);
+        new DeleteAgentProjectUseCase(this.forgeAgentClient).execute(PROJECT_ID);
 
         assertThat(actual).isSameAs(project);
         verify(this.forgeAgentClient).createProject(command);
+        verify(this.forgeAgentClient).deleteProject(PROJECT_ID);
     }
 
     @Test
     void projectTaskUseCasesDelegateToClient() {
         final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID);
         final var summary = new AgentProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, NOW, NOW);
+        final var page = new AgentProjectTaskPage(List.of(summary), 2, 10, 21, 3);
         final var task = new AgentProjectTask(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), NOW, NOW);
         when(this.forgeAgentClient.createProjectTask(PROJECT_ID, command)).thenReturn(task);
-        when(this.forgeAgentClient.listProjectTasks(PROJECT_ID)).thenReturn(List.of(summary));
+        when(this.forgeAgentClient.listProjectTasks(PROJECT_ID, 2, 10)).thenReturn(page);
         when(this.forgeAgentClient.getProjectTask(TASK_ID)).thenReturn(task);
 
         assertThat(new CreateAgentProjectTaskUseCase(this.forgeAgentClient).execute(PROJECT_ID, command)).isSameAs(task);
-        assertThat(new ListAgentProjectTasksUseCase(this.forgeAgentClient).execute(PROJECT_ID)).containsExactly(summary);
+        assertThat(new ListAgentProjectTasksUseCase(this.forgeAgentClient).execute(PROJECT_ID, 2, 10)).isSameAs(page);
         assertThat(new GetAgentProjectTaskUseCase(this.forgeAgentClient).execute(TASK_ID)).isSameAs(task);
+        new DeleteAgentProjectTaskUseCase(this.forgeAgentClient).execute(TASK_ID);
         verify(this.forgeAgentClient).createProjectTask(PROJECT_ID, command);
-        verify(this.forgeAgentClient).listProjectTasks(PROJECT_ID);
+        verify(this.forgeAgentClient).listProjectTasks(PROJECT_ID, 2, 10);
         verify(this.forgeAgentClient).getProjectTask(TASK_ID);
+        verify(this.forgeAgentClient).deleteProjectTask(TASK_ID);
     }
 
     @Test
@@ -118,9 +124,11 @@ class AgentProxyUseCaseTest {
         assertThat(new CreateAgentDefinitionUseCase(this.forgeAgentClient).execute(PROJECT_ID, command)).isSameAs(agent);
         assertThat(new GetAgentDefinitionUseCase(this.forgeAgentClient).execute(AGENT_ID)).isSameAs(agent);
         assertThat(new UpdateAgentDefinitionUseCase(this.forgeAgentClient).execute(AGENT_ID, command)).isSameAs(agent);
+        new DeleteAgentDefinitionUseCase(this.forgeAgentClient).execute(AGENT_ID);
         verify(this.forgeAgentClient).createAgent(PROJECT_ID, command);
         verify(this.forgeAgentClient).getAgent(AGENT_ID);
         verify(this.forgeAgentClient).updateAgent(AGENT_ID, command);
+        verify(this.forgeAgentClient).deleteAgent(AGENT_ID);
     }
 
     @Test
@@ -138,9 +146,11 @@ class AgentProxyUseCaseTest {
         assertThat(new CreateAgentWorkflowUseCase(this.forgeAgentClient).execute(PROJECT_ID, createCommand)).isSameAs(workflow);
         assertThat(new GetAgentWorkflowUseCase(this.forgeAgentClient).execute(WORKFLOW_ID)).isSameAs(workflow);
         assertThat(new UpdateAgentWorkflowUseCase(this.forgeAgentClient).execute(WORKFLOW_ID, saveCommand)).isSameAs(workflow);
+        new DeleteAgentWorkflowUseCase(this.forgeAgentClient).execute(WORKFLOW_ID);
         verify(this.forgeAgentClient).listProjectWorkflows(PROJECT_ID);
         verify(this.forgeAgentClient).createWorkflow(PROJECT_ID, createCommand);
         verify(this.forgeAgentClient).getWorkflow(WORKFLOW_ID);
         verify(this.forgeAgentClient).updateWorkflow(WORKFLOW_ID, saveCommand);
+        verify(this.forgeAgentClient).deleteWorkflow(WORKFLOW_ID);
     }
 }

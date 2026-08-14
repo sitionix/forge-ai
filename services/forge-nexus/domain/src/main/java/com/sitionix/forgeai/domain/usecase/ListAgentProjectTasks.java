@@ -1,10 +1,9 @@
 package com.sitionix.forgeai.domain.usecase;
 
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
-import java.util.List;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import java.util.UUID;
 
 public interface ListAgentProjectTasks {
 
-    List<AgentProjectTaskSummary> execute(UUID projectId);
+    AgentProjectTaskPage execute(UUID projectId, int page, int size);
 }

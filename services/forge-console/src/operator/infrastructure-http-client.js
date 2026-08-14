@@ -77,6 +77,9 @@ export function createInfrastructureHttpClient(options = {}) {
     put(path, body, options = {}) {
       return request('PUT', path, { ...options, body });
     },
+    delete(path, options = {}) {
+      return request('DELETE', path, options);
+    },
     request
   };
 }

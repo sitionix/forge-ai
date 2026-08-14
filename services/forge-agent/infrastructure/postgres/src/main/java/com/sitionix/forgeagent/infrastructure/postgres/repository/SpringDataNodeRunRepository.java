@@ -28,6 +28,8 @@ public interface SpringDataNodeRunRepository extends JpaRepository<NodeRunEntity
     @Query("select n.workflowRunId from NodeRunEntity n where n.id = :id")
     Optional<UUID> findWorkflowRunIdById(@Param("id") UUID id);
 
+    boolean existsBySourceAgentIdAndStatusIn(UUID sourceAgentId, List<String> statuses);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select n from NodeRunEntity n where n.id = :id")
     Optional<NodeRunEntity> findByIdForUpdate(@Param("id") UUID id);

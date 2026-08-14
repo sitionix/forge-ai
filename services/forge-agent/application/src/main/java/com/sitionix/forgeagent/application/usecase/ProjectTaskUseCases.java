@@ -1,9 +1,12 @@
 package com.sitionix.forgeagent.application.usecase;
 
+import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.ProjectTask;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
+import com.sitionix.forgeagent.domain.model.ProjectTaskPage;
+import com.sitionix.forgeagent.domain.model.ProjectTaskSummaryPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
@@ -65,11 +68,17 @@ public class ProjectTaskUseCases {
     }
 
     @Transactional(readOnly = true)
-    public List<ProjectTaskSummary> listProjectTasks(final UUID projectId) {
+    public ProjectTaskSummaryPage listProjectTasks(final UUID projectId, final int page, final int size) {
         this.requireProject(projectId);
-        return this.projectTaskRepository.findByProjectId(projectId).stream()
-                .map(this::toSummary)
-                .toList();
+        this.validatePage(page, size);
+        final ProjectTaskPage taskPage = this.projectTaskRepository.findPageByProjectId(projectId, page, size);
+        return new ProjectTaskSummaryPage(
+                taskPage.items().stream().map(this::toSummary).toList(),
+                taskPage.page(),
+                taskPage.size(),
+                taskPage.totalItems(),
+                taskPage.totalPages()
+        );
     }
 
     @Transactional(readOnly = true)
@@ -77,6 +86,25 @@ public class ProjectTaskUseCases {
         final ProjectTask task = this.projectTaskRepository.findById(taskId)
                 .orElseThrow(() -> new NotFoundException("PROJECT_TASK_NOT_FOUND", "Project task was not found."));
         return this.toDetails(task, this.workflowRunRepository.findSummariesByTaskId(task.id()));
+    }
+
+    @Transactional
+    public void deleteProjectTask(final UUID taskId) {
+        this.projectTaskRepository.findById(taskId)
+                .orElseThrow(() -> new NotFoundException("PROJECT_TASK_NOT_FOUND", "Project task was not found."));
+        if (this.workflowRunRepository.existsActiveByTaskId(taskId)) {
+            throw new ConflictException("PROJECT_TASK_HAS_ACTIVE_EXECUTIONS", "Task cannot be deleted while an execution is active.");
+        }
+        this.projectTaskRepository.deleteById(taskId);
+    }
+
+    private void validatePage(final int page, final int size) {
+        if (page < 0) {
+            throw new ValidationException("INVALID_TASK_PAGE", "Task page must be greater than or equal to 0.");
+        }
+        if (size < 1 || size > 100) {
+            throw new ValidationException("INVALID_TASK_PAGE_SIZE", "Task page size must be between 1 and 100.");
+        }
     }
 
     private void requireProject(final UUID projectId) {
