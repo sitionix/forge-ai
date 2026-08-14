@@ -2067,6 +2067,31 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2NodeEditorDialog')?.hasAttribute('open')).toBe(false);
   });
 
+  it('compact Node keeps the small layout and renders configured ports as labels only', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20, 'DEPENDENCIES_ONLY', [
+        { id: 'input-a', name: 'Review feedback', description: 'Feedback.', order: 0 },
+        { id: 'input-b', name: 'Context', description: 'Context.', order: 1 }
+      ], [
+        { id: 'output-a', name: 'Approved', description: 'Continue.', order: 0 },
+        { id: 'output-b', name: 'Return', description: 'Return.', order: 1 }
+      ])
+    ]))) });
+    const { dom } = await openedBuilder(fakeApi);
+    const source = consoleSourceText();
+    const nodeElement = dom.window.document.querySelector<HTMLElement>('[data-node-id="node-1"]')!;
+
+    expect(source).toContain('const NODE_WIDTH = 204;');
+    expect(source).toMatch(/\.workflow-node\s*\{[\s\S]*width: 180px;/);
+    expect(source).not.toContain('.workflow-node-port i');
+    expect(source).not.toContain('<i aria-hidden="true"></i>');
+    expect(portTexts(dom, 'node-1', 'input')).toEqual(['Review feedback', 'Context']);
+    expect(portTexts(dom, 'node-1', 'output')).toEqual(['Approved', 'Return']);
+    expect(nodeElement.querySelectorAll('[data-node-input]')).toHaveLength(1);
+    expect(nodeElement.querySelectorAll('[data-node-output]')).toHaveLength(1);
+    expect(nodeElement.querySelectorAll('.workflow-node-port button, .workflow-node-port .node-handle')).toHaveLength(0);
+  });
+
   it('clicking compact Node opens Node Editor and Cancel leaves draft unchanged', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20, 'DEPENDENCIES_ONLY', [], [
@@ -2079,6 +2104,11 @@ describe('Agent projects page', () => {
     clickNode(dom, 'node-1');
     expect(dom.window.document.getElementById('agentsV2NodeEditorDialog')?.hasAttribute('open')).toBe(true);
     expect(dom.window.document.getElementById('agentsV2NodeEditorAgent')?.textContent).toContain('Agent: Architect');
+    expect(editorCompactRows(dom, 'outputs')).toHaveLength(1);
+    expect(dom.window.document.getElementById('agentsV2NodeEditorBody')?.textContent).toContain('Accepted.');
+    expect(dom.window.document.querySelector('[data-node-editor-port-name]')).toBeNull();
+    editPort(dom, 'outputs', 'out-1');
+    expect(editorEditingRows(dom, 'outputs')).toHaveLength(1);
     const name = dom.window.document.querySelector<HTMLInputElement>('[data-node-editor-port-direction="outputs"] [data-node-editor-port-name]')!;
     name.value = 'Ready';
     dom.window.document.getElementById('agentsV2NodeEditorCancel')?.click();
@@ -2100,12 +2130,20 @@ describe('Agent projects page', () => {
     setRandomUuids(dom, ['input-added', 'output-added']);
 
     clickNode(dom, 'node-1');
+    expect(editorCompactRows(dom, 'inputs')).toHaveLength(1);
+    expect(editorCompactRows(dom, 'outputs')).toHaveLength(1);
+    expect(editorEditingRows(dom, 'inputs')).toHaveLength(0);
+    expect(editorEditingRows(dom, 'outputs')).toHaveLength(0);
     dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="inputs"]')?.click();
     dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="outputs"]')?.click();
     expect(editorRows(dom, 'inputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['input-existing', 'input-added']);
     expect(editorRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-existing', 'output-added']);
+    expect(editorEditingRows(dom, 'inputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['input-added']);
+    expect(editorEditingRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-added']);
 
     setPortFields(editorRow(dom, 'inputs', 1), 'Review feedback', 'Feedback from review.');
+    editPort(dom, 'outputs', 'output-existing');
+    expect(editorEditingRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-existing', 'output-added']);
     setPortFields(editorRow(dom, 'outputs', 0), 'Ready', 'Ready for testing.');
     setPortFields(editorRow(dom, 'outputs', 1), 'Return', 'Return for changes.');
     dom.window.document.querySelector<HTMLElement>('[data-node-editor-remove="input-existing"]')?.click();
@@ -2123,6 +2161,12 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-node-id="node-1"]')?.textContent).toContain('Review feedback');
     expect(dom.window.document.querySelector('[data-node-id="node-1"]')?.textContent).toContain('Ready');
     expect(dom.window.document.querySelector('[data-node-id="node-1"]')?.textContent).toContain('Return');
+
+    clickNode(dom, 'node-1');
+    expect(editorCompactRows(dom, 'inputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['input-added']);
+    expect(editorCompactRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-existing', 'output-added']);
+    expect(editorEditingRows(dom, 'inputs')).toHaveLength(0);
+    expect(editorEditingRows(dom, 'outputs')).toHaveLength(0);
   });
 
   it('Node Editor rejects invalid names and descriptions while allowing same name across directions', async () => {
@@ -2453,10 +2497,22 @@ function editorRows(dom: JSDOM, direction: string) {
   return [...dom.window.document.querySelectorAll<HTMLElement>(`[data-node-editor-port-direction="${direction}"]`)];
 }
 
+function editorCompactRows(dom: JSDOM, direction: string) {
+  return [...dom.window.document.querySelectorAll<HTMLElement>(`.node-editor-port-row.compact[data-node-editor-port-direction="${direction}"]`)];
+}
+
+function editorEditingRows(dom: JSDOM, direction: string) {
+  return [...dom.window.document.querySelectorAll<HTMLElement>(`.node-editor-port-row.editing[data-node-editor-port-direction="${direction}"]`)];
+}
+
 function editorRow(dom: JSDOM, direction: string, index: number) {
   const row = editorRows(dom, direction)[index];
   expect(row).toBeDefined();
   return row!;
+}
+
+function editPort(dom: JSDOM, direction: string, portId: string) {
+  dom.window.document.querySelector<HTMLElement>(`button[data-node-editor-edit="${portId}"][data-node-editor-edit-direction="${direction}"]`)?.click();
 }
 
 function setPortFields(row: HTMLElement, name: string, description: string) {
@@ -2472,7 +2528,7 @@ function portTexts(dom: JSDOM, nodeId: string, direction: string) {
 function consoleSourceText() {
   const root = join(process.cwd(), 'src', 'operator');
   return walk(root)
-    .filter((file) => file.endsWith('.js') || file.endsWith('.html'))
+    .filter((file) => file.endsWith('.js') || file.endsWith('.html') || file.endsWith('.css'))
     .map((file) => readFileSync(file, 'utf8'))
     .join('\n');
 }

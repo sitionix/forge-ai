@@ -1,5 +1,5 @@
 import { escapeHtml } from './dom-render-helpers.js';
-const NODE_WIDTH = 344;
+const NODE_WIDTH = 204;
 const NODE_MID_Y = 52;
 const DEFAULT_INPUT_MODE = 'DEPENDENCIES_ONLY';
 const TASK_AND_DEPENDENCIES_INPUT_MODE = 'TASK_AND_DEPENDENCIES';
@@ -19,6 +19,7 @@ export class WorkflowBuilder {
     this.connectionDrag = null;
     this.nodeEditorNodeId = null;
     this.nodeEditorDraft = null;
+    this.nodeEditorEditingPorts = new Set();
     this.saving = false;
   }
 
@@ -58,6 +59,7 @@ export class WorkflowBuilder {
     this.connectionDrag = null;
     this.nodeEditorNodeId = null;
     this.nodeEditorDraft = null;
+    this.nodeEditorEditingPorts.clear();
     this.showError('');
     this.byId('agentsV2BuilderTitle').textContent = workflow.name;
     this.byId('agentsV2BuilderCrumbs').textContent = `Projects / ${project?.name || ''} / Workflows / ${workflow.name}`;
@@ -195,7 +197,7 @@ export class WorkflowBuilder {
   renderCompactPorts(ports) {
     return ports.map((port) => `
       <div class="workflow-node-port" title="${escapeHtml(port.name)}">
-        <span>${escapeHtml(port.name)}</span><i aria-hidden="true"></i>
+        <span>${escapeHtml(port.name)}</span>
       </div>
     `).join('');
   }
@@ -381,14 +383,6 @@ export class WorkflowBuilder {
     return Boolean(sourceExists && target && !(target.dependsOnNodeIds || []).includes(sourceNodeId));
   }
 
-  setNodeInputMode(nodeId, inputMode) {
-    const node = this.workflow?.nodes.find((candidate) => candidate.id === nodeId);
-    if (!node) {
-      return;
-    }
-    node.inputMode = this.normalizeInputMode(inputMode);
-  }
-
   openNodeEditor(nodeId) {
     const node = this.workflow?.nodes.find((candidate) => candidate.id === nodeId);
     if (!node) {
@@ -396,6 +390,7 @@ export class WorkflowBuilder {
     }
     this.nodeEditorNodeId = nodeId;
     this.nodeEditorDraft = this.cloneNode(node);
+    this.nodeEditorEditingPorts.clear();
     this.renderNodeEditor();
     this.showNodeEditorError('');
     const dialog = this.byId('agentsV2NodeEditorDialog');
@@ -409,6 +404,7 @@ export class WorkflowBuilder {
   closeNodeEditor() {
     this.nodeEditorNodeId = null;
     this.nodeEditorDraft = null;
+    this.nodeEditorEditingPorts.clear();
     this.showNodeEditorError('');
     const dialog = this.byId('agentsV2NodeEditorDialog');
     if (dialog?.close) {
@@ -454,8 +450,11 @@ export class WorkflowBuilder {
   }
 
   renderNodeEditorPort(direction, port, index) {
+    if (!this.isNodeEditorPortEditing(direction, port.id)) {
+      return this.renderNodeEditorCompactPort(direction, port);
+    }
     return `
-      <div class="node-editor-port-row" data-node-editor-port="${escapeHtml(port.id)}" data-node-editor-port-direction="${escapeHtml(direction)}">
+      <div class="node-editor-port-row editing" data-node-editor-port="${escapeHtml(port.id)}" data-node-editor-port-direction="${escapeHtml(direction)}">
         <div class="node-editor-port-row-head">
           <strong>${index + 1}.</strong>
           <button class="node-editor-port-remove" type="button" title="Remove port" aria-label="Remove port" data-node-editor-remove="${escapeHtml(port.id)}" data-node-editor-remove-direction="${escapeHtml(direction)}">×</button>
@@ -464,6 +463,21 @@ export class WorkflowBuilder {
         <input id="node-editor-${escapeHtml(direction)}-${escapeHtml(port.id)}-name" class="text-input" type="text" value="${escapeHtml(port.name || '')}" data-node-editor-port-name>
         <label class="field-label" for="node-editor-${escapeHtml(direction)}-${escapeHtml(port.id)}-description">Description</label>
         <textarea id="node-editor-${escapeHtml(direction)}-${escapeHtml(port.id)}-description" class="agent-modal-textarea node-editor-description" data-node-editor-port-description>${escapeHtml(port.description || '')}</textarea>
+      </div>
+    `;
+  }
+
+  renderNodeEditorCompactPort(direction, port) {
+    return `
+      <div class="node-editor-port-row compact" data-node-editor-port="${escapeHtml(port.id)}" data-node-editor-port-direction="${escapeHtml(direction)}" data-node-editor-edit="${escapeHtml(port.id)}" data-node-editor-edit-direction="${escapeHtml(direction)}">
+        <div class="node-editor-port-summary">
+          <strong>${escapeHtml(port.name || 'Untitled port')}</strong>
+          <p>${escapeHtml(port.description || '')}</p>
+        </div>
+        <div class="node-editor-port-actions">
+          <button class="button tiny secondary" type="button" data-node-editor-edit="${escapeHtml(port.id)}" data-node-editor-edit-direction="${escapeHtml(direction)}">Edit</button>
+          <button class="node-editor-port-remove" type="button" title="Remove port" aria-label="Remove port" data-node-editor-remove="${escapeHtml(port.id)}" data-node-editor-remove-direction="${escapeHtml(direction)}">×</button>
+        </div>
       </div>
     `;
   }
@@ -491,6 +505,11 @@ export class WorkflowBuilder {
     const removeButton = event.target.closest?.('[data-node-editor-remove]');
     if (removeButton) {
       this.removeNodeEditorPort(removeButton.dataset.nodeEditorRemoveDirection, removeButton.dataset.nodeEditorRemove);
+      return;
+    }
+    const editTarget = event.target.closest?.('[data-node-editor-edit]');
+    if (editTarget) {
+      this.editNodeEditorPort(editTarget.dataset.nodeEditorEditDirection, editTarget.dataset.nodeEditorEdit);
     }
   }
 
@@ -509,6 +528,7 @@ export class WorkflowBuilder {
     const ports = this.nodePorts(this.nodeEditorDraft[direction]);
     ports.push({ id, name: '', description: '', order: ports.length });
     this.nodeEditorDraft[direction] = ports;
+    this.nodeEditorEditingPorts.add(this.nodeEditorPortKey(direction, id));
     this.renderNodeEditor();
   }
 
@@ -520,6 +540,16 @@ export class WorkflowBuilder {
     this.nodeEditorDraft[direction] = this.reindexPorts(
       this.nodePorts(this.nodeEditorDraft[direction]).filter((port) => port.id !== portId)
     );
+    this.nodeEditorEditingPorts.delete(this.nodeEditorPortKey(direction, portId));
+    this.renderNodeEditor();
+  }
+
+  editNodeEditorPort(direction, portId) {
+    if (!this.nodeEditorDraft || !['inputs', 'outputs'].includes(direction)) {
+      return;
+    }
+    this.syncNodeEditorDraftFromDom();
+    this.nodeEditorEditingPorts.add(this.nodeEditorPortKey(direction, portId));
     this.renderNodeEditor();
   }
 
@@ -528,13 +558,22 @@ export class WorkflowBuilder {
       return;
     }
     for (const direction of ['inputs', 'outputs']) {
-      this.nodeEditorDraft[direction] = [...this.byId('agentsV2NodeEditorBody').querySelectorAll(`[data-node-editor-port-direction="${direction}"]`)]
-        .map((row, index) => ({
-          id: row.dataset.nodeEditorPort,
-          name: row.querySelector('[data-node-editor-port-name]')?.value || '',
-          description: row.querySelector('[data-node-editor-port-description]')?.value || '',
-          order: index
-        }));
+      const portsById = new Map(this.nodePorts(this.nodeEditorDraft[direction]).map((port) => [port.id, { ...port }]));
+      this.byId('agentsV2NodeEditorBody').querySelectorAll(`[data-node-editor-port-direction="${direction}"]`).forEach((row) => {
+        const port = portsById.get(row.dataset.nodeEditorPort);
+        if (!port) {
+          return;
+        }
+        const nameInput = row.querySelector('[data-node-editor-port-name]');
+        const descriptionInput = row.querySelector('[data-node-editor-port-description]');
+        if (nameInput) {
+          port.name = nameInput.value || '';
+        }
+        if (descriptionInput) {
+          port.description = descriptionInput.value || '';
+        }
+      });
+      this.nodeEditorDraft[direction] = this.reindexPorts([...portsById.values()]);
     }
     const inputMode = this.byId('agentsV2NodeEditorBody').querySelector('[data-node-editor-input-mode]')?.value;
     if (inputMode) {
@@ -763,6 +802,14 @@ export class WorkflowBuilder {
       description: String(port.description || '').trim(),
       order: Number(port.order || 0)
     };
+  }
+
+  isNodeEditorPortEditing(direction, portId) {
+    return this.nodeEditorEditingPorts.has(this.nodeEditorPortKey(direction, portId));
+  }
+
+  nodeEditorPortKey(direction, portId) {
+    return `${direction}:${portId}`;
   }
 
   agentById(agentId) {
