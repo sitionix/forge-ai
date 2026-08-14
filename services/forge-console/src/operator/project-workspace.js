@@ -50,13 +50,19 @@ export class ProjectWorkspace {
       return;
     }
     list.innerHTML = agents.map((agent) => `
-      <article class="agents-v2-card">
+      <article class="agents-v2-card agents-v2-deletable">
+        <button
+          class="entity-delete-control"
+          type="button"
+          data-delete-agent-id="${escapeHtml(agent.id)}"
+          aria-label="Delete agent ${escapeHtml(agent.name)}"
+          title="Delete agent"
+        >×</button>
         <h3>${escapeHtml(agent.name)}</h3>
         <p>${escapeHtml(agent.instructions || 'Reusable agent definition')}</p>
         ${this.renderAgentModelMeta(agent.model, runtimeCatalog)}
         <div class="agents-v2-card-actions">
           <button class="button small secondary" type="button" data-agent-id="${escapeHtml(agent.id)}">Edit</button>
-          <button class="button small danger" type="button" data-delete-agent-id="${escapeHtml(agent.id)}">Delete</button>
         </div>
       </article>
     `).join('');
@@ -102,12 +108,18 @@ export class ProjectWorkspace {
       return;
     }
     list.innerHTML = workflows.map((workflow) => `
-      <article class="agents-v2-card">
+      <article class="agents-v2-card agents-v2-deletable">
+        <button
+          class="entity-delete-control"
+          type="button"
+          data-delete-workflow-id="${escapeHtml(workflow.id)}"
+          aria-label="Delete workflow ${escapeHtml(workflow.name)}"
+          title="Delete workflow"
+        >×</button>
         <h3>${escapeHtml(workflow.name)}</h3>
         <p>${(workflow.nodes || []).length} nodes</p>
         <div class="agents-v2-card-actions">
           <button class="button small secondary" type="button" data-workflow-id="${escapeHtml(workflow.id)}">Open</button>
-          <button class="button small danger" type="button" data-delete-workflow-id="${escapeHtml(workflow.id)}">Delete</button>
         </div>
       </article>
     `).join('');
@@ -149,7 +161,13 @@ export class ProjectWorkspace {
               <span>${escapeHtml(this.formatDate(task.createdAt))}</span>
               <span class="agents-v2-task-actions">
                 <button class="button tiny secondary" type="button" data-task-id="${escapeHtml(task.id)}">Open</button>
-                <button class="button tiny danger" type="button" data-delete-task-id="${escapeHtml(task.id)}">Delete</button>
+                <button
+                  class="entity-delete-control"
+                  type="button"
+                  data-delete-task-id="${escapeHtml(task.id)}"
+                  aria-label="Delete task ${escapeHtml(task.title)}"
+                  title="Delete task"
+                >×</button>
               </span>
             </div>
           `).join('')}

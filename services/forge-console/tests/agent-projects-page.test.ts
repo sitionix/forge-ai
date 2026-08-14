@@ -274,6 +274,18 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2ProjectsView')?.textContent).not.toContain('New Workflow');
   });
 
+  it('Project renders x delete control instead of visible Delete text action', async () => {
+    const { dom } = await mountedPage();
+    const card = dom.window.document.querySelector<HTMLElement>('.project-card')!;
+    const deleteButton = card.querySelector<HTMLButtonElement>('[data-delete-project-id]')!;
+
+    expect(deleteButton.textContent).toBe('×');
+    expect(deleteButton.classList.contains('entity-delete-control')).toBe(true);
+    expect(deleteButton.getAttribute('aria-label')).toBe('Delete project Sitionix');
+    expect(card.textContent).toContain('Open project');
+    expect(card.textContent).not.toContain('Delete');
+  });
+
   it('creating Project adds and opens the new Project', async () => {
     const newProject = project('22222222-2222-4222-8222-222222222222', 'Forge AI');
     const fakeApi = api({
@@ -375,15 +387,42 @@ describe('Agent projects page', () => {
     const { dom } = await openedProject(fakeApi);
     const list = dom.window.document.getElementById('agentsV2TasksList')!;
     const rows = [...list.querySelectorAll<HTMLElement>('.agents-v2-task-row:not(.agents-v2-task-row-head)')];
+    const deleteButton = rows[0]!.querySelector<HTMLButtonElement>('[data-delete-task-id="task-1"]')!;
 
+    expect(list.classList.contains('agents-v2-task-list')).toBe(true);
+    expect(list.classList.contains('agents-v2-card-grid')).toBe(false);
     expect(list.querySelector('.agents-v2-task-table')).not.toBeNull();
+    expect(list.querySelector('[role="table"]')).not.toBeNull();
     expect(rows).toHaveLength(2);
     expect(rows[0]!.textContent).toContain('Fix auth endpoint');
     expect(rows[0]!.textContent).toContain('Backend Flow');
     expect(rows[0]!.textContent).toContain('RUNNING');
     expect(rows[0]!.textContent).toContain('Open');
-    expect(rows[0]!.textContent).toContain('Delete');
+    expect(rows[0]!.textContent).not.toContain('Delete');
+    expect(deleteButton.textContent).toBe('×');
+    expect(deleteButton.classList.contains('entity-delete-control')).toBe(true);
+    expect(deleteButton.getAttribute('aria-label')).toBe('Delete task Fix auth endpoint');
     expect(list.querySelector('.agents-v2-card')).toBeNull();
+  });
+
+  it('Agent and Workflow render x delete controls with entity labels', async () => {
+    const { dom } = await openedProject();
+    const agentCard = dom.window.document.getElementById('agentsV2AgentsList')!.querySelector<HTMLElement>('.agents-v2-card')!;
+    const workflowCard = dom.window.document.getElementById('agentsV2WorkflowsList')!.querySelector<HTMLElement>('.agents-v2-card')!;
+    const agentDelete = agentCard.querySelector<HTMLButtonElement>('[data-delete-agent-id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]')!;
+    const workflowDelete = workflowCard.querySelector<HTMLButtonElement>('[data-delete-workflow-id="33333333-3333-4333-8333-333333333333"]')!;
+
+    expect(agentDelete.textContent).toBe('×');
+    expect(agentDelete.classList.contains('entity-delete-control')).toBe(true);
+    expect(agentDelete.getAttribute('aria-label')).toBe('Delete agent Architect');
+    expect(agentCard.textContent).toContain('Edit');
+    expect(agentCard.textContent).not.toContain('Delete');
+
+    expect(workflowDelete.textContent).toBe('×');
+    expect(workflowDelete.classList.contains('entity-delete-control')).toBe(true);
+    expect(workflowDelete.getAttribute('aria-label')).toBe('Delete workflow Full Testing');
+    expect(workflowCard.textContent).toContain('Open');
+    expect(workflowCard.textContent).not.toContain('Delete');
   });
 
   it('Task pagination starts at page 0 size 20 and moves Next and Previous with disabled edge controls', async () => {

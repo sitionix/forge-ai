@@ -329,12 +329,18 @@ export class AgentProjectsPage {
       return;
     }
     list.innerHTML = this.state.projects.map((project) => `
-      <article class="agents-v2-card project-card">
+      <article class="agents-v2-card project-card agents-v2-deletable">
+        <button
+          class="entity-delete-control"
+          type="button"
+          data-delete-project-id="${escapeHtml(project.id)}"
+          aria-label="Delete project ${escapeHtml(project.name)}"
+          title="Delete project"
+        >×</button>
         <h3>${escapeHtml(project.name)}</h3>
         <p>Project agent configuration</p>
         <div class="agents-v2-card-actions">
           <button class="button small secondary" type="button" data-project-id="${escapeHtml(project.id)}">Open project →</button>
-          <button class="button small danger" type="button" data-delete-project-id="${escapeHtml(project.id)}">Delete</button>
         </div>
       </article>
     `).join('');

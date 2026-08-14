@@ -588,6 +588,7 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .agents-v2-card {
+  position: relative;
   display: grid;
   grid-template-rows: auto 1fr auto auto;
   min-height: 150px;
@@ -599,6 +600,7 @@ body.sidebar-collapsed .sidebar-link {
 
 .agents-v2-card h3 {
   margin: 0;
+  padding-right: 28px;
   overflow-wrap: anywhere;
   font-size: 16px;
 }
@@ -676,6 +678,45 @@ body.sidebar-collapsed .sidebar-link {
   justify-self: auto;
 }
 
+.entity-delete-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(27, 36, 31, 0.46);
+  cursor: pointer;
+  font: 800 18px/1 var(--mono);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.entity-delete-control:hover,
+.entity-delete-control:focus-visible {
+  background: rgba(201, 61, 61, 0.09);
+  color: #b12f2f;
+  outline: none;
+}
+
+.agents-v2-deletable .entity-delete-control {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.agents-v2-deletable:hover .entity-delete-control,
+.agents-v2-deletable:focus-within .entity-delete-control,
+.agents-v2-task-row:hover .entity-delete-control,
+.agents-v2-task-row:focus-within .entity-delete-control {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .agents-v2-task-meta {
   display: flex;
   flex-wrap: wrap;
@@ -734,8 +775,16 @@ body.sidebar-collapsed .sidebar-link {
   color: #625647;
 }
 
+.agents-v2-task-list {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
 .agents-v2-task-table {
   display: grid;
+  width: 100%;
+  min-width: 720px;
   border: 1px solid rgba(27, 36, 31, 0.12);
   border-radius: 8px;
   overflow: hidden;
@@ -744,7 +793,7 @@ body.sidebar-collapsed .sidebar-link {
 
 .agents-v2-task-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.7fr) minmax(120px, 1fr) minmax(96px, 0.7fr) minmax(140px, 0.9fr) minmax(108px, 0.7fr);
+  grid-template-columns: minmax(220px, 1fr) minmax(140px, 220px) minmax(92px, 116px) minmax(150px, 180px) minmax(84px, 96px);
   gap: 12px;
   align-items: center;
   min-height: 46px;
@@ -773,9 +822,15 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .agents-v2-task-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 24px;
   gap: 6px;
   justify-content: flex-end;
+  align-items: center;
+}
+
+.agents-v2-task-actions .entity-delete-control {
+  justify-self: end;
 }
 
 .agents-v2-pagination {
