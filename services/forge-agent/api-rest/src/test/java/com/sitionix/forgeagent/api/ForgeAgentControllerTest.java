@@ -333,11 +333,13 @@ class ForgeAgentControllerTest {
     void updateWorkflow() {
         final SaveWorkflowRequest request = new SaveWorkflowRequest(
                 "Full Testing",
-                List.of(new NodeRequest(NODE_ID, AGENT_ID, List.of(), new NodePositionRequest(1.0, 2.0)))
+                List.of(new NodeRequest(NODE_ID, AGENT_ID, new NodePositionRequest(1.0, 2.0))),
+                List.of()
         );
         final SaveWorkflowCommand command = new SaveWorkflowCommand(
                 "Full Testing",
-                List.of(new Node(NODE_ID, AGENT_ID, List.of(), new NodePosition(1.0, 2.0)))
+                List.of(new Node(NODE_ID, AGENT_ID, new NodePosition(1.0, 2.0))),
+                List.of()
         );
         final Workflow workflow = this.workflow();
         final WorkflowResponse response = this.workflowResponse();
@@ -434,7 +436,8 @@ class ForgeAgentControllerTest {
                 PROJECT_ID,
                 "Full Testing",
                 "full testing",
-                List.of(new Node(NODE_ID, AGENT_ID, List.of(), new NodePosition(1.0, 2.0))),
+                List.of(new Node(NODE_ID, AGENT_ID, new NodePosition(1.0, 2.0))),
+                List.of(),
                 NOW,
                 NOW
         );
@@ -445,7 +448,8 @@ class ForgeAgentControllerTest {
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new NodeResponse(NODE_ID, AGENT_ID, List.of(), new NodePositionResponse(1.0, 2.0))),
+                List.of(new NodeResponse(NODE_ID, AGENT_ID, new NodePositionResponse(1.0, 2.0))),
+                List.of(),
                 NOW,
                 NOW
         );

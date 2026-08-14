@@ -30,6 +30,8 @@ import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
+import com.sitionix.forgeagent.api.dto.WorkflowConnectionRequest;
+import com.sitionix.forgeagent.api.dto.WorkflowConnectionResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
@@ -56,6 +58,7 @@ import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummaryPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
+import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import java.util.List;
@@ -98,6 +101,9 @@ class ForgeAgentApiMapper {
                 request.name(),
                 request.nodes() == null ? List.of() : request.nodes().stream()
                         .map(this::toNode)
+                        .toList(),
+                request.connections() == null ? List.of() : request.connections().stream()
+                        .map(this::toConnection)
                         .toList()
         );
     }
@@ -148,6 +154,7 @@ class ForgeAgentApiMapper {
                 workflow.projectId(),
                 workflow.name(),
                 workflow.nodes().stream().map(this::toResponse).toList(),
+                workflow.connections().stream().map(this::toResponse).toList(),
                 workflow.createdAt(),
                 workflow.updatedAt()
         );
@@ -226,7 +233,6 @@ class ForgeAgentApiMapper {
         return new Node(
                 request.id(),
                 request.targetId(),
-                request.dependsOnNodeIds() == null ? List.of() : request.dependsOnNodeIds(),
                 inputMode(request.inputMode()),
                 request.inputs() == null ? List.of() : request.inputs().stream().map(this::toNodePort).toList(),
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toNodePort).toList(),
@@ -238,12 +244,22 @@ class ForgeAgentApiMapper {
         return new NodeResponse(
                 node.id(),
                 node.targetId(),
-                node.dependsOnNodeIds(),
                 inputMode(node.inputMode()).name(),
                 node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
                 new NodePositionResponse(node.position().x(), node.position().y())
         );
+    }
+
+    private WorkflowConnection toConnection(final WorkflowConnectionRequest request) {
+        if (request == null) {
+            return null;
+        }
+        return new WorkflowConnection(request.id(), request.sourceOutputPortId(), request.targetInputPortId());
+    }
+
+    private WorkflowConnectionResponse toResponse(final WorkflowConnection connection) {
+        return new WorkflowConnectionResponse(connection.id(), connection.sourceOutputPortId(), connection.targetInputPortId());
     }
 
     private NodePort toNodePort(final NodePortRequest request) {

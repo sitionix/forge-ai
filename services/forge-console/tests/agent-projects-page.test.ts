@@ -74,8 +74,16 @@ function unavailableCodexRuntime(status = 'UNAVAILABLE') {
   };
 }
 
-function workflow(id = '33333333-3333-4333-8333-333333333333', nodes: any[] = [], projectId = project().id) {
-  return { id, projectId, name: 'Full Testing', nodes, createdAt: '2026-08-04T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z' };
+function workflow(id = '33333333-3333-4333-8333-333333333333', nodes: any[] = [], projectId = project().id, connections: any[] | null = null) {
+  return {
+    id,
+    projectId,
+    name: 'Full Testing',
+    nodes: nodes.map((item) => ({ ...item })),
+    connections: connections || [],
+    createdAt: '2026-08-04T00:00:00Z',
+    updatedAt: '2026-08-04T00:00:00Z'
+  };
 }
 
 function task(
@@ -167,14 +175,43 @@ function workflowRunDetail(id: string, status: string, nodeRuns: any[] = [], wor
 function node(
   id: string,
   targetId: string,
-  dependsOnNodeIds: string[] = [],
   x = 10,
   y = 20,
   inputMode = 'DEPENDENCIES_ONLY',
   inputs: any[] = [],
   outputs: any[] = []
 ) {
-  return { id, targetId, dependsOnNodeIds, inputMode, inputs, outputs, position: { x, y } };
+  return { id, targetId, inputMode, inputs, outputs, position: { x, y } };
+}
+
+function portedNode(
+  id: string,
+  targetId: string,
+  x = 10,
+  y = 20,
+  inputMode = 'DEPENDENCIES_ONLY'
+) {
+  return node(
+    id,
+    targetId,
+    x,
+    y,
+    inputMode,
+    [{ id: `${id}-input`, name: 'Input', description: 'Default workflow input.', order: 0 }],
+    [{ id: `${id}-output`, name: 'Output', description: 'Default workflow output.', order: 0 }]
+  );
+}
+
+function connection(sourceNodeId: string, targetNodeId: string, id = `${sourceNodeId}-${targetNodeId}-connection`) {
+  return {
+    id,
+    sourceOutputPortId: `${sourceNodeId}-output`,
+    targetInputPortId: `${targetNodeId}-input`
+  };
+}
+
+function portConnection(id: string, sourceOutputPortId: string, targetInputPortId: string) {
+  return { id, sourceOutputPortId, targetInputPortId };
 }
 
 function deferred<T>() {
@@ -204,7 +241,7 @@ function api(overrides = {}) {
     listProjectWorkflows: vi.fn(() => Promise.resolve([workflow()])),
     createWorkflow: vi.fn(() => Promise.resolve(workflow('44444444-4444-4444-8444-444444444444'))),
     getWorkflow: vi.fn((workflowId: string) => Promise.resolve(workflow(workflowId))),
-    updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes))),
+    updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections))),
     deleteWorkflow: vi.fn(() => Promise.resolve({})),
     listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([task(undefined, 'SUCCEEDED', projectId)], page, size))),
     createProjectTask: vi.fn(() => Promise.resolve(task('77777777-7777-4777-8777-777777777777', 'QUEUED'))),
@@ -247,6 +284,10 @@ function setRandomUuids(dom: JSDOM, values: string[]) {
 
 function pointer(dom: JSDOM, type: string, x: number, y: number) {
   return new dom.window.MouseEvent(type, { clientX: x, clientY: y, bubbles: true, cancelable: true });
+}
+
+function wheel(dom: JSDOM, x: number, y: number, deltaY: number) {
+  return new dom.window.WheelEvent('wheel', { clientX: x, clientY: y, deltaY, bubbles: true, cancelable: true });
 }
 
 function selectValue(dom: JSDOM, id: string, value: string) {
@@ -2043,18 +2084,46 @@ describe('Agent projects page', () => {
 
   it('same Agent can be added multiple times as distinct Node IDs', async () => {
     const { dom, page } = await openedBuilder();
-    setRandomUuids(dom, ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']);
+    setRandomUuids(dom, [
+      '11111111-1111-4111-8111-111111111111',
+      '11111111-1111-4111-8111-111111111112',
+      '11111111-1111-4111-8111-111111111113',
+      '22222222-2222-4222-8222-222222222222',
+      '22222222-2222-4222-8222-222222222223',
+      '22222222-2222-4222-8222-222222222224',
+      '33333333-3333-4333-8333-333333333333',
+      '33333333-3333-4333-8333-333333333334',
+      '33333333-3333-4333-8333-333333333335'
+    ]);
 
     page.workflowBuilder.addNode('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
     page.workflowBuilder.addNode('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    page.workflowBuilder.addNode('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
 
-    expect(page.workflowBuilder.workflow.nodes).toHaveLength(2);
+    expect(page.workflowBuilder.workflow.nodes).toHaveLength(3);
     expect(page.workflowBuilder.workflow.nodes[0].id).not.toBe(page.workflowBuilder.workflow.nodes[1].id);
     expect(page.workflowBuilder.workflow.nodes[0].targetId).toBe(page.workflowBuilder.workflow.nodes[1].targetId);
+    expect(page.workflowBuilder.workflow.nodes.map((node: any) => node.position)).toEqual([
+      { x: 120, y: 90 },
+      { x: 480, y: 90 },
+      { x: 840, y: 90 }
+    ]);
+    for (const [left, right] of [
+      [page.workflowBuilder.workflow.nodes[0], page.workflowBuilder.workflow.nodes[1]],
+      [page.workflowBuilder.workflow.nodes[1], page.workflowBuilder.workflow.nodes[2]]
+    ] as any[]) {
+      expect(right.position.x - left.position.x).toBeGreaterThanOrEqual(252);
+    }
+    expect(page.workflowBuilder.workflow.nodes[0].inputs).toEqual([
+      { id: '11111111-1111-4111-8111-111111111112', name: 'Input', description: 'Default workflow input.', order: 0 }
+    ]);
+    expect(page.workflowBuilder.workflow.nodes[0].outputs).toEqual([
+      { id: '11111111-1111-4111-8111-111111111113', name: 'Output', description: 'Default workflow output.', order: 0 }
+    ]);
   });
 
   it('Node body drag changes position without rebuilding Node DOM', async () => {
-    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20)]))) });
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20)]))) });
     const { dom, page } = await openedBuilder(fakeApi);
     const element = dom.window.document.querySelector<HTMLElement>('[data-node-id="node-1"]')!;
 
@@ -2067,9 +2136,9 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2NodeEditorDialog')?.hasAttribute('open')).toBe(false);
   });
 
-  it('compact Node keeps the small layout and renders configured ports as labels only', async () => {
+  it('compact Node renders configured ports as in-card labels with edge handles', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20, 'DEPENDENCIES_ONLY', [
+      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20, 'DEPENDENCIES_ONLY', [
         { id: 'input-a', name: 'Review feedback', description: 'Feedback.', order: 0 },
         { id: 'input-b', name: 'Context', description: 'Context.', order: 1 },
         { id: 'input-c', name: 'Test result', description: 'Test.', order: 2 },
@@ -2079,16 +2148,20 @@ describe('Agent projects page', () => {
         { id: 'output-b', name: 'Return', description: 'Return.', order: 1 },
         { id: 'output-c', name: 'Reject', description: 'Reject.', order: 2 }
       ]),
-      node('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', [], 260, 20)
+      node('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20)
     ]))) });
     const { dom } = await openedBuilder(fakeApi);
     const source = consoleSourceText();
     const nodeElement = dom.window.document.querySelector<HTMLElement>('[data-node-id="node-1"]')!;
     const noPortNode = dom.window.document.querySelector<HTMLElement>('[data-node-id="node-2"]')!;
 
-    expect(source).toContain('const NODE_WIDTH = 204;');
-    expect(source).toMatch(/\.workflow-node\s*\{[\s\S]*width: 180px;/);
-    expect(source).toMatch(/\.workflow-node\s*\{[\s\S]*min-height: max\(104px, calc\(var\(--workflow-node-port-rows, 1\) \* 17px \+ 24px\)\);/);
+    expect(source).toContain('const NODE_WIDTH = 252;');
+    expect(source).toMatch(/\.workflow-node\s*\{[\s\S]*width: 252px;/);
+    expect(source).toMatch(/\.workflow-node\s*\{[\s\S]*min-height: max\(132px, calc\(var\(--workflow-node-port-rows, 1\) \* 26px \+ 58px\)\);/);
+    expect(source).toMatch(/\.workflow-node-port-list\.input\s*\{[\s\S]*left: 0;/);
+    expect(source).toMatch(/\.workflow-node-port-list\.output\s*\{[\s\S]*right: 0;/);
+    expect(source).toMatch(/\.node-handle\.input\s*\{[\s\S]*margin-left: -9px;/);
+    expect(source).toMatch(/\.node-handle\.output\s*\{[\s\S]*margin-right: -9px;/);
     expect(source).not.toMatch(/\.workflow-node-port-list\s*\{[^}]*max-height:/);
     expect(source).not.toMatch(/\.workflow-node-port-list\s*\{[^}]*overflow: hidden;/);
     expect(source).not.toContain('.workflow-node-port i');
@@ -2099,18 +2172,35 @@ describe('Agent projects page', () => {
     expect(portTexts(dom, 'node-1', 'output')).toEqual(['Approved', 'Return', 'Reject']);
     expect(portTexts(dom, 'node-2', 'input')).toEqual([]);
     expect(portTexts(dom, 'node-2', 'output')).toEqual([]);
-    expect(nodeElement.querySelectorAll('[data-node-input]')).toHaveLength(1);
-    expect(nodeElement.querySelectorAll('[data-node-output]')).toHaveLength(1);
-    expect(nodeElement.querySelectorAll('.workflow-node-port button, .workflow-node-port .node-handle')).toHaveLength(0);
+    expect(nodeElement.querySelectorAll('[data-node-input-port]')).toHaveLength(4);
+    expect(nodeElement.querySelectorAll('[data-node-output-port]')).toHaveLength(3);
+    expect(noPortNode.querySelectorAll('[data-node-input-port], [data-node-output-port]')).toHaveLength(0);
+  });
+
+  it('Canvas bounds use current Node geometry for Nodes with many Ports', async () => {
+    const manyInputs = Array.from({ length: 40 }, (_value, index) => ({
+      id: `input-${index}`,
+      name: `Input ${index}`,
+      description: `Input ${index}.`,
+      order: index
+    }));
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 20, 900, 'DEPENDENCIES_ONLY', manyInputs, [])
+    ]))) });
+    const { dom } = await openedBuilder(fakeApi);
+    const svg = dom.window.document.getElementById('agentsV2WorkflowEdges')!;
+
+    expect(Number(svg.getAttribute('height'))).toBeGreaterThanOrEqual(900 + (40 * 26 + 58) + 240);
   });
 
   it('clicking compact Node opens Node Editor and Cancel leaves draft unchanged', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20, 'DEPENDENCIES_ONLY', [], [
+      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20, 'DEPENDENCIES_ONLY', [], [
         { id: 'out-1', name: 'Approved', description: 'Accepted.', order: 0 }
       ])
     ]))) });
     const { dom, page } = await openedBuilder(fakeApi);
+    setRandomUuids(dom, ['a-b-connection', 'a-c-connection', 'b-c-connection']);
 
     expect(dom.window.document.querySelector('[data-node-input-mode]')).toBeNull();
     clickNode(dom, 'node-1');
@@ -2132,7 +2222,7 @@ describe('Agent projects page', () => {
 
   it('Node Editor adds, deletes, validates, saves ports, and keeps renamed Port IDs', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20, 'DEPENDENCIES_ONLY', [
+      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20, 'DEPENDENCIES_ONLY', [
         { id: 'input-existing', name: 'Context', description: 'Existing context.', order: 0 }
       ], [
         { id: 'output-existing', name: 'Approved', description: 'Accepted.', order: 0 }
@@ -2188,9 +2278,98 @@ describe('Agent projects page', () => {
     expect(editorEditingRows(dom, 'outputs')).toHaveLength(0);
   });
 
+  it('Node Editor rejects deletion of connected source Output and target Input Ports', async () => {
+    const graph = workflow('wf', [
+      node('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20, 'DEPENDENCIES_ONLY', [
+        { id: 'input-a', name: 'Input', description: 'Default workflow input.', order: 0 }
+      ], [
+        { id: 'output-a', name: 'Output', description: 'Default workflow output.', order: 0 }
+      ]),
+      node('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20, 'DEPENDENCIES_ONLY', [
+        { id: 'input-b', name: 'Input', description: 'Default workflow input.', order: 0 }
+      ], [
+        { id: 'output-b', name: 'Output', description: 'Default workflow output.', order: 0 }
+      ])
+    ], project().id, [portConnection('edge-a-b', 'output-a', 'input-b')]);
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+
+    clickNode(dom, 'a');
+    dom.window.document.querySelector<HTMLElement>('[data-node-editor-remove="output-a"]')?.click();
+    expect(dom.window.document.getElementById('agentsV2NodeEditorError')?.textContent)
+      .toContain('Port is connected. Remove its connections first.');
+    expect(editorRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-a']);
+    expect(page.workflowBuilder.workflow.connections).toEqual([portConnection('edge-a-b', 'output-a', 'input-b')]);
+    dom.window.document.getElementById('agentsV2NodeEditorCancel')?.click();
+
+    clickNode(dom, 'b');
+    dom.window.document.querySelector<HTMLElement>('[data-node-editor-remove="input-b"]')?.click();
+    expect(dom.window.document.getElementById('agentsV2NodeEditorError')?.textContent)
+      .toContain('Port is connected. Remove its connections first.');
+    expect(editorRows(dom, 'inputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['input-b']);
+    expect(page.workflowBuilder.workflow.connections).toEqual([portConnection('edge-a-b', 'output-a', 'input-b')]);
+  });
+
+  it('Port rename preserves existing WorkflowConnection identity and Port IDs', async () => {
+    const graph = workflow('wf', [
+      node('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20, 'DEPENDENCIES_ONLY', [], [
+        { id: 'output-1', name: 'Output', description: 'Default workflow output.', order: 0 }
+      ]),
+      node('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20, 'DEPENDENCIES_ONLY', [
+        { id: 'input-1', name: 'Input', description: 'Default workflow input.', order: 0 }
+      ], [])
+    ], project().id, [portConnection('connection-1', 'output-1', 'input-1')]);
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+
+    clickNode(dom, 'a');
+    editPort(dom, 'outputs', 'output-1');
+    setPortFields(editorRow(dom, 'outputs', 0), 'Approved', 'Approved output.');
+    dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
+
+    expect(page.workflowBuilder.workflow.nodes[0].outputs).toEqual([
+      { id: 'output-1', name: 'Approved', description: 'Approved output.', order: 0 }
+    ]);
+    expect(page.workflowBuilder.workflow.connections).toEqual([
+      portConnection('connection-1', 'output-1', 'input-1')
+    ]);
+  });
+
+  it('Canvas supports multiple distinct Port edges between the same Nodes', async () => {
+    const graph = workflow('wf', [
+      node('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20, 'DEPENDENCIES_ONLY', [], [
+        { id: 'a-output-1', name: 'Output1', description: 'First output.', order: 0 },
+        { id: 'a-output-2', name: 'Output2', description: 'Second output.', order: 1 }
+      ]),
+      node('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20, 'DEPENDENCIES_ONLY', [
+        { id: 'b-input-1', name: 'Input1', description: 'First input.', order: 0 },
+        { id: 'b-input-2', name: 'Input2', description: 'Second input.', order: 1 }
+      ], [])
+    ]);
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    setRandomUuids(dom, ['edge-1', 'edge-2']);
+
+    dom.window.document.querySelector<HTMLElement>('[data-node-output-port="a-output-1"]')!
+      .dispatchEvent(pointer(dom, 'pointerdown', 200, 40));
+    dom.window.document.querySelector<HTMLElement>('[data-node-input-port="b-input-1"]')!
+      .dispatchEvent(pointer(dom, 'pointerup', 20, 40));
+    dom.window.document.querySelector<HTMLElement>('[data-node-output-port="a-output-2"]')!
+      .dispatchEvent(pointer(dom, 'pointerdown', 200, 66));
+    dom.window.document.querySelector<HTMLElement>('[data-node-input-port="b-input-2"]')!
+      .dispatchEvent(pointer(dom, 'pointerup', 20, 66));
+
+    expect(page.workflowBuilder.workflow.connections).toEqual([
+      portConnection('edge-1', 'a-output-1', 'b-input-1'),
+      portConnection('edge-2', 'a-output-2', 'b-input-2')
+    ]);
+    expect(new Set(page.workflowBuilder.workflow.connections.map((item: any) => item.id))).toEqual(new Set(['edge-1', 'edge-2']));
+    expect(dom.window.document.querySelectorAll('.workflow-edge')).toHaveLength(2);
+  });
+
   it('Node Editor switches and clears the single active port editor without losing draft values', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20, 'DEPENDENCIES_ONLY', [], [
+      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20, 'DEPENDENCIES_ONLY', [], [
         { id: 'output-a', name: 'Approved', description: 'Accepted.', order: 0 },
         { id: 'output-b', name: 'Return', description: 'Return for changes.', order: 1 }
       ])
@@ -2252,7 +2431,7 @@ describe('Agent projects page', () => {
   it('compact Node renders ports by order and Workflow Save payload contains inputs and outputs', async () => {
     const fakeApi = api({
       getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-        node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 44, 55, 'DEPENDENCIES_ONLY', [
+        node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 44, 55, 'DEPENDENCIES_ONLY', [
           { id: 'input-b', name: 'Second input', description: 'Second.', order: 1 },
           { id: 'input-a', name: 'First input', description: 'First.', order: 0 }
         ], [
@@ -2273,7 +2452,6 @@ describe('Agent projects page', () => {
       nodes: [{
         id: 'node-1',
         targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        dependsOnNodeIds: [],
         inputMode: 'DEPENDENCIES_ONLY',
         inputs: [
           { id: 'input-a', name: 'First input', description: 'First.', order: 0 },
@@ -2284,7 +2462,8 @@ describe('Agent projects page', () => {
           { id: 'output-b', name: 'Second output', description: 'Second.', order: 1 }
         ],
         position: { x: 44, y: 55 }
-      }]
+      }],
+      connections: []
     });
     expect(portTexts(dom, 'node-1', 'input')).toEqual(['First input', 'Second input']);
     expect(portTexts(dom, 'node-1', 'output')).toEqual(['First output', 'Second output']);
@@ -2292,14 +2471,14 @@ describe('Agent projects page', () => {
 
   it('Node body drag updates only connected edge geometry without rebuilding unrelated edge DOM', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20),
-      node('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', ['a'], 260, 20),
-      node('c', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', [], 10, 220),
-      node('d', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', ['c'], 260, 220)
-    ]))) });
+      portedNode('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20),
+      portedNode('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20),
+      portedNode('c', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 10, 220),
+      portedNode('d', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 260, 220)
+    ], project().id, [connection('a', 'b'), connection('c', 'd')]))) });
     const { dom } = await openedBuilder(fakeApi);
-    const movingEdge = dom.window.document.querySelector<SVGGElement>('[data-edge-source="a"][data-edge-target="b"]')!;
-    const unrelatedEdge = dom.window.document.querySelector<SVGGElement>('[data-edge-source="c"][data-edge-target="d"]')!;
+    const movingEdge = dom.window.document.querySelector<SVGGElement>('[data-edge-id="a-b-connection"]')!;
+    const unrelatedEdge = dom.window.document.querySelector<SVGGElement>('[data-edge-id="c-d-connection"]')!;
     const movingPathBefore = movingEdge.querySelector('.edge-visible')!.getAttribute('d');
     const unrelatedPathBefore = unrelatedEdge.querySelector('.edge-visible')!.getAttribute('d');
     const nodeElement = dom.window.document.querySelector<HTMLElement>('[data-node-id="a"]')!;
@@ -2307,73 +2486,114 @@ describe('Agent projects page', () => {
     nodeElement.dispatchEvent(pointer(dom, 'pointerdown', 10, 20));
     dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 60, 80));
 
-    const movingEdgeAfter = dom.window.document.querySelector<SVGGElement>('[data-edge-source="a"][data-edge-target="b"]')!;
-    const unrelatedEdgeAfter = dom.window.document.querySelector<SVGGElement>('[data-edge-source="c"][data-edge-target="d"]')!;
+    const movingEdgeAfter = dom.window.document.querySelector<SVGGElement>('[data-edge-id="a-b-connection"]')!;
+    const unrelatedEdgeAfter = dom.window.document.querySelector<SVGGElement>('[data-edge-id="c-d-connection"]')!;
     expect(movingEdgeAfter).toBe(movingEdge);
     expect(movingEdgeAfter.querySelector('.edge-visible')!.getAttribute('d')).not.toBe(movingPathBefore);
     expect(unrelatedEdgeAfter).toBe(unrelatedEdge);
     expect(unrelatedEdgeAfter.querySelector('.edge-visible')!.getAttribute('d')).toBe(unrelatedPathBefore);
+
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 1800, 1200));
+
+    const expandedSvg = dom.window.document.getElementById('agentsV2WorkflowEdges')!;
+    expect(Number(expandedSvg.getAttribute('width'))).toBeGreaterThan(1600);
+    expect(Number(expandedSvg.getAttribute('height'))).toBeGreaterThan(1000);
+    expect(dom.window.document.querySelector<SVGGElement>('[data-edge-id="a-b-connection"]')).toBe(movingEdge);
+    expect(movingEdge.querySelector('.edge-visible')!.getAttribute('d')).toMatch(/^M /);
+    expect(movingEdge.querySelector('.edge-visible')!.getAttribute('d')).toContain('2052 1255');
   });
 
-  it('dragging from output handle previews and dropping on target input creates dependency', async () => {
+  it('Canvas background drag pans the viewport and wheel zooms without moving Nodes', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
-      node('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+      portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 44, 55)
     ]))) });
     const { dom, page } = await openedBuilder(fakeApi);
+    const canvas = dom.window.document.getElementById('agentsV2WorkflowCanvas')!;
+    const nodesLayer = dom.window.document.getElementById('agentsV2WorkflowNodes')!;
 
-    dom.window.document.querySelector<HTMLElement>('[data-node-output="node-1"]')!
+    canvas.dispatchEvent(pointer(dom, 'pointerdown', 100, 100));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 140, 125));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointerup', 140, 125));
+
+    expect(page.workflowBuilder.viewport).toEqual({ x: 40, y: 25, scale: 1 });
+    expect(nodesLayer.style.transform).toBe('translate(40px, 25px) scale(1)');
+    expect(page.workflowBuilder.workflow.nodes[0].position).toEqual({ x: 44, y: 55 });
+
+    canvas.dispatchEvent(wheel(dom, 100, 100, -100));
+
+    expect(page.workflowBuilder.viewport.scale).toBeGreaterThan(1);
+    expect(nodesLayer.style.transform).toContain('scale(1.08)');
+    expect(page.workflowBuilder.workflow.nodes[0].position).toEqual({ x: 44, y: 55 });
+  });
+
+  it('dragging from output handle previews and dropping on target input creates port connection', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    ]))) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    setRandomUuids(dom, ['node-1-node-2-new-connection']);
+
+    dom.window.document.querySelector<HTMLElement>('[data-node-output-port="node-1-output"]')!
       .dispatchEvent(pointer(dom, 'pointerdown', 214, 72));
     dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 300, 120));
     expect(dom.window.document.querySelector('.workflow-edge-preview')?.getAttribute('d')).toContain('300 120');
 
-    dom.window.document.querySelector<HTMLElement>('[data-node-input="node-2"]')!
+    dom.window.document.querySelector<HTMLElement>('[data-node-input-port="node-2-input"]')!
       .dispatchEvent(pointer(dom, 'pointerup', 10, 72));
-    expect(page.workflowBuilder.workflow.nodes[1].dependsOnNodeIds).toEqual(['node-1']);
+    expect(page.workflowBuilder.workflow.connections).toEqual([{
+      id: 'node-1-node-2-new-connection',
+      sourceOutputPortId: 'node-1-output',
+      targetInputPortId: 'node-2-input'
+    }]);
     expect(dom.window.document.querySelector('.workflow-edge-preview')).toBeNull();
     expect(dom.window.document.getElementById('agentsV2WorkflowEdges')?.innerHTML).toContain('workflow-edge');
   });
 
   it('dropping connection on empty canvas cancels', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
-      node('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+      portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
     ]))) });
     const { dom, page } = await openedBuilder(fakeApi);
 
-    dom.window.document.querySelector<HTMLElement>('[data-node-output="node-1"]')!
+    dom.window.document.querySelector<HTMLElement>('[data-node-output-port="node-1-output"]')!
       .dispatchEvent(pointer(dom, 'pointerdown', 214, 72));
     dom.window.document.dispatchEvent(pointer(dom, 'pointerup', 500, 500));
 
-    expect(page.workflowBuilder.workflow.nodes[1].dependsOnNodeIds).toEqual([]);
+    expect(page.workflowBuilder.workflow.connections).toEqual([]);
     expect(dom.window.document.querySelector('.workflow-edge-preview')).toBeNull();
   });
 
   it('self and duplicate connections are rejected locally', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
-      node('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', ['node-1'])
-    ]))) });
+      portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    ], project().id, [connection('node-1', 'node-2')]))) });
     const { dom, page } = await openedBuilder(fakeApi);
 
-    dom.window.document.querySelector<HTMLElement>('[data-node-output="node-1"]')!
+    dom.window.document.querySelector<HTMLElement>('[data-node-output-port="node-1-output"]')!
       .dispatchEvent(pointer(dom, 'pointerdown', 214, 72));
-    dom.window.document.querySelector<HTMLElement>('[data-node-input="node-1"]')!
+    dom.window.document.querySelector<HTMLElement>('[data-node-input-port="node-1-input"]')!
       .dispatchEvent(pointer(dom, 'pointerup', 10, 72));
-    expect(page.workflowBuilder.workflow.nodes[0].dependsOnNodeIds).toEqual([]);
+    expect(page.workflowBuilder.workflow.connections).toEqual([{
+      id: 'node-1-node-2-connection',
+      sourceOutputPortId: 'node-1-output',
+      targetInputPortId: 'node-2-input'
+    }]);
 
-    dom.window.document.querySelector<HTMLElement>('[data-node-output="node-1"]')!
+    dom.window.document.querySelector<HTMLElement>('[data-node-output-port="node-1-output"]')!
       .dispatchEvent(pointer(dom, 'pointerdown', 214, 72));
-    dom.window.document.querySelector<HTMLElement>('[data-node-input="node-2"]')!
+    dom.window.document.querySelector<HTMLElement>('[data-node-input-port="node-2-input"]')!
       .dispatchEvent(pointer(dom, 'pointerup', 10, 72));
-    expect(page.workflowBuilder.workflow.nodes[1].dependsOnNodeIds).toEqual(['node-1']);
+    expect(page.workflowBuilder.workflow.connections).toHaveLength(1);
   });
 
-  it('fan-out and fan-in connections update target dependsOnNodeIds only', async () => {
+  it('fan-out and fan-in connections are stored as port connections', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
-      node('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
-      node('c', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc')
+      portedNode('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+      portedNode('c', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc')
     ]))) });
     const { dom, page } = await openedBuilder(fakeApi);
 
@@ -2381,31 +2601,38 @@ describe('Agent projects page', () => {
     dragConnect(dom, 'a', 'c');
     dragConnect(dom, 'b', 'c');
 
-    expect(page.workflowBuilder.workflow.nodes.find((item: any) => item.id === 'b').dependsOnNodeIds).toEqual(['a']);
-    expect(page.workflowBuilder.workflow.nodes.find((item: any) => item.id === 'c').dependsOnNodeIds).toEqual(['a', 'b']);
+    expect(page.workflowBuilder.workflow.connections.map((connection: any) => [
+      connection.sourceOutputPortId,
+      connection.targetInputPortId
+    ])).toEqual([
+      ['a-output', 'b-input'],
+      ['a-output', 'c-input'],
+      ['b-output', 'c-input']
+    ]);
   });
 
   it('existing edge can be removed directly and Node removal cleans references', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
-      node('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', ['a'])
-    ]))) });
+      portedNode('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    ], project().id, [connection('a', 'b')]))) });
     const { dom, page } = await openedBuilder(fakeApi);
 
-    dom.window.document.querySelector<SVGElement>('[data-remove-connection][data-source-node-id="a"][data-target-node-id="b"]')!
+    dom.window.document.querySelector<SVGElement>('[data-remove-connection="a-b-connection"]')!
       .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    expect(page.workflowBuilder.workflow.nodes[1].dependsOnNodeIds).toEqual([]);
+    expect(page.workflowBuilder.workflow.connections).toEqual([]);
+    setRandomUuids(dom, ['a-b-new-connection']);
     dragConnect(dom, 'a', 'b');
     page.workflowBuilder.removeNode('a');
     expect(page.workflowBuilder.workflow.nodes).toHaveLength(1);
-    expect(page.workflowBuilder.workflow.nodes[0].dependsOnNodeIds).toEqual([]);
+    expect(page.workflowBuilder.workflow.connections).toEqual([]);
   });
 
   it('save submits complete graph, reload restores positions, and backend cycle errors are shown', async () => {
     const fakeApi = api({
-      getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 44, 55)]))),
+      getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 44, 55)]))),
       updateWorkflow: vi.fn()
-        .mockResolvedValueOnce(workflow('wf', [node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 80, 90)]))
+        .mockResolvedValueOnce(workflow('wf', [node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 80, 90)]))
         .mockRejectedValueOnce(new Error('WORKFLOW_GRAPH_CYCLE: Workflow graph contains a cycle.'))
     });
     const { dom, page } = await openedBuilder(fakeApi);
@@ -2417,12 +2644,12 @@ describe('Agent projects page', () => {
       nodes: [{
         id: 'node-1',
         targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        dependsOnNodeIds: [],
         inputMode: 'DEPENDENCIES_ONLY',
         inputs: [],
         outputs: [],
         position: { x: 80, y: 90 }
-      }]
+      }],
+      connections: []
     });
     expect(page.workflowBuilder.workflow.nodes[0].position).toEqual({ x: 80, y: 90 });
 
@@ -2432,9 +2659,9 @@ describe('Agent projects page', () => {
 
   it('Workflow Builder edits dependency input mode in the Node Editor', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
-      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
-      node('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', ['node-1'], 260, 20)
-    ]))) });
+      portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20)
+    ], project().id, [connection('node-1', 'node-2')]))) });
     const { dom, page } = await openedBuilder(fakeApi);
 
     expect(dom.window.document.querySelector('[data-node-input-mode]')).toBeNull();
@@ -2455,22 +2682,25 @@ describe('Agent projects page', () => {
         {
           id: 'node-1',
           targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-          dependsOnNodeIds: [],
           inputMode: 'DEPENDENCIES_ONLY',
-          inputs: [],
-          outputs: [],
+          inputs: [{ id: 'node-1-input', name: 'Input', description: 'Default workflow input.', order: 0 }],
+          outputs: [{ id: 'node-1-output', name: 'Output', description: 'Default workflow output.', order: 0 }],
           position: { x: 10, y: 20 }
         },
         {
           id: 'node-2',
           targetId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-          dependsOnNodeIds: ['node-1'],
           inputMode: 'TASK_AND_DEPENDENCIES',
-          inputs: [],
-          outputs: [],
+          inputs: [{ id: 'node-2-input', name: 'Input', description: 'Default workflow input.', order: 0 }],
+          outputs: [{ id: 'node-2-output', name: 'Output', description: 'Default workflow output.', order: 0 }],
           position: { x: 260, y: 20 }
         }
-      ]
+      ],
+      connections: [{
+        id: 'node-1-node-2-connection',
+        sourceOutputPortId: 'node-1-output',
+        targetInputPortId: 'node-2-input'
+      }]
     });
   });
 
@@ -2531,9 +2761,9 @@ describe('Agent projects page', () => {
 });
 
 function dragConnect(dom: JSDOM, source: string, target: string) {
-  dom.window.document.querySelector<HTMLElement>(`[data-node-output="${source}"]`)!
+  dom.window.document.querySelector<HTMLElement>(`[data-node-output-port="${source}-output"]`)!
     .dispatchEvent(pointer(dom, 'pointerdown', 200, 40));
-  dom.window.document.querySelector<HTMLElement>(`[data-node-input="${target}"]`)!
+  dom.window.document.querySelector<HTMLElement>(`[data-node-input-port="${target}-input"]`)!
     .dispatchEvent(pointer(dom, 'pointerup', 20, 40));
 }
 

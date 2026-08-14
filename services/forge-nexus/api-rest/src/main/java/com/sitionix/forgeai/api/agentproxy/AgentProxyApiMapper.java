@@ -29,6 +29,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -71,6 +72,9 @@ public class AgentProxyApiMapper {
         return new SaveAgentWorkflowCommand(
                 request.name(),
                 request.nodes() == null ? List.of() : request.nodes().stream()
+                        .map(this::toDomain)
+                        .toList(),
+                request.connections() == null ? List.of() : request.connections().stream()
                         .map(this::toDomain)
                         .toList()
         );
@@ -196,6 +200,7 @@ public class AgentProxyApiMapper {
                 workflow.projectId(),
                 workflow.name(),
                 workflow.nodes().stream().map(this::toResponse).toList(),
+                workflow.connections().stream().map(this::toResponse).toList(),
                 workflow.createdAt(),
                 workflow.updatedAt()
         );
@@ -234,7 +239,6 @@ public class AgentProxyApiMapper {
         return new Node(
                 request.id(),
                 request.targetId(),
-                request.dependsOnNodeIds() == null ? List.of() : request.dependsOnNodeIds(),
                 inputMode(request.inputMode()),
                 request.inputs() == null ? List.of() : request.inputs().stream().map(this::toDomain).toList(),
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toDomain).toList(),
@@ -246,12 +250,22 @@ public class AgentProxyApiMapper {
         return new NodeResponse(
                 node.id(),
                 node.targetId(),
-                node.dependsOnNodeIds(),
                 inputMode(node.inputMode()).name(),
                 node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
                 new NodePositionResponse(node.position().x(), node.position().y())
         );
+    }
+
+    private WorkflowConnection toDomain(final WorkflowConnectionRequest request) {
+        if (request == null) {
+            return null;
+        }
+        return new WorkflowConnection(request.id(), request.sourceOutputPortId(), request.targetInputPortId());
+    }
+
+    private WorkflowConnectionResponse toResponse(final WorkflowConnection connection) {
+        return new WorkflowConnectionResponse(connection.id(), connection.sourceOutputPortId(), connection.targetInputPortId());
     }
 
     private NodePort toDomain(final NodePortRequest request) {

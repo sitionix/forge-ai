@@ -4,6 +4,7 @@ import java.util.List;
 
 public record SaveAgentWorkflowCommand(
         String name,
-        List<Node> nodes
+        List<Node> nodes,
+        List<WorkflowConnection> connections
 ) {
 }

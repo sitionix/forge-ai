@@ -4,35 +4,94 @@
     {
       "id": "40000000-0000-4000-8000-000000000001",
       "targetId": "20000000-0000-4000-8000-000000000001",
-      "dependsOnNodeIds": [
-        "40000000-0000-4000-8000-000000000003"
-      ],
       "position": {
         "x": 1,
         "y": 2
-      }
+      },
+      "inputMode": "DEPENDENCIES_ONLY",
+      "inputs": [
+        {
+          "id": "61000000-0000-4000-8000-000000000001",
+          "name": "Input",
+          "description": "Default workflow input.",
+          "order": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "71000000-0000-4000-8000-000000000001",
+          "name": "Output",
+          "description": "Default workflow output.",
+          "order": 0
+        }
+      ]
     },
     {
       "id": "40000000-0000-4000-8000-000000000002",
       "targetId": "20000000-0000-4000-8000-000000000002",
-      "dependsOnNodeIds": [
-        "40000000-0000-4000-8000-000000000001"
-      ],
       "position": {
         "x": 3,
         "y": 4
-      }
+      },
+      "inputMode": "DEPENDENCIES_ONLY",
+      "inputs": [
+        {
+          "id": "61000000-0000-4000-8000-000000000002",
+          "name": "Input",
+          "description": "Default workflow input.",
+          "order": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "71000000-0000-4000-8000-000000000002",
+          "name": "Output",
+          "description": "Default workflow output.",
+          "order": 0
+        }
+      ]
     },
     {
       "id": "40000000-0000-4000-8000-000000000003",
       "targetId": "20000000-0000-4000-8000-000000000003",
-      "dependsOnNodeIds": [
-        "40000000-0000-4000-8000-000000000002"
-      ],
       "position": {
         "x": 5,
         "y": 6
-      }
+      },
+      "inputMode": "DEPENDENCIES_ONLY",
+      "inputs": [
+        {
+          "id": "61000000-0000-4000-8000-000000000003",
+          "name": "Input",
+          "description": "Default workflow input.",
+          "order": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "71000000-0000-4000-8000-000000000003",
+          "name": "Output",
+          "description": "Default workflow output.",
+          "order": 0
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "81000000-0000-4000-8000-000000000001",
+      "sourceOutputPortId": "71000000-0000-4000-8000-000000000001",
+      "targetInputPortId": "61000000-0000-4000-8000-000000000002"
+    },
+    {
+      "id": "81000000-0000-4000-8000-000000000002",
+      "sourceOutputPortId": "71000000-0000-4000-8000-000000000002",
+      "targetInputPortId": "61000000-0000-4000-8000-000000000003"
+    },
+    {
+      "id": "81000000-0000-4000-8000-000000000003",
+      "sourceOutputPortId": "71000000-0000-4000-8000-000000000003",
+      "targetInputPortId": "61000000-0000-4000-8000-000000000001"
     }
   ]
 }

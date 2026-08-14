@@ -1,0 +1,37 @@
+{
+  "name": "Full Testing",
+  "nodes": [
+    {
+      "id": "40000000-0000-4000-8000-000000000001",
+      "targetId": "20000000-0000-4000-8000-000000000001",
+      "position": {
+        "x": 1,
+        "y": 2
+      },
+      "inputMode": "DEPENDENCIES_ONLY",
+      "inputs": [
+        {
+          "id": "61000000-0000-4000-8000-000000000001",
+          "name": "Input",
+          "description": "Default workflow input.",
+          "order": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "71000000-0000-4000-8000-000000000001",
+          "name": "Output",
+          "description": "Default workflow output.",
+          "order": 0
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "81000000-0000-4000-8000-000000000001",
+      "sourceOutputPortId": "99999999-9999-4999-8999-999999999999",
+      "targetInputPortId": "61000000-0000-4000-8000-000000000001"
+    }
+  ]
+}

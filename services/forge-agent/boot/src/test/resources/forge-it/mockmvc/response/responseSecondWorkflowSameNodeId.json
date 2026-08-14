@@ -6,13 +6,30 @@
     {
       "id": "40000000-0000-4000-8000-000000000001",
       "targetId": "20000000-0000-4000-8000-000000000001",
-      "dependsOnNodeIds": [],
       "position": {
         "x": 900,
         "y": 300
-      }
+      },
+      "inputMode": "DEPENDENCIES_ONLY",
+      "inputs": [
+        {
+          "id": "62000000-0000-4000-8000-000000000001",
+          "name": "Input",
+          "description": "Default workflow input.",
+          "order": 0
+        }
+      ],
+      "outputs": [
+        {
+          "id": "72000000-0000-4000-8000-000000000001",
+          "name": "Output",
+          "description": "Default workflow output.",
+          "order": 0
+        }
+      ]
     }
   ],
   "createdAt": "2026-01-01T00:00:00Z",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "updatedAt": "2026-01-01T00:00:00Z",
+  "connections": []
 }

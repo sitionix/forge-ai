@@ -30,6 +30,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
@@ -52,6 +53,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequ
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowConnectionRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowConnectionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import java.time.Instant;
@@ -68,6 +71,7 @@ class ForgeAgentClientMapperTest {
     private static final UUID NODE_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID INPUT_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
     private static final UUID OUTPUT_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
+    private static final UUID CONNECTION_ID = UUID.fromString("30000000-0000-4000-8000-000000000001");
     private static final UUID RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID NODE_RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final UUID TASK_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
@@ -198,10 +202,10 @@ class ForgeAgentClientMapperTest {
     void workflowCommandsAndResponsesMapSuccessfully() {
         final var input = new NodePort(INPUT_ID, "Review feedback", "Feedback produced by review.", 0);
         final var output = new NodePort(OUTPUT_ID, "Approved", "Continue when accepted.", 0);
+        final var connection = new WorkflowConnection(CONNECTION_ID, OUTPUT_ID, INPUT_ID);
         final var node = new Node(
                 NODE_ID,
                 AGENT_ID,
-                List.of(),
                 NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(input),
                 List.of(output),
@@ -209,18 +213,18 @@ class ForgeAgentClientMapperTest {
         );
         assertThat(this.mapper.toRequest(new CreateAgentWorkflowCommand("Full Testing")))
                 .isEqualTo(new AgentWorkflowRequest("Full Testing"));
-        assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand("Full Testing", List.of(node))))
+        assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand("Full Testing", List.of(node), List.of(connection))))
                 .isEqualTo(new SaveAgentWorkflowRequest(
                         "Full Testing",
                         List.of(new NodeRequest(
                                 NODE_ID,
                                 AGENT_ID,
-                                List.of(),
                                 NodeInputMode.DEPENDENCIES_ONLY.name(),
                                 List.of(new NodePortRequest(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                                 List.of(new NodePortRequest(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
                                 new NodePositionRequest(1.0, 2.0)
-                        ))
+                        )),
+                        List.of(new WorkflowConnectionRequest(CONNECTION_ID, OUTPUT_ID, INPUT_ID))
                 ));
 
         assertThat(this.mapper.toDomain(new AgentWorkflowResponse(
@@ -230,15 +234,15 @@ class ForgeAgentClientMapperTest {
                 List.of(new NodeResponse(
                         NODE_ID,
                         AGENT_ID,
-                        List.of(),
                         NodeInputMode.DEPENDENCIES_ONLY.name(),
                         List.of(new NodePortResponse(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                         List.of(new NodePortResponse(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
                         new NodePositionResponse(1.0, 2.0)
                 )),
+                List.of(new WorkflowConnectionResponse(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
                 CREATED,
                 UPDATED
-        ))).isEqualTo(new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(node), CREATED, UPDATED));
+        ))).isEqualTo(new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(node), List.of(connection), CREATED, UPDATED));
     }
 
     @Test
@@ -340,7 +344,8 @@ class ForgeAgentClientMapperTest {
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new NodeResponse(NODE_ID, null, List.of(), new NodePositionResponse(1.0, 2.0))),
+                List.of(new NodeResponse(NODE_ID, null, new NodePositionResponse(1.0, 2.0))),
+                List.of(),
                 CREATED,
                 UPDATED
         )))

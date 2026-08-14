@@ -133,10 +133,10 @@ class AgentProxyUseCaseTest {
 
     @Test
     void workflowUseCasesDelegateToClient() {
-        final var node = new Node(NODE_ID, AGENT_ID, List.of(), new NodePosition(1.0, 2.0));
+        final var node = new Node(NODE_ID, AGENT_ID, new NodePosition(1.0, 2.0));
         final var createCommand = new CreateAgentWorkflowCommand("Full Testing");
-        final var saveCommand = new SaveAgentWorkflowCommand("Full Testing", List.of(node));
-        final var workflow = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(node), NOW, NOW);
+        final var saveCommand = new SaveAgentWorkflowCommand("Full Testing", List.of(node), List.of());
+        final var workflow = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(node), List.of(), NOW, NOW);
         when(this.forgeAgentClient.listProjectWorkflows(PROJECT_ID)).thenReturn(List.of(workflow));
         when(this.forgeAgentClient.createWorkflow(PROJECT_ID, createCommand)).thenReturn(workflow);
         when(this.forgeAgentClient.getWorkflow(WORKFLOW_ID)).thenReturn(workflow);

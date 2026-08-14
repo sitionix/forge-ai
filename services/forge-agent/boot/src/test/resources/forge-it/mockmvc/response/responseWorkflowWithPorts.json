@@ -6,7 +6,6 @@
     {
       "id": "40000000-0000-4000-8000-000000000001",
       "targetId": "20000000-0000-4000-8000-000000000001",
-      "dependsOnNodeIds": [],
       "inputMode": "DEPENDENCIES_ONLY",
       "inputs": [
         {
@@ -43,5 +42,6 @@
     }
   ],
   "createdAt": "2026-01-01T00:00:00Z",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "updatedAt": "2026-01-01T00:00:00Z",
+  "connections": []
 }

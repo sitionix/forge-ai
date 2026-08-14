@@ -10,6 +10,7 @@ public record Workflow(
         String name,
         String normalizedName,
         List<Node> nodes,
+        List<WorkflowConnection> connections,
         Instant createdAt,
         Instant updatedAt
 ) {

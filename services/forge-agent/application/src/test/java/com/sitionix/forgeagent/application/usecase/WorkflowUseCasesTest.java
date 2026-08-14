@@ -7,15 +7,18 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.sitionix.forgeagent.application.graph.NodeGraphValidator;
+import com.sitionix.forgeagent.application.graph.WorkflowGraphValidator;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.Workflow;
+import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import com.sitionix.forgeagent.domain.port.ProjectTaskRepository;
@@ -45,6 +48,10 @@ class WorkflowUseCasesTest {
     private final UUID nodeA = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     private final UUID nodeB = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     private final UUID agentId = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    private final UUID inputA = UUID.fromString("10000000-0000-4000-8000-000000000001");
+    private final UUID inputB = UUID.fromString("10000000-0000-4000-8000-000000000002");
+    private final UUID outputA = UUID.fromString("20000000-0000-4000-8000-000000000001");
+    private final UUID outputB = UUID.fromString("20000000-0000-4000-8000-000000000002");
 
     @Mock
     private ProjectRepository projectRepository;
@@ -71,7 +78,7 @@ class WorkflowUseCasesTest {
                 this.workflowRepository,
                 this.projectTaskRepository,
                 this.workflowRunRepository,
-                new NodeGraphValidator(),
+                new WorkflowGraphValidator(),
                 CLOCK
         );
     }
@@ -85,6 +92,7 @@ class WorkflowUseCasesTest {
 
         assertThat(workflow.name()).isEqualTo("Full Testing");
         assertThat(workflow.nodes()).isEmpty();
+        assertThat(workflow.connections()).isEmpty();
         assertThat(workflow.createdAt()).isEqualTo(Instant.parse("2026-08-04T00:00:00Z"));
     }
 
@@ -102,8 +110,8 @@ class WorkflowUseCasesTest {
     @Test
     void updateLocksWorkflowBeforeReloadAndValidatesFinalGraphBeforeSave() {
         final Workflow current = this.workflow(List.of());
-        final Node first = new Node(this.nodeA, this.agentId, List.of(), new NodePosition(1.0, 2.0));
-        final Node second = new Node(this.nodeB, this.agentId, List.of(this.nodeA), new NodePosition(3.0, 4.0));
+        final Node first = new Node(this.nodeA, this.agentId, new NodePosition(1.0, 2.0));
+        final Node second = new Node(this.nodeB, this.agentId, new NodePosition(3.0, 4.0));
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
@@ -111,10 +119,11 @@ class WorkflowUseCasesTest {
 
         final Workflow saved = this.useCases.updateWorkflow(
                 this.workflowId,
-                new SaveWorkflowCommand("Full Testing", List.of(first, second))
+                new SaveWorkflowCommand("Full Testing", List.of(first, second), List.of())
         );
 
         assertThat(saved.nodes()).containsExactly(first, second);
+        assertThat(saved.connections()).isEmpty();
         final InOrder order = org.mockito.Mockito.inOrder(this.workflowRepository, this.agentDefinitionRepository);
         order.verify(this.workflowRepository).findById(this.workflowId);
         order.verify(this.workflowRepository).findByIdForUpdate(this.workflowId);
@@ -125,7 +134,7 @@ class WorkflowUseCasesTest {
 
     @Test
     void failedUpdateDoesNotPersist() {
-        final Workflow current = this.workflow(List.of(new Node(this.nodeA, this.agentId, List.of(), new NodePosition(1.0, 2.0))));
+        final Workflow current = this.workflow(List.of(new Node(this.nodeA, this.agentId, new NodePosition(1.0, 2.0))));
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
@@ -133,8 +142,17 @@ class WorkflowUseCasesTest {
         assertThatThrownBy(() -> this.useCases.updateWorkflow(
                 this.workflowId,
                 new SaveWorkflowCommand("Full Testing", List.of(
-                        new Node(this.nodeA, this.agentId, List.of(this.nodeB), new NodePosition(1.0, 2.0)),
-                        new Node(this.nodeB, this.agentId, List.of(this.nodeA), new NodePosition(3.0, 4.0))
+                        new Node(this.nodeA, this.agentId, NodeInputMode.DEPENDENCIES_ONLY,
+                                List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
+                                List.of(new NodePort(this.outputA, "Output", "Output.", 0)),
+                                new NodePosition(1.0, 2.0)),
+                        new Node(this.nodeB, this.agentId, NodeInputMode.DEPENDENCIES_ONLY,
+                                List.of(new NodePort(this.inputB, "Input", "Input.", 0)),
+                                List.of(new NodePort(this.outputB, "Output", "Output.", 0)),
+                                new NodePosition(3.0, 4.0))
+                ), List.of(
+                        new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB),
+                        new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000002"), this.outputB, this.inputA)
                 ))
         ))
                 .isInstanceOf(ConflictException.class)
@@ -162,6 +180,6 @@ class WorkflowUseCasesTest {
     }
 
     private Workflow workflow(final List<Node> nodes) {
-        return new Workflow(this.workflowId, this.projectId, "Full Testing", "full testing", nodes, Instant.EPOCH, Instant.EPOCH);
+        return new Workflow(this.workflowId, this.projectId, "Full Testing", "full testing", nodes, List.of(), Instant.EPOCH, Instant.EPOCH);
     }
 }

@@ -2,7 +2,6 @@ package com.sitionix.forgeagent.it.tests;
 
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_ALPHA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.WORKFLOW_ID;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_PROJECT_TASK;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_PROJECT_TASK_ERROR;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_PROJECT_TASK;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_PROJECT_TASKS;
@@ -15,7 +14,6 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW_RUN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
@@ -27,7 +25,6 @@ import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
 import com.sitionix.forgeit.mockmvc.api.QueryParams;
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,62 +37,21 @@ class ForgeAgentProjectTaskIT {
     private ForgeAgentTestManager forgeIt;
 
     @Test
-    void givenNonEmptyWorkflow_whenCreateTask_thenTaskTriggersInitialWorkflowRunAndAppearsInReadModels() {
+    void givenPortAwareWorkflow_whenCreateTask_thenExecutionUnsupportedAndNothingIsPersisted() {
         this.seedProjectAgentsAndWorkflow();
         this.updateWorkflow();
 
-        final UUID taskId = this.createTaskAndAssertResponse();
-        final ProjectTaskEntity task = this.task(taskId);
-        final WorkflowRunEntity run = this.latestRunForTask(taskId);
-
-        assertThat(task.getProjectId()).isEqualTo(PROJECT_ALPHA_ID);
-        assertThat(task.getTitle()).isEqualTo("Check calculation");
-        assertThat(task.getInput()).isEqualTo("Count the letters in Sitionix.");
-        assertThat(task.getWorkflowId()).isEqualTo(WORKFLOW_ID);
-        assertThat(run.getProjectId()).isEqualTo(PROJECT_ALPHA_ID);
-        assertThat(run.getSourceWorkflowId()).isEqualTo(WORKFLOW_ID);
-        assertThat(run.getTaskId()).isEqualTo(taskId);
-        assertThat(run.getInput()).isEqualTo("Count the letters in Sitionix.");
-        assertThat(run.getStatus()).isEqualTo("QUEUED");
-        assertThat(this.forgeIt.postgresql().get(NodeRunEntity.class).getAll())
-                .hasSize(3)
-                .allSatisfy(nodeRun -> {
-                    assertThat(nodeRun.getWorkflowRunId()).isEqualTo(run.getId());
-                    assertThat(nodeRun.getStatus()).isEqualTo("PENDING");
-                    assertThat(nodeRun.getStartedAt()).isNull();
-                    assertThat(nodeRun.getFinishedAt()).isNull();
-                });
-
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_TASKS)
+                .ping(CREATE_PROJECT_TASK_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
-                .expectStatus(HttpStatus.OK)
-                .andExpectPath(jsonPath("$.items", hasSize(1)))
-                .andExpectPath(jsonPath("$.page").value(0))
-                .andExpectPath(jsonPath("$.size").value(20))
-                .andExpectPath(jsonPath("$.totalItems").value(1))
-                .andExpectPath(jsonPath("$.totalPages").value(1))
-                .andExpectPath(jsonPath("$.items[0].id").value(taskId.toString()))
-                .andExpectPath(jsonPath("$.items[0].projectId").value(PROJECT_ALPHA_ID.toString()))
-                .andExpectPath(jsonPath("$.items[0].title").value("Check calculation"))
-                .andExpectPath(jsonPath("$.items[0].workflowId").value(WORKFLOW_ID.toString()))
-                .andExpectPath(jsonPath("$.items[0].workflowName").value("Full Testing"))
-                .andExpectPath(jsonPath("$.items[0].latestWorkflowRunId").value(run.getId().toString()))
-                .andExpectPath(jsonPath("$.items[0].executionStatus").value("QUEUED"))
-                .andExpectPath(jsonPath("$.items[0].input").doesNotExist())
+                .withRequest("requestCreateProjectTask.json")
+                .expectStatus(HttpStatus.CONFLICT)
+                .andExpectPath(jsonPath("$.code").value("WORKFLOW_GRAPH_EXECUTION_NOT_SUPPORTED"))
                 .assertAndCreate();
 
-        this.forgeIt.mockMvc()
-                .ping(GET_PROJECT_TASK)
-                .withPathParameters(PathParams.create().add("taskId", taskId))
-                .expectStatus(HttpStatus.OK)
-                .andExpectPath(jsonPath("$.id").value(taskId.toString()))
-                .andExpectPath(jsonPath("$.input").value("Count the letters in Sitionix."))
-                .andExpectPath(jsonPath("$.runs", hasSize(1)))
-                .andExpectPath(jsonPath("$.runs[0].id").value(run.getId().toString()))
-                .andExpectPath(jsonPath("$.runs[0].taskId").value(taskId.toString()))
-                .andExpectPath(jsonPath("$.runs[0].status").value("QUEUED"))
-                .assertAndCreate();
+        assertThat(this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll()).isEmpty();
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll()).isEmpty();
+        assertThat(this.forgeIt.postgresql().get(NodeRunEntity.class).getAll()).isEmpty();
     }
 
     @Test
@@ -107,7 +63,7 @@ class ForgeAgentProjectTaskIT {
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateProjectTask.json")
                 .expectStatus(HttpStatus.CONFLICT)
-                .andExpectPath(jsonPath("$.code").value("EMPTY_WORKFLOW"))
+                .andExpectPath(jsonPath("$.code").value("WORKFLOW_GRAPH_EXECUTION_NOT_SUPPORTED"))
                 .assertAndCreate();
 
         assertThat(this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll()).isEmpty();
@@ -118,12 +74,13 @@ class ForgeAgentProjectTaskIT {
     @Test
     void givenTaskWithMultipleRuns_whenGetTask_thenRunsAreNewestFirst() {
         this.seedProjectAgentsAndWorkflow();
-        this.updateWorkflow();
-        final UUID taskId = this.createTaskAndAssertResponse();
-        final WorkflowRunEntity firstRun = this.latestRunForTask(taskId);
+        final UUID taskId = UUID.fromString("50000000-0000-4000-8000-000000000010");
+        final UUID firstRunId = UUID.fromString("50000000-0000-4000-8000-000000000098");
         final UUID secondRunId = UUID.fromString("50000000-0000-4000-8000-000000000099");
         this.forgeIt.postgresql()
                 .create()
+                .to(PROJECT_TASK.withEntity(this.projectTaskEntity(taskId, "Task with runs", Instant.parse("2026-08-10T12:00:00Z"))))
+                .to(WORKFLOW_RUN.withEntity(this.workflowRunEntity(firstRunId, taskId, Instant.parse("2026-08-10T12:00:00Z"))))
                 .to(WORKFLOW_RUN.withEntity(this.workflowRunEntity(secondRunId, taskId, Instant.parse("2099-08-10T12:01:00Z"))))
                 .build();
 
@@ -133,7 +90,7 @@ class ForgeAgentProjectTaskIT {
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$.runs", hasSize(2)))
                 .andExpectPath(jsonPath("$.runs[0].id").value(secondRunId.toString()))
-                .andExpectPath(jsonPath("$.runs[1].id").value(firstRun.getId().toString()))
+                .andExpectPath(jsonPath("$.runs[1].id").value(firstRunId.toString()))
                 .assertAndCreate();
     }
 
@@ -226,31 +183,6 @@ class ForgeAgentProjectTaskIT {
                 .assertAndCreate();
     }
 
-    private UUID createTaskAndAssertResponse() {
-        this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT_TASK)
-                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
-                .withRequest("requestCreateProjectTask.json")
-                .expectStatus(HttpStatus.CREATED)
-                .andExpectPath(header().string("Location", org.hamcrest.Matchers.startsWith("/api/v1/tasks/")))
-                .andExpectPath(jsonPath("$.id").isNotEmpty())
-                .andExpectPath(jsonPath("$.projectId").value(PROJECT_ALPHA_ID.toString()))
-                .andExpectPath(jsonPath("$.title").value("Check calculation"))
-                .andExpectPath(jsonPath("$.input").value("Count the letters in Sitionix."))
-                .andExpectPath(jsonPath("$.workflowId").value(WORKFLOW_ID.toString()))
-                .andExpectPath(jsonPath("$.runs", hasSize(1)))
-                .andExpectPath(jsonPath("$.runs[0].taskId").isNotEmpty())
-                .andExpectPath(jsonPath("$.runs[0].workflowName").value("Full Testing"))
-                .andExpectPath(jsonPath("$.runs[0].status").value("QUEUED"))
-                .andExpectPath(jsonPath("$.runs[0].startedAt").value(nullValue()))
-                .andExpectPath(jsonPath("$.runs[0].finishedAt").value(nullValue()))
-                .assertAndCreate();
-        return this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll().stream()
-                .max(Comparator.comparing(ProjectTaskEntity::getCreatedAt).thenComparing(ProjectTaskEntity::getId))
-                .map(ProjectTaskEntity::getId)
-                .orElseThrow();
-    }
-
     private void updateWorkflow() {
         this.forgeIt.mockMvc()
                 .ping(UPDATE_WORKFLOW)
@@ -258,20 +190,6 @@ class ForgeAgentProjectTaskIT {
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
-    }
-
-    private ProjectTaskEntity task(final UUID taskId) {
-        return this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll().stream()
-                .filter(task -> taskId.equals(task.getId()))
-                .findFirst()
-                .orElseThrow();
-    }
-
-    private WorkflowRunEntity latestRunForTask(final UUID taskId) {
-        return this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll().stream()
-                .filter(run -> taskId.equals(run.getTaskId()))
-                .max(Comparator.comparing(WorkflowRunEntity::getCreatedAt).thenComparing(WorkflowRunEntity::getId))
-                .orElseThrow();
     }
 
     private WorkflowRunEntity workflowRunEntity(final UUID runId, final UUID taskId, final Instant createdAt) {

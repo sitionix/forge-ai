@@ -7,6 +7,7 @@ import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
+import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -22,24 +23,31 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 @Component
-public class NodeGraphValidator {
+public class WorkflowGraphValidator {
 
-    public List<Node> validateAndNormalize(final UUID projectId,
-                                           final List<Node> nodes,
-                                           final Collection<AgentDefinition> targets) {
+    public ValidatedGraph validateAndNormalize(final UUID projectId,
+                                               final List<Node> nodes,
+                                               final List<WorkflowConnection> connections,
+                                               final Collection<AgentDefinition> targets) {
         final List<Node> normalizedNodes = nodes == null ? List.of() : nodes.stream()
                 .map(this::normalizeNode)
+                .toList();
+        final List<WorkflowConnection> normalizedConnections = connections == null ? List.of() : connections.stream()
+                .map(this::normalizeConnection)
                 .toList();
         final Map<UUID, AgentDefinition> targetsById = targets.stream()
                 .collect(Collectors.toMap(AgentDefinition::id, Function.identity()));
         final Set<UUID> nodeIds = new HashSet<>();
         final Set<UUID> portIds = new HashSet<>();
+        final Map<UUID, UUID> inputOwnersByPortId = new HashMap<>();
+        final Map<UUID, UUID> outputOwnersByPortId = new HashMap<>();
+        final Map<UUID, UUID> allOwnersByPortId = new HashMap<>();
         for (final Node node : normalizedNodes) {
             if (!nodeIds.add(node.id())) {
                 throw new ValidationException("DUPLICATE_NODE_ID", "Workflow node IDs must be unique.");
             }
-            this.rejectDuplicatePortIds(node.inputs(), portIds);
-            this.rejectDuplicatePortIds(node.outputs(), portIds);
+            this.indexPorts(node.inputs(), node.id(), portIds, inputOwnersByPortId, allOwnersByPortId);
+            this.indexPorts(node.outputs(), node.id(), portIds, outputOwnersByPortId, allOwnersByPortId);
             final AgentDefinition target = targetsById.get(node.targetId());
             if (target == null) {
                 throw new ValidationException("UNKNOWN_NODE_TARGET", "Workflow nodes must target existing agents.");
@@ -48,18 +56,9 @@ public class NodeGraphValidator {
                 throw new ConflictException("CROSS_PROJECT_NODE_TARGET", "Workflow node targets must belong to the same project.");
             }
         }
-        for (final Node node : normalizedNodes) {
-            for (final UUID dependencyId : node.dependsOnNodeIds()) {
-                if (node.id().equals(dependencyId)) {
-                    throw new ValidationException("SELF_NODE_DEPENDENCY", "A workflow node cannot depend on itself.");
-                }
-                if (!nodeIds.contains(dependencyId)) {
-                    throw new ValidationException("UNKNOWN_NODE_DEPENDENCY", "Workflow node dependencies must reference nodes in the same workflow.");
-                }
-            }
-        }
-        this.rejectCycles(normalizedNodes);
-        return normalizedNodes;
+        this.validateConnections(normalizedConnections, inputOwnersByPortId, outputOwnersByPortId, allOwnersByPortId);
+        this.rejectCycles(normalizedNodes, normalizedConnections, inputOwnersByPortId, outputOwnersByPortId);
+        return new ValidatedGraph(normalizedNodes, normalizedConnections);
     }
 
     private Node normalizeNode(final Node node) {
@@ -70,14 +69,10 @@ public class NodeGraphValidator {
             throw new ValidationException("UNKNOWN_NODE_TARGET", "Workflow nodes must target existing agents.");
         }
         final NodePosition position = node.position() == null ? new NodePosition(0.0, 0.0) : node.position();
-        final List<UUID> dependencies = node.dependsOnNodeIds() == null
-                ? List.of()
-                : new ArrayList<>(new LinkedHashSet<>(node.dependsOnNodeIds()));
         final NodeInputMode inputMode = node.inputMode() == null ? NodeInputMode.DEPENDENCIES_ONLY : node.inputMode();
         return new Node(
                 node.id(),
                 node.targetId(),
-                dependencies,
                 inputMode,
                 this.normalizePorts(node.inputs()),
                 this.normalizePorts(node.outputs()),
@@ -122,28 +117,81 @@ public class NodeGraphValidator {
                 .toList();
     }
 
-    private void rejectDuplicatePortIds(final List<NodePort> ports, final Set<UUID> portIds) {
+    private WorkflowConnection normalizeConnection(final WorkflowConnection connection) {
+        if (connection == null || connection.id() == null) {
+            throw new ValidationException("INVALID_WORKFLOW_CONNECTION", "Workflow connections must have an ID.");
+        }
+        return connection;
+    }
+
+    private void indexPorts(final List<NodePort> ports,
+                            final UUID nodeId,
+                            final Set<UUID> portIds,
+                            final Map<UUID, UUID> ownersByPortId,
+                            final Map<UUID, UUID> allOwnersByPortId) {
         for (final NodePort port : ports) {
             if (!portIds.add(port.id())) {
                 throw new ValidationException("DUPLICATE_NODE_PORT_ID", "Workflow node port IDs must be unique in the workflow.");
             }
+            ownersByPortId.put(port.id(), nodeId);
+            allOwnersByPortId.put(port.id(), nodeId);
         }
     }
 
-    private void rejectCycles(final List<Node> nodes) {
-        final Map<UUID, List<UUID>> dependenciesByNode = new HashMap<>();
-        nodes.forEach(node -> dependenciesByNode.put(node.id(), node.dependsOnNodeIds()));
+    private void validateConnections(final List<WorkflowConnection> connections,
+                                     final Map<UUID, UUID> inputOwnersByPortId,
+                                     final Map<UUID, UUID> outputOwnersByPortId,
+                                     final Map<UUID, UUID> allOwnersByPortId) {
+        final Set<UUID> connectionIds = new HashSet<>();
+        final Set<PortPair> pairs = new HashSet<>();
+        for (final WorkflowConnection connection : connections) {
+            if (!connectionIds.add(connection.id())) {
+                throw new ValidationException("DUPLICATE_WORKFLOW_CONNECTION_ID", "Workflow connection IDs must be unique.");
+            }
+            if (connection.sourceOutputPortId() == null || !allOwnersByPortId.containsKey(connection.sourceOutputPortId())) {
+                throw new ValidationException("UNKNOWN_SOURCE_OUTPUT_PORT", "Workflow connection source output port must exist.");
+            }
+            if (!outputOwnersByPortId.containsKey(connection.sourceOutputPortId())) {
+                throw new ValidationException("INVALID_SOURCE_OUTPUT_PORT", "Workflow connection source must be an OUTPUT port.");
+            }
+            if (connection.targetInputPortId() == null || !allOwnersByPortId.containsKey(connection.targetInputPortId())) {
+                throw new ValidationException("UNKNOWN_TARGET_INPUT_PORT", "Workflow connection target input port must exist.");
+            }
+            if (!inputOwnersByPortId.containsKey(connection.targetInputPortId())) {
+                throw new ValidationException("INVALID_TARGET_INPUT_PORT", "Workflow connection target must be an INPUT port.");
+            }
+            final UUID sourceNodeId = outputOwnersByPortId.get(connection.sourceOutputPortId());
+            final UUID targetNodeId = inputOwnersByPortId.get(connection.targetInputPortId());
+            if (sourceNodeId.equals(targetNodeId)) {
+                throw new ValidationException("SELF_NODE_CONNECTION", "A workflow node cannot connect to itself.");
+            }
+            if (!pairs.add(new PortPair(connection.sourceOutputPortId(), connection.targetInputPortId()))) {
+                throw new ValidationException("DUPLICATE_WORKFLOW_CONNECTION", "Workflow connections must not duplicate the same source and target ports.");
+            }
+        }
+    }
+
+    private void rejectCycles(final List<Node> nodes,
+                              final List<WorkflowConnection> connections,
+                              final Map<UUID, UUID> inputOwnersByPortId,
+                              final Map<UUID, UUID> outputOwnersByPortId) {
+        final Map<UUID, Set<UUID>> adjacencyByNode = new HashMap<>();
+        nodes.forEach(node -> adjacencyByNode.put(node.id(), new LinkedHashSet<>()));
+        for (final WorkflowConnection connection : connections) {
+            adjacencyByNode.get(outputOwnersByPortId.get(connection.sourceOutputPortId()))
+                    .add(inputOwnersByPortId.get(connection.targetInputPortId()));
+        }
         final Set<UUID> visited = new HashSet<>();
         final Set<UUID> visiting = new HashSet<>();
         for (final Node node : nodes) {
-            if (this.hasCycle(node.id(), dependenciesByNode, visited, visiting)) {
+            if (this.hasCycle(node.id(), adjacencyByNode, visited, visiting)) {
                 throw new ConflictException("WORKFLOW_GRAPH_CYCLE", "Workflow graph contains a cycle.");
             }
         }
     }
 
     private boolean hasCycle(final UUID nodeId,
-                             final Map<UUID, List<UUID>> dependenciesByNode,
+                             final Map<UUID, Set<UUID>> adjacencyByNode,
                              final Set<UUID> visited,
                              final Set<UUID> visiting) {
         if (visited.contains(nodeId)) {
@@ -152,13 +200,19 @@ public class NodeGraphValidator {
         if (!visiting.add(nodeId)) {
             return true;
         }
-        for (final UUID dependencyId : dependenciesByNode.getOrDefault(nodeId, List.of())) {
-            if (this.hasCycle(dependencyId, dependenciesByNode, visited, visiting)) {
+        for (final UUID targetNodeId : adjacencyByNode.getOrDefault(nodeId, Set.of())) {
+            if (this.hasCycle(targetNodeId, adjacencyByNode, visited, visiting)) {
                 return true;
             }
         }
         visiting.remove(nodeId);
         visited.add(nodeId);
         return false;
+    }
+
+    private record PortPair(UUID sourceOutputPortId, UUID targetInputPortId) {
+    }
+
+    public record ValidatedGraph(List<Node> nodes, List<WorkflowConnection> connections) {
     }
 }

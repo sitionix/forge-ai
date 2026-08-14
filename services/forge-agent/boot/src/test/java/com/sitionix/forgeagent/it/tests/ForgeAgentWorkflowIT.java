@@ -23,13 +23,13 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodeEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodePortEntity;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
-import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -119,7 +119,6 @@ class ForgeAgentWorkflowIT {
                 .findFirst()
                 .orElseThrow();
         assertThat(reviewerAgain.getTargetId()).isEqualTo(AGENT_A_ID);
-        assertThat(Arrays.asList(reviewerAgain.getDependsOnNodeIds())).containsExactly(NODE_B_ID);
         assertThat(reviewerAgain.getPositionX()).isEqualTo(720.0);
         assertThat(reviewerAgain.getPositionY()).isEqualTo(120.0);
         assertThat(reviewerAgain.getWorkflowId()).isEqualTo(WORKFLOW_ID);
@@ -320,7 +319,6 @@ class ForgeAgentWorkflowIT {
                 .findFirst()
                 .orElseThrow();
         assertThat(nodeA.getTargetId()).isEqualTo(AGENT_A_ID);
-        assertThat(nodeA.getDependsOnNodeIds()).isEmpty();
         assertThat(nodeA.getPositionX()).isEqualTo(120.0);
         assertThat(nodeA.getPositionY()).isEqualTo(100.0);
     }
@@ -331,8 +329,8 @@ class ForgeAgentWorkflowIT {
 
         this.expectWorkflowError("requestUnknownNodeTarget.json", HttpStatus.BAD_REQUEST, "responseUnknownNodeTargetError.json");
         this.expectWorkflowError("requestCrossProjectNodeTarget.json", HttpStatus.CONFLICT, "responseCrossProjectNodeTargetError.json");
-        this.expectWorkflowError("requestUnknownNodeDependency.json", HttpStatus.BAD_REQUEST, "responseUnknownNodeDependencyError.json");
-        this.expectWorkflowError("requestSelfNodeDependency.json", HttpStatus.BAD_REQUEST, "responseSelfNodeDependencyError.json");
+        this.expectWorkflowError("requestUnknownSourceOutputPort.json", HttpStatus.BAD_REQUEST, "responseUnknownSourceOutputPortError.json");
+        this.expectWorkflowError("requestSelfNodeConnection.json", HttpStatus.BAD_REQUEST, "responseSelfNodeConnectionError.json");
         this.expectWorkflowError("requestDuplicateNodeIdWorkflow.json", HttpStatus.BAD_REQUEST, "responseDuplicateNodeIdError.json");
         this.expectWorkflowError("requestWorkflowDuplicatePortName.json", HttpStatus.BAD_REQUEST, "responseDuplicateNodePortNameError.json");
         this.expectWorkflowError("requestWorkflowPortOrderGap.json", HttpStatus.BAD_REQUEST, "responseInvalidNodePortOrderError.json");
@@ -363,6 +361,100 @@ class ForgeAgentWorkflowIT {
     }
 
     @Test
+    void givenPortIdOwnedByAnotherWorkflow_whenUpdateWorkflow_thenConflictAndTopologiesRemainUnchanged() {
+        this.seedProjectAgentsAndWorkflow();
+        final UUID secondWorkflowId = UUID.fromString("30000000-0000-4000-8000-000000000002");
+        this.forgeIt.postgresql()
+                .create()
+                .to(WORKFLOW.withEntity(this.workflowEntity(secondWorkflowId, PROJECT_ALPHA_ID, "Second Workflow")))
+                .build();
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestWorkflowWithPorts.json")
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW_ERROR)
+                .withPathParameters(PathParams.create().add("workflowId", secondWorkflowId))
+                .withRequest("requestCrossWorkflowPortId.json")
+                .expectStatus(HttpStatus.CONFLICT)
+                .expectResponse("responseWorkflowNodePortIdInUseError.json")
+                .assertAndCreate();
+
+        final UUID reusedPortId = UUID.fromString("60000000-0000-4000-8000-000000000001");
+        final WorkflowNodePortEntity workflowAPort = this.forgeIt.postgresql()
+                .get(WorkflowNodePortEntity.class)
+                .getAll()
+                .stream()
+                .filter(port -> reusedPortId.equals(port.getId()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(workflowAPort.getWorkflowId()).isEqualTo(WORKFLOW_ID);
+        assertThat(workflowAPort.getNodeId()).isEqualTo(NODE_A_ID);
+        assertThat(workflowAPort.getName()).isEqualTo("Review feedback");
+        assertThat(workflowAPort.getDescription()).isEqualTo("Feedback produced by the previous review step.");
+        assertThat(workflowAPort.getPortOrder()).isZero();
+        assertThat(this.forgeIt.postgresql().get(WorkflowNodePortEntity.class).getAll())
+                .filteredOn(port -> secondWorkflowId.equals(port.getWorkflowId()))
+                .isEmpty();
+        assertThat(this.forgeIt.postgresql().get(WorkflowNodeEntity.class).getAll())
+                .filteredOn(node -> secondWorkflowId.equals(node.getWorkflowId()))
+                .isEmpty();
+        assertThat(this.forgeIt.postgresql().get(WorkflowEntity.class).getAll())
+                .filteredOn(workflow -> secondWorkflowId.equals(workflow.getId()))
+                .singleElement()
+                .extracting(WorkflowEntity::getName)
+                .isEqualTo("Second Workflow");
+    }
+
+    @Test
+    void givenConnectionIdOwnedByAnotherWorkflow_whenUpdateWorkflow_thenConflictAndTopologiesRemainUnchanged() {
+        this.seedProjectAgentsAndWorkflow();
+        final UUID secondWorkflowId = UUID.fromString("30000000-0000-4000-8000-000000000002");
+        this.forgeIt.postgresql()
+                .create()
+                .to(WORKFLOW.withEntity(this.workflowEntity(secondWorkflowId, PROJECT_ALPHA_ID, "Second Workflow")))
+                .build();
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestWorkflowAToBConnection.json")
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW_ERROR)
+                .withPathParameters(PathParams.create().add("workflowId", secondWorkflowId))
+                .withRequest("requestCrossWorkflowConnectionId.json")
+                .expectStatus(HttpStatus.CONFLICT)
+                .expectResponse("responseWorkflowConnectionIdInUseError.json")
+                .assertAndCreate();
+
+        final UUID reusedConnectionId = UUID.fromString("81000000-0000-4000-8000-000000000002");
+        final WorkflowConnectionEntity workflowAConnection = this.forgeIt.postgresql()
+                .get(WorkflowConnectionEntity.class)
+                .getAll()
+                .stream()
+                .filter(connection -> reusedConnectionId.equals(connection.getId()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(workflowAConnection.getSourceOutputPortId()).isEqualTo(UUID.fromString("71000000-0000-4000-8000-000000000001"));
+        assertThat(workflowAConnection.getTargetInputPortId()).isEqualTo(UUID.fromString("61000000-0000-4000-8000-000000000002"));
+        assertThat(this.forgeIt.postgresql().get(WorkflowNodePortEntity.class).getAll())
+                .filteredOn(port -> secondWorkflowId.equals(port.getWorkflowId()))
+                .isEmpty();
+        assertThat(this.forgeIt.postgresql().get(WorkflowNodeEntity.class).getAll())
+                .filteredOn(node -> secondWorkflowId.equals(node.getWorkflowId()))
+                .isEmpty();
+        assertThat(this.forgeIt.postgresql().get(WorkflowConnectionEntity.class).getAll())
+                .hasSize(1)
+                .extracting(WorkflowConnectionEntity::getId)
+                .containsExactly(reusedConnectionId);
+    }
+
+    @Test
     void givenMissingWorkflow_whenGetWorkflow_thenNotFoundIsReturned() {
         this.forgeIt.mockMvc()
                 .ping(GET_WORKFLOW_ERROR)
@@ -381,7 +473,7 @@ class ForgeAgentWorkflowIT {
                     this.forgeIt.mockMvc()
                             .ping(UPDATE_WORKFLOW)
                             .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
-                            .withRequest("requestWorkflowADependsOnB.json")
+                            .withRequest("requestWorkflowBToAConnection.json")
                             .expectStatus(HttpStatus.OK)
                             .assertAndCreate();
                     return null;
@@ -390,7 +482,7 @@ class ForgeAgentWorkflowIT {
                     this.forgeIt.mockMvc()
                             .ping(UPDATE_WORKFLOW)
                             .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
-                            .withRequest("requestWorkflowBDependsOnA.json")
+                            .withRequest("requestWorkflowAToBConnection.json")
                             .expectStatus(HttpStatus.OK)
                             .assertAndCreate();
                     return null;
@@ -399,17 +491,17 @@ class ForgeAgentWorkflowIT {
 
         final List<WorkflowNodeEntity> nodes = this.forgeIt.postgresql().get(WorkflowNodeEntity.class).getAll();
         assertThat(nodes).hasSize(2);
-        final WorkflowNodeEntity nodeA = nodes.stream()
-                .filter(entity -> NODE_A_ID.equals(entity.getId()))
-                .findFirst()
-                .orElseThrow();
-        final WorkflowNodeEntity nodeB = nodes.stream()
-                .filter(entity -> NODE_B_ID.equals(entity.getId()))
-                .findFirst()
-                .orElseThrow();
-        final boolean aDependsOnB = Arrays.asList(nodeA.getDependsOnNodeIds()).contains(NODE_B_ID);
-        final boolean bDependsOnA = Arrays.asList(nodeB.getDependsOnNodeIds()).contains(NODE_A_ID);
-        assertThat(aDependsOnB && bDependsOnA).isFalse();
+        final List<WorkflowConnectionEntity> connections = this.forgeIt.postgresql().get(WorkflowConnectionEntity.class).getAll();
+        assertThat(connections).hasSize(1);
+        final boolean aToB = connections.stream().anyMatch(connection ->
+                UUID.fromString("71000000-0000-4000-8000-000000000001").equals(connection.getSourceOutputPortId())
+                        && UUID.fromString("61000000-0000-4000-8000-000000000002").equals(connection.getTargetInputPortId())
+        );
+        final boolean bToA = connections.stream().anyMatch(connection ->
+                UUID.fromString("71000000-0000-4000-8000-000000000002").equals(connection.getSourceOutputPortId())
+                        && UUID.fromString("61000000-0000-4000-8000-000000000001").equals(connection.getTargetInputPortId())
+        );
+        assertThat(aToB).isNotEqualTo(bToA);
     }
 
     @Test
@@ -523,5 +615,16 @@ class ForgeAgentWorkflowIT {
                 .to(AGENT_DEFINITION.withJson("other_project_agent.json"))
                 .to(WORKFLOW.withJson("workflow_alpha.json"))
                 .build();
+    }
+
+    private WorkflowEntity workflowEntity(final UUID id, final UUID projectId, final String name) {
+        final WorkflowEntity workflow = new WorkflowEntity();
+        workflow.setId(id);
+        workflow.setProjectId(projectId);
+        workflow.setName(name);
+        workflow.setNormalizedName(name.toLowerCase(java.util.Locale.ROOT));
+        workflow.setCreatedAt(java.time.Instant.parse("2026-01-01T00:00:00Z"));
+        workflow.setUpdatedAt(java.time.Instant.parse("2026-01-01T00:00:00Z"));
+        return workflow;
     }
 }

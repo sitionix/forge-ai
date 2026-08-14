@@ -9,6 +9,7 @@ public record AgentWorkflow(
         UUID projectId,
         String name,
         List<Node> nodes,
+        List<WorkflowConnection> connections,
         Instant createdAt,
         Instant updatedAt
 ) {
