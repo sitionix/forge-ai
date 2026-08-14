@@ -6,6 +6,7 @@ import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_PROJECT_TASK_ERROR;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_PROJECT_TASK;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_PROJECT_TASKS;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_PROJECT_TASKS_ERROR;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.UPDATE_WORKFLOW;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
@@ -24,6 +25,7 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
+import com.sitionix.forgeit.mockmvc.api.QueryParams;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.UUID;
@@ -135,6 +137,95 @@ class ForgeAgentProjectTaskIT {
                 .assertAndCreate();
     }
 
+    @Test
+    void givenSeededProjectTasks_whenListTasksWithPagination_thenSecondPageMetadataAndOrderingAreReturned() {
+        this.seedProjectAgentsAndWorkflow();
+        final UUID newestTaskId = UUID.fromString("50000000-0000-4000-8000-000000000005");
+        final UUID tieHighTaskId = UUID.fromString("50000000-0000-4000-8000-000000000004");
+        final UUID tieLowTaskId = UUID.fromString("50000000-0000-4000-8000-000000000003");
+        final UUID olderTaskId = UUID.fromString("50000000-0000-4000-8000-000000000002");
+        final UUID oldestTaskId = UUID.fromString("50000000-0000-4000-8000-000000000001");
+        this.forgeIt.postgresql()
+                .create()
+                .to(PROJECT_TASK.withEntity(this.projectTaskEntity(oldestTaskId, "Oldest task", Instant.parse("2026-08-14T10:00:00Z"))))
+                .to(PROJECT_TASK.withEntity(this.projectTaskEntity(olderTaskId, "Older task", Instant.parse("2026-08-14T10:01:00Z"))))
+                .to(PROJECT_TASK.withEntity(this.projectTaskEntity(tieLowTaskId, "Tie low id task", Instant.parse("2026-08-14T10:02:00Z"))))
+                .to(PROJECT_TASK.withEntity(this.projectTaskEntity(tieHighTaskId, "Tie high id task", Instant.parse("2026-08-14T10:02:00Z"))))
+                .to(PROJECT_TASK.withEntity(this.projectTaskEntity(newestTaskId, "Newest task", Instant.parse("2026-08-14T10:03:00Z"))))
+                .build();
+
+        this.forgeIt.mockMvc()
+                .ping(LIST_PROJECT_TASKS)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withQueryParameters(QueryParams.create().add("page", "0").add("size", "3"))
+                .expectStatus(HttpStatus.OK)
+                .andExpectPath(jsonPath("$.items", hasSize(3)))
+                .andExpectPath(jsonPath("$.page").value(0))
+                .andExpectPath(jsonPath("$.size").value(3))
+                .andExpectPath(jsonPath("$.totalItems").value(5))
+                .andExpectPath(jsonPath("$.totalPages").value(2))
+                .andExpectPath(jsonPath("$.items[0].id").value(newestTaskId.toString()))
+                .andExpectPath(jsonPath("$.items[0].title").value("Newest task"))
+                .andExpectPath(jsonPath("$.items[1].id").value(tieHighTaskId.toString()))
+                .andExpectPath(jsonPath("$.items[1].title").value("Tie high id task"))
+                .andExpectPath(jsonPath("$.items[2].id").value(tieLowTaskId.toString()))
+                .andExpectPath(jsonPath("$.items[2].title").value("Tie low id task"))
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(LIST_PROJECT_TASKS)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withQueryParameters(QueryParams.create().add("page", "1").add("size", "2"))
+                .expectStatus(HttpStatus.OK)
+                .andExpectPath(jsonPath("$.items", hasSize(2)))
+                .andExpectPath(jsonPath("$.page").value(1))
+                .andExpectPath(jsonPath("$.size").value(2))
+                .andExpectPath(jsonPath("$.totalItems").value(5))
+                .andExpectPath(jsonPath("$.totalPages").value(3))
+                .andExpectPath(jsonPath("$.items[0].id").value(tieLowTaskId.toString()))
+                .andExpectPath(jsonPath("$.items[1].id").value(olderTaskId.toString()))
+                .assertAndCreate();
+    }
+
+    @Test
+    void givenInvalidTaskPageRequest_whenListTasks_thenValidationErrorIsReturned() {
+        this.seedProjectAgentsAndWorkflow();
+
+        this.forgeIt.mockMvc()
+                .ping(LIST_PROJECT_TASKS_ERROR)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withQueryParameters(QueryParams.create().add("page", "-1").add("size", "20"))
+                .expectStatus(HttpStatus.BAD_REQUEST)
+                .andExpectPath(jsonPath("$.code").value("INVALID_TASK_PAGE"))
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(LIST_PROJECT_TASKS_ERROR)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withQueryParameters(QueryParams.create().add("page", "0").add("size", "0"))
+                .expectStatus(HttpStatus.BAD_REQUEST)
+                .andExpectPath(jsonPath("$.code").value("INVALID_TASK_PAGE_SIZE"))
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(LIST_PROJECT_TASKS_ERROR)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withQueryParameters(QueryParams.create().add("page", "0").add("size", "101"))
+                .expectStatus(HttpStatus.BAD_REQUEST)
+                .andExpectPath(jsonPath("$.code").value("INVALID_TASK_PAGE_SIZE"))
+                .assertAndCreate();
+    }
+
+    @Test
+    void givenMissingProject_whenListTasks_thenProjectNotFoundIsReturned() {
+        this.forgeIt.mockMvc()
+                .ping(LIST_PROJECT_TASKS_ERROR)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .expectStatus(HttpStatus.NOT_FOUND)
+                .andExpectPath(jsonPath("$.code").value("PROJECT_NOT_FOUND"))
+                .assertAndCreate();
+    }
+
     private UUID createTaskAndAssertResponse() {
         this.forgeIt.mockMvc()
                 .ping(CREATE_PROJECT_TASK)
@@ -193,6 +284,18 @@ class ForgeAgentProjectTaskIT {
         entity.setInput("Second attempt");
         entity.setStatus("QUEUED");
         entity.setCreatedAt(createdAt);
+        return entity;
+    }
+
+    private ProjectTaskEntity projectTaskEntity(final UUID taskId, final String title, final Instant createdAt) {
+        final ProjectTaskEntity entity = new ProjectTaskEntity();
+        entity.setId(taskId);
+        entity.setProjectId(PROJECT_ALPHA_ID);
+        entity.setTitle(title);
+        entity.setInput("Input for " + title);
+        entity.setWorkflowId(WORKFLOW_ID);
+        entity.setCreatedAt(createdAt);
+        entity.setUpdatedAt(createdAt);
         return entity;
     }
 

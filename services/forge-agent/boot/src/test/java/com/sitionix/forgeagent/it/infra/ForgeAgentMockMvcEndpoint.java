@@ -37,6 +37,8 @@ public final class ForgeAgentMockMvcEndpoint {
             Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.POST, CreateProjectTaskRequest.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, ProjectTaskPageResponse> LIST_PROJECT_TASKS =
             Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.GET, Void.class, ProjectTaskPageResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> LIST_PROJECT_TASKS_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, ProjectTaskResponse> GET_PROJECT_TASK =
             Endpoint.createContract("/api/v1/tasks/{taskId}", HttpMethod.GET, Void.class, ProjectTaskResponse.class);
     public static final Endpoint<Void, Void> DELETE_PROJECT_TASK =

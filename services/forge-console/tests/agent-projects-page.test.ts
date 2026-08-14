@@ -293,6 +293,48 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2ProjectTitle')?.textContent).toContain('Forge AI');
   });
 
+  it('Project delete cancel makes no API call', async () => {
+    const { dom, fakeApi } = await mountedPage();
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => false), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>(`[data-delete-project-id="${project().id}"]`)?.click();
+    await flushAsync();
+
+    expect(dom.window.confirm).toHaveBeenCalledWith('Delete project "Sitionix"?\nIts agents, workflows, tasks and execution history will be deleted.');
+    expect(fakeApi.deleteProject).not.toHaveBeenCalled();
+  });
+
+  it('Project delete accepts confirmation, calls delete API, and refreshes Projects', async () => {
+    const fakeApi = api({
+      listProjects: vi.fn()
+        .mockResolvedValueOnce([project()])
+        .mockResolvedValueOnce([])
+    });
+    const { dom } = await mountedPage(fakeApi);
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>(`[data-delete-project-id="${project().id}"]`)?.click();
+    await flushAsync();
+
+    expect(fakeApi.deleteProject).toHaveBeenCalledWith(project().id);
+    expect(fakeApi.listProjects).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.getElementById('agentsV2ProjectsList')?.textContent).not.toContain('Sitionix');
+  });
+
+  it('Project delete backend conflict remains visible', async () => {
+    const fakeApi = api({
+      deleteProject: vi.fn(() => Promise.reject(new Error('PROJECT_HAS_ACTIVE_EXECUTIONS: Project cannot be deleted while an execution is active.')))
+    });
+    const { dom } = await mountedPage(fakeApi);
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>(`[data-delete-project-id="${project().id}"]`)?.click();
+    await flushAsync();
+
+    expect(fakeApi.deleteProject).toHaveBeenCalledWith(project().id);
+    expect(dom.window.document.getElementById('agentsV2ProjectsError')?.textContent).toContain('PROJECT_HAS_ACTIVE_EXECUTIONS');
+  });
+
   it('opening Project switches to workspace and back returns to Projects', async () => {
     const { dom, page } = await openedProject();
     expect(dom.window.document.getElementById('agentsV2ProjectCrumbs')?.textContent).toBe('Projects / Sitionix');
@@ -321,6 +363,194 @@ describe('Agent projects page', () => {
     expect(list.textContent).toContain('Created');
     expect(list.querySelector('[data-task-status="RUNNING"]')).not.toBeNull();
     expect(list.querySelector('[data-task-id="task-1"]')?.textContent).toBe('Open');
+  });
+
+  it('Tasks render as compact rows instead of Task cards', async () => {
+    const fakeApi = api({
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([
+        { ...task('task-1', 'RUNNING', projectId, workflow().id, 'Backend Flow'), title: 'Fix auth endpoint' },
+        { ...task('task-2', 'FAILED', projectId, workflow().id, 'Review Flow'), title: 'Review implementation' }
+      ], page, size)))
+    });
+    const { dom } = await openedProject(fakeApi);
+    const list = dom.window.document.getElementById('agentsV2TasksList')!;
+    const rows = [...list.querySelectorAll<HTMLElement>('.agents-v2-task-row:not(.agents-v2-task-row-head)')];
+
+    expect(list.querySelector('.agents-v2-task-table')).not.toBeNull();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain('Fix auth endpoint');
+    expect(rows[0]!.textContent).toContain('Backend Flow');
+    expect(rows[0]!.textContent).toContain('RUNNING');
+    expect(rows[0]!.textContent).toContain('Open');
+    expect(rows[0]!.textContent).toContain('Delete');
+    expect(list.querySelector('.agents-v2-card')).toBeNull();
+  });
+
+  it('Task pagination starts at page 0 size 20 and moves Next and Previous with disabled edge controls', async () => {
+    const fakeApi = api({
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([
+        { ...task(`task-page-${page}`, 'SUCCEEDED', projectId, workflow().id, 'Full Testing'), title: `Page ${page} task` }
+      ], page, size, 40, 2)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    expect(page.state.tasksPage).toBe(0);
+    expect(page.state.tasksPageSize).toBe(20);
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledWith(project().id, 0, 20);
+    expect((dom.window.document.querySelector('[data-task-page="prev"]') as HTMLButtonElement).disabled).toBe(true);
+    expect((dom.window.document.querySelector('[data-task-page="next"]') as HTMLButtonElement).disabled).toBe(false);
+
+    dom.window.document.querySelector<HTMLElement>('[data-task-page="next"]')?.click();
+    await flushAsync();
+
+    expect(page.state.tasksPage).toBe(1);
+    expect(fakeApi.listProjectTasks).toHaveBeenLastCalledWith(project().id, 1, 20);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Page 2 of 2');
+    expect((dom.window.document.querySelector('[data-task-page="next"]') as HTMLButtonElement).disabled).toBe(true);
+    expect((dom.window.document.querySelector('[data-task-page="prev"]') as HTMLButtonElement).disabled).toBe(false);
+
+    dom.window.document.querySelector<HTMLElement>('[data-task-page="prev"]')?.click();
+    await flushAsync();
+
+    expect(page.state.tasksPage).toBe(0);
+    expect(fakeApi.listProjectTasks).toHaveBeenLastCalledWith(project().id, 0, 20);
+    expect((dom.window.document.querySelector('[data-task-page="prev"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('switching Project resets the selected Task page to 0', async () => {
+    const projectOne = project();
+    const projectTwo = project('22222222-2222-4222-8222-222222222222', 'Forge AI');
+    const fakeApi = api({
+      listProjects: vi.fn(() => Promise.resolve([projectOne, projectTwo])),
+      listProjectAgents: vi.fn((projectId: string) => Promise.resolve([agent(`agent-${projectId}`, projectId === projectOne.id ? 'Architect' : 'Backend', projectId)])),
+      listProjectWorkflows: vi.fn((projectId: string) => Promise.resolve([workflow(projectId === projectOne.id ? 'wf-1' : 'wf-2', [], projectId)])),
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([
+        { ...task(`task-${projectId}-${page}`, 'SUCCEEDED', projectId, projectId === projectOne.id ? 'wf-1' : 'wf-2'), title: `Project ${projectId} page ${page}` }
+      ], page, size, 40, 2)))
+    });
+    const { page } = await mountedPage(fakeApi);
+
+    await page.openProject(projectOne.id);
+    await flushAsync();
+    await page.goToTaskPage(1);
+    await flushAsync();
+    expect(page.state.tasksPage).toBe(1);
+
+    await page.openProject(projectTwo.id);
+    await flushAsync();
+
+    expect(page.state.selectedProjectId).toBe(projectTwo.id);
+    expect(page.state.tasksPage).toBe(0);
+    expect(fakeApi.listProjectTasks).toHaveBeenLastCalledWith(projectTwo.id, 0, 20);
+  });
+
+  it('creating a Task from page greater than 0 resets Tasks to page 0', async () => {
+    const fakeApi = api({
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([
+        { ...task(`task-page-${page}`, 'SUCCEEDED', projectId, workflow().id, 'Full Testing'), title: `Page ${page} task` }
+      ], page, size, 40, 2)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.goToTaskPage(1);
+    await flushAsync();
+
+    dom.window.document.getElementById('agentsV2CreateTask')?.click();
+    (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = 'Fresh task';
+    (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Run this now.';
+    (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+    dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.createProjectTask).toHaveBeenCalledTimes(1);
+    expect(page.state.tasksPage).toBe(0);
+    expect(fakeApi.listProjectTasks).toHaveBeenLastCalledWith(project().id, 0, 20);
+  });
+
+  it('TaskExecutionView Back preserves the Task page selected before opening', async () => {
+    const fakeApi = api({
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([
+        task(`task-page-${page}`, 'SUCCEEDED', projectId)
+      ], page, size, 40, 2))),
+      getProjectTask: vi.fn((taskId: string) => Promise.resolve(taskDetail(taskId, [taskRun('run-done', 'SUCCEEDED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn((runId: string) => Promise.resolve(workflowRunDetail(runId, 'SUCCEEDED')))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.goToTaskPage(1);
+    await flushAsync();
+
+    await page.openTaskExecution('task-page-1');
+    await flushAsync();
+    dom.window.document.getElementById('agentsV2TaskExecutionBack')?.click();
+    await flushAsync();
+
+    expect(page.state.tasksPage).toBe(1);
+    expect(fakeApi.listProjectTasks).toHaveBeenLastCalledWith(project().id, 1, 20);
+    expect(dom.window.document.getElementById('agentsV2Workspace')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('stale Task page response cannot overwrite the newly selected page', async () => {
+    const pageOne = deferred<any>();
+    const fakeApi = api({
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => {
+        if (page === 1) {
+          return pageOne.promise;
+        }
+        if (page === 2) {
+          return Promise.resolve(taskPage([
+            { ...task('task-page-2', 'SUCCEEDED', projectId), title: 'Current page task' }
+          ], page, size, 60, 3));
+        }
+        return Promise.resolve(taskPage([
+          { ...task('task-page-0', 'SUCCEEDED', projectId), title: 'Initial page task' }
+        ], page, size, 60, 3));
+      })
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    const staleLoad = page.goToTaskPage(1);
+    await flushAsync();
+    const currentLoad = page.goToTaskPage(2);
+    await currentLoad;
+    pageOne.resolve(taskPage([
+      { ...task('task-page-1', 'SUCCEEDED'), title: 'Stale page task' }
+    ], 1, 20, 60, 3));
+    await staleLoad;
+    await flushAsync();
+
+    expect(page.state.tasksPage).toBe(2);
+    expect(page.state.tasksLoadedPage).toBe(2);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Current page task');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).not.toContain('Stale page task');
+  });
+
+  it('Task polling fetches only the currently selected Task page', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const fakeApi = api({
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([
+        task(`task-page-${page}`, 'RUNNING', projectId)
+      ], page, size, 40, 2)))
+    });
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: fakeApi,
+      runtimeConfig: { activeJobPollIntervalMs: 1000 }
+    });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await flushAsync();
+    await page.goToTaskPage(1);
+    await flushAsync();
+    fakeApi.listProjectTasks.mockClear();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushAsync();
+
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(1);
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledWith(project().id, 1, 20);
   });
 
   it('Task row Open switches to execution view, loads newest run, and Back refreshes Tasks', async () => {
@@ -1094,6 +1324,193 @@ describe('Agent projects page', () => {
     expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(3);
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Fresh task');
     expect(fakeApi.createWorkflowRun).not.toHaveBeenCalled();
+  });
+
+  it('Task delete cancel makes no DELETE request', async () => {
+    const { dom, fakeApi } = await openedProject();
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => false), configurable: true });
+    const initialLoads = fakeApi.listProjectTasks.mock.calls.length;
+
+    dom.window.document.querySelector<HTMLElement>('[data-delete-task-id="55555555-5555-4555-8555-555555555555"]')?.click();
+    await flushAsync();
+
+    expect(dom.window.confirm).toHaveBeenCalledWith('Delete task "Check calculation"?');
+    expect(fakeApi.deleteProjectTask).not.toHaveBeenCalled();
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(initialLoads);
+  });
+
+  it('Task delete success reloads the current Task page', async () => {
+    let deleted = false;
+    const fakeApi = api({
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([
+        { ...task(`task-page-${page}`, 'SUCCEEDED', projectId), title: deleted ? `Reloaded page ${page}` : `Original page ${page}` }
+      ], page, size, 40, 2))),
+      deleteProjectTask: vi.fn(() => {
+        deleted = true;
+        return Promise.resolve({});
+      })
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.goToTaskPage(1);
+    await flushAsync();
+    fakeApi.listProjectTasks.mockClear();
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>('[data-delete-task-id="task-page-1"]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.deleteProjectTask).toHaveBeenCalledWith('task-page-1');
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(1);
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledWith(project().id, 1, 20);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Reloaded page 1');
+  });
+
+  it('Task delete 409 leaves the row visible and shows the backend message', async () => {
+    const fakeApi = api({
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([
+        { ...task('task-active', 'RUNNING', projectId), title: 'Active task' }
+      ], page, size))),
+      deleteProjectTask: vi.fn(() => Promise.reject(new Error('PROJECT_TASK_HAS_ACTIVE_EXECUTIONS: Task cannot be deleted while an execution is active.')))
+    });
+    const { dom } = await openedProject(fakeApi);
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>('[data-delete-task-id="task-active"]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.deleteProjectTask).toHaveBeenCalledWith('task-active');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Active task');
+    expect(dom.window.document.getElementById('agentsV2TasksError')?.textContent).toContain('PROJECT_TASK_HAS_ACTIVE_EXECUTIONS');
+  });
+
+  it('deleting the last Task on a non-zero page loads the previous page exactly once', async () => {
+    let deleted = false;
+    const fakeApi = api({
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => {
+        if (page === 2) {
+          return Promise.resolve(taskPage(deleted ? [] : [
+            { ...task('task-last', 'SUCCEEDED', projectId), title: 'Last task on page' }
+          ], page, size, deleted ? 40 : 41, deleted ? 2 : 3));
+        }
+        return Promise.resolve(taskPage([
+          { ...task(`task-page-${page}`, 'SUCCEEDED', projectId), title: `Page ${page} task` }
+        ], page, size, 41, 3));
+      }),
+      deleteProjectTask: vi.fn(() => {
+        deleted = true;
+        return Promise.resolve({});
+      })
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.goToTaskPage(1);
+    await flushAsync();
+    await page.goToTaskPage(2);
+    await flushAsync();
+    fakeApi.listProjectTasks.mockClear();
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>('[data-delete-task-id="task-last"]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.deleteProjectTask).toHaveBeenCalledWith('task-last');
+    expect(fakeApi.listProjectTasks.mock.calls).toEqual([
+      [project().id, 2, 20],
+      [project().id, 1, 20]
+    ]);
+    expect(page.state.tasksPage).toBe(1);
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Page 1 task');
+  });
+
+  it('Agent delete cancel makes no API call', async () => {
+    const { dom, fakeApi } = await openedProject();
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => false), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>('[data-delete-agent-id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]')?.click();
+    await flushAsync();
+
+    expect(dom.window.confirm).toHaveBeenCalledWith('Delete agent "Architect"?');
+    expect(fakeApi.deleteAgent).not.toHaveBeenCalled();
+  });
+
+  it('Agent delete accepts confirmation, calls delete API, and refreshes Agents', async () => {
+    const fakeApi = api({
+      listProjectAgents: vi.fn()
+        .mockResolvedValueOnce([agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect')])
+        .mockResolvedValueOnce([agent('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'Reviewer')])
+    });
+    const { dom } = await openedProject(fakeApi);
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>('[data-delete-agent-id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.deleteAgent).toHaveBeenCalledWith('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    expect(fakeApi.listProjectAgents).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Reviewer');
+    expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).not.toContain('Architect');
+  });
+
+  it('Agent delete backend conflict remains visible', async () => {
+    const fakeApi = api({
+      deleteAgent: vi.fn(() => Promise.reject(new Error('AGENT_IN_USE: Agent is used by a workflow.')))
+    });
+    const { dom } = await openedProject(fakeApi);
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>('[data-delete-agent-id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.deleteAgent).toHaveBeenCalledWith('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    expect(dom.window.document.getElementById('agentsV2AgentsError')?.textContent).toContain('AGENT_IN_USE');
+  });
+
+  it('Workflow delete cancel makes no API call', async () => {
+    const { dom, fakeApi } = await openedProject();
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => false), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>('[data-delete-workflow-id="33333333-3333-4333-8333-333333333333"]')?.click();
+    await flushAsync();
+
+    expect(dom.window.confirm).toHaveBeenCalledWith('Delete workflow "Full Testing"?');
+    expect(fakeApi.deleteWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('Workflow delete accepts confirmation, calls delete API, and refreshes Workflows and Tasks', async () => {
+    const fakeApi = api({
+      listProjectWorkflows: vi.fn()
+        .mockResolvedValueOnce([workflow()])
+        .mockResolvedValueOnce([{ ...workflow('44444444-4444-4444-8444-444444444444', [], project().id), name: 'Review Flow' }]),
+      listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([
+        { ...task('task-1', 'SUCCEEDED', projectId), title: `Tasks refreshed page ${page}` }
+      ], page, size)))
+    });
+    const { dom } = await openedProject(fakeApi);
+    fakeApi.listProjectTasks.mockClear();
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>('[data-delete-workflow-id="33333333-3333-4333-8333-333333333333"]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.deleteWorkflow).toHaveBeenCalledWith('33333333-3333-4333-8333-333333333333');
+    expect(fakeApi.listProjectWorkflows).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectTasks).toHaveBeenCalledWith(project().id, 0, 20);
+    expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Review Flow');
+    expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).not.toContain('Full Testing');
+    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Tasks refreshed page 0');
+  });
+
+  it('Workflow delete backend conflict remains visible', async () => {
+    const fakeApi = api({
+      deleteWorkflow: vi.fn(() => Promise.reject(new Error('WORKFLOW_IN_USE: Workflow is used by a task.')))
+    });
+    const { dom } = await openedProject(fakeApi);
+    Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
+
+    dom.window.document.querySelector<HTMLElement>('[data-delete-workflow-id="33333333-3333-4333-8333-333333333333"]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.deleteWorkflow).toHaveBeenCalledWith('33333333-3333-4333-8333-333333333333');
+    expect(dom.window.document.getElementById('agentsV2WorkflowsError')?.textContent).toContain('WORKFLOW_IN_USE');
   });
 
   it('creates and edits agents without dependency fields in payloads', async () => {
