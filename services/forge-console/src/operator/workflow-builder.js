@@ -19,7 +19,7 @@ export class WorkflowBuilder {
     this.connectionDrag = null;
     this.nodeEditorNodeId = null;
     this.nodeEditorDraft = null;
-    this.nodeEditorEditingPorts = new Set();
+    this.nodeEditorEditingPortKey = null;
     this.saving = false;
   }
 
@@ -59,7 +59,7 @@ export class WorkflowBuilder {
     this.connectionDrag = null;
     this.nodeEditorNodeId = null;
     this.nodeEditorDraft = null;
-    this.nodeEditorEditingPorts.clear();
+    this.nodeEditorEditingPortKey = null;
     this.showError('');
     this.byId('agentsV2BuilderTitle').textContent = workflow.name;
     this.byId('agentsV2BuilderCrumbs').textContent = `Projects / ${project?.name || ''} / Workflows / ${workflow.name}`;
@@ -175,8 +175,9 @@ export class WorkflowBuilder {
     const agent = this.agentById(node.targetId);
     const inputs = this.nodePorts(node.inputs);
     const outputs = this.nodePorts(node.outputs);
+    const portRows = Math.max(inputs.length, outputs.length, 1);
     return `
-      <article class="workflow-node" data-node-id="${escapeHtml(node.id)}" style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px;">
+      <article class="workflow-node" data-node-id="${escapeHtml(node.id)}" style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px; --workflow-node-port-rows:${portRows};">
         <button class="node-handle input" type="button" title="Input" data-node-input="${escapeHtml(node.id)}" aria-label="Input for ${escapeHtml(agent?.name || 'node')}"></button>
         <div class="workflow-node-port-list input" aria-label="Configured inputs">
           ${this.renderCompactPorts(inputs)}
@@ -390,7 +391,7 @@ export class WorkflowBuilder {
     }
     this.nodeEditorNodeId = nodeId;
     this.nodeEditorDraft = this.cloneNode(node);
-    this.nodeEditorEditingPorts.clear();
+    this.nodeEditorEditingPortKey = null;
     this.renderNodeEditor();
     this.showNodeEditorError('');
     const dialog = this.byId('agentsV2NodeEditorDialog');
@@ -404,7 +405,7 @@ export class WorkflowBuilder {
   closeNodeEditor() {
     this.nodeEditorNodeId = null;
     this.nodeEditorDraft = null;
-    this.nodeEditorEditingPorts.clear();
+    this.nodeEditorEditingPortKey = null;
     this.showNodeEditorError('');
     const dialog = this.byId('agentsV2NodeEditorDialog');
     if (dialog?.close) {
@@ -528,7 +529,7 @@ export class WorkflowBuilder {
     const ports = this.nodePorts(this.nodeEditorDraft[direction]);
     ports.push({ id, name: '', description: '', order: ports.length });
     this.nodeEditorDraft[direction] = ports;
-    this.nodeEditorEditingPorts.add(this.nodeEditorPortKey(direction, id));
+    this.nodeEditorEditingPortKey = this.nodeEditorPortKey(direction, id);
     this.renderNodeEditor();
   }
 
@@ -540,7 +541,9 @@ export class WorkflowBuilder {
     this.nodeEditorDraft[direction] = this.reindexPorts(
       this.nodePorts(this.nodeEditorDraft[direction]).filter((port) => port.id !== portId)
     );
-    this.nodeEditorEditingPorts.delete(this.nodeEditorPortKey(direction, portId));
+    if (this.nodeEditorEditingPortKey === this.nodeEditorPortKey(direction, portId)) {
+      this.nodeEditorEditingPortKey = null;
+    }
     this.renderNodeEditor();
   }
 
@@ -549,7 +552,7 @@ export class WorkflowBuilder {
       return;
     }
     this.syncNodeEditorDraftFromDom();
-    this.nodeEditorEditingPorts.add(this.nodeEditorPortKey(direction, portId));
+    this.nodeEditorEditingPortKey = this.nodeEditorPortKey(direction, portId);
     this.renderNodeEditor();
   }
 
@@ -805,7 +808,7 @@ export class WorkflowBuilder {
   }
 
   isNodeEditorPortEditing(direction, portId) {
-    return this.nodeEditorEditingPorts.has(this.nodeEditorPortKey(direction, portId));
+    return this.nodeEditorEditingPortKey === this.nodeEditorPortKey(direction, portId);
   }
 
   nodeEditorPortKey(direction, portId) {

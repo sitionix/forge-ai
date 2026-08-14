@@ -2071,22 +2071,34 @@ describe('Agent projects page', () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20, 'DEPENDENCIES_ONLY', [
         { id: 'input-a', name: 'Review feedback', description: 'Feedback.', order: 0 },
-        { id: 'input-b', name: 'Context', description: 'Context.', order: 1 }
+        { id: 'input-b', name: 'Context', description: 'Context.', order: 1 },
+        { id: 'input-c', name: 'Test result', description: 'Test.', order: 2 },
+        { id: 'input-d', name: 'Extra notes', description: 'Notes.', order: 3 }
       ], [
         { id: 'output-a', name: 'Approved', description: 'Continue.', order: 0 },
-        { id: 'output-b', name: 'Return', description: 'Return.', order: 1 }
-      ])
+        { id: 'output-b', name: 'Return', description: 'Return.', order: 1 },
+        { id: 'output-c', name: 'Reject', description: 'Reject.', order: 2 }
+      ]),
+      node('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', [], 260, 20)
     ]))) });
     const { dom } = await openedBuilder(fakeApi);
     const source = consoleSourceText();
     const nodeElement = dom.window.document.querySelector<HTMLElement>('[data-node-id="node-1"]')!;
+    const noPortNode = dom.window.document.querySelector<HTMLElement>('[data-node-id="node-2"]')!;
 
     expect(source).toContain('const NODE_WIDTH = 204;');
     expect(source).toMatch(/\.workflow-node\s*\{[\s\S]*width: 180px;/);
+    expect(source).toMatch(/\.workflow-node\s*\{[\s\S]*min-height: max\(104px, calc\(var\(--workflow-node-port-rows, 1\) \* 17px \+ 24px\)\);/);
+    expect(source).not.toMatch(/\.workflow-node-port-list\s*\{[^}]*max-height:/);
+    expect(source).not.toMatch(/\.workflow-node-port-list\s*\{[^}]*overflow: hidden;/);
     expect(source).not.toContain('.workflow-node-port i');
     expect(source).not.toContain('<i aria-hidden="true"></i>');
-    expect(portTexts(dom, 'node-1', 'input')).toEqual(['Review feedback', 'Context']);
-    expect(portTexts(dom, 'node-1', 'output')).toEqual(['Approved', 'Return']);
+    expect(nodeElement.getAttribute('style')).toContain('--workflow-node-port-rows:4');
+    expect(noPortNode.getAttribute('style')).toContain('--workflow-node-port-rows:1');
+    expect(portTexts(dom, 'node-1', 'input')).toEqual(['Review feedback', 'Context', 'Test result', 'Extra notes']);
+    expect(portTexts(dom, 'node-1', 'output')).toEqual(['Approved', 'Return', 'Reject']);
+    expect(portTexts(dom, 'node-2', 'input')).toEqual([]);
+    expect(portTexts(dom, 'node-2', 'output')).toEqual([]);
     expect(nodeElement.querySelectorAll('[data-node-input]')).toHaveLength(1);
     expect(nodeElement.querySelectorAll('[data-node-output]')).toHaveLength(1);
     expect(nodeElement.querySelectorAll('.workflow-node-port button, .workflow-node-port .node-handle')).toHaveLength(0);
@@ -2135,17 +2147,24 @@ describe('Agent projects page', () => {
     expect(editorEditingRows(dom, 'inputs')).toHaveLength(0);
     expect(editorEditingRows(dom, 'outputs')).toHaveLength(0);
     dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="inputs"]')?.click();
-    dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="outputs"]')?.click();
     expect(editorRows(dom, 'inputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['input-existing', 'input-added']);
-    expect(editorRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-existing', 'output-added']);
     expect(editorEditingRows(dom, 'inputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['input-added']);
-    expect(editorEditingRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-added']);
-
     setPortFields(editorRow(dom, 'inputs', 1), 'Review feedback', 'Feedback from review.');
-    editPort(dom, 'outputs', 'output-existing');
-    expect(editorEditingRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-existing', 'output-added']);
-    setPortFields(editorRow(dom, 'outputs', 0), 'Ready', 'Ready for testing.');
+
+    dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="outputs"]')?.click();
+    expect(editorRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-existing', 'output-added']);
+    expect(editorEditingRows(dom, 'inputs')).toHaveLength(0);
+    expect(editorEditingRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-added']);
+    expect(editorCompactRows(dom, 'inputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['input-existing', 'input-added']);
+    expect(dom.window.document.getElementById('agentsV2NodeEditorBody')?.textContent).toContain('Feedback from review.');
     setPortFields(editorRow(dom, 'outputs', 1), 'Return', 'Return for changes.');
+
+    editPort(dom, 'outputs', 'output-existing');
+    expect(editorEditingRows(dom, 'inputs')).toHaveLength(0);
+    expect(editorEditingRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-existing']);
+    expect(editorCompactRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toContain('output-added');
+    expect(dom.window.document.getElementById('agentsV2NodeEditorBody')?.textContent).toContain('Return for changes.');
+    setPortFields(editorRow(dom, 'outputs', 0), 'Ready', 'Ready for testing.');
     dom.window.document.querySelector<HTMLElement>('[data-node-editor-remove="input-existing"]')?.click();
     expect(editorRows(dom, 'inputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['input-added']);
     expect(editorRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-existing', 'output-added']);
@@ -2169,6 +2188,35 @@ describe('Agent projects page', () => {
     expect(editorEditingRows(dom, 'outputs')).toHaveLength(0);
   });
 
+  it('Node Editor switches and clears the single active port editor without losing draft values', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', [], 10, 20, 'DEPENDENCIES_ONLY', [], [
+        { id: 'output-a', name: 'Approved', description: 'Accepted.', order: 0 },
+        { id: 'output-b', name: 'Return', description: 'Return for changes.', order: 1 }
+      ])
+    ]))) });
+    const { dom } = await openedBuilder(fakeApi);
+
+    clickNode(dom, 'node-1');
+    expect(editorEditingRows(dom, 'outputs')).toHaveLength(0);
+    editPort(dom, 'outputs', 'output-a');
+    expect(editorEditingRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-a']);
+    setPortFields(editorRow(dom, 'outputs', 0), 'Ready', 'Ready for testing.');
+    editPort(dom, 'outputs', 'output-b');
+    expect(editorEditingRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-b']);
+    expect(editorCompactRows(dom, 'outputs').map((row) => row.textContent)).toEqual([
+      expect.stringContaining('Ready')
+    ]);
+    const activeOutputRow = editorEditingRows(dom, 'outputs')[0];
+    expect(activeOutputRow).toBeDefined();
+    expect(activeOutputRow!.textContent).toContain('Return');
+
+    dom.window.document.querySelector<HTMLElement>('[data-node-editor-remove="output-b"]')?.click();
+    expect(editorEditingRows(dom, 'outputs')).toHaveLength(0);
+    expect(editorCompactRows(dom, 'outputs').map((row) => row.dataset.nodeEditorPort)).toEqual(['output-a']);
+    expect(dom.window.document.getElementById('agentsV2NodeEditorBody')?.textContent).toContain('Ready for testing.');
+  });
+
   it('Node Editor rejects invalid names and descriptions while allowing same name across directions', async () => {
     const { dom, page } = await openedBuilder(api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
@@ -2177,22 +2225,24 @@ describe('Agent projects page', () => {
 
     clickNode(dom, 'node-1');
     dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="inputs"]')?.click();
-    dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="inputs"]')?.click();
-    dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="outputs"]')?.click();
-    dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="outputs"]')?.click();
     setPortFields(editorRow(dom, 'inputs', 0), 'Result', 'Input result.');
+    dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="inputs"]')?.click();
     setPortFields(editorRow(dom, 'inputs', 1), 'Result', 'Duplicate input.');
+    dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="outputs"]')?.click();
     setPortFields(editorRow(dom, 'outputs', 0), 'Result', 'Output result.');
+    dom.window.document.querySelector<HTMLElement>('[data-node-editor-add="outputs"]')?.click();
     setPortFields(editorRow(dom, 'outputs', 1), 'Return', ' ');
 
     dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
     expect(dom.window.document.getElementById('agentsV2NodeEditorError')?.textContent).toContain('Input port names must be unique');
     expect(page.workflowBuilder.workflow.nodes[0].inputs).toEqual([]);
 
+    editPort(dom, 'inputs', 'input-b');
     setPortFields(editorRow(dom, 'inputs', 1), 'Context', 'Context input.');
     dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
     expect(dom.window.document.getElementById('agentsV2NodeEditorError')?.textContent).toContain('Output port description is required');
 
+    editPort(dom, 'outputs', 'output-b');
     setPortFields(editorRow(dom, 'outputs', 1), 'Return', 'Return for changes.');
     dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
     expect(page.workflowBuilder.workflow.nodes[0].inputs.map((port: any) => port.name)).toEqual(['Result', 'Context']);
