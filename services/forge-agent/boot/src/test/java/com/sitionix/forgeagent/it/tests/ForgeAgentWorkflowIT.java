@@ -335,8 +335,6 @@ class ForgeAgentWorkflowIT {
         this.expectWorkflowError("requestWorkflowDuplicatePortName.json", HttpStatus.BAD_REQUEST, "responseDuplicateNodePortNameError.json");
         this.expectWorkflowError("requestWorkflowPortOrderGap.json", HttpStatus.BAD_REQUEST, "responseInvalidNodePortOrderError.json");
         this.expectWorkflowError("requestWorkflowBlankPortField.json", HttpStatus.BAD_REQUEST, "responseInvalidNodePortError.json");
-        this.expectWorkflowError("requestDirectCycleWorkflow.json", HttpStatus.CONFLICT, "responseWorkflowCycleError.json");
-        this.expectWorkflowError("requestIndirectCycleWorkflow.json", HttpStatus.CONFLICT, "responseWorkflowCycleError.json");
     }
 
     @Test
@@ -350,7 +348,7 @@ class ForgeAgentWorkflowIT {
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
 
-        this.expectWorkflowError("requestDirectCycleWorkflow.json", HttpStatus.CONFLICT, "responseWorkflowCycleError.json");
+        this.expectWorkflowError("requestSelfNodeConnection.json", HttpStatus.BAD_REQUEST, "responseSelfNodeConnectionError.json");
 
         this.forgeIt.mockMvc()
                 .ping(GET_WORKFLOW)

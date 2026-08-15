@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataConnectionResolutionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataNodeRunRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRunRepository;
 import java.util.List;
@@ -24,6 +25,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
 
     private final SpringDataWorkflowRunRepository workflowRunRepository;
     private final SpringDataNodeRunRepository nodeRunRepository;
+    private final SpringDataConnectionResolutionRepository resolutionRepository;
 
     @Override
     public WorkflowRun save(final WorkflowRun run) {
@@ -102,6 +104,9 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 WorkflowRunStatus.valueOf(entity.getStatus()),
                 this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(entity.getId()).stream()
                         .map(PostgresNodeRunMapper::toDomain)
+                        .toList(),
+                this.resolutionRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(entity.getId()).stream()
+                        .map(PostgresConnectionResolutionRepository::toDomain)
                         .toList(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),

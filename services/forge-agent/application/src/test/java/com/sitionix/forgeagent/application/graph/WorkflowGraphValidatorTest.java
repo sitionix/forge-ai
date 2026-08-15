@@ -152,28 +152,24 @@ class WorkflowGraphValidatorTest {
     }
 
     @Test
-    void rejectsDirectAndIndirectCycles() {
-        assertThatThrownBy(() -> this.validate(
+    void acceptsMultiNodeCyclesForRuntimeReentry() {
+        final WorkflowGraphValidator.ValidatedGraph direct = this.validate(
                 List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA)),
                         this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputB))),
                 List.of(this.connection(this.connectionAB, this.outputA, this.inputB),
                         this.connection(this.connectionBC, this.outputB, this.inputA))
-        ))
-                .isInstanceOf(ConflictException.class)
-                .extracting("code")
-                .isEqualTo("WORKFLOW_GRAPH_CYCLE");
-
-        assertThatThrownBy(() -> this.validate(
+        );
+        final WorkflowGraphValidator.ValidatedGraph indirect = this.validate(
                 List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA)),
                         this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputB)),
                         this.node(this.nodeC, this.agentA, List.of(this.inputC), List.of(this.outputC))),
                 List.of(this.connection(this.connectionAB, this.outputA, this.inputB),
                         this.connection(this.connectionBC, this.outputB, this.inputC),
                         this.connection(this.connectionAC, this.outputC, this.inputA))
-        ))
-                .isInstanceOf(ConflictException.class)
-                .extracting("code")
-                .isEqualTo("WORKFLOW_GRAPH_CYCLE");
+        );
+
+        assertThat(direct.connections()).hasSize(2);
+        assertThat(indirect.connections()).hasSize(3);
     }
 
     @Test

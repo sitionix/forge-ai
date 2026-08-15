@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.it.tests;
 
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_ALPHA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.WORKFLOW_ID;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_PROJECT_TASK;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_PROJECT_TASK_ERROR;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_PROJECT_TASK;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_PROJECT_TASKS;
@@ -19,7 +20,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.ExecutionFrameEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunNodeEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunPortEntity;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
@@ -37,21 +42,34 @@ class ForgeAgentProjectTaskIT {
     private ForgeAgentTestManager forgeIt;
 
     @Test
-    void givenPortAwareWorkflow_whenCreateTask_thenExecutionUnsupportedAndNothingIsPersisted() {
+    void givenPortAwareWorkflow_whenCreateTask_thenRuntimeSnapshotAndRootRunArePersisted() {
         this.seedProjectAgentsAndWorkflow();
         this.updateWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT_TASK_ERROR)
+                .ping(CREATE_PROJECT_TASK)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateProjectTask.json")
-                .expectStatus(HttpStatus.CONFLICT)
-                .andExpectPath(jsonPath("$.code").value("WORKFLOW_GRAPH_EXECUTION_NOT_SUPPORTED"))
+                .expectStatus(HttpStatus.CREATED)
                 .assertAndCreate();
 
-        assertThat(this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll()).isEmpty();
-        assertThat(this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll()).isEmpty();
-        assertThat(this.forgeIt.postgresql().get(NodeRunEntity.class).getAll()).isEmpty();
+        assertThat(this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll()).hasSize(1);
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll()).singleElement().satisfies(run -> {
+            assertThat(run.getSourceWorkflowId()).isEqualTo(WORKFLOW_ID);
+            assertThat(run.getTaskId()).isNotNull();
+            assertThat(run.getStatus()).isEqualTo("QUEUED");
+        });
+        assertThat(this.forgeIt.postgresql().get(ExecutionFrameEntity.class).getAll()).hasSize(1);
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunNodeEntity.class).getAll()).hasSize(3);
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunPortEntity.class).getAll()).hasSize(6);
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunConnectionEntity.class).getAll()).hasSize(2);
+        assertThat(this.forgeIt.postgresql().get(NodeRunEntity.class).getAll()).singleElement().satisfies(nodeRun -> {
+            assertThat(nodeRun.getSourceNodeId()).isEqualTo(UUID.fromString("40000000-0000-4000-8000-000000000001"));
+            assertThat(nodeRun.getStatus()).isEqualTo("PENDING");
+            assertThat(nodeRun.getExecutionFrameId()).isNotNull();
+            assertThat(nodeRun.getActivationFrameId()).isNull();
+            assertThat(nodeRun.getEnteredViaInputPortId()).isNull();
+        });
     }
 
     @Test
@@ -62,8 +80,8 @@ class ForgeAgentProjectTaskIT {
                 .ping(CREATE_PROJECT_TASK_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateProjectTask.json")
-                .expectStatus(HttpStatus.CONFLICT)
-                .andExpectPath(jsonPath("$.code").value("WORKFLOW_GRAPH_EXECUTION_NOT_SUPPORTED"))
+                .expectStatus(HttpStatus.BAD_REQUEST)
+                .andExpectPath(jsonPath("$.code").value("WORKFLOW_ENTRY_NOT_FOUND"))
                 .assertAndCreate();
 
         assertThat(this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll()).isEmpty();

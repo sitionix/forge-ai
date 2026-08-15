@@ -11,6 +11,7 @@ import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
 import com.sitionix.forgeagent.api.dto.CodexRuntimeEffortResponse;
 import com.sitionix.forgeagent.api.dto.CodexRuntimeModelResponse;
 import com.sitionix.forgeagent.api.dto.CodexRuntimeProviderResponse;
+import com.sitionix.forgeagent.api.dto.ConnectionResolutionResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
@@ -48,6 +49,7 @@ import com.sitionix.forgeagent.domain.model.AiRuntimeCatalog;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeEffort;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeModel;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
+import com.sitionix.forgeagent.domain.model.ConnectionResolution;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
@@ -183,6 +185,7 @@ class ForgeAgentApiMapper {
                 run.input(),
                 run.status(),
                 run.nodeRuns().stream().map(this::toResponse).toList(),
+                run.connectionResolutions().stream().map(this::toResponse).toList(),
                 run.createdAt(),
                 run.startedAt(),
                 run.finishedAt()
@@ -282,9 +285,12 @@ class ForgeAgentApiMapper {
                     nodeRun.agentName(),
                     nodeRun.agentInstructions(),
                     this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
-                    nodeRun.dependsOnNodeRunIds(),
                     inputMode(nodeRun.inputMode()).name(),
                     new NodePositionResponse(nodeRun.position().x(), nodeRun.position().y()),
+                    nodeRun.executionFrameId(),
+                    nodeRun.enteredViaInputPortId(),
+                    nodeRun.activationFrameId(),
+                    nodeRun.selectedOutputPortId(),
                     nodeRun.status(),
                     nodeRun.output() == null ? null : this.objectMapper.readTree(nodeRun.output().jsonValue()),
                     nodeRun.failure() == null ? null : new NodeRunFailureResponse(nodeRun.failure().code(), nodeRun.failure().message()),
@@ -294,6 +300,24 @@ class ForgeAgentApiMapper {
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored node run JSON is invalid.", exception);
+        }
+    }
+
+    private ConnectionResolutionResponse toResponse(final ConnectionResolution resolution) {
+        try {
+            return new ConnectionResolutionResponse(
+                    resolution.id(),
+                    resolution.executionFrameId(),
+                    resolution.sourceNodeRunId(),
+                    resolution.sourceConnectionId(),
+                    resolution.targetInputPortId(),
+                    resolution.type(),
+                    resolution.payload() == null ? null : this.objectMapper.readTree(resolution.payload().jsonValue()),
+                    resolution.consumedByNodeRunId(),
+                    resolution.createdAt()
+            );
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalStateException("Stored connection resolution JSON is invalid.", exception);
         }
     }
 

@@ -116,6 +116,7 @@ class WorkflowUseCasesTest {
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
         when(this.workflowRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(this.workflowRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         final Workflow saved = this.useCases.updateWorkflow(
                 this.workflowId,
@@ -133,13 +134,14 @@ class WorkflowUseCasesTest {
     }
 
     @Test
-    void failedUpdateDoesNotPersist() {
+    void cyclicUpdatePersistsForRuntimeReentry() {
         final Workflow current = this.workflow(List.of(new Node(this.nodeA, this.agentId, new NodePosition(1.0, 2.0))));
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
+        when(this.workflowRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        assertThatThrownBy(() -> this.useCases.updateWorkflow(
+        final Workflow saved = this.useCases.updateWorkflow(
                 this.workflowId,
                 new SaveWorkflowCommand("Full Testing", List.of(
                         new Node(this.nodeA, this.agentId, NodeInputMode.DEPENDENCIES_ONLY,
@@ -154,11 +156,10 @@ class WorkflowUseCasesTest {
                         new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB),
                         new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000002"), this.outputB, this.inputA)
                 ))
-        ))
-                .isInstanceOf(ConflictException.class)
-                .extracting("code")
-                .isEqualTo("WORKFLOW_GRAPH_CYCLE");
-        verify(this.workflowRepository, never()).save(any());
+        );
+
+        assertThat(saved.connections()).hasSize(2);
+        verify(this.workflowRepository).save(any());
     }
 
     @Test

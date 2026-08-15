@@ -317,22 +317,22 @@ export class TaskExecutionView {
 
   renderEdges(nodeRuns) {
     const byId = new Map(nodeRuns.map((nodeRun) => [nodeRun.id, nodeRun]));
-    const edges = [];
-    for (const target of nodeRuns) {
-      for (const sourceId of target.dependsOnNodeRunIds || []) {
-        const source = byId.get(sourceId);
-        if (!source) {
-          continue;
+    const edges = this.consumedConnectionResolutions()
+      .map((resolution) => {
+        const source = byId.get(resolution.sourceNodeRunId);
+        const target = byId.get(resolution.consumedByNodeRunId);
+        if (!source || !target) {
+          return '';
         }
         const start = this.nodePoint(source, 'output');
         const end = this.nodePoint(target, 'input');
-        edges.push(`
+        return `
           <g class="workflow-edge execution-edge" data-edge-source="${escapeHtml(source.id)}" data-edge-target="${escapeHtml(target.id)}">
             <path class="edge-visible" d="${this.pathD(start, end)}" marker-end="url(#agentsV2ExecutionArrow)" />
           </g>
-        `);
-      }
-    }
+        `;
+      })
+      .filter(Boolean);
     this.byId('agentsV2ExecutionEdges').innerHTML = `
       <defs>
         <marker id="agentsV2ExecutionArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -384,7 +384,7 @@ export class TaskExecutionView {
   }
 
   formatInputMode(nodeRun) {
-    if ((nodeRun.dependsOnNodeRunIds || []).length === 0) {
+    if (this.consumedConnectionResolutions(nodeRun.id).length === 0) {
       return 'Original task';
     }
     if (nodeRun.inputMode === 'TASK_AND_DEPENDENCIES') {
@@ -394,6 +394,13 @@ export class TaskExecutionView {
       return 'Previous outputs only';
     }
     return 'Unknown';
+  }
+
+  consumedConnectionResolutions(nodeRunId = null) {
+    return (this.state.workflowRun?.connectionResolutions || [])
+      .filter((resolution) => resolution.resolutionType === 'DELIVERED')
+      .filter((resolution) => Boolean(resolution.consumedByNodeRunId))
+      .filter((resolution) => !nodeRunId || resolution.consumedByNodeRunId === nodeRunId);
   }
 
   selectedNodeRun() {

@@ -3,7 +3,6 @@ package com.sitionix.forgeai.api.agentproxy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 public record AgentNodeRunResponse(
@@ -13,9 +12,12 @@ public record AgentNodeRunResponse(
         String agentName,
         String agentInstructions,
         JsonNode agentOutputSchema,
-        List<UUID> dependsOnNodeRunIds,
         String inputMode,
         NodePositionResponse position,
+        UUID executionFrameId,
+        UUID enteredViaInputPortId,
+        UUID activationFrameId,
+        UUID selectedOutputPortId,
         AgentNodeRunStatus status,
         JsonNode output,
         AgentNodeRunFailureResponse failure,
@@ -29,7 +31,6 @@ public record AgentNodeRunResponse(
                                 final String agentName,
                                 final String agentInstructions,
                                 final JsonNode agentOutputSchema,
-                                final List<UUID> dependsOnNodeRunIds,
                                 final NodePositionResponse position,
                                 final AgentNodeRunStatus status,
                                 final JsonNode output,
@@ -44,9 +45,12 @@ public record AgentNodeRunResponse(
                 agentName,
                 agentInstructions,
                 agentOutputSchema,
-                dependsOnNodeRunIds,
                 null,
                 position,
+                null,
+                null,
+                null,
+                null,
                 status,
                 output,
                 failure,

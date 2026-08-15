@@ -15,6 +15,12 @@ public interface SpringDataNodeRunRepository extends JpaRepository<NodeRunEntity
 
     List<NodeRunEntity> findByWorkflowRunIdOrderByCreatedAtAscIdAsc(UUID workflowRunId);
 
+    List<NodeRunEntity> findByWorkflowRunIdAndExecutionFrameIdOrderByCreatedAtAscIdAsc(UUID workflowRunId, UUID executionFrameId);
+
+    Optional<NodeRunEntity> findByWorkflowRunIdAndExecutionFrameIdAndSourceNodeId(UUID workflowRunId, UUID executionFrameId, UUID sourceNodeId);
+
+    Optional<NodeRunEntity> findByWorkflowRunIdAndActivationFrameIdAndEnteredViaInputPortId(UUID workflowRunId, UUID activationFrameId, UUID enteredViaInputPortId);
+
     @Query("""
             select n.id
             from NodeRunEntity n

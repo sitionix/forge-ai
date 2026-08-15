@@ -5,6 +5,9 @@
   "normalizedName": "other project agent",
   "instructions": "Do work for another project.",
   "outputSchema": "{\"type\":\"object\"}",
+  "modelProviderId": "codex",
+  "modelId": "discovered-model",
+  "modelEffortId": "medium",
   "createdAt": "2026-01-01T00:00:00Z",
   "updatedAt": "2026-01-01T00:00:00Z"
 }

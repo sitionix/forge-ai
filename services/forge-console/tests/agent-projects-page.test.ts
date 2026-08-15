@@ -134,7 +134,7 @@ function nodeRun(
   id: string,
   agentName: string,
   status: string,
-  dependsOnNodeRunIds: string[] = [],
+  upstreamNodeRunIds: string[] = [],
   x = 10,
   y = 20,
   output: any = null,
@@ -147,9 +147,13 @@ function nodeRun(
     agentName,
     agentInstructions: `${agentName} instructions`,
     agentOutputSchema: { type: 'object' },
-    dependsOnNodeRunIds,
     inputMode: 'DEPENDENCIES_ONLY',
     position: { x, y },
+    executionFrameId: 'frame-root',
+    enteredViaInputPortId: upstreamNodeRunIds.length > 0 ? `${id}-input` : null,
+    activationFrameId: upstreamNodeRunIds.length > 0 ? 'frame-root' : null,
+    selectedOutputPortId: null,
+    testUpstreamNodeRunIds: upstreamNodeRunIds,
     status,
     output,
     failure,
@@ -160,12 +164,24 @@ function nodeRun(
 }
 
 function workflowRunDetail(id: string, status: string, nodeRuns: any[] = [], workflowName = 'Full Testing') {
+  const connectionResolutions = nodeRuns.flatMap((target) => (target.testUpstreamNodeRunIds || []).map((sourceId: string, index: number) => ({
+    id: `${sourceId}-${target.id}-resolution-${index}`,
+    executionFrameId: target.activationFrameId || target.executionFrameId,
+    sourceNodeRunId: sourceId,
+    sourceConnectionId: `${sourceId}-${target.id}-connection`,
+    targetInputPortId: target.enteredViaInputPortId || `${target.id}-input`,
+    resolutionType: 'DELIVERED',
+    payload: { value: `Output from ${sourceId}` },
+    consumedByNodeRunId: target.id,
+    createdAt: target.createdAt
+  })));
   return {
     id,
     taskId: task().id,
     workflowName,
     status,
     nodeRuns,
+    connectionResolutions,
     createdAt: '2026-08-13T10:00:00Z',
     startedAt: '2026-08-13T10:00:02Z',
     finishedAt: status === 'RUNNING' || status === 'QUEUED' ? null : '2026-08-13T10:03:00Z'

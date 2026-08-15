@@ -9,8 +9,6 @@ import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
-import java.util.Arrays;
-import java.util.List;
 
 final class PostgresNodeRunMapper {
 
@@ -26,9 +24,12 @@ final class PostgresNodeRunMapper {
                 entity.getAgentName(),
                 entity.getAgentInstructions(),
                 AgentOutputSchema.ofCanonicalJsonObject(entity.getAgentOutputSchema()),
-                entity.getDependsOnNodeRunIds() == null ? List.of() : Arrays.asList(entity.getDependsOnNodeRunIds()),
                 inputMode(entity.getInputMode()),
                 new NodePosition(entity.getPositionX(), entity.getPositionY()),
+                entity.getExecutionFrameId(),
+                entity.getEnteredViaInputPortId(),
+                entity.getActivationFrameId(),
+                entity.getSelectedOutputPortId(),
                 NodeRunStatus.valueOf(entity.getStatus()),
                 entity.getOutput() == null ? null : new NodeRunOutput(entity.getOutput()),
                 entity.getFailureCode() == null && entity.getFailureMessage() == null
@@ -50,10 +51,13 @@ final class PostgresNodeRunMapper {
         entity.setAgentName(nodeRun.agentName());
         entity.setAgentInstructions(nodeRun.agentInstructions());
         entity.setAgentOutputSchema(nodeRun.agentOutputSchema().jsonObject());
-        entity.setDependsOnNodeRunIds(nodeRun.dependsOnNodeRunIds().toArray(java.util.UUID[]::new));
         entity.setInputMode(inputMode(nodeRun.inputMode()).name());
         entity.setPositionX(nodeRun.position().x());
         entity.setPositionY(nodeRun.position().y());
+        entity.setExecutionFrameId(nodeRun.executionFrameId());
+        entity.setEnteredViaInputPortId(nodeRun.enteredViaInputPortId());
+        entity.setActivationFrameId(nodeRun.activationFrameId());
+        entity.setSelectedOutputPortId(nodeRun.selectedOutputPortId());
         entity.setStatus(nodeRun.status().name());
         entity.setOutput(nodeRun.output() == null ? null : nodeRun.output().jsonValue());
         entity.setFailureCode(nodeRun.failure() == null ? null : nodeRun.failure().code());

@@ -13,7 +13,6 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -57,7 +56,6 @@ public class WorkflowGraphValidator {
             }
         }
         this.validateConnections(normalizedConnections, inputOwnersByPortId, outputOwnersByPortId, allOwnersByPortId);
-        this.rejectCycles(normalizedNodes, normalizedConnections, inputOwnersByPortId, outputOwnersByPortId);
         return new ValidatedGraph(normalizedNodes, normalizedConnections);
     }
 
@@ -169,45 +167,6 @@ public class WorkflowGraphValidator {
                 throw new ValidationException("DUPLICATE_WORKFLOW_CONNECTION", "Workflow connections must not duplicate the same source and target ports.");
             }
         }
-    }
-
-    private void rejectCycles(final List<Node> nodes,
-                              final List<WorkflowConnection> connections,
-                              final Map<UUID, UUID> inputOwnersByPortId,
-                              final Map<UUID, UUID> outputOwnersByPortId) {
-        final Map<UUID, Set<UUID>> adjacencyByNode = new HashMap<>();
-        nodes.forEach(node -> adjacencyByNode.put(node.id(), new LinkedHashSet<>()));
-        for (final WorkflowConnection connection : connections) {
-            adjacencyByNode.get(outputOwnersByPortId.get(connection.sourceOutputPortId()))
-                    .add(inputOwnersByPortId.get(connection.targetInputPortId()));
-        }
-        final Set<UUID> visited = new HashSet<>();
-        final Set<UUID> visiting = new HashSet<>();
-        for (final Node node : nodes) {
-            if (this.hasCycle(node.id(), adjacencyByNode, visited, visiting)) {
-                throw new ConflictException("WORKFLOW_GRAPH_CYCLE", "Workflow graph contains a cycle.");
-            }
-        }
-    }
-
-    private boolean hasCycle(final UUID nodeId,
-                             final Map<UUID, Set<UUID>> adjacencyByNode,
-                             final Set<UUID> visited,
-                             final Set<UUID> visiting) {
-        if (visited.contains(nodeId)) {
-            return false;
-        }
-        if (!visiting.add(nodeId)) {
-            return true;
-        }
-        for (final UUID targetNodeId : adjacencyByNode.getOrDefault(nodeId, Set.of())) {
-            if (this.hasCycle(targetNodeId, adjacencyByNode, visited, visiting)) {
-                return true;
-            }
-        }
-        visiting.remove(nodeId);
-        visited.add(nodeId);
-        return false;
     }
 
     private record PortPair(UUID sourceOutputPortId, UUID targetInputPortId) {

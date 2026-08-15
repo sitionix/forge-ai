@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -19,6 +20,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataNodeRunRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataConnectionResolutionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRunRepository;
 import java.time.Instant;
 import java.util.List;
@@ -45,18 +47,23 @@ class PostgresWorkflowRunRepositoryTest {
     private static final UUID SOURCE_NODE_B = UUID.fromString("40000000-0000-4000-8000-000000000002");
     private static final UUID AGENT_A = UUID.fromString("50000000-0000-4000-8000-000000000001");
     private static final UUID AGENT_B = UUID.fromString("50000000-0000-4000-8000-000000000002");
+    private static final UUID FRAME_ID = UUID.fromString("60000000-0000-4000-8000-000000000001");
+    private static final UUID INPUT_PORT_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
     private static final Instant NOW = Instant.parse("2026-08-10T12:00:00Z");
 
     @Mock
     private SpringDataWorkflowRunRepository workflowRunRepository;
     @Mock
     private SpringDataNodeRunRepository nodeRunRepository;
+    @Mock
+    private SpringDataConnectionResolutionRepository resolutionRepository;
 
     private PostgresWorkflowRunRepository repository;
 
     @BeforeEach
     void setUp() {
-        this.repository = new PostgresWorkflowRunRepository(this.workflowRunRepository, this.nodeRunRepository);
+        this.repository = new PostgresWorkflowRunRepository(this.workflowRunRepository, this.nodeRunRepository, this.resolutionRepository);
+        lenient().when(this.resolutionRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
     }
 
     @Test
@@ -65,8 +72,8 @@ class PostgresWorkflowRunRepositoryTest {
         when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
 
         this.repository.save(this.run(List.of(
-                this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, List.of(), null, null),
-                this.nodeRun(NODE_RUN_B, SOURCE_NODE_B, AGENT_B, List.of(NODE_RUN_A), null, null)
+                this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, null, null),
+                this.nodeRun(NODE_RUN_B, SOURCE_NODE_B, AGENT_B, null, null)
         )));
 
         final WorkflowRunEntity savedRun = this.savedRun();
@@ -93,7 +100,10 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(second.getAgentName()).isEqualTo("Agent " + AGENT_B);
         assertThat(second.getAgentInstructions()).isEqualTo("Instructions " + AGENT_B);
         assertThat(second.getAgentOutputSchema()).isEqualTo("{\"type\":\"object\"}");
-        assertThat(second.getDependsOnNodeRunIds()).containsExactly(NODE_RUN_A);
+        assertThat(second.getExecutionFrameId()).isEqualTo(FRAME_ID);
+        assertThat(second.getEnteredViaInputPortId()).isNull();
+        assertThat(second.getActivationFrameId()).isNull();
+        assertThat(second.getSelectedOutputPortId()).isNull();
         assertThat(second.getPositionX()).isEqualTo(3.0);
         assertThat(second.getPositionY()).isEqualTo(4.0);
         assertThat(second.getStatus()).isEqualTo("PENDING");
@@ -106,7 +116,7 @@ class PostgresWorkflowRunRepositoryTest {
 
     @Test
     void findByIdReconstructsDomainIncludingNodeRunsOutputAndFailure() {
-        final NodeRunEntity node = this.nodeEntity(NODE_RUN_B, SOURCE_NODE_B, AGENT_B, List.of(NODE_RUN_A));
+        final NodeRunEntity node = this.nodeEntity(NODE_RUN_B, SOURCE_NODE_B, AGENT_B);
         node.setOutput("{\"summary\":\"done\"}");
         node.setFailureCode("ERR");
         node.setFailureMessage("Failed");
@@ -123,7 +133,9 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(run.nodeRuns()).singleElement().satisfies(nodeRun -> {
             assertThat(nodeRun.id()).isEqualTo(NODE_RUN_B);
             assertThat(nodeRun.workflowRunId()).isEqualTo(RUN_ID);
-            assertThat(nodeRun.dependsOnNodeRunIds()).containsExactly(NODE_RUN_A);
+            assertThat(nodeRun.executionFrameId()).isEqualTo(FRAME_ID);
+            assertThat(nodeRun.enteredViaInputPortId()).isNull();
+            assertThat(nodeRun.activationFrameId()).isNull();
             assertThat(nodeRun.position()).isEqualTo(new NodePosition(3.0, 4.0));
             assertThat(nodeRun.output()).isEqualTo(new NodeRunOutput("{\"summary\":\"done\"}"));
             assertThat(nodeRun.failure()).isEqualTo(new NodeRunFailure("ERR", "Failed"));
@@ -134,7 +146,7 @@ class PostgresWorkflowRunRepositoryTest {
 
     @Test
     void findByIdReconstructsExecutionModelWithNullableEffort() {
-        final NodeRunEntity node = this.nodeEntity(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, List.of());
+        final NodeRunEntity node = this.nodeEntity(NODE_RUN_A, SOURCE_NODE_A, AGENT_A);
         node.setExecutionModelProviderId("codex");
         node.setExecutionModelId("model-without-effort");
         node.setExecutionModelEffortId(null);
@@ -154,7 +166,7 @@ class PostgresWorkflowRunRepositoryTest {
         when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
 
         this.repository.save(this.run(List.of(this.withExecutionModel(
-                this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, List.of(), null, null),
+                this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, null, null),
                 new NodeRunExecutionModel("codex", "model-without-effort", null)
         ))));
 
@@ -212,7 +224,6 @@ class PostgresWorkflowRunRepositoryTest {
     private NodeRun nodeRun(final UUID id,
                             final UUID sourceNodeId,
                             final UUID sourceAgentId,
-                            final List<UUID> dependsOnNodeRunIds,
                             final NodeRunOutput output,
                             final NodeRunFailure failure) {
         final double x = NODE_RUN_A.equals(id) ? 1.0 : 3.0;
@@ -225,8 +236,12 @@ class PostgresWorkflowRunRepositoryTest {
                 "Agent " + sourceAgentId,
                 "Instructions " + sourceAgentId,
                 AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
-                dependsOnNodeRunIds,
+                com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
                 new NodePosition(x, y),
+                FRAME_ID,
+                null,
+                null,
+                null,
                 NodeRunStatus.PENDING,
                 output,
                 failure,
@@ -246,8 +261,12 @@ class PostgresWorkflowRunRepositoryTest {
                 nodeRun.agentName(),
                 nodeRun.agentInstructions(),
                 nodeRun.agentOutputSchema(),
-                nodeRun.dependsOnNodeRunIds(),
+                nodeRun.inputMode(),
                 nodeRun.position(),
+                nodeRun.executionFrameId(),
+                nodeRun.enteredViaInputPortId(),
+                nodeRun.activationFrameId(),
+                nodeRun.selectedOutputPortId(),
                 nodeRun.status(),
                 nodeRun.output(),
                 nodeRun.failure(),
@@ -273,8 +292,7 @@ class PostgresWorkflowRunRepositoryTest {
 
     private NodeRunEntity nodeEntity(final UUID id,
                                      final UUID sourceNodeId,
-                                     final UUID sourceAgentId,
-                                     final List<UUID> dependsOnNodeRunIds) {
+                                     final UUID sourceAgentId) {
         final NodeRunEntity entity = new NodeRunEntity();
         entity.setId(id);
         entity.setWorkflowRunId(RUN_ID);
@@ -283,7 +301,11 @@ class PostgresWorkflowRunRepositoryTest {
         entity.setAgentName("Agent " + sourceAgentId);
         entity.setAgentInstructions("Instructions " + sourceAgentId);
         entity.setAgentOutputSchema("{\"type\":\"object\"}");
-        entity.setDependsOnNodeRunIds(dependsOnNodeRunIds.toArray(UUID[]::new));
+        entity.setInputMode("DEPENDENCIES_ONLY");
+        entity.setExecutionFrameId(FRAME_ID);
+        entity.setEnteredViaInputPortId(null);
+        entity.setActivationFrameId(null);
+        entity.setSelectedOutputPortId(null);
         entity.setPositionX(3.0);
         entity.setPositionY(4.0);
         entity.setStatus("PENDING");

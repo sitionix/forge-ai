@@ -1,7 +1,6 @@
 package com.sitionix.forgeagent.domain.model;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 public record NodeRun(
@@ -12,9 +11,12 @@ public record NodeRun(
         String agentName,
         String agentInstructions,
         AgentOutputSchema agentOutputSchema,
-        List<UUID> dependsOnNodeRunIds,
         NodeInputMode inputMode,
         NodePosition position,
+        UUID executionFrameId,
+        UUID enteredViaInputPortId,
+        UUID activationFrameId,
+        UUID selectedOutputPortId,
         NodeRunStatus status,
         NodeRunOutput output,
         NodeRunFailure failure,
@@ -30,7 +32,7 @@ public record NodeRun(
                    final String agentName,
                    final String agentInstructions,
                    final AgentOutputSchema agentOutputSchema,
-                   final List<UUID> dependsOnNodeRunIds,
+                   final UUID executionFrameId,
                    final NodePosition position,
                    final NodeRunStatus status,
                    final NodeRunOutput output,
@@ -47,9 +49,12 @@ public record NodeRun(
                 agentName,
                 agentInstructions,
                 agentOutputSchema,
-                dependsOnNodeRunIds,
                 NodeInputMode.DEPENDENCIES_ONLY,
                 position,
+                executionFrameId,
+                null,
+                null,
+                null,
                 status,
                 output,
                 failure,

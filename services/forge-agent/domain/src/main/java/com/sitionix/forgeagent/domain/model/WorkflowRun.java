@@ -13,8 +13,22 @@ public record WorkflowRun(
         String input,
         WorkflowRunStatus status,
         List<NodeRun> nodeRuns,
+        List<ConnectionResolution> connectionResolutions,
         Instant createdAt,
         Instant startedAt,
         Instant finishedAt
 ) {
+    public WorkflowRun(final UUID id,
+                       final UUID projectId,
+                       final UUID sourceWorkflowId,
+                       final UUID taskId,
+                       final String workflowName,
+                       final String input,
+                       final WorkflowRunStatus status,
+                       final List<NodeRun> nodeRuns,
+                       final Instant createdAt,
+                       final Instant startedAt,
+                       final Instant finishedAt) {
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), createdAt, startedAt, finishedAt);
+    }
 }

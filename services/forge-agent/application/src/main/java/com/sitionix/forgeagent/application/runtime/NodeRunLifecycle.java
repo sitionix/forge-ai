@@ -1,8 +1,6 @@
 package com.sitionix.forgeagent.application.runtime;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
-import com.sitionix.forgeagent.domain.model.AgentDefinition;
-import com.sitionix.forgeagent.domain.model.AgentModelSelection;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
@@ -10,19 +8,14 @@ import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
-import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
+import com.sitionix.forgeagent.domain.port.ConnectionResolutionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Collection;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,14 +24,14 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class NodeRunLifecycle {
 
-    public static final String SOURCE_AGENT_NOT_FOUND = "SOURCE_AGENT_NOT_FOUND";
     public static final String AGENT_MODEL_NOT_CONFIGURED = "AGENT_MODEL_NOT_CONFIGURED";
-    public static final String INVALID_NODE_RUN_DEPENDENCY = "INVALID_NODE_RUN_DEPENDENCY";
     public static final String LIFECYCLE_CONFLICT = "NODE_RUN_LIFECYCLE_CONFLICT";
 
     private final NodeRunRepository nodeRunRepository;
     private final WorkflowRunRepository workflowRunRepository;
-    private final AgentDefinitionRepository agentDefinitionRepository;
+    private final ConnectionResolutionRepository resolutionRepository;
+    private final NodeInputContentPolicyRegistry inputContentPolicyRegistry;
+    private final WorkflowExecutionCoordinator coordinator;
     private final Clock clock;
 
     @Transactional
@@ -59,40 +52,11 @@ public class NodeRunLifecycle {
         }
 
         final NodeRun nodeRun = locked.get();
-        final Map<UUID, NodeRun> dependencies = this.dependenciesById(nodeRun.dependsOnNodeRunIds());
-        if (this.hasInvalidDependencies(nodeRun, dependencies)) {
+        final NodeRunExecutionModel executionModel = nodeRun.executionModel();
+        if (executionModel == null || this.isBlank(executionModel.providerId()) || this.isBlank(executionModel.modelId())) {
             this.nodeRunRepository.save(this.withFailed(
                     nodeRun,
-                    new NodeRunFailure(INVALID_NODE_RUN_DEPENDENCY, "Node run dependency is invalid."),
-                    Instant.now(this.clock)
-            ));
-            this.reconcileWorkflowRun(workflowRun, Instant.now(this.clock));
-            return Optional.empty();
-        }
-        if (this.hasDependencyStatus(dependencies.values(), NodeRunStatus.FAILED, NodeRunStatus.BLOCKED, NodeRunStatus.CANCELLED)) {
-            this.nodeRunRepository.save(this.withBlocked(nodeRun, Instant.now(this.clock)));
-            this.reconcileWorkflowRun(workflowRun, Instant.now(this.clock));
-            return Optional.empty();
-        }
-        if (this.hasDependencyStatus(dependencies.values(), NodeRunStatus.PENDING, NodeRunStatus.RUNNING)) {
-            return Optional.empty();
-        }
-
-        final Optional<AgentDefinition> agent = this.agentDefinitionRepository.findById(nodeRun.sourceAgentId());
-        if (agent.isEmpty()) {
-            this.nodeRunRepository.save(this.withFailed(
-                    nodeRun,
-                    new NodeRunFailure(SOURCE_AGENT_NOT_FOUND, "Source agent was not found."),
-                    Instant.now(this.clock)
-            ));
-            this.reconcileWorkflowRun(workflowRun, Instant.now(this.clock));
-            return Optional.empty();
-        }
-        final Optional<NodeRunExecutionModel> executionModel = this.toExecutionModel(agent.get().model());
-        if (executionModel.isEmpty()) {
-            this.nodeRunRepository.save(this.withFailed(
-                    nodeRun,
-                    new NodeRunFailure(AGENT_MODEL_NOT_CONFIGURED, "Source agent model is not configured."),
+                    new NodeRunFailure(AGENT_MODEL_NOT_CONFIGURED, "Snapshotted source agent model is not configured."),
                     Instant.now(this.clock)
             ));
             this.reconcileWorkflowRun(workflowRun, Instant.now(this.clock));
@@ -100,7 +64,7 @@ public class NodeRunLifecycle {
         }
 
         final Instant now = Instant.now(this.clock);
-        final NodeRun running = this.nodeRunRepository.save(this.withRunning(nodeRun, executionModel.get(), now));
+        final NodeRun running = this.nodeRunRepository.save(this.withRunning(nodeRun, now));
         if (workflowRun.status() == WorkflowRunStatus.QUEUED) {
             this.workflowRunRepository.saveLifecycle(new WorkflowRun(
                     workflowRun.id(),
@@ -117,17 +81,22 @@ public class NodeRunLifecycle {
             ));
         }
 
+        final NodeExecutionInputContent input = this.inputContentPolicyRegistry.assemble(new NodeInputContentContext(
+                workflowRun,
+                running,
+                this.resolutionRepository.findConsumedByNodeRunId(running.id())
+        ));
         return Optional.of(new NodeExecutionClaim(
                 workflowRun.id(),
                 running.id(),
                 running.sourceAgentId(),
-                workflowRun.input(),
+                input.workflowInput(),
                 running.agentName(),
                 running.agentInstructions(),
                 running.agentOutputSchema(),
                 running.executionModel(),
                 running.inputMode(),
-                this.dependencyOutputs(running.dependsOnNodeRunIds(), dependencies)
+                input.dependencies()
         ));
     }
 
@@ -151,7 +120,7 @@ public class NodeRunLifecycle {
             throw this.conflict("Only RUNNING node runs can succeed.");
         }
         this.nodeRunRepository.save(this.withSucceeded(nodeRun, output, Instant.now(this.clock)));
-        this.reconcileWorkflowRun(target.workflowRun(), Instant.now(this.clock));
+        this.coordinator.completeSuccessfulNodeRun(nodeRunId);
     }
 
     @Transactional
@@ -184,74 +153,6 @@ public class NodeRunLifecycle {
                 .orElseThrow(() -> new ConflictException("WORKFLOW_RUN_NOT_FOUND", "Owning workflow run was not found."));
         final Optional<NodeRun> locked = this.nodeRunRepository.findByIdForUpdate(nodeRunId);
         return locked.map(nodeRun -> new CompletionTarget(workflowRun, nodeRun)).orElse(null);
-    }
-
-    private Map<UUID, NodeRun> dependenciesById(final List<UUID> dependencyIds) {
-        if (dependencyIds == null || dependencyIds.isEmpty()) {
-            return Map.of();
-        }
-        final Map<UUID, NodeRun> loaded = this.nodeRunRepository.findByIds(dependencyIds).stream()
-                .collect(Collectors.toMap(NodeRun::id, Function.identity()));
-        final Map<UUID, NodeRun> ordered = new LinkedHashMap<>();
-        for (final UUID dependencyId : dependencyIds) {
-            final NodeRun dependency = loaded.get(dependencyId);
-            if (dependency != null) {
-                ordered.put(dependencyId, dependency);
-            }
-        }
-        return ordered;
-    }
-
-    private boolean hasInvalidDependencies(final NodeRun nodeRun, final Map<UUID, NodeRun> dependenciesById) {
-        for (final UUID dependencyId : nodeRun.dependsOnNodeRunIds()) {
-            final NodeRun dependency = dependenciesById.get(dependencyId);
-            if (dependency == null || !nodeRun.workflowRunId().equals(dependency.workflowRunId())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean hasDependencyStatus(final Collection<NodeRun> dependencies, final NodeRunStatus... statuses) {
-        for (final NodeRun dependency : dependencies) {
-            for (final NodeRunStatus status : statuses) {
-                if (dependency.status() == status) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private List<NodeDependencyOutput> dependencyOutputs(final List<UUID> dependencyIds,
-                                                        final Map<UUID, NodeRun> dependenciesById) {
-        return dependencyIds.stream()
-                .map(dependencyId -> {
-                    final NodeRun dependency = dependenciesById.get(dependencyId);
-                    return new NodeDependencyOutput(
-                            dependencyId,
-                            dependency.agentName(),
-                            dependency.output()
-                    );
-                })
-                .toList();
-    }
-
-    private Optional<NodeRunExecutionModel> toExecutionModel(final AgentModelSelection selection) {
-        if (selection == null
-                || this.isBlank(selection.providerId())
-                || this.isBlank(selection.modelId())) {
-            return Optional.empty();
-        }
-        return Optional.of(new NodeRunExecutionModel(
-                selection.providerId(),
-                selection.modelId(),
-                this.isBlank(selection.effortId()) ? null : selection.effortId()
-        ));
-    }
-
-    private boolean isBlank(final String value) {
-        return value == null || value.isBlank();
     }
 
     private void reconcileWorkflowRun(final WorkflowRun lockedWorkflowRun, final Instant now) {
@@ -301,7 +202,11 @@ public class NodeRunLifecycle {
         );
     }
 
-    private NodeRun withRunning(final NodeRun nodeRun, final NodeRunExecutionModel executionModel, final Instant now) {
+    private boolean isBlank(final String value) {
+        return value == null || value.isBlank();
+    }
+
+    private NodeRun withRunning(final NodeRun nodeRun, final Instant now) {
         return new NodeRun(
                 nodeRun.id(),
                 nodeRun.workflowRunId(),
@@ -310,13 +215,16 @@ public class NodeRunLifecycle {
                 nodeRun.agentName(),
                 nodeRun.agentInstructions(),
                 nodeRun.agentOutputSchema(),
-                nodeRun.dependsOnNodeRunIds(),
                 nodeRun.inputMode(),
                 nodeRun.position(),
+                nodeRun.executionFrameId(),
+                nodeRun.enteredViaInputPortId(),
+                nodeRun.activationFrameId(),
+                nodeRun.selectedOutputPortId(),
                 NodeRunStatus.RUNNING,
                 nodeRun.output(),
                 nodeRun.failure(),
-                executionModel,
+                nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt() == null ? now : nodeRun.startedAt(),
                 nodeRun.finishedAt()
@@ -332,9 +240,12 @@ public class NodeRunLifecycle {
                 nodeRun.agentName(),
                 nodeRun.agentInstructions(),
                 nodeRun.agentOutputSchema(),
-                nodeRun.dependsOnNodeRunIds(),
                 nodeRun.inputMode(),
                 nodeRun.position(),
+                nodeRun.executionFrameId(),
+                nodeRun.enteredViaInputPortId(),
+                nodeRun.activationFrameId(),
+                nodeRun.selectedOutputPortId(),
                 NodeRunStatus.SUCCEEDED,
                 output,
                 nodeRun.failure(),
@@ -354,34 +265,15 @@ public class NodeRunLifecycle {
                 nodeRun.agentName(),
                 nodeRun.agentInstructions(),
                 nodeRun.agentOutputSchema(),
-                nodeRun.dependsOnNodeRunIds(),
                 nodeRun.inputMode(),
                 nodeRun.position(),
+                nodeRun.executionFrameId(),
+                nodeRun.enteredViaInputPortId(),
+                nodeRun.activationFrameId(),
+                nodeRun.selectedOutputPortId(),
                 NodeRunStatus.FAILED,
                 nodeRun.output(),
                 failure,
-                nodeRun.executionModel(),
-                nodeRun.createdAt(),
-                nodeRun.startedAt(),
-                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt()
-        );
-    }
-
-    private NodeRun withBlocked(final NodeRun nodeRun, final Instant now) {
-        return new NodeRun(
-                nodeRun.id(),
-                nodeRun.workflowRunId(),
-                nodeRun.sourceNodeId(),
-                nodeRun.sourceAgentId(),
-                nodeRun.agentName(),
-                nodeRun.agentInstructions(),
-                nodeRun.agentOutputSchema(),
-                nodeRun.dependsOnNodeRunIds(),
-                nodeRun.inputMode(),
-                nodeRun.position(),
-                NodeRunStatus.BLOCKED,
-                nodeRun.output(),
-                new NodeRunFailure("DEPENDENCY_NOT_SUCCEEDED", "A dependency did not complete successfully."),
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
