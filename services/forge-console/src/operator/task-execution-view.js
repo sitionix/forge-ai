@@ -10,6 +10,7 @@ const NODE_SECTION_LABEL_HEIGHT = 14;
 const NODE_PORT_ROW_HEIGHT = 22;
 const NODE_HISTORY_HEIGHT = 28;
 const NODE_VERTICAL_PADDING = 24;
+const EDGE_TOKEN_DURATION_MS = 950;
 const LEGACY_NODE_WIDTH = 204;
 const LEGACY_NODE_HEIGHT = 110;
 const NODE_MID_Y = 58;
@@ -492,30 +493,41 @@ export class TaskExecutionView {
           ${latest ? `<span>Last</span><strong>#${latestNumber} · ${escapeHtml(latest.status)}</strong>` : '<span></span><strong>No executions yet</strong>'}
           ${routing ? `<span>Routing pending</span><strong>${routing}</strong>` : ''}
         </div>
-        ${this.renderPortUsage('Inputs', inputPorts, inputCounts, animationDelta.inputPortIds, 'input')}
-        ${this.renderPortUsage('Outputs', outputPorts, outputCounts, animationDelta.outputPortIds, 'output')}
+        ${this.renderPortUsage('Inputs', inputPorts, inputCounts, animationDelta.inputPortIds, 'input', node, geometry)}
+        ${this.renderPortUsage('Outputs', outputPorts, outputCounts, animationDelta.outputPortIds, 'output', node, geometry)}
         ${markers ? `<div class="execution-board-history">${markers}</div>` : ''}
       </article>
     `;
   }
 
-  renderPortUsage(label, ports, counts, highlightedPortIds, side) {
+  renderPortUsage(label, ports, counts, highlightedPortIds, side, node, geometry) {
     if (!ports.length) {
       return '';
     }
     return `
       <div class="execution-board-port-usage execution-board-port-usage-${escapeHtml(side)}">
         <span>${escapeHtml(label)}</span>
-        ${ports.map((port) => `
+        ${ports.map((port) => {
+          const anchor = geometry.ports.get(port.sourcePortId) || this.modernPortLayoutFallback(port, node, geometry);
+          return `
           <div
             class="execution-board-port-row execution-board-port-row-${escapeHtml(side)} ${highlightedPortIds.has(port.sourcePortId) ? 'execution-port-new-fact' : ''}"
             data-runtime-port-id="${escapeHtml(port.sourcePortId)}"
+            style="height:${NODE_PORT_ROW_HEIGHT}px;"
           >
-            <i class="execution-port-anchor" aria-hidden="true" data-runtime-port-anchor-id="${escapeHtml(port.sourcePortId)}"></i>
+            <i
+              class="execution-port-anchor"
+              aria-hidden="true"
+              data-runtime-port-anchor-id="${escapeHtml(port.sourcePortId)}"
+              data-runtime-anchor-x="${anchor.x}"
+              data-runtime-anchor-y="${anchor.y}"
+              style="--execution-port-anchor-y:${anchor.y}px;"
+            ></i>
             <small>${escapeHtml(port.name || 'Port')}</small>
             <strong>×${Number(counts.get(port.sourcePortId) || 0)}</strong>
           </div>
-        `).join('')}
+        `;
+        }).join('')}
       </div>
     `;
   }
@@ -578,6 +590,7 @@ export class TaskExecutionView {
       </defs>
       ${edges.join('')}
     `;
+    this.scheduleEdgeTokenCleanup();
   }
 
   renderEdgeToken(connection, projection, animationDelta, path) {
@@ -595,9 +608,15 @@ export class TaskExecutionView {
     }
     return `
       <circle class="execution-edge-token" r="5" data-edge-animation-id="${escapeHtml(connection.sourceConnectionId)}">
-        <animateMotion dur="900ms" fill="freeze" path="${escapeHtml(path)}"></animateMotion>
+        <animateMotion dur="${EDGE_TOKEN_DURATION_MS}ms" fill="remove" path="${escapeHtml(path)}"></animateMotion>
       </circle>
     `;
+  }
+
+  scheduleEdgeTokenCleanup() {
+    for (const token of this.document.querySelectorAll('[data-edge-animation-id]')) {
+      this.window.setTimeout(() => token.remove(), EDGE_TOKEN_DURATION_MS + 50);
+    }
   }
 
   renderLegacyGraph() {
@@ -956,9 +975,9 @@ export class TaskExecutionView {
       if (nodeRun.finishedAt) {
         events.push({ at: nodeRun.finishedAt, sequence: sequence += 1, label: `${labelForRun(nodeRun)} ${String(nodeRun.status || '').toLowerCase()}` });
       }
-      if (nodeRun.selectedOutputPortId && (nodeRun.finishedAt || nodeRun.startedAt || nodeRun.createdAt)) {
+      if (nodeRun.selectedOutputPortId && (nodeRun.routingCompletedAt || nodeRun.finishedAt || nodeRun.startedAt || nodeRun.createdAt)) {
         const port = indexes.portById.get(nodeRun.selectedOutputPortId);
-        events.push({ at: nodeRun.finishedAt || nodeRun.startedAt || nodeRun.createdAt, sequence: sequence += 1, label: `${labelForRun(nodeRun)} selected ${port?.name || 'Output'}` });
+        events.push({ at: nodeRun.routingCompletedAt || nodeRun.finishedAt || nodeRun.startedAt || nodeRun.createdAt, sequence: sequence += 1, label: `${labelForRun(nodeRun)} selected ${port?.name || 'Output'}` });
       }
       if (nodeRun.routingCompletedAt) {
         events.push({ at: nodeRun.routingCompletedAt, sequence: sequence += 1, label: `${labelForRun(nodeRun)} routing completed` });
@@ -1003,6 +1022,9 @@ export class TaskExecutionView {
         animations.nodeRunIds.add(nodeRun.id);
         if (nodeRun.enteredViaInputPortId) {
           animations.inputPortIds.add(nodeRun.enteredViaInputPortId);
+        }
+        if (nodeRun.selectedOutputPortId) {
+          animations.outputPortIds.add(nodeRun.selectedOutputPortId);
         }
       } else {
         if (oldRun.status !== nodeRun.status && nodeRun.status === 'RUNNING') {
@@ -1246,12 +1268,22 @@ export class TaskExecutionView {
     const inputPorts = projection.inputPortsByNode.get(node.sourceNodeId) || [];
     const outputPorts = projection.outputPortsByNode.get(node.sourceNodeId) || [];
     const sections = new Map();
+    const portLayouts = new Map();
     for (const [side, ports] of [['input', inputPorts], ['output', outputPorts]]) {
       if (!ports.length) {
         continue;
       }
       cursor += NODE_SECTION_TOP_GAP;
       const top = cursor;
+      const x = side === 'output' ? NODE_WIDTH : 0;
+      ports.forEach((port, index) => {
+        portLayouts.set(port.sourcePortId, {
+          side,
+          index,
+          x,
+          y: top + NODE_SECTION_LABEL_HEIGHT + (index * NODE_PORT_ROW_HEIGHT) + (NODE_PORT_ROW_HEIGHT / 2)
+        });
+      });
       cursor += NODE_SECTION_LABEL_HEIGHT + (ports.length * NODE_PORT_ROW_HEIGHT);
       sections.set(side, { top, rows: ports.length });
     }
@@ -1260,7 +1292,17 @@ export class TaskExecutionView {
     }
     return {
       height: Math.max(NODE_MIN_HEIGHT, cursor + NODE_VERTICAL_PADDING),
-      sections
+      sections,
+      ports: portLayouts
+    };
+  }
+
+  modernPortLayoutFallback(port, node, geometry) {
+    return {
+      side: port.direction === 'OUTPUT' ? 'output' : 'input',
+      index: 0,
+      x: port.direction === 'OUTPUT' ? NODE_WIDTH : 0,
+      y: geometry.height / 2
     };
   }
 
@@ -1269,19 +1311,10 @@ export class TaskExecutionView {
     if (!node) {
       return { x: 0, y: 0 };
     }
-    const side = port.direction === 'OUTPUT' ? 'output' : 'input';
-    const ports = side === 'output'
-      ? projection.outputPortsByNode.get(port.sourceNodeId) || []
-      : projection.inputPortsByNode.get(port.sourceNodeId) || [];
-    const index = Math.max(0, ports.findIndex((item) => item.sourcePortId === port.sourcePortId));
     const geometry = this.modernNodeGeometry(node, projection);
-    const section = geometry.sections.get(side);
-    const x = Number(node.position?.x || 0) + (side === 'output' ? NODE_WIDTH : 0);
-    const y = Number(node.position?.y || 0) + (
-      section
-        ? section.top + NODE_SECTION_LABEL_HEIGHT + (index * NODE_PORT_ROW_HEIGHT) + (NODE_PORT_ROW_HEIGHT / 2)
-        : geometry.height / 2
-    );
+    const layout = geometry.ports.get(port.sourcePortId) || this.modernPortLayoutFallback(port, node, geometry);
+    const x = Number(node.position?.x || 0) + layout.x;
+    const y = Number(node.position?.y || 0) + layout.y;
     return { x, y };
   }
 
@@ -1436,8 +1469,45 @@ export class TaskExecutionView {
     const projection = this.modernProjection();
     const activeNodes = [...new Set(newActiveIds)].map((sourceId) => projection.nodeBySource.get(sourceId)).filter(Boolean);
     if (activeNodes.length) {
-      this.fitTopology(activeNodes);
+      this.panBoundsIntoViewport(this.nodeBounds(activeNodes, projection, 0));
     }
+  }
+
+  panBoundsIntoViewport(bounds) {
+    const canvas = this.byId('agentsV2ExecutionCanvas');
+    const rect = canvas?.getBoundingClientRect?.() || {};
+    const viewportWidth = rect.width || 900;
+    const viewportHeight = rect.height || 520;
+    const scale = this.viewport.scale || 1;
+    const visible = {
+      left: -this.viewport.x / scale,
+      top: -this.viewport.y / scale,
+      right: (viewportWidth - this.viewport.x) / scale,
+      bottom: (viewportHeight - this.viewport.y) / scale
+    };
+    let nextX = this.viewport.x;
+    let nextY = this.viewport.y;
+    const right = bounds.left + bounds.width;
+    const bottom = bounds.top + bounds.height;
+    if (bounds.width * scale > viewportWidth) {
+      nextX = -bounds.left * scale;
+    } else if (bounds.left < visible.left) {
+      nextX += (visible.left - bounds.left) * scale;
+    } else if (right > visible.right) {
+      nextX += (visible.right - right) * scale;
+    }
+    if (bounds.height * scale > viewportHeight) {
+      nextY = -bounds.top * scale;
+    } else if (bounds.top < visible.top) {
+      nextY += (visible.top - bounds.top) * scale;
+    } else if (bottom > visible.bottom) {
+      nextY += (visible.bottom - bottom) * scale;
+    }
+    if (nextX === this.viewport.x && nextY === this.viewport.y) {
+      return;
+    }
+    this.viewport = { ...this.viewport, x: nextX, y: nextY };
+    this.applyViewportTransform();
   }
 
   disableFollowActive() {
@@ -1447,7 +1517,7 @@ export class TaskExecutionView {
     }
   }
 
-  nodeBounds(nodes, projection = null) {
+  nodeBounds(nodes, projection = null, padding = 32) {
     let left = Infinity;
     let top = Infinity;
     let right = -Infinity;
@@ -1462,10 +1532,10 @@ export class TaskExecutionView {
       bottom = Math.max(bottom, y + height);
     }
     return {
-      left: left - 32,
-      top: top - 32,
-      width: Math.max(1, right - left + 64),
-      height: Math.max(1, bottom - top + 64)
+      left: left - padding,
+      top: top - padding,
+      width: Math.max(1, right - left + (padding * 2)),
+      height: Math.max(1, bottom - top + (padding * 2))
     };
   }
 

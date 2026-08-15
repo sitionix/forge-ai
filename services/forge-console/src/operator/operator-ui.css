@@ -1385,6 +1385,7 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .execution-board-node {
+  box-sizing: border-box;
   width: 252px;
   min-height: 132px;
   padding: 12px;
@@ -1438,7 +1439,6 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .execution-board-port-row {
-  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
@@ -1458,22 +1458,24 @@ body.sidebar-collapsed .sidebar-link {
 
 .execution-port-anchor {
   position: absolute;
-  top: 50%;
+  top: var(--execution-port-anchor-y, 50%);
   width: 9px;
   height: 9px;
   border: 1px solid rgba(43, 111, 98, 0.58);
   border-radius: 50%;
   background: #fffaf0;
-  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .execution-board-port-row-input .execution-port-anchor {
-  left: -17px;
+  left: 0;
+  transform: translate(-50%, -50%);
 }
 
 .execution-board-port-row-output .execution-port-anchor {
-  right: -17px;
+  right: 0;
   background: #2b6f62;
+  transform: translate(50%, -50%);
 }
 
 .execution-board-port-row small {
@@ -1560,7 +1562,7 @@ body.sidebar-collapsed .sidebar-link {
 
 .execution-edge-token {
   fill: #2b6f62;
-  animation: executionEdgeToken 900ms ease-out;
+  animation: executionEdgeToken 950ms ease-out forwards;
 }
 
 .execution-details-tabs {
