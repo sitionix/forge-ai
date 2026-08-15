@@ -909,6 +909,8 @@ body.sidebar-collapsed .sidebar-link {
   inset: 0;
   width: 1600px;
   height: 1000px;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .workflow-edges {
@@ -1221,6 +1223,52 @@ body.sidebar-collapsed .sidebar-link {
 
 .execution-edge .edge-visible {
   stroke: rgba(43, 111, 98, 0.72);
+}
+
+.task-execution-failure-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(27, 36, 31, 0.12);
+}
+
+.task-execution-failure-summary > strong {
+  color: #b12f2f;
+  font: 800 12px/1.2 var(--mono);
+  text-transform: uppercase;
+}
+
+.task-execution-failure-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) max-content minmax(0, 1.5fr);
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(177, 47, 47, 0.22);
+  border-radius: 8px;
+  background: rgba(177, 47, 47, 0.06);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.task-execution-failure-row span,
+.task-execution-failure-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-execution-failure-row code {
+  color: #b12f2f;
+  font: 800 11px/1.2 var(--mono);
+}
+
+.task-execution-failure-row small {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .execution-node {

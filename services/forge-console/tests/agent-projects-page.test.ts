@@ -810,6 +810,88 @@ describe('Agent projects page', () => {
     await flushAsync();
     expect(details.textContent).toContain('ASSERTION_FAILED');
     expect(details.textContent).toContain('Expected count to match.');
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Reviewer');
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('ASSERTION_FAILED');
+  });
+
+  it('Execution graph pans empty canvas, zooms around cursor, and keeps node positions read-only', async () => {
+    const nodeRuns = [
+      nodeRun('source-node', 'Planner', 'SUCCEEDED', [], 40, 50, { ok: true }),
+      nodeRun('target-node', 'Reviewer', 'FAILED', ['source-node'], 340, 160, null, { code: 'ROUTING_FAILED', message: 'Output port was invalid.' })
+    ];
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'FAILED', nodeRuns)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const canvas = dom.window.document.getElementById('agentsV2ExecutionCanvas')!;
+    const nodesLayer = dom.window.document.getElementById('agentsV2ExecutionNodes')!;
+    const edgesLayer = dom.window.document.getElementById('agentsV2ExecutionEdges')!;
+    const targetNode = dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="target-node"]')!;
+    const initialNodeStyle = targetNode.getAttribute('style');
+
+    canvas.dispatchEvent(new dom.window.MouseEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      clientX: 120,
+      clientY: 140
+    }));
+    dom.window.document.dispatchEvent(new dom.window.MouseEvent('pointermove', {
+      bubbles: true,
+      clientX: 170,
+      clientY: 115
+    }));
+    dom.window.document.dispatchEvent(new dom.window.MouseEvent('pointerup', { bubbles: true }));
+
+    expect(nodesLayer.style.transform).toBe('translate(50px, -25px) scale(1)');
+    expect(edgesLayer.style.transform).toBe(nodesLayer.style.transform);
+    expect(targetNode.getAttribute('style')).toBe(initialNodeStyle);
+
+    canvas.getBoundingClientRect = () => ({
+      left: 20,
+      top: 30,
+      width: 800,
+      height: 520,
+      right: 820,
+      bottom: 550,
+      x: 20,
+      y: 30,
+      toJSON: () => ({})
+    } as DOMRect);
+    canvas.dispatchEvent(new dom.window.WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 220,
+      clientY: 230,
+      deltaY: -100
+    }));
+
+    expect(nodesLayer.style.transform).toBe('translate(38px, -43.00000000000003px) scale(1.08)');
+    expect(edgesLayer.style.transform).toBe(nodesLayer.style.transform);
+    expect(targetNode.getAttribute('style')).toBe(initialNodeStyle);
+
+    targetNode.dispatchEvent(new dom.window.MouseEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      clientX: 360,
+      clientY: 180
+    }));
+    dom.window.document.dispatchEvent(new dom.window.MouseEvent('pointermove', {
+      bubbles: true,
+      clientX: 420,
+      clientY: 240
+    }));
+    dom.window.document.dispatchEvent(new dom.window.MouseEvent('pointerup', { bubbles: true }));
+    targetNode.click();
+    await flushAsync();
+
+    expect(nodesLayer.style.transform).toBe('translate(38px, -43.00000000000003px) scale(1.08)');
+    expect(targetNode.getAttribute('style')).toBe(initialNodeStyle);
+    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('ROUTING_FAILED');
   });
 
   it('active WorkflowRun polling refreshes node output and stops at terminal status', async () => {

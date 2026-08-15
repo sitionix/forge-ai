@@ -2,7 +2,13 @@ import { escapeHtml } from './dom-render-helpers.js';
 
 const ACTIVE_RUN_STATUSES = new Set(['QUEUED', 'RUNNING']);
 const NODE_WIDTH = 204;
+const NODE_HEIGHT = 110;
 const NODE_MID_Y = 58;
+const MIN_CANVAS_WIDTH = 1600;
+const MIN_CANVAS_HEIGHT = 1000;
+const CANVAS_PADDING = 240;
+const MIN_CANVAS_SCALE = 0.45;
+const MAX_CANVAS_SCALE = 1.8;
 
 export class TaskExecutionView {
   constructor(options) {
@@ -17,15 +23,32 @@ export class TaskExecutionView {
     this.runLoadSequence = 0;
     this.pollTimer = null;
     this.pollInFlight = null;
+    this.canvasPan = null;
+    this.viewport = { x: 0, y: 0, scale: 1 };
     this.state = this.emptyState();
   }
 
   bind() {
+    this.handlePointerMove = (event) => this.onPointerMove(event);
+    this.handlePointerUp = () => this.endCanvasPan();
+    this.handlePointerCancel = () => this.endCanvasPan();
+    this.handleCanvasPointerDown = (event) => this.onCanvasPointerDown(event);
+    this.handleCanvasWheel = (event) => this.onCanvasWheel(event);
+    this.document.addEventListener('pointermove', this.handlePointerMove);
+    this.document.addEventListener('pointerup', this.handlePointerUp);
+    this.document.addEventListener('pointercancel', this.handlePointerCancel);
+    this.byId('agentsV2ExecutionCanvas')?.addEventListener('pointerdown', this.handleCanvasPointerDown);
+    this.byId('agentsV2ExecutionCanvas')?.addEventListener('wheel', this.handleCanvasWheel, { passive: false });
     this.byId('agentsV2TaskExecutionBack')?.addEventListener('click', () => this.onBack());
   }
 
   dispose() {
     this.disposed = true;
+    this.document.removeEventListener('pointermove', this.handlePointerMove);
+    this.document.removeEventListener('pointerup', this.handlePointerUp);
+    this.document.removeEventListener('pointercancel', this.handlePointerCancel);
+    this.byId('agentsV2ExecutionCanvas')?.removeEventListener('pointerdown', this.handleCanvasPointerDown);
+    this.byId('agentsV2ExecutionCanvas')?.removeEventListener('wheel', this.handleCanvasWheel);
     this.close();
   }
 
@@ -35,7 +58,11 @@ export class TaskExecutionView {
     this.runLoadSequence += 1;
     this.stopPolling();
     this.pollInFlight = null;
+    this.canvasPan = null;
     this.state = this.emptyState();
+    this.viewport = { x: 0, y: 0, scale: 1 };
+    this.applyViewportTransform();
+    this.byId('agentsV2ExecutionCanvas')?.classList.remove('panning');
   }
 
   async open(taskId, project) {
@@ -217,6 +244,7 @@ export class TaskExecutionView {
     }
     const workflowName = this.state.workflowRun?.workflowName || this.selectedRunSummary()?.workflowName || 'Unknown workflow';
     const runStatus = this.state.workflowRun?.status || this.selectedRunSummary()?.status || 'UNKNOWN';
+    const failedNodeRuns = (this.state.workflowRun?.nodeRuns || []).filter((nodeRun) => nodeRun.status === 'FAILED');
     summary.innerHTML = `
       <div class="task-execution-summary-grid">
         <div>
@@ -231,6 +259,25 @@ export class TaskExecutionView {
           <span>Execution</span>
           <strong class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(runStatus))}" data-run-status="${escapeHtml(runStatus)}">${escapeHtml(runStatus)}</strong>
         </div>
+      </div>
+      ${runStatus === 'FAILED' && failedNodeRuns.length ? this.renderRunFailureSummary(failedNodeRuns) : ''}
+    `;
+    summary.querySelectorAll('[data-failed-node-run-id]').forEach((element) => {
+      element.addEventListener('click', () => this.selectNodeRun(element.dataset.failedNodeRunId));
+    });
+  }
+
+  renderRunFailureSummary(failedNodeRuns) {
+    return `
+      <div class="task-execution-failure-summary">
+        <strong>Failure</strong>
+        ${failedNodeRuns.map((nodeRun) => `
+          <button class="task-execution-failure-row" type="button" data-failed-node-run-id="${escapeHtml(nodeRun.id)}">
+            <span>${escapeHtml(nodeRun.agentName || 'Unknown agent')}</span>
+            <code>${escapeHtml(nodeRun.failure?.code || 'FAILURE')}</code>
+            <small>${escapeHtml(nodeRun.failure?.message || 'Node execution failed.')}</small>
+          </button>
+        `).join('')}
       </div>
     `;
   }
@@ -289,13 +336,11 @@ export class TaskExecutionView {
     }
     nodesLayer.innerHTML = nodeRuns.map((nodeRun) => this.renderNode(nodeRun)).join('');
     nodesLayer.querySelectorAll('[data-execution-node-id]').forEach((element) => {
-      element.addEventListener('click', () => {
-        this.state.selectedNodeRunId = element.dataset.executionNodeId;
-        this.renderGraph();
-        this.renderNodeDetails();
-      });
+      element.addEventListener('click', () => this.selectNodeRun(element.dataset.executionNodeId));
     });
     this.renderEdges(nodeRuns);
+    this.syncCanvasBounds(nodeRuns);
+    this.applyViewportTransform();
   }
 
   renderNode(nodeRun) {
@@ -423,6 +468,12 @@ export class TaskExecutionView {
     return (this.state.workflowRun?.nodeRuns || []).find((nodeRun) => nodeRun.id === this.state.selectedNodeRunId) || null;
   }
 
+  selectNodeRun(nodeRunId) {
+    this.state.selectedNodeRunId = nodeRunId;
+    this.renderGraph();
+    this.renderNodeDetails();
+  }
+
   selectedRunSummary() {
     return (this.state.task?.runs || []).find((run) => run.id === this.state.selectedRunId) || null;
   }
@@ -483,6 +534,100 @@ export class TaskExecutionView {
   pathD(start, end) {
     const mid = Math.max(40, Math.abs(end.x - start.x) / 2);
     return `M ${start.x} ${start.y} C ${start.x + mid} ${start.y}, ${end.x - mid} ${end.y}, ${end.x} ${end.y}`;
+  }
+
+  onCanvasPointerDown(event) {
+    if (event.button !== 0) {
+      return;
+    }
+    if (event.target?.closest?.('.execution-node, button, select, input, textarea')) {
+      return;
+    }
+    event.preventDefault();
+    this.canvasPan = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originalX: this.viewport.x,
+      originalY: this.viewport.y
+    };
+    this.byId('agentsV2ExecutionCanvas')?.classList.add('panning');
+  }
+
+  onPointerMove(event) {
+    if (!this.canvasPan) {
+      return;
+    }
+    this.viewport = {
+      ...this.viewport,
+      x: this.canvasPan.originalX + (event.clientX - this.canvasPan.startX),
+      y: this.canvasPan.originalY + (event.clientY - this.canvasPan.startY)
+    };
+    this.applyViewportTransform();
+  }
+
+  endCanvasPan() {
+    this.canvasPan = null;
+    this.byId('agentsV2ExecutionCanvas')?.classList.remove('panning');
+  }
+
+  onCanvasWheel(event) {
+    if (!this.state.workflowRun) {
+      return;
+    }
+    event.preventDefault();
+    const canvas = this.byId('agentsV2ExecutionCanvas');
+    if (!canvas) {
+      return;
+    }
+    const canvasRect = canvas.getBoundingClientRect();
+    const before = this.canvasPoint(event);
+    const zoomFactor = event.deltaY < 0 ? 1.08 : 0.92;
+    const scale = clamp(this.viewport.scale * zoomFactor, MIN_CANVAS_SCALE, MAX_CANVAS_SCALE);
+    this.viewport = {
+      scale,
+      x: (event.clientX - canvasRect.left) - (before.x * scale),
+      y: (event.clientY - canvasRect.top) - (before.y * scale)
+    };
+    this.applyViewportTransform();
+  }
+
+  canvasPoint(event) {
+    const canvas = this.byId('agentsV2ExecutionCanvas');
+    const rect = canvas?.getBoundingClientRect?.() || { left: 0, top: 0 };
+    return {
+      x: ((event.clientX - rect.left) - this.viewport.x) / this.viewport.scale,
+      y: ((event.clientY - rect.top) - this.viewport.y) / this.viewport.scale
+    };
+  }
+
+  syncCanvasBounds(nodeRuns) {
+    const edgesSvg = this.byId('agentsV2ExecutionEdges');
+    const nodesLayer = this.byId('agentsV2ExecutionNodes');
+    let width = MIN_CANVAS_WIDTH;
+    let height = MIN_CANVAS_HEIGHT;
+    for (const nodeRun of nodeRuns) {
+      width = Math.max(width, Number(nodeRun.position?.x || 0) + NODE_WIDTH + CANVAS_PADDING);
+      height = Math.max(height, Number(nodeRun.position?.y || 0) + NODE_HEIGHT + CANVAS_PADDING);
+    }
+    const widthValue = `${Math.ceil(width)}px`;
+    const heightValue = `${Math.ceil(height)}px`;
+    edgesSvg.style.width = widthValue;
+    edgesSvg.style.height = heightValue;
+    edgesSvg.setAttribute('width', String(Math.ceil(width)));
+    edgesSvg.setAttribute('height', String(Math.ceil(height)));
+    nodesLayer.style.width = widthValue;
+    nodesLayer.style.height = heightValue;
+  }
+
+  applyViewportTransform() {
+    const transform = `translate(${this.viewport.x}px, ${this.viewport.y}px) scale(${this.viewport.scale})`;
+    for (const element of [this.byId('agentsV2ExecutionEdges'), this.byId('agentsV2ExecutionNodes')]) {
+      if (!element) {
+        continue;
+      }
+      element.style.transform = transform;
+      element.style.transformOrigin = '0 0';
+    }
   }
 
   stopPolling() {
@@ -556,4 +701,8 @@ export function statusTone(status) {
     return 'pending';
   }
   return 'unknown';
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
