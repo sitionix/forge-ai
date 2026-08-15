@@ -4,7 +4,6 @@ import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeInputContribution;
 import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.RunPort;
-import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import java.util.Comparator;
 import lombok.RequiredArgsConstructor;
@@ -16,7 +15,6 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class DependenciesOnlyNodeInputContentPolicy implements NodeInputContentPolicy {
 
-    private final NodeRunRepository nodeRunRepository;
     private final WorkflowRunGraphRepository graphRepository;
 
     @Override
@@ -36,9 +34,8 @@ public class DependenciesOnlyNodeInputContentPolicy implements NodeInputContentP
     protected java.util.List<NodeInputContribution> contributions(final NodeInputContentContext context) {
         return context.consumedContributions().stream()
                 .sorted(Comparator
-                        .comparing(com.sitionix.forgeagent.domain.model.ConnectionResolution::sourceNodeRunId)
-                        .thenComparing(com.sitionix.forgeagent.domain.model.ConnectionResolution::sourceConnectionId))
-                .peek(resolution -> this.nodeRunRepository.findById(resolution.sourceNodeRunId()).orElseThrow())
+                        .comparing(com.sitionix.forgeagent.domain.model.ConnectionResolution::sourceConnectionId)
+                        .thenComparing(com.sitionix.forgeagent.domain.model.ConnectionResolution::sourceNodeRunId))
                 .map(resolution -> new NodeInputContribution(
                         resolution.sourceNodeRunId(),
                         resolution.sourceConnectionId(),

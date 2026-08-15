@@ -28,6 +28,11 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     }
 
     @Override
+    public List<UUID> findSuccessfulUnroutedIds() {
+        return this.repository.findSuccessfulUnroutedIds();
+    }
+
+    @Override
     public Optional<UUID> findWorkflowRunIdById(final UUID nodeRunId) {
         return this.repository.findWorkflowRunIdById(nodeRunId);
     }

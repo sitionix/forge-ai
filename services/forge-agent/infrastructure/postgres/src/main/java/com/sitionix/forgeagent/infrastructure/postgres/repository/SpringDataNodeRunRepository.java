@@ -26,10 +26,23 @@ public interface SpringDataNodeRunRepository extends JpaRepository<NodeRunEntity
             from NodeRunEntity n
             join WorkflowRunEntity w on w.id = n.workflowRunId
             where n.status = 'PENDING'
+              and n.executionFrameId is not null
               and w.status in ('QUEUED', 'RUNNING')
             order by n.createdAt asc, n.id asc
             """)
     List<UUID> findPendingIds();
+
+    @Query("""
+            select n.id
+            from NodeRunEntity n
+            join WorkflowRunEntity w on w.id = n.workflowRunId
+            where n.status = 'SUCCEEDED'
+              and n.routingCompletedAt is null
+              and n.executionFrameId is not null
+              and w.status in ('QUEUED', 'RUNNING')
+            order by n.createdAt asc, n.id asc
+            """)
+    List<UUID> findSuccessfulUnroutedIds();
 
     @Query("select n.workflowRunId from NodeRunEntity n where n.id = :id")
     Optional<UUID> findWorkflowRunIdById(@Param("id") UUID id);

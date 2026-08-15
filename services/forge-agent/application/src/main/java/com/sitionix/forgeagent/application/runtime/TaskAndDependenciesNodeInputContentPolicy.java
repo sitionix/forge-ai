@@ -2,7 +2,6 @@ package com.sitionix.forgeagent.application.runtime;
 
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
-import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -11,9 +10,8 @@ import org.springframework.stereotype.Component;
 @Order(30)
 public class TaskAndDependenciesNodeInputContentPolicy extends DependenciesOnlyNodeInputContentPolicy {
 
-    public TaskAndDependenciesNodeInputContentPolicy(final NodeRunRepository nodeRunRepository,
-                                                    final WorkflowRunGraphRepository graphRepository) {
-        super(nodeRunRepository, graphRepository);
+    public TaskAndDependenciesNodeInputContentPolicy(final WorkflowRunGraphRepository graphRepository) {
+        super(graphRepository);
     }
 
     @Override

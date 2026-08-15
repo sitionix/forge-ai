@@ -30,6 +30,23 @@ FROM node_runs target
 CROSS JOIN LATERAL unnest(target.depends_on_node_run_ids) AS legacy(source_node_run_id)
 WHERE target.depends_on_node_run_ids IS NOT NULL;
 
+UPDATE node_runs
+SET status = 'CANCELLED',
+    failure_code = 'LEGACY_RUNTIME_MIGRATION_CANCELLED',
+    failure_message = 'Workflow execution was cancelled during port-aware runtime migration.',
+    finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP)
+WHERE status IN ('PENDING', 'RUNNING')
+  AND workflow_run_id IN (
+      SELECT id
+      FROM workflow_runs
+      WHERE status IN ('QUEUED', 'RUNNING')
+  );
+
+UPDATE workflow_runs
+SET status = 'CANCELLED',
+    finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP)
+WHERE status IN ('QUEUED', 'RUNNING');
+
 ALTER TABLE node_runs
     DROP COLUMN IF EXISTS depends_on_node_run_ids;
 
@@ -37,7 +54,8 @@ ALTER TABLE node_runs
     ADD COLUMN execution_frame_id UUID,
     ADD COLUMN entered_via_input_port_id UUID NULL,
     ADD COLUMN activation_frame_id UUID NULL,
-    ADD COLUMN selected_output_port_id UUID NULL;
+    ADD COLUMN selected_output_port_id UUID NULL,
+    ADD COLUMN routing_completed_at TIMESTAMPTZ NULL;
 
 CREATE TABLE workflow_execution_frames (
     id UUID PRIMARY KEY,

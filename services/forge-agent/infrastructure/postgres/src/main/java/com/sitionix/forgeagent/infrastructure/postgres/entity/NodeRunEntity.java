@@ -67,6 +67,9 @@ public class NodeRunEntity {
     @Column(name = "selected_output_port_id")
     private UUID selectedOutputPortId;
 
+    @Column(name = "routing_completed_at")
+    private Instant routingCompletedAt;
+
     @Column(nullable = false, length = 32)
     private String status;
 

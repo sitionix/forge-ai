@@ -1,6 +1,8 @@
 package com.sitionix.forgeagent;
 
 import com.sitionix.forgeagent.application.runtime.AgentExecutor;
+import com.sitionix.forgeagent.application.runtime.NodeRunCompletionProcessor;
+import com.sitionix.forgeagent.application.runtime.NodeRunCompletionWorker;
 import com.sitionix.forgeagent.application.runtime.NodeRunLifecycle;
 import com.sitionix.forgeagent.application.runtime.NodeRunWorker;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
@@ -34,10 +36,24 @@ class ForgeAgentWorkerConfiguration {
     }
 
     @Bean
+    @ConditionalOnBean(AgentExecutor.class)
+    NodeRunCompletionWorker nodeRunCompletionWorker(final NodeRunRepository nodeRunRepository,
+                                                    final NodeRunCompletionProcessor processor) {
+        return new NodeRunCompletionWorker(nodeRunRepository, processor);
+    }
+
+    @Bean
     @ConditionalOnBean(NodeRunWorker.class)
     @ConditionalOnProperty(prefix = "forge.agent.worker", name = "scheduling-enabled", havingValue = "true", matchIfMissing = true)
     NodeRunPollingScheduler nodeRunPollingScheduler(final NodeRunWorker worker) {
         return new NodeRunPollingScheduler(worker);
+    }
+
+    @Bean
+    @ConditionalOnBean(NodeRunCompletionWorker.class)
+    @ConditionalOnProperty(prefix = "forge.agent.worker", name = "scheduling-enabled", havingValue = "true", matchIfMissing = true)
+    NodeRunCompletionPollingScheduler nodeRunCompletionPollingScheduler(final NodeRunCompletionWorker worker) {
+        return new NodeRunCompletionPollingScheduler(worker);
     }
 
     @RequiredArgsConstructor
@@ -48,6 +64,20 @@ class ForgeAgentWorkerConfiguration {
         @Scheduled(
                 initialDelayString = "${forge.agent.worker.poll-delay:10000}",
                 fixedDelayString = "${forge.agent.worker.poll-delay:10000}"
+        )
+        void poll() {
+            this.worker.poll();
+        }
+    }
+
+    @RequiredArgsConstructor
+    static final class NodeRunCompletionPollingScheduler {
+
+        private final NodeRunCompletionWorker worker;
+
+        @Scheduled(
+                initialDelayString = "${forge.agent.worker.completion-poll-delay:${forge.agent.worker.poll-delay:10000}}",
+                fixedDelayString = "${forge.agent.worker.completion-poll-delay:${forge.agent.worker.poll-delay:10000}}"
         )
         void poll() {
             this.worker.poll();

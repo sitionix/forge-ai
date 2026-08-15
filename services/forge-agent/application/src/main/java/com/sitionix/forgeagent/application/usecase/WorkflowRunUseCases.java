@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.application.usecase;
 
 import com.sitionix.forgeagent.application.runtime.NodeRunFactory;
+import com.sitionix.forgeagent.application.runtime.ExecutionBudgetPolicy;
 import com.sitionix.forgeagent.application.runtime.WorkflowEntrySelector;
 import com.sitionix.forgeagent.application.runtime.WorkflowRunSnapshotBuilder;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
@@ -38,6 +39,7 @@ public class WorkflowRunUseCases {
     private final WorkflowRunSnapshotBuilder snapshotBuilder;
     private final WorkflowEntrySelector entrySelector;
     private final NodeRunFactory nodeRunFactory;
+    private final ExecutionBudgetPolicy executionBudgetPolicy;
     private final Clock clock;
 
     @Transactional
@@ -80,8 +82,7 @@ public class WorkflowRunUseCases {
         this.graphRepository.saveSnapshot(graph);
         final ExecutionFrame rootFrame = this.executionFrameRepository.save(new ExecutionFrame(UUID.randomUUID(), run.id(), null, now));
         final List<NodeRun> rootNodeRuns = entries.stream()
-                .map(entry -> this.nodeRunFactory.root(run, rootFrame, entry))
-                .map(this.nodeRunRepository::save)
+                .map(entry -> this.createRootNodeRun(run, rootFrame, entry))
                 .toList();
         return new WorkflowRun(
                 run.id(),
@@ -116,5 +117,10 @@ public class WorkflowRunUseCases {
             throw new ValidationException("INVALID_WORKFLOW_RUN_INPUT", "Workflow run input is required.");
         }
         return candidate.trim();
+    }
+
+    private NodeRun createRootNodeRun(final WorkflowRun run, final ExecutionFrame rootFrame, final RunNode entry) {
+        this.executionBudgetPolicy.assertNodeRunCanBeCreated(run);
+        return this.nodeRunRepository.save(this.nodeRunFactory.root(run, rootFrame, entry));
     }
 }

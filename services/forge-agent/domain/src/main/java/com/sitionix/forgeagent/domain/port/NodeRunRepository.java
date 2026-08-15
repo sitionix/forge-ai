@@ -10,6 +10,8 @@ public interface NodeRunRepository {
 
     List<UUID> findPendingIds();
 
+    List<UUID> findSuccessfulUnroutedIds();
+
     Optional<UUID> findWorkflowRunIdById(UUID nodeRunId);
 
     Optional<NodeRun> findById(UUID nodeRunId);

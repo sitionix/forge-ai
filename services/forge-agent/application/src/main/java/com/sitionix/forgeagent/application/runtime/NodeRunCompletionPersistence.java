@@ -58,6 +58,9 @@ public class NodeRunCompletionPersistence {
                 .orElseThrow(() -> new ConflictException("WORKFLOW_RUN_NOT_FOUND", "Owning workflow run was not found."));
         final NodeRun current = this.nodeRunRepository.findByIdForUpdate(nodeRunId)
                 .orElseThrow(() -> new ConflictException("NODE_RUN_NOT_FOUND", "Node run was not found."));
+        if (current.routingCompletedAt() != null || current.status() != NodeRunStatus.SUCCEEDED) {
+            return;
+        }
         this.nodeRunRepository.saveAndFlush(this.withFailed(current, failure, Instant.now(this.clock)));
         this.reconcileWorkflowRun(workflowRun);
     }

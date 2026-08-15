@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.application.runtime.NodeRunFactory;
+import com.sitionix.forgeagent.application.runtime.ExecutionBudgetPolicy;
 import com.sitionix.forgeagent.application.runtime.WorkflowEntrySelector;
 import com.sitionix.forgeagent.application.runtime.WorkflowRunSnapshotBuilder;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
@@ -69,6 +70,8 @@ class WorkflowRunUseCasesTest {
     private AgentDefinitionRepository agentDefinitionRepository;
     @Mock
     private WorkflowEntrySelector entrySelector;
+    @Mock
+    private ExecutionBudgetPolicy executionBudgetPolicy;
 
     private WorkflowRunUseCases useCases;
 
@@ -83,6 +86,7 @@ class WorkflowRunUseCasesTest {
                 new WorkflowRunSnapshotBuilder(this.agentDefinitionRepository),
                 this.entrySelector,
                 new NodeRunFactory(CLOCK),
+                this.executionBudgetPolicy,
                 CLOCK
         );
     }

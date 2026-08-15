@@ -63,6 +63,8 @@ class NodeRunLifecycleTest {
     private WorkflowExecutionCoordinator coordinator;
     @Mock
     private WorkflowCompletionPolicy completionPolicy;
+    @Mock
+    private NodeRunCompletionProcessor completionProcessor;
 
     private final Map<UUID, NodeRun> nodeRuns = new LinkedHashMap<>();
     private WorkflowRun workflowRun;
@@ -84,7 +86,8 @@ class NodeRunLifecycleTest {
                         this.completionPolicy,
                         this.coordinator,
                         CLOCK
-                )
+                ),
+                this.completionProcessor
         );
         this.workflowRun = this.workflowRun(WorkflowRunStatus.QUEUED, null, null);
         this.stubRepositories();
@@ -133,7 +136,7 @@ class NodeRunLifecycleTest {
 
         assertThat(this.nodeRuns.get(NODE_RUN_ID).status()).isEqualTo(NodeRunStatus.SUCCEEDED);
         assertThat(this.nodeRuns.get(NODE_RUN_ID).output()).isEqualTo(output);
-        verify(this.coordinator).completeSuccessfulNodeRun(NODE_RUN_ID);
+        verify(this.completionProcessor).process(NODE_RUN_ID);
     }
 
     @Test

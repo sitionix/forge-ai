@@ -30,6 +30,7 @@ final class PostgresNodeRunMapper {
                 entity.getEnteredViaInputPortId(),
                 entity.getActivationFrameId(),
                 entity.getSelectedOutputPortId(),
+                entity.getRoutingCompletedAt(),
                 NodeRunStatus.valueOf(entity.getStatus()),
                 entity.getOutput() == null ? null : new NodeRunOutput(entity.getOutput()),
                 entity.getFailureCode() == null && entity.getFailureMessage() == null
@@ -58,6 +59,7 @@ final class PostgresNodeRunMapper {
         entity.setEnteredViaInputPortId(nodeRun.enteredViaInputPortId());
         entity.setActivationFrameId(nodeRun.activationFrameId());
         entity.setSelectedOutputPortId(nodeRun.selectedOutputPortId());
+        entity.setRoutingCompletedAt(nodeRun.routingCompletedAt());
         entity.setStatus(nodeRun.status().name());
         entity.setOutput(nodeRun.output() == null ? null : nodeRun.output().jsonValue());
         entity.setFailureCode(nodeRun.failure() == null ? null : nodeRun.failure().code());

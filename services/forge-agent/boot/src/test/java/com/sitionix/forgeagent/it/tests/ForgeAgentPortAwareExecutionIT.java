@@ -14,11 +14,19 @@ import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.application.runtime.AiOutputRouter;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
+import com.sitionix.forgeagent.application.runtime.NodeRunCompletionPersistence;
+import com.sitionix.forgeagent.application.runtime.NodeRunCompletionProcessor;
+import com.sitionix.forgeagent.application.runtime.NodeRunCompletionWorker;
 import com.sitionix.forgeagent.application.runtime.NodeRunLifecycle;
+import com.sitionix.forgeagent.application.runtime.WorkflowExecutionCoordinator;
+import com.sitionix.forgeagent.application.usecase.AgentUseCases;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
+import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowUseCases;
+import com.sitionix.forgeagent.domain.model.AgentModelSelection;
+import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.ConnectionResolution;
 import com.sitionix.forgeagent.domain.model.ConnectionResolutionType;
 import com.sitionix.forgeagent.domain.model.Node;
@@ -43,9 +51,12 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @IntegrationTest
 class ForgeAgentPortAwareExecutionIT {
@@ -60,7 +71,10 @@ class ForgeAgentPortAwareExecutionIT {
     private static final UUID CODE = UUID.fromString("90000000-0000-4000-8000-000000000008");
 
     private static final UUID A_OUT = UUID.fromString("91000000-0000-4000-8000-000000000001");
+    private static final UUID A_PASS = UUID.fromString("91000000-0000-4000-8000-000000000021");
+    private static final UUID A_RETURN = UUID.fromString("91000000-0000-4000-8000-000000000022");
     private static final UUID B_IN = UUID.fromString("92000000-0000-4000-8000-000000000002");
+    private static final UUID B_IN_UPDATED = UUID.fromString("92000000-0000-4000-8000-000000000022");
     private static final UUID B_OUT = UUID.fromString("91000000-0000-4000-8000-000000000002");
     private static final UUID C_IN = UUID.fromString("92000000-0000-4000-8000-000000000003");
     private static final UUID C_OUT = UUID.fromString("91000000-0000-4000-8000-000000000003");
@@ -87,7 +101,17 @@ class ForgeAgentPortAwareExecutionIT {
     @Autowired
     private WorkflowRunUseCases workflowRunUseCases;
     @Autowired
+    private AgentUseCases agentUseCases;
+    @Autowired
     private NodeRunLifecycle lifecycle;
+    @Autowired
+    private NodeRunCompletionPersistence completionPersistence;
+    @Autowired
+    private NodeRunCompletionProcessor completionProcessor;
+    @Autowired
+    private NodeRunCompletionWorker completionWorker;
+    @Autowired
+    private WorkflowExecutionCoordinator coordinator;
     @Autowired
     private NodeRunRepository nodeRunRepository;
     @Autowired
@@ -279,10 +303,172 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.nodeRunRepository.findById(strategy.id()).orElseThrow()).satisfies(nodeRun -> {
             assertThat(nodeRun.status()).isEqualTo(NodeRunStatus.FAILED);
             assertThat(nodeRun.failure()).isNotNull();
-            assertThat(nodeRun.failure().code()).isEqualTo("NODE_RUN_COMPLETION_FAILED");
+            assertThat(nodeRun.failure().code()).isEqualTo("AI_OUTPUT_ROUTING_INVALID_PORT");
         });
         assertThat(this.nodeRunRepository.findByWorkflowRunId(run.id())).noneMatch(nodeRun -> nodeRun.status() == NodeRunStatus.RUNNING);
         assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.FAILED);
+    }
+
+    @Test
+    void crashBetweenBusinessSuccessAndRoutingIsRecoveredByCompletionWorker() {
+        this.seed();
+        this.saveLinearWorkflow();
+
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Build feature."));
+        final NodeRun runningA = this.start(this.onlyPending(run.id(), A));
+        this.completionPersistence.markBusinessSucceeded(runningA.id(), new NodeRunOutput("{\"step\":\"A\"}"));
+        this.entityManager.clear();
+
+        assertThat(this.nodeRunRepository.findById(runningA.id()).orElseThrow()).satisfies(nodeRun -> {
+            assertThat(nodeRun.status()).isEqualTo(NodeRunStatus.SUCCEEDED);
+            assertThat(nodeRun.routingCompletedAt()).isNull();
+        });
+        assertThat(this.pendingForSource(run.id(), B)).isEmpty();
+
+        this.completionWorker.poll();
+        this.entityManager.clear();
+
+        assertThat(this.nodeRunRepository.findById(runningA.id()).orElseThrow()).satisfies(nodeRun -> {
+            assertThat(nodeRun.selectedOutputPortId()).isEqualTo(A_OUT);
+            assertThat(nodeRun.routingCompletedAt()).isNotNull();
+        });
+        assertThat(this.onlyPending(run.id(), B)).isNotNull();
+    }
+
+    @Test
+    void aiRoutingRunsOutsideDatabaseTransactionThroughCompletionProcessor() {
+        this.seed();
+        this.saveReviewerWorkflow();
+        final AtomicBoolean observedNoTransaction = new AtomicBoolean(false);
+        when(this.aiOutputRouter.selectOutput(any(), any())).thenAnswer(invocation -> {
+            observedNoTransaction.set(!TransactionSynchronizationManager.isActualTransactionActive());
+            return STRATEGY_PASS;
+        });
+
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Implement feature."));
+        this.complete(this.onlyPending(run.id(), IMPLEMENTER), "{\"patch\":\"v1\"}");
+        final NodeRun strategy = this.start(this.onlyPending(run.id(), STRATEGY));
+        this.completionPersistence.markBusinessSucceeded(strategy.id(), new NodeRunOutput("{\"strategy\":\"pass\"}"));
+
+        this.completionProcessor.process(strategy.id());
+
+        assertThat(observedNoTransaction).isTrue();
+        assertThat(this.nodeRunRepository.findById(strategy.id()).orElseThrow().routingCompletedAt()).isNotNull();
+    }
+
+    @Test
+    void concurrentCompletionProcessingAppliesRoutingExactlyOnce() throws Exception {
+        this.seed();
+        this.saveSingleAiReturnWorkflow();
+        when(this.aiOutputRouter.selectOutput(any(), any())).thenReturn(A_RETURN);
+
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Route once."));
+        final NodeRun runningA = this.start(this.onlyPending(run.id(), A));
+        this.completionPersistence.markBusinessSucceeded(runningA.id(), new NodeRunOutput("{\"route\":\"return\"}"));
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            final var first = executor.submit(() -> this.completionProcessor.process(runningA.id()));
+            final var second = executor.submit(() -> this.completionProcessor.process(runningA.id()));
+            first.get();
+            second.get();
+        }
+        this.entityManager.clear();
+
+        final NodeRun routedA = this.nodeRunRepository.findById(runningA.id()).orElseThrow();
+        assertThat(routedA.selectedOutputPortId()).isEqualTo(A_RETURN);
+        assertThat(routedA.routingCompletedAt()).isNotNull();
+        assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().connectionResolutions()).singleElement()
+                .satisfies(resolution -> assertThat(resolution.sourceNodeRunId()).isEqualTo(runningA.id()));
+        assertThat(this.pendingForSource(run.id(), B)).hasSize(1);
+        final NodeRun b = this.onlyPending(run.id(), B);
+        assertThat(this.activationResolutionRepository.find(run.id(), runningA.executionFrameId(), B_IN)).isPresent()
+                .get()
+                .satisfies(resolution -> assertThat(resolution.activatedNodeRunId()).isEqualTo(b.id()));
+        assertThat(this.frameRepository.findByWorkflowRunId(run.id())).hasSize(1);
+    }
+
+    @Test
+    void workflowCannotCompleteWhileSuccessfulNodeRunStillNeedsRouting() {
+        this.seed();
+        this.saveTerminalWorkflow();
+
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Terminal."));
+        final NodeRun runningA = this.start(this.onlyPending(run.id(), A));
+        this.completionPersistence.markBusinessSucceeded(runningA.id(), new NodeRunOutput("{\"done\":true}"));
+        this.coordinator.reconcile(this.workflowRunRepository.findById(run.id()).orElseThrow());
+
+        assertThat(this.nodeRunRepository.findById(runningA.id()).orElseThrow().routingCompletedAt()).isNull();
+        assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.RUNNING);
+    }
+
+    @Test
+    @Transactional
+    void legacyPendingNodeRunWithoutExecutionFrameCannotBeClaimedByNewWorkerQuery() {
+        this.seed();
+        final UUID legacyRunId = UUID.fromString("94000000-0000-4000-8000-000000000001");
+        final UUID legacyNodeRunId = UUID.fromString("94000000-0000-4000-8000-000000000002");
+        this.entityManager.createNativeQuery("""
+                INSERT INTO workflow_runs (id, project_id, source_workflow_id, workflow_name, input, status, created_at, started_at)
+                VALUES (:runId, :projectId, :workflowId, 'Legacy active', 'Legacy input', 'RUNNING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """)
+                .setParameter("runId", legacyRunId)
+                .setParameter("projectId", PROJECT_ALPHA_ID)
+                .setParameter("workflowId", WORKFLOW_ID)
+                .executeUpdate();
+        this.entityManager.createNativeQuery("""
+                INSERT INTO node_runs (
+                    id, workflow_run_id, source_node_id, source_agent_id, agent_name, agent_instructions,
+                    agent_output_schema, input_mode, position_x, position_y, status,
+                    execution_model_provider_id, execution_model_id, execution_model_effort_id, created_at
+                )
+                VALUES (
+                    :nodeRunId, :runId, :sourceNodeId, :agentId, 'Legacy Agent', 'Legacy instructions.',
+                    CAST(:schema AS jsonb), 'DEPENDENCIES_ONLY', 0, 0, 'PENDING',
+                    'codex', 'discovered-model', 'medium', CURRENT_TIMESTAMP
+                )
+                """)
+                .setParameter("nodeRunId", legacyNodeRunId)
+                .setParameter("runId", legacyRunId)
+                .setParameter("sourceNodeId", A)
+                .setParameter("agentId", AGENT_A_ID)
+                .setParameter("schema", "{\"type\":\"object\"}")
+                .executeUpdate();
+        this.entityManager.flush();
+
+        assertThat(this.nodeRunRepository.findPendingIds()).doesNotContain(legacyNodeRunId);
+        assertThat(this.lifecycle.tryStart(legacyNodeRunId)).isEmpty();
+    }
+
+    @Test
+    void activeRunUsesSnapshottedTopologyAndAgentAfterLiveWorkflowMutation() {
+        this.seed();
+        this.saveLinearWorkflow();
+
+        final WorkflowRun runOne = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("First run."));
+        this.saveLinearWorkflowWithUpdatedBPort();
+        this.agentUseCases.updateAgent(AGENT_B_ID, new SaveAgentCommand(
+                "Agent B",
+                "Updated live Agent B instructions.",
+                AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                new AgentModelSelection("codex", "model-b", "xhigh")
+        ));
+
+        this.complete(this.onlyPending(runOne.id(), A), "{\"step\":\"A1\"}");
+        final NodeExecutionClaim oldBClaim = this.lifecycle.tryStart(this.onlyPending(runOne.id(), B).id()).orElseThrow();
+        assertThat(oldBClaim.agentInstructions()).isEqualTo("Do work for Agent B.");
+        assertThat(oldBClaim.executionModel().modelId()).isEqualTo("discovered-model");
+        assertThat(oldBClaim.inputEnvelope().entryInputPort().sourcePortId()).isEqualTo(B_IN);
+        assertThat(oldBClaim.inputEnvelope().entryInputPort().name()).isEqualTo("Input");
+
+        final WorkflowRun runTwo = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Second run."));
+        this.complete(this.onlyPending(runTwo.id(), A), "{\"step\":\"A2\"}");
+        final NodeExecutionClaim newBClaim = this.lifecycle.tryStart(this.onlyPending(runTwo.id(), B).id()).orElseThrow();
+        assertThat(newBClaim.agentInstructions()).isEqualTo("Updated live Agent B instructions.");
+        assertThat(newBClaim.executionModel().modelId()).isEqualTo("model-b");
+        assertThat(newBClaim.executionModel().effortId()).isEqualTo("xhigh");
+        assertThat(newBClaim.inputEnvelope().entryInputPort().sourcePortId()).isEqualTo(B_IN_UPDATED);
+        assertThat(newBClaim.inputEnvelope().entryInputPort().name()).isEqualTo("Updated Input");
+        assertThat(newBClaim.inputEnvelope().entryInputPort().description()).isEqualTo("Updated B input description.");
     }
 
     private void seed() {
@@ -308,6 +494,40 @@ class ForgeAgentPortAwareExecutionIT {
                         this.connection(1, A_OUT, B_IN),
                         this.connection(2, B_OUT, C_IN)
                 )
+        ));
+    }
+
+    private void saveLinearWorkflowWithUpdatedBPort() {
+        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
+                "Full Testing",
+                List.of(
+                        this.node(A, AGENT_A_ID, List.of(), List.of(this.port(A_OUT, "Done")), 0),
+                        this.node(B, AGENT_B_ID, List.of(this.port(B_IN_UPDATED, "Updated Input", "Updated B input description.", 0)), List.of(this.port(B_OUT, "Done")), 1),
+                        this.node(C, AGENT_C_ID, List.of(this.port(C_IN, "Input")), List.of(this.port(C_OUT, "Done")), 2)
+                ),
+                List.of(
+                        this.connection(20, A_OUT, B_IN_UPDATED),
+                        this.connection(2, B_OUT, C_IN)
+                )
+        ));
+    }
+
+    private void saveTerminalWorkflow() {
+        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
+                "Full Testing",
+                List.of(this.node(A, AGENT_A_ID, List.of(), List.of(), 0)),
+                List.of()
+        ));
+    }
+
+    private void saveSingleAiReturnWorkflow() {
+        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
+                "Full Testing",
+                List.of(
+                        this.node(A, AGENT_A_ID, List.of(), List.of(this.port(A_PASS, "Pass", 0), this.port(A_RETURN, "Return", 1)), 0),
+                        this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")), List.of(this.port(B_OUT, "Done")), 1)
+                ),
+                List.of(this.connection(30, A_RETURN, B_IN))
         ));
     }
 
@@ -362,7 +582,11 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private NodePort port(final UUID id, final String name, final int order) {
-        return new NodePort(id, name, name + " description.", order);
+        return this.port(id, name, name + " description.", order);
+    }
+
+    private NodePort port(final UUID id, final String name, final String description, final int order) {
+        return new NodePort(id, name, description, order);
     }
 
     private UUID outputNamed(final List<com.sitionix.forgeagent.domain.model.RunPort> outputs, final String name) {

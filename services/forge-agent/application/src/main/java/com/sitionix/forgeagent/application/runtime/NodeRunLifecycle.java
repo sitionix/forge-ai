@@ -33,6 +33,7 @@ public class NodeRunLifecycle {
     private final WorkflowCompletionPolicy completionPolicy;
     private final Clock clock;
     private final NodeRunCompletionPersistence completionPersistence;
+    private final NodeRunCompletionProcessor completionProcessor;
 
     public NodeRunLifecycle(final NodeRunRepository nodeRunRepository,
                             final WorkflowRunRepository workflowRunRepository,
@@ -41,7 +42,8 @@ public class NodeRunLifecycle {
                             final WorkflowExecutionCoordinator coordinator,
                             final WorkflowCompletionPolicy completionPolicy,
                             final Clock clock,
-                            final NodeRunCompletionPersistence completionPersistence) {
+                            final NodeRunCompletionPersistence completionPersistence,
+                            final NodeRunCompletionProcessor completionProcessor) {
         this.nodeRunRepository = nodeRunRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.resolutionRepository = resolutionRepository;
@@ -50,6 +52,7 @@ public class NodeRunLifecycle {
         this.completionPolicy = completionPolicy;
         this.clock = clock;
         this.completionPersistence = completionPersistence;
+        this.completionProcessor = completionProcessor;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -124,14 +127,7 @@ public class NodeRunLifecycle {
         if (!this.completionPersistence.markBusinessSucceeded(nodeRunId, output)) {
             return;
         }
-        try {
-            this.coordinator.completeSuccessfulNodeRun(nodeRunId);
-        } catch (final RuntimeException exception) {
-            this.completionPersistence.markCompletionFailed(nodeRunId, new NodeRunFailure(
-                    "NODE_RUN_COMPLETION_FAILED",
-                    this.failureMessage(exception)
-            ));
-        }
+        this.completionProcessor.process(nodeRunId);
     }
 
     @Transactional

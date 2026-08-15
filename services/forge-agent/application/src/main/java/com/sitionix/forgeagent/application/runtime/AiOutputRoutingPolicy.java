@@ -27,7 +27,12 @@ public class AiOutputRoutingPolicy implements OutputRoutingPolicy {
         if (this.router == null) {
             throw new ConflictException("AI_OUTPUT_ROUTER_NOT_CONFIGURED", "AI output routing is not configured.");
         }
-        final UUID selected = this.router.selectOutput(context.output(), context.availableOutputs());
+        final UUID selected;
+        try {
+            selected = this.router.selectOutput(context.output(), context.availableOutputs());
+        } catch (final RuntimeException exception) {
+            throw new ConflictException("AI_OUTPUT_ROUTING_FAILED", this.failureMessage(exception));
+        }
         if (selected == null) {
             throw new ConflictException("AI_OUTPUT_ROUTING_INVALID_PORT", "AI output routing did not select an output port.");
         }
@@ -38,5 +43,10 @@ public class AiOutputRoutingPolicy implements OutputRoutingPolicy {
             throw new ConflictException("AI_OUTPUT_ROUTING_INVALID_PORT", "AI output routing selected an unknown output port.");
         }
         return new SelectedOutputRoutingDecision(selected);
+    }
+
+    private String failureMessage(final RuntimeException exception) {
+        final String message = exception.getMessage();
+        return message == null || message.isBlank() ? "AI output routing failed." : message;
     }
 }
