@@ -16,10 +16,27 @@ public record AgentWorkflowRunResponse(
         List<AgentNodeRunResponse> nodeRuns,
         List<AgentConnectionResolutionResponse> connectionResolutions,
         List<AgentWorkflowRunExecutionEdgeResponse> executionEdges,
+        AgentWorkflowRunGraphResponse runtimeGraph,
         Instant createdAt,
         Instant startedAt,
         Instant finishedAt
 ) {
+    public AgentWorkflowRunResponse(final UUID id,
+                                    final UUID projectId,
+                                    final UUID sourceWorkflowId,
+                                    final UUID taskId,
+                                    final String workflowName,
+                                    final String input,
+                                    final AgentWorkflowRunStatus status,
+                                    final List<AgentNodeRunResponse> nodeRuns,
+                                    final List<AgentConnectionResolutionResponse> connectionResolutions,
+                                    final List<AgentWorkflowRunExecutionEdgeResponse> executionEdges,
+                                    final Instant createdAt,
+                                    final Instant startedAt,
+                                    final Instant finishedAt) {
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, connectionResolutions, executionEdges, null, createdAt, startedAt, finishedAt);
+    }
+
     public AgentWorkflowRunResponse(final UUID id,
                                     final UUID projectId,
                                     final UUID sourceWorkflowId,
@@ -31,6 +48,6 @@ public record AgentWorkflowRunResponse(
                                      final Instant createdAt,
                                      final Instant startedAt,
                                      final Instant finishedAt) {
-        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), List.of(), createdAt, startedAt, finishedAt);
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), List.of(), null, createdAt, startedAt, finishedAt);
     }
 }

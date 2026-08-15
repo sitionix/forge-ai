@@ -2,8 +2,10 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunExecutionEdge;
+import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
+import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunExecutionEdgeEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
@@ -30,6 +32,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     private final SpringDataNodeRunRepository nodeRunRepository;
     private final SpringDataConnectionResolutionRepository resolutionRepository;
     private final SpringDataWorkflowRunExecutionEdgeRepository executionEdgeRepository;
+    private final WorkflowRunGraphRepository graphRepository;
 
     @Override
     public WorkflowRun save(final WorkflowRun run) {
@@ -115,6 +118,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 this.executionEdgeRepository.findByWorkflowRunIdOrderBySourceNodeRunIdAscTargetNodeRunIdAsc(entity.getId()).stream()
                         .map(this::toExecutionEdge)
                         .toList(),
+                this.runtimeGraphOrNull(entity.getId()),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
                 entity.getFinishedAt()
@@ -135,6 +139,14 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getStartedAt(),
                 entity.getFinishedAt()
         );
+    }
+
+    private WorkflowRunGraph runtimeGraphOrNull(final UUID workflowRunId) {
+        final WorkflowRunGraph graph = this.graphRepository.findByWorkflowRunId(workflowRunId);
+        if (graph == null || graph.nodes().isEmpty()) {
+            return null;
+        }
+        return graph;
     }
 
     private WorkflowRunEntity toEntity(final WorkflowRun run) {

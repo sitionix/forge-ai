@@ -15,6 +15,7 @@ public record WorkflowRun(
         List<NodeRun> nodeRuns,
         List<ConnectionResolution> connectionResolutions,
         List<WorkflowRunExecutionEdge> executionEdges,
+        WorkflowRunGraph runtimeGraph,
         Instant createdAt,
         Instant startedAt,
         Instant finishedAt
@@ -30,7 +31,7 @@ public record WorkflowRun(
                        final Instant createdAt,
                        final Instant startedAt,
                        final Instant finishedAt) {
-        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), List.of(), createdAt, startedAt, finishedAt);
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), List.of(), null, createdAt, startedAt, finishedAt);
     }
 
     public WorkflowRun(final UUID id,
@@ -45,6 +46,22 @@ public record WorkflowRun(
                        final Instant createdAt,
                        final Instant startedAt,
                        final Instant finishedAt) {
-        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, connectionResolutions, List.of(), createdAt, startedAt, finishedAt);
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, connectionResolutions, List.of(), null, createdAt, startedAt, finishedAt);
+    }
+
+    public WorkflowRun(final UUID id,
+                       final UUID projectId,
+                       final UUID sourceWorkflowId,
+                       final UUID taskId,
+                       final String workflowName,
+                       final String input,
+                       final WorkflowRunStatus status,
+                       final List<NodeRun> nodeRuns,
+                       final List<ConnectionResolution> connectionResolutions,
+                       final List<WorkflowRunExecutionEdge> executionEdges,
+                       final Instant createdAt,
+                       final Instant startedAt,
+                       final Instant finishedAt) {
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, connectionResolutions, executionEdges, null, createdAt, startedAt, finishedAt);
     }
 }

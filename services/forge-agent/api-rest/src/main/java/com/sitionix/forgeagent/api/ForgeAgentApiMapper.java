@@ -27,10 +27,14 @@ import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
+import com.sitionix.forgeagent.api.dto.RunConnectionResponse;
+import com.sitionix.forgeagent.api.dto.RunNodeResponse;
+import com.sitionix.forgeagent.api.dto.RunPortResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
-import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunExecutionEdgeResponse;
+import com.sitionix.forgeagent.api.dto.WorkflowRunGraphResponse;
+import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowConnectionRequest;
 import com.sitionix.forgeagent.api.dto.WorkflowConnectionResponse;
@@ -60,6 +64,9 @@ import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummaryPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
+import com.sitionix.forgeagent.domain.model.RunConnection;
+import com.sitionix.forgeagent.domain.model.RunNode;
+import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
@@ -189,9 +196,56 @@ class ForgeAgentApiMapper {
                 run.nodeRuns().stream().map(this::toResponse).toList(),
                 run.connectionResolutions().stream().map(this::toResponse).toList(),
                 run.executionEdges().stream().map(this::toResponse).toList(),
+                this.toResponse(run.runtimeGraph()),
                 run.createdAt(),
                 run.startedAt(),
                 run.finishedAt()
+        );
+    }
+
+    private WorkflowRunGraphResponse toResponse(final com.sitionix.forgeagent.domain.model.WorkflowRunGraph graph) {
+        if (graph == null) {
+            return null;
+        }
+        return new WorkflowRunGraphResponse(
+                graph.nodes().stream().map(this::toResponse).toList(),
+                graph.ports().stream().map(this::toResponse).toList(),
+                graph.connections().stream().map(this::toResponse).toList()
+        );
+    }
+
+    private RunNodeResponse toResponse(final RunNode node) {
+        try {
+            return new RunNodeResponse(
+                    node.sourceNodeId(),
+                    node.sourceAgentId(),
+                    node.agentName(),
+                    node.agentInstructions(),
+                    this.objectMapper.readTree(node.agentOutputSchema().jsonObject()),
+                    inputMode(node.inputMode()).name(),
+                    new NodePositionResponse(node.position().x(), node.position().y())
+            );
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalStateException("Stored run node output schema is invalid JSON.", exception);
+        }
+    }
+
+    private RunPortResponse toResponse(final RunPort port) {
+        return new RunPortResponse(
+                port.sourcePortId(),
+                port.sourceNodeId(),
+                port.direction(),
+                port.name(),
+                port.description(),
+                port.order()
+        );
+    }
+
+    private RunConnectionResponse toResponse(final RunConnection connection) {
+        return new RunConnectionResponse(
+                connection.sourceConnectionId(),
+                connection.sourceOutputPortId(),
+                connection.targetInputPortId()
         );
     }
 
@@ -305,6 +359,7 @@ class ForgeAgentApiMapper {
                     nodeRun.status(),
                     nodeRun.output() == null ? null : this.objectMapper.readTree(nodeRun.output().jsonValue()),
                     nodeRun.failure() == null ? null : new NodeRunFailureResponse(nodeRun.failure().code(), nodeRun.failure().message()),
+                    nodeRun.routingCompletedAt(),
                     nodeRun.createdAt(),
                     nodeRun.startedAt(),
                     nodeRun.finishedAt()

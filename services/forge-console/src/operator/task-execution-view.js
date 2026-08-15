@@ -1,14 +1,17 @@
 import { escapeHtml } from './dom-render-helpers.js';
 
 const ACTIVE_RUN_STATUSES = new Set(['QUEUED', 'RUNNING']);
-const NODE_WIDTH = 204;
-const NODE_HEIGHT = 110;
+const NODE_WIDTH = 224;
+const NODE_HEIGHT = 168;
+const LEGACY_NODE_WIDTH = 204;
+const LEGACY_NODE_HEIGHT = 110;
 const NODE_MID_Y = 58;
 const MIN_CANVAS_WIDTH = 1600;
 const MIN_CANVAS_HEIGHT = 1000;
 const CANVAS_PADDING = 240;
 const MIN_CANVAS_SCALE = 0.45;
 const MAX_CANVAS_SCALE = 1.8;
+const HISTORY_MARKER_LIMIT = 8;
 
 export class TaskExecutionView {
   constructor(options) {
@@ -25,6 +28,7 @@ export class TaskExecutionView {
     this.pollInFlight = null;
     this.canvasPan = null;
     this.viewport = { x: 0, y: 0, scale: 1 };
+    this.fitAppliedRunId = null;
     this.state = this.emptyState();
   }
 
@@ -59,6 +63,7 @@ export class TaskExecutionView {
     this.stopPolling();
     this.pollInFlight = null;
     this.canvasPan = null;
+    this.fitAppliedRunId = null;
     this.state = this.emptyState();
     this.viewport = { x: 0, y: 0, scale: 1 };
     this.applyViewportTransform();
@@ -113,12 +118,15 @@ export class TaskExecutionView {
     this.runLoadSequence = runSequence;
     this.stopPolling();
     this.pollInFlight = null;
+    this.fitAppliedRunId = null;
     this.state.selectedRunId = runId;
     this.state.selectedNodeRunId = null;
+    this.state.selectedSourceNodeId = null;
     this.state.workflowRun = null;
     this.state.loadingRun = true;
     this.state.executionError = '';
     this.state.refreshError = '';
+    this.state.pendingAnimations = this.emptyAnimations();
     this.render();
     try {
       const workflowRun = await this.api.getWorkflowRun(runId);
@@ -140,12 +148,32 @@ export class TaskExecutionView {
   }
 
   applyWorkflowRun(workflowRun) {
+    const previous = this.state.workflowRun;
+    const sameRun = previous?.id && previous.id === workflowRun?.id;
+    this.state.pendingAnimations = sameRun ? this.detectPollAnimations(previous, workflowRun) : this.emptyAnimations();
     this.state.workflowRun = workflowRun;
     this.state.refreshError = '';
     this.mergeRunSummary(workflowRun);
+    if (this.hasRuntimeGraph(workflowRun)) {
+      this.syncModernSelection(workflowRun);
+      return;
+    }
     const nodeRuns = workflowRun?.nodeRuns || [];
     if (!nodeRuns.some((nodeRun) => nodeRun.id === this.state.selectedNodeRunId)) {
       this.state.selectedNodeRunId = nodeRuns[0]?.id || null;
+    }
+    this.state.selectedSourceNodeId = null;
+  }
+
+  syncModernSelection(workflowRun) {
+    const graphNodes = workflowRun.runtimeGraph.nodes || [];
+    const selectedNodeStillExists = graphNodes.some((node) => node.sourceNodeId === this.state.selectedSourceNodeId);
+    if (!selectedNodeStillExists) {
+      this.state.selectedSourceNodeId = graphNodes[0]?.sourceNodeId || null;
+    }
+    const nodeRuns = workflowRun.nodeRuns || [];
+    if (!nodeRuns.some((nodeRun) => nodeRun.id === this.state.selectedNodeRunId)) {
+      this.state.selectedNodeRunId = this.latestNodeRunForSource(this.state.selectedSourceNodeId, nodeRuns)?.id || null;
     }
   }
 
@@ -190,6 +218,9 @@ export class TaskExecutionView {
       }
       this.applyWorkflowRun(workflowRun);
       this.render();
+      if (this.state.followActive && this.hasRuntimeGraph(workflowRun)) {
+        this.followNewActiveNode();
+      }
     } catch (error) {
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         return;
@@ -263,7 +294,7 @@ export class TaskExecutionView {
       ${runStatus === 'FAILED' && failedNodeRuns.length ? this.renderRunFailureSummary(failedNodeRuns) : ''}
     `;
     summary.querySelectorAll('[data-failed-node-run-id]').forEach((element) => {
-      element.addEventListener('click', () => this.selectNodeRun(element.dataset.failedNodeRunId));
+      element.addEventListener('click', () => this.selectConcreteNodeRun(element.dataset.failedNodeRunId));
     });
   }
 
@@ -273,7 +304,7 @@ export class TaskExecutionView {
         <strong>Failure</strong>
         ${failedNodeRuns.map((nodeRun) => `
           <button class="task-execution-failure-row" type="button" data-failed-node-run-id="${escapeHtml(nodeRun.id)}">
-            <span>${escapeHtml(nodeRun.agentName || 'Unknown agent')}</span>
+            <span>${escapeHtml(nodeRun.agentName || this.agentNameForSource(nodeRun.sourceNodeId) || 'Unknown agent')}</span>
             <code>${escapeHtml(nodeRun.failure?.code || 'FAILURE')}</code>
             <small>${escapeHtml(nodeRun.failure?.message || 'Node execution failed.')}</small>
           </button>
@@ -320,10 +351,229 @@ export class TaskExecutionView {
       state.innerHTML = '<div class="muted-state compact">No executions yet.</div>';
       return;
     }
-    state.innerHTML = '';
+    if (!this.hasRuntimeGraph(this.state.workflowRun)) {
+      state.innerHTML = this.state.workflowRun ? '<div class="execution-board-legacy-note">Legacy execution trace</div>' : '';
+      return;
+    }
+    const projection = this.modernProjection();
+    const summary = projection.summary;
+    const activeRows = projection.activeNodeRuns.slice(0, 4).map((nodeRun) => {
+      const number = projection.invocationNumberById.get(nodeRun.id) || 1;
+      return `<span>${escapeHtml(this.agentNameForSource(nodeRun.sourceNodeId) || nodeRun.agentName || 'Unknown agent')} · #${number} · ${escapeHtml(nodeRun.status)}</span>`;
+    }).join('');
+    state.innerHTML = `
+      <div class="execution-board-strip">
+        <div class="execution-board-status">
+          <span class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(this.state.workflowRun.status))}">${escapeHtml(this.state.workflowRun.status || 'UNKNOWN')}</span>
+        </div>
+        ${this.summaryMetric('Running', summary.running)}
+        ${this.summaryMetric('Pending', summary.pending)}
+        ${this.summaryMetric('Routing', summary.routing)}
+        ${this.summaryMetric('NodeRuns', summary.totalNodeRuns)}
+        ${this.summaryMetric('Reached', `${summary.reached} / ${summary.totalNodes}`)}
+        ${this.summaryMetric('Elapsed', this.elapsedLabel(this.state.workflowRun))}
+        <div class="execution-board-last-activity">
+          <span>Last activity</span>
+          <strong>${escapeHtml(summary.lastActivity?.label || '-')}</strong>
+        </div>
+        <div class="execution-board-active-now">
+          <span>Active now</span>
+          <strong>${activeRows || '-'}</strong>
+        </div>
+        <div class="execution-board-controls">
+          <button class="button small secondary" type="button" data-execution-control="fit">Fit</button>
+          <button class="button small secondary" type="button" data-execution-control="center-active">Center active</button>
+          <button class="button small ${this.state.followActive ? '' : 'secondary'}" type="button" data-execution-control="follow-active">Follow active</button>
+        </div>
+      </div>
+    `;
+    state.querySelector('[data-execution-control="fit"]')?.addEventListener('click', () => this.fitTopology());
+    state.querySelector('[data-execution-control="center-active"]')?.addEventListener('click', () => this.centerActive());
+    state.querySelector('[data-execution-control="follow-active"]')?.addEventListener('click', () => {
+      this.state.followActive = !this.state.followActive;
+      this.renderExecutionState();
+      if (this.state.followActive) {
+        this.centerActive();
+      }
+    });
+  }
+
+  summaryMetric(label, value) {
+    return `
+      <div class="execution-board-metric">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(String(value))}</strong>
+      </div>
+    `;
   }
 
   renderGraph() {
+    if (this.hasRuntimeGraph(this.state.workflowRun)) {
+      this.renderModernGraph();
+      return;
+    }
+    this.renderLegacyGraph();
+  }
+
+  renderModernGraph() {
+    const nodesLayer = this.byId('agentsV2ExecutionNodes');
+    const edgesSvg = this.byId('agentsV2ExecutionEdges');
+    const projection = this.modernProjection();
+    if (!this.state.workflowRun) {
+      nodesLayer.innerHTML = '';
+      edgesSvg.innerHTML = '';
+      return;
+    }
+    nodesLayer.innerHTML = projection.graph.nodes.map((node) => this.renderModernNode(node, projection)).join('');
+    nodesLayer.querySelectorAll('[data-execution-source-node-id]').forEach((element) => {
+      element.addEventListener('click', () => this.selectSourceNode(element.dataset.executionSourceNodeId));
+    });
+    nodesLayer.querySelectorAll('[data-execution-run-chip-id]').forEach((element) => {
+      element.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.selectConcreteNodeRun(element.dataset.executionRunChipId);
+      });
+    });
+    this.renderModernEdges(projection);
+    this.syncCanvasBounds(projection.graph.nodes);
+    this.applyViewportTransform();
+    if (this.fitAppliedRunId !== this.state.workflowRun.id) {
+      this.fitTopology();
+      this.fitAppliedRunId = this.state.workflowRun.id;
+    }
+  }
+
+  renderModernNode(node, projection) {
+    const nodeRuns = projection.nodeRunsBySource.get(node.sourceNodeId) || [];
+    const latest = nodeRuns[nodeRuns.length - 1] || null;
+    const latestNumber = latest ? projection.invocationNumberById.get(latest.id) : null;
+    const running = nodeRuns.filter((nodeRun) => nodeRun.status === 'RUNNING').length;
+    const pending = nodeRuns.filter((nodeRun) => nodeRun.status === 'PENDING').length;
+    const failed = nodeRuns.filter((nodeRun) => nodeRun.status === 'FAILED').length;
+    const routing = nodeRuns.filter((nodeRun) => nodeRun.status === 'SUCCEEDED' && !nodeRun.routingCompletedAt).length;
+    const inputPorts = projection.inputPortsByNode.get(node.sourceNodeId) || [];
+    const outputPorts = projection.outputPortsByNode.get(node.sourceNodeId) || [];
+    const inputCounts = projection.inputCountsByNode.get(node.sourceNodeId) || new Map();
+    const outputCounts = projection.outputCountsByNode.get(node.sourceNodeId) || new Map();
+    const selected = node.sourceNodeId === this.state.selectedSourceNodeId;
+    const animationClasses = [
+      this.state.pendingAnimations.nodeRunIds.has(latest?.id) ? 'execution-node-new-fact' : '',
+      running ? 'execution-node-has-running' : '',
+      failed ? 'execution-node-has-failed' : '',
+      !nodeRuns.length ? 'execution-node-unreached' : '',
+      selected ? 'selected' : ''
+    ].filter(Boolean).join(' ');
+    const markers = this.renderInvocationMarkers(nodeRuns, projection);
+    return `
+      <article
+        class="execution-node execution-board-node ${animationClasses}"
+        data-execution-source-node-id="${escapeHtml(node.sourceNodeId)}"
+        data-execution-node-id="${escapeHtml(node.sourceNodeId)}"
+        style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px;"
+      >
+        <div class="execution-board-node-head">
+          <strong>${escapeHtml(node.agentName || 'Unknown agent')}</strong>
+        </div>
+        <div class="execution-board-node-metrics">
+          <span>Executions</span><strong>${nodeRuns.length}</strong>
+          ${running ? `<span>Running</span><strong>${running}</strong>` : ''}
+          ${pending ? `<span>Pending</span><strong>${pending}</strong>` : ''}
+          ${failed ? `<span>Failed</span><strong>${failed}</strong>` : ''}
+          ${latest ? `<span>Last</span><strong>#${latestNumber} · ${escapeHtml(latest.status)}</strong>` : '<span></span><strong>No executions yet</strong>'}
+          ${routing ? `<span>Routing pending</span><strong>${routing}</strong>` : ''}
+        </div>
+        ${this.renderPortUsage('Inputs', inputPorts, inputCounts, this.state.pendingAnimations.inputPortIds)}
+        ${this.renderPortUsage('Outputs', outputPorts, outputCounts, this.state.pendingAnimations.outputPortIds)}
+        ${markers ? `<div class="execution-board-history">${markers}</div>` : ''}
+      </article>
+    `;
+  }
+
+  renderPortUsage(label, ports, counts, highlightedPortIds) {
+    if (!ports.length) {
+      return '';
+    }
+    return `
+      <div class="execution-board-port-usage">
+        <span>${escapeHtml(label)}</span>
+        ${ports.map((port) => `
+          <div class="execution-board-port-row ${highlightedPortIds.has(port.sourcePortId) ? 'execution-port-new-fact' : ''}">
+            <small>${escapeHtml(port.name || 'Port')}</small>
+            <strong>×${Number(counts.get(port.sourcePortId) || 0)}</strong>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  renderInvocationMarkers(nodeRuns, projection) {
+    if (!nodeRuns.length) {
+      return '';
+    }
+    const hidden = Math.max(0, nodeRuns.length - HISTORY_MARKER_LIMIT);
+    const visible = nodeRuns.slice(-HISTORY_MARKER_LIMIT);
+    return `
+      ${hidden ? `<span class="execution-history-overflow">+${hidden}</span>` : ''}
+      ${visible.map((nodeRun) => {
+        const number = projection.invocationNumberById.get(nodeRun.id) || 1;
+        const title = `Execution #${number}\n${nodeRun.status}\n${this.formatDate(nodeRun.startedAt || nodeRun.createdAt)}`;
+        return `<button class="execution-history-marker execution-history-marker-${escapeHtml(statusTone(nodeRun.status))}" type="button" title="${escapeHtml(title)}" data-execution-run-chip-id="${escapeHtml(nodeRun.id)}">${escapeHtml(statusSymbol(nodeRun.status))}</button>`;
+      }).join('')}
+    `;
+  }
+
+  renderModernEdges(projection) {
+    const edges = projection.graph.connections.map((connection) => {
+      const sourcePort = projection.portById.get(connection.sourceOutputPortId);
+      const targetPort = projection.portById.get(connection.targetInputPortId);
+      const sourceNode = sourcePort ? projection.nodeBySource.get(sourcePort.sourceNodeId) : null;
+      const targetNode = targetPort ? projection.nodeBySource.get(targetPort.sourceNodeId) : null;
+      if (!sourceNode || !targetNode) {
+        return '';
+      }
+      const delivered = projection.deliveredByConnection.get(connection.sourceConnectionId) || 0;
+      const closed = projection.closedByConnection.get(connection.sourceConnectionId) || 0;
+      const start = this.modernNodePoint(sourceNode, 'output');
+      const end = this.modernNodePoint(targetNode, 'input');
+      const labelPoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 10 };
+      const token = this.state.pendingAnimations.connectionResolutionIds.size
+        ? this.renderEdgeToken(connection, projection, start, end)
+        : '';
+      const title = `${sourceNode.agentName}.${sourcePort.name} → ${targetNode.agentName}.${targetPort.name} · DELIVERED ${delivered} · CLOSED ${closed}`;
+      return `
+        <g class="workflow-edge execution-edge execution-topology-edge ${delivered ? 'execution-edge-delivered' : ''}" data-runtime-connection-id="${escapeHtml(connection.sourceConnectionId)}">
+          <title>${escapeHtml(title)}</title>
+          <path class="edge-visible" d="${this.pathD(start, end)}" marker-end="url(#agentsV2ExecutionArrow)" />
+          ${delivered ? `<text class="execution-edge-count" x="${labelPoint.x}" y="${labelPoint.y}">×${delivered}</text>` : ''}
+          ${token}
+        </g>
+      `;
+    }).filter(Boolean);
+    this.byId('agentsV2ExecutionEdges').innerHTML = `
+      <defs>
+        <marker id="agentsV2ExecutionArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z"></path>
+        </marker>
+      </defs>
+      ${edges.join('')}
+    `;
+  }
+
+  renderEdgeToken(connection, projection, start, end) {
+    const hasNewResolution = (this.state.workflowRun?.connectionResolutions || [])
+      .some((resolution) => (
+        resolution.sourceConnectionId === connection.sourceConnectionId
+        && resolution.resolutionType === 'DELIVERED'
+        && this.state.pendingAnimations.connectionResolutionIds.has(resolution.id)
+      ));
+    if (!hasNewResolution) {
+      return '';
+    }
+    const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    return `<circle class="execution-edge-token" cx="${middle.x}" cy="${middle.y}" r="5" data-edge-animation-id="${escapeHtml(connection.sourceConnectionId)}"></circle>`;
+  }
+
+  renderLegacyGraph() {
     const nodesLayer = this.byId('agentsV2ExecutionNodes');
     const edgesSvg = this.byId('agentsV2ExecutionEdges');
     const nodeRuns = this.state.workflowRun?.nodeRuns || [];
@@ -334,16 +584,16 @@ export class TaskExecutionView {
       edgesSvg.innerHTML = '';
       return;
     }
-    nodesLayer.innerHTML = nodeRuns.map((nodeRun) => this.renderNode(nodeRun)).join('');
+    nodesLayer.innerHTML = nodeRuns.map((nodeRun) => this.renderLegacyNode(nodeRun)).join('');
     nodesLayer.querySelectorAll('[data-execution-node-id]').forEach((element) => {
       element.addEventListener('click', () => this.selectNodeRun(element.dataset.executionNodeId));
     });
-    this.renderEdges(nodeRuns);
-    this.syncCanvasBounds(nodeRuns);
+    this.renderLegacyEdges(nodeRuns);
+    this.syncCanvasBounds(nodeRuns, true);
     this.applyViewportTransform();
   }
 
-  renderNode(nodeRun) {
+  renderLegacyNode(nodeRun) {
     const status = nodeRun.status || 'PENDING';
     return `
       <article
@@ -360,7 +610,7 @@ export class TaskExecutionView {
     `;
   }
 
-  renderEdges(nodeRuns) {
+  renderLegacyEdges(nodeRuns) {
     const byId = new Map(nodeRuns.map((nodeRun) => [nodeRun.id, nodeRun]));
     const edges = this.executionEdges()
       .map((edge) => {
@@ -369,8 +619,8 @@ export class TaskExecutionView {
         if (!source || !target) {
           return '';
         }
-        const start = this.nodePoint(source, 'output');
-        const end = this.nodePoint(target, 'input');
+        const start = this.legacyNodePoint(source, 'output');
+        const end = this.legacyNodePoint(target, 'input');
         return `
           <g class="workflow-edge execution-edge" data-edge-source="${escapeHtml(source.id)}" data-edge-target="${escapeHtml(target.id)}">
             <path class="edge-visible" d="${this.pathD(start, end)}" marker-end="url(#agentsV2ExecutionArrow)" />
@@ -389,6 +639,172 @@ export class TaskExecutionView {
   }
 
   renderNodeDetails() {
+    if (this.hasRuntimeGraph(this.state.workflowRun)) {
+      this.renderModernDetails();
+      return;
+    }
+    this.renderLegacyNodeDetails();
+  }
+
+  renderModernDetails() {
+    const panel = this.byId('agentsV2NodeRunDetails');
+    const projection = this.modernProjection();
+    const node = projection.nodeBySource.get(this.state.selectedSourceNodeId);
+    if (!node) {
+      panel.innerHTML = '<div class="muted-state">Select a workflow node to inspect execution.</div>';
+      return;
+    }
+    const selectedTab = this.state.detailsTab || 'details';
+    panel.innerHTML = `
+      <div class="execution-details-tabs">
+        <button class="${selectedTab === 'details' ? 'selected' : ''}" type="button" data-details-tab="details">Details</button>
+        <button class="${selectedTab === 'activity' ? 'selected' : ''}" type="button" data-details-tab="activity">Activity</button>
+      </div>
+      ${selectedTab === 'activity' ? this.renderActivityPanel(projection) : this.renderNodeDetailsPanel(node, projection)}
+    `;
+    panel.querySelectorAll('[data-details-tab]').forEach((element) => {
+      element.addEventListener('click', () => {
+        this.state.detailsTab = element.dataset.detailsTab;
+        this.renderNodeDetails();
+      });
+    });
+    panel.querySelectorAll('[data-detail-node-run-id]').forEach((element) => {
+      element.addEventListener('click', () => this.selectConcreteNodeRun(element.dataset.detailNodeRunId));
+    });
+  }
+
+  renderActivityPanel(projection) {
+    const items = projection.activity.slice(0, 80);
+    return `
+      <section class="execution-activity-panel">
+        ${items.length ? items.map((item) => `
+          <div class="execution-activity-row">
+            <time>${escapeHtml(this.formatTime(item.at))}</time>
+            <span>${escapeHtml(item.label)}</span>
+          </div>
+        `).join('') : '<div class="muted-state compact">No activity yet.</div>'}
+      </section>
+    `;
+  }
+
+  renderNodeDetailsPanel(node, projection) {
+    const nodeRuns = (projection.nodeRunsBySource.get(node.sourceNodeId) || []).slice().reverse();
+    const inputPorts = projection.inputPortsByNode.get(node.sourceNodeId) || [];
+    const outputPorts = projection.outputPortsByNode.get(node.sourceNodeId) || [];
+    const selectedRun = this.selectedNodeRun();
+    return `
+      <div class="node-run-details-grid">
+        ${this.detailRow('Agent', node.agentName || 'Unknown agent')}
+        ${this.detailRow('Input mode', this.inputModeLabel(node.inputMode))}
+      </div>
+      <section class="execution-configured-ports">
+        <h3>Inputs</h3>
+        ${inputPorts.length ? inputPorts.map((port) => this.portDetail(port)).join('') : '<div class="muted-state compact">No configured inputs.</div>'}
+        <h3>Outputs</h3>
+        ${outputPorts.length ? outputPorts.map((port) => this.portDetail(port)).join('') : '<div class="muted-state compact">No configured outputs.</div>'}
+      </section>
+      <section class="execution-history-list">
+        <h3>Execution history</h3>
+        ${nodeRuns.length ? nodeRuns.map((nodeRun) => this.renderExecutionHistoryRow(nodeRun, projection)).join('') : '<div class="muted-state compact">No executions yet.</div>'}
+      </section>
+      ${selectedRun ? this.renderConcreteNodeRunDetails(selectedRun, projection) : ''}
+      <details class="agent-snapshot-details">
+        <summary>Agent snapshot</summary>
+        <pre>${escapeHtml(node.agentInstructions || '')}</pre>
+      </details>
+    `;
+  }
+
+  portDetail(port) {
+    return `
+      <div class="execution-port-detail">
+        <strong>${escapeHtml(port.name || 'Port')}</strong>
+        <span>${escapeHtml(port.description || '')}</span>
+      </div>
+    `;
+  }
+
+  renderExecutionHistoryRow(nodeRun, projection) {
+    const number = projection.invocationNumberById.get(nodeRun.id) || 1;
+    const selected = nodeRun.id === this.state.selectedNodeRunId;
+    return `
+      <button class="execution-history-detail-row ${selected ? 'selected' : ''}" type="button" data-detail-node-run-id="${escapeHtml(nodeRun.id)}">
+        <span>#${number}</span>
+        <strong class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(nodeRun.status))}">${escapeHtml(nodeRun.status)}</strong>
+        <small>${escapeHtml(this.durationLabel(nodeRun))}</small>
+      </button>
+    `;
+  }
+
+  renderConcreteNodeRunDetails(nodeRun, projection) {
+    const inputPort = nodeRun.enteredViaInputPortId ? projection.portById.get(nodeRun.enteredViaInputPortId) : null;
+    const selectedOutput = nodeRun.selectedOutputPortId ? projection.portById.get(nodeRun.selectedOutputPortId) : null;
+    const consumed = (this.state.workflowRun.connectionResolutions || [])
+      .filter((resolution) => resolution.resolutionType === 'DELIVERED' && resolution.consumedByNodeRunId === nodeRun.id);
+    const outgoing = (this.state.workflowRun.connectionResolutions || [])
+      .filter((resolution) => resolution.sourceNodeRunId === nodeRun.id);
+    return `
+      <section class="node-run-output">
+        <h3>Execution</h3>
+        <div class="node-run-details-grid">
+          ${this.detailRow('Status', nodeRun.status || '-')}
+          ${this.detailRow('Created', this.formatDate(nodeRun.createdAt))}
+          ${this.detailRow('Started', this.formatDate(nodeRun.startedAt))}
+          ${this.detailRow('Finished', this.formatDate(nodeRun.finishedAt))}
+          ${this.detailRow('Duration', this.durationLabel(nodeRun))}
+        </div>
+      </section>
+      <section class="node-run-output">
+        <h3>Input</h3>
+        ${this.detailRow(inputPort ? 'Entry input' : 'Entry', inputPort ? `${inputPort.name} · ${inputPort.description}` : 'Root task')}
+        ${consumed.length ? consumed.map((resolution) => this.renderConsumedContribution(resolution, projection)).join('') : '<div class="muted-state compact">No consumed upstream contributions.</div>'}
+      </section>
+      <section class="node-run-output">
+        <h3>Output</h3>
+        ${nodeRun.output == null ? '<div class="muted-state compact">No output yet.</div>' : `<pre>${escapeHtml(this.formatOutput(nodeRun.output))}</pre>`}
+      </section>
+      <section class="node-run-output">
+        <h3>Routing</h3>
+        ${this.detailRow('Routing completed', this.formatDate(nodeRun.routingCompletedAt))}
+        ${this.detailRow('Selected output', selectedOutput ? selectedOutput.name : '-')}
+        ${outgoing.length ? outgoing.map((resolution) => this.renderRoutingFact(resolution, projection)).join('') : '<div class="muted-state compact">No routing facts yet.</div>'}
+      </section>
+      ${nodeRun.failure ? `
+        <section class="node-run-failure">
+          <h3>Failure</h3>
+          <strong>${escapeHtml(nodeRun.failure.code || 'FAILURE')}</strong>
+          <p>${escapeHtml(nodeRun.failure.message || '')}</p>
+        </section>
+      ` : ''}
+    `;
+  }
+
+  renderConsumedContribution(resolution, projection) {
+    const sourceRun = (this.state.workflowRun.nodeRuns || []).find((nodeRun) => nodeRun.id === resolution.sourceNodeRunId);
+    const connection = projection.connectionById.get(resolution.sourceConnectionId);
+    const sourcePort = connection ? projection.portById.get(connection.sourceOutputPortId) : null;
+    const sourceNode = sourceRun ? projection.nodeBySource.get(sourceRun.sourceNodeId) : null;
+    return `
+      <div class="execution-routing-fact">
+        <strong>${escapeHtml(sourceNode?.agentName || sourceRun?.agentName || 'Unknown source')} · ${escapeHtml(sourcePort?.name || 'Output')}</strong>
+        ${resolution.payload == null ? '' : `<pre>${escapeHtml(this.formatOutput(resolution.payload))}</pre>`}
+      </div>
+    `;
+  }
+
+  renderRoutingFact(resolution, projection) {
+    const connection = projection.connectionById.get(resolution.sourceConnectionId);
+    const targetPort = connection ? projection.portById.get(connection.targetInputPortId) : null;
+    const targetNode = targetPort ? projection.nodeBySource.get(targetPort.sourceNodeId) : null;
+    return `
+      <div class="execution-routing-fact">
+        <strong>${escapeHtml(resolution.resolutionType || '-')} ${targetNode ? `→ ${targetNode.agentName}.${targetPort.name}` : ''}</strong>
+        ${resolution.payload == null ? '' : `<pre>${escapeHtml(this.formatOutput(resolution.payload))}</pre>`}
+      </div>
+    `;
+  }
+
+  renderLegacyNodeDetails() {
     const panel = this.byId('agentsV2NodeRunDetails');
     const nodeRun = this.selectedNodeRun();
     if (!nodeRun) {
@@ -428,17 +844,204 @@ export class TaskExecutionView {
     `;
   }
 
-  formatInputMode(nodeRun) {
-    if (this.incomingExecutionEdges(nodeRun.id).length === 0) {
-      return 'Original task';
+  modernProjection() {
+    const run = this.state.workflowRun || {};
+    const graph = run.runtimeGraph || { nodes: [], ports: [], connections: [] };
+    const nodeRuns = this.sortedNodeRuns(run.nodeRuns || []);
+    const nodeBySource = new Map((graph.nodes || []).map((node) => [node.sourceNodeId, node]));
+    const portById = new Map((graph.ports || []).map((port) => [port.sourcePortId, port]));
+    const connectionById = new Map((graph.connections || []).map((connection) => [connection.sourceConnectionId, connection]));
+    const inputPortsByNode = this.groupPorts(graph.ports || [], 'INPUT');
+    const outputPortsByNode = this.groupPorts(graph.ports || [], 'OUTPUT');
+    const nodeRunsBySource = new Map();
+    const inputCountsByNode = new Map();
+    const outputCountsByNode = new Map();
+    const invocationNumberById = new Map();
+    for (const nodeRun of nodeRuns) {
+      const sourceId = nodeRun.sourceNodeId;
+      if (!nodeRunsBySource.has(sourceId)) {
+        nodeRunsBySource.set(sourceId, []);
+      }
+      const runs = nodeRunsBySource.get(sourceId);
+      runs.push(nodeRun);
+      invocationNumberById.set(nodeRun.id, runs.length);
+      if (nodeRun.enteredViaInputPortId) {
+        this.incrementNested(inputCountsByNode, sourceId, nodeRun.enteredViaInputPortId);
+      }
+      if (nodeRun.selectedOutputPortId) {
+        this.incrementNested(outputCountsByNode, sourceId, nodeRun.selectedOutputPortId);
+      }
     }
-    if (nodeRun.inputMode === 'TASK_AND_DEPENDENCIES') {
-      return 'Original task + previous outputs';
+    const deliveredByConnection = new Map();
+    const closedByConnection = new Map();
+    for (const resolution of run.connectionResolutions || []) {
+      if (resolution.resolutionType === 'DELIVERED') {
+        deliveredByConnection.set(resolution.sourceConnectionId, (deliveredByConnection.get(resolution.sourceConnectionId) || 0) + 1);
+      } else if (resolution.resolutionType === 'CLOSED') {
+        closedByConnection.set(resolution.sourceConnectionId, (closedByConnection.get(resolution.sourceConnectionId) || 0) + 1);
+      }
     }
-    if (nodeRun.inputMode === 'DEPENDENCIES_ONLY') {
-      return 'Previous outputs only';
+    const activeNodeRuns = nodeRuns.filter((nodeRun) => nodeRun.status === 'RUNNING' || nodeRun.status === 'PENDING');
+    const activity = this.projectActivity(run, { nodeBySource, portById, connectionById, invocationNumberById });
+    const reached = new Set(nodeRuns.map((nodeRun) => nodeRun.sourceNodeId)).size;
+    const summary = {
+      running: nodeRuns.filter((nodeRun) => nodeRun.status === 'RUNNING').length,
+      pending: nodeRuns.filter((nodeRun) => nodeRun.status === 'PENDING').length,
+      routing: nodeRuns.filter((nodeRun) => nodeRun.status === 'SUCCEEDED' && !nodeRun.routingCompletedAt).length,
+      totalNodeRuns: nodeRuns.length,
+      reached,
+      totalNodes: (graph.nodes || []).length,
+      lastActivity: activity[0] || null
+    };
+    return {
+      graph,
+      nodeRuns,
+      nodeBySource,
+      portById,
+      connectionById,
+      inputPortsByNode,
+      outputPortsByNode,
+      nodeRunsBySource,
+      inputCountsByNode,
+      outputCountsByNode,
+      deliveredByConnection,
+      closedByConnection,
+      activeNodeRuns,
+      activity,
+      invocationNumberById,
+      summary
+    };
+  }
+
+  projectActivity(run, indexes) {
+    const events = [];
+    let sequence = 0;
+    const nodeRunById = new Map((run.nodeRuns || []).map((nodeRun) => [nodeRun.id, nodeRun]));
+    const labelForRun = (nodeRun) => {
+      const node = indexes.nodeBySource.get(nodeRun.sourceNodeId);
+      const number = indexes.invocationNumberById.get(nodeRun.id) || 1;
+      return `${node?.agentName || nodeRun.agentName || 'Unknown agent'} #${number}`;
+    };
+    for (const nodeRun of run.nodeRuns || []) {
+      if (nodeRun.startedAt) {
+        events.push({ at: nodeRun.startedAt, sequence: sequence += 1, label: `${labelForRun(nodeRun)} started` });
+      }
+      if (nodeRun.finishedAt) {
+        events.push({ at: nodeRun.finishedAt, sequence: sequence += 1, label: `${labelForRun(nodeRun)} ${String(nodeRun.status || '').toLowerCase()}` });
+      }
+      if (nodeRun.selectedOutputPortId && (nodeRun.finishedAt || nodeRun.startedAt || nodeRun.createdAt)) {
+        const port = indexes.portById.get(nodeRun.selectedOutputPortId);
+        events.push({ at: nodeRun.finishedAt || nodeRun.startedAt || nodeRun.createdAt, sequence: sequence += 1, label: `${labelForRun(nodeRun)} selected ${port?.name || 'Output'}` });
+      }
+      if (nodeRun.routingCompletedAt) {
+        events.push({ at: nodeRun.routingCompletedAt, sequence: sequence += 1, label: `${labelForRun(nodeRun)} routing completed` });
+      }
     }
-    return 'Unknown';
+    for (const resolution of run.connectionResolutions || []) {
+      const sourceRun = nodeRunById.get(resolution.sourceNodeRunId);
+      const connection = indexes.connectionById.get(resolution.sourceConnectionId);
+      const sourcePort = connection ? indexes.portById.get(connection.sourceOutputPortId) : null;
+      const targetPort = connection ? indexes.portById.get(connection.targetInputPortId) : null;
+      const targetNode = targetPort ? indexes.nodeBySource.get(targetPort.sourceNodeId) : null;
+      const sourceLabel = sourceRun ? labelForRun(sourceRun) : 'Unknown source';
+      const output = sourcePort?.name || 'Output';
+      const target = targetNode && targetPort ? `${targetNode.agentName}.${targetPort.name}` : resolution.resolutionType;
+      events.push({ at: resolution.createdAt, sequence: sequence += 1, label: `${sourceLabel} → ${output} → ${target}` });
+    }
+    return events
+      .filter((event) => Boolean(event.at))
+      .sort((left, right) => {
+        const leftTime = new Date(left.at).getTime();
+        const rightTime = new Date(right.at).getTime();
+        if (leftTime !== rightTime) {
+          return rightTime - leftTime;
+        }
+        return right.sequence - left.sequence;
+      });
+  }
+
+  detectPollAnimations(previous, next) {
+    if (!this.hasRuntimeGraph(previous) || !this.hasRuntimeGraph(next)) {
+      return this.emptyAnimations();
+    }
+    const previousRuns = new Map((previous.nodeRuns || []).map((nodeRun) => [nodeRun.id, nodeRun]));
+    const previousResolutions = new Set((previous.connectionResolutions || []).map((resolution) => resolution.id));
+    const animations = this.emptyAnimations();
+    for (const nodeRun of next.nodeRuns || []) {
+      const oldRun = previousRuns.get(nodeRun.id);
+      if (!oldRun) {
+        animations.nodeRunIds.add(nodeRun.id);
+        if (nodeRun.enteredViaInputPortId) {
+          animations.inputPortIds.add(nodeRun.enteredViaInputPortId);
+        }
+      } else {
+        if (oldRun.status !== nodeRun.status && nodeRun.status === 'RUNNING') {
+          animations.nodeRunIds.add(nodeRun.id);
+        }
+        if (!oldRun.selectedOutputPortId && nodeRun.selectedOutputPortId) {
+          animations.outputPortIds.add(nodeRun.selectedOutputPortId);
+        }
+        if (oldRun.status !== 'FAILED' && nodeRun.status === 'FAILED') {
+          animations.nodeRunIds.add(nodeRun.id);
+        }
+      }
+    }
+    for (const resolution of next.connectionResolutions || []) {
+      if (!previousResolutions.has(resolution.id) && resolution.resolutionType === 'DELIVERED') {
+        animations.connectionResolutionIds.add(resolution.id);
+      }
+    }
+    return animations;
+  }
+
+  emptyAnimations() {
+    return {
+      nodeRunIds: new Set(),
+      inputPortIds: new Set(),
+      outputPortIds: new Set(),
+      connectionResolutionIds: new Set()
+    };
+  }
+
+  groupPorts(ports, direction) {
+    const grouped = new Map();
+    for (const port of ports.filter((item) => item.direction === direction)) {
+      if (!grouped.has(port.sourceNodeId)) {
+        grouped.set(port.sourceNodeId, []);
+      }
+      grouped.get(port.sourceNodeId).push(port);
+    }
+    for (const list of grouped.values()) {
+      list.sort((left, right) => (left.order || 0) - (right.order || 0));
+    }
+    return grouped;
+  }
+
+  incrementNested(map, key, nestedKey) {
+    if (!map.has(key)) {
+      map.set(key, new Map());
+    }
+    const nested = map.get(key);
+    nested.set(nestedKey, (nested.get(nestedKey) || 0) + 1);
+  }
+
+  sortedNodeRuns(nodeRuns) {
+    return nodeRuns.slice().sort((left, right) => {
+      const leftTime = this.parseTime(left.createdAt);
+      const rightTime = this.parseTime(right.createdAt);
+      if (leftTime !== rightTime) {
+        return leftTime - rightTime;
+      }
+      return String(left.id || '').localeCompare(String(right.id || ''));
+    });
+  }
+
+  latestNodeRunForSource(sourceNodeId, nodeRuns) {
+    return this.sortedNodeRuns(nodeRuns.filter((nodeRun) => nodeRun.sourceNodeId === sourceNodeId)).at(-1) || null;
+  }
+
+  hasRuntimeGraph(workflowRun) {
+    return Boolean(workflowRun?.runtimeGraph && Array.isArray(workflowRun.runtimeGraph.nodes));
   }
 
   consumedConnectionResolutions(nodeRunId = null) {
@@ -466,6 +1069,23 @@ export class TaskExecutionView {
 
   selectedNodeRun() {
     return (this.state.workflowRun?.nodeRuns || []).find((nodeRun) => nodeRun.id === this.state.selectedNodeRunId) || null;
+  }
+
+  selectSourceNode(sourceNodeId) {
+    this.state.selectedSourceNodeId = sourceNodeId;
+    this.state.selectedNodeRunId = this.latestNodeRunForSource(sourceNodeId, this.state.workflowRun?.nodeRuns || [])?.id || null;
+    this.renderGraph();
+    this.renderNodeDetails();
+  }
+
+  selectConcreteNodeRun(nodeRunId) {
+    const nodeRun = (this.state.workflowRun?.nodeRuns || []).find((item) => item.id === nodeRunId);
+    if (nodeRun) {
+      this.state.selectedSourceNodeId = nodeRun.sourceNodeId;
+    }
+    this.state.selectedNodeRunId = nodeRunId;
+    this.renderGraph();
+    this.renderNodeDetails();
   }
 
   selectNodeRun(nodeRunId) {
@@ -498,6 +1118,11 @@ export class TaskExecutionView {
     return Number.isNaN(time) ? 0 : time;
   }
 
+  parseTime(value) {
+    const time = value ? new Date(value).getTime() : Number.NaN;
+    return Number.isNaN(time) ? 0 : time;
+  }
+
   formatOutput(value) {
     if (typeof value === 'string') {
       try {
@@ -524,9 +1149,72 @@ export class TaskExecutionView {
     return date.toLocaleString();
   }
 
-  nodePoint(nodeRun, kind) {
+  formatTime(value) {
+    if (!value) {
+      return '-';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleTimeString();
+  }
+
+  elapsedLabel(run) {
+    const start = this.parseTime(run.startedAt || run.createdAt);
+    const end = run.finishedAt ? this.parseTime(run.finishedAt) : Date.now();
+    if (!start || !end || end < start) {
+      return '-';
+    }
+    const seconds = Math.floor((end - start) / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    return `${String(hours).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  }
+
+  durationLabel(nodeRun) {
+    if (!nodeRun.startedAt) {
+      return '-';
+    }
+    const endValue = nodeRun.finishedAt || new Date().toISOString();
+    const duration = Math.max(0, this.parseTime(endValue) - this.parseTime(nodeRun.startedAt));
+    if (duration < 1000) {
+      return `${duration}ms`;
+    }
+    return `${(duration / 1000).toFixed(duration < 10000 ? 1 : 0)}s`;
+  }
+
+  inputModeLabel(inputMode) {
+    if (inputMode === 'TASK_AND_DEPENDENCIES') {
+      return 'Original task + previous outputs';
+    }
+    if (inputMode === 'DEPENDENCIES_ONLY') {
+      return 'Previous outputs only';
+    }
+    return inputMode || 'Unknown';
+  }
+
+  formatInputMode(nodeRun) {
+    if (this.incomingExecutionEdges(nodeRun.id).length === 0) {
+      return 'Original task';
+    }
+    return this.inputModeLabel(nodeRun.inputMode);
+  }
+
+  agentNameForSource(sourceNodeId) {
+    return (this.state.workflowRun?.runtimeGraph?.nodes || []).find((node) => node.sourceNodeId === sourceNodeId)?.agentName;
+  }
+
+  modernNodePoint(node, kind) {
     return {
-      x: Number(nodeRun.position?.x || 0) + (kind === 'output' ? NODE_WIDTH : 0),
+      x: Number(node.position?.x || 0) + (kind === 'output' ? NODE_WIDTH : 0),
+      y: Number(node.position?.y || 0) + 84
+    };
+  }
+
+  legacyNodePoint(nodeRun, kind) {
+    return {
+      x: Number(nodeRun.position?.x || 0) + (kind === 'output' ? LEGACY_NODE_WIDTH : 0),
       y: Number(nodeRun.position?.y || 0) + NODE_MID_Y
     };
   }
@@ -544,6 +1232,7 @@ export class TaskExecutionView {
       return;
     }
     event.preventDefault();
+    this.disableFollowActive();
     this.canvasPan = {
       startX: event.clientX,
       startY: event.clientY,
@@ -575,6 +1264,7 @@ export class TaskExecutionView {
       return;
     }
     event.preventDefault();
+    this.disableFollowActive();
     const canvas = this.byId('agentsV2ExecutionCanvas');
     if (!canvas) {
       return;
@@ -600,14 +1290,16 @@ export class TaskExecutionView {
     };
   }
 
-  syncCanvasBounds(nodeRuns) {
+  syncCanvasBounds(nodes, legacy = false) {
     const edgesSvg = this.byId('agentsV2ExecutionEdges');
     const nodesLayer = this.byId('agentsV2ExecutionNodes');
     let width = MIN_CANVAS_WIDTH;
     let height = MIN_CANVAS_HEIGHT;
-    for (const nodeRun of nodeRuns) {
-      width = Math.max(width, Number(nodeRun.position?.x || 0) + NODE_WIDTH + CANVAS_PADDING);
-      height = Math.max(height, Number(nodeRun.position?.y || 0) + NODE_HEIGHT + CANVAS_PADDING);
+    const widthForNode = legacy ? LEGACY_NODE_WIDTH : NODE_WIDTH;
+    const heightForNode = legacy ? LEGACY_NODE_HEIGHT : NODE_HEIGHT;
+    for (const node of nodes) {
+      width = Math.max(width, Number(node.position?.x || 0) + widthForNode + CANVAS_PADDING);
+      height = Math.max(height, Number(node.position?.y || 0) + heightForNode + CANVAS_PADDING);
     }
     const widthValue = `${Math.ceil(width)}px`;
     const heightValue = `${Math.ceil(height)}px`;
@@ -617,6 +1309,76 @@ export class TaskExecutionView {
     edgesSvg.setAttribute('height', String(Math.ceil(height)));
     nodesLayer.style.width = widthValue;
     nodesLayer.style.height = heightValue;
+  }
+
+  fitTopology(nodes = null) {
+    const graphNodes = nodes || this.state.workflowRun?.runtimeGraph?.nodes || [];
+    if (!graphNodes.length) {
+      return;
+    }
+    const bounds = this.nodeBounds(graphNodes);
+    const canvas = this.byId('agentsV2ExecutionCanvas');
+    const rect = canvas?.getBoundingClientRect?.() || {};
+    const viewportWidth = rect.width || 900;
+    const viewportHeight = rect.height || 520;
+    const scale = clamp(Math.min((viewportWidth - 48) / bounds.width, (viewportHeight - 48) / bounds.height), MIN_CANVAS_SCALE, MAX_CANVAS_SCALE);
+    this.viewport = {
+      scale,
+      x: ((viewportWidth - bounds.width * scale) / 2) - (bounds.left * scale),
+      y: ((viewportHeight - bounds.height * scale) / 2) - (bounds.top * scale)
+    };
+    this.applyViewportTransform();
+  }
+
+  centerActive() {
+    const projection = this.modernProjection();
+    const activeSourceIds = [...new Set(projection.activeNodeRuns.map((nodeRun) => nodeRun.sourceNodeId))];
+    const activeNodes = activeSourceIds.map((sourceId) => projection.nodeBySource.get(sourceId)).filter(Boolean);
+    if (activeNodes.length) {
+      this.fitTopology(activeNodes);
+    }
+  }
+
+  followNewActiveNode() {
+    const newActiveIds = (this.state.workflowRun?.nodeRuns || [])
+      .filter((nodeRun) => (nodeRun.status === 'RUNNING' || nodeRun.status === 'PENDING') && this.state.pendingAnimations.nodeRunIds.has(nodeRun.id))
+      .map((nodeRun) => nodeRun.sourceNodeId);
+    if (!newActiveIds.length) {
+      return;
+    }
+    const projection = this.modernProjection();
+    const activeNodes = [...new Set(newActiveIds)].map((sourceId) => projection.nodeBySource.get(sourceId)).filter(Boolean);
+    if (activeNodes.length) {
+      this.fitTopology(activeNodes);
+    }
+  }
+
+  disableFollowActive() {
+    if (this.state.followActive) {
+      this.state.followActive = false;
+      this.renderExecutionState();
+    }
+  }
+
+  nodeBounds(nodes) {
+    let left = Infinity;
+    let top = Infinity;
+    let right = -Infinity;
+    let bottom = -Infinity;
+    for (const node of nodes) {
+      const x = Number(node.position?.x || 0);
+      const y = Number(node.position?.y || 0);
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x + NODE_WIDTH);
+      bottom = Math.max(bottom, y + NODE_HEIGHT);
+    }
+    return {
+      left: left - 32,
+      top: top - 32,
+      width: Math.max(1, right - left + 64),
+      height: Math.max(1, bottom - top + 64)
+    };
   }
 
   applyViewportTransform() {
@@ -668,6 +1430,10 @@ export class TaskExecutionView {
       workflowRun: null,
       selectedRunId: null,
       selectedNodeRunId: null,
+      selectedSourceNodeId: null,
+      detailsTab: 'details',
+      followActive: false,
+      pendingAnimations: this.emptyAnimations(),
       loadingTask: false,
       loadingRun: false,
       taskError: '',
@@ -701,6 +1467,28 @@ export function statusTone(status) {
     return 'pending';
   }
   return 'unknown';
+}
+
+function statusSymbol(status) {
+  if (status === 'SUCCEEDED') {
+    return '✓';
+  }
+  if (status === 'RUNNING') {
+    return '●';
+  }
+  if (status === 'PENDING') {
+    return '○';
+  }
+  if (status === 'FAILED') {
+    return '!';
+  }
+  if (status === 'BLOCKED') {
+    return 'B';
+  }
+  if (status === 'CANCELLED') {
+    return '×';
+  }
+  return '?';
 }
 
 function clamp(value, min, max) {

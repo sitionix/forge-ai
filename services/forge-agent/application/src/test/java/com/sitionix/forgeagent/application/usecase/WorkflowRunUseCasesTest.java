@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -24,6 +25,7 @@ import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
@@ -41,6 +43,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -132,6 +135,33 @@ class WorkflowRunUseCasesTest {
     }
 
     @Test
+    void eachWorkflowRunUsesTheLiveWorkflowShapeOnlyForItsOwnSnapshot() {
+        final Workflow firstWorkflowShape = this.workflowWithOutput("Done", "Terminal output");
+        final Workflow secondWorkflowShape = this.workflowWithOutput("Escalate", "Escalation output");
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId))
+                .thenReturn(Optional.of(firstWorkflowShape), Optional.of(secondWorkflowShape));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
+        when(this.entrySelector.selectEntries(any())).thenAnswer(invocation -> invocation.<WorkflowRunGraph>getArgument(0).nodes());
+        when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(this.executionFrameRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(this.nodeRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run one"));
+        this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run two"));
+
+        final ArgumentCaptor<WorkflowRunGraph> graphCaptor = ArgumentCaptor.forClass(WorkflowRunGraph.class);
+        verify(this.graphRepository, times(2)).saveSnapshot(graphCaptor.capture());
+        assertThat(graphCaptor.getAllValues().get(0).ports())
+                .extracting(port -> port.name() + ":" + port.description())
+                .contains("Done:Terminal output")
+                .doesNotContain("Escalate:Escalation output");
+        assertThat(graphCaptor.getAllValues().get(1).ports())
+                .extracting(port -> port.name() + ":" + port.description())
+                .contains("Escalate:Escalation output")
+                .doesNotContain("Done:Terminal output");
+    }
+
+    @Test
     void missingEntryReturnsControlledError() {
         final Workflow workflow = this.workflow();
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
@@ -192,6 +222,10 @@ class WorkflowRunUseCasesTest {
     }
 
     private Workflow workflow() {
+        return this.workflowWithOutput("Done", "Done");
+    }
+
+    private Workflow workflowWithOutput(final String outputName, final String outputDescription) {
         return new Workflow(
                 this.workflowId,
                 this.projectId,
@@ -202,7 +236,7 @@ class WorkflowRunUseCasesTest {
                         this.agentId,
                         com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
                         List.of(new NodePort(UUID.randomUUID(), "Input", "Input", 0)),
-                        List.of(new NodePort(UUID.randomUUID(), "Done", "Done", 0)),
+                        List.of(new NodePort(UUID.randomUUID(), outputName, outputDescription, 0)),
                         new NodePosition(1.0, 2.0)
                 )),
                 List.of(),
