@@ -15,12 +15,15 @@
       "agentOutputSchema": {
         "type": "object"
       },
-      "dependsOnNodeRunIds": [],
       "inputMode": "DEPENDENCIES_ONLY",
       "position": {
         "x": 1,
         "y": 2
       },
+      "executionFrameId": "77777777-7777-4777-8777-777777777777",
+      "enteredViaInputPortId": null,
+      "activationFrameId": null,
+      "selectedOutputPortId": null,
       "status": "PENDING",
       "output": null,
       "failure": null,
@@ -29,6 +32,8 @@
       "finishedAt": null
     }
   ],
+  "connectionResolutions": [],
+  "executionEdges": [],
   "createdAt": "2026-08-04T00:00:00Z",
   "startedAt": null,
   "finishedAt": null

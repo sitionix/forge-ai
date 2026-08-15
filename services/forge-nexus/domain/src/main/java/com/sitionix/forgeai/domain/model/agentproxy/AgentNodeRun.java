@@ -1,7 +1,6 @@
 package com.sitionix.forgeai.domain.model.agentproxy;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 public record AgentNodeRun(
@@ -11,9 +10,12 @@ public record AgentNodeRun(
         String agentName,
         String agentInstructions,
         AgentOutputSchemaDocument agentOutputSchema,
-        List<UUID> dependsOnNodeRunIds,
         NodeInputMode inputMode,
         NodePosition position,
+        UUID executionFrameId,
+        UUID enteredViaInputPortId,
+        UUID activationFrameId,
+        UUID selectedOutputPortId,
         AgentNodeRunStatus status,
         AgentNodeRunOutputDocument output,
         AgentNodeRunFailure failure,
@@ -27,7 +29,6 @@ public record AgentNodeRun(
                         final String agentName,
                         final String agentInstructions,
                         final AgentOutputSchemaDocument agentOutputSchema,
-                        final List<UUID> dependsOnNodeRunIds,
                         final NodePosition position,
                         final AgentNodeRunStatus status,
                         final AgentNodeRunOutputDocument output,
@@ -42,9 +43,12 @@ public record AgentNodeRun(
                 agentName,
                 agentInstructions,
                 agentOutputSchema,
-                dependsOnNodeRunIds,
                 NodeInputMode.DEPENDENCIES_ONLY,
                 position,
+                null,
+                null,
+                null,
+                null,
                 status,
                 output,
                 failure,

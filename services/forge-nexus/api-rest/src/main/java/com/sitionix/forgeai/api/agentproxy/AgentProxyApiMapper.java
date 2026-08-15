@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentModelSelection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
@@ -18,6 +19,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunExecutionEdge;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
@@ -229,9 +231,19 @@ public class AgentProxyApiMapper {
                 run.input(),
                 run.status(),
                 run.nodeRuns().stream().map(this::toResponse).toList(),
+                run.connectionResolutions().stream().map(this::toResponse).toList(),
+                run.executionEdges().stream().map(this::toResponse).toList(),
                 run.createdAt(),
                 run.startedAt(),
                 run.finishedAt()
+        );
+    }
+
+    private AgentWorkflowRunExecutionEdgeResponse toResponse(final AgentWorkflowRunExecutionEdge edge) {
+        return new AgentWorkflowRunExecutionEdgeResponse(
+                edge.sourceNodeRunId(),
+                edge.targetNodeRunId(),
+                edge.sourceType()
         );
     }
 
@@ -288,9 +300,12 @@ public class AgentProxyApiMapper {
                     nodeRun.agentName(),
                     nodeRun.agentInstructions(),
                     this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
-                    nodeRun.dependsOnNodeRunIds(),
                     nodeRunInputMode(nodeRun.inputMode()).name(),
                     new NodePositionResponse(nodeRun.position().x(), nodeRun.position().y()),
+                    nodeRun.executionFrameId(),
+                    nodeRun.enteredViaInputPortId(),
+                    nodeRun.activationFrameId(),
+                    nodeRun.selectedOutputPortId(),
                     nodeRun.status(),
                     nodeRun.output() == null ? null : this.objectMapper.readTree(nodeRun.output().jsonValue()),
                     nodeRun.failure() == null ? null : this.toResponse(nodeRun.failure()),
@@ -305,6 +320,24 @@ public class AgentProxyApiMapper {
 
     private AgentNodeRunFailureResponse toResponse(final AgentNodeRunFailure failure) {
         return new AgentNodeRunFailureResponse(failure.code(), failure.message());
+    }
+
+    private AgentConnectionResolutionResponse toResponse(final AgentConnectionResolution resolution) {
+        try {
+            return new AgentConnectionResolutionResponse(
+                    resolution.id(),
+                    resolution.executionFrameId(),
+                    resolution.sourceNodeRunId(),
+                    resolution.sourceConnectionId(),
+                    resolution.targetInputPortId(),
+                    resolution.resolutionType(),
+                    resolution.payload() == null ? null : this.objectMapper.readTree(resolution.payload().jsonValue()),
+                    resolution.consumedByNodeRunId(),
+                    resolution.createdAt()
+            );
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalStateException("Agent connection resolution payload is not valid JSON.", exception);
+        }
     }
 
     private static NodeInputMode inputMode(final NodeInputMode inputMode) {

@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 import com.sitionix.forgeagent.infrastructure.postgres.entity.AgentDefinitionEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.ExecutionFrameEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
@@ -28,6 +29,7 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodeEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataAgentDefinitionRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataExecutionFrameRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataNodeRunRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataProjectRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataProjectTaskRepository;
@@ -57,6 +59,9 @@ class ForgeAgentDeleteIT {
 
     @Autowired
     private SpringDataNodeRunRepository nodeRunRepository;
+
+    @Autowired
+    private SpringDataExecutionFrameRepository executionFrameRepository;
 
     @Autowired
     private SpringDataAgentDefinitionRepository agentRepository;
@@ -116,6 +121,7 @@ class ForgeAgentDeleteIT {
         assertThat(this.forgeIt.postgresql().get(WorkflowNodeEntity.class).getAll()).isEmpty();
         assertThat(this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll()).isEmpty();
         assertThat(this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll()).isEmpty();
+        assertThat(this.forgeIt.postgresql().get(ExecutionFrameEntity.class).getAll()).isEmpty();
         assertThat(this.forgeIt.postgresql().get(NodeRunEntity.class).getAll()).isEmpty();
     }
 
@@ -333,6 +339,12 @@ class ForgeAgentDeleteIT {
     }
 
     private NodeRunEntity nodeRun(final UUID nodeRunId, final UUID workflowRunId, final UUID agentId, final String status) {
+        final ExecutionFrameEntity frame = new ExecutionFrameEntity();
+        frame.setId(UUID.randomUUID());
+        frame.setWorkflowRunId(workflowRunId);
+        frame.setCreatedAt(Instant.parse("2026-08-14T10:00:30Z"));
+        this.executionFrameRepository.save(frame);
+
         final NodeRunEntity entity = new NodeRunEntity();
         entity.setId(nodeRunId);
         entity.setWorkflowRunId(workflowRunId);
@@ -341,7 +353,8 @@ class ForgeAgentDeleteIT {
         entity.setAgentName("Agent A");
         entity.setAgentInstructions("Do work.");
         entity.setAgentOutputSchema("{\"type\":\"object\"}");
-        entity.setDependsOnNodeRunIds(new UUID[0]);
+        entity.setInputMode("DEPENDENCIES_ONLY");
+        entity.setExecutionFrameId(frame.getId());
         entity.setPositionX(0.0);
         entity.setPositionY(0.0);
         entity.setStatus(status);

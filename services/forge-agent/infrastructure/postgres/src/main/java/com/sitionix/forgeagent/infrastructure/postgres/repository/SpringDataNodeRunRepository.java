@@ -15,15 +15,34 @@ public interface SpringDataNodeRunRepository extends JpaRepository<NodeRunEntity
 
     List<NodeRunEntity> findByWorkflowRunIdOrderByCreatedAtAscIdAsc(UUID workflowRunId);
 
+    List<NodeRunEntity> findByWorkflowRunIdAndExecutionFrameIdOrderByCreatedAtAscIdAsc(UUID workflowRunId, UUID executionFrameId);
+
+    Optional<NodeRunEntity> findByWorkflowRunIdAndExecutionFrameIdAndSourceNodeId(UUID workflowRunId, UUID executionFrameId, UUID sourceNodeId);
+
+    Optional<NodeRunEntity> findByWorkflowRunIdAndActivationFrameIdAndEnteredViaInputPortId(UUID workflowRunId, UUID activationFrameId, UUID enteredViaInputPortId);
+
     @Query("""
             select n.id
             from NodeRunEntity n
             join WorkflowRunEntity w on w.id = n.workflowRunId
             where n.status = 'PENDING'
+              and n.executionFrameId is not null
               and w.status in ('QUEUED', 'RUNNING')
             order by n.createdAt asc, n.id asc
             """)
     List<UUID> findPendingIds();
+
+    @Query("""
+            select n.id
+            from NodeRunEntity n
+            join WorkflowRunEntity w on w.id = n.workflowRunId
+            where n.status = 'SUCCEEDED'
+              and n.routingCompletedAt is null
+              and n.executionFrameId is not null
+              and w.status in ('QUEUED', 'RUNNING')
+            order by n.createdAt asc, n.id asc
+            """)
+    List<UUID> findSuccessfulUnroutedIds();
 
     @Query("select n.workflowRunId from NodeRunEntity n where n.id = :id")
     Optional<UUID> findWorkflowRunIdById(@Param("id") UUID id);

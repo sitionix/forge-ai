@@ -15,7 +15,10 @@ import org.hibernate.type.SqlTypes;
 @Entity
 @Table(
         name = "node_runs",
-        uniqueConstraints = @UniqueConstraint(name = "uk_node_runs_workflow_run_source_node", columnNames = {"workflow_run_id", "source_node_id"})
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_node_runs_workflow_run_frame_source_node",
+                columnNames = {"workflow_run_id", "execution_frame_id", "source_node_id"}
+        )
 )
 @Getter
 @Setter
@@ -43,10 +46,6 @@ public class NodeRunEntity {
     @Column(name = "agent_output_schema", nullable = false, columnDefinition = "jsonb")
     private String agentOutputSchema;
 
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "depends_on_node_run_ids", nullable = false, columnDefinition = "uuid[]")
-    private UUID[] dependsOnNodeRunIds;
-
     @Column(name = "position_x", nullable = false)
     private double positionX;
 
@@ -55,6 +54,21 @@ public class NodeRunEntity {
 
     @Column(name = "input_mode", nullable = false, length = 32)
     private String inputMode = "DEPENDENCIES_ONLY";
+
+    @Column(name = "execution_frame_id", nullable = false)
+    private UUID executionFrameId;
+
+    @Column(name = "entered_via_input_port_id")
+    private UUID enteredViaInputPortId;
+
+    @Column(name = "activation_frame_id")
+    private UUID activationFrameId;
+
+    @Column(name = "selected_output_port_id")
+    private UUID selectedOutputPortId;
+
+    @Column(name = "routing_completed_at")
+    private Instant routingCompletedAt;
 
     @Column(nullable = false, length = 32)
     private String status;

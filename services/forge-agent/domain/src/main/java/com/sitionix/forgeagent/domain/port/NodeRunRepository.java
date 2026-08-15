@@ -10,6 +10,8 @@ public interface NodeRunRepository {
 
     List<UUID> findPendingIds();
 
+    List<UUID> findSuccessfulUnroutedIds();
+
     Optional<UUID> findWorkflowRunIdById(UUID nodeRunId);
 
     Optional<NodeRun> findById(UUID nodeRunId);
@@ -20,7 +22,15 @@ public interface NodeRunRepository {
 
     List<NodeRun> findByWorkflowRunId(UUID workflowRunId);
 
+    List<NodeRun> findByWorkflowRunIdAndExecutionFrameId(UUID workflowRunId, UUID executionFrameId);
+
+    Optional<NodeRun> findByWorkflowRunIdAndExecutionFrameIdAndSourceNodeId(UUID workflowRunId, UUID executionFrameId, UUID sourceNodeId);
+
+    Optional<NodeRun> findByWorkflowRunIdAndActivationFrameIdAndEnteredViaInputPortId(UUID workflowRunId, UUID activationFrameId, UUID enteredViaInputPortId);
+
     NodeRun save(NodeRun nodeRun);
+
+    NodeRun saveAndFlush(NodeRun nodeRun);
 
     boolean existsActiveBySourceAgentId(UUID agentId);
 }

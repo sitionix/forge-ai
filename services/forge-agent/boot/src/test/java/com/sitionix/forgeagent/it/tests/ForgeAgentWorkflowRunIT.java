@@ -2,7 +2,9 @@ package com.sitionix.forgeagent.it.tests;
 
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_ALPHA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.WORKFLOW_ID;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_WORKFLOW_RUN;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CREATE_WORKFLOW_RUN_ERROR;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.UPDATE_WORKFLOW;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.GET_WORKFLOW_RUN;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_WORKFLOW_RUNS;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
@@ -15,7 +17,11 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.ExecutionFrameEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunNodeEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunPortEntity;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
@@ -33,19 +39,35 @@ class ForgeAgentWorkflowRunIT {
     private ForgeAgentTestManager forgeIt;
 
     @Test
-    void givenWorkflow_whenCreateRun_thenConflictAndNoSnapshotIsPersisted() {
+    void givenExecutableWorkflow_whenCreateRun_thenRuntimeSnapshotAndRootRunArePersisted() {
         this.seedProjectAgentsAndWorkflow();
+        this.updateWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_WORKFLOW_RUN_ERROR)
+                .ping(CREATE_WORKFLOW_RUN)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestCreateWorkflowRun.json")
-                .expectStatus(HttpStatus.CONFLICT)
-                .andExpectPath(jsonPath("$.code").value("WORKFLOW_GRAPH_EXECUTION_NOT_SUPPORTED"))
+                .expectStatus(HttpStatus.CREATED)
+                .andExpectPath(jsonPath("$.nodeRuns", hasSize(1)))
+                .andExpectPath(jsonPath("$.connectionResolutions", hasSize(0)))
                 .assertAndCreate();
 
-        assertThat(this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll()).isEmpty();
-        assertThat(this.forgeIt.postgresql().get(NodeRunEntity.class).getAll()).isEmpty();
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll()).singleElement().satisfies(run -> {
+            assertThat(run.getSourceWorkflowId()).isEqualTo(WORKFLOW_ID);
+            assertThat(run.getStatus()).isEqualTo("QUEUED");
+            assertThat(run.getTaskId()).isNull();
+        });
+        assertThat(this.forgeIt.postgresql().get(ExecutionFrameEntity.class).getAll()).hasSize(1);
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunNodeEntity.class).getAll()).hasSize(3);
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunPortEntity.class).getAll()).hasSize(6);
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunConnectionEntity.class).getAll()).hasSize(2);
+        assertThat(this.forgeIt.postgresql().get(NodeRunEntity.class).getAll()).singleElement().satisfies(nodeRun -> {
+            assertThat(nodeRun.getSourceNodeId()).isEqualTo(UUID.fromString("40000000-0000-4000-8000-000000000001"));
+            assertThat(nodeRun.getStatus()).isEqualTo("PENDING");
+            assertThat(nodeRun.getExecutionFrameId()).isNotNull();
+            assertThat(nodeRun.getActivationFrameId()).isNull();
+            assertThat(nodeRun.getEnteredViaInputPortId()).isNull();
+        });
     }
 
     @Test
@@ -128,5 +150,14 @@ class ForgeAgentWorkflowRunIT {
                 .to(AGENT_DEFINITION.withJson("agent_c.json"))
                 .to(WORKFLOW.withJson("workflow_alpha.json"))
                 .build();
+    }
+
+    private void updateWorkflow() {
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestUpdateWorkflowGraph.json")
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
     }
 }

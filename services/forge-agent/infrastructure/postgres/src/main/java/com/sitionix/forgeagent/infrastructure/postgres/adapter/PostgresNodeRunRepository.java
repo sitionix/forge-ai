@@ -28,6 +28,11 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     }
 
     @Override
+    public List<UUID> findSuccessfulUnroutedIds() {
+        return this.repository.findSuccessfulUnroutedIds();
+    }
+
+    @Override
     public Optional<UUID> findWorkflowRunIdById(final UUID nodeRunId) {
         return this.repository.findWorkflowRunIdById(nodeRunId);
     }
@@ -60,8 +65,36 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     }
 
     @Override
+    public List<NodeRun> findByWorkflowRunIdAndExecutionFrameId(final UUID workflowRunId, final UUID executionFrameId) {
+        return this.repository.findByWorkflowRunIdAndExecutionFrameIdOrderByCreatedAtAscIdAsc(workflowRunId, executionFrameId).stream()
+                .map(PostgresNodeRunMapper::toDomain)
+                .toList();
+    }
+
+    @Override
+    public Optional<NodeRun> findByWorkflowRunIdAndExecutionFrameIdAndSourceNodeId(final UUID workflowRunId,
+                                                                                   final UUID executionFrameId,
+                                                                                   final UUID sourceNodeId) {
+        return this.repository.findByWorkflowRunIdAndExecutionFrameIdAndSourceNodeId(workflowRunId, executionFrameId, sourceNodeId)
+                .map(PostgresNodeRunMapper::toDomain);
+    }
+
+    @Override
+    public Optional<NodeRun> findByWorkflowRunIdAndActivationFrameIdAndEnteredViaInputPortId(final UUID workflowRunId,
+                                                                                             final UUID activationFrameId,
+                                                                                             final UUID enteredViaInputPortId) {
+        return this.repository.findByWorkflowRunIdAndActivationFrameIdAndEnteredViaInputPortId(workflowRunId, activationFrameId, enteredViaInputPortId)
+                .map(PostgresNodeRunMapper::toDomain);
+    }
+
+    @Override
     public NodeRun save(final NodeRun nodeRun) {
         return PostgresNodeRunMapper.toDomain(this.repository.save(PostgresNodeRunMapper.toEntity(nodeRun)));
+    }
+
+    @Override
+    public NodeRun saveAndFlush(final NodeRun nodeRun) {
+        return PostgresNodeRunMapper.toDomain(this.repository.saveAndFlush(PostgresNodeRunMapper.toEntity(nodeRun)));
     }
 
     @Override

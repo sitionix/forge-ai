@@ -43,6 +43,7 @@ import com.sitionix.forgeagent.domain.model.AgentListItem;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.AiRuntimeCatalog;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
@@ -472,7 +473,7 @@ class ForgeAgentControllerTest {
                         "Backend",
                         "Do work.",
                         OUTPUT_SCHEMA,
-                        List.of(),
+                        UUID.fromString("99999999-0000-4000-8000-000000000001"),
                         new NodePosition(1.0, 2.0),
                         NodeRunStatus.PENDING,
                         null,
@@ -504,8 +505,12 @@ class ForgeAgentControllerTest {
                         "Backend",
                         "Do work.",
                         this.objectMapper.createObjectNode(),
-                        List.of(),
+                        NodeInputMode.DEPENDENCIES_ONLY.name(),
                         new NodePositionResponse(1.0, 2.0),
+                        UUID.fromString("99999999-0000-4000-8000-000000000001"),
+                        null,
+                        null,
+                        null,
                         NodeRunStatus.PENDING,
                         null,
                         null,

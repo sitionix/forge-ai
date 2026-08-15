@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentModelSelection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
@@ -19,7 +20,9 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunExecutionEdge;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
+import com.sitionix.forgeai.domain.model.agentproxy.ConnectionResolutionType;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
@@ -43,6 +46,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeProviderR
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ConnectionResolutionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunFailureResponse;
@@ -56,6 +60,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageRespon
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunExecutionEdgeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import java.util.List;
 import java.util.UUID;
@@ -276,9 +281,27 @@ public class ForgeAgentClientMapper {
                 this.requireList(response.nodeRuns(), "workflowRun.nodeRuns").stream()
                         .map(this::toDomain)
                         .toList(),
+                this.requireList(response.connectionResolutions(), "workflowRun.connectionResolutions").stream()
+                        .map(this::toDomain)
+                        .toList(),
+                this.optionalList(response.executionEdges()).stream()
+                        .map(this::toDomain)
+                        .toList(),
                 response.createdAt(),
                 response.startedAt(),
                 response.finishedAt()
+        );
+    }
+
+    private AgentWorkflowRunExecutionEdge toDomain(final WorkflowRunExecutionEdgeResponse response) {
+        this.requireResponse(response, "workflow run execution edge");
+        this.requireId(response.sourceNodeRunId(), "workflowRun.executionEdges.sourceNodeRunId");
+        this.requireId(response.targetNodeRunId(), "workflowRun.executionEdges.targetNodeRunId");
+        this.requireText(response.sourceType(), "workflowRun.executionEdges.sourceType");
+        return new AgentWorkflowRunExecutionEdge(
+                response.sourceNodeRunId(),
+                response.targetNodeRunId(),
+                response.sourceType()
         );
     }
 
@@ -424,9 +447,12 @@ public class ForgeAgentClientMapper {
                     response.agentName(),
                     response.agentInstructions(),
                     new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(response.agentOutputSchema())),
-                    this.requireList(response.dependsOnNodeRunIds(), "nodeRun.dependsOnNodeRunIds"),
                     nodeRunInputMode(response.inputMode()),
                     new NodePosition(response.position().x(), response.position().y()),
+                    response.executionFrameId(),
+                    response.enteredViaInputPortId(),
+                    response.activationFrameId(),
+                    response.selectedOutputPortId(),
                     response.status(),
                     response.output() == null ? null : new AgentNodeRunOutputDocument(this.objectMapper.writeValueAsString(response.output())),
                     response.failure() == null ? null : this.toDomain(response.failure()),
@@ -446,11 +472,42 @@ public class ForgeAgentClientMapper {
         return new AgentNodeRunFailure(response.code(), response.message());
     }
 
+    private AgentConnectionResolution toDomain(final ConnectionResolutionResponse response) {
+        this.requireResponse(response, "connection resolution");
+        this.requireId(response.id(), "connectionResolution.id");
+        this.requireId(response.executionFrameId(), "connectionResolution.executionFrameId");
+        this.requireId(response.sourceNodeRunId(), "connectionResolution.sourceNodeRunId");
+        this.requireId(response.sourceConnectionId(), "connectionResolution.sourceConnectionId");
+        this.requireId(response.targetInputPortId(), "connectionResolution.targetInputPortId");
+        if (response.resolutionType() == null) {
+            throw this.invalid("connectionResolution.resolutionType must not be null");
+        }
+        try {
+            return new AgentConnectionResolution(
+                    response.id(),
+                    response.executionFrameId(),
+                    response.sourceNodeRunId(),
+                    response.sourceConnectionId(),
+                    response.targetInputPortId(),
+                    ConnectionResolutionType.valueOf(response.resolutionType().name()),
+                    response.payload() == null ? null : new AgentNodeRunOutputDocument(this.objectMapper.writeValueAsString(response.payload())),
+                    response.consumedByNodeRunId(),
+                    response.createdAt()
+            );
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalArgumentException("Forge Agent connection resolution payload was invalid.", exception);
+        }
+    }
+
     <T> List<T> requireList(final List<T> responses, final String field) {
         if (responses == null) {
             throw this.invalid(field + " must not be null");
         }
         return responses;
+    }
+
+    private <T> List<T> optionalList(final List<T> responses) {
+        return responses == null ? List.of() : responses;
     }
 
     private void requireResponse(final Object response, final String label) {
