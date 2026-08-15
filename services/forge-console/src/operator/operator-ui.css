@@ -1385,9 +1385,10 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .execution-board-node {
-  width: 224px;
+  width: 252px;
   min-height: 132px;
   padding: 12px;
+  overflow: visible;
 }
 
 .execution-board-node-head {
@@ -1437,10 +1438,42 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .execution-board-port-row {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
+  min-height: 22px;
+  padding: 2px 0;
+}
+
+.execution-board-port-row-input {
+  padding-left: 16px;
+}
+
+.execution-board-port-row-output {
+  padding-right: 16px;
+  text-align: right;
+}
+
+.execution-port-anchor {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(43, 111, 98, 0.58);
+  border-radius: 50%;
+  background: #fffaf0;
+  transform: translateY(-50%);
+}
+
+.execution-board-port-row-input .execution-port-anchor {
+  left: -17px;
+}
+
+.execution-board-port-row-output .execution-port-anchor {
+  right: -17px;
+  background: #2b6f62;
 }
 
 .execution-board-port-row small {

@@ -24,6 +24,7 @@ import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.Workflow;
+import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
@@ -57,7 +58,14 @@ class WorkflowRunUseCasesTest {
     private final UUID workflowId = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private final UUID taskId = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private final UUID nodeId = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    private final UUID secondNodeId = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
     private final UUID agentId = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    private final UUID secondAgentId = UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    private final UUID inputPortId = UUID.fromString("55555555-5555-4555-8555-555555555555");
+    private final UUID outputPortId = UUID.fromString("66666666-6666-4666-8666-666666666666");
+    private final UUID secondInputPortId = UUID.fromString("77777777-7777-4777-8777-777777777777");
+    private final UUID secondOutputPortId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+    private final UUID connectionId = UUID.fromString("99999999-9999-4999-8999-999999999999");
 
     @Mock
     private WorkflowRepository workflowRepository;
@@ -96,10 +104,10 @@ class WorkflowRunUseCasesTest {
 
     @Test
     void createWorkflowRunSnapshotsGraphAndCreatesOnlyRootPendingNodeRuns() {
-        final Workflow workflow = this.workflow();
+        final Workflow workflow = this.workflowWithTwoNodes();
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
-        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
-        when(this.entrySelector.selectEntries(any())).thenAnswer(invocation -> invocation.<com.sitionix.forgeagent.domain.model.WorkflowRunGraph>getArgument(0).nodes());
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent(), this.secondAgent()));
+        when(this.entrySelector.selectEntries(any())).thenAnswer(invocation -> List.of(invocation.<WorkflowRunGraph>getArgument(0).nodes().get(0)));
         when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.executionFrameRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.nodeRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -107,6 +115,21 @@ class WorkflowRunUseCasesTest {
         final WorkflowRun run = this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run it"));
 
         assertThat(run.status()).isEqualTo(WorkflowRunStatus.QUEUED);
+        assertThat(run.runtimeGraph()).isNotNull();
+        assertThat(run.runtimeGraph().nodes())
+                .extracting(item -> item.sourceNodeId())
+                .containsExactly(this.nodeId, this.secondNodeId);
+        assertThat(run.runtimeGraph().ports())
+                .extracting(port -> port.sourcePortId() + ":" + port.name() + ":" + port.description())
+                .contains(
+                        this.inputPortId + ":Input:Input",
+                        this.outputPortId + ":Done:Done",
+                        this.secondInputPortId + ":Review feedback:Review feedback",
+                        this.secondOutputPortId + ":Approved:Approved"
+                );
+        assertThat(run.runtimeGraph().connections())
+                .extracting(connection -> connection.sourceConnectionId())
+                .containsExactly(this.connectionId);
         assertThat(run.nodeRuns()).hasSize(1);
         assertThat(run.nodeRuns().get(0)).satisfies(nodeRun -> {
             assertThat(nodeRun.sourceNodeId()).isEqualTo(this.nodeId);
@@ -115,6 +138,9 @@ class WorkflowRunUseCasesTest {
             assertThat(nodeRun.activationFrameId()).isNull();
             assertThat(nodeRun.enteredViaInputPortId()).isNull();
         });
+        final ArgumentCaptor<WorkflowRun> savedRunCaptor = ArgumentCaptor.forClass(WorkflowRun.class);
+        verify(this.workflowRunRepository).save(savedRunCaptor.capture());
+        assertThat(savedRunCaptor.getValue().runtimeGraph()).isEqualTo(run.runtimeGraph());
         verify(this.graphRepository).saveSnapshot(any());
         verify(this.executionFrameRepository).save(any(ExecutionFrame.class));
     }
@@ -132,6 +158,8 @@ class WorkflowRunUseCasesTest {
         final WorkflowRun run = this.useCases.createWorkflowRunForTask(this.workflowId, new CreateWorkflowRunCommand("Run it"), this.taskId);
 
         assertThat(run.taskId()).isEqualTo(this.taskId);
+        assertThat(run.runtimeGraph()).isNotNull();
+        assertThat(run.runtimeGraph().nodes()).hasSize(1);
     }
 
     @Test
@@ -146,8 +174,8 @@ class WorkflowRunUseCasesTest {
         when(this.executionFrameRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.nodeRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run one"));
-        this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run two"));
+        final WorkflowRun firstRun = this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run one"));
+        final WorkflowRun secondRun = this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run two"));
 
         final ArgumentCaptor<WorkflowRunGraph> graphCaptor = ArgumentCaptor.forClass(WorkflowRunGraph.class);
         verify(this.graphRepository, times(2)).saveSnapshot(graphCaptor.capture());
@@ -159,6 +187,8 @@ class WorkflowRunUseCasesTest {
                 .extracting(port -> port.name() + ":" + port.description())
                 .contains("Escalate:Escalation output")
                 .doesNotContain("Done:Terminal output");
+        assertThat(firstRun.runtimeGraph()).isEqualTo(graphCaptor.getAllValues().get(0));
+        assertThat(secondRun.runtimeGraph()).isEqualTo(graphCaptor.getAllValues().get(1));
     }
 
     @Test
@@ -245,6 +275,36 @@ class WorkflowRunUseCasesTest {
         );
     }
 
+    private Workflow workflowWithTwoNodes() {
+        return new Workflow(
+                this.workflowId,
+                this.projectId,
+                "Full Testing",
+                "full testing",
+                List.of(
+                        new Node(
+                                this.nodeId,
+                                this.agentId,
+                                com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                                List.of(new NodePort(this.inputPortId, "Input", "Input", 0)),
+                                List.of(new NodePort(this.outputPortId, "Done", "Done", 0)),
+                                new NodePosition(1.0, 2.0)
+                        ),
+                        new Node(
+                                this.secondNodeId,
+                                this.secondAgentId,
+                                com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                                List.of(new NodePort(this.secondInputPortId, "Review feedback", "Review feedback", 0)),
+                                List.of(new NodePort(this.secondOutputPortId, "Approved", "Approved", 0)),
+                                new NodePosition(3.0, 4.0)
+                        )
+                ),
+                List.of(new WorkflowConnection(this.connectionId, this.outputPortId, this.secondInputPortId)),
+                NOW,
+                NOW
+        );
+    }
+
     private AgentDefinition agent() {
         return new AgentDefinition(
                 this.agentId,
@@ -252,6 +312,20 @@ class WorkflowRunUseCasesTest {
                 "Snapshot Agent",
                 "snapshot agent",
                 "Snapshot instructions.",
+                AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                new AgentModelSelection("codex", "gpt-5", null),
+                NOW,
+                NOW
+        );
+    }
+
+    private AgentDefinition secondAgent() {
+        return new AgentDefinition(
+                this.secondAgentId,
+                this.projectId,
+                "Reviewer Agent",
+                "reviewer agent",
+                "Reviewer instructions.",
                 AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
                 new AgentModelSelection("codex", "gpt-5", null),
                 NOW,

@@ -1,8 +1,15 @@
 import { escapeHtml } from './dom-render-helpers.js';
 
 const ACTIVE_RUN_STATUSES = new Set(['QUEUED', 'RUNNING']);
-const NODE_WIDTH = 224;
-const NODE_HEIGHT = 168;
+const NODE_WIDTH = 252;
+const NODE_MIN_HEIGHT = 132;
+const NODE_HEADER_HEIGHT = 28;
+const NODE_METRIC_ROW_HEIGHT = 18;
+const NODE_SECTION_TOP_GAP = 10;
+const NODE_SECTION_LABEL_HEIGHT = 14;
+const NODE_PORT_ROW_HEIGHT = 22;
+const NODE_HISTORY_HEIGHT = 28;
+const NODE_VERTICAL_PADDING = 24;
 const LEGACY_NODE_WIDTH = 204;
 const LEGACY_NODE_HEIGHT = 110;
 const NODE_MID_Y = 58;
@@ -126,7 +133,6 @@ export class TaskExecutionView {
     this.state.loadingRun = true;
     this.state.executionError = '';
     this.state.refreshError = '';
-    this.state.pendingAnimations = this.emptyAnimations();
     this.render();
     try {
       const workflowRun = await this.api.getWorkflowRun(runId);
@@ -150,19 +156,20 @@ export class TaskExecutionView {
   applyWorkflowRun(workflowRun) {
     const previous = this.state.workflowRun;
     const sameRun = previous?.id && previous.id === workflowRun?.id;
-    this.state.pendingAnimations = sameRun ? this.detectPollAnimations(previous, workflowRun) : this.emptyAnimations();
+    const animationDelta = sameRun ? this.detectPollAnimations(previous, workflowRun) : this.emptyAnimations();
     this.state.workflowRun = workflowRun;
     this.state.refreshError = '';
     this.mergeRunSummary(workflowRun);
     if (this.hasRuntimeGraph(workflowRun)) {
       this.syncModernSelection(workflowRun);
-      return;
+      return animationDelta;
     }
     const nodeRuns = workflowRun?.nodeRuns || [];
     if (!nodeRuns.some((nodeRun) => nodeRun.id === this.state.selectedNodeRunId)) {
       this.state.selectedNodeRunId = nodeRuns[0]?.id || null;
     }
     this.state.selectedSourceNodeId = null;
+    return animationDelta;
   }
 
   syncModernSelection(workflowRun) {
@@ -216,10 +223,10 @@ export class TaskExecutionView {
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         return;
       }
-      this.applyWorkflowRun(workflowRun);
-      this.render();
+      const animationDelta = this.applyWorkflowRun(workflowRun);
+      this.render(animationDelta);
       if (this.state.followActive && this.hasRuntimeGraph(workflowRun)) {
-        this.followNewActiveNode();
+        this.followNewActiveNode(animationDelta);
       }
     } catch (error) {
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
@@ -246,12 +253,12 @@ export class TaskExecutionView {
     );
   }
 
-  render() {
+  render(animationDelta = null) {
     this.renderHeader();
     this.renderTaskSummary();
     this.renderHistory();
     this.renderExecutionState();
-    this.renderGraph();
+    this.renderGraph(animationDelta || this.emptyAnimations());
     this.renderNodeDetails();
   }
 
@@ -407,24 +414,25 @@ export class TaskExecutionView {
     `;
   }
 
-  renderGraph() {
+  renderGraph(animationDelta = null) {
     if (this.hasRuntimeGraph(this.state.workflowRun)) {
-      this.renderModernGraph();
+      this.renderModernGraph(animationDelta || this.emptyAnimations());
       return;
     }
     this.renderLegacyGraph();
   }
 
-  renderModernGraph() {
+  renderModernGraph(animationDelta = null) {
     const nodesLayer = this.byId('agentsV2ExecutionNodes');
     const edgesSvg = this.byId('agentsV2ExecutionEdges');
+    const animations = animationDelta || this.emptyAnimations();
     const projection = this.modernProjection();
     if (!this.state.workflowRun) {
       nodesLayer.innerHTML = '';
       edgesSvg.innerHTML = '';
       return;
     }
-    nodesLayer.innerHTML = projection.graph.nodes.map((node) => this.renderModernNode(node, projection)).join('');
+    nodesLayer.innerHTML = projection.graph.nodes.map((node) => this.renderModernNode(node, projection, animations)).join('');
     nodesLayer.querySelectorAll('[data-execution-source-node-id]').forEach((element) => {
       element.addEventListener('click', () => this.selectSourceNode(element.dataset.executionSourceNodeId));
     });
@@ -434,8 +442,8 @@ export class TaskExecutionView {
         this.selectConcreteNodeRun(element.dataset.executionRunChipId);
       });
     });
-    this.renderModernEdges(projection);
-    this.syncCanvasBounds(projection.graph.nodes);
+    this.renderModernEdges(projection, animations);
+    this.syncCanvasBounds(projection.graph.nodes, false, projection);
     this.applyViewportTransform();
     if (this.fitAppliedRunId !== this.state.workflowRun.id) {
       this.fitTopology();
@@ -443,7 +451,8 @@ export class TaskExecutionView {
     }
   }
 
-  renderModernNode(node, projection) {
+  renderModernNode(node, projection, animations = null) {
+    const animationDelta = animations || this.emptyAnimations();
     const nodeRuns = projection.nodeRunsBySource.get(node.sourceNodeId) || [];
     const latest = nodeRuns[nodeRuns.length - 1] || null;
     const latestNumber = latest ? projection.invocationNumberById.get(latest.id) : null;
@@ -456,8 +465,9 @@ export class TaskExecutionView {
     const inputCounts = projection.inputCountsByNode.get(node.sourceNodeId) || new Map();
     const outputCounts = projection.outputCountsByNode.get(node.sourceNodeId) || new Map();
     const selected = node.sourceNodeId === this.state.selectedSourceNodeId;
+    const geometry = this.modernNodeGeometry(node, projection);
     const animationClasses = [
-      this.state.pendingAnimations.nodeRunIds.has(latest?.id) ? 'execution-node-new-fact' : '',
+      animationDelta.nodeRunIds.has(latest?.id) ? 'execution-node-new-fact' : '',
       running ? 'execution-node-has-running' : '',
       failed ? 'execution-node-has-failed' : '',
       !nodeRuns.length ? 'execution-node-unreached' : '',
@@ -469,7 +479,7 @@ export class TaskExecutionView {
         class="execution-node execution-board-node ${animationClasses}"
         data-execution-source-node-id="${escapeHtml(node.sourceNodeId)}"
         data-execution-node-id="${escapeHtml(node.sourceNodeId)}"
-        style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px;"
+        style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px; width:${NODE_WIDTH}px; height:${geometry.height}px;"
       >
         <div class="execution-board-node-head">
           <strong>${escapeHtml(node.agentName || 'Unknown agent')}</strong>
@@ -482,22 +492,26 @@ export class TaskExecutionView {
           ${latest ? `<span>Last</span><strong>#${latestNumber} · ${escapeHtml(latest.status)}</strong>` : '<span></span><strong>No executions yet</strong>'}
           ${routing ? `<span>Routing pending</span><strong>${routing}</strong>` : ''}
         </div>
-        ${this.renderPortUsage('Inputs', inputPorts, inputCounts, this.state.pendingAnimations.inputPortIds)}
-        ${this.renderPortUsage('Outputs', outputPorts, outputCounts, this.state.pendingAnimations.outputPortIds)}
+        ${this.renderPortUsage('Inputs', inputPorts, inputCounts, animationDelta.inputPortIds, 'input')}
+        ${this.renderPortUsage('Outputs', outputPorts, outputCounts, animationDelta.outputPortIds, 'output')}
         ${markers ? `<div class="execution-board-history">${markers}</div>` : ''}
       </article>
     `;
   }
 
-  renderPortUsage(label, ports, counts, highlightedPortIds) {
+  renderPortUsage(label, ports, counts, highlightedPortIds, side) {
     if (!ports.length) {
       return '';
     }
     return `
-      <div class="execution-board-port-usage">
+      <div class="execution-board-port-usage execution-board-port-usage-${escapeHtml(side)}">
         <span>${escapeHtml(label)}</span>
         ${ports.map((port) => `
-          <div class="execution-board-port-row ${highlightedPortIds.has(port.sourcePortId) ? 'execution-port-new-fact' : ''}">
+          <div
+            class="execution-board-port-row execution-board-port-row-${escapeHtml(side)} ${highlightedPortIds.has(port.sourcePortId) ? 'execution-port-new-fact' : ''}"
+            data-runtime-port-id="${escapeHtml(port.sourcePortId)}"
+          >
+            <i class="execution-port-anchor" aria-hidden="true" data-runtime-port-anchor-id="${escapeHtml(port.sourcePortId)}"></i>
             <small>${escapeHtml(port.name || 'Port')}</small>
             <strong>×${Number(counts.get(port.sourcePortId) || 0)}</strong>
           </div>
@@ -522,7 +536,8 @@ export class TaskExecutionView {
     `;
   }
 
-  renderModernEdges(projection) {
+  renderModernEdges(projection, animations = null) {
+    const animationDelta = animations || this.emptyAnimations();
     const edges = projection.graph.connections.map((connection) => {
       const sourcePort = projection.portById.get(connection.sourceOutputPortId);
       const targetPort = projection.portById.get(connection.targetInputPortId);
@@ -533,17 +548,23 @@ export class TaskExecutionView {
       }
       const delivered = projection.deliveredByConnection.get(connection.sourceConnectionId) || 0;
       const closed = projection.closedByConnection.get(connection.sourceConnectionId) || 0;
-      const start = this.modernNodePoint(sourceNode, 'output');
-      const end = this.modernNodePoint(targetNode, 'input');
+      const start = this.modernPortPoint(sourcePort, projection);
+      const end = this.modernPortPoint(targetPort, projection);
       const labelPoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 10 };
-      const token = this.state.pendingAnimations.connectionResolutionIds.size
-        ? this.renderEdgeToken(connection, projection, start, end)
+      const path = this.pathD(start, end);
+      const token = animationDelta.connectionResolutionIds.size
+        ? this.renderEdgeToken(connection, projection, animationDelta, path)
         : '';
       const title = `${sourceNode.agentName}.${sourcePort.name} → ${targetNode.agentName}.${targetPort.name} · DELIVERED ${delivered} · CLOSED ${closed}`;
       return `
-        <g class="workflow-edge execution-edge execution-topology-edge ${delivered ? 'execution-edge-delivered' : ''}" data-runtime-connection-id="${escapeHtml(connection.sourceConnectionId)}">
+        <g
+          class="workflow-edge execution-edge execution-topology-edge ${delivered ? 'execution-edge-delivered' : ''}"
+          data-runtime-connection-id="${escapeHtml(connection.sourceConnectionId)}"
+          data-runtime-source-port-id="${escapeHtml(sourcePort.sourcePortId)}"
+          data-runtime-target-port-id="${escapeHtml(targetPort.sourcePortId)}"
+        >
           <title>${escapeHtml(title)}</title>
-          <path class="edge-visible" d="${this.pathD(start, end)}" marker-end="url(#agentsV2ExecutionArrow)" />
+          <path class="edge-visible" d="${path}" marker-end="url(#agentsV2ExecutionArrow)" />
           ${delivered ? `<text class="execution-edge-count" x="${labelPoint.x}" y="${labelPoint.y}">×${delivered}</text>` : ''}
           ${token}
         </g>
@@ -559,18 +580,24 @@ export class TaskExecutionView {
     `;
   }
 
-  renderEdgeToken(connection, projection, start, end) {
+  renderEdgeToken(connection, projection, animationDelta, path) {
+    if (this.prefersReducedMotion()) {
+      return '';
+    }
     const hasNewResolution = (this.state.workflowRun?.connectionResolutions || [])
       .some((resolution) => (
         resolution.sourceConnectionId === connection.sourceConnectionId
         && resolution.resolutionType === 'DELIVERED'
-        && this.state.pendingAnimations.connectionResolutionIds.has(resolution.id)
+        && animationDelta.connectionResolutionIds.has(resolution.id)
       ));
     if (!hasNewResolution) {
       return '';
     }
-    const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-    return `<circle class="execution-edge-token" cx="${middle.x}" cy="${middle.y}" r="5" data-edge-animation-id="${escapeHtml(connection.sourceConnectionId)}"></circle>`;
+    return `
+      <circle class="execution-edge-token" r="5" data-edge-animation-id="${escapeHtml(connection.sourceConnectionId)}">
+        <animateMotion dur="900ms" fill="freeze" path="${escapeHtml(path)}"></animateMotion>
+      </circle>
+    `;
   }
 
   renderLegacyGraph() {
@@ -938,6 +965,9 @@ export class TaskExecutionView {
       }
     }
     for (const resolution of run.connectionResolutions || []) {
+      if (resolution.resolutionType !== 'DELIVERED') {
+        continue;
+      }
       const sourceRun = nodeRunById.get(resolution.sourceNodeRunId);
       const connection = indexes.connectionById.get(resolution.sourceConnectionId);
       const sourcePort = connection ? indexes.portById.get(connection.sourceOutputPortId) : null;
@@ -1205,10 +1235,66 @@ export class TaskExecutionView {
     return (this.state.workflowRun?.runtimeGraph?.nodes || []).find((node) => node.sourceNodeId === sourceNodeId)?.agentName;
   }
 
+  modernNodeGeometry(node, projection) {
+    const nodeRuns = projection.nodeRunsBySource.get(node.sourceNodeId) || [];
+    const metricRows = 2
+      + (nodeRuns.some((nodeRun) => nodeRun.status === 'RUNNING') ? 1 : 0)
+      + (nodeRuns.some((nodeRun) => nodeRun.status === 'PENDING') ? 1 : 0)
+      + (nodeRuns.some((nodeRun) => nodeRun.status === 'FAILED') ? 1 : 0)
+      + (nodeRuns.some((nodeRun) => nodeRun.status === 'SUCCEEDED' && !nodeRun.routingCompletedAt) ? 1 : 0);
+    let cursor = NODE_VERTICAL_PADDING + NODE_HEADER_HEIGHT + (metricRows * NODE_METRIC_ROW_HEIGHT);
+    const inputPorts = projection.inputPortsByNode.get(node.sourceNodeId) || [];
+    const outputPorts = projection.outputPortsByNode.get(node.sourceNodeId) || [];
+    const sections = new Map();
+    for (const [side, ports] of [['input', inputPorts], ['output', outputPorts]]) {
+      if (!ports.length) {
+        continue;
+      }
+      cursor += NODE_SECTION_TOP_GAP;
+      const top = cursor;
+      cursor += NODE_SECTION_LABEL_HEIGHT + (ports.length * NODE_PORT_ROW_HEIGHT);
+      sections.set(side, { top, rows: ports.length });
+    }
+    if (nodeRuns.length) {
+      cursor += NODE_HISTORY_HEIGHT;
+    }
+    return {
+      height: Math.max(NODE_MIN_HEIGHT, cursor + NODE_VERTICAL_PADDING),
+      sections
+    };
+  }
+
+  modernPortPoint(port, projection) {
+    const node = projection.nodeBySource.get(port.sourceNodeId);
+    if (!node) {
+      return { x: 0, y: 0 };
+    }
+    const side = port.direction === 'OUTPUT' ? 'output' : 'input';
+    const ports = side === 'output'
+      ? projection.outputPortsByNode.get(port.sourceNodeId) || []
+      : projection.inputPortsByNode.get(port.sourceNodeId) || [];
+    const index = Math.max(0, ports.findIndex((item) => item.sourcePortId === port.sourcePortId));
+    const geometry = this.modernNodeGeometry(node, projection);
+    const section = geometry.sections.get(side);
+    const x = Number(node.position?.x || 0) + (side === 'output' ? NODE_WIDTH : 0);
+    const y = Number(node.position?.y || 0) + (
+      section
+        ? section.top + NODE_SECTION_LABEL_HEIGHT + (index * NODE_PORT_ROW_HEIGHT) + (NODE_PORT_ROW_HEIGHT / 2)
+        : geometry.height / 2
+    );
+    return { x, y };
+  }
+
+  prefersReducedMotion() {
+    return Boolean(this.window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
+  }
+
   modernNodePoint(node, kind) {
+    const projection = this.modernProjection();
+    const geometry = this.modernNodeGeometry(node, projection);
     return {
       x: Number(node.position?.x || 0) + (kind === 'output' ? NODE_WIDTH : 0),
-      y: Number(node.position?.y || 0) + 84
+      y: Number(node.position?.y || 0) + (geometry.height / 2)
     };
   }
 
@@ -1290,14 +1376,14 @@ export class TaskExecutionView {
     };
   }
 
-  syncCanvasBounds(nodes, legacy = false) {
+  syncCanvasBounds(nodes, legacy = false, projection = null) {
     const edgesSvg = this.byId('agentsV2ExecutionEdges');
     const nodesLayer = this.byId('agentsV2ExecutionNodes');
     let width = MIN_CANVAS_WIDTH;
     let height = MIN_CANVAS_HEIGHT;
     const widthForNode = legacy ? LEGACY_NODE_WIDTH : NODE_WIDTH;
-    const heightForNode = legacy ? LEGACY_NODE_HEIGHT : NODE_HEIGHT;
     for (const node of nodes) {
+      const heightForNode = legacy ? LEGACY_NODE_HEIGHT : this.modernNodeGeometry(node, projection || this.modernProjection()).height;
       width = Math.max(width, Number(node.position?.x || 0) + widthForNode + CANVAS_PADDING);
       height = Math.max(height, Number(node.position?.y || 0) + heightForNode + CANVAS_PADDING);
     }
@@ -1316,7 +1402,7 @@ export class TaskExecutionView {
     if (!graphNodes.length) {
       return;
     }
-    const bounds = this.nodeBounds(graphNodes);
+    const bounds = this.nodeBounds(graphNodes, this.hasRuntimeGraph(this.state.workflowRun) ? this.modernProjection() : null);
     const canvas = this.byId('agentsV2ExecutionCanvas');
     const rect = canvas?.getBoundingClientRect?.() || {};
     const viewportWidth = rect.width || 900;
@@ -1339,9 +1425,10 @@ export class TaskExecutionView {
     }
   }
 
-  followNewActiveNode() {
+  followNewActiveNode(animationDelta = null) {
+    const delta = animationDelta || this.emptyAnimations();
     const newActiveIds = (this.state.workflowRun?.nodeRuns || [])
-      .filter((nodeRun) => (nodeRun.status === 'RUNNING' || nodeRun.status === 'PENDING') && this.state.pendingAnimations.nodeRunIds.has(nodeRun.id))
+      .filter((nodeRun) => (nodeRun.status === 'RUNNING' || nodeRun.status === 'PENDING') && delta.nodeRunIds.has(nodeRun.id))
       .map((nodeRun) => nodeRun.sourceNodeId);
     if (!newActiveIds.length) {
       return;
@@ -1360,7 +1447,7 @@ export class TaskExecutionView {
     }
   }
 
-  nodeBounds(nodes) {
+  nodeBounds(nodes, projection = null) {
     let left = Infinity;
     let top = Infinity;
     let right = -Infinity;
@@ -1371,7 +1458,8 @@ export class TaskExecutionView {
       left = Math.min(left, x);
       top = Math.min(top, y);
       right = Math.max(right, x + NODE_WIDTH);
-      bottom = Math.max(bottom, y + NODE_HEIGHT);
+      const height = projection ? this.modernNodeGeometry(node, projection).height : LEGACY_NODE_HEIGHT;
+      bottom = Math.max(bottom, y + height);
     }
     return {
       left: left - 32,
@@ -1433,7 +1521,6 @@ export class TaskExecutionView {
       selectedSourceNodeId: null,
       detailsTab: 'details',
       followActive: false,
-      pendingAnimations: this.emptyAnimations(),
       loadingTask: false,
       loadingRun: false,
       taskError: '',

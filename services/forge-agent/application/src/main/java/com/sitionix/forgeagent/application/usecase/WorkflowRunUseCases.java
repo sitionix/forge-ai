@@ -75,6 +75,9 @@ public class WorkflowRunUseCases {
                 input,
                 WorkflowRunStatus.QUEUED,
                 List.of(),
+                List.of(),
+                List.of(),
+                graph,
                 now,
                 null,
                 null
@@ -93,6 +96,9 @@ public class WorkflowRunUseCases {
                 run.input(),
                 run.status(),
                 rootNodeRuns,
+                List.of(),
+                List.of(),
+                graph,
                 run.createdAt(),
                 run.startedAt(),
                 run.finishedAt()
