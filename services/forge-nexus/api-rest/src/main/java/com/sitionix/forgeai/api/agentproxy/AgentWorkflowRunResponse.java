@@ -15,6 +15,7 @@ public record AgentWorkflowRunResponse(
         AgentWorkflowRunStatus status,
         List<AgentNodeRunResponse> nodeRuns,
         List<AgentConnectionResolutionResponse> connectionResolutions,
+        List<AgentWorkflowRunExecutionEdgeResponse> executionEdges,
         Instant createdAt,
         Instant startedAt,
         Instant finishedAt
@@ -25,11 +26,11 @@ public record AgentWorkflowRunResponse(
                                     final UUID taskId,
                                     final String workflowName,
                                     final String input,
-                                    final AgentWorkflowRunStatus status,
-                                    final List<AgentNodeRunResponse> nodeRuns,
-                                    final Instant createdAt,
-                                    final Instant startedAt,
-                                    final Instant finishedAt) {
-        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), createdAt, startedAt, finishedAt);
+                                     final AgentWorkflowRunStatus status,
+                                     final List<AgentNodeRunResponse> nodeRuns,
+                                     final Instant createdAt,
+                                     final Instant startedAt,
+                                     final Instant finishedAt) {
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), List.of(), createdAt, startedAt, finishedAt);
     }
 }

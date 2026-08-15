@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
@@ -168,7 +169,7 @@ class NodeRunWorkerTest {
                 "Instructions",
                 OUTPUT_SCHEMA,
                 EXECUTION_MODEL,
-                List.of()
+                new NodeInputEnvelope("Review auth changes.", null, List.of())
         );
     }
 }

@@ -16,7 +16,11 @@ class DefaultInputResolutionEvaluatorTest {
     private static final UUID FRAME_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
     private static final UUID INPUT_ID = UUID.fromString("30000000-0000-4000-8000-000000000001");
 
-    private final DefaultInputResolutionEvaluator evaluator = new DefaultInputResolutionEvaluator();
+    private final DefaultInputResolutionEvaluator evaluator = new DefaultInputResolutionEvaluator(new InputResolutionRuleRegistry(List.of(
+            new OpenParticipationWaitRule(),
+            new ResolvedEmptyCloseRule(),
+            new ResolvedDeliveredActivateRule()
+    )));
 
     @Test
     void waitsWhileAnyRelevantPathCanStillContribute() {

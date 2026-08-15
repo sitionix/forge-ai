@@ -22,6 +22,7 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataNodeRunRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataConnectionResolutionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRunRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRunExecutionEdgeRepository;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -57,13 +58,21 @@ class PostgresWorkflowRunRepositoryTest {
     private SpringDataNodeRunRepository nodeRunRepository;
     @Mock
     private SpringDataConnectionResolutionRepository resolutionRepository;
+    @Mock
+    private SpringDataWorkflowRunExecutionEdgeRepository executionEdgeRepository;
 
     private PostgresWorkflowRunRepository repository;
 
     @BeforeEach
     void setUp() {
-        this.repository = new PostgresWorkflowRunRepository(this.workflowRunRepository, this.nodeRunRepository, this.resolutionRepository);
+        this.repository = new PostgresWorkflowRunRepository(
+                this.workflowRunRepository,
+                this.nodeRunRepository,
+                this.resolutionRepository,
+                this.executionEdgeRepository
+        );
         lenient().when(this.resolutionRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
+        lenient().when(this.executionEdgeRepository.findByWorkflowRunIdOrderBySourceNodeRunIdAscTargetNodeRunIdAsc(RUN_ID)).thenReturn(List.of());
     }
 
     @Test

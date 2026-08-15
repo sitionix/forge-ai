@@ -20,6 +20,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunExecutionEdge;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.ConnectionResolutionType;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
@@ -59,6 +60,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageRespon
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunExecutionEdgeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import java.util.List;
 import java.util.UUID;
@@ -282,9 +284,24 @@ public class ForgeAgentClientMapper {
                 this.requireList(response.connectionResolutions(), "workflowRun.connectionResolutions").stream()
                         .map(this::toDomain)
                         .toList(),
+                this.optionalList(response.executionEdges()).stream()
+                        .map(this::toDomain)
+                        .toList(),
                 response.createdAt(),
                 response.startedAt(),
                 response.finishedAt()
+        );
+    }
+
+    private AgentWorkflowRunExecutionEdge toDomain(final WorkflowRunExecutionEdgeResponse response) {
+        this.requireResponse(response, "workflow run execution edge");
+        this.requireId(response.sourceNodeRunId(), "workflowRun.executionEdges.sourceNodeRunId");
+        this.requireId(response.targetNodeRunId(), "workflowRun.executionEdges.targetNodeRunId");
+        this.requireText(response.sourceType(), "workflowRun.executionEdges.sourceType");
+        return new AgentWorkflowRunExecutionEdge(
+                response.sourceNodeRunId(),
+                response.targetNodeRunId(),
+                response.sourceType()
         );
     }
 
@@ -487,6 +504,10 @@ public class ForgeAgentClientMapper {
             throw this.invalid(field + " must not be null");
         }
         return responses;
+    }
+
+    private <T> List<T> optionalList(final List<T> responses) {
+        return responses == null ? List.of() : responses;
     }
 
     private void requireResponse(final Object response, final String label) {

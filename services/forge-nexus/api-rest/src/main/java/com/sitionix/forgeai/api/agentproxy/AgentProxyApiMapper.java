@@ -19,6 +19,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunExecutionEdge;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
@@ -231,9 +232,18 @@ public class AgentProxyApiMapper {
                 run.status(),
                 run.nodeRuns().stream().map(this::toResponse).toList(),
                 run.connectionResolutions().stream().map(this::toResponse).toList(),
+                run.executionEdges().stream().map(this::toResponse).toList(),
                 run.createdAt(),
                 run.startedAt(),
                 run.finishedAt()
+        );
+    }
+
+    private AgentWorkflowRunExecutionEdgeResponse toResponse(final AgentWorkflowRunExecutionEdge edge) {
+        return new AgentWorkflowRunExecutionEdgeResponse(
+                edge.sourceNodeRunId(),
+                edge.targetNodeRunId(),
+                edge.sourceType()
         );
     }
 

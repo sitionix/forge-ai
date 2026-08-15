@@ -60,11 +60,11 @@ public class PostgresConnectionResolutionRepository implements ConnectionResolut
     }
 
     @Override
-    public void markConsumed(final Collection<UUID> resolutionIds, final UUID nodeRunId) {
+    public int markConsumed(final Collection<UUID> resolutionIds, final UUID nodeRunId) {
         if (resolutionIds == null || resolutionIds.isEmpty()) {
-            return;
+            return 0;
         }
-        this.repository.markConsumed(resolutionIds, nodeRunId);
+        return this.repository.markConsumed(resolutionIds, nodeRunId);
     }
 
     private ConnectionResolutionEntity toEntity(final ConnectionResolution resolution) {

@@ -1,9 +1,8 @@
 package com.sitionix.forgeagent.application.runtime;
 
-import java.util.List;
+import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 
 public record NodeExecutionInputContent(
-        String workflowInput,
-        List<NodeDependencyOutput> dependencies
+        NodeInputEnvelope envelope
 ) {
 }

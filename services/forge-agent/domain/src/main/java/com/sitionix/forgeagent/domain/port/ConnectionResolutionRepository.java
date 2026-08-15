@@ -15,5 +15,5 @@ public interface ConnectionResolutionRepository {
 
     void saveAll(Collection<ConnectionResolution> resolutions);
 
-    void markConsumed(Collection<UUID> resolutionIds, UUID nodeRunId);
+    int markConsumed(Collection<UUID> resolutionIds, UUID nodeRunId);
 }

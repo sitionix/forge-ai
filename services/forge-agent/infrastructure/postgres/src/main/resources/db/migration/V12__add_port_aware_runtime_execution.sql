@@ -1,6 +1,35 @@
 ALTER TABLE node_runs
     DROP CONSTRAINT IF EXISTS uk_node_runs_workflow_run_source_node;
 
+CREATE TABLE workflow_run_execution_edges (
+    workflow_run_id UUID NOT NULL,
+    source_node_run_id UUID NOT NULL,
+    target_node_run_id UUID NOT NULL,
+    source_type VARCHAR(32) NOT NULL,
+    PRIMARY KEY (workflow_run_id, source_node_run_id, target_node_run_id, source_type),
+    CONSTRAINT fk_workflow_run_execution_edges_workflow_run
+        FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE,
+    CONSTRAINT fk_workflow_run_execution_edges_source_node_run
+        FOREIGN KEY (source_node_run_id) REFERENCES node_runs(id) ON DELETE CASCADE,
+    CONSTRAINT fk_workflow_run_execution_edges_target_node_run
+        FOREIGN KEY (target_node_run_id) REFERENCES node_runs(id) ON DELETE CASCADE
+);
+
+INSERT INTO workflow_run_execution_edges (
+    workflow_run_id,
+    source_node_run_id,
+    target_node_run_id,
+    source_type
+)
+SELECT
+    target.workflow_run_id,
+    legacy.source_node_run_id,
+    target.id,
+    'LEGACY_DEPENDENCY'
+FROM node_runs target
+CROSS JOIN LATERAL unnest(target.depends_on_node_run_ids) AS legacy(source_node_run_id)
+WHERE target.depends_on_node_run_ids IS NOT NULL;
+
 ALTER TABLE node_runs
     DROP COLUMN IF EXISTS depends_on_node_run_ids;
 
@@ -136,3 +165,5 @@ CREATE INDEX idx_workflow_run_connections_target_input
     ON workflow_run_connections(workflow_run_id, target_input_port_id);
 CREATE INDEX idx_connection_resolutions_frame
     ON workflow_connection_resolutions(workflow_run_id, execution_frame_id);
+CREATE INDEX idx_workflow_run_execution_edges_workflow_run
+    ON workflow_run_execution_edges(workflow_run_id);

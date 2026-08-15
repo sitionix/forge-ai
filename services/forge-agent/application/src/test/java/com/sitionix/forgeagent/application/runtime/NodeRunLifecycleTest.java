@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeRun;
@@ -60,6 +61,8 @@ class NodeRunLifecycleTest {
     private NodeInputContentPolicyRegistry inputContentPolicyRegistry;
     @Mock
     private WorkflowExecutionCoordinator coordinator;
+    @Mock
+    private WorkflowCompletionPolicy completionPolicy;
 
     private final Map<UUID, NodeRun> nodeRuns = new LinkedHashMap<>();
     private WorkflowRun workflowRun;
@@ -73,7 +76,15 @@ class NodeRunLifecycleTest {
                 this.resolutionRepository,
                 this.inputContentPolicyRegistry,
                 this.coordinator,
-                CLOCK
+                this.completionPolicy,
+                CLOCK,
+                new NodeRunCompletionPersistence(
+                        this.nodeRunRepository,
+                        this.workflowRunRepository,
+                        this.completionPolicy,
+                        this.coordinator,
+                        CLOCK
+                )
         );
         this.workflowRun = this.workflowRun(WorkflowRunStatus.QUEUED, null, null);
         this.stubRepositories();
@@ -84,8 +95,7 @@ class NodeRunLifecycleTest {
         this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.PENDING, MODEL));
         when(this.resolutionRepository.findConsumedByNodeRunId(NODE_RUN_ID)).thenReturn(List.of());
         when(this.inputContentPolicyRegistry.assemble(any())).thenReturn(new NodeExecutionInputContent(
-                "Review auth changes.",
-                List.of()
+                new NodeInputEnvelope("Review auth changes.", null, List.of())
         ));
 
         final Optional<NodeExecutionClaim> claim = this.lifecycle.tryStart(NODE_RUN_ID);
@@ -97,7 +107,8 @@ class NodeRunLifecycleTest {
             assertThat(execution.nodeRunId()).isEqualTo(NODE_RUN_ID);
             assertThat(execution.executionModel()).isEqualTo(MODEL);
             assertThat(execution.workflowInput()).isEqualTo("Review auth changes.");
-            assertThat(execution.dependencies()).isEmpty();
+            assertThat(execution.inputEnvelope().originalTask()).isEqualTo("Review auth changes.");
+            assertThat(execution.inputEnvelope().contributions()).isEmpty();
         });
     }
 
@@ -159,10 +170,31 @@ class NodeRunLifecycleTest {
             this.nodeRuns.put(nodeRun.id(), nodeRun);
             return nodeRun;
         });
+        lenient().when(this.nodeRunRepository.saveAndFlush(any())).thenAnswer(invocation -> {
+            final NodeRun nodeRun = invocation.getArgument(0);
+            this.nodeRuns.put(nodeRun.id(), nodeRun);
+            return nodeRun;
+        });
         lenient().when(this.workflowRunRepository.findByIdForUpdate(any())).thenAnswer(invocation -> Optional.ofNullable(this.workflowRun));
         lenient().when(this.workflowRunRepository.saveLifecycle(any())).thenAnswer(invocation -> {
             this.workflowRun = invocation.getArgument(0);
             return this.workflowRun;
+        });
+        lenient().when(this.completionPolicy.evaluate(any())).thenReturn(new FailedWorkflowDecision());
+        lenient().when(this.coordinator.completionDecisionHandler(any())).thenAnswer(invocation -> new WorkflowCompletionDecisionHandler() {
+            @Override
+            public void handle(final RunningWorkflowDecision decision) {
+            }
+
+            @Override
+            public void handle(final SuccessfulWorkflowDecision decision) {
+                NodeRunLifecycleTest.this.workflowRun = NodeRunLifecycleTest.this.workflowRun(WorkflowRunStatus.SUCCEEDED, NOW, NOW);
+            }
+
+            @Override
+            public void handle(final FailedWorkflowDecision decision) {
+                NodeRunLifecycleTest.this.workflowRun = NodeRunLifecycleTest.this.workflowRun(WorkflowRunStatus.FAILED, NOW, NOW);
+            }
         });
     }
 
@@ -206,4 +238,5 @@ class NodeRunLifecycleTest {
                 null
         );
     }
+
 }

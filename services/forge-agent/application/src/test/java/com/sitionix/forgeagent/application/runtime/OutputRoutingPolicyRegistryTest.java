@@ -46,6 +46,34 @@ class OutputRoutingPolicyRegistryTest {
     }
 
     @Test
+    void selectsDirectRoutingForOneConfiguredOutputWithoutConnections() {
+        final OutputRoutingDecision decision = this.registry(null).route(new OutputRoutingContext(
+                null,
+                OUTPUT,
+                List.of(this.output(OUTPUT_A, "Done")),
+                List.of()
+        ));
+
+        assertThat(decision)
+                .isInstanceOfSatisfying(SelectedOutputRoutingDecision.class,
+                        selected -> assertThat(selected.selectedOutputPortId()).isEqualTo(OUTPUT_A));
+    }
+
+    @Test
+    void selectsDirectRoutingForOneConfiguredOutputWithManyConnections() {
+        final OutputRoutingDecision decision = this.registry(null).route(new OutputRoutingContext(
+                null,
+                OUTPUT,
+                List.of(this.output(OUTPUT_A, "Done")),
+                List.of(this.connection(CONNECTION_A, OUTPUT_A), this.connection(CONNECTION_B, OUTPUT_A))
+        ));
+
+        assertThat(decision)
+                .isInstanceOfSatisfying(SelectedOutputRoutingDecision.class,
+                        selected -> assertThat(selected.selectedOutputPortId()).isEqualTo(OUTPUT_A));
+    }
+
+    @Test
     void selectsAiRoutingForSemanticChoiceAndPassesStablePorts() {
         final CapturingRouter router = new CapturingRouter(OUTPUT_B);
         final OutputRoutingDecision decision = this.registry(router).route(new OutputRoutingContext(
@@ -65,6 +93,47 @@ class OutputRoutingPolicyRegistryTest {
                         org.assertj.core.groups.Tuple.tuple(OUTPUT_A, "Pass", "Pass description"),
                         org.assertj.core.groups.Tuple.tuple(OUTPUT_B, "Return", "Return description")
                 );
+    }
+
+    @Test
+    void selectsAiRoutingForTwoConfiguredOutputsWhenOnlyOneIsConnected() {
+        final CapturingRouter router = new CapturingRouter(OUTPUT_A);
+
+        this.registry(router).route(new OutputRoutingContext(
+                null,
+                OUTPUT,
+                List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
+                List.of(this.connection(CONNECTION_A, OUTPUT_B))
+        ));
+
+        assertThat(router.outputs).hasSize(2);
+    }
+
+    @Test
+    void selectsAiRoutingForTwoConfiguredOutputsWhenNoneAreConnected() {
+        final CapturingRouter router = new CapturingRouter(OUTPUT_A);
+
+        this.registry(router).route(new OutputRoutingContext(
+                null,
+                OUTPUT,
+                List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
+                List.of()
+        ));
+
+        assertThat(router.outputs).hasSize(2);
+    }
+
+    @Test
+    void rejectsNullAiSelection() {
+        assertThatThrownBy(() -> this.registry(new CapturingRouter(null)).route(new OutputRoutingContext(
+                null,
+                OUTPUT,
+                List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
+                List.of()
+        )))
+                .isInstanceOf(ConflictException.class)
+                .extracting(exception -> ((ConflictException) exception).code())
+                .isEqualTo("AI_OUTPUT_ROUTING_INVALID_PORT");
     }
 
     @Test

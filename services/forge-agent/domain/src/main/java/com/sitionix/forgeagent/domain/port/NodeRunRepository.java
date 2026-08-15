@@ -28,5 +28,7 @@ public interface NodeRunRepository {
 
     NodeRun save(NodeRun nodeRun);
 
+    NodeRun saveAndFlush(NodeRun nodeRun);
+
     boolean existsActiveBySourceAgentId(UUID agentId);
 }

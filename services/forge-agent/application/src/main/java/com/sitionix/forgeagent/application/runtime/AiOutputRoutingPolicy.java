@@ -19,7 +19,7 @@ public class AiOutputRoutingPolicy implements OutputRoutingPolicy {
 
     @Override
     public boolean supports(final OutputRoutingContext context) {
-        return !context.availableOutputs().isEmpty();
+        return context.availableOutputs().size() > 1;
     }
 
     @Override
@@ -28,6 +28,9 @@ public class AiOutputRoutingPolicy implements OutputRoutingPolicy {
             throw new ConflictException("AI_OUTPUT_ROUTER_NOT_CONFIGURED", "AI output routing is not configured.");
         }
         final UUID selected = this.router.selectOutput(context.output(), context.availableOutputs());
+        if (selected == null) {
+            throw new ConflictException("AI_OUTPUT_ROUTING_INVALID_PORT", "AI output routing did not select an output port.");
+        }
         final Set<UUID> valid = context.availableOutputs().stream()
                 .map(com.sitionix.forgeagent.domain.model.RunPort::sourcePortId)
                 .collect(Collectors.toSet());

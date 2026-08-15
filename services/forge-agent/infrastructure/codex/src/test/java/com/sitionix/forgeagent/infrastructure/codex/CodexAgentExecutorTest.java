@@ -5,12 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeagent.application.runtime.NodeDependencyOutput;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
-import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodeInputContribution;
+import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
+import com.sitionix.forgeagent.domain.model.PortDirection;
+import com.sitionix.forgeagent.domain.model.RunPort;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,9 @@ class CodexAgentExecutorTest {
     private static final UUID WORKFLOW_RUN_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
     private static final UUID NODE_RUN_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
     private static final UUID AGENT_ID = UUID.fromString("30000000-0000-4000-8000-000000000001");
+    private static final UUID INPUT_PORT_ID = UUID.fromString("40000000-0000-4000-8000-000000000001");
+    private static final UUID SOURCE_NODE_RUN_ID = UUID.fromString("50000000-0000-4000-8000-000000000001");
+    private static final UUID SOURCE_CONNECTION_ID = UUID.fromString("60000000-0000-4000-8000-000000000001");
     private static final AgentOutputSchema OUTPUT_SCHEMA = AgentOutputSchema.ofCanonicalJsonObject("""
             {"type":"object","description":"Technical analysis result.","properties":{"summary":{"type":"string","description":"Concise summary."},"riskLevel":{"type":"string","description":"Technical risk level.","enum":["LOW","MEDIUM","HIGH"]}},"required":["summary","riskLevel"],"additionalProperties":false}
             """);
@@ -56,22 +61,25 @@ class CodexAgentExecutorTest {
                 "Analyze the requested change.",
                 OUTPUT_SCHEMA,
                 new NodeRunExecutionModel("codex", "gpt-5.6-luna", null),
-                NodeInputMode.TASK_AND_DEPENDENCIES,
-                List.of(new NodeDependencyOutput(
-                        UUID.fromString("40000000-0000-4000-8000-000000000001"),
-                        "Security Review",
-                        new NodeRunOutput("{\"risk\":\"LOW\"}")
-                ))
+                new NodeInputEnvelope(
+                        "Review auth changes.",
+                        new RunPort(WORKFLOW_RUN_ID, INPUT_PORT_ID, UUID.randomUUID(), PortDirection.INPUT, "Review feedback", "Reviewer feedback.", 0),
+                        List.of(new NodeInputContribution(SOURCE_NODE_RUN_ID, SOURCE_CONNECTION_ID, new NodeRunOutput("{\"risk\":\"LOW\"}")))
+                )
         );
 
         this.executor.execute(claim);
 
         assertThat(this.turnClient.request.developerInstructions()).isEqualTo("Analyze the requested change.");
         final JsonNode userInput = this.objectMapper.readTree(this.turnClient.request.userInput());
-        assertThat(userInput.path("workflowInput").asText()).isEqualTo("Review auth changes.");
-        assertThat(userInput.path("dependencyResults")).hasSize(1);
-        assertThat(userInput.path("dependencyResults").get(0).path("agentName").asText()).isEqualTo("Security Review");
-        assertThat(userInput.path("dependencyResults").get(0).path("output")).isEqualTo(this.objectMapper.readTree("{\"risk\":\"LOW\"}"));
+        assertThat(userInput.path("task").asText()).isEqualTo("Review auth changes.");
+        assertThat(userInput.path("entryInput").path("id").asText()).isEqualTo(INPUT_PORT_ID.toString());
+        assertThat(userInput.path("entryInput").path("name").asText()).isEqualTo("Review feedback");
+        assertThat(userInput.path("entryInput").path("description").asText()).isEqualTo("Reviewer feedback.");
+        assertThat(userInput.path("contributions")).hasSize(1);
+        assertThat(userInput.path("contributions").get(0).path("sourceNodeRunId").asText()).isEqualTo(SOURCE_NODE_RUN_ID.toString());
+        assertThat(userInput.path("contributions").get(0).path("sourceConnectionId").asText()).isEqualTo(SOURCE_CONNECTION_ID.toString());
+        assertThat(userInput.path("contributions").get(0).path("payload")).isEqualTo(this.objectMapper.readTree("{\"risk\":\"LOW\"}"));
         assertThat(this.turnClient.request.userInput()).doesNotContain(
                 "Analyze the requested change.",
                 "outputSchema",
@@ -82,7 +90,7 @@ class CodexAgentExecutorTest {
     }
 
     @Test
-    void dependencyOnlyInputModeOmitsWorkflowInputWhenDependenciesExist() throws Exception {
+    void dependencyOnlyEnvelopeOmitsTaskWhenPolicyOmittedIt() throws Exception {
         final NodeExecutionClaim claim = new NodeExecutionClaim(
                 WORKFLOW_RUN_ID,
                 NODE_RUN_ID,
@@ -92,20 +100,20 @@ class CodexAgentExecutorTest {
                 "Analyze the requested change.",
                 OUTPUT_SCHEMA,
                 new NodeRunExecutionModel("codex", "gpt-5.6-luna", null),
-                NodeInputMode.DEPENDENCIES_ONLY,
-                List.of(new NodeDependencyOutput(
-                        UUID.fromString("40000000-0000-4000-8000-000000000001"),
-                        "Security Review",
-                        new NodeRunOutput("{\"risk\":\"LOW\"}")
-                ))
+                new NodeInputEnvelope(
+                        null,
+                        new RunPort(WORKFLOW_RUN_ID, INPUT_PORT_ID, UUID.randomUUID(), PortDirection.INPUT, "Review feedback", "Reviewer feedback.", 0),
+                        List.of(new NodeInputContribution(SOURCE_NODE_RUN_ID, SOURCE_CONNECTION_ID, new NodeRunOutput("{\"risk\":\"LOW\"}")))
+                )
         );
 
         this.executor.execute(claim);
 
         final JsonNode userInput = this.objectMapper.readTree(this.turnClient.request.userInput());
-        assertThat(userInput.has("workflowInput")).isFalse();
-        assertThat(userInput.path("dependencyResults")).hasSize(1);
-        assertThat(userInput.path("dependencyResults").get(0).path("output")).isEqualTo(this.objectMapper.readTree("{\"risk\":\"LOW\"}"));
+        assertThat(userInput.has("task")).isFalse();
+        assertThat(userInput.path("entryInput").path("id").asText()).isEqualTo(INPUT_PORT_ID.toString());
+        assertThat(userInput.path("contributions")).hasSize(1);
+        assertThat(userInput.path("contributions").get(0).path("payload")).isEqualTo(this.objectMapper.readTree("{\"risk\":\"LOW\"}"));
     }
 
     @Test
@@ -113,8 +121,8 @@ class CodexAgentExecutorTest {
         this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", null), OUTPUT_SCHEMA));
 
         final JsonNode userInput = this.objectMapper.readTree(this.turnClient.request.userInput());
-        assertThat(userInput.path("workflowInput").asText()).isEqualTo("Review auth changes.");
-        assertThat(userInput.path("dependencyResults")).isEmpty();
+        assertThat(userInput.path("task").asText()).isEqualTo("Review auth changes.");
+        assertThat(userInput.path("contributions")).isEmpty();
     }
 
     @Test
@@ -161,7 +169,7 @@ class CodexAgentExecutorTest {
                 "Analyze the requested change.",
                 outputSchema,
                 executionModel,
-                List.of()
+                new NodeInputEnvelope("Review auth changes.", null, List.of())
         );
     }
 

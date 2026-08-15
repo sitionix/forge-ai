@@ -24,4 +24,6 @@ public class CodexAppServerProperties {
     private int modelListMaxPages = 20;
     private Duration gracefulTerminateTimeout = Duration.ofSeconds(2);
     private Duration forceKillTimeout = Duration.ofSeconds(2);
+    private String outputRouterModelId = "gpt-5.1";
+    private String outputRouterEffortId = "low";
 }

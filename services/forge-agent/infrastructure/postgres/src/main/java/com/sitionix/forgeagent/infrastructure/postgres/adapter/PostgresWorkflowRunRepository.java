@@ -1,12 +1,15 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunExecutionEdge;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunExecutionEdgeEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataConnectionResolutionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataNodeRunRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRunExecutionEdgeRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRunRepository;
 import java.util.List;
 import java.util.Optional;
@@ -26,6 +29,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     private final SpringDataWorkflowRunRepository workflowRunRepository;
     private final SpringDataNodeRunRepository nodeRunRepository;
     private final SpringDataConnectionResolutionRepository resolutionRepository;
+    private final SpringDataWorkflowRunExecutionEdgeRepository executionEdgeRepository;
 
     @Override
     public WorkflowRun save(final WorkflowRun run) {
@@ -108,6 +112,9 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 this.resolutionRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(entity.getId()).stream()
                         .map(PostgresConnectionResolutionRepository::toDomain)
                         .toList(),
+                this.executionEdgeRepository.findByWorkflowRunIdOrderBySourceNodeRunIdAscTargetNodeRunIdAsc(entity.getId()).stream()
+                        .map(this::toExecutionEdge)
+                        .toList(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
                 entity.getFinishedAt()
@@ -143,5 +150,14 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         entity.setStartedAt(run.startedAt());
         entity.setFinishedAt(run.finishedAt());
         return entity;
+    }
+
+    private WorkflowRunExecutionEdge toExecutionEdge(final WorkflowRunExecutionEdgeEntity entity) {
+        return new WorkflowRunExecutionEdge(
+                entity.getWorkflowRunId(),
+                entity.getSourceNodeRunId(),
+                entity.getTargetNodeRunId(),
+                entity.getSourceType()
+        );
     }
 }

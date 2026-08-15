@@ -88,6 +88,11 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     }
 
     @Override
+    public NodeRun saveAndFlush(final NodeRun nodeRun) {
+        return PostgresNodeRunMapper.toDomain(this.repository.saveAndFlush(PostgresNodeRunMapper.toEntity(nodeRun)));
+    }
+
+    @Override
     public boolean existsActiveBySourceAgentId(final UUID agentId) {
         return this.repository.existsBySourceAgentIdAndStatusIn(agentId, ACTIVE_STATUSES);
     }

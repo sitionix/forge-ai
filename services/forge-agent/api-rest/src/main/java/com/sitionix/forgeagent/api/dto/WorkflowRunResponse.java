@@ -15,6 +15,7 @@ public record WorkflowRunResponse(
         WorkflowRunStatus status,
         List<NodeRunResponse> nodeRuns,
         List<ConnectionResolutionResponse> connectionResolutions,
+        List<WorkflowRunExecutionEdgeResponse> executionEdges,
         Instant createdAt,
         Instant startedAt,
         Instant finishedAt
@@ -30,6 +31,6 @@ public record WorkflowRunResponse(
                                final Instant createdAt,
                                final Instant startedAt,
                                final Instant finishedAt) {
-        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), createdAt, startedAt, finishedAt);
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), List.of(), createdAt, startedAt, finishedAt);
     }
 }

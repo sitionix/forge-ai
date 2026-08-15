@@ -4,6 +4,7 @@ import com.sitionix.forgeagent.domain.model.ExecutionFrame;
 import com.sitionix.forgeagent.domain.port.ExecutionFrameRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ExecutionFrameEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataExecutionFrameRepository;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,13 @@ public class PostgresExecutionFrameRepository implements ExecutionFrameRepositor
     @Override
     public Optional<ExecutionFrame> findByIdForUpdate(final UUID id) {
         return this.repository.findByIdForUpdate(id).map(this::toDomain);
+    }
+
+    @Override
+    public List<ExecutionFrame> findByWorkflowRunId(final UUID workflowRunId) {
+        return this.repository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(workflowRunId).stream()
+                .map(this::toDomain)
+                .toList();
     }
 
     private ExecutionFrame toDomain(final ExecutionFrameEntity entity) {

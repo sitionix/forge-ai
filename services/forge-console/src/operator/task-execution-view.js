@@ -317,10 +317,10 @@ export class TaskExecutionView {
 
   renderEdges(nodeRuns) {
     const byId = new Map(nodeRuns.map((nodeRun) => [nodeRun.id, nodeRun]));
-    const edges = this.consumedConnectionResolutions()
-      .map((resolution) => {
-        const source = byId.get(resolution.sourceNodeRunId);
-        const target = byId.get(resolution.consumedByNodeRunId);
+    const edges = this.executionEdges()
+      .map((edge) => {
+        const source = byId.get(edge.sourceNodeRunId);
+        const target = byId.get(edge.targetNodeRunId);
         if (!source || !target) {
           return '';
         }
@@ -384,7 +384,7 @@ export class TaskExecutionView {
   }
 
   formatInputMode(nodeRun) {
-    if (this.consumedConnectionResolutions(nodeRun.id).length === 0) {
+    if (this.incomingExecutionEdges(nodeRun.id).length === 0) {
       return 'Original task';
     }
     if (nodeRun.inputMode === 'TASK_AND_DEPENDENCIES') {
@@ -401,6 +401,22 @@ export class TaskExecutionView {
       .filter((resolution) => resolution.resolutionType === 'DELIVERED')
       .filter((resolution) => Boolean(resolution.consumedByNodeRunId))
       .filter((resolution) => !nodeRunId || resolution.consumedByNodeRunId === nodeRunId);
+  }
+
+  executionEdges() {
+    const resolutionEdges = this.consumedConnectionResolutions()
+      .map((resolution) => ({
+        sourceNodeRunId: resolution.sourceNodeRunId,
+        targetNodeRunId: resolution.consumedByNodeRunId
+      }));
+    if (resolutionEdges.length) {
+      return resolutionEdges;
+    }
+    return this.state.workflowRun?.executionEdges || [];
+  }
+
+  incomingExecutionEdges(nodeRunId) {
+    return this.executionEdges().filter((edge) => edge.targetNodeRunId === nodeRunId);
   }
 
   selectedNodeRun() {

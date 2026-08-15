@@ -14,6 +14,10 @@ public class RootNodeInputContentPolicy implements NodeInputContentPolicy {
 
     @Override
     public NodeExecutionInputContent assemble(final NodeInputContentContext context) {
-        return new NodeExecutionInputContent(context.workflowRun().input(), java.util.List.of());
+        return new NodeExecutionInputContent(new com.sitionix.forgeagent.domain.model.NodeInputEnvelope(
+                context.workflowRun().input(),
+                null,
+                java.util.List.of()
+        ));
     }
 }

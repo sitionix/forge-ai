@@ -37,3 +37,5 @@ forge:
         force-kill-timeout: ${FORGE_AGENT_CODEX_FORCE_KILL_TIMEOUT:2s}
     worker:
       scheduling-enabled: ${FORGE_AGENT_WORKER_SCHEDULING_ENABLED:true}
+    runtime:
+      max-node-runs-per-workflow-run: ${FORGE_AGENT_RUNTIME_MAX_NODE_RUNS_PER_WORKFLOW_RUN:1000}
