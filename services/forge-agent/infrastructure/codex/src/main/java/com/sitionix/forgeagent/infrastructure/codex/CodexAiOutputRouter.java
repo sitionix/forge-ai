@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeagent.application.runtime.AiOutputRouter;
+import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.RunPort;
 import java.util.List;
@@ -19,15 +20,14 @@ public class CodexAiOutputRouter implements AiOutputRouter {
 
     private final ObjectMapper objectMapper;
     private final CodexTurnClient turnClient;
-    private final CodexAppServerProperties properties;
 
     @Override
-    public UUID selectOutput(final NodeRunOutput output, final List<RunPort> outputs) {
+    public UUID selectOutput(final NodeRunOutput output, final List<RunPort> outputs, final NodeRunExecutionModel executionModel) {
         final String response = this.turnClient.execute(new CodexTurnRequest(
                 this.userInput(output, outputs),
                 "Select exactly one workflow output port. Respond only with JSON matching the provided schema.",
-                this.properties.getOutputRouterModelId(),
-                this.properties.getOutputRouterEffortId(),
+                executionModel.modelId(),
+                executionModel.effortId(),
                 this.outputSchema()
         ));
         return this.parseSelectedOutputPortId(response);

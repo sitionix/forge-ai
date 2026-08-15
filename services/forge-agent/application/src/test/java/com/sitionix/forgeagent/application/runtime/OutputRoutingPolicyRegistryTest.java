@@ -4,10 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
+import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodePosition;
+import com.sitionix.forgeagent.domain.model.NodeRun;
+import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
+import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunConnection;
 import com.sitionix.forgeagent.domain.model.RunPort;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -23,6 +30,7 @@ class OutputRoutingPolicyRegistryTest {
     private static final UUID CONNECTION_B = UUID.fromString("40000000-0000-4000-8000-000000000002");
     private static final UUID INPUT_A = UUID.fromString("50000000-0000-4000-8000-000000000001");
     private static final NodeRunOutput OUTPUT = new NodeRunOutput("{\"summary\":\"done\"}");
+    private static final NodeRunExecutionModel EXECUTION_MODEL = new NodeRunExecutionModel("codex", "gpt-5.6-luna", "low");
 
     @Test
     void selectsTerminalRoutingForTerminalNode() {
@@ -77,7 +85,7 @@ class OutputRoutingPolicyRegistryTest {
     void selectsAiRoutingForSemanticChoiceAndPassesStablePorts() {
         final CapturingRouter router = new CapturingRouter(OUTPUT_B);
         final OutputRoutingDecision decision = this.registry(router).route(new OutputRoutingContext(
-                null,
+                this.nodeRun(),
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
                 List.of(this.connection(CONNECTION_A, OUTPUT_A), this.connection(CONNECTION_B, OUTPUT_B))
@@ -93,6 +101,7 @@ class OutputRoutingPolicyRegistryTest {
                         org.assertj.core.groups.Tuple.tuple(OUTPUT_A, "Pass", "Pass description"),
                         org.assertj.core.groups.Tuple.tuple(OUTPUT_B, "Return", "Return description")
                 );
+        assertThat(router.executionModel).isEqualTo(EXECUTION_MODEL);
     }
 
     @Test
@@ -100,7 +109,7 @@ class OutputRoutingPolicyRegistryTest {
         final CapturingRouter router = new CapturingRouter(OUTPUT_A);
 
         this.registry(router).route(new OutputRoutingContext(
-                null,
+                this.nodeRun(),
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
                 List.of(this.connection(CONNECTION_A, OUTPUT_B))
@@ -114,7 +123,7 @@ class OutputRoutingPolicyRegistryTest {
         final CapturingRouter router = new CapturingRouter(OUTPUT_A);
 
         this.registry(router).route(new OutputRoutingContext(
-                null,
+                this.nodeRun(),
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
                 List.of()
@@ -126,7 +135,7 @@ class OutputRoutingPolicyRegistryTest {
     @Test
     void rejectsNullAiSelection() {
         assertThatThrownBy(() -> this.registry(new CapturingRouter(null)).route(new OutputRoutingContext(
-                null,
+                this.nodeRun(),
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
                 List.of()
@@ -137,11 +146,24 @@ class OutputRoutingPolicyRegistryTest {
     }
 
     @Test
+    void aiRoutingRejectsMissingSnapshottedModelInsteadOfUsingDefault() {
+        assertThatThrownBy(() -> this.registry(new CapturingRouter(OUTPUT_A)).route(new OutputRoutingContext(
+                this.nodeRunWithoutExecutionModel(),
+                OUTPUT,
+                List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
+                List.of()
+        )))
+                .isInstanceOf(ConflictException.class)
+                .extracting(exception -> ((ConflictException) exception).code())
+                .isEqualTo("AI_OUTPUT_ROUTING_MODEL_NOT_CONFIGURED");
+    }
+
+    @Test
     void unknownAiOutputFailsClosed() {
         final UUID unknown = UUID.fromString("99999999-9999-4999-8999-999999999999");
 
         assertThatThrownBy(() -> this.registry(new CapturingRouter(unknown)).route(new OutputRoutingContext(
-                null,
+                this.nodeRun(),
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
                 List.of(this.connection(CONNECTION_A, OUTPUT_A), this.connection(CONNECTION_B, OUTPUT_B))
@@ -167,20 +189,58 @@ class OutputRoutingPolicyRegistryTest {
         return new RunConnection(RUN_ID, id, outputPortId, INPUT_A);
     }
 
+    private NodeRun nodeRun() {
+        return this.nodeRun(EXECUTION_MODEL);
+    }
+
+    private NodeRun nodeRunWithoutExecutionModel() {
+        return this.nodeRun(null);
+    }
+
+    private NodeRun nodeRun(final NodeRunExecutionModel executionModel) {
+        return new NodeRun(
+                UUID.fromString("60000000-0000-4000-8000-000000000001"),
+                RUN_ID,
+                NODE_ID,
+                UUID.fromString("70000000-0000-4000-8000-000000000001"),
+                "Reviewer",
+                "Review.",
+                AgentOutputSchema.ofCanonicalJsonObject("{}"),
+                NodeInputMode.DEPENDENCIES_ONLY,
+                new NodePosition(0, 0),
+                UUID.fromString("80000000-0000-4000-8000-000000000001"),
+                null,
+                null,
+                null,
+                null,
+                NodeRunStatus.SUCCEEDED,
+                OUTPUT,
+                null,
+                executionModel,
+                Instant.parse("2026-08-15T00:00:00Z"),
+                Instant.parse("2026-08-15T00:00:01Z"),
+                Instant.parse("2026-08-15T00:00:02Z")
+        );
+    }
+
     private static final class CapturingRouter implements AiOutputRouter {
 
         private final UUID selected;
         private NodeRunOutput output;
         private List<RunPort> outputs;
+        private NodeRunExecutionModel executionModel;
 
         private CapturingRouter(final UUID selected) {
             this.selected = selected;
         }
 
         @Override
-        public UUID selectOutput(final NodeRunOutput output, final List<RunPort> outputs) {
+        public UUID selectOutput(final NodeRunOutput output,
+                                 final List<RunPort> outputs,
+                                 final NodeRunExecutionModel executionModel) {
             this.output = output;
             this.outputs = outputs;
+            this.executionModel = executionModel;
             return this.selected;
         }
     }

@@ -151,7 +151,7 @@ class ForgeAgentPortAwareExecutionIT {
     void passAndReturnCreatesOneReentryWithOnlyReturnedFeedback() {
         this.seed();
         this.saveReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any())).thenReturn(STRATEGY_PASS, CODE_RETURN);
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_RETURN);
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Implement feature."));
         final NodeRun implementerOne = this.onlyPending(run.id(), IMPLEMENTER);
@@ -174,7 +174,7 @@ class ForgeAgentPortAwareExecutionIT {
     void concurrentReturnAndReturnCreatesOneReentryAndOneChildFrame() throws Exception {
         this.seed();
         this.saveReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any())).thenAnswer(invocation -> invocation.<List<com.sitionix.forgeagent.domain.model.RunPort>>getArgument(1).stream()
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation -> invocation.<List<com.sitionix.forgeagent.domain.model.RunPort>>getArgument(1).stream()
                 .filter(port -> port.name().equals("Return"))
                 .findFirst()
                 .orElseThrow()
@@ -202,7 +202,7 @@ class ForgeAgentPortAwareExecutionIT {
     void passAndPassClosesReviewWithoutReentry() {
         this.seed();
         this.saveReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any())).thenReturn(STRATEGY_PASS, CODE_PASS);
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_PASS);
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Implement feature."));
         this.complete(this.onlyPending(run.id(), IMPLEMENTER), "{\"patch\":\"v1\"}");
@@ -236,7 +236,7 @@ class ForgeAgentPortAwareExecutionIT {
     void closingDeepBranchReevaluatesFanInAndConsumesDeliveredBranchOnly() {
         this.seed();
         this.saveDeepWorkflow(true);
-        when(this.aiOutputRouter.selectOutput(any(), any())).thenReturn(C_OTHER);
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(C_OTHER);
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Fan in."));
         this.complete(this.onlyPending(run.id(), A), "{\"step\":\"A\"}");
@@ -254,7 +254,7 @@ class ForgeAgentPortAwareExecutionIT {
     void secondRoundReentryUsesNewFrameWithoutCrossFrameContributionMixing() {
         this.seed();
         this.saveReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any())).thenAnswer(invocation -> {
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation -> {
             final NodeRunOutput output = invocation.getArgument(0);
             final String targetName = output.jsonValue().contains("pass") ? "Pass" : "Return";
             return this.outputNamed(invocation.getArgument(1), targetName);
@@ -291,7 +291,7 @@ class ForgeAgentPortAwareExecutionIT {
     void invalidAiRoutingResultFailsNodeRunAndWorkflowWithoutLeavingRunningRows() {
         this.seed();
         this.saveReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any())).thenReturn(UUID.fromString("aaaaaaaa-0000-4000-8000-000000000000"));
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(UUID.fromString("aaaaaaaa-0000-4000-8000-000000000000"));
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Implement feature."));
         this.complete(this.onlyPending(run.id(), IMPLEMENTER), "{\"patch\":\"v1\"}");
@@ -340,7 +340,7 @@ class ForgeAgentPortAwareExecutionIT {
         this.seed();
         this.saveReviewerWorkflow();
         final AtomicBoolean observedNoTransaction = new AtomicBoolean(false);
-        when(this.aiOutputRouter.selectOutput(any(), any())).thenAnswer(invocation -> {
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation -> {
             observedNoTransaction.set(!TransactionSynchronizationManager.isActualTransactionActive());
             return STRATEGY_PASS;
         });
@@ -360,7 +360,7 @@ class ForgeAgentPortAwareExecutionIT {
     void concurrentCompletionProcessingAppliesRoutingExactlyOnce() throws Exception {
         this.seed();
         this.saveSingleAiReturnWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any())).thenReturn(A_RETURN);
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(A_RETURN);
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Route once."));
         final NodeRun runningA = this.start(this.onlyPending(run.id(), A));

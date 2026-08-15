@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.application.runtime;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
+import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -27,9 +28,10 @@ public class AiOutputRoutingPolicy implements OutputRoutingPolicy {
         if (this.router == null) {
             throw new ConflictException("AI_OUTPUT_ROUTER_NOT_CONFIGURED", "AI output routing is not configured.");
         }
+        final NodeRunExecutionModel executionModel = this.executionModel(context);
         final UUID selected;
         try {
-            selected = this.router.selectOutput(context.output(), context.availableOutputs());
+            selected = this.router.selectOutput(context.output(), context.availableOutputs(), executionModel);
         } catch (final RuntimeException exception) {
             throw new ConflictException("AI_OUTPUT_ROUTING_FAILED", this.failureMessage(exception));
         }
@@ -43,6 +45,18 @@ public class AiOutputRoutingPolicy implements OutputRoutingPolicy {
             throw new ConflictException("AI_OUTPUT_ROUTING_INVALID_PORT", "AI output routing selected an unknown output port.");
         }
         return new SelectedOutputRoutingDecision(selected);
+    }
+
+    private NodeRunExecutionModel executionModel(final OutputRoutingContext context) {
+        final NodeRunExecutionModel executionModel = context.nodeRun() == null ? null : context.nodeRun().executionModel();
+        if (executionModel == null || this.isBlank(executionModel.modelId())) {
+            throw new ConflictException("AI_OUTPUT_ROUTING_MODEL_NOT_CONFIGURED", "Snapshotted node run model is not configured for AI output routing.");
+        }
+        return executionModel;
+    }
+
+    private boolean isBlank(final String value) {
+        return value == null || value.isBlank();
     }
 
     private String failureMessage(final RuntimeException exception) {

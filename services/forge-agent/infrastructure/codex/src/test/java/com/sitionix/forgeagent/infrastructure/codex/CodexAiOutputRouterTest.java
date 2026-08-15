@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunPort;
@@ -21,17 +22,18 @@ class CodexAiOutputRouterTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RecordingTurnClient turnClient = new RecordingTurnClient();
-    private final CodexAppServerProperties properties = new CodexAppServerProperties();
-    private final CodexAiOutputRouter router = new CodexAiOutputRouter(this.objectMapper, this.turnClient, this.properties);
+    private final NodeRunExecutionModel executionModel = new NodeRunExecutionModel("codex", "gpt-5.6-luna", "low");
+    private final CodexAiOutputRouter router = new CodexAiOutputRouter(this.objectMapper, this.turnClient);
 
     @Test
     void sendsBusinessOutputAndStableOutputMetadata() throws Exception {
         this.turnClient.outputText = "{\"selectedOutputPortId\":\"" + RETURN_ID + "\"}";
 
-        final UUID selected = this.router.selectOutput(new NodeRunOutput("{\"decision\":\"needs changes\"}"), this.outputs());
+        final UUID selected = this.router.selectOutput(new NodeRunOutput("{\"decision\":\"needs changes\"}"), this.outputs(), this.executionModel);
 
         assertThat(selected).isEqualTo(RETURN_ID);
-        assertThat(this.turnClient.request.modelId()).isEqualTo(this.properties.getOutputRouterModelId());
+        assertThat(this.turnClient.request.modelId()).isEqualTo("gpt-5.6-luna");
+        assertThat(this.turnClient.request.effortId()).isEqualTo("low");
         final JsonNode input = this.objectMapper.readTree(this.turnClient.request.userInput());
         assertThat(input.path("businessOutput")).isEqualTo(this.objectMapper.readTree("{\"decision\":\"needs changes\"}"));
         assertThat(input.path("availableOutputs")).hasSize(2);
@@ -45,7 +47,7 @@ class CodexAiOutputRouterTest {
     void malformedResponseIsRejected() {
         this.turnClient.outputText = "{\"selectedOutputPortId\":42}";
 
-        assertThatThrownBy(() -> this.router.selectOutput(new NodeRunOutput("{\"decision\":\"pass\"}"), this.outputs()))
+        assertThatThrownBy(() -> this.router.selectOutput(new NodeRunOutput("{\"decision\":\"pass\"}"), this.outputs(), this.executionModel))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("AI output routing response was invalid.");
     }
