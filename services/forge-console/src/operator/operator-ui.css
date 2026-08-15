@@ -1439,6 +1439,7 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .execution-board-port-row {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
@@ -1458,7 +1459,7 @@ body.sidebar-collapsed .sidebar-link {
 
 .execution-port-anchor {
   position: absolute;
-  top: var(--execution-port-anchor-y, 50%);
+  top: 50%;
   width: 9px;
   height: 9px;
   border: 1px solid rgba(43, 111, 98, 0.58);

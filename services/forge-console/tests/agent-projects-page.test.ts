@@ -282,12 +282,53 @@ function edgeCoordinates(path: string) {
   };
 }
 
-function portAnchor(dom: JSDOM, portId: string) {
-  const anchor = dom.window.document.querySelector<HTMLElement>(`[data-runtime-port-anchor-id="${portId}"]`)!;
+function measuredRect(left: number, top: number, width: number, height: number) {
   return {
-    x: Number(anchor.dataset.runtimeAnchorX),
-    y: Number(anchor.dataset.runtimeAnchorY)
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({})
+  } as DOMRect;
+}
+
+function measuredCenter(rect: DOMRect, canvas = measuredRect(0, 0, 900, 520), viewport = { x: 0, y: 0, scale: 1 }) {
+  return {
+    x: (((rect.left + rect.width / 2) - canvas.left) - viewport.x) / viewport.scale,
+    y: (((rect.top + rect.height / 2) - canvas.top) - viewport.y) / viewport.scale
   };
+}
+
+function installExecutionGeometry(
+  dom: JSDOM,
+  geometry: {
+    canvas?: DOMRect;
+    cards?: Record<string, DOMRect>;
+    ports?: Record<string, DOMRect>;
+  }
+) {
+  const original = dom.window.Element.prototype.getBoundingClientRect;
+  Object.defineProperty(dom.window.Element.prototype, 'getBoundingClientRect', {
+    value(this: Element) {
+      if (this.id === 'agentsV2ExecutionCanvas' && geometry.canvas) {
+        return geometry.canvas;
+      }
+      const sourceNodeId = this.getAttribute('data-execution-source-node-id');
+      if (sourceNodeId && geometry.cards?.[sourceNodeId]) {
+        return geometry.cards[sourceNodeId];
+      }
+      const portId = this.getAttribute('data-runtime-port-anchor-id');
+      if (portId && geometry.ports?.[portId]) {
+        return geometry.ports[portId];
+      }
+      return original.call(this);
+    },
+    configurable: true
+  });
 }
 
 function transformScale(transform: string) {
@@ -1086,23 +1127,53 @@ describe('Agent projects page', () => {
       getWorkflowRun: vi.fn(() => Promise.resolve(run))
     });
     const { dom, page } = await openedProject(fakeApi);
+    const canvasRect = measuredRect(100, 50, 900, 520);
+    const portRects: Record<string, DOMRect> = {
+      'a-output-one': measuredRect(368, 150, 10, 10),
+      'a-output-two': measuredRect(368, 192, 10, 10),
+      'b-input-one': measuredRect(456, 148, 10, 10),
+      'b-input-two': measuredRect(456, 210, 10, 10)
+    };
+    installExecutionGeometry(dom, {
+      canvas: canvasRect,
+      cards: {
+        a: measuredRect(120, 90, 252, 210),
+        b: measuredRect(460, 90, 252, 210)
+      },
+      ports: portRects
+    });
 
     await page.openTaskExecution('task-1');
     await flushAsync();
 
     const first = edgeCoordinates(edgePath(dom, 'edge-one'));
     const second = edgeCoordinates(edgePath(dom, 'edge-two'));
-    const outputOne = portAnchor(dom, 'a-output-one');
-    const outputTwo = portAnchor(dom, 'a-output-two');
-    const inputOne = portAnchor(dom, 'b-input-one');
-    const inputTwo = portAnchor(dom, 'b-input-two');
+    const outputOne = measuredCenter(portRects['a-output-one']!, canvasRect);
+    const outputTwo = measuredCenter(portRects['a-output-two']!, canvasRect);
+    const inputOne = measuredCenter(portRects['b-input-one']!, canvasRect);
+    const inputTwo = measuredCenter(portRects['b-input-two']!, canvasRect);
     expect(edgePath(dom, 'edge-one')).not.toBe(edgePath(dom, 'edge-two'));
-    expect(first.startY).toBe(40 + outputOne.y);
-    expect(second.startY).toBe(40 + outputTwo.y);
-    expect(first.endY).toBe(40 + inputOne.y);
-    expect(second.endY).toBe(40 + inputTwo.y);
+    expect(first.startX).toBe(outputOne.x);
+    expect(first.startY).toBe(outputOne.y);
+    expect(first.endX).toBe(inputOne.x);
+    expect(first.endY).toBe(inputOne.y);
+    expect(second.startX).toBe(outputTwo.x);
+    expect(second.startY).toBe(outputTwo.y);
+    expect(second.endX).toBe(inputTwo.x);
+    expect(second.endY).toBe(inputTwo.y);
     expect(first.startY).not.toBe(second.startY);
     expect(first.endY).not.toBe(second.endY);
+
+    portRects['a-output-two'] = measuredRect(368, 238, 10, 10);
+    page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
+    page.taskExecutionView.fitAppliedRunId = run.id;
+    page.taskExecutionView.render();
+    await flushAsync();
+
+    const movedSecond = edgeCoordinates(edgePath(dom, 'edge-two'));
+    const movedOutputTwo = measuredCenter(portRects['a-output-two']!, canvasRect);
+    expect(movedSecond.startY).toBe(movedOutputTwo.y);
+    expect(movedSecond.startY).not.toBe(second.startY);
   });
 
   it('modern execution board uses the same source port anchor for fan-out paths', async () => {
@@ -1120,14 +1191,36 @@ describe('Agent projects page', () => {
       getWorkflowRun: vi.fn(() => Promise.resolve(run))
     });
     const { dom, page } = await openedProject(fakeApi);
+    const canvasRect = measuredRect(100, 50, 900, 520);
+    const portRects: Record<string, DOMRect> = {
+      'a-output': measuredRect(368, 150, 10, 10),
+      'b-input': measuredRect(456, 90, 10, 10),
+      'c-input': measuredRect(456, 290, 10, 10)
+    };
+    installExecutionGeometry(dom, {
+      canvas: canvasRect,
+      cards: {
+        a: measuredRect(120, 90, 252, 210),
+        b: measuredRect(460, 30, 252, 210),
+        c: measuredRect(460, 230, 252, 210)
+      },
+      ports: portRects
+    });
 
     await page.openTaskExecution('task-1');
     await flushAsync();
 
     const toB = edgeCoordinates(edgePath(dom, 'edge-b'));
     const toC = edgeCoordinates(edgePath(dom, 'edge-c'));
-    expect(toB.startX).toBe(toC.startX);
-    expect(toB.startY).toBe(toC.startY);
+    const source = measuredCenter(portRects['a-output']!, canvasRect);
+    const targetB = measuredCenter(portRects['b-input']!, canvasRect);
+    const targetC = measuredCenter(portRects['c-input']!, canvasRect);
+    expect(toB.startX).toBe(source.x);
+    expect(toB.startY).toBe(source.y);
+    expect(toC.startX).toBe(source.x);
+    expect(toC.startY).toBe(source.y);
+    expect(toB.endY).toBe(targetB.y);
+    expect(toC.endY).toBe(targetC.y);
     expect(toB.endY).not.toBe(toC.endY);
   });
 
@@ -1154,13 +1247,35 @@ describe('Agent projects page', () => {
       getWorkflowRun: vi.fn(() => Promise.resolve(run))
     });
     const { dom, page } = await openedProject(fakeApi);
+    const canvasRect = measuredRect(100, 50, 900, 520);
+    const portRects: Record<string, DOMRect> = {
+      'a-output': measuredRect(368, 90, 10, 10),
+      'b-output': measuredRect(368, 290, 10, 10),
+      'x-input-a': measuredRect(456, 150, 10, 10),
+      'x-input-b': measuredRect(456, 210, 10, 10)
+    };
+    installExecutionGeometry(dom, {
+      canvas: canvasRect,
+      cards: {
+        a: measuredRect(120, 30, 252, 210),
+        b: measuredRect(120, 230, 252, 210),
+        x: measuredRect(460, 110, 252, 240)
+      },
+      ports: portRects
+    });
 
     await page.openTaskExecution('task-1');
     await flushAsync();
 
     const fromA = edgeCoordinates(edgePath(dom, 'edge-a-x'));
     const fromB = edgeCoordinates(edgePath(dom, 'edge-b-x'));
+    const targetA = measuredCenter(portRects['x-input-a']!, canvasRect);
+    const targetB = measuredCenter(portRects['x-input-b']!, canvasRect);
     expect(fromA.endX).toBe(fromB.endX);
+    expect(fromA.endX).toBe(targetA.x);
+    expect(fromB.endX).toBe(targetB.x);
+    expect(fromA.endY).toBe(targetA.y);
+    expect(fromB.endY).toBe(targetB.y);
     expect(fromA.endY).not.toBe(fromB.endY);
   });
 
@@ -1190,15 +1305,18 @@ describe('Agent projects page', () => {
       getWorkflowRun: vi.fn(() => Promise.resolve(run))
     });
     const { dom, page } = await openedProject(fakeApi);
+    installExecutionGeometry(dom, {
+      canvas: measuredRect(0, 0, 900, 520),
+      cards: {
+        tall: measuredRect(20, 900, 252, 520)
+      }
+    });
 
     await page.openTaskExecution('task-1');
     await flushAsync();
 
-    const cardStyle = dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="tall"]')?.getAttribute('style') || '';
-    const renderedHeight = Number(cardStyle.match(/height:(\d+)px/)?.[1] || 0);
     const svgHeight = Number(dom.window.document.getElementById('agentsV2ExecutionEdges')?.getAttribute('height') || 0);
-    expect(renderedHeight).toBeGreaterThan(168);
-    expect(svgHeight).toBeGreaterThanOrEqual(900 + renderedHeight + 240);
+    expect(svgHeight).toBeGreaterThanOrEqual(900 + 520 + 240);
   });
 
   it('modern execution board shows concurrent invocations, routing facts, and concrete failure details without relabeling nodes', async () => {
@@ -1355,6 +1473,33 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2ExecutionNodes')!.style.transform).toBe(before);
   });
 
+  it('Follow active toggle preserves the current viewport', async () => {
+    const graph = runtimeGraph([{ id: 'worker', agentName: 'Worker', position: { x: 20, y: 30 } }]);
+    const run = workflowRunDetail('run-new', 'RUNNING', [
+      modernNodeRun('worker-1', 'worker', 'RUNNING', '2026-08-13T10:00:00Z', { agentName: 'Worker' })
+    ], 'Follow Toggle Board', graph);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(run))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    page.taskExecutionView.viewport = { x: 137, y: -84, scale: 1.31 };
+    page.taskExecutionView.applyViewportTransform();
+    const nodesLayer = dom.window.document.getElementById('agentsV2ExecutionNodes')!;
+    const before = nodesLayer.style.transform;
+
+    dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.click();
+    await flushAsync();
+
+    expect(nodesLayer.style.transform).toBe(before);
+    expect(transformScale(nodesLayer.style.transform)).toBe(1.31);
+    expect(dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.classList.contains('secondary')).toBe(false);
+  });
+
   it('Follow active pans offscreen newly active cards without changing zoom', async () => {
     vi.useFakeTimers();
     const dom = agentProjectsDom();
@@ -1386,6 +1531,8 @@ describe('Agent projects page', () => {
     await page.openTaskExecution('task-1');
     await flushAsync();
 
+    page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
+    page.taskExecutionView.applyViewportTransform();
     dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.click();
     const before = dom.window.document.getElementById('agentsV2ExecutionNodes')!.style.transform;
     const scaleBefore = transformScale(before);

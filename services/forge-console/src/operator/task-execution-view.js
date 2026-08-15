@@ -400,9 +400,6 @@ export class TaskExecutionView {
     state.querySelector('[data-execution-control="follow-active"]')?.addEventListener('click', () => {
       this.state.followActive = !this.state.followActive;
       this.renderExecutionState();
-      if (this.state.followActive) {
-        this.centerActive();
-      }
     });
   }
 
@@ -443,8 +440,8 @@ export class TaskExecutionView {
         this.selectConcreteNodeRun(element.dataset.executionRunChipId);
       });
     });
-    this.renderModernEdges(projection, animations);
     this.syncCanvasBounds(projection.graph.nodes, false, projection);
+    this.renderModernEdges(projection, animations);
     this.applyViewportTransform();
     if (this.fitAppliedRunId !== this.state.workflowRun.id) {
       this.fitTopology();
@@ -466,7 +463,6 @@ export class TaskExecutionView {
     const inputCounts = projection.inputCountsByNode.get(node.sourceNodeId) || new Map();
     const outputCounts = projection.outputCountsByNode.get(node.sourceNodeId) || new Map();
     const selected = node.sourceNodeId === this.state.selectedSourceNodeId;
-    const geometry = this.modernNodeGeometry(node, projection);
     const animationClasses = [
       animationDelta.nodeRunIds.has(latest?.id) ? 'execution-node-new-fact' : '',
       running ? 'execution-node-has-running' : '',
@@ -480,7 +476,7 @@ export class TaskExecutionView {
         class="execution-node execution-board-node ${animationClasses}"
         data-execution-source-node-id="${escapeHtml(node.sourceNodeId)}"
         data-execution-node-id="${escapeHtml(node.sourceNodeId)}"
-        style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px; width:${NODE_WIDTH}px; height:${geometry.height}px;"
+        style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px; width:${NODE_WIDTH}px;"
       >
         <div class="execution-board-node-head">
           <strong>${escapeHtml(node.agentName || 'Unknown agent')}</strong>
@@ -493,41 +489,34 @@ export class TaskExecutionView {
           ${latest ? `<span>Last</span><strong>#${latestNumber} · ${escapeHtml(latest.status)}</strong>` : '<span></span><strong>No executions yet</strong>'}
           ${routing ? `<span>Routing pending</span><strong>${routing}</strong>` : ''}
         </div>
-        ${this.renderPortUsage('Inputs', inputPorts, inputCounts, animationDelta.inputPortIds, 'input', node, geometry)}
-        ${this.renderPortUsage('Outputs', outputPorts, outputCounts, animationDelta.outputPortIds, 'output', node, geometry)}
+        ${this.renderPortUsage('Inputs', inputPorts, inputCounts, animationDelta.inputPortIds, 'input')}
+        ${this.renderPortUsage('Outputs', outputPorts, outputCounts, animationDelta.outputPortIds, 'output')}
         ${markers ? `<div class="execution-board-history">${markers}</div>` : ''}
       </article>
     `;
   }
 
-  renderPortUsage(label, ports, counts, highlightedPortIds, side, node, geometry) {
+  renderPortUsage(label, ports, counts, highlightedPortIds, side) {
     if (!ports.length) {
       return '';
     }
     return `
       <div class="execution-board-port-usage execution-board-port-usage-${escapeHtml(side)}">
         <span>${escapeHtml(label)}</span>
-        ${ports.map((port) => {
-          const anchor = geometry.ports.get(port.sourcePortId) || this.modernPortLayoutFallback(port, node, geometry);
-          return `
+        ${ports.map((port) => `
           <div
             class="execution-board-port-row execution-board-port-row-${escapeHtml(side)} ${highlightedPortIds.has(port.sourcePortId) ? 'execution-port-new-fact' : ''}"
             data-runtime-port-id="${escapeHtml(port.sourcePortId)}"
-            style="height:${NODE_PORT_ROW_HEIGHT}px;"
           >
             <i
               class="execution-port-anchor"
               aria-hidden="true"
               data-runtime-port-anchor-id="${escapeHtml(port.sourcePortId)}"
-              data-runtime-anchor-x="${anchor.x}"
-              data-runtime-anchor-y="${anchor.y}"
-              style="--execution-port-anchor-y:${anchor.y}px;"
             ></i>
             <small>${escapeHtml(port.name || 'Port')}</small>
             <strong>×${Number(counts.get(port.sourcePortId) || 0)}</strong>
           </div>
-        `;
-        }).join('')}
+        `).join('')}
       </div>
     `;
   }
@@ -1307,6 +1296,10 @@ export class TaskExecutionView {
   }
 
   modernPortPoint(port, projection) {
+    const measured = this.elementCanvasCenter(this.elementByData('data-runtime-port-anchor-id', port.sourcePortId));
+    if (measured) {
+      return measured;
+    }
     const node = projection.nodeBySource.get(port.sourceNodeId);
     if (!node) {
       return { x: 0, y: 0 };
@@ -1409,16 +1402,74 @@ export class TaskExecutionView {
     };
   }
 
+  elementByData(attribute, value) {
+    if (!value) {
+      return null;
+    }
+    return [...this.document.querySelectorAll(`[${attribute}]`)]
+      .find((element) => element.getAttribute(attribute) === value) || null;
+  }
+
+  elementCanvasBounds(element) {
+    if (!element?.getBoundingClientRect) {
+      return null;
+    }
+    const rect = element.getBoundingClientRect();
+    if (!rect) {
+      return null;
+    }
+    const left = Number(rect.left);
+    const top = Number(rect.top);
+    const width = Number(rect.width ?? (Number(rect.right) - left));
+    const height = Number(rect.height ?? (Number(rect.bottom) - top));
+    if (![left, top, width, height].every(Number.isFinite) || (width === 0 && height === 0)) {
+      return null;
+    }
+    const right = Number.isFinite(Number(rect.right)) ? Number(rect.right) : left + width;
+    const bottom = Number.isFinite(Number(rect.bottom)) ? Number(rect.bottom) : top + height;
+    const canvasRect = this.byId('agentsV2ExecutionCanvas')?.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const canvasLeft = Number(canvasRect.left) || 0;
+    const canvasTop = Number(canvasRect.top) || 0;
+    const scale = this.viewport.scale || 1;
+    const canvasLeftPoint = ((left - canvasLeft) - this.viewport.x) / scale;
+    const canvasTopPoint = ((top - canvasTop) - this.viewport.y) / scale;
+    const canvasRightPoint = ((right - canvasLeft) - this.viewport.x) / scale;
+    const canvasBottomPoint = ((bottom - canvasTop) - this.viewport.y) / scale;
+    return {
+      left: canvasLeftPoint,
+      top: canvasTopPoint,
+      right: canvasRightPoint,
+      bottom: canvasBottomPoint,
+      width: Math.max(0, canvasRightPoint - canvasLeftPoint),
+      height: Math.max(0, canvasBottomPoint - canvasTopPoint)
+    };
+  }
+
+  elementCanvasCenter(element) {
+    const bounds = this.elementCanvasBounds(element);
+    if (!bounds) {
+      return null;
+    }
+    return {
+      x: bounds.left + (bounds.width / 2),
+      y: bounds.top + (bounds.height / 2)
+    };
+  }
+
   syncCanvasBounds(nodes, legacy = false, projection = null) {
     const edgesSvg = this.byId('agentsV2ExecutionEdges');
     const nodesLayer = this.byId('agentsV2ExecutionNodes');
     let width = MIN_CANVAS_WIDTH;
     let height = MIN_CANVAS_HEIGHT;
-    const widthForNode = legacy ? LEGACY_NODE_WIDTH : NODE_WIDTH;
-    for (const node of nodes) {
-      const heightForNode = legacy ? LEGACY_NODE_HEIGHT : this.modernNodeGeometry(node, projection || this.modernProjection()).height;
-      width = Math.max(width, Number(node.position?.x || 0) + widthForNode + CANVAS_PADDING);
-      height = Math.max(height, Number(node.position?.y || 0) + heightForNode + CANVAS_PADDING);
+    if (legacy) {
+      for (const node of nodes) {
+        width = Math.max(width, Number(node.position?.x || 0) + LEGACY_NODE_WIDTH + CANVAS_PADDING);
+        height = Math.max(height, Number(node.position?.y || 0) + LEGACY_NODE_HEIGHT + CANVAS_PADDING);
+      }
+    } else {
+      const bounds = this.nodeBounds(nodes, projection || this.modernProjection(), 0);
+      width = Math.max(width, bounds.left + bounds.width + CANVAS_PADDING);
+      height = Math.max(height, bounds.top + bounds.height + CANVAS_PADDING);
     }
     const widthValue = `${Math.ceil(width)}px`;
     const heightValue = `${Math.ceil(height)}px`;
@@ -1523,12 +1574,16 @@ export class TaskExecutionView {
     let right = -Infinity;
     let bottom = -Infinity;
     for (const node of nodes) {
-      const x = Number(node.position?.x || 0);
-      const y = Number(node.position?.y || 0);
+      const measured = projection
+        ? this.elementCanvasBounds(this.elementByData('data-execution-source-node-id', node.sourceNodeId))
+        : null;
+      const x = measured ? measured.left : Number(node.position?.x || 0);
+      const y = measured ? measured.top : Number(node.position?.y || 0);
+      const width = measured ? measured.width : NODE_WIDTH;
+      const height = measured ? measured.height : (projection ? this.modernNodeGeometry(node, projection).height : LEGACY_NODE_HEIGHT);
       left = Math.min(left, x);
       top = Math.min(top, y);
-      right = Math.max(right, x + NODE_WIDTH);
-      const height = projection ? this.modernNodeGeometry(node, projection).height : LEGACY_NODE_HEIGHT;
+      right = Math.max(right, x + width);
       bottom = Math.max(bottom, y + height);
     }
     return {
