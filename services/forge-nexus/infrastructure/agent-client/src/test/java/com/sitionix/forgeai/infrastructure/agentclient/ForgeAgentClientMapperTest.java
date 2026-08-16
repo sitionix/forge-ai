@@ -345,12 +345,12 @@ class ForgeAgentClientMapperTest {
     }
 
     @Test
-    void workflowRunRuntimeGraphAndRoutingCompletedAtMapSuccessfully() throws Exception {
+    void workflowRunRuntimeGraphMapsSuccessfully() throws Exception {
         final UUID inputPortId = UUID.fromString("88888888-0000-4000-8000-000000000001");
         final UUID outputPortId = UUID.fromString("88888888-0000-4000-8000-000000000002");
         final UUID connectionId = UUID.fromString("88888888-0000-4000-8000-000000000003");
         final UUID frameId = UUID.fromString("99999999-0000-4000-8000-000000000001");
-        final Instant routingCompletedAt = Instant.parse("2026-08-04T00:02:00Z");
+        final Instant finishedAt = Instant.parse("2026-08-04T00:02:00Z");
         final var nodeRunResponse = new NodeRunResponse(
                 NODE_RUN_ID,
                 NODE_ID,
@@ -367,24 +367,19 @@ class ForgeAgentClientMapperTest {
                 AgentNodeRunStatus.SUCCEEDED,
                 this.objectMapper.readTree("{\"summary\":\"done\"}"),
                 null,
-                routingCompletedAt,
                 CREATED,
                 CREATED,
-                routingCompletedAt
+                finishedAt
         );
         final WorkflowRunGraphResponse graph = new WorkflowRunGraphResponse(
                 List.of(new RunNodeResponse(
                         NODE_ID,
-                        AGENT_ID,
                         "Analyzer",
-                        "Analyze changes.",
-                        this.objectMapper.readTree("{\"type\":\"object\"}"),
-                        NodeInputMode.DEPENDENCIES_ONLY.name(),
                         new NodePositionResponse(1.0, 2.0)
                 )),
                 List.of(
-                        new RunPortResponse(inputPortId, NODE_ID, "INPUT", "Initial", "Initial input.", 0),
-                        new RunPortResponse(outputPortId, NODE_ID, "OUTPUT", "Done", "Terminal output.", 0)
+                        new RunPortResponse(inputPortId, NODE_ID, "INPUT", "Initial", 0),
+                        new RunPortResponse(outputPortId, NODE_ID, "OUTPUT", "Done", 0)
                 ),
                 List.of(new RunConnectionResponse(connectionId, outputPortId, inputPortId))
         );
@@ -428,26 +423,21 @@ class ForgeAgentClientMapperTest {
                         AgentNodeRunStatus.SUCCEEDED,
                         new AgentNodeRunOutputDocument("{\"summary\":\"done\"}"),
                         null,
-                        routingCompletedAt,
                         CREATED,
                         CREATED,
-                        routingCompletedAt
+                        finishedAt
                 )),
                 List.of(),
                 List.of(),
                 new AgentWorkflowRunGraph(
                         List.of(new AgentRunNode(
                                 NODE_ID,
-                                AGENT_ID,
                                 "Analyzer",
-                                "Analyze changes.",
-                                new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
-                                NodeInputMode.DEPENDENCIES_ONLY,
                                 new NodePosition(1.0, 2.0)
                         )),
                         List.of(
-                                new AgentRunPort(inputPortId, NODE_ID, "INPUT", "Initial", "Initial input.", 0),
-                                new AgentRunPort(outputPortId, NODE_ID, "OUTPUT", "Done", "Terminal output.", 0)
+                                new AgentRunPort(inputPortId, NODE_ID, "INPUT", "Initial", 0),
+                                new AgentRunPort(outputPortId, NODE_ID, "OUTPUT", "Done", 0)
                         ),
                         List.of(new AgentRunConnection(connectionId, outputPortId, inputPortId))
                 ),

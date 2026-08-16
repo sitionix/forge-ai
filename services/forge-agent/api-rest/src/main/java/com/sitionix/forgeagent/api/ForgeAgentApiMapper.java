@@ -215,19 +215,11 @@ class ForgeAgentApiMapper {
     }
 
     private RunNodeResponse toResponse(final RunNode node) {
-        try {
-            return new RunNodeResponse(
-                    node.sourceNodeId(),
-                    node.sourceAgentId(),
-                    node.agentName(),
-                    node.agentInstructions(),
-                    this.objectMapper.readTree(node.agentOutputSchema().jsonObject()),
-                    inputMode(node.inputMode()).name(),
-                    new NodePositionResponse(node.position().x(), node.position().y())
-            );
-        } catch (final JsonProcessingException exception) {
-            throw new IllegalStateException("Stored run node output schema is invalid JSON.", exception);
-        }
+        return new RunNodeResponse(
+                node.sourceNodeId(),
+                node.agentName(),
+                new NodePositionResponse(node.position().x(), node.position().y())
+        );
     }
 
     private RunPortResponse toResponse(final RunPort port) {
@@ -236,7 +228,6 @@ class ForgeAgentApiMapper {
                 port.sourceNodeId(),
                 port.direction(),
                 port.name(),
-                port.description(),
                 port.order()
         );
     }
@@ -359,7 +350,6 @@ class ForgeAgentApiMapper {
                     nodeRun.status(),
                     nodeRun.output() == null ? null : this.objectMapper.readTree(nodeRun.output().jsonValue()),
                     nodeRun.failure() == null ? null : new NodeRunFailureResponse(nodeRun.failure().code(), nodeRun.failure().message()),
-                    nodeRun.routingCompletedAt(),
                     nodeRun.createdAt(),
                     nodeRun.startedAt(),
                     nodeRun.finishedAt()

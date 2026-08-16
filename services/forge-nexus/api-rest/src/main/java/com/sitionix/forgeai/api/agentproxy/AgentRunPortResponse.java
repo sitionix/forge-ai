@@ -7,7 +7,6 @@ public record AgentRunPortResponse(
         UUID sourceNodeId,
         String direction,
         String name,
-        String description,
         int order
 ) {
 }

@@ -256,19 +256,11 @@ public class AgentProxyApiMapper {
     }
 
     private AgentRunNodeResponse toResponse(final AgentRunNode node) {
-        try {
-            return new AgentRunNodeResponse(
-                    node.sourceNodeId(),
-                    node.sourceAgentId(),
-                    node.agentName(),
-                    node.agentInstructions(),
-                    this.objectMapper.readTree(node.agentOutputSchema().jsonObject()),
-                    nodeRunInputMode(node.inputMode()).name(),
-                    new NodePositionResponse(node.position().x(), node.position().y())
-            );
-        } catch (final JsonProcessingException exception) {
-            throw new IllegalStateException("Agent runtime graph JSON is not valid JSON.", exception);
-        }
+        return new AgentRunNodeResponse(
+                node.sourceNodeId(),
+                node.agentName(),
+                new NodePositionResponse(node.position().x(), node.position().y())
+        );
     }
 
     private AgentRunPortResponse toResponse(final AgentRunPort port) {
@@ -277,7 +269,6 @@ public class AgentProxyApiMapper {
                 port.sourceNodeId(),
                 port.direction(),
                 port.name(),
-                port.description(),
                 port.order()
         );
     }
@@ -360,7 +351,6 @@ public class AgentProxyApiMapper {
                     nodeRun.status(),
                     nodeRun.output() == null ? null : this.objectMapper.readTree(nodeRun.output().jsonValue()),
                     nodeRun.failure() == null ? null : this.toResponse(nodeRun.failure()),
-                    nodeRun.routingCompletedAt(),
                     nodeRun.createdAt(),
                     nodeRun.startedAt(),
                     nodeRun.finishedAt()

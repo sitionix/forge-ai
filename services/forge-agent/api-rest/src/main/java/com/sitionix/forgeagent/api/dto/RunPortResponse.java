@@ -8,7 +8,6 @@ public record RunPortResponse(
         UUID sourceNodeId,
         PortDirection direction,
         String name,
-        String description,
         int order
 ) {
 }

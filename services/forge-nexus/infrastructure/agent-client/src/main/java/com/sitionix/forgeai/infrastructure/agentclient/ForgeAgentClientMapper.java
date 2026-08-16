@@ -322,28 +322,15 @@ public class ForgeAgentClientMapper {
     private AgentRunNode toDomain(final RunNodeResponse response) {
         this.requireResponse(response, "runtime graph node");
         this.requireId(response.sourceNodeId(), "workflowRun.runtimeGraph.nodes.sourceNodeId");
-        this.requireId(response.sourceAgentId(), "workflowRun.runtimeGraph.nodes.sourceAgentId");
         this.requireText(response.agentName(), "workflowRun.runtimeGraph.nodes.agentName");
-        this.requireText(response.agentInstructions(), "workflowRun.runtimeGraph.nodes.agentInstructions");
-        if (response.agentOutputSchema() == null || !response.agentOutputSchema().isObject()) {
-            throw this.invalid("workflowRun.runtimeGraph.nodes.agentOutputSchema must be a JSON object");
-        }
         if (response.position() == null) {
             throw this.invalid("workflowRun.runtimeGraph.nodes.position must not be null");
         }
-        try {
-            return new AgentRunNode(
-                    response.sourceNodeId(),
-                    response.sourceAgentId(),
-                    response.agentName(),
-                    response.agentInstructions(),
-                    new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(response.agentOutputSchema())),
-                    nodeRunInputMode(response.inputMode()),
-                    new NodePosition(response.position().x(), response.position().y())
-            );
-        } catch (final JsonProcessingException exception) {
-            throw new IllegalArgumentException("Forge Agent runtime graph node JSON was invalid.", exception);
-        }
+        return new AgentRunNode(
+                response.sourceNodeId(),
+                response.agentName(),
+                new NodePosition(response.position().x(), response.position().y())
+        );
     }
 
     private AgentRunPort toDomain(final RunPortResponse response) {
@@ -352,13 +339,11 @@ public class ForgeAgentClientMapper {
         this.requireId(response.sourceNodeId(), "workflowRun.runtimeGraph.ports.sourceNodeId");
         this.requireText(response.direction(), "workflowRun.runtimeGraph.ports.direction");
         this.requireText(response.name(), "workflowRun.runtimeGraph.ports.name");
-        this.requireText(response.description(), "workflowRun.runtimeGraph.ports.description");
         return new AgentRunPort(
                 response.sourcePortId(),
                 response.sourceNodeId(),
                 response.direction(),
                 response.name(),
-                response.description(),
                 response.order()
         );
     }
@@ -538,7 +523,6 @@ public class ForgeAgentClientMapper {
                     response.status(),
                     response.output() == null ? null : new AgentNodeRunOutputDocument(this.objectMapper.writeValueAsString(response.output())),
                     response.failure() == null ? null : this.toDomain(response.failure()),
-                    response.routingCompletedAt(),
                     response.createdAt(),
                     response.startedAt(),
                     response.finishedAt()

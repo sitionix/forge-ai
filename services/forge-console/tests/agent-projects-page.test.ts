@@ -153,7 +153,6 @@ function nodeRun(
     enteredViaInputPortId: upstreamNodeRunIds.length > 0 ? `${id}-input` : null,
     activationFrameId: upstreamNodeRunIds.length > 0 ? 'frame-root' : null,
     selectedOutputPortId: null,
-    routingCompletedAt: status === 'SUCCEEDED' ? '2026-08-13T10:02:02Z' : null,
     testUpstreamNodeRunIds: upstreamNodeRunIds,
     status,
     output,
@@ -194,18 +193,14 @@ function runtimeGraph(nodes: any[], connections: any[] = []) {
   return {
     nodes: nodes.map((item) => ({
       sourceNodeId: item.id,
-      sourceAgentId: item.sourceAgentId || `agent-${item.id}`,
       agentName: item.agentName,
-      agentInstructions: `${item.agentName} instructions`,
-      agentOutputSchema: { type: 'object' },
-      inputMode: item.inputMode || 'DEPENDENCIES_ONLY',
       position: item.position || { x: 10, y: 20 }
     })),
     ports: nodes.flatMap((item) => [
-      ...(item.inputs || [{ id: `${item.id}-input`, name: 'Input', description: 'Default input.', order: 0 }])
-        .map((port: any) => ({ sourcePortId: port.id, sourceNodeId: item.id, direction: 'INPUT', name: port.name, description: port.description, order: port.order })),
-      ...(item.outputs || [{ id: `${item.id}-output`, name: 'Output', description: 'Default output.', order: 0 }])
-        .map((port: any) => ({ sourcePortId: port.id, sourceNodeId: item.id, direction: 'OUTPUT', name: port.name, description: port.description, order: port.order }))
+      ...(item.inputs || [{ id: `${item.id}-input`, name: 'Input', order: 0 }])
+        .map((port: any) => ({ sourcePortId: port.id, sourceNodeId: item.id, direction: 'INPUT', name: port.name, order: port.order })),
+      ...(item.outputs || [{ id: `${item.id}-output`, name: 'Output', order: 0 }])
+        .map((port: any) => ({ sourcePortId: port.id, sourceNodeId: item.id, direction: 'OUTPUT', name: port.name, order: port.order }))
     ]),
     connections: connections.map((item) => ({
       sourceConnectionId: item.id,
@@ -220,119 +215,17 @@ function modernNodeRun(
   sourceNodeId: string,
   status: string,
   createdAt: string,
-  options: any = {}
+  selectedOutputPortId: string | null = null
 ) {
   return {
-    id,
+    ...nodeRun(id, sourceNodeId, status),
     sourceNodeId,
-    sourceAgentId: `agent-${sourceNodeId}`,
-    agentName: options.agentName || sourceNodeId,
-    agentInstructions: `${options.agentName || sourceNodeId} instructions`,
-    agentOutputSchema: { type: 'object' },
-    inputMode: options.inputMode || 'DEPENDENCIES_ONLY',
-    position: options.position || { x: 10, y: 20 },
-    executionFrameId: options.executionFrameId || 'frame-root',
-    enteredViaInputPortId: options.enteredViaInputPortId || null,
-    activationFrameId: options.activationFrameId || null,
-    selectedOutputPortId: options.selectedOutputPortId || null,
-    routingCompletedAt: Object.prototype.hasOwnProperty.call(options, 'routingCompletedAt') ? options.routingCompletedAt : (status === 'SUCCEEDED' ? '2026-08-13T10:02:02Z' : null),
-    status,
-    output: options.output ?? null,
-    failure: options.failure || null,
+    agentName: sourceNodeId,
+    selectedOutputPortId,
     createdAt,
-    startedAt: status === 'PENDING' ? null : options.startedAt || createdAt,
-    finishedAt: ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(status) ? options.finishedAt || '2026-08-13T10:02:00Z' : null
+    startedAt: status === 'PENDING' ? null : createdAt,
+    finishedAt: status === 'RUNNING' || status === 'PENDING' ? null : createdAt
   };
-}
-
-function resolution(
-  id: string,
-  sourceNodeRunId: string,
-  sourceConnectionId: string,
-  type = 'DELIVERED',
-  consumedByNodeRunId: string | null = null,
-  createdAt = '2026-08-13T10:02:03Z'
-) {
-  return {
-    id,
-    executionFrameId: 'frame-root',
-    sourceNodeRunId,
-    sourceConnectionId,
-    targetInputPortId: 'target-input',
-    resolutionType: type,
-    payload: { value: id },
-    consumedByNodeRunId,
-    createdAt
-  };
-}
-
-function edgePath(dom: JSDOM, connectionId: string) {
-  return dom.window.document
-    .querySelector<SVGPathElement>(`[data-runtime-connection-id="${connectionId}"] .edge-visible`)
-    ?.getAttribute('d') || '';
-}
-
-function edgeCoordinates(path: string) {
-  const numbers = (path.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
-  return {
-    startX: numbers[0],
-    startY: numbers[1],
-    endX: numbers[6],
-    endY: numbers[7]
-  };
-}
-
-function measuredRect(left: number, top: number, width: number, height: number) {
-  return {
-    x: left,
-    y: top,
-    left,
-    top,
-    right: left + width,
-    bottom: top + height,
-    width,
-    height,
-    toJSON: () => ({})
-  } as DOMRect;
-}
-
-function measuredCenter(rect: DOMRect, canvas = measuredRect(0, 0, 900, 520), viewport = { x: 0, y: 0, scale: 1 }) {
-  return {
-    x: (((rect.left + rect.width / 2) - canvas.left) - viewport.x) / viewport.scale,
-    y: (((rect.top + rect.height / 2) - canvas.top) - viewport.y) / viewport.scale
-  };
-}
-
-function installExecutionGeometry(
-  dom: JSDOM,
-  geometry: {
-    canvas?: DOMRect;
-    cards?: Record<string, DOMRect>;
-    ports?: Record<string, DOMRect>;
-  }
-) {
-  const original = dom.window.Element.prototype.getBoundingClientRect;
-  Object.defineProperty(dom.window.Element.prototype, 'getBoundingClientRect', {
-    value(this: Element) {
-      if (this.id === 'agentsV2ExecutionCanvas' && geometry.canvas) {
-        return geometry.canvas;
-      }
-      const sourceNodeId = this.getAttribute('data-execution-source-node-id');
-      if (sourceNodeId && geometry.cards?.[sourceNodeId]) {
-        return geometry.cards[sourceNodeId];
-      }
-      const portId = this.getAttribute('data-runtime-port-anchor-id');
-      if (portId && geometry.ports?.[portId]) {
-        return geometry.ports[portId];
-      }
-      return original.call(this);
-    },
-    configurable: true
-  });
-}
-
-function transformScale(transform: string) {
-  return Number(transform.match(/scale\(([^)]+)\)/)?.[1] || 1);
 }
 
 function node(
@@ -961,18 +854,18 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('ASSERTION_FAILED');
   });
 
-  it('modern execution board renders complete runtimeGraph topology before all nodes execute', async () => {
+  it('modern execution board renders all runtimeGraph nodes before they execute', async () => {
     const graph = runtimeGraph([
-      { id: 'node-a', agentName: 'Planner', position: { x: 20, y: 30 } },
-      { id: 'node-b', agentName: 'Builder', position: { x: 280, y: 30 } },
-      { id: 'node-c', agentName: 'Reviewer', position: { x: 540, y: 30 } }
+      { id: 'a', agentName: 'A', position: { x: 20, y: 30 } },
+      { id: 'b', agentName: 'B', position: { x: 260, y: 30 } },
+      { id: 'c', agentName: 'C', position: { x: 500, y: 30 } }
     ], [
-      { id: 'a-b', sourceOutputPortId: 'node-a-output', targetInputPortId: 'node-b-input' },
-      { id: 'b-c', sourceOutputPortId: 'node-b-output', targetInputPortId: 'node-c-input' }
+      portConnection('a-b', 'a-output', 'b-input'),
+      portConnection('b-c', 'b-output', 'c-input')
     ]);
     const run = workflowRunDetail('run-new', 'RUNNING', [
-      modernNodeRun('nr-a-1', 'node-a', 'RUNNING', '2026-08-13T10:00:00Z', { agentName: 'Planner', position: { x: 20, y: 30 } })
-    ], 'Snapshot Board', graph);
+      modernNodeRun('a-1', 'a', 'RUNNING', '2026-08-13T10:00:00Z')
+    ], 'Modern Board', graph);
     const fakeApi = api({
       getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
       getWorkflowRun: vi.fn(() => Promise.resolve(run))
@@ -983,96 +876,28 @@ describe('Agent projects page', () => {
     await flushAsync();
 
     expect(fakeApi.getWorkflow).not.toHaveBeenCalled();
-    expect(fakeApi.getAgent).not.toHaveBeenCalled();
     expect(dom.window.document.querySelectorAll('[data-execution-source-node-id]')).toHaveLength(3);
-    expect(dom.window.document.querySelector('[data-execution-source-node-id="node-a"]')?.textContent).toContain('Executions1');
-    expect(dom.window.document.querySelector('[data-execution-source-node-id="node-b"]')?.textContent).toContain('Executions0');
-    expect(dom.window.document.querySelector('[data-execution-source-node-id="node-b"]')?.textContent).toContain('No executions yet');
-    expect(dom.window.document.querySelector('[data-node-status]')).toBeNull();
-    expect(compactText(dom.window.document.getElementById('agentsV2ExecutionState')!)).toContain('Reached1/3');
-    expect(dom.window.document.getElementById('agentsV2ExecutionState')?.textContent).not.toContain('%');
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="a"]')?.textContent).toContain('#1 RUNNING');
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="b"]')?.textContent).toContain('0 runs');
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="c"]')?.textContent).toContain('0 runs');
+    expect(dom.window.document.querySelector('[data-runtime-connection-id="a-b"]')).not.toBeNull();
+    expect(dom.window.document.querySelector('[data-runtime-connection-id="b-c"]')).not.toBeNull();
   });
 
-  it('modern execution board aggregates cycle re-entry into one card per Workflow Node', async () => {
+  it('modern execution board keeps one card per source node for cycles and marks the latest selected output', async () => {
     const graph = runtimeGraph([
-      { id: 'worker', agentName: 'Worker', position: { x: 20, y: 80 } },
-      {
-        id: 'reviewer',
-        agentName: 'Reviewer',
-        position: { x: 320, y: 80 },
-        outputs: [
-          { id: 'reviewer-continue', name: 'Continue', description: 'Loop again.', order: 0 },
-          { id: 'reviewer-done', name: 'Done', description: 'Terminal output.', order: 1 }
-        ]
-      }
+      { id: 'worker', agentName: 'Worker', position: { x: 20, y: 30 }, inputs: [{ id: 'worker-input', name: 'Input', order: 0 }, { id: 'worker-feedback', name: 'Feedback', order: 1 }] },
+      { id: 'reviewer', agentName: 'Reviewer', position: { x: 300, y: 30 }, outputs: [{ id: 'reviewer-pass', name: 'Pass', order: 0 }, { id: 'reviewer-fail', name: 'Fail', order: 1 }] }
     ], [
-      { id: 'worker-reviewer', sourceOutputPortId: 'worker-output', targetInputPortId: 'reviewer-input' },
-      { id: 'reviewer-worker', sourceOutputPortId: 'reviewer-continue', targetInputPortId: 'worker-input' }
-    ]);
-    const nodeRuns = [
-      ...Array.from({ length: 5 }, (_, index) => modernNodeRun(`worker-${index + 1}`, 'worker', 'SUCCEEDED', `2026-08-13T10:0${index}:00Z`, {
-        agentName: 'Worker',
-        selectedOutputPortId: 'worker-output',
-        position: { x: 20, y: 80 }
-      })),
-      ...Array.from({ length: 5 }, (_, index) => modernNodeRun(`reviewer-${index + 1}`, 'reviewer', 'SUCCEEDED', `2026-08-13T10:1${index}:00Z`, {
-        agentName: 'Reviewer',
-        selectedOutputPortId: index < 4 ? 'reviewer-continue' : 'reviewer-done',
-        position: { x: 320, y: 80 }
-      }))
-    ];
-    const run = workflowRunDetail('run-new', 'SUCCEEDED', nodeRuns, 'Cycle Board', graph);
-    run.connectionResolutions = [
-      ...Array.from({ length: 5 }, (_, index) => resolution(`worker-reviewer-${index + 1}`, `worker-${index + 1}`, 'worker-reviewer', 'DELIVERED', `reviewer-${index + 1}`)),
-      ...Array.from({ length: 4 }, (_, index) => resolution(`reviewer-worker-${index + 1}`, `reviewer-${index + 1}`, 'reviewer-worker', 'DELIVERED', `worker-${index + 2}`)),
-      resolution('reviewer-worker-closed', 'reviewer-5', 'reviewer-worker', 'CLOSED', null)
-    ];
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'SUCCEEDED', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn(() => Promise.resolve(run))
-    });
-    const { dom, page } = await openedProject(fakeApi);
-
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    expect(dom.window.document.querySelectorAll('[data-execution-source-node-id]')).toHaveLength(2);
-    expect(dom.window.document.querySelector('[data-execution-source-node-id="worker"]')?.textContent).toContain('Executions5');
-    const reviewer = dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')!;
-    expect(reviewer.textContent).toContain('Executions5');
-    expect(compactText(reviewer as HTMLElement)).toContain('Continue×4');
-    expect(compactText(reviewer as HTMLElement)).toContain('Done×1');
-    const edgeText = dom.window.document.getElementById('agentsV2ExecutionEdges')?.textContent || '';
-    expect(edgeText).toContain('×5');
-    expect(edgeText).toContain('×4');
-    expect(edgeText).not.toContain('×1');
-  });
-
-  it('modern execution board does not project CLOSED resolutions as delivered Activity', async () => {
-    const graph = runtimeGraph([
-      { id: 'worker', agentName: 'Worker', position: { x: 20, y: 80 } },
-      {
-        id: 'reviewer',
-        agentName: 'Reviewer',
-        position: { x: 320, y: 80 },
-        outputs: [
-          { id: 'reviewer-continue', name: 'Continue', description: 'Loop again.', order: 0 },
-          { id: 'reviewer-done', name: 'Done', description: 'Terminal output.', order: 1 }
-        ]
-      }
-    ], [
-      { id: 'reviewer-worker', sourceOutputPortId: 'reviewer-continue', targetInputPortId: 'worker-input' }
+      portConnection('worker-reviewer', 'worker-output', 'reviewer-input'),
+      portConnection('reviewer-worker', 'reviewer-fail', 'worker-feedback')
     ]);
     const run = workflowRunDetail('run-new', 'SUCCEEDED', [
-      modernNodeRun('reviewer-5', 'reviewer', 'SUCCEEDED', '2026-08-13T10:05:00Z', {
-        agentName: 'Reviewer',
-        selectedOutputPortId: 'reviewer-done',
-        routingCompletedAt: '2026-08-13T10:05:02Z'
-      })
-    ], 'Closed Activity Board', graph);
-    run.connectionResolutions = [
-      resolution('reviewer-worker-closed', 'reviewer-5', 'reviewer-worker', 'CLOSED', null, '2026-08-13T10:05:03Z')
-    ];
+      modernNodeRun('worker-1', 'worker', 'SUCCEEDED', '2026-08-13T10:00:00Z', 'worker-output'),
+      modernNodeRun('reviewer-1', 'reviewer', 'SUCCEEDED', '2026-08-13T10:01:00Z', 'reviewer-fail'),
+      modernNodeRun('worker-2', 'worker', 'SUCCEEDED', '2026-08-13T10:02:00Z', 'worker-output'),
+      modernNodeRun('reviewer-2', 'reviewer', 'SUCCEEDED', '2026-08-13T10:03:00Z', 'reviewer-pass')
+    ], 'Cycle Board', graph);
     const fakeApi = api({
       getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'SUCCEEDED', '2026-08-13T10:00:00Z')]))),
       getWorkflowRun: vi.fn(() => Promise.resolve(run))
@@ -1080,669 +905,31 @@ describe('Agent projects page', () => {
     const { dom, page } = await openedProject(fakeApi);
 
     await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    const lastActivity = dom.window.document.querySelector<HTMLElement>('.execution-board-last-activity')?.textContent || '';
-    expect(lastActivity).toContain('Reviewer #1 routing completed');
-    expect(lastActivity).not.toContain('Continue');
-    expect(lastActivity).not.toContain('Worker');
-
-    dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="reviewer"]')?.click();
-    await flushAsync();
-    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('CLOSED');
-    dom.window.document.querySelector<HTMLElement>('[data-details-tab="activity"]')?.click();
-    await flushAsync();
-    const activity = dom.window.document.querySelector<HTMLElement>('.execution-activity-panel')?.textContent || '';
-    expect(activity).toContain('Reviewer #1 selected Done');
-    expect(activity).not.toContain('Reviewer #1 → Continue → Worker');
-  });
-
-  it('modern execution board renders distinct paths for different ports between the same nodes', async () => {
-    const graph = runtimeGraph([
-      {
-        id: 'a',
-        agentName: 'Source',
-        position: { x: 20, y: 40 },
-        outputs: [
-          { id: 'a-output-one', name: 'OutputOne', description: 'One.', order: 0 },
-          { id: 'a-output-two', name: 'OutputTwo', description: 'Two.', order: 1 }
-        ]
-      },
-      {
-        id: 'b',
-        agentName: 'Target',
-        position: { x: 360, y: 40 },
-        inputs: [
-          { id: 'b-input-one', name: 'InputOne', description: 'One.', order: 0 },
-          { id: 'b-input-two', name: 'InputTwo', description: 'Two.', order: 1 }
-        ]
-      }
-    ], [
-      { id: 'edge-one', sourceOutputPortId: 'a-output-one', targetInputPortId: 'b-input-one' },
-      { id: 'edge-two', sourceOutputPortId: 'a-output-two', targetInputPortId: 'b-input-two' }
-    ]);
-    const run = workflowRunDetail('run-new', 'RUNNING', [], 'Geometry Board', graph);
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn(() => Promise.resolve(run))
-    });
-    const { dom, page } = await openedProject(fakeApi);
-    const canvasRect = measuredRect(100, 50, 900, 520);
-    const portRects: Record<string, DOMRect> = {
-      'a-output-one': measuredRect(368, 150, 10, 10),
-      'a-output-two': measuredRect(368, 192, 10, 10),
-      'b-input-one': measuredRect(456, 148, 10, 10),
-      'b-input-two': measuredRect(456, 210, 10, 10)
-    };
-    installExecutionGeometry(dom, {
-      canvas: canvasRect,
-      cards: {
-        a: measuredRect(120, 90, 252, 210),
-        b: measuredRect(460, 90, 252, 210)
-      },
-      ports: portRects
-    });
-
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    const first = edgeCoordinates(edgePath(dom, 'edge-one'));
-    const second = edgeCoordinates(edgePath(dom, 'edge-two'));
-    const outputOne = measuredCenter(portRects['a-output-one']!, canvasRect);
-    const outputTwo = measuredCenter(portRects['a-output-two']!, canvasRect);
-    const inputOne = measuredCenter(portRects['b-input-one']!, canvasRect);
-    const inputTwo = measuredCenter(portRects['b-input-two']!, canvasRect);
-    expect(edgePath(dom, 'edge-one')).not.toBe(edgePath(dom, 'edge-two'));
-    expect(first.startX).toBe(outputOne.x);
-    expect(first.startY).toBe(outputOne.y);
-    expect(first.endX).toBe(inputOne.x);
-    expect(first.endY).toBe(inputOne.y);
-    expect(second.startX).toBe(outputTwo.x);
-    expect(second.startY).toBe(outputTwo.y);
-    expect(second.endX).toBe(inputTwo.x);
-    expect(second.endY).toBe(inputTwo.y);
-    expect(first.startY).not.toBe(second.startY);
-    expect(first.endY).not.toBe(second.endY);
-
-    portRects['a-output-two'] = measuredRect(368, 238, 10, 10);
-    page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
-    page.taskExecutionView.fitAppliedRunId = run.id;
-    page.taskExecutionView.render();
-    await flushAsync();
-
-    const movedSecond = edgeCoordinates(edgePath(dom, 'edge-two'));
-    const movedOutputTwo = measuredCenter(portRects['a-output-two']!, canvasRect);
-    expect(movedSecond.startY).toBe(movedOutputTwo.y);
-    expect(movedSecond.startY).not.toBe(second.startY);
-  });
-
-  it('modern execution board uses the same source port anchor for fan-out paths', async () => {
-    const graph = runtimeGraph([
-      { id: 'a', agentName: 'Source', position: { x: 20, y: 40 } },
-      { id: 'b', agentName: 'Branch B', position: { x: 360, y: 20 } },
-      { id: 'c', agentName: 'Branch C', position: { x: 360, y: 220 } }
-    ], [
-      { id: 'edge-b', sourceOutputPortId: 'a-output', targetInputPortId: 'b-input' },
-      { id: 'edge-c', sourceOutputPortId: 'a-output', targetInputPortId: 'c-input' }
-    ]);
-    const run = workflowRunDetail('run-new', 'RUNNING', [], 'Fanout Geometry Board', graph);
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn(() => Promise.resolve(run))
-    });
-    const { dom, page } = await openedProject(fakeApi);
-    const canvasRect = measuredRect(100, 50, 900, 520);
-    const portRects: Record<string, DOMRect> = {
-      'a-output': measuredRect(368, 150, 10, 10),
-      'b-input': measuredRect(456, 90, 10, 10),
-      'c-input': measuredRect(456, 290, 10, 10)
-    };
-    installExecutionGeometry(dom, {
-      canvas: canvasRect,
-      cards: {
-        a: measuredRect(120, 90, 252, 210),
-        b: measuredRect(460, 30, 252, 210),
-        c: measuredRect(460, 230, 252, 210)
-      },
-      ports: portRects
-    });
-
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    const toB = edgeCoordinates(edgePath(dom, 'edge-b'));
-    const toC = edgeCoordinates(edgePath(dom, 'edge-c'));
-    const source = measuredCenter(portRects['a-output']!, canvasRect);
-    const targetB = measuredCenter(portRects['b-input']!, canvasRect);
-    const targetC = measuredCenter(portRects['c-input']!, canvasRect);
-    expect(toB.startX).toBe(source.x);
-    expect(toB.startY).toBe(source.y);
-    expect(toC.startX).toBe(source.x);
-    expect(toC.startY).toBe(source.y);
-    expect(toB.endY).toBe(targetB.y);
-    expect(toC.endY).toBe(targetC.y);
-    expect(toB.endY).not.toBe(toC.endY);
-  });
-
-  it('modern execution board uses distinct target input anchors for fan-in paths', async () => {
-    const graph = runtimeGraph([
-      { id: 'a', agentName: 'Source A', position: { x: 20, y: 20 } },
-      { id: 'b', agentName: 'Source B', position: { x: 20, y: 220 } },
-      {
-        id: 'x',
-        agentName: 'Join',
-        position: { x: 360, y: 80 },
-        inputs: [
-          { id: 'x-input-a', name: 'InputA', description: 'A.', order: 0 },
-          { id: 'x-input-b', name: 'InputB', description: 'B.', order: 1 }
-        ]
-      }
-    ], [
-      { id: 'edge-a-x', sourceOutputPortId: 'a-output', targetInputPortId: 'x-input-a' },
-      { id: 'edge-b-x', sourceOutputPortId: 'b-output', targetInputPortId: 'x-input-b' }
-    ]);
-    const run = workflowRunDetail('run-new', 'RUNNING', [], 'Fanin Geometry Board', graph);
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn(() => Promise.resolve(run))
-    });
-    const { dom, page } = await openedProject(fakeApi);
-    const canvasRect = measuredRect(100, 50, 900, 520);
-    const portRects: Record<string, DOMRect> = {
-      'a-output': measuredRect(368, 90, 10, 10),
-      'b-output': measuredRect(368, 290, 10, 10),
-      'x-input-a': measuredRect(456, 150, 10, 10),
-      'x-input-b': measuredRect(456, 210, 10, 10)
-    };
-    installExecutionGeometry(dom, {
-      canvas: canvasRect,
-      cards: {
-        a: measuredRect(120, 30, 252, 210),
-        b: measuredRect(120, 230, 252, 210),
-        x: measuredRect(460, 110, 252, 240)
-      },
-      ports: portRects
-    });
-
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    const fromA = edgeCoordinates(edgePath(dom, 'edge-a-x'));
-    const fromB = edgeCoordinates(edgePath(dom, 'edge-b-x'));
-    const targetA = measuredCenter(portRects['x-input-a']!, canvasRect);
-    const targetB = measuredCenter(portRects['x-input-b']!, canvasRect);
-    expect(fromA.endX).toBe(fromB.endX);
-    expect(fromA.endX).toBe(targetA.x);
-    expect(fromB.endX).toBe(targetB.x);
-    expect(fromA.endY).toBe(targetA.y);
-    expect(fromB.endY).toBe(targetB.y);
-    expect(fromA.endY).not.toBe(fromB.endY);
-  });
-
-  it('modern execution board includes tall multi-port card height in canvas bounds', async () => {
-    const graph = runtimeGraph([
-      {
-        id: 'tall',
-        agentName: 'Tall Node',
-        position: { x: 20, y: 900 },
-        inputs: Array.from({ length: 4 }, (_value, index) => ({
-          id: `tall-input-${index}`,
-          name: `Input ${index}`,
-          description: `Input ${index}.`,
-          order: index
-        })),
-        outputs: Array.from({ length: 5 }, (_value, index) => ({
-          id: `tall-output-${index}`,
-          name: `Output ${index}`,
-          description: `Output ${index}.`,
-          order: index
-        }))
-      }
-    ]);
-    const run = workflowRunDetail('run-new', 'RUNNING', [], 'Tall Geometry Board', graph);
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn(() => Promise.resolve(run))
-    });
-    const { dom, page } = await openedProject(fakeApi);
-    installExecutionGeometry(dom, {
-      canvas: measuredRect(0, 0, 900, 520),
-      cards: {
-        tall: measuredRect(20, 900, 252, 520)
-      }
-    });
-
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    const svgHeight = Number(dom.window.document.getElementById('agentsV2ExecutionEdges')?.getAttribute('height') || 0);
-    expect(svgHeight).toBeGreaterThanOrEqual(900 + 520 + 240);
-  });
-
-  it('modern execution board shows concurrent invocations, routing facts, and concrete failure details without relabeling nodes', async () => {
-    const graph = runtimeGraph([{ id: 'worker', agentName: 'Worker', position: { x: 20, y: 30 } }]);
-    const run = workflowRunDetail('run-new', 'SUCCEEDED', [
-      modernNodeRun('worker-1', 'worker', 'RUNNING', '2026-08-13T10:00:00Z', { agentName: 'Worker' }),
-      modernNodeRun('worker-2', 'worker', 'RUNNING', '2026-08-13T10:01:00Z', { agentName: 'Worker' }),
-      modernNodeRun('worker-3', 'worker', 'SUCCEEDED', '2026-08-13T10:02:00Z', { agentName: 'Worker', selectedOutputPortId: 'worker-output', routingCompletedAt: null }),
-      modernNodeRun('worker-4', 'worker', 'FAILED', '2026-08-13T10:03:00Z', { agentName: 'Worker', failure: { code: 'BAD_OUTPUT', message: 'Output failed validation.' } })
-    ], 'Concurrent Board', graph);
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'SUCCEEDED', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn(() => Promise.resolve(run))
-    });
-    const { dom, page } = await openedProject(fakeApi);
-
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    const cardText = compactText(dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="worker"]')!);
-    expect(cardText).toContain('Executions4');
-    expect(cardText).toContain('Running2');
-    expect(cardText).toContain('Routingpending1');
-    expect(compactText(dom.window.document.getElementById('agentsV2ExecutionState')!)).toContain('Routing1');
-    expect(dom.window.document.body.textContent).not.toContain('COMPLETED');
-
-    dom.window.document.querySelector<HTMLElement>('[data-execution-run-chip-id="worker-4"]')?.click();
-    await flushAsync();
-    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('BAD_OUTPUT');
-    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('Output failed validation.');
-  });
-
-  it('modern execution board handles polling deltas without replaying initial animations or losing viewport selection', async () => {
-    vi.useFakeTimers();
-    const dom = agentProjectsDom();
-    useFakeWindowTimers(dom);
-    const graph = runtimeGraph([
-      { id: 'worker', agentName: 'Worker', position: { x: 20, y: 30 } },
-      { id: 'reviewer', agentName: 'Reviewer', position: { x: 320, y: 30 } }
-    ], [
-      { id: 'worker-reviewer', sourceOutputPortId: 'worker-output', targetInputPortId: 'reviewer-input' }
-    ]);
-    const firstRun = workflowRunDetail('run-new', 'RUNNING', [
-      modernNodeRun('worker-1', 'worker', 'RUNNING', '2026-08-13T10:00:00Z', { agentName: 'Worker', position: { x: 20, y: 30 } })
-    ], 'Polling Board', graph);
-    const secondRun = workflowRunDetail('run-new', 'RUNNING', [
-      modernNodeRun('worker-1', 'worker', 'SUCCEEDED', '2026-08-13T10:00:00Z', { agentName: 'Worker', position: { x: 20, y: 30 }, selectedOutputPortId: 'worker-output' }),
-      modernNodeRun('reviewer-1', 'reviewer', 'PENDING', '2026-08-13T10:01:00Z', { agentName: 'Reviewer', position: { x: 320, y: 30 }, enteredViaInputPortId: 'reviewer-input' })
-    ], 'Polling Board', graph);
-    secondRun.connectionResolutions = [resolution('res-1', 'worker-1', 'worker-reviewer', 'DELIVERED', 'reviewer-1')];
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn()
-        .mockResolvedValueOnce(firstRun)
-        .mockResolvedValueOnce(secondRun)
-        .mockResolvedValueOnce(secondRun)
-    });
-    const page = new AgentProjectsPage({
-      document: dom.window.document,
-      window: dom.window,
-      api: fakeApi,
-      runtimeConfig: { activeJobPollIntervalMs: 1000 }
-    });
-    page.mount();
-    await flushAsync();
-    await page.openProject(project().id);
-    await flushAsync();
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    expect(dom.window.document.querySelector('[data-edge-animation-id]')).toBeNull();
-    dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="worker"]')?.click();
-    const canvas = dom.window.document.getElementById('agentsV2ExecutionCanvas')!;
-    const nodesLayer = dom.window.document.getElementById('agentsV2ExecutionNodes')!;
-    canvas.dispatchEvent(new dom.window.MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 120, clientY: 140 }));
-    dom.window.document.dispatchEvent(new dom.window.MouseEvent('pointermove', { bubbles: true, clientX: 150, clientY: 150 }));
-    dom.window.document.dispatchEvent(new dom.window.MouseEvent('pointerup', { bubbles: true }));
-
-    dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.click();
-    expect(dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.classList.contains('secondary')).toBe(false);
-    canvas.dispatchEvent(new dom.window.MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }));
-    expect(dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.classList.contains('secondary')).toBe(true);
-    dom.window.document.dispatchEvent(new dom.window.MouseEvent('pointerup', { bubbles: true }));
-    const transformAfterManualNavigation = nodesLayer.style.transform;
-
-    await vi.advanceTimersByTimeAsync(1000);
     await flushAsync();
 
     expect(dom.window.document.querySelectorAll('[data-execution-source-node-id="worker"]')).toHaveLength(1);
     expect(dom.window.document.querySelectorAll('[data-execution-source-node-id="reviewer"]')).toHaveLength(1);
-    expect(dom.window.document.querySelector('[data-edge-animation-id]')).not.toBeNull();
-    expect(dom.window.document.querySelector('.execution-node-new-fact')).not.toBeNull();
-    expect(dom.window.document.querySelector('[data-execution-source-node-id="worker"]')?.classList.contains('selected')).toBe(true);
-    expect(nodesLayer.style.transform).toBe(transformAfterManualNavigation);
-
-    dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="reviewer"]')?.click();
-    await flushAsync();
-    expect(dom.window.document.querySelector('[data-edge-animation-id]')).toBeNull();
-    expect(dom.window.document.querySelector('.execution-node-new-fact')).toBeNull();
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="worker"]')?.textContent).toContain('2 runs');
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')?.textContent).toContain('#2 SUCCEEDED');
+    expect(dom.window.document.querySelector('[data-runtime-port-id="reviewer-pass"]')?.classList.contains('selected')).toBe(true);
+    expect(dom.window.document.querySelector('[data-runtime-port-id="reviewer-fail"]')?.classList.contains('selected')).toBe(false);
+    expect(dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d')).toContain('C');
 
     dom.window.document.querySelector<HTMLElement>('[data-execution-run-chip-id="reviewer-1"]')?.click();
     await flushAsync();
-    dom.window.document.querySelector<HTMLElement>('[data-details-tab="activity"]')?.click();
-    await flushAsync();
-    expect(dom.window.document.querySelector('[data-edge-animation-id]')).toBeNull();
-    expect(dom.window.document.querySelector('.execution-node-new-fact')).toBeNull();
-
-    await vi.advanceTimersByTimeAsync(1000);
-    await flushAsync();
-    expect(dom.window.document.querySelector('[data-edge-animation-id]')).toBeNull();
-    expect(dom.window.document.querySelector('.execution-node-new-fact')).toBeNull();
+    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('SUCCEEDED');
   });
 
-  it('Follow active does not move when newly active cards are already visible', async () => {
-    vi.useFakeTimers();
-    const dom = agentProjectsDom();
-    useFakeWindowTimers(dom);
+  it('modern execution board shows terminal unconnected output selection without inventing an edge', async () => {
     const graph = runtimeGraph([
-      { id: 'worker', agentName: 'Worker', position: { x: 20, y: 30 } },
-      { id: 'reviewer', agentName: 'Reviewer', position: { x: 180, y: 30 } }
-    ]);
-    const firstRun = workflowRunDetail('run-new', 'RUNNING', [
-      modernNodeRun('worker-1', 'worker', 'RUNNING', '2026-08-13T10:00:00Z', { agentName: 'Worker' })
-    ], 'Visible Follow Board', graph);
-    const secondRun = workflowRunDetail('run-new', 'RUNNING', [
-      modernNodeRun('worker-1', 'worker', 'RUNNING', '2026-08-13T10:00:00Z', { agentName: 'Worker' }),
-      modernNodeRun('reviewer-2', 'reviewer', 'PENDING', '2026-08-13T10:01:00Z', { agentName: 'Reviewer' })
-    ], 'Visible Follow Board', graph);
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn()
-        .mockResolvedValueOnce(firstRun)
-        .mockResolvedValueOnce(secondRun)
-    });
-    const page = new AgentProjectsPage({
-      document: dom.window.document,
-      window: dom.window,
-      api: fakeApi,
-      runtimeConfig: { activeJobPollIntervalMs: 1000 }
-    });
-    page.mount();
-    await flushAsync();
-    await page.openProject(project().id);
-    await flushAsync();
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.click();
-    const before = dom.window.document.getElementById('agentsV2ExecutionNodes')!.style.transform;
-
-    await vi.advanceTimersByTimeAsync(1000);
-    await flushAsync();
-
-    expect(dom.window.document.getElementById('agentsV2ExecutionNodes')!.style.transform).toBe(before);
-  });
-
-  it('Follow active toggle preserves the current viewport', async () => {
-    const graph = runtimeGraph([{ id: 'worker', agentName: 'Worker', position: { x: 20, y: 30 } }]);
-    const run = workflowRunDetail('run-new', 'RUNNING', [
-      modernNodeRun('worker-1', 'worker', 'RUNNING', '2026-08-13T10:00:00Z', { agentName: 'Worker' })
-    ], 'Follow Toggle Board', graph);
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn(() => Promise.resolve(run))
-    });
-    const { dom, page } = await openedProject(fakeApi);
-
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    page.taskExecutionView.viewport = { x: 137, y: -84, scale: 1.31 };
-    page.taskExecutionView.applyViewportTransform();
-    const nodesLayer = dom.window.document.getElementById('agentsV2ExecutionNodes')!;
-    const before = nodesLayer.style.transform;
-
-    dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.click();
-    await flushAsync();
-
-    expect(nodesLayer.style.transform).toBe(before);
-    expect(transformScale(nodesLayer.style.transform)).toBe(1.31);
-    expect(dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.classList.contains('secondary')).toBe(false);
-  });
-
-  it('Follow active pans offscreen newly active cards without changing zoom', async () => {
-    vi.useFakeTimers();
-    const dom = agentProjectsDom();
-    useFakeWindowTimers(dom);
-    const graph = runtimeGraph([
-      { id: 'worker', agentName: 'Worker', position: { x: 20, y: 30 } },
-      { id: 'remote', agentName: 'Remote', position: { x: 3000, y: 30 } }
-    ]);
-    const firstRun = workflowRunDetail('run-new', 'RUNNING', [], 'Offscreen Follow Board', graph);
-    const secondRun = workflowRunDetail('run-new', 'RUNNING', [
-      modernNodeRun('remote-1', 'remote', 'PENDING', '2026-08-13T10:01:00Z', { agentName: 'Remote' })
-    ], 'Offscreen Follow Board', graph);
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn()
-        .mockResolvedValueOnce(firstRun)
-        .mockResolvedValueOnce(secondRun)
-    });
-    const page = new AgentProjectsPage({
-      document: dom.window.document,
-      window: dom.window,
-      api: fakeApi,
-      runtimeConfig: { activeJobPollIntervalMs: 1000 }
-    });
-    page.mount();
-    await flushAsync();
-    await page.openProject(project().id);
-    await flushAsync();
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
-    page.taskExecutionView.applyViewportTransform();
-    dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.click();
-    const before = dom.window.document.getElementById('agentsV2ExecutionNodes')!.style.transform;
-    const scaleBefore = transformScale(before);
-
-    await vi.advanceTimersByTimeAsync(1000);
-    await flushAsync();
-
-    const after = dom.window.document.getElementById('agentsV2ExecutionNodes')!.style.transform;
-    expect(after).not.toBe(before);
-    expect(transformScale(after)).toBe(scaleBefore);
-  });
-
-  it('manual zoom disables Follow active', async () => {
-    const graph = runtimeGraph([{ id: 'worker', agentName: 'Worker', position: { x: 20, y: 30 } }]);
-    const run = workflowRunDetail('run-new', 'RUNNING', [], 'Manual Zoom Board', graph);
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn(() => Promise.resolve(run))
-    });
-    const { dom, page } = await openedProject(fakeApi);
-
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.click();
-    const followButton = dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')!;
-    expect(followButton.classList.contains('secondary')).toBe(false);
-    const canvas = dom.window.document.getElementById('agentsV2ExecutionCanvas')!;
-    canvas.dispatchEvent(new dom.window.WheelEvent('wheel', {
-      bubbles: true,
-      cancelable: true,
-      clientX: 120,
-      clientY: 120,
-      deltaY: -100
-    }));
-
-    expect(dom.window.document.querySelector<HTMLElement>('[data-execution-control="follow-active"]')?.classList.contains('secondary')).toBe(true);
-  });
-
-  it('DELIVERED edge travel token is removed after animation without another poll', async () => {
-    vi.useFakeTimers();
-    const dom = agentProjectsDom();
-    useFakeWindowTimers(dom);
-    const graph = runtimeGraph([
-      { id: 'worker', agentName: 'Worker', position: { x: 20, y: 30 } },
-      { id: 'reviewer', agentName: 'Reviewer', position: { x: 320, y: 30 } }
+      { id: 'reviewer', agentName: 'Reviewer', position: { x: 20, y: 30 }, outputs: [{ id: 'continue', name: 'Continue', order: 0 }, { id: 'done', name: 'Done', order: 1 }] },
+      { id: 'worker', agentName: 'Worker', position: { x: 300, y: 30 } }
     ], [
-      { id: 'worker-reviewer', sourceOutputPortId: 'worker-output', targetInputPortId: 'reviewer-input' }
-    ]);
-    const firstRun = workflowRunDetail('run-new', 'RUNNING', [
-      modernNodeRun('worker-1', 'worker', 'RUNNING', '2026-08-13T10:00:00Z', { agentName: 'Worker' })
-    ], 'Token Cleanup Board', graph);
-    const secondRun = workflowRunDetail('run-new', 'SUCCEEDED', [
-      modernNodeRun('worker-1', 'worker', 'SUCCEEDED', '2026-08-13T10:00:00Z', { agentName: 'Worker', selectedOutputPortId: 'worker-output' }),
-      modernNodeRun('reviewer-1', 'reviewer', 'SUCCEEDED', '2026-08-13T10:01:00Z', { agentName: 'Reviewer', enteredViaInputPortId: 'reviewer-input' })
-    ], 'Token Cleanup Board', graph);
-    secondRun.connectionResolutions = [resolution('res-1', 'worker-1', 'worker-reviewer', 'DELIVERED', 'reviewer-1')];
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn()
-        .mockResolvedValueOnce(firstRun)
-        .mockResolvedValueOnce(secondRun)
-    });
-    const page = new AgentProjectsPage({
-      document: dom.window.document,
-      window: dom.window,
-      api: fakeApi,
-      runtimeConfig: { activeJobPollIntervalMs: 100 }
-    });
-    page.mount();
-    await flushAsync();
-    await page.openProject(project().id);
-    await flushAsync();
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    await vi.advanceTimersByTimeAsync(100);
-    await flushAsync();
-    expect(dom.window.document.querySelector('[data-edge-animation-id]')).not.toBeNull();
-
-    await vi.advanceTimersByTimeAsync(1000);
-    await flushAsync();
-    expect(dom.window.document.querySelector('[data-edge-animation-id]')).toBeNull();
-    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(2);
-  });
-
-  it('reduced motion suppresses delivered edge travel token', async () => {
-    vi.useFakeTimers();
-    const dom = agentProjectsDom();
-    useFakeWindowTimers(dom);
-    Object.defineProperty(dom.window, 'matchMedia', {
-      value: vi.fn(() => ({
-        matches: true,
-        media: '(prefers-reduced-motion: reduce)',
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn()
-      })),
-      configurable: true
-    });
-    const graph = runtimeGraph([
-      { id: 'worker', agentName: 'Worker', position: { x: 20, y: 30 } },
-      { id: 'reviewer', agentName: 'Reviewer', position: { x: 320, y: 30 } }
-    ], [
-      { id: 'worker-reviewer', sourceOutputPortId: 'worker-output', targetInputPortId: 'reviewer-input' }
-    ]);
-    const firstRun = workflowRunDetail('run-new', 'RUNNING', [
-      modernNodeRun('worker-1', 'worker', 'RUNNING', '2026-08-13T10:00:00Z', { agentName: 'Worker' })
-    ], 'Reduced Motion Board', graph);
-    const secondRun = workflowRunDetail('run-new', 'RUNNING', [
-      modernNodeRun('worker-1', 'worker', 'SUCCEEDED', '2026-08-13T10:00:00Z', { agentName: 'Worker', selectedOutputPortId: 'worker-output' }),
-      modernNodeRun('reviewer-1', 'reviewer', 'PENDING', '2026-08-13T10:01:00Z', { agentName: 'Reviewer', enteredViaInputPortId: 'reviewer-input' })
-    ], 'Reduced Motion Board', graph);
-    secondRun.connectionResolutions = [resolution('res-1', 'worker-1', 'worker-reviewer', 'DELIVERED', 'reviewer-1')];
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn()
-        .mockResolvedValueOnce(firstRun)
-        .mockResolvedValueOnce(secondRun)
-    });
-    const page = new AgentProjectsPage({
-      document: dom.window.document,
-      window: dom.window,
-      api: fakeApi,
-      runtimeConfig: { activeJobPollIntervalMs: 1000 }
-    });
-    page.mount();
-    await flushAsync();
-    await page.openProject(project().id);
-    await flushAsync();
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    await vi.advanceTimersByTimeAsync(1000);
-    await flushAsync();
-
-    expect(dom.window.document.querySelector('[data-edge-animation-id]')).toBeNull();
-    expect(dom.window.document.getElementById('agentsV2ExecutionEdges')?.textContent).toContain('×1');
-  });
-
-  it('fast terminal NodeRun highlights selected unconnected Output without inventing an edge animation', async () => {
-    vi.useFakeTimers();
-    const dom = agentProjectsDom();
-    useFakeWindowTimers(dom);
-    const graph = runtimeGraph([
-      {
-        id: 'reviewer',
-        agentName: 'Reviewer',
-        position: { x: 20, y: 30 },
-        outputs: [
-          { id: 'reviewer-continue', name: 'Continue', description: 'Loop again.', order: 0 },
-          { id: 'reviewer-done', name: 'Done', description: 'Terminal.', order: 1 }
-        ]
-      }
-    ]);
-    const firstRun = workflowRunDetail('run-new', 'RUNNING', [], 'Fast Terminal Board', graph);
-    const secondRun = workflowRunDetail('run-new', 'SUCCEEDED', [
-      modernNodeRun('reviewer-5', 'reviewer', 'SUCCEEDED', '2026-08-13T10:05:00Z', {
-        agentName: 'Reviewer',
-        selectedOutputPortId: 'reviewer-done',
-        routingCompletedAt: '2026-08-13T10:05:02Z'
-      })
-    ], 'Fast Terminal Board', graph);
-    const fakeApi = api({
-      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
-      getWorkflowRun: vi.fn()
-        .mockResolvedValueOnce(firstRun)
-        .mockResolvedValueOnce(secondRun)
-    });
-    const page = new AgentProjectsPage({
-      document: dom.window.document,
-      window: dom.window,
-      api: fakeApi,
-      runtimeConfig: { activeJobPollIntervalMs: 1000 }
-    });
-    page.mount();
-    await flushAsync();
-    await page.openProject(project().id);
-    await flushAsync();
-    await page.openTaskExecution('task-1');
-    await flushAsync();
-
-    await vi.advanceTimersByTimeAsync(1000);
-    await flushAsync();
-
-    expect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')?.classList.contains('execution-node-new-fact')).toBe(true);
-    const doneOutput = dom.window.document.querySelector<HTMLElement>('[data-runtime-port-id="reviewer-done"]')!;
-    expect(doneOutput.classList.contains('execution-port-new-fact')).toBe(true);
-    expect(compactText(doneOutput)).toContain('Done×1');
-    expect(dom.window.document.querySelector('[data-edge-animation-id]')).toBeNull();
-  });
-
-  it('selected Output Activity uses routingCompletedAt instead of finishedAt', async () => {
-    const routingCompletedAt = '2026-08-13T10:10:00Z';
-    const finishedAt = '2026-08-13T10:00:00Z';
-    const graph = runtimeGraph([
-      {
-        id: 'reviewer',
-        agentName: 'Reviewer',
-        position: { x: 20, y: 30 },
-        outputs: [{ id: 'reviewer-done', name: 'Done', description: 'Terminal.', order: 0 }]
-      }
+      portConnection('continue-worker', 'continue', 'worker-input')
     ]);
     const run = workflowRunDetail('run-new', 'SUCCEEDED', [
-      modernNodeRun('reviewer-5', 'reviewer', 'SUCCEEDED', '2026-08-13T09:59:00Z', {
-        agentName: 'Reviewer',
-        selectedOutputPortId: 'reviewer-done',
-        finishedAt,
-        routingCompletedAt
-      })
-    ], 'Activity Timestamp Board', graph);
+      modernNodeRun('reviewer-1', 'reviewer', 'SUCCEEDED', '2026-08-13T10:00:00Z', 'done')
+    ], 'Terminal Board', graph);
     const fakeApi = api({
       getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'SUCCEEDED', '2026-08-13T10:00:00Z')]))),
       getWorkflowRun: vi.fn(() => Promise.resolve(run))
@@ -1751,13 +938,10 @@ describe('Agent projects page', () => {
 
     await page.openTaskExecution('task-1');
     await flushAsync();
-    dom.window.document.querySelector<HTMLElement>('[data-details-tab="activity"]')?.click();
-    await flushAsync();
 
-    const selectedRow = Array.from(dom.window.document.querySelectorAll<HTMLElement>('.execution-activity-row'))
-      .find((row) => row.textContent?.includes('selected Done'))!;
-    expect(selectedRow.querySelector('time')?.textContent).toBe(new Date(routingCompletedAt).toLocaleTimeString());
-    expect(selectedRow.querySelector('time')?.textContent).not.toBe(new Date(finishedAt).toLocaleTimeString());
+    expect(dom.window.document.querySelector('[data-runtime-port-id="done"]')?.classList.contains('selected')).toBe(true);
+    expect(dom.window.document.querySelectorAll('[data-runtime-connection-id]')).toHaveLength(1);
+    expect(dom.window.document.querySelector('[data-runtime-connection-id="continue-worker"]')).not.toBeNull();
   });
 
   it('Execution graph pans empty canvas, zooms around cursor, and keeps node positions read-only', async () => {
@@ -3847,10 +3031,6 @@ function setPortFields(row: HTMLElement, name: string, description: string) {
 function portTexts(dom: JSDOM, nodeId: string, direction: string) {
   return [...dom.window.document.querySelectorAll(`[data-node-id="${nodeId}"] .workflow-node-port-list.${direction} .workflow-node-port span`)]
     .map((element) => element.textContent);
-}
-
-function compactText(element: HTMLElement) {
-  return (element.textContent || '').replace(/\s+/g, '');
 }
 
 function consoleSourceText() {

@@ -7,7 +7,6 @@ public record RunPortResponse(
         UUID sourceNodeId,
         String direction,
         String name,
-        String description,
         int order
 ) {
 }

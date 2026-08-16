@@ -370,7 +370,7 @@ class ForgeAgentApiMapperTest {
     }
 
     @Test
-    void mapsRuntimeGraphSnapshotAndRoutingCompletedAt() throws Exception {
+    void mapsRuntimeGraphSnapshot() throws Exception {
         final UUID inputPortId = UUID.fromString("77777777-7777-4777-8777-777777777771");
         final UUID outputPortId = UUID.fromString("77777777-7777-4777-8777-777777777772");
         final UUID connectionId = UUID.fromString("77777777-7777-4777-8777-777777777773");
@@ -434,22 +434,15 @@ class ForgeAgentApiMapperTest {
 
         final WorkflowRunResponse response = this.mapper.toResponse(run);
 
-        assertThat(response.nodeRuns()).singleElement()
-                .extracting(NodeRunResponse::routingCompletedAt)
-                .isEqualTo(routingCompletedAt);
         assertThat(response.runtimeGraph()).isEqualTo(new WorkflowRunGraphResponse(
                 List.of(new RunNodeResponse(
                         NODE_A,
-                        AGENT_ID,
                         "Analyzer",
-                        "Analyze changes.",
-                        this.objectMapper.readTree("{\"type\":\"object\"}"),
-                        NodeInputMode.DEPENDENCIES_ONLY.name(),
                         new NodePositionResponse(1.0, 2.0)
                 )),
                 List.of(
-                        new RunPortResponse(inputPortId, NODE_A, PortDirection.INPUT, "Initial", "Initial input.", 0),
-                        new RunPortResponse(outputPortId, NODE_A, PortDirection.OUTPUT, "Done", "Terminal output.", 0)
+                        new RunPortResponse(inputPortId, NODE_A, PortDirection.INPUT, "Initial", 0),
+                        new RunPortResponse(outputPortId, NODE_A, PortDirection.OUTPUT, "Done", 0)
                 ),
                 List.of(new RunConnectionResponse(connectionId, outputPortId, inputPortId))
         ));
