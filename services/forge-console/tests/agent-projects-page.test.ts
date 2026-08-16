@@ -338,6 +338,27 @@ function setRandomUuids(dom: JSDOM, values: string[]) {
   });
 }
 
+function stubRect(element: Element | null, left: number, top: number, width: number, height: number) {
+  if (!element) {
+    throw new Error('Expected element to exist');
+  }
+  element.getBoundingClientRect = () => ({
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    x: left,
+    y: top,
+    width,
+    height,
+    toJSON: () => ({})
+  });
+}
+
+function stubAnchor(dom: JSDOM, portId: string, centerX: number, centerY: number) {
+  stubRect(dom.window.document.querySelector(`[data-runtime-port-anchor-id="${portId}"]`), centerX - 4, centerY - 4, 8, 8);
+}
+
 function pointer(dom: JSDOM, type: string, x: number, y: number) {
   return new dom.window.MouseEvent(type, { clientX: x, clientY: y, bubbles: true, cancelable: true });
 }
@@ -880,8 +901,91 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-execution-source-node-id="a"]')?.textContent).toContain('#1 RUNNING');
     expect(dom.window.document.querySelector('[data-execution-source-node-id="b"]')?.textContent).toContain('0 runs');
     expect(dom.window.document.querySelector('[data-execution-source-node-id="c"]')?.textContent).toContain('0 runs');
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="b"]')?.textContent?.match(/0 runs/g)).toHaveLength(1);
     expect(dom.window.document.querySelector('[data-runtime-connection-id="a-b"]')).not.toBeNull();
     expect(dom.window.document.querySelector('[data-runtime-connection-id="b-c"]')).not.toBeNull();
+  });
+
+  it('modern execution board renders forward edges as orthogonal paths from measured port anchors', async () => {
+    const graph = runtimeGraph([
+      {
+        id: 'a',
+        agentName: 'A',
+        position: { x: 20, y: 30 },
+        outputs: [
+          { id: 'a-output-one', name: 'One', order: 0 },
+          { id: 'a-output-two', name: 'Two', order: 1 }
+        ]
+      },
+      {
+        id: 'b',
+        agentName: 'B',
+        position: { x: 320, y: 30 },
+        inputs: [
+          { id: 'b-input-one', name: 'One', order: 0 },
+          { id: 'b-input-two', name: 'Two', order: 1 }
+        ]
+      }
+    ], [
+      portConnection('edge-one', 'a-output-one', 'b-input-one'),
+      portConnection('edge-two', 'a-output-two', 'b-input-two')
+    ]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Modern Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 900, 600);
+    page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
+    stubAnchor(dom, 'a-output-one', 252, 80);
+    stubAnchor(dom, 'b-input-one', 320, 120);
+    stubAnchor(dom, 'a-output-two', 252, 132);
+    stubAnchor(dom, 'b-input-two', 320, 180);
+    page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
+
+    const pathOne = dom.window.document.querySelector('[data-runtime-connection-id="edge-one"] path')?.getAttribute('d') || '';
+    const pathTwo = dom.window.document.querySelector('[data-runtime-connection-id="edge-two"] path')?.getAttribute('d') || '';
+    expect(pathOne).toBe('M 252 80 H 274 Q 286 80 286 92 V 108 Q 286 120 298 120 H 320');
+    expect(pathTwo).toBe('M 252 132 H 274 Q 286 132 286 144 V 168 Q 286 180 298 180 H 320');
+    expect(pathOne).not.toMatch(/[CS]/);
+    expect(pathTwo).not.toMatch(/[CS]/);
+    expect(pathOne).not.toBe(pathTwo);
+  });
+
+  it('modern execution board routes reverse edges outside measured node bounds without cubic curves', async () => {
+    const graph = runtimeGraph([
+      { id: 'worker', agentName: 'Worker', position: { x: 20, y: 50 }, inputs: [{ id: 'worker-feedback', name: 'Feedback', order: 0 }] },
+      { id: 'reviewer', agentName: 'Reviewer', position: { x: 320, y: 40 }, outputs: [{ id: 'reviewer-fail', name: 'Fail', order: 0 }] }
+    ], [
+      portConnection('reviewer-worker', 'reviewer-fail', 'worker-feedback')
+    ]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Modern Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 900, 600);
+    page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
+    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="worker"]'), 20, 50, 232, 140);
+    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]'), 320, 40, 232, 120);
+    stubAnchor(dom, 'reviewer-fail', 552, 100);
+    stubAnchor(dom, 'worker-feedback', 20, 120);
+    page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
+
+    const path = dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d') || '';
+    expect(path).toBe('M 552 100 H 572 Q 584 100 584 88 V 20 Q 584 8 572 8 H 0 Q -12 8 -12 20 V 108 Q -12 120 0 120 H 20');
+    expect(path).not.toMatch(/[CS]/);
+    expect(path).toContain('584');
+    expect(path).toContain('-12');
+    expect(path).toContain(' 8 ');
   });
 
   it('modern execution board keeps one card per source node for cycles and marks the latest selected output', async () => {
@@ -913,7 +1017,7 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')?.textContent).toContain('#2 SUCCEEDED');
     expect(dom.window.document.querySelector('[data-runtime-port-id="reviewer-pass"]')?.classList.contains('selected')).toBe(true);
     expect(dom.window.document.querySelector('[data-runtime-port-id="reviewer-fail"]')?.classList.contains('selected')).toBe(false);
-    expect(dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d')).toContain('C');
+    expect(dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d')).not.toMatch(/[CS]/);
 
     dom.window.document.querySelector<HTMLElement>('[data-execution-run-chip-id="reviewer-1"]')?.click();
     await flushAsync();

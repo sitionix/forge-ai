@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -90,7 +91,6 @@ class PostgresWorkflowRunRepositoryTest {
     @Test
     void persistsWorkflowRunAndNodeRunSnapshotFields() {
         when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
 
         this.repository.save(this.run(List.of(
                 this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, null, null),
@@ -133,6 +133,50 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(second.getFailureMessage()).isNull();
         assertThat(second.getStartedAt()).isNull();
         assertThat(second.getFinishedAt()).isNull();
+        verify(this.graphRepository, never()).findByWorkflowRunId(any());
+    }
+
+    @Test
+    void saveReturnsInMemoryRuntimeGraphWithoutReadingSnapshotRepository() {
+        final WorkflowRunGraph graph = new WorkflowRunGraph(
+                RUN_ID,
+                List.of(new RunNode(
+                        RUN_ID,
+                        SOURCE_NODE_A,
+                        AGENT_A,
+                        "Planner",
+                        "Use the task input.",
+                        AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                        new NodeRunExecutionModel("codex", "model-a", "medium"),
+                        com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                        new NodePosition(10.0, 20.0)
+                )),
+                List.of(new RunPort(RUN_ID, OUTPUT_PORT_ID, SOURCE_NODE_A, PortDirection.OUTPUT, "Done", "Terminal output.", 0)),
+                List.of()
+        );
+        final WorkflowRun source = new WorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                TASK_ID,
+                "Full Testing",
+                "Review auth changes.",
+                WorkflowRunStatus.QUEUED,
+                List.of(this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, null, null)),
+                List.of(),
+                List.of(),
+                graph,
+                NOW,
+                null,
+                null
+        );
+        when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        final WorkflowRun saved = this.repository.save(source);
+
+        assertThat(saved.runtimeGraph()).isSameAs(graph);
+        assertThat(saved.nodeRuns()).hasSize(1);
+        verify(this.graphRepository, never()).findByWorkflowRunId(any());
     }
 
     @Test
@@ -216,7 +260,6 @@ class PostgresWorkflowRunRepositoryTest {
     @Test
     void savePersistsExecutionModelWithNullableEffort() {
         when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
 
         this.repository.save(this.run(List.of(this.withExecutionModel(
                 this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, null, null),

@@ -403,7 +403,7 @@ export class TaskExecutionView {
           </div>
           <div class="execution-board-card-main">
             <strong>${escapeHtml(node.agentName || 'Unknown agent')}</strong>
-            ${latest ? `<span>#${latestNumber} ${escapeHtml(latest.status)}</span>` : '<span>0 runs</span>'}
+            ${latest ? `<span>#${latestNumber} ${escapeHtml(latest.status)}</span>` : ''}
             <div class="execution-board-runline">
               <small>${nodeRuns.length} ${nodeRuns.length === 1 ? 'run' : 'runs'}</small>
               ${this.renderInvocationMarkers(nodeRuns, projection)}
@@ -459,7 +459,7 @@ export class TaskExecutionView {
       }
       const start = this.modernPortPoint(sourcePort, projection);
       const end = this.modernPortPoint(targetPort, projection);
-      const path = this.modernPathD(start, end, sourceNode, targetNode);
+      const path = this.modernPathD(start, end, sourceNode, targetNode, projection);
       const title = `${sourceNode.agentName}.${sourcePort.name} -> ${targetNode.agentName}.${targetPort.name}`;
       return `
         <g class="workflow-edge execution-edge execution-topology-edge" data-runtime-connection-id="${escapeHtml(connection.sourceConnectionId)}">
@@ -774,15 +774,87 @@ export class TaskExecutionView {
     return `M ${start.x} ${start.y} C ${start.x + mid} ${start.y}, ${end.x - mid} ${end.y}, ${end.x} ${end.y}`;
   }
 
-  modernPathD(start, end, sourceNode, targetNode) {
+  modernPathD(start, end, sourceNode, targetNode, projection = null) {
     const sourceX = Number(sourceNode.position?.x || 0);
     const targetX = Number(targetNode.position?.x || 0);
     if (targetX <= sourceX) {
-      const clearance = 72;
-      const top = Math.min(start.y, end.y) - clearance;
-      return `M ${start.x} ${start.y} C ${start.x + clearance} ${start.y}, ${start.x + clearance} ${top}, ${(start.x + end.x) / 2} ${top} S ${end.x - clearance} ${top}, ${end.x} ${end.y}`;
+      const sourceBounds = this.modernNodeBounds(sourceNode, projection);
+      const targetBounds = this.modernNodeBounds(targetNode, projection);
+      const clearance = 32;
+      const right = Math.max(sourceBounds.right, targetBounds.right, start.x, end.x) + clearance;
+      const left = Math.min(sourceBounds.left, targetBounds.left, start.x, end.x) - clearance;
+      const top = Math.min(sourceBounds.top, targetBounds.top, start.y, end.y) - clearance;
+      return this.orthogonalRoundedPath([
+        start,
+        { x: right, y: start.y },
+        { x: right, y: top },
+        { x: left, y: top },
+        { x: left, y: end.y },
+        end
+      ]);
     }
-    return this.pathD(start, end);
+    const midX = (start.x + end.x) / 2;
+    return this.orthogonalRoundedPath([
+      start,
+      { x: midX, y: start.y },
+      { x: midX, y: end.y },
+      end
+    ]);
+  }
+
+  orthogonalRoundedPath(points) {
+    const clean = points.filter((point, index) => {
+      const previous = points[index - 1];
+      return !previous || previous.x !== point.x || previous.y !== point.y;
+    });
+    if (!clean.length) {
+      return '';
+    }
+    let d = `M ${clean[0].x} ${clean[0].y}`;
+    for (let index = 1; index < clean.length; index += 1) {
+      const current = clean[index];
+      const previous = clean[index - 1];
+      const next = clean[index + 1];
+      if (!next) {
+        d += this.orthogonalLineCommand(previous, current);
+        break;
+      }
+      const incomingHorizontal = previous.y === current.y;
+      const outgoingHorizontal = current.y === next.y;
+      if (incomingHorizontal === outgoingHorizontal) {
+        d += this.orthogonalLineCommand(previous, current);
+        continue;
+      }
+      const incomingDistance = incomingHorizontal ? Math.abs(current.x - previous.x) : Math.abs(current.y - previous.y);
+      const outgoingDistance = outgoingHorizontal ? Math.abs(next.x - current.x) : Math.abs(next.y - current.y);
+      const radius = Math.min(12, incomingDistance / 2, outgoingDistance / 2);
+      if (radius <= 0) {
+        d += this.orthogonalLineCommand(previous, current);
+        continue;
+      }
+      const before = incomingHorizontal
+        ? { x: current.x - Math.sign(current.x - previous.x) * radius, y: current.y }
+        : { x: current.x, y: current.y - Math.sign(current.y - previous.y) * radius };
+      const after = outgoingHorizontal
+        ? { x: current.x + Math.sign(next.x - current.x) * radius, y: current.y }
+        : { x: current.x, y: current.y + Math.sign(next.y - current.y) * radius };
+      d += this.orthogonalLineCommand(previous, before);
+      d += ` Q ${current.x} ${current.y} ${after.x} ${after.y}`;
+    }
+    return d;
+  }
+
+  orthogonalLineCommand(from, to) {
+    if (from.x === to.x && from.y === to.y) {
+      return '';
+    }
+    if (from.y === to.y) {
+      return ` H ${to.x}`;
+    }
+    if (from.x === to.x) {
+      return ` V ${to.y}`;
+    }
+    return ` H ${to.x} V ${to.y}`;
   }
 
   edgeDefs(content) {
@@ -821,6 +893,8 @@ export class TaskExecutionView {
     return {
       left,
       top,
+      right: left + (width / scale),
+      bottom: top + (height / scale),
       width: width / scale,
       height: height / scale
     };
@@ -834,6 +908,24 @@ export class TaskExecutionView {
     return {
       x: bounds.left + (bounds.width / 2),
       y: bounds.top + (bounds.height / 2)
+    };
+  }
+
+  modernNodeBounds(node, projection = null) {
+    const measured = this.elementCanvasBounds(this.elementByData('data-execution-source-node-id', node.sourceNodeId));
+    if (measured) {
+      return measured;
+    }
+    const left = Number(node.position?.x || 0);
+    const top = Number(node.position?.y || 0);
+    const height = this.modernNodeHeight(node, projection);
+    return {
+      left,
+      top,
+      right: left + MODERN_NODE_WIDTH,
+      bottom: top + height,
+      width: MODERN_NODE_WIDTH,
+      height
     };
   }
 

@@ -40,7 +40,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         this.nodeRunRepository.saveAll(run.nodeRuns().stream()
                 .map(PostgresNodeRunMapper::toEntity)
                 .toList());
-        return this.toDomain(saved);
+        return this.toSavedDomain(saved, run);
     }
 
     @Override
@@ -119,6 +119,25 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                         .map(this::toExecutionEdge)
                         .toList(),
                 this.runtimeGraphOrNull(entity.getId()),
+                entity.getCreatedAt(),
+                entity.getStartedAt(),
+                entity.getFinishedAt()
+        );
+    }
+
+    private WorkflowRun toSavedDomain(final WorkflowRunEntity entity, final WorkflowRun source) {
+        return new WorkflowRun(
+                entity.getId(),
+                entity.getProjectId(),
+                entity.getSourceWorkflowId(),
+                entity.getTaskId(),
+                entity.getWorkflowName(),
+                entity.getInput(),
+                WorkflowRunStatus.valueOf(entity.getStatus()),
+                source.nodeRuns(),
+                source.connectionResolutions(),
+                source.executionEdges(),
+                source.runtimeGraph(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
                 entity.getFinishedAt()
