@@ -10,6 +10,7 @@ const NODE_MID_Y = 58;
 const MIN_CANVAS_WIDTH = 1600;
 const MIN_CANVAS_HEIGHT = 1000;
 const CANVAS_PADDING = 240;
+const REVERSE_EDGE_CANVAS_MARGIN = 8;
 const MIN_CANVAS_SCALE = 0.45;
 const MAX_CANVAS_SCALE = 1.8;
 const HISTORY_MARKER_LIMIT = 6;
@@ -784,11 +785,24 @@ export class TaskExecutionView {
       const right = Math.max(sourceBounds.right, targetBounds.right, start.x, end.x) + clearance;
       const left = Math.min(sourceBounds.left, targetBounds.left, start.x, end.x) - clearance;
       const top = Math.min(sourceBounds.top, targetBounds.top, start.y, end.y) - clearance;
+      if (left < REVERSE_EDGE_CANVAS_MARGIN) {
+        const verticalOutside = top >= REVERSE_EDGE_CANVAS_MARGIN
+          ? top
+          : Math.max(sourceBounds.bottom, targetBounds.bottom, start.y, end.y) + clearance;
+        return this.orthogonalRoundedPath([
+          start,
+          { x: right, y: start.y },
+          { x: right, y: verticalOutside },
+          { x: end.x, y: verticalOutside },
+          end
+        ]);
+      }
+      const safeTop = Math.max(REVERSE_EDGE_CANVAS_MARGIN, top);
       return this.orthogonalRoundedPath([
         start,
         { x: right, y: start.y },
-        { x: right, y: top },
-        { x: left, y: top },
+        { x: right, y: safeTop },
+        { x: left, y: safeTop },
         { x: left, y: end.y },
         end
       ]);

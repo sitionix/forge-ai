@@ -359,6 +359,45 @@ function stubAnchor(dom: JSDOM, portId: string, centerX: number, centerY: number
   stubRect(dom.window.document.querySelector(`[data-runtime-port-anchor-id="${portId}"]`), centerX - 4, centerY - 4, 8, 8);
 }
 
+function pathNumbers(path: string) {
+  return (path.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+}
+
+function pathPoints(path: string) {
+  const points: Array<{ x: number; y: number }> = [];
+  let current = { x: 0, y: 0 };
+  for (const match of path.matchAll(/([MHVQ])((?:\s-?\d+(?:\.\d+)?)+)/g)) {
+    const command = match[1]!;
+    const numbers = (match[2]!.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+    if (command === 'M') {
+      current = { x: numbers[0]!, y: numbers[1]! };
+      points.push(current);
+    }
+    if (command === 'H') {
+      current = { x: numbers[0]!, y: current.y };
+      points.push(current);
+    }
+    if (command === 'V') {
+      current = { x: current.x, y: numbers[0]! };
+      points.push(current);
+    }
+    if (command === 'Q') {
+      points.push({ x: numbers[0]!, y: numbers[1]! });
+      current = { x: numbers[2]!, y: numbers[3]! };
+      points.push(current);
+    }
+  }
+  return points;
+}
+
+function expectPathOutsideRects(path: string, rects: Array<{ left: number; top: number; right: number; bottom: number }>) {
+  for (const point of pathPoints(path)) {
+    for (const rect of rects) {
+      expect(point.x > rect.left && point.x < rect.right && point.y > rect.top && point.y < rect.bottom).toBe(false);
+    }
+  }
+}
+
 function pointer(dom: JSDOM, type: string, x: number, y: number) {
   return new dom.window.MouseEvent(type, { clientX: x, clientY: y, bubbles: true, cancelable: true });
 }
@@ -956,10 +995,10 @@ describe('Agent projects page', () => {
     expect(pathOne).not.toBe(pathTwo);
   });
 
-  it('modern execution board routes reverse edges outside measured node bounds without cubic curves', async () => {
+  it('modern execution board routes reverse edges near the canvas origin outside node bounds without cubic curves', async () => {
     const graph = runtimeGraph([
-      { id: 'worker', agentName: 'Worker', position: { x: 20, y: 50 }, inputs: [{ id: 'worker-feedback', name: 'Feedback', order: 0 }] },
-      { id: 'reviewer', agentName: 'Reviewer', position: { x: 320, y: 40 }, outputs: [{ id: 'reviewer-fail', name: 'Fail', order: 0 }] }
+      { id: 'worker', agentName: 'Worker', position: { x: 0, y: 0 }, inputs: [{ id: 'worker-feedback', name: 'Feedback', order: 0 }] },
+      { id: 'reviewer', agentName: 'Reviewer', position: { x: 280, y: 0 }, outputs: [{ id: 'reviewer-fail', name: 'Fail', order: 0 }] }
     ], [
       portConnection('reviewer-worker', 'reviewer-fail', 'worker-feedback')
     ]);
@@ -974,18 +1013,20 @@ describe('Agent projects page', () => {
 
     stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 900, 600);
     page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
-    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="worker"]'), 20, 50, 232, 140);
-    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]'), 320, 40, 232, 120);
-    stubAnchor(dom, 'reviewer-fail', 552, 100);
-    stubAnchor(dom, 'worker-feedback', 20, 120);
+    const workerBounds = { left: 0, top: 0, right: 232, bottom: 140 };
+    const reviewerBounds = { left: 280, top: 0, right: 512, bottom: 120 };
+    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="worker"]'), workerBounds.left, workerBounds.top, 232, 140);
+    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]'), reviewerBounds.left, reviewerBounds.top, 232, 120);
+    stubAnchor(dom, 'reviewer-fail', 512, 40);
+    stubAnchor(dom, 'worker-feedback', 0, 100);
     page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
 
     const path = dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d') || '';
-    expect(path).toBe('M 552 100 H 572 Q 584 100 584 88 V 20 Q 584 8 572 8 H 0 Q -12 8 -12 20 V 108 Q -12 120 0 120 H 20');
+    expect(path).toBe('M 512 40 H 532 Q 544 40 544 52 V 160 Q 544 172 532 172 H 12 Q 0 172 0 160 V 100');
     expect(path).not.toMatch(/[CS]/);
-    expect(path).toContain('584');
-    expect(path).toContain('-12');
-    expect(path).toContain(' 8 ');
+    expect(path).toMatch(/^M (?:\d+(?:\.\d+)? )+\d+(?: H \d+(?:\.\d+)?| V \d+(?:\.\d+)?| Q \d+(?:\.\d+)? \d+(?:\.\d+)? \d+(?:\.\d+)? \d+(?:\.\d+)?)+$/);
+    expect(pathNumbers(path).every((value) => value >= 0)).toBe(true);
+    expectPathOutsideRects(path, [workerBounds, reviewerBounds]);
   });
 
   it('modern execution board keeps one card per source node for cycles and marks the latest selected output', async () => {
