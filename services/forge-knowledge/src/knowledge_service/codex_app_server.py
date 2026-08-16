@@ -589,9 +589,9 @@ class CodexProcessTransport:
         try:
             await asyncio.wait_for(self._write_lock.acquire(), timeout=_remaining(deadline))
             acquired = True
-            stdin.write(encoded)
             if on_submitted is not None:
                 on_submitted()
+            stdin.write(encoded)
             drain = getattr(stdin, "drain", None)
             if callable(drain):
                 await asyncio.wait_for(drain(), timeout=_remaining(deadline))
