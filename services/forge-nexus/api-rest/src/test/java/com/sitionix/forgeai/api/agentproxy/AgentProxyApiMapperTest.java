@@ -209,7 +209,7 @@ class AgentProxyApiMapperTest {
                 List.of(outputRequest),
                 new NodePositionRequest(1.0, 2.0)
         );
-        assertThat(this.mapper.toCommand(new SaveAgentWorkflowRequest("Full Testing", List.of(nodeRequest), List.of(connectionRequest))))
+        assertThat(this.mapper.toCommand(new SaveAgentWorkflowRequest("Full Testing", List.of(nodeRequest), List.of(connectionRequest), INPUT_ID)))
                 .isEqualTo(new SaveAgentWorkflowCommand(
                         "Full Testing",
                         List.of(new Node(
@@ -220,7 +220,8 @@ class AgentProxyApiMapperTest {
                                 List.of(output),
                                 new NodePosition(1.0, 2.0)
                         )),
-                        List.of(connection)
+                        List.of(connection),
+                        INPUT_ID
                 ));
 
         final var workflow = new AgentWorkflow(
@@ -236,6 +237,7 @@ class AgentProxyApiMapperTest {
                         new NodePosition(1.0, 2.0)
                 )),
                 List.of(connection),
+                INPUT_ID,
                 CREATED,
                 UPDATED
         );
@@ -252,6 +254,7 @@ class AgentProxyApiMapperTest {
                         new NodePositionResponse(1.0, 2.0)
                 )),
                 List.of(new WorkflowConnectionResponse(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
+                INPUT_ID,
                 CREATED,
                 UPDATED
         ));

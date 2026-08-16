@@ -82,7 +82,8 @@ public class AgentProxyApiMapper {
                         .toList(),
                 request.connections() == null ? List.of() : request.connections().stream()
                         .map(this::toDomain)
-                        .toList()
+                        .toList(),
+                request.taskInputPortId()
         );
     }
 
@@ -207,6 +208,7 @@ public class AgentProxyApiMapper {
                 workflow.name(),
                 workflow.nodes().stream().map(this::toResponse).toList(),
                 workflow.connections().stream().map(this::toResponse).toList(),
+                workflow.taskInputPortId(),
                 workflow.createdAt(),
                 workflow.updatedAt()
         );
@@ -249,6 +251,7 @@ public class AgentProxyApiMapper {
             return null;
         }
         return new AgentWorkflowRunGraphResponse(
+                graph.taskInputPortId(),
                 graph.nodes().stream().map(this::toResponse).toList(),
                 graph.ports().stream().map(this::toResponse).toList(),
                 graph.connections().stream().map(this::toResponse).toList()

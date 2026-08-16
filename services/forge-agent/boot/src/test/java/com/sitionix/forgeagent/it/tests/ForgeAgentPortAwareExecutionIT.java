@@ -71,6 +71,7 @@ class ForgeAgentPortAwareExecutionIT {
     private static final UUID CODE = UUID.fromString("90000000-0000-4000-8000-000000000008");
 
     private static final UUID A_OUT = UUID.fromString("91000000-0000-4000-8000-000000000001");
+    private static final UUID A_IN = UUID.fromString("92000000-0000-4000-8000-000000000001");
     private static final UUID A_PASS = UUID.fromString("91000000-0000-4000-8000-000000000021");
     private static final UUID A_RETURN = UUID.fromString("91000000-0000-4000-8000-000000000022");
     private static final UUID B_IN = UUID.fromString("92000000-0000-4000-8000-000000000002");
@@ -486,14 +487,15 @@ class ForgeAgentPortAwareExecutionIT {
         this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
                 "Full Testing",
                 List.of(
-                        this.node(A, AGENT_A_ID, List.of(), List.of(this.port(A_OUT, "Done")), 0),
+                        this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Done")), 0),
                         this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")), List.of(this.port(B_OUT, "Done")), 1),
                         this.node(C, AGENT_C_ID, List.of(this.port(C_IN, "Input")), List.of(this.port(C_OUT, "Done")), 2)
                 ),
                 List.of(
                         this.connection(1, A_OUT, B_IN),
                         this.connection(2, B_OUT, C_IN)
-                )
+                ),
+                A_IN
         ));
     }
 
@@ -501,22 +503,24 @@ class ForgeAgentPortAwareExecutionIT {
         this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
                 "Full Testing",
                 List.of(
-                        this.node(A, AGENT_A_ID, List.of(), List.of(this.port(A_OUT, "Done")), 0),
+                        this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Done")), 0),
                         this.node(B, AGENT_B_ID, List.of(this.port(B_IN_UPDATED, "Updated Input", "Updated B input description.", 0)), List.of(this.port(B_OUT, "Done")), 1),
                         this.node(C, AGENT_C_ID, List.of(this.port(C_IN, "Input")), List.of(this.port(C_OUT, "Done")), 2)
                 ),
                 List.of(
                         this.connection(20, A_OUT, B_IN_UPDATED),
                         this.connection(2, B_OUT, C_IN)
-                )
+                ),
+                A_IN
         ));
     }
 
     private void saveTerminalWorkflow() {
         this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
                 "Full Testing",
-                List.of(this.node(A, AGENT_A_ID, List.of(), List.of(), 0)),
-                List.of()
+                List.of(this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(), 0)),
+                List.of(),
+                A_IN
         ));
     }
 
@@ -524,10 +528,11 @@ class ForgeAgentPortAwareExecutionIT {
         this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
                 "Full Testing",
                 List.of(
-                        this.node(A, AGENT_A_ID, List.of(), List.of(this.port(A_PASS, "Pass", 0), this.port(A_RETURN, "Return", 1)), 0),
+                        this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_PASS, "Pass", 0), this.port(A_RETURN, "Return", 1)), 0),
                         this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")), List.of(this.port(B_OUT, "Done")), 1)
                 ),
-                List.of(this.connection(30, A_RETURN, B_IN))
+                List.of(this.connection(30, A_RETURN, B_IN)),
+                A_IN
         ));
     }
 
@@ -548,7 +553,8 @@ class ForgeAgentPortAwareExecutionIT {
                         this.connection(2, IMPLEMENTER_OUT, CODE_IN),
                         this.connection(3, STRATEGY_RETURN, IMPLEMENTER_REVIEW_IN),
                         this.connection(4, CODE_RETURN, IMPLEMENTER_REVIEW_IN)
-                )
+                ),
+                IMPLEMENTER_INITIAL_IN
         ));
     }
 
@@ -556,7 +562,7 @@ class ForgeAgentPortAwareExecutionIT {
         this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
                 "Full Testing",
                 List.of(
-                        this.node(A, AGENT_A_ID, List.of(), List.of(this.port(A_OUT, "Done")), 0),
+                        this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Done")), 0),
                         this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")), List.of(this.port(B_OUT, "Done")), 1),
                         this.node(C, AGENT_C_ID, List.of(this.port(C_IN, "Input")),
                                 closeCPath ? List.of(this.port(C_OUT, "To D", 0), this.port(C_OTHER, "Other", 1)) : List.of(this.port(C_OUT, "To D")), 2),
@@ -569,7 +575,8 @@ class ForgeAgentPortAwareExecutionIT {
                         this.connection(3, B_OUT, X_IN),
                         this.connection(4, C_OUT, D_IN),
                         this.connection(5, D_OUT, X_IN)
-                )
+                ),
+                A_IN
         ));
     }
 

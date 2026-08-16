@@ -10,6 +10,7 @@ public record AgentWorkflow(
         String name,
         List<Node> nodes,
         List<WorkflowConnection> connections,
+        UUID taskInputPortId,
         Instant createdAt,
         Instant updatedAt
 ) {

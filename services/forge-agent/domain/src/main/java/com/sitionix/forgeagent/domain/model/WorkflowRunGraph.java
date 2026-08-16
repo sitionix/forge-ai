@@ -5,6 +5,7 @@ import java.util.UUID;
 
 public record WorkflowRunGraph(
         UUID workflowRunId,
+        UUID taskInputPortId,
         List<RunNode> nodes,
         List<RunPort> ports,
         List<RunConnection> connections

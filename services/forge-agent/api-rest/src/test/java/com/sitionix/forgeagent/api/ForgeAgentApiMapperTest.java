@@ -246,13 +246,15 @@ class ForgeAgentApiMapperTest {
                 "Full Testing",
                 List.of(new NodeRequest(NODE_A, AGENT_ID, new NodePositionRequest(1.0, 2.0)),
                         new NodeRequest(NODE_B, AGENT_ID, new NodePositionRequest(3.0, 4.0))),
-                List.of(new WorkflowConnectionRequest(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B))
+                List.of(new WorkflowConnectionRequest(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
+                NODE_A
         );
         assertThat(this.mapper.toCommand(saveRequest)).isEqualTo(new SaveWorkflowCommand(
                 "Full Testing",
                 List.of(new Node(NODE_A, AGENT_ID, new NodePosition(1.0, 2.0)),
                         new Node(NODE_B, AGENT_ID, new NodePosition(3.0, 4.0))),
-                List.of(new WorkflowConnection(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B))
+                List.of(new WorkflowConnection(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
+                NODE_A
         ));
 
         final Workflow workflow = new Workflow(
@@ -262,6 +264,7 @@ class ForgeAgentApiMapperTest {
                 "full testing",
                 List.of(new Node(NODE_B, AGENT_ID, new NodePosition(3.0, 4.0))),
                 List.of(new WorkflowConnection(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
+                NODE_A,
                 CREATED,
                 UPDATED
         );
@@ -271,6 +274,7 @@ class ForgeAgentApiMapperTest {
                 "Full Testing",
                 List.of(new NodeResponse(NODE_B, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(), new NodePositionResponse(3.0, 4.0))),
                 List.of(new WorkflowConnectionResponse(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
+                NODE_A,
                 CREATED,
                 UPDATED
         ));
@@ -410,6 +414,7 @@ class ForgeAgentApiMapperTest {
                 List.of(),
                 new WorkflowRunGraph(
                         RUN_ID,
+                        inputPortId,
                         List.of(new RunNode(
                                 RUN_ID,
                                 NODE_A,
@@ -435,6 +440,7 @@ class ForgeAgentApiMapperTest {
         final WorkflowRunResponse response = this.mapper.toResponse(run);
 
         assertThat(response.runtimeGraph()).isEqualTo(new WorkflowRunGraphResponse(
+                inputPortId,
                 List.of(new RunNodeResponse(
                         NODE_A,
                         "Analyzer",

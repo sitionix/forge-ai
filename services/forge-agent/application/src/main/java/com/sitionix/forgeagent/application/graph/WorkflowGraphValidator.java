@@ -27,6 +27,7 @@ public class WorkflowGraphValidator {
     public ValidatedGraph validateAndNormalize(final UUID projectId,
                                                final List<Node> nodes,
                                                final List<WorkflowConnection> connections,
+                                               final UUID taskInputPortId,
                                                final Collection<AgentDefinition> targets) {
         final List<Node> normalizedNodes = nodes == null ? List.of() : nodes.stream()
                 .map(this::normalizeNode)
@@ -56,7 +57,8 @@ public class WorkflowGraphValidator {
             }
         }
         this.validateConnections(normalizedConnections, inputOwnersByPortId, outputOwnersByPortId, allOwnersByPortId);
-        return new ValidatedGraph(normalizedNodes, normalizedConnections);
+        this.validateTaskInputPort(taskInputPortId, normalizedNodes, inputOwnersByPortId, allOwnersByPortId);
+        return new ValidatedGraph(normalizedNodes, normalizedConnections, taskInputPortId);
     }
 
     private Node normalizeNode(final Node node) {
@@ -169,9 +171,30 @@ public class WorkflowGraphValidator {
         }
     }
 
+    private void validateTaskInputPort(final UUID taskInputPortId,
+                                       final List<Node> nodes,
+                                       final Map<UUID, UUID> inputOwnersByPortId,
+                                       final Map<UUID, UUID> allOwnersByPortId) {
+        if (nodes.isEmpty()) {
+            if (taskInputPortId != null) {
+                throw new ValidationException("UNKNOWN_TASK_INPUT_PORT", "Workflow task input port must exist.");
+            }
+            return;
+        }
+        if (taskInputPortId == null) {
+            return;
+        }
+        if (!allOwnersByPortId.containsKey(taskInputPortId)) {
+            throw new ValidationException("UNKNOWN_TASK_INPUT_PORT", "Workflow task input port must exist.");
+        }
+        if (!inputOwnersByPortId.containsKey(taskInputPortId)) {
+            throw new ValidationException("INVALID_TASK_INPUT_PORT", "Workflow task input port must be an INPUT port.");
+        }
+    }
+
     private record PortPair(UUID sourceOutputPortId, UUID targetInputPortId) {
     }
 
-    public record ValidatedGraph(List<Node> nodes, List<WorkflowConnection> connections) {
+    public record ValidatedGraph(List<Node> nodes, List<WorkflowConnection> connections, UUID taskInputPortId) {
     }
 }

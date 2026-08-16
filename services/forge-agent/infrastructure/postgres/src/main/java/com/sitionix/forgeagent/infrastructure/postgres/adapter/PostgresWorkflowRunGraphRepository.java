@@ -19,6 +19,7 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunPortEnt
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRunConnectionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRunNodeRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRunPortRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataWorkflowRunRepository;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -33,6 +34,7 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
     private final SpringDataWorkflowRunNodeRepository nodeRepository;
     private final SpringDataWorkflowRunPortRepository portRepository;
     private final SpringDataWorkflowRunConnectionRepository connectionRepository;
+    private final SpringDataWorkflowRunRepository workflowRunRepository;
 
     @Override
     public void saveSnapshot(final WorkflowRunGraph graph) {
@@ -45,6 +47,9 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
     public WorkflowRunGraph findByWorkflowRunId(final UUID workflowRunId) {
         return new WorkflowRunGraph(
                 workflowRunId,
+                this.workflowRunRepository.findById(workflowRunId)
+                        .map(com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity::getTaskInputPortId)
+                        .orElse(null),
                 this.nodeRepository.findByWorkflowRunIdOrderBySourceNodeIdAsc(workflowRunId).stream().map(this::toDomain).toList(),
                 this.portRepository.findByWorkflowRunIdOrderBySourceNodeIdAscPortOrderAsc(workflowRunId).stream().map(this::toDomain).toList(),
                 this.connectionRepository.findByWorkflowRunIdOrderBySourceConnectionIdAsc(workflowRunId).stream().map(this::toDomain).toList()

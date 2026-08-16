@@ -74,13 +74,14 @@ function unavailableCodexRuntime(status = 'UNAVAILABLE') {
   };
 }
 
-function workflow(id = '33333333-3333-4333-8333-333333333333', nodes: any[] = [], projectId = project().id, connections: any[] | null = null) {
+function workflow(id = '33333333-3333-4333-8333-333333333333', nodes: any[] = [], projectId = project().id, connections: any[] | null = null, taskInputPortId: string | null = null) {
   return {
     id,
     projectId,
     name: 'Full Testing',
     nodes: nodes.map((item) => ({ ...item })),
     connections: connections || [],
+    taskInputPortId,
     createdAt: '2026-08-04T00:00:00Z',
     updatedAt: '2026-08-04T00:00:00Z'
   };
@@ -297,7 +298,7 @@ function api(overrides = {}) {
     listProjectWorkflows: vi.fn(() => Promise.resolve([workflow()])),
     createWorkflow: vi.fn(() => Promise.resolve(workflow('44444444-4444-4444-8444-444444444444'))),
     getWorkflow: vi.fn((workflowId: string) => Promise.resolve(workflow(workflowId))),
-    updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections))),
+    updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections, request.taskInputPortId))),
     deleteWorkflow: vi.fn(() => Promise.resolve({})),
     listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([task(undefined, 'SUCCEEDED', projectId)], page, size))),
     createProjectTask: vi.fn(() => Promise.resolve(task('77777777-7777-4777-8777-777777777777', 'QUEUED'))),
@@ -2836,7 +2837,8 @@ describe('Agent projects page', () => {
         ],
         position: { x: 44, y: 55 }
       }],
-      connections: []
+      connections: [],
+      taskInputPortId: null
     });
     expect(portTexts(dom, 'node-1', 'input')).toEqual(['First input', 'Second input']);
     expect(portTexts(dom, 'node-1', 'output')).toEqual(['First output', 'Second output']);
@@ -2921,6 +2923,52 @@ describe('Agent projects page', () => {
     }]);
     expect(dom.window.document.querySelector('.workflow-edge-preview')).toBeNull();
     expect(dom.window.document.getElementById('agentsV2WorkflowEdges')?.innerHTML).toContain('workflow-edge');
+  });
+
+  it('Task Input loads, targets the same input as feedback, reconnects, saves, and disconnects', async () => {
+    const graph = workflow('wf', [
+      portedNode('plus', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('reviewer', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20)
+    ], project().id, [portConnection('reviewer-plus-feedback', 'reviewer-output', 'plus-input')], 'plus-input');
+    const fakeApi = api({
+      getWorkflow: vi.fn(() => Promise.resolve(graph)),
+      updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections, request.taskInputPortId)))
+    });
+    const { dom, page } = await openedBuilder(fakeApi);
+
+    expect(dom.window.document.querySelector('[data-task-input]')?.textContent).toContain('TASK INPUT');
+    expect(dom.window.document.querySelector('[data-task-input-edge]')).not.toBeNull();
+    expect(dom.window.document.querySelector('[data-edge-id="reviewer-plus-feedback"]')).not.toBeNull();
+    expect(page.workflowBuilder.workflow.taskInputPortId).toBe('plus-input');
+    expect(page.workflowBuilder.workflow.connections).toEqual([
+      portConnection('reviewer-plus-feedback', 'reviewer-output', 'plus-input')
+    ]);
+
+    clickNode(dom, 'plus');
+    dom.window.document.querySelector<HTMLElement>('[data-node-editor-remove="plus-input"]')?.click();
+    expect(dom.window.document.getElementById('agentsV2NodeEditorError')?.textContent)
+      .toContain('Port is connected. Remove its connections first.');
+    dom.window.document.getElementById('agentsV2NodeEditorCancel')?.click();
+
+    dom.window.document.querySelector<HTMLElement>('[data-task-input-output]')!
+      .dispatchEvent(pointer(dom, 'pointerdown', 130, 64));
+    dom.window.document.querySelector<HTMLElement>('[data-node-input-port="reviewer-input"]')!
+      .dispatchEvent(pointer(dom, 'pointerup', 260, 72));
+
+    expect(page.workflowBuilder.workflow.taskInputPortId).toBe('reviewer-input');
+    expect(page.workflowBuilder.workflow.connections).toEqual([
+      portConnection('reviewer-plus-feedback', 'reviewer-output', 'plus-input')
+    ]);
+    await page.workflowBuilder.save();
+    expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', expect.objectContaining({
+      taskInputPortId: 'reviewer-input',
+      connections: [portConnection('reviewer-plus-feedback', 'reviewer-output', 'plus-input')]
+    }));
+
+    dom.window.document.querySelector<SVGElement>('[data-remove-task-input]')!
+      .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    expect(page.workflowBuilder.workflow.taskInputPortId).toBeNull();
+    expect(dom.window.document.querySelector('[data-task-input-edge]')).toBeNull();
   });
 
   it('dropping connection on empty canvas cancels', async () => {
@@ -3022,7 +3070,8 @@ describe('Agent projects page', () => {
         outputs: [],
         position: { x: 80, y: 90 }
       }],
-      connections: []
+      connections: [],
+      taskInputPortId: null
     });
     expect(page.workflowBuilder.workflow.nodes[0].position).toEqual({ x: 80, y: 90 });
 
@@ -3034,7 +3083,7 @@ describe('Agent projects page', () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
       portedNode('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20)
-    ], project().id, [connection('node-1', 'node-2')]))) });
+    ], project().id, [connection('node-1', 'node-2')], 'node-1-input'))) });
     const { dom, page } = await openedBuilder(fakeApi);
 
     expect(dom.window.document.querySelector('[data-node-input-mode]')).toBeNull();
@@ -3073,7 +3122,8 @@ describe('Agent projects page', () => {
         id: 'node-1-node-2-connection',
         sourceOutputPortId: 'node-1-output',
         targetInputPortId: 'node-2-input'
-      }]
+      }],
+      taskInputPortId: 'node-1-input'
     });
   });
 

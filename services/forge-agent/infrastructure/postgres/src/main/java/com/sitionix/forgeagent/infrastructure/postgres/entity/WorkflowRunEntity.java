@@ -27,6 +27,9 @@ public class WorkflowRunEntity {
     @Column(name = "task_id")
     private UUID taskId;
 
+    @Column(name = "task_input_port_id")
+    private UUID taskInputPortId;
+
     @Column(name = "workflow_name", nullable = false, length = 120)
     private String workflowName;
 

@@ -987,6 +987,31 @@ body.sidebar-collapsed .sidebar-link {
   cursor: grabbing;
 }
 
+.workflow-task-input {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 104px;
+  height: 44px;
+  padding: 0 10px 0 12px;
+  border: 1px solid rgba(43, 111, 98, 0.28);
+  border-radius: 8px;
+  background: #edf7f1;
+  box-shadow: 0 10px 20px rgba(27, 36, 31, 0.10);
+  color: var(--ink);
+  font: 800 10px/1 var(--mono);
+  letter-spacing: 0;
+  cursor: default;
+  touch-action: none;
+}
+
+.workflow-task-input span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workflow-node-content {
   display: grid;
   gap: 6px;

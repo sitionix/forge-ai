@@ -17,8 +17,11 @@ public class NodeRunFactory {
 
     private final Clock clock;
 
-    public NodeRun root(final WorkflowRun workflowRun, final ExecutionFrame executionFrame, final RunNode runNode) {
-        return this.create(workflowRun, executionFrame, runNode, null, null);
+    public NodeRun root(final WorkflowRun workflowRun,
+                        final ExecutionFrame executionFrame,
+                        final RunNode runNode,
+                        final UUID enteredViaInputPortId) {
+        return this.create(workflowRun, executionFrame, runNode, null, enteredViaInputPortId);
     }
 
     public NodeRun activated(final WorkflowRun workflowRun,

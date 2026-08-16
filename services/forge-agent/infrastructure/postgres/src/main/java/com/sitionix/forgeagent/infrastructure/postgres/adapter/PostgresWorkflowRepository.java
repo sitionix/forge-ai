@@ -251,6 +251,7 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
                         .sorted(Comparator.comparing(WorkflowConnectionEntity::getId))
                         .map(this::toDomain)
                         .toList(),
+                entity.getTaskInputPortId(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
@@ -322,6 +323,7 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
         entity.setProjectId(workflow.projectId());
         entity.setName(workflow.name());
         entity.setNormalizedName(workflow.normalizedName());
+        entity.setTaskInputPortId(workflow.taskInputPortId());
         entity.setCreatedAt(workflow.createdAt());
         entity.setUpdatedAt(workflow.updatedAt());
         return entity;

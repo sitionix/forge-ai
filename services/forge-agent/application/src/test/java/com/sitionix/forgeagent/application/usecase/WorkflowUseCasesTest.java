@@ -120,7 +120,7 @@ class WorkflowUseCasesTest {
 
         final Workflow saved = this.useCases.updateWorkflow(
                 this.workflowId,
-                new SaveWorkflowCommand("Full Testing", List.of(first, second), List.of())
+                new SaveWorkflowCommand("Full Testing", List.of(first, second), List.of(), null)
         );
 
         assertThat(saved.nodes()).containsExactly(first, second);
@@ -155,10 +155,11 @@ class WorkflowUseCasesTest {
                 ), List.of(
                         new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB),
                         new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000002"), this.outputB, this.inputA)
-                ))
+                ), this.inputA)
         );
 
         assertThat(saved.connections()).hasSize(2);
+        assertThat(saved.taskInputPortId()).isEqualTo(this.inputA);
         verify(this.workflowRepository).save(any());
     }
 
@@ -181,6 +182,6 @@ class WorkflowUseCasesTest {
     }
 
     private Workflow workflow(final List<Node> nodes) {
-        return new Workflow(this.workflowId, this.projectId, "Full Testing", "full testing", nodes, List.of(), Instant.EPOCH, Instant.EPOCH);
+        return new Workflow(this.workflowId, this.projectId, "Full Testing", "full testing", nodes, List.of(), null, Instant.EPOCH, Instant.EPOCH);
     }
 }

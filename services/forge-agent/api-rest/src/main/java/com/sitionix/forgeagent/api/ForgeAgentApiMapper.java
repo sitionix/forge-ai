@@ -115,7 +115,8 @@ class ForgeAgentApiMapper {
                         .toList(),
                 request.connections() == null ? List.of() : request.connections().stream()
                         .map(this::toConnection)
-                        .toList()
+                        .toList(),
+                request.taskInputPortId()
         );
     }
 
@@ -166,6 +167,7 @@ class ForgeAgentApiMapper {
                 workflow.name(),
                 workflow.nodes().stream().map(this::toResponse).toList(),
                 workflow.connections().stream().map(this::toResponse).toList(),
+                workflow.taskInputPortId(),
                 workflow.createdAt(),
                 workflow.updatedAt()
         );
@@ -208,6 +210,7 @@ class ForgeAgentApiMapper {
             return null;
         }
         return new WorkflowRunGraphResponse(
+                graph.taskInputPortId(),
                 graph.nodes().stream().map(this::toResponse).toList(),
                 graph.ports().stream().map(this::toResponse).toList(),
                 graph.connections().stream().map(this::toResponse).toList()
