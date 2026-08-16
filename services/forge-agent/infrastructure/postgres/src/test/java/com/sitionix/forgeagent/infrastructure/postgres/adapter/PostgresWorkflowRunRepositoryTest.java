@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -14,9 +15,15 @@ import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
+import com.sitionix.forgeagent.domain.model.PortDirection;
+import com.sitionix.forgeagent.domain.model.RunConnection;
+import com.sitionix.forgeagent.domain.model.RunNode;
+import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
+import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataNodeRunRepository;
@@ -50,6 +57,8 @@ class PostgresWorkflowRunRepositoryTest {
     private static final UUID AGENT_B = UUID.fromString("50000000-0000-4000-8000-000000000002");
     private static final UUID FRAME_ID = UUID.fromString("60000000-0000-4000-8000-000000000001");
     private static final UUID INPUT_PORT_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
+    private static final UUID OUTPUT_PORT_ID = UUID.fromString("70000000-0000-4000-8000-000000000002");
+    private static final UUID CONNECTION_ID = UUID.fromString("80000000-0000-4000-8000-000000000001");
     private static final Instant NOW = Instant.parse("2026-08-10T12:00:00Z");
 
     @Mock
@@ -60,6 +69,8 @@ class PostgresWorkflowRunRepositoryTest {
     private SpringDataConnectionResolutionRepository resolutionRepository;
     @Mock
     private SpringDataWorkflowRunExecutionEdgeRepository executionEdgeRepository;
+    @Mock
+    private WorkflowRunGraphRepository graphRepository;
 
     private PostgresWorkflowRunRepository repository;
 
@@ -69,16 +80,17 @@ class PostgresWorkflowRunRepositoryTest {
                 this.workflowRunRepository,
                 this.nodeRunRepository,
                 this.resolutionRepository,
-                this.executionEdgeRepository
+                this.executionEdgeRepository,
+                this.graphRepository
         );
         lenient().when(this.resolutionRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
         lenient().when(this.executionEdgeRepository.findByWorkflowRunIdOrderBySourceNodeRunIdAscTargetNodeRunIdAsc(RUN_ID)).thenReturn(List.of());
+        lenient().when(this.graphRepository.findByWorkflowRunId(RUN_ID)).thenReturn(new WorkflowRunGraph(RUN_ID, List.of(), List.of(), List.of()));
     }
 
     @Test
     void persistsWorkflowRunAndNodeRunSnapshotFields() {
         when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
 
         this.repository.save(this.run(List.of(
                 this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, null, null),
@@ -121,6 +133,50 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(second.getFailureMessage()).isNull();
         assertThat(second.getStartedAt()).isNull();
         assertThat(second.getFinishedAt()).isNull();
+        verify(this.graphRepository, never()).findByWorkflowRunId(any());
+    }
+
+    @Test
+    void saveReturnsInMemoryRuntimeGraphWithoutReadingSnapshotRepository() {
+        final WorkflowRunGraph graph = new WorkflowRunGraph(
+                RUN_ID,
+                List.of(new RunNode(
+                        RUN_ID,
+                        SOURCE_NODE_A,
+                        AGENT_A,
+                        "Planner",
+                        "Use the task input.",
+                        AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                        new NodeRunExecutionModel("codex", "model-a", "medium"),
+                        com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                        new NodePosition(10.0, 20.0)
+                )),
+                List.of(new RunPort(RUN_ID, OUTPUT_PORT_ID, SOURCE_NODE_A, PortDirection.OUTPUT, "Done", "Terminal output.", 0)),
+                List.of()
+        );
+        final WorkflowRun source = new WorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                TASK_ID,
+                "Full Testing",
+                "Review auth changes.",
+                WorkflowRunStatus.QUEUED,
+                List.of(this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, null, null)),
+                List.of(),
+                List.of(),
+                graph,
+                NOW,
+                null,
+                null
+        );
+        when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        final WorkflowRun saved = this.repository.save(source);
+
+        assertThat(saved.runtimeGraph()).isSameAs(graph);
+        assertThat(saved.nodeRuns()).hasSize(1);
+        verify(this.graphRepository, never()).findByWorkflowRunId(any());
     }
 
     @Test
@@ -139,6 +195,7 @@ class PostgresWorkflowRunRepositoryTest {
 
         assertThat(run.id()).isEqualTo(RUN_ID);
         assertThat(run.taskId()).isEqualTo(TASK_ID);
+        assertThat(run.runtimeGraph()).isNull();
         assertThat(run.nodeRuns()).singleElement().satisfies(nodeRun -> {
             assertThat(nodeRun.id()).isEqualTo(NODE_RUN_B);
             assertThat(nodeRun.workflowRunId()).isEqualTo(RUN_ID);
@@ -151,6 +208,37 @@ class PostgresWorkflowRunRepositoryTest {
             assertThat(nodeRun.executionModel()).isEqualTo(new NodeRunExecutionModel("codex", "model-b", "xhigh"));
         });
         verify(this.nodeRunRepository).findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID);
+        verify(this.graphRepository).findByWorkflowRunId(RUN_ID);
+    }
+
+    @Test
+    void findByIdIncludesRuntimeGraphSnapshotWhenPresent() {
+        final WorkflowRunGraph graph = new WorkflowRunGraph(
+                RUN_ID,
+                List.of(new RunNode(
+                        RUN_ID,
+                        SOURCE_NODE_A,
+                        AGENT_A,
+                        "Planner",
+                        "Use the task input.",
+                        AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                        new NodeRunExecutionModel("codex", "model-a", "medium"),
+                        com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                        new NodePosition(10.0, 20.0)
+                )),
+                List.of(
+                        new RunPort(RUN_ID, INPUT_PORT_ID, SOURCE_NODE_A, PortDirection.INPUT, "Initial", "Root input.", 0),
+                        new RunPort(RUN_ID, OUTPUT_PORT_ID, SOURCE_NODE_A, PortDirection.OUTPUT, "Done", "Terminal output.", 0)
+                ),
+                List.of(new RunConnection(RUN_ID, CONNECTION_ID, OUTPUT_PORT_ID, INPUT_PORT_ID))
+        );
+        when(this.workflowRunRepository.findById(RUN_ID)).thenReturn(Optional.of(this.runEntity(RUN_ID, NOW)));
+        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
+        when(this.graphRepository.findByWorkflowRunId(RUN_ID)).thenReturn(graph);
+
+        final WorkflowRun run = this.repository.findById(RUN_ID).orElseThrow();
+
+        assertThat(run.runtimeGraph()).isEqualTo(graph);
     }
 
     @Test
@@ -172,7 +260,6 @@ class PostgresWorkflowRunRepositoryTest {
     @Test
     void savePersistsExecutionModelWithNullableEffort() {
         when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(this.nodeRunRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
 
         this.repository.save(this.run(List.of(this.withExecutionModel(
                 this.nodeRun(NODE_RUN_A, SOURCE_NODE_A, AGENT_A, null, null),

@@ -22,8 +22,12 @@ import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
+import com.sitionix.forgeagent.api.dto.RunConnectionResponse;
+import com.sitionix.forgeagent.api.dto.RunNodeResponse;
+import com.sitionix.forgeagent.api.dto.RunPortResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.WorkflowRunGraphResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowConnectionRequest;
@@ -50,12 +54,17 @@ import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
+import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
+import com.sitionix.forgeagent.domain.model.RunConnection;
+import com.sitionix.forgeagent.domain.model.RunNode;
+import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
@@ -357,6 +366,85 @@ class ForgeAgentApiMapperTest {
                 CREATED,
                 null,
                 null
+        ));
+    }
+
+    @Test
+    void mapsRuntimeGraphSnapshot() throws Exception {
+        final UUID inputPortId = UUID.fromString("77777777-7777-4777-8777-777777777771");
+        final UUID outputPortId = UUID.fromString("77777777-7777-4777-8777-777777777772");
+        final UUID connectionId = UUID.fromString("77777777-7777-4777-8777-777777777773");
+        final Instant routingCompletedAt = Instant.parse("2026-08-04T00:02:00Z");
+        final WorkflowRun run = new WorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                null,
+                "Full Testing",
+                "Review auth changes.",
+                WorkflowRunStatus.RUNNING,
+                List.of(new NodeRun(
+                        NODE_RUN_ID,
+                        RUN_ID,
+                        NODE_A,
+                        AGENT_ID,
+                        "Analyzer",
+                        "Analyze changes.",
+                        AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                        NodeInputMode.DEPENDENCIES_ONLY,
+                        new NodePosition(1.0, 2.0),
+                        UUID.fromString("99999999-0000-4000-8000-000000000001"),
+                        inputPortId,
+                        null,
+                        outputPortId,
+                        routingCompletedAt,
+                        NodeRunStatus.SUCCEEDED,
+                        new NodeRunOutput("{\"summary\":\"done\"}"),
+                        null,
+                        null,
+                        CREATED,
+                        CREATED,
+                        routingCompletedAt
+                )),
+                List.of(),
+                List.of(),
+                new WorkflowRunGraph(
+                        RUN_ID,
+                        List.of(new RunNode(
+                                RUN_ID,
+                                NODE_A,
+                                AGENT_ID,
+                                "Analyzer",
+                                "Analyze changes.",
+                                AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                                null,
+                                NodeInputMode.DEPENDENCIES_ONLY,
+                                new NodePosition(1.0, 2.0)
+                        )),
+                        List.of(
+                                new RunPort(RUN_ID, inputPortId, NODE_A, PortDirection.INPUT, "Initial", "Initial input.", 0),
+                                new RunPort(RUN_ID, outputPortId, NODE_A, PortDirection.OUTPUT, "Done", "Terminal output.", 0)
+                        ),
+                        List.of(new RunConnection(RUN_ID, connectionId, outputPortId, inputPortId))
+                ),
+                CREATED,
+                CREATED,
+                null
+        );
+
+        final WorkflowRunResponse response = this.mapper.toResponse(run);
+
+        assertThat(response.runtimeGraph()).isEqualTo(new WorkflowRunGraphResponse(
+                List.of(new RunNodeResponse(
+                        NODE_A,
+                        "Analyzer",
+                        new NodePositionResponse(1.0, 2.0)
+                )),
+                List.of(
+                        new RunPortResponse(inputPortId, NODE_A, PortDirection.INPUT, "Initial", 0),
+                        new RunPortResponse(outputPortId, NODE_A, PortDirection.OUTPUT, "Done", 0)
+                ),
+                List.of(new RunConnectionResponse(connectionId, outputPortId, inputPortId))
         ));
     }
 }

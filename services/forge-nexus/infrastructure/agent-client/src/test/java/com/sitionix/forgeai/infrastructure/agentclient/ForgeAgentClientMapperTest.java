@@ -16,8 +16,12 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRunConnection;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRunNode;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRunPort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunGraph;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
@@ -53,8 +57,12 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequ
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RunConnectionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RunNodeResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RunPortResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowConnectionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowConnectionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunGraphResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import java.time.Instant;
@@ -332,6 +340,109 @@ class ForgeAgentClientMapperTest {
                 )),
                 CREATED,
                 null,
+                null
+        ));
+    }
+
+    @Test
+    void workflowRunRuntimeGraphMapsSuccessfully() throws Exception {
+        final UUID inputPortId = UUID.fromString("88888888-0000-4000-8000-000000000001");
+        final UUID outputPortId = UUID.fromString("88888888-0000-4000-8000-000000000002");
+        final UUID connectionId = UUID.fromString("88888888-0000-4000-8000-000000000003");
+        final UUID frameId = UUID.fromString("99999999-0000-4000-8000-000000000001");
+        final Instant finishedAt = Instant.parse("2026-08-04T00:02:00Z");
+        final var nodeRunResponse = new NodeRunResponse(
+                NODE_RUN_ID,
+                NODE_ID,
+                AGENT_ID,
+                "Analyzer",
+                "Analyze changes.",
+                this.objectMapper.readTree("{\"type\":\"object\"}"),
+                NodeInputMode.DEPENDENCIES_ONLY.name(),
+                new NodePositionResponse(1.0, 2.0),
+                frameId,
+                inputPortId,
+                null,
+                outputPortId,
+                AgentNodeRunStatus.SUCCEEDED,
+                this.objectMapper.readTree("{\"summary\":\"done\"}"),
+                null,
+                CREATED,
+                CREATED,
+                finishedAt
+        );
+        final WorkflowRunGraphResponse graph = new WorkflowRunGraphResponse(
+                List.of(new RunNodeResponse(
+                        NODE_ID,
+                        "Analyzer",
+                        new NodePositionResponse(1.0, 2.0)
+                )),
+                List.of(
+                        new RunPortResponse(inputPortId, NODE_ID, "INPUT", "Initial", 0),
+                        new RunPortResponse(outputPortId, NODE_ID, "OUTPUT", "Done", 0)
+                ),
+                List.of(new RunConnectionResponse(connectionId, outputPortId, inputPortId))
+        );
+
+        assertThat(this.mapper.toDomain(new WorkflowRunResponse(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                null,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.RUNNING,
+                List.of(nodeRunResponse),
+                List.of(),
+                List.of(),
+                graph,
+                CREATED,
+                CREATED,
+                null
+        ))).isEqualTo(new AgentWorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                null,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.RUNNING,
+                List.of(new AgentNodeRun(
+                        NODE_RUN_ID,
+                        NODE_ID,
+                        AGENT_ID,
+                        "Analyzer",
+                        "Analyze changes.",
+                        new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
+                        NodeInputMode.DEPENDENCIES_ONLY,
+                        new NodePosition(1.0, 2.0),
+                        frameId,
+                        inputPortId,
+                        null,
+                        outputPortId,
+                        AgentNodeRunStatus.SUCCEEDED,
+                        new AgentNodeRunOutputDocument("{\"summary\":\"done\"}"),
+                        null,
+                        CREATED,
+                        CREATED,
+                        finishedAt
+                )),
+                List.of(),
+                List.of(),
+                new AgentWorkflowRunGraph(
+                        List.of(new AgentRunNode(
+                                NODE_ID,
+                                "Analyzer",
+                                new NodePosition(1.0, 2.0)
+                        )),
+                        List.of(
+                                new AgentRunPort(inputPortId, NODE_ID, "INPUT", "Initial", 0),
+                                new AgentRunPort(outputPortId, NODE_ID, "OUTPUT", "Done", 0)
+                        ),
+                        List.of(new AgentRunConnection(connectionId, outputPortId, inputPortId))
+                ),
+                CREATED,
+                CREATED,
                 null
         ));
     }

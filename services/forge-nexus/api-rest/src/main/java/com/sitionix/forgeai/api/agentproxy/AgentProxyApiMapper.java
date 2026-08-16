@@ -17,9 +17,13 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRunConnection;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRunNode;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRunPort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunExecutionEdge;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunGraph;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
@@ -233,9 +237,47 @@ public class AgentProxyApiMapper {
                 run.nodeRuns().stream().map(this::toResponse).toList(),
                 run.connectionResolutions().stream().map(this::toResponse).toList(),
                 run.executionEdges().stream().map(this::toResponse).toList(),
+                this.toResponse(run.runtimeGraph()),
                 run.createdAt(),
                 run.startedAt(),
                 run.finishedAt()
+        );
+    }
+
+    private AgentWorkflowRunGraphResponse toResponse(final AgentWorkflowRunGraph graph) {
+        if (graph == null) {
+            return null;
+        }
+        return new AgentWorkflowRunGraphResponse(
+                graph.nodes().stream().map(this::toResponse).toList(),
+                graph.ports().stream().map(this::toResponse).toList(),
+                graph.connections().stream().map(this::toResponse).toList()
+        );
+    }
+
+    private AgentRunNodeResponse toResponse(final AgentRunNode node) {
+        return new AgentRunNodeResponse(
+                node.sourceNodeId(),
+                node.agentName(),
+                new NodePositionResponse(node.position().x(), node.position().y())
+        );
+    }
+
+    private AgentRunPortResponse toResponse(final AgentRunPort port) {
+        return new AgentRunPortResponse(
+                port.sourcePortId(),
+                port.sourceNodeId(),
+                port.direction(),
+                port.name(),
+                port.order()
+        );
+    }
+
+    private AgentRunConnectionResponse toResponse(final AgentRunConnection connection) {
+        return new AgentRunConnectionResponse(
+                connection.sourceConnectionId(),
+                connection.sourceOutputPortId(),
+                connection.targetInputPortId()
         );
     }
 
