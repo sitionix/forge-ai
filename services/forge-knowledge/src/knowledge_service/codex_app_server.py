@@ -534,7 +534,10 @@ class CodexProcessTransport:
             self._cleanup_process = None
 
     async def _cancel_and_drain_reader_tasks(self) -> None:
-        current = asyncio.current_task()
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
         tasks = tuple(task for task in (self._reader_task, self._stderr_task) if task is not None and task is not current)
         for task in tasks:
             if not task.done():
@@ -1481,10 +1484,19 @@ class CodexAppServerClient:
         result_future: concurrent.futures.Future[Any] = concurrent.futures.Future()
         completed_future: concurrent.futures.Future[None] = concurrent.futures.Future()
         cancel_requested = threading.Event()
+        cancel_lock = threading.Lock()
         task_ref: list[asyncio.Task[Any]] = []
 
+        def request_cancel_once() -> bool:
+            with cancel_lock:
+                if cancel_requested.is_set():
+                    return False
+                cancel_requested.set()
+                return True
+
         def cancel_loop_task() -> None:
-            cancel_requested.set()
+            if not request_cancel_once():
+                return
 
             def cancel_task() -> None:
                 if task_ref:
@@ -1508,7 +1520,7 @@ class CodexAppServerClient:
                 task.cancel()
 
             def cancel_task(_future: concurrent.futures.Future[Any]) -> None:
-                if _future.cancelled() and not task.done():
+                if _future.cancelled() and request_cancel_once() and not task.done():
                     task.cancel()
 
             result_future.add_done_callback(lambda _future: loop.call_soon_threadsafe(cancel_task, _future))
