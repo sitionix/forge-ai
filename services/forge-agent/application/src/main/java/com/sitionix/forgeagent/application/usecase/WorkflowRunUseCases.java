@@ -2,13 +2,14 @@ package com.sitionix.forgeagent.application.usecase;
 
 import com.sitionix.forgeagent.application.runtime.NodeRunFactory;
 import com.sitionix.forgeagent.application.runtime.ExecutionBudgetPolicy;
-import com.sitionix.forgeagent.application.runtime.WorkflowEntrySelector;
 import com.sitionix.forgeagent.application.runtime.WorkflowRunSnapshotBuilder;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.ExecutionFrame;
 import com.sitionix.forgeagent.domain.model.NodeRun;
+import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunNode;
+import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
@@ -37,7 +38,6 @@ public class WorkflowRunUseCases {
     private final ExecutionFrameRepository executionFrameRepository;
     private final NodeRunRepository nodeRunRepository;
     private final WorkflowRunSnapshotBuilder snapshotBuilder;
-    private final WorkflowEntrySelector entrySelector;
     private final NodeRunFactory nodeRunFactory;
     private final ExecutionBudgetPolicy executionBudgetPolicy;
     private final Clock clock;
@@ -61,8 +61,9 @@ public class WorkflowRunUseCases {
                 .orElseThrow(() -> new NotFoundException("WORKFLOW_NOT_FOUND", "Workflow was not found."));
         final UUID runId = UUID.randomUUID();
         final WorkflowRunGraph graph = this.snapshotBuilder.build(runId, workflow);
-        final List<RunNode> entries = this.entrySelector.selectEntries(graph);
-        if (graph.nodes().isEmpty() || entries.isEmpty()) {
+        final RunPort taskInputPort = this.requireTaskInputPort(graph);
+        final RunNode entry = this.requireTaskInputNode(graph, taskInputPort);
+        if (graph.nodes().isEmpty()) {
             throw new ValidationException("WORKFLOW_ENTRY_NOT_FOUND", "Workflow entry node was not found.");
         }
         final Instant now = Instant.now(this.clock);
@@ -84,9 +85,7 @@ public class WorkflowRunUseCases {
         ));
         this.graphRepository.saveSnapshot(graph);
         final ExecutionFrame rootFrame = this.executionFrameRepository.save(new ExecutionFrame(UUID.randomUUID(), run.id(), null, now));
-        final List<NodeRun> rootNodeRuns = entries.stream()
-                .map(entry -> this.createRootNodeRun(run, rootFrame, entry))
-                .toList();
+        final List<NodeRun> rootNodeRuns = List.of(this.createRootNodeRun(run, rootFrame, entry, taskInputPort.sourcePortId()));
         return new WorkflowRun(
                 run.id(),
                 run.projectId(),
@@ -125,8 +124,32 @@ public class WorkflowRunUseCases {
         return candidate.trim();
     }
 
-    private NodeRun createRootNodeRun(final WorkflowRun run, final ExecutionFrame rootFrame, final RunNode entry) {
+    private RunPort requireTaskInputPort(final WorkflowRunGraph graph) {
+        if (graph.nodes().isEmpty()) {
+            throw new ValidationException("WORKFLOW_ENTRY_NOT_FOUND", "Workflow entry node was not found.");
+        }
+        if (graph.taskInputPortId() == null) {
+            throw new ValidationException("WORKFLOW_TASK_INPUT_REQUIRED", "Workflow task input port is required before execution.");
+        }
+        final RunPort port = graph.ports().stream()
+                .filter(candidate -> graph.taskInputPortId().equals(candidate.sourcePortId()))
+                .findFirst()
+                .orElseThrow(() -> new ValidationException("UNKNOWN_TASK_INPUT_PORT", "Workflow task input port must exist."));
+        if (port.direction() != PortDirection.INPUT) {
+            throw new ValidationException("INVALID_TASK_INPUT_PORT", "Workflow task input port must be an INPUT port.");
+        }
+        return port;
+    }
+
+    private RunNode requireTaskInputNode(final WorkflowRunGraph graph, final RunPort taskInputPort) {
+        return graph.nodes().stream()
+                .filter(node -> node.sourceNodeId().equals(taskInputPort.sourceNodeId()))
+                .findFirst()
+                .orElseThrow(() -> new ValidationException("WORKFLOW_ENTRY_NOT_FOUND", "Workflow entry node was not found."));
+    }
+
+    private NodeRun createRootNodeRun(final WorkflowRun run, final ExecutionFrame rootFrame, final RunNode entry, final UUID taskInputPortId) {
         this.executionBudgetPolicy.assertNodeRunCanBeCreated(run);
-        return this.nodeRunRepository.save(this.nodeRunFactory.root(run, rootFrame, entry));
+        return this.nodeRunRepository.save(this.nodeRunFactory.root(run, rootFrame, entry, taskInputPortId));
     }
 }

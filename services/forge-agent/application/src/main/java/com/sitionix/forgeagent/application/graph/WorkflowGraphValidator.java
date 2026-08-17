@@ -27,6 +27,7 @@ public class WorkflowGraphValidator {
     public ValidatedGraph validateAndNormalize(final UUID projectId,
                                                final List<Node> nodes,
                                                final List<WorkflowConnection> connections,
+                                               final UUID taskInputPortId,
                                                final Collection<AgentDefinition> targets) {
         final List<Node> normalizedNodes = nodes == null ? List.of() : nodes.stream()
                 .map(this::normalizeNode)
@@ -56,7 +57,9 @@ public class WorkflowGraphValidator {
             }
         }
         this.validateConnections(normalizedConnections, inputOwnersByPortId, outputOwnersByPortId, allOwnersByPortId);
-        return new ValidatedGraph(normalizedNodes, normalizedConnections);
+        this.validateTaskInputPort(taskInputPortId, normalizedNodes, inputOwnersByPortId, allOwnersByPortId);
+        this.validateReachability(normalizedNodes, normalizedConnections, taskInputPortId, inputOwnersByPortId, outputOwnersByPortId);
+        return new ValidatedGraph(normalizedNodes, normalizedConnections, taskInputPortId);
     }
 
     private Node normalizeNode(final Node node) {
@@ -169,9 +172,67 @@ public class WorkflowGraphValidator {
         }
     }
 
+    private void validateTaskInputPort(final UUID taskInputPortId,
+                                       final List<Node> nodes,
+                                       final Map<UUID, UUID> inputOwnersByPortId,
+                                       final Map<UUID, UUID> allOwnersByPortId) {
+        if (nodes.isEmpty()) {
+            if (taskInputPortId != null) {
+                throw new ValidationException("UNKNOWN_TASK_INPUT_PORT", "Workflow task input port must exist.");
+            }
+            return;
+        }
+        if (taskInputPortId == null) {
+            throw new ValidationException("WORKFLOW_TASK_INPUT_REQUIRED", "Workflow task input port is required.");
+        }
+        if (!allOwnersByPortId.containsKey(taskInputPortId)) {
+            throw new ValidationException("UNKNOWN_TASK_INPUT_PORT", "Workflow task input port must exist.");
+        }
+        if (!inputOwnersByPortId.containsKey(taskInputPortId)) {
+            throw new ValidationException("INVALID_TASK_INPUT_PORT", "Workflow task input port must be an INPUT port.");
+        }
+    }
+
+    private void validateReachability(final List<Node> nodes,
+                                      final List<WorkflowConnection> connections,
+                                      final UUID taskInputPortId,
+                                      final Map<UUID, UUID> inputOwnersByPortId,
+                                      final Map<UUID, UUID> outputOwnersByPortId) {
+        if (nodes.isEmpty()) {
+            return;
+        }
+        final Map<UUID, List<UUID>> targetNodeIdsBySourceNodeId = new HashMap<>();
+        for (final WorkflowConnection connection : connections) {
+            final UUID sourceNodeId = outputOwnersByPortId.get(connection.sourceOutputPortId());
+            final UUID targetNodeId = inputOwnersByPortId.get(connection.targetInputPortId());
+            targetNodeIdsBySourceNodeId.computeIfAbsent(sourceNodeId, ignored -> new ArrayList<>()).add(targetNodeId);
+        }
+
+        final UUID startNodeId = inputOwnersByPortId.get(taskInputPortId);
+        final Set<UUID> reachableNodeIds = new HashSet<>();
+        final ArrayList<UUID> pendingNodeIds = new ArrayList<>();
+        pendingNodeIds.add(startNodeId);
+        while (!pendingNodeIds.isEmpty()) {
+            final UUID nodeId = pendingNodeIds.removeLast();
+            if (!reachableNodeIds.add(nodeId)) {
+                continue;
+            }
+            pendingNodeIds.addAll(targetNodeIdsBySourceNodeId.getOrDefault(nodeId, List.of()));
+        }
+
+        for (final Node node : nodes) {
+            if (!reachableNodeIds.contains(node.id())) {
+                throw new ValidationException(
+                        "INCONSISTENT_WORKFLOW_GRAPH",
+                        "Workflow contains nodes that are not reachable from Task Input. Connect all workflow nodes to the execution flow or remove them."
+                );
+            }
+        }
+    }
+
     private record PortPair(UUID sourceOutputPortId, UUID targetInputPortId) {
     }
 
-    public record ValidatedGraph(List<Node> nodes, List<WorkflowConnection> connections) {
+    public record ValidatedGraph(List<Node> nodes, List<WorkflowConnection> connections, UUID taskInputPortId) {
     }
 }

@@ -221,7 +221,7 @@ class ForgeAgentClientMapperTest {
         );
         assertThat(this.mapper.toRequest(new CreateAgentWorkflowCommand("Full Testing")))
                 .isEqualTo(new AgentWorkflowRequest("Full Testing"));
-        assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand("Full Testing", List.of(node), List.of(connection))))
+        assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand("Full Testing", List.of(node), List.of(connection), INPUT_ID)))
                 .isEqualTo(new SaveAgentWorkflowRequest(
                         "Full Testing",
                         List.of(new NodeRequest(
@@ -232,7 +232,8 @@ class ForgeAgentClientMapperTest {
                                 List.of(new NodePortRequest(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
                                 new NodePositionRequest(1.0, 2.0)
                         )),
-                        List.of(new WorkflowConnectionRequest(CONNECTION_ID, OUTPUT_ID, INPUT_ID))
+                        List.of(new WorkflowConnectionRequest(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
+                        INPUT_ID
                 ));
 
         assertThat(this.mapper.toDomain(new AgentWorkflowResponse(
@@ -248,9 +249,10 @@ class ForgeAgentClientMapperTest {
                         new NodePositionResponse(1.0, 2.0)
                 )),
                 List.of(new WorkflowConnectionResponse(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
+                INPUT_ID,
                 CREATED,
                 UPDATED
-        ))).isEqualTo(new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(node), List.of(connection), CREATED, UPDATED));
+        ))).isEqualTo(new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(node), List.of(connection), INPUT_ID, CREATED, UPDATED));
     }
 
     @Test
@@ -372,6 +374,7 @@ class ForgeAgentClientMapperTest {
                 finishedAt
         );
         final WorkflowRunGraphResponse graph = new WorkflowRunGraphResponse(
+                inputPortId,
                 List.of(new RunNodeResponse(
                         NODE_ID,
                         "Analyzer",
@@ -430,6 +433,7 @@ class ForgeAgentClientMapperTest {
                 List.of(),
                 List.of(),
                 new AgentWorkflowRunGraph(
+                        inputPortId,
                         List.of(new AgentRunNode(
                                 NODE_ID,
                                 "Analyzer",
@@ -464,6 +468,7 @@ class ForgeAgentClientMapperTest {
                 "Full Testing",
                 List.of(new NodeResponse(NODE_ID, null, new NodePositionResponse(1.0, 2.0))),
                 List.of(),
+                null,
                 CREATED,
                 UPDATED
         )))

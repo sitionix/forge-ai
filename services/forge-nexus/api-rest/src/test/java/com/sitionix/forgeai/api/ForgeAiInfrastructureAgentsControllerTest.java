@@ -395,8 +395,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
 
     @Test
     void updateWorkflow() {
-        final SaveAgentWorkflowRequest request = new SaveAgentWorkflowRequest("Full Testing", List.of(), List.of());
-        final SaveAgentWorkflowCommand command = new SaveAgentWorkflowCommand("Full Testing", List.of(), List.of());
+        final SaveAgentWorkflowRequest request = new SaveAgentWorkflowRequest("Full Testing", List.of(), List.of(), null);
+        final SaveAgentWorkflowCommand command = new SaveAgentWorkflowCommand("Full Testing", List.of(), List.of(), null);
         final AgentWorkflow workflow = this.workflow();
         final AgentWorkflowResponse response = this.workflowResponse();
         when(this.mapper.toCommand(request)).thenReturn(command);
@@ -487,11 +487,11 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     private AgentWorkflow workflow() {
-        return new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), List.of(), NOW, NOW);
+        return new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), List.of(), null, NOW, NOW);
     }
 
     private AgentWorkflowResponse workflowResponse() {
-        return new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), List.of(), NOW, NOW);
+        return new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), List.of(), null, NOW, NOW);
     }
 
     private AgentWorkflowRun workflowRun() {

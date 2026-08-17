@@ -223,7 +223,7 @@ class PostgresWorkflowRepositoryTest {
     }
 
     private Workflow workflow(final UUID workflowId, final List<Node> nodes, final List<WorkflowConnection> connections) {
-        return new Workflow(workflowId, PROJECT_ID, "Full Testing", "full testing", nodes, connections, NOW, NOW);
+        return new Workflow(workflowId, PROJECT_ID, "Full Testing", "full testing", nodes, connections, null, NOW, NOW);
     }
 
     private Node nodeA() {

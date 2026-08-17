@@ -34,6 +34,7 @@ public class WorkflowRunSnapshotBuilder {
                 .collect(Collectors.toMap(AgentDefinition::id, Function.identity()));
         return new WorkflowRunGraph(
                 workflowRunId,
+                workflow.taskInputPortId(),
                 workflow.nodes().stream().map(node -> this.runNode(workflowRunId, node, agentsById)).toList(),
                 workflow.nodes().stream()
                         .flatMap(node -> java.util.stream.Stream.concat(

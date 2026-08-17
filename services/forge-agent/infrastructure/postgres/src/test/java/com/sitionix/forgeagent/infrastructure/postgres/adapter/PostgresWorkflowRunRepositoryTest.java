@@ -85,7 +85,7 @@ class PostgresWorkflowRunRepositoryTest {
         );
         lenient().when(this.resolutionRepository.findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID)).thenReturn(List.of());
         lenient().when(this.executionEdgeRepository.findByWorkflowRunIdOrderBySourceNodeRunIdAscTargetNodeRunIdAsc(RUN_ID)).thenReturn(List.of());
-        lenient().when(this.graphRepository.findByWorkflowRunId(RUN_ID)).thenReturn(new WorkflowRunGraph(RUN_ID, List.of(), List.of(), List.of()));
+        lenient().when(this.graphRepository.findByWorkflowRunId(RUN_ID)).thenReturn(new WorkflowRunGraph(RUN_ID, INPUT_PORT_ID, List.of(), List.of(), List.of()));
     }
 
     @Test
@@ -102,6 +102,7 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(savedRun.getProjectId()).isEqualTo(PROJECT_ID);
         assertThat(savedRun.getSourceWorkflowId()).isEqualTo(WORKFLOW_ID);
         assertThat(savedRun.getTaskId()).isEqualTo(TASK_ID);
+        assertThat(savedRun.getTaskInputPortId()).isNull();
         assertThat(savedRun.getWorkflowName()).isEqualTo("Full Testing");
         assertThat(savedRun.getInput()).isEqualTo("Review auth changes.");
         assertThat(savedRun.getStatus()).isEqualTo("QUEUED");
@@ -140,6 +141,7 @@ class PostgresWorkflowRunRepositoryTest {
     void saveReturnsInMemoryRuntimeGraphWithoutReadingSnapshotRepository() {
         final WorkflowRunGraph graph = new WorkflowRunGraph(
                 RUN_ID,
+                INPUT_PORT_ID,
                 List.of(new RunNode(
                         RUN_ID,
                         SOURCE_NODE_A,
@@ -215,6 +217,7 @@ class PostgresWorkflowRunRepositoryTest {
     void findByIdIncludesRuntimeGraphSnapshotWhenPresent() {
         final WorkflowRunGraph graph = new WorkflowRunGraph(
                 RUN_ID,
+                INPUT_PORT_ID,
                 List.of(new RunNode(
                         RUN_ID,
                         SOURCE_NODE_A,

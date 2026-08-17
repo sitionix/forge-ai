@@ -68,7 +68,7 @@ class ForgeAgentProjectTaskIT {
             assertThat(nodeRun.getStatus()).isEqualTo("PENDING");
             assertThat(nodeRun.getExecutionFrameId()).isNotNull();
             assertThat(nodeRun.getActivationFrameId()).isNull();
-            assertThat(nodeRun.getEnteredViaInputPortId()).isNull();
+            assertThat(nodeRun.getEnteredViaInputPortId()).isEqualTo(UUID.fromString("61000000-0000-4000-8000-000000000001"));
         });
     }
 

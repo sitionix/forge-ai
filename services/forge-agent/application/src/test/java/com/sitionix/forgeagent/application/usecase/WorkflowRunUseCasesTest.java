@@ -10,7 +10,6 @@ import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.application.runtime.NodeRunFactory;
 import com.sitionix.forgeagent.application.runtime.ExecutionBudgetPolicy;
-import com.sitionix.forgeagent.application.runtime.WorkflowEntrySelector;
 import com.sitionix.forgeagent.application.runtime.WorkflowRunSnapshotBuilder;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
@@ -80,8 +79,6 @@ class WorkflowRunUseCasesTest {
     @Mock
     private AgentDefinitionRepository agentDefinitionRepository;
     @Mock
-    private WorkflowEntrySelector entrySelector;
-    @Mock
     private ExecutionBudgetPolicy executionBudgetPolicy;
 
     private WorkflowRunUseCases useCases;
@@ -95,7 +92,6 @@ class WorkflowRunUseCasesTest {
                 this.executionFrameRepository,
                 this.nodeRunRepository,
                 new WorkflowRunSnapshotBuilder(this.agentDefinitionRepository),
-                this.entrySelector,
                 new NodeRunFactory(CLOCK),
                 this.executionBudgetPolicy,
                 CLOCK
@@ -107,7 +103,6 @@ class WorkflowRunUseCasesTest {
         final Workflow workflow = this.workflowWithTwoNodes();
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent(), this.secondAgent()));
-        when(this.entrySelector.selectEntries(any())).thenAnswer(invocation -> List.of(invocation.<WorkflowRunGraph>getArgument(0).nodes().get(0)));
         when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.executionFrameRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.nodeRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -116,6 +111,7 @@ class WorkflowRunUseCasesTest {
 
         assertThat(run.status()).isEqualTo(WorkflowRunStatus.QUEUED);
         assertThat(run.runtimeGraph()).isNotNull();
+        assertThat(run.runtimeGraph().taskInputPortId()).isEqualTo(this.inputPortId);
         assertThat(run.runtimeGraph().nodes())
                 .extracting(item -> item.sourceNodeId())
                 .containsExactly(this.nodeId, this.secondNodeId);
@@ -129,14 +125,14 @@ class WorkflowRunUseCasesTest {
                 );
         assertThat(run.runtimeGraph().connections())
                 .extracting(connection -> connection.sourceConnectionId())
-                .containsExactly(this.connectionId);
+                .containsExactly(this.connectionId, UUID.fromString("99999999-9999-4999-8999-999999999998"));
         assertThat(run.nodeRuns()).hasSize(1);
         assertThat(run.nodeRuns().get(0)).satisfies(nodeRun -> {
             assertThat(nodeRun.sourceNodeId()).isEqualTo(this.nodeId);
             assertThat(nodeRun.status()).isEqualTo(NodeRunStatus.PENDING);
             assertThat(nodeRun.executionFrameId()).isNotNull();
             assertThat(nodeRun.activationFrameId()).isNull();
-            assertThat(nodeRun.enteredViaInputPortId()).isNull();
+            assertThat(nodeRun.enteredViaInputPortId()).isEqualTo(this.inputPortId);
         });
         final ArgumentCaptor<WorkflowRun> savedRunCaptor = ArgumentCaptor.forClass(WorkflowRun.class);
         verify(this.workflowRunRepository).save(savedRunCaptor.capture());
@@ -150,7 +146,6 @@ class WorkflowRunUseCasesTest {
         final Workflow workflow = this.workflow();
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
-        when(this.entrySelector.selectEntries(any())).thenAnswer(invocation -> invocation.<com.sitionix.forgeagent.domain.model.WorkflowRunGraph>getArgument(0).nodes());
         when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.executionFrameRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.nodeRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -164,12 +159,11 @@ class WorkflowRunUseCasesTest {
 
     @Test
     void eachWorkflowRunUsesTheLiveWorkflowShapeOnlyForItsOwnSnapshot() {
-        final Workflow firstWorkflowShape = this.workflowWithOutput("Done", "Terminal output");
-        final Workflow secondWorkflowShape = this.workflowWithOutput("Escalate", "Escalation output");
+        final Workflow firstWorkflowShape = this.workflowWithTaskInput(this.inputPortId, "Done", "Terminal output");
+        final Workflow secondWorkflowShape = this.workflowWithTaskInput(this.secondInputPortId, "Escalate", "Escalation output");
         when(this.workflowRepository.findByIdForUpdate(this.workflowId))
                 .thenReturn(Optional.of(firstWorkflowShape), Optional.of(secondWorkflowShape));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
-        when(this.entrySelector.selectEntries(any())).thenAnswer(invocation -> invocation.<WorkflowRunGraph>getArgument(0).nodes());
         when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.executionFrameRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.nodeRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -183,25 +177,36 @@ class WorkflowRunUseCasesTest {
                 .extracting(port -> port.name() + ":" + port.description())
                 .contains("Done:Terminal output")
                 .doesNotContain("Escalate:Escalation output");
+        assertThat(graphCaptor.getAllValues().get(0).taskInputPortId()).isEqualTo(this.inputPortId);
         assertThat(graphCaptor.getAllValues().get(1).ports())
                 .extracting(port -> port.name() + ":" + port.description())
                 .contains("Escalate:Escalation output")
                 .doesNotContain("Done:Terminal output");
+        assertThat(graphCaptor.getAllValues().get(1).taskInputPortId()).isEqualTo(this.secondInputPortId);
         assertThat(firstRun.runtimeGraph()).isEqualTo(graphCaptor.getAllValues().get(0));
         assertThat(secondRun.runtimeGraph()).isEqualTo(graphCaptor.getAllValues().get(1));
     }
 
     @Test
-    void missingEntryReturnsControlledError() {
-        final Workflow workflow = this.workflow();
+    void missingTaskInputReturnsControlledError() {
+        final Workflow workflow = new Workflow(
+                this.workflowId,
+                this.projectId,
+                "Full Testing",
+                "full testing",
+                this.workflow().nodes(),
+                List.of(),
+                null,
+                NOW,
+                NOW
+        );
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
-        when(this.entrySelector.selectEntries(any())).thenReturn(List.of());
 
         assertThatThrownBy(() -> this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run it")))
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
-                .isEqualTo("WORKFLOW_ENTRY_NOT_FOUND");
+                .isEqualTo("WORKFLOW_TASK_INPUT_REQUIRED");
 
         verify(this.workflowRunRepository, never()).save(any());
     }
@@ -256,6 +261,10 @@ class WorkflowRunUseCasesTest {
     }
 
     private Workflow workflowWithOutput(final String outputName, final String outputDescription) {
+        return this.workflowWithTaskInput(this.inputPortId, outputName, outputDescription);
+    }
+
+    private Workflow workflowWithTaskInput(final UUID taskInputPortId, final String outputName, final String outputDescription) {
         return new Workflow(
                 this.workflowId,
                 this.projectId,
@@ -265,11 +274,15 @@ class WorkflowRunUseCasesTest {
                         this.nodeId,
                         this.agentId,
                         com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
-                        List.of(new NodePort(UUID.randomUUID(), "Input", "Input", 0)),
+                        List.of(
+                                new NodePort(this.inputPortId, "Input", "Input", 0),
+                                new NodePort(this.secondInputPortId, "Alternate Input", "Alternate Input", 1)
+                        ),
                         List.of(new NodePort(UUID.randomUUID(), outputName, outputDescription, 0)),
                         new NodePosition(1.0, 2.0)
                 )),
                 List.of(),
+                taskInputPortId,
                 NOW,
                 NOW
         );
@@ -299,7 +312,11 @@ class WorkflowRunUseCasesTest {
                                 new NodePosition(3.0, 4.0)
                         )
                 ),
-                List.of(new WorkflowConnection(this.connectionId, this.outputPortId, this.secondInputPortId)),
+                List.of(
+                        new WorkflowConnection(this.connectionId, this.outputPortId, this.secondInputPortId),
+                        new WorkflowConnection(UUID.fromString("99999999-9999-4999-8999-999999999998"), this.secondOutputPortId, this.inputPortId)
+                ),
+                this.inputPortId,
                 NOW,
                 NOW
         );

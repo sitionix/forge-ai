@@ -69,7 +69,11 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
 
     @Override
     public WorkflowRun saveLifecycle(final WorkflowRun run) {
-        return this.toLifecycleDomain(this.workflowRunRepository.save(this.toEntity(run)));
+        final WorkflowRunEntity entity = this.toEntity(run);
+        this.workflowRunRepository.findById(run.id())
+                .map(WorkflowRunEntity::getTaskInputPortId)
+                .ifPresent(entity::setTaskInputPortId);
+        return this.toLifecycleDomain(this.workflowRunRepository.save(entity));
     }
 
     @Override
@@ -174,6 +178,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         entity.setProjectId(run.projectId());
         entity.setSourceWorkflowId(run.sourceWorkflowId());
         entity.setTaskId(run.taskId());
+        entity.setTaskInputPortId(run.runtimeGraph() == null ? null : run.runtimeGraph().taskInputPortId());
         entity.setWorkflowName(run.workflowName());
         entity.setInput(run.input());
         entity.setStatus(run.status().name());

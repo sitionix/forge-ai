@@ -10,6 +10,7 @@ public record WorkflowResponse(
         String name,
         List<NodeResponse> nodes,
         List<WorkflowConnectionResponse> connections,
+        UUID taskInputPortId,
         Instant createdAt,
         Instant updatedAt
 ) {

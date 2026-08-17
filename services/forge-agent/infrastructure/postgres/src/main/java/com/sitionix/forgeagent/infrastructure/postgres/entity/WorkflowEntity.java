@@ -31,6 +31,9 @@ public class WorkflowEntity {
     @Column(name = "normalized_name", nullable = false, length = 120)
     private String normalizedName;
 
+    @Column(name = "task_input_port_id")
+    private UUID taskInputPortId;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

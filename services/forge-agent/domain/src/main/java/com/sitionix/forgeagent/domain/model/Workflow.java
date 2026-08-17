@@ -11,6 +11,7 @@ public record Workflow(
         String normalizedName,
         List<Node> nodes,
         List<WorkflowConnection> connections,
+        UUID taskInputPortId,
         Instant createdAt,
         Instant updatedAt
 ) {

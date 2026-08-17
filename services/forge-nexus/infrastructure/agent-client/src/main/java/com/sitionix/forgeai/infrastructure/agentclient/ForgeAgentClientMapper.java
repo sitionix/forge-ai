@@ -220,7 +220,8 @@ public class ForgeAgentClientMapper {
                         .toList(),
                 command.connections() == null ? List.of() : command.connections().stream()
                         .map(this::toRequest)
-                        .toList()
+                        .toList(),
+                command.taskInputPortId()
         );
     }
 
@@ -243,6 +244,7 @@ public class ForgeAgentClientMapper {
                 this.requireList(response.connections(), "workflow.connections").stream()
                         .map(this::toDomain)
                         .toList(),
+                response.taskInputPortId(),
                 response.createdAt(),
                 response.updatedAt()
         );
@@ -307,6 +309,7 @@ public class ForgeAgentClientMapper {
             return null;
         }
         return new AgentWorkflowRunGraph(
+                response.taskInputPortId(),
                 this.requireList(response.nodes(), "workflowRun.runtimeGraph.nodes").stream()
                         .map(this::toDomain)
                         .toList(),

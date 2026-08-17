@@ -110,8 +110,22 @@ class WorkflowUseCasesTest {
     @Test
     void updateLocksWorkflowBeforeReloadAndValidatesFinalGraphBeforeSave() {
         final Workflow current = this.workflow(List.of());
-        final Node first = new Node(this.nodeA, this.agentId, new NodePosition(1.0, 2.0));
-        final Node second = new Node(this.nodeB, this.agentId, new NodePosition(3.0, 4.0));
+        final Node first = new Node(
+                this.nodeA,
+                this.agentId,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
+                List.of(new NodePort(this.outputA, "Output", "Output.", 0)),
+                new NodePosition(1.0, 2.0)
+        );
+        final Node second = new Node(
+                this.nodeB,
+                this.agentId,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodePort(this.inputB, "Input", "Input.", 0)),
+                List.of(new NodePort(this.outputB, "Output", "Output.", 0)),
+                new NodePosition(3.0, 4.0)
+        );
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
@@ -120,17 +134,47 @@ class WorkflowUseCasesTest {
 
         final Workflow saved = this.useCases.updateWorkflow(
                 this.workflowId,
-                new SaveWorkflowCommand("Full Testing", List.of(first, second), List.of())
+                new SaveWorkflowCommand("Full Testing", List.of(first, second), List.of(
+                        new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB)
+                ), this.inputA)
         );
 
         assertThat(saved.nodes()).containsExactly(first, second);
-        assertThat(saved.connections()).isEmpty();
+        assertThat(saved.connections()).containsExactly(
+                new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB)
+        );
         final InOrder order = org.mockito.Mockito.inOrder(this.workflowRepository, this.agentDefinitionRepository);
         order.verify(this.workflowRepository).findById(this.workflowId);
         order.verify(this.workflowRepository).findByIdForUpdate(this.workflowId);
         order.verify(this.workflowRepository).findById(this.workflowId);
         order.verify(this.agentDefinitionRepository).findByIds(any());
         order.verify(this.workflowRepository).save(any());
+    }
+
+    @Test
+    void updateRejectsNonEmptyWorkflowWithoutTaskInput() {
+        final Workflow current = this.workflow(List.of());
+        final Node first = new Node(
+                this.nodeA,
+                this.agentId,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
+                List.of(new NodePort(this.outputA, "Output", "Output.", 0)),
+                new NodePosition(1.0, 2.0)
+        );
+        when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
+
+        assertThatThrownBy(() -> this.useCases.updateWorkflow(
+                this.workflowId,
+                new SaveWorkflowCommand("Full Testing", List.of(first), List.of(), null)
+        ))
+                .isInstanceOf(com.sitionix.forgeagent.domain.exception.ValidationException.class)
+                .extracting("code")
+                .isEqualTo("WORKFLOW_TASK_INPUT_REQUIRED");
+
+        verify(this.workflowRepository, never()).save(any());
     }
 
     @Test
@@ -155,10 +199,11 @@ class WorkflowUseCasesTest {
                 ), List.of(
                         new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB),
                         new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000002"), this.outputB, this.inputA)
-                ))
+                ), this.inputA)
         );
 
         assertThat(saved.connections()).hasSize(2);
+        assertThat(saved.taskInputPortId()).isEqualTo(this.inputA);
         verify(this.workflowRepository).save(any());
     }
 
@@ -181,6 +226,6 @@ class WorkflowUseCasesTest {
     }
 
     private Workflow workflow(final List<Node> nodes) {
-        return new Workflow(this.workflowId, this.projectId, "Full Testing", "full testing", nodes, List.of(), Instant.EPOCH, Instant.EPOCH);
+        return new Workflow(this.workflowId, this.projectId, "Full Testing", "full testing", nodes, List.of(), null, Instant.EPOCH, Instant.EPOCH);
     }
 }
