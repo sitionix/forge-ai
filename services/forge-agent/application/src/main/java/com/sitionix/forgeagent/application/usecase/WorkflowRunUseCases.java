@@ -62,6 +62,7 @@ public class WorkflowRunUseCases {
         final UUID runId = UUID.randomUUID();
         final WorkflowRunGraph graph = this.snapshotBuilder.build(runId, workflow);
         final RunPort taskInputPort = this.requireTaskInputPort(graph);
+        this.requireTaskOutputPort(graph);
         final RunNode entry = this.requireTaskInputNode(graph, taskInputPort);
         if (graph.nodes().isEmpty()) {
             throw new ValidationException("WORKFLOW_ENTRY_NOT_FOUND", "Workflow entry node was not found.");
@@ -79,6 +80,8 @@ public class WorkflowRunUseCases {
                 List.of(),
                 List.of(),
                 graph,
+                null,
+                null,
                 now,
                 null,
                 null
@@ -98,6 +101,8 @@ public class WorkflowRunUseCases {
                 List.of(),
                 List.of(),
                 graph,
+                run.result(),
+                run.resultSourceNodeRunId(),
                 run.createdAt(),
                 run.startedAt(),
                 run.finishedAt()
@@ -137,6 +142,26 @@ public class WorkflowRunUseCases {
                 .orElseThrow(() -> new ValidationException("UNKNOWN_TASK_INPUT_PORT", "Workflow task input port must exist."));
         if (port.direction() != PortDirection.INPUT) {
             throw new ValidationException("INVALID_TASK_INPUT_PORT", "Workflow task input port must be an INPUT port.");
+        }
+        return port;
+    }
+
+    private RunPort requireTaskOutputPort(final WorkflowRunGraph graph) {
+        if (graph.nodes().isEmpty()) {
+            throw new ValidationException("WORKFLOW_ENTRY_NOT_FOUND", "Workflow entry node was not found.");
+        }
+        if (graph.taskOutputPortId() == null) {
+            throw new ValidationException("WORKFLOW_TASK_OUTPUT_REQUIRED", "Workflow task output port is required.");
+        }
+        final RunPort port = graph.ports().stream()
+                .filter(candidate -> graph.taskOutputPortId().equals(candidate.sourcePortId()))
+                .findFirst()
+                .orElseThrow(() -> new ValidationException("UNKNOWN_TASK_OUTPUT_PORT", "Workflow task output port must exist."));
+        if (port.direction() != PortDirection.OUTPUT) {
+            throw new ValidationException("INVALID_TASK_OUTPUT_PORT", "Workflow task output port must be an OUTPUT port.");
+        }
+        if (graph.connections().stream().anyMatch(connection -> graph.taskOutputPortId().equals(connection.sourceOutputPortId()))) {
+            throw new ValidationException("TASK_OUTPUT_PORT_NOT_TERMINAL", "Workflow Task Output must not have downstream workflow connections.");
         }
         return port;
     }

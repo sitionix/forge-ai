@@ -11,6 +11,7 @@ import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
+import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import com.sitionix.forgeagent.domain.port.ProjectTaskRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRepository;
@@ -64,7 +65,7 @@ public class ProjectTaskUseCases {
                 new CreateWorkflowRunCommand(input),
                 task.id()
         );
-        return this.toDetails(task, List.of(this.toSummary(run)));
+        return this.toDetails(task, List.of(this.toSummary(run)), null);
     }
 
     @Transactional(readOnly = true)
@@ -85,7 +86,7 @@ public class ProjectTaskUseCases {
     public ProjectTaskDetails getProjectTask(final UUID taskId) {
         final ProjectTask task = this.projectTaskRepository.findById(taskId)
                 .orElseThrow(() -> new NotFoundException("PROJECT_TASK_NOT_FOUND", "Project task was not found."));
-        return this.toDetails(task, this.workflowRunRepository.findSummariesByTaskId(task.id()));
+        return this.toDetails(task, this.workflowRunRepository.findSummariesByTaskId(task.id()), this.currentTaskResult(task.id()));
     }
 
     @Transactional
@@ -155,7 +156,17 @@ public class ProjectTaskUseCases {
         );
     }
 
-    private ProjectTaskDetails toDetails(final ProjectTask task, final List<WorkflowRunSummary> runs) {
+    private com.sitionix.forgeagent.domain.model.NodeRunOutput currentTaskResult(final UUID taskId) {
+        final WorkflowRun latest = this.workflowRunRepository.findLatestByTaskId(taskId).orElse(null);
+        if (latest == null || latest.status() != WorkflowRunStatus.SUCCEEDED || latest.result() == null) {
+            return null;
+        }
+        return latest.result();
+    }
+
+    private ProjectTaskDetails toDetails(final ProjectTask task,
+                                         final List<WorkflowRunSummary> runs,
+                                         final com.sitionix.forgeagent.domain.model.NodeRunOutput result) {
         return new ProjectTaskDetails(
                 task.id(),
                 task.projectId(),
@@ -163,6 +174,7 @@ public class ProjectTaskUseCases {
                 task.input(),
                 task.workflowId(),
                 runs,
+                result,
                 task.createdAt(),
                 task.updatedAt()
         );

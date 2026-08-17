@@ -14,6 +14,8 @@ public interface WorkflowRunRepository {
 
     Optional<WorkflowRun> findByIdForUpdate(UUID runId);
 
+    Optional<WorkflowRun> findLatestByTaskId(UUID taskId);
+
     List<WorkflowRunSummary> findSummariesBySourceWorkflowId(UUID workflowId);
 
     List<WorkflowRunSummary> findSummariesByTaskId(UUID taskId);

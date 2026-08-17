@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunExecutionEdge;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
+import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunExecutionEdgeEntity;
@@ -54,6 +55,13 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     }
 
     @Override
+    public Optional<WorkflowRun> findLatestByTaskId(final UUID taskId) {
+        return this.workflowRunRepository.findByTaskIdOrderByCreatedAtDescIdDesc(taskId).stream()
+                .findFirst()
+                .map(this::toLifecycleDomain);
+    }
+
+    @Override
     public List<WorkflowRunSummary> findSummariesBySourceWorkflowId(final UUID workflowId) {
         return this.workflowRunRepository.findBySourceWorkflowIdOrderByCreatedAtDescIdDesc(workflowId).stream()
                 .map(this::toSummary)
@@ -71,8 +79,16 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     public WorkflowRun saveLifecycle(final WorkflowRun run) {
         final WorkflowRunEntity entity = this.toEntity(run);
         this.workflowRunRepository.findById(run.id())
-                .map(WorkflowRunEntity::getTaskInputPortId)
-                .ifPresent(entity::setTaskInputPortId);
+                .ifPresent(existing -> {
+                    entity.setTaskInputPortId(existing.getTaskInputPortId());
+                    entity.setTaskOutputPortId(existing.getTaskOutputPortId());
+                    if (run.result() == null && existing.getResult() != null) {
+                        entity.setResult(existing.getResult());
+                    }
+                    if (run.resultSourceNodeRunId() == null && existing.getResultSourceNodeRunId() != null) {
+                        entity.setResultSourceNodeRunId(existing.getResultSourceNodeRunId());
+                    }
+                });
         return this.toLifecycleDomain(this.workflowRunRepository.save(entity));
     }
 
@@ -123,6 +139,8 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                         .map(this::toExecutionEdge)
                         .toList(),
                 this.runtimeGraphOrNull(entity.getId()),
+                entity.getResult() == null ? null : new NodeRunOutput(entity.getResult()),
+                entity.getResultSourceNodeRunId(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
                 entity.getFinishedAt()
@@ -142,6 +160,8 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 source.connectionResolutions(),
                 source.executionEdges(),
                 source.runtimeGraph(),
+                source.result(),
+                source.resultSourceNodeRunId(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
                 entity.getFinishedAt()
@@ -158,6 +178,11 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getInput(),
                 WorkflowRunStatus.valueOf(entity.getStatus()),
                 List.of(),
+                List.of(),
+                List.of(),
+                null,
+                entity.getResult() == null ? null : new NodeRunOutput(entity.getResult()),
+                entity.getResultSourceNodeRunId(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
                 entity.getFinishedAt()
@@ -179,12 +204,15 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         entity.setSourceWorkflowId(run.sourceWorkflowId());
         entity.setTaskId(run.taskId());
         entity.setTaskInputPortId(run.runtimeGraph() == null ? null : run.runtimeGraph().taskInputPortId());
+        entity.setTaskOutputPortId(run.runtimeGraph() == null ? null : run.runtimeGraph().taskOutputPortId());
         entity.setWorkflowName(run.workflowName());
         entity.setInput(run.input());
         entity.setStatus(run.status().name());
         entity.setCreatedAt(run.createdAt());
         entity.setStartedAt(run.startedAt());
         entity.setFinishedAt(run.finishedAt());
+        entity.setResult(run.result() == null ? null : run.result().jsonValue());
+        entity.setResultSourceNodeRunId(run.resultSourceNodeRunId());
         return entity;
     }
 

@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.api.dto;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import java.time.Instant;
 import java.util.List;
@@ -17,6 +18,8 @@ public record WorkflowRunResponse(
         List<ConnectionResolutionResponse> connectionResolutions,
         List<WorkflowRunExecutionEdgeResponse> executionEdges,
         WorkflowRunGraphResponse runtimeGraph,
+        JsonNode result,
+        UUID resultSourceNodeRunId,
         Instant createdAt,
         Instant startedAt,
         Instant finishedAt
@@ -34,7 +37,7 @@ public record WorkflowRunResponse(
                                final Instant createdAt,
                                final Instant startedAt,
                                final Instant finishedAt) {
-        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, connectionResolutions, executionEdges, null, createdAt, startedAt, finishedAt);
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, connectionResolutions, executionEdges, null, null, null, createdAt, startedAt, finishedAt);
     }
 
     public WorkflowRunResponse(final UUID id,
@@ -48,6 +51,6 @@ public record WorkflowRunResponse(
                                final Instant createdAt,
                                final Instant startedAt,
                                final Instant finishedAt) {
-        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), List.of(), null, createdAt, startedAt, finishedAt);
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), List.of(), null, null, null, createdAt, startedAt, finishedAt);
     }
 }

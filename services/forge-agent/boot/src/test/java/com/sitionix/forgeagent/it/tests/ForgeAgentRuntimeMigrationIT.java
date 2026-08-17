@@ -54,6 +54,7 @@ class ForgeAgentRuntimeMigrationIT {
     private static final UUID V13_UNREACHABLE_CONNECTION_AB = UUID.fromString("97000000-0000-4000-8000-000000000026");
     private static final UUID V13_UNREACHABLE_CONNECTION_CD = UUID.fromString("97000000-0000-4000-8000-000000000027");
     private static final UUID V13_UNREACHABLE_CONNECTION_DC = UUID.fromString("97000000-0000-4000-8000-000000000028");
+    private static final UUID V15_LEGACY_RUN = UUID.fromString("98000000-0000-4000-8000-000000000001");
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
@@ -140,6 +141,53 @@ class ForgeAgentRuntimeMigrationIT {
                     .isNull();
             assertThat(this.uuidValue(jdbc, "SELECT task_input_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_UNREACHABLE_ISLAND_WORKFLOW))
                     .isNull();
+        } finally {
+            jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+        }
+    }
+
+    @Test
+    void v15AddsNullableTaskOutputAndResultFieldsWithoutBackfillOrCancellingLegacyRuns() {
+        final String schema = "task_output_migration_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, MigrationVersion.fromVersion("12")).migrate();
+            this.insertV13BackfillRows(jdbc, schema);
+            this.flyway(schema, MigrationVersion.fromVersion("14")).migrate();
+            jdbc.update("""
+                    INSERT INTO %s.workflow_runs (
+                        id, project_id, source_workflow_id, workflow_name, input, status, created_at, started_at
+                    )
+                    VALUES (?, ?, ?, 'Legacy active', 'Legacy input', 'RUNNING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """.formatted(schema), V15_LEGACY_RUN, V13_PROJECT_ID, V13_UNAMBIGUOUS_WORKFLOW);
+
+            this.flyway(schema, null).migrate();
+
+            assertThat(this.count(jdbc, """
+                    SELECT COUNT(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = ?
+                      AND table_name = 'agent_workflows'
+                      AND column_name = 'task_output_port_id'
+                    """, schema)).isEqualTo(1);
+            assertThat(this.count(jdbc, """
+                    SELECT COUNT(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = ?
+                      AND table_name = 'workflow_runs'
+                      AND column_name IN ('task_output_port_id', 'result', 'result_source_node_run_id')
+                    """, schema)).isEqualTo(3);
+            assertThat(this.uuidValue(jdbc, "SELECT task_output_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_UNAMBIGUOUS_WORKFLOW))
+                    .isNull();
+            assertThat(this.uuidValue(jdbc, "SELECT task_output_port_id FROM %s.workflow_runs WHERE id = ?".formatted(schema), V15_LEGACY_RUN))
+                    .isNull();
+            assertThat(this.value(jdbc, "SELECT result FROM %s.workflow_runs WHERE id = ?".formatted(schema), V15_LEGACY_RUN))
+                    .isNull();
+            assertThat(this.uuidValue(jdbc, "SELECT result_source_node_run_id FROM %s.workflow_runs WHERE id = ?".formatted(schema), V15_LEGACY_RUN))
+                    .isNull();
+            assertThat(this.value(jdbc, "SELECT status FROM %s.workflow_runs WHERE id = ?".formatted(schema), V15_LEGACY_RUN))
+                    .isEqualTo("RUNNING");
         } finally {
             jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
         }

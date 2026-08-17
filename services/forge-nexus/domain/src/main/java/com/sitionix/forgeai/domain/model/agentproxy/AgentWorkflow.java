@@ -11,7 +11,18 @@ public record AgentWorkflow(
         List<Node> nodes,
         List<WorkflowConnection> connections,
         UUID taskInputPortId,
+        UUID taskOutputPortId,
         Instant createdAt,
         Instant updatedAt
 ) {
+    public AgentWorkflow(final UUID id,
+                         final UUID projectId,
+                         final String name,
+                         final List<Node> nodes,
+                         final List<WorkflowConnection> connections,
+                         final UUID taskInputPortId,
+                         final Instant createdAt,
+                         final Instant updatedAt) {
+        this(id, projectId, name, nodes, connections, taskInputPortId, null, createdAt, updatedAt);
+    }
 }

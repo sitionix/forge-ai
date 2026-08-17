@@ -316,6 +316,73 @@ class PostgresWorkflowRunRepositoryTest {
         verifyNoInteractions(this.nodeRunRepository);
     }
 
+    @Test
+    void saveLifecyclePreservesSnapshotAndResultFieldsForLightweightUpdates() {
+        final WorkflowRunEntity existing = this.runEntity(RUN_ID, NOW);
+        existing.setTaskInputPortId(INPUT_PORT_ID);
+        existing.setTaskOutputPortId(OUTPUT_PORT_ID);
+        existing.setResult("{\"summary\":\"done\"}");
+        existing.setResultSourceNodeRunId(NODE_RUN_A);
+        when(this.workflowRunRepository.findById(RUN_ID)).thenReturn(Optional.of(existing));
+        when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        final WorkflowRun saved = this.repository.saveLifecycle(new WorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                TASK_ID,
+                "Full Testing",
+                "Review auth changes.",
+                WorkflowRunStatus.RUNNING,
+                List.of(),
+                NOW,
+                NOW,
+                null
+        ));
+
+        final WorkflowRunEntity savedEntity = this.savedRun();
+        assertThat(savedEntity.getTaskInputPortId()).isEqualTo(INPUT_PORT_ID);
+        assertThat(savedEntity.getTaskOutputPortId()).isEqualTo(OUTPUT_PORT_ID);
+        assertThat(savedEntity.getResult()).isEqualTo("{\"summary\":\"done\"}");
+        assertThat(savedEntity.getResultSourceNodeRunId()).isEqualTo(NODE_RUN_A);
+        assertThat(saved.result()).isEqualTo(new NodeRunOutput("{\"summary\":\"done\"}"));
+        assertThat(saved.resultSourceNodeRunId()).isEqualTo(NODE_RUN_A);
+    }
+
+    @Test
+    void saveLifecycleWritesNewResultWhilePreservingSnapshotFields() {
+        final WorkflowRunEntity existing = this.runEntity(RUN_ID, NOW);
+        existing.setTaskInputPortId(INPUT_PORT_ID);
+        existing.setTaskOutputPortId(OUTPUT_PORT_ID);
+        when(this.workflowRunRepository.findById(RUN_ID)).thenReturn(Optional.of(existing));
+        when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        this.repository.saveLifecycle(new WorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                TASK_ID,
+                "Full Testing",
+                "Review auth changes.",
+                WorkflowRunStatus.SUCCEEDED,
+                List.of(),
+                List.of(),
+                List.of(),
+                null,
+                new NodeRunOutput("{\"summary\":\"new\"}"),
+                NODE_RUN_B,
+                NOW,
+                NOW,
+                NOW.plusSeconds(1)
+        ));
+
+        final WorkflowRunEntity savedEntity = this.savedRun();
+        assertThat(savedEntity.getTaskInputPortId()).isEqualTo(INPUT_PORT_ID);
+        assertThat(savedEntity.getTaskOutputPortId()).isEqualTo(OUTPUT_PORT_ID);
+        assertThat(savedEntity.getResult()).isEqualTo("{\"summary\":\"new\"}");
+        assertThat(savedEntity.getResultSourceNodeRunId()).isEqualTo(NODE_RUN_B);
+    }
+
     private WorkflowRun run(final List<NodeRun> nodeRuns) {
         return new WorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, TASK_ID, "Full Testing", "Review auth changes.", WorkflowRunStatus.QUEUED, nodeRuns, NOW, null, null);
     }

@@ -20,9 +20,11 @@ import com.sitionix.forgeagent.application.runtime.NodeRunCompletionWorker;
 import com.sitionix.forgeagent.application.runtime.NodeRunLifecycle;
 import com.sitionix.forgeagent.application.runtime.WorkflowExecutionCoordinator;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
+import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
+import com.sitionix.forgeagent.application.usecase.ProjectTaskUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowUseCases;
 import com.sitionix.forgeagent.domain.model.AgentModelSelection;
@@ -36,6 +38,7 @@ import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
+import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
@@ -102,6 +105,8 @@ class ForgeAgentPortAwareExecutionIT {
     @Autowired
     private WorkflowRunUseCases workflowRunUseCases;
     @Autowired
+    private ProjectTaskUseCases projectTaskUseCases;
+    @Autowired
     private AgentUseCases agentUseCases;
     @Autowired
     private NodeRunLifecycle lifecycle;
@@ -142,10 +147,37 @@ class ForgeAgentPortAwareExecutionIT {
 
         final WorkflowRun finished = this.workflowRunRepository.findById(run.id()).orElseThrow();
         assertThat(finished.status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+        assertThat(finished.result()).isEqualTo(new NodeRunOutput("{\"step\": \"C\"}"));
+        assertThat(finished.resultSourceNodeRunId()).isEqualTo(c.id());
         assertThat(finished.nodeRuns()).extracting(NodeRun::sourceNodeId).containsExactly(A, B, C);
         assertThat(finished.connectionResolutions()).hasSize(2)
                 .allSatisfy(resolution -> assertThat(resolution.type()).isEqualTo(ConnectionResolutionType.DELIVERED));
         assertThat(this.nodeRunRepository.findById(c.id()).orElseThrow().selectedOutputPortId()).isEqualTo(C_OUT);
+    }
+
+    @Test
+    void projectTaskExecutionPersistsWorkflowRunResultAndReturnsTaskResult() {
+        this.seed();
+        this.saveLinearWorkflow();
+
+        final ProjectTaskDetails created = this.projectTaskUseCases.createProjectTask(PROJECT_ALPHA_ID, new CreateProjectTaskCommand(
+                "Build feature",
+                "Build feature.",
+                WORKFLOW_ID
+        ));
+        final UUID runId = created.runs().getFirst().id();
+        this.complete(this.onlyPending(runId, A), "{\"step\":\"A\"}");
+        this.complete(this.onlyPending(runId, B), "{\"step\":\"B\"}");
+        final NodeRun c = this.onlyPending(runId, C);
+        this.complete(c, "{\"business\":\"result\"}");
+        this.entityManager.clear();
+
+        final WorkflowRun finished = this.workflowRunRepository.findById(runId).orElseThrow();
+        assertThat(finished.status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+        assertThat(finished.result()).isEqualTo(new NodeRunOutput("{\"business\": \"result\"}"));
+        assertThat(finished.resultSourceNodeRunId()).isEqualTo(c.id());
+        assertThat(this.projectTaskUseCases.getProjectTask(created.id()).result())
+                .isEqualTo(new NodeRunOutput("{\"business\": \"result\"}"));
     }
 
     @Test
@@ -495,7 +527,8 @@ class ForgeAgentPortAwareExecutionIT {
                         this.connection(1, A_OUT, B_IN),
                         this.connection(2, B_OUT, C_IN)
                 ),
-                A_IN
+                A_IN,
+                C_OUT
         ));
     }
 
@@ -511,16 +544,18 @@ class ForgeAgentPortAwareExecutionIT {
                         this.connection(20, A_OUT, B_IN_UPDATED),
                         this.connection(2, B_OUT, C_IN)
                 ),
-                A_IN
+                A_IN,
+                C_OUT
         ));
     }
 
     private void saveTerminalWorkflow() {
         this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
                 "Full Testing",
-                List.of(this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(), 0)),
+                List.of(this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Done")), 0)),
                 List.of(),
-                A_IN
+                A_IN,
+                A_OUT
         ));
     }
 
@@ -532,7 +567,8 @@ class ForgeAgentPortAwareExecutionIT {
                         this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")), List.of(this.port(B_OUT, "Done")), 1)
                 ),
                 List.of(this.connection(30, A_RETURN, B_IN)),
-                A_IN
+                A_IN,
+                B_OUT
         ));
     }
 
@@ -554,7 +590,8 @@ class ForgeAgentPortAwareExecutionIT {
                         this.connection(3, STRATEGY_RETURN, IMPLEMENTER_REVIEW_IN),
                         this.connection(4, CODE_RETURN, IMPLEMENTER_REVIEW_IN)
                 ),
-                IMPLEMENTER_INITIAL_IN
+                IMPLEMENTER_INITIAL_IN,
+                CODE_PASS
         ));
     }
 
@@ -576,7 +613,8 @@ class ForgeAgentPortAwareExecutionIT {
                         this.connection(4, C_OUT, D_IN),
                         this.connection(5, D_OUT, X_IN)
                 ),
-                A_IN
+                A_IN,
+                X_OUT
         ));
     }
 

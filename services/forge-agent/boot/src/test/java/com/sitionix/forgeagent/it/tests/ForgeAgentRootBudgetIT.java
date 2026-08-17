@@ -65,7 +65,8 @@ class ForgeAgentRootBudgetIT {
                         this.node(B, AGENT_B_ID, B_OUT, 1)
                 ),
                 List.of(new WorkflowConnection(A_TO_B, A_OUT, B_IN)),
-                A_IN
+                A_IN,
+                B_OUT
         ));
 
         this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("One explicit root."));

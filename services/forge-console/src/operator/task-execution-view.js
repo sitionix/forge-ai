@@ -149,6 +149,7 @@ export class TaskExecutionView {
     this.state.workflowRun = workflowRun;
     this.state.refreshError = '';
     this.mergeRunSummary(workflowRun);
+    this.mergeTaskResult(workflowRun);
     if (this.hasRuntimeGraph(workflowRun)) {
       const graphNodes = workflowRun.runtimeGraph.nodes || [];
       if (!graphNodes.some((node) => node.sourceNodeId === this.state.selectedSourceNodeId)) {
@@ -170,6 +171,19 @@ export class TaskExecutionView {
   mergeRunSummary(workflowRun) {
     const runs = this.state.task?.runs || [];
     this.state.task.runs = runs.map((run) => run.id === workflowRun.id ? { ...run, ...workflowRun } : run);
+  }
+
+  mergeTaskResult(workflowRun) {
+    if (!this.state.task || this.sortedRuns()[0]?.id !== workflowRun.id) {
+      return;
+    }
+    if (workflowRun.status === 'SUCCEEDED' && workflowRun.result != null) {
+      this.state.task.result = workflowRun.result;
+      return;
+    }
+    if (ACTIVE_RUN_STATUSES.has(workflowRun.status) || ['FAILED', 'CANCELLED'].includes(workflowRun.status)) {
+      this.state.task.result = null;
+    }
   }
 
   syncPolling() {
@@ -278,6 +292,7 @@ export class TaskExecutionView {
           <strong class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(runStatus))}" data-run-status="${escapeHtml(runStatus)}">${escapeHtml(runStatus)}</strong>
         </div>
       </div>
+      ${this.renderTaskResult(runStatus)}
       ${runStatus === 'FAILED' && failedNodeRuns.length ? this.renderRunFailureSummary(failedNodeRuns) : ''}
     `;
     summary.querySelectorAll('[data-failed-node-run-id]').forEach((element) => {
@@ -297,6 +312,33 @@ export class TaskExecutionView {
           </button>
         `).join('')}
       </div>
+    `;
+  }
+
+  renderTaskResult(runStatus) {
+    const result = this.state.task?.result;
+    const active = ACTIVE_RUN_STATUSES.has(runStatus);
+    if (active) {
+      return `
+        <section class="task-result-section">
+          <h2>Result</h2>
+          <div class="muted-state compact">Result not available yet.</div>
+        </section>
+      `;
+    }
+    if (runStatus === 'SUCCEEDED' && result != null) {
+      return `
+        <section class="task-result-section">
+          <h2>Result</h2>
+          <pre>${escapeHtml(this.formatOutput(result))}</pre>
+        </section>
+      `;
+    }
+    return `
+      <section class="task-result-section">
+        <h2>Result</h2>
+        <div class="muted-state compact">No result.</div>
+      </section>
     `;
   }
 

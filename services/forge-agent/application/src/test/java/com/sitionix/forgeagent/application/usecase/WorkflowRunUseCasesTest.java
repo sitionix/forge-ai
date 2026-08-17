@@ -64,6 +64,7 @@ class WorkflowRunUseCasesTest {
     private final UUID outputPortId = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private final UUID secondInputPortId = UUID.fromString("77777777-7777-4777-8777-777777777777");
     private final UUID secondOutputPortId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+    private final UUID terminalOutputPortId = UUID.fromString("aaaaaaaa-0000-4000-8000-000000000001");
     private final UUID connectionId = UUID.fromString("99999999-9999-4999-8999-999999999999");
 
     @Mock
@@ -112,6 +113,7 @@ class WorkflowRunUseCasesTest {
         assertThat(run.status()).isEqualTo(WorkflowRunStatus.QUEUED);
         assertThat(run.runtimeGraph()).isNotNull();
         assertThat(run.runtimeGraph().taskInputPortId()).isEqualTo(this.inputPortId);
+        assertThat(run.runtimeGraph().taskOutputPortId()).isEqualTo(this.terminalOutputPortId);
         assertThat(run.runtimeGraph().nodes())
                 .extracting(item -> item.sourceNodeId())
                 .containsExactly(this.nodeId, this.secondNodeId);
@@ -121,7 +123,8 @@ class WorkflowRunUseCasesTest {
                         this.inputPortId + ":Input:Input",
                         this.outputPortId + ":Done:Done",
                         this.secondInputPortId + ":Review feedback:Review feedback",
-                        this.secondOutputPortId + ":Approved:Approved"
+                        this.secondOutputPortId + ":Approved:Approved",
+                        this.terminalOutputPortId + ":Task Result:Task Result"
                 );
         assertThat(run.runtimeGraph().connections())
                 .extracting(connection -> connection.sourceConnectionId())
@@ -178,11 +181,13 @@ class WorkflowRunUseCasesTest {
                 .contains("Done:Terminal output")
                 .doesNotContain("Escalate:Escalation output");
         assertThat(graphCaptor.getAllValues().get(0).taskInputPortId()).isEqualTo(this.inputPortId);
+        assertThat(graphCaptor.getAllValues().get(0).taskOutputPortId()).isEqualTo(this.outputPortId);
         assertThat(graphCaptor.getAllValues().get(1).ports())
                 .extracting(port -> port.name() + ":" + port.description())
                 .contains("Escalate:Escalation output")
                 .doesNotContain("Done:Terminal output");
         assertThat(graphCaptor.getAllValues().get(1).taskInputPortId()).isEqualTo(this.secondInputPortId);
+        assertThat(graphCaptor.getAllValues().get(1).taskOutputPortId()).isEqualTo(this.secondOutputPortId);
         assertThat(firstRun.runtimeGraph()).isEqualTo(graphCaptor.getAllValues().get(0));
         assertThat(secondRun.runtimeGraph()).isEqualTo(graphCaptor.getAllValues().get(1));
     }
@@ -207,6 +212,30 @@ class WorkflowRunUseCasesTest {
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
                 .isEqualTo("WORKFLOW_TASK_INPUT_REQUIRED");
+
+        verify(this.workflowRunRepository, never()).save(any());
+    }
+
+    @Test
+    void missingTaskOutputReturnsControlledError() {
+        final Workflow workflow = new Workflow(
+                this.workflowId,
+                this.projectId,
+                "Full Testing",
+                "full testing",
+                this.workflow().nodes(),
+                List.of(),
+                this.inputPortId,
+                NOW,
+                NOW
+        );
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
+
+        assertThatThrownBy(() -> this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run it")))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("WORKFLOW_TASK_OUTPUT_REQUIRED");
 
         verify(this.workflowRunRepository, never()).save(any());
     }
@@ -265,6 +294,7 @@ class WorkflowRunUseCasesTest {
     }
 
     private Workflow workflowWithTaskInput(final UUID taskInputPortId, final String outputName, final String outputDescription) {
+        final UUID taskOutputPortId = this.inputPortId.equals(taskInputPortId) ? this.outputPortId : this.secondOutputPortId;
         return new Workflow(
                 this.workflowId,
                 this.projectId,
@@ -278,11 +308,12 @@ class WorkflowRunUseCasesTest {
                                 new NodePort(this.inputPortId, "Input", "Input", 0),
                                 new NodePort(this.secondInputPortId, "Alternate Input", "Alternate Input", 1)
                         ),
-                        List.of(new NodePort(UUID.randomUUID(), outputName, outputDescription, 0)),
+                        List.of(new NodePort(taskOutputPortId, outputName, outputDescription, 0)),
                         new NodePosition(1.0, 2.0)
                 )),
                 List.of(),
                 taskInputPortId,
+                taskOutputPortId,
                 NOW,
                 NOW
         );
@@ -308,7 +339,8 @@ class WorkflowRunUseCasesTest {
                                 this.secondAgentId,
                                 com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
                                 List.of(new NodePort(this.secondInputPortId, "Review feedback", "Review feedback", 0)),
-                                List.of(new NodePort(this.secondOutputPortId, "Approved", "Approved", 0)),
+                                List.of(new NodePort(this.secondOutputPortId, "Approved", "Approved", 0),
+                                        new NodePort(this.terminalOutputPortId, "Task Result", "Task Result", 1)),
                                 new NodePosition(3.0, 4.0)
                         )
                 ),
@@ -317,6 +349,7 @@ class WorkflowRunUseCasesTest {
                         new WorkflowConnection(UUID.fromString("99999999-9999-4999-8999-999999999998"), this.secondOutputPortId, this.inputPortId)
                 ),
                 this.inputPortId,
+                this.terminalOutputPortId,
                 NOW,
                 NOW
         );

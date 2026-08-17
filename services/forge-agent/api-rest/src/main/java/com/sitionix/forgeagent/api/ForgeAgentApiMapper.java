@@ -116,7 +116,8 @@ class ForgeAgentApiMapper {
                 request.connections() == null ? List.of() : request.connections().stream()
                         .map(this::toConnection)
                         .toList(),
-                request.taskInputPortId()
+                request.taskInputPortId(),
+                request.taskOutputPortId()
         );
     }
 
@@ -168,6 +169,7 @@ class ForgeAgentApiMapper {
                 workflow.nodes().stream().map(this::toResponse).toList(),
                 workflow.connections().stream().map(this::toResponse).toList(),
                 workflow.taskInputPortId(),
+                workflow.taskOutputPortId(),
                 workflow.createdAt(),
                 workflow.updatedAt()
         );
@@ -187,22 +189,28 @@ class ForgeAgentApiMapper {
     }
 
     WorkflowRunResponse toResponse(final WorkflowRun run) {
-        return new WorkflowRunResponse(
-                run.id(),
-                run.projectId(),
-                run.sourceWorkflowId(),
-                run.taskId(),
-                run.workflowName(),
-                run.input(),
-                run.status(),
-                run.nodeRuns().stream().map(this::toResponse).toList(),
-                run.connectionResolutions().stream().map(this::toResponse).toList(),
-                run.executionEdges().stream().map(this::toResponse).toList(),
-                this.toResponse(run.runtimeGraph()),
-                run.createdAt(),
-                run.startedAt(),
-                run.finishedAt()
-        );
+        try {
+            return new WorkflowRunResponse(
+                    run.id(),
+                    run.projectId(),
+                    run.sourceWorkflowId(),
+                    run.taskId(),
+                    run.workflowName(),
+                    run.input(),
+                    run.status(),
+                    run.nodeRuns().stream().map(this::toResponse).toList(),
+                    run.connectionResolutions().stream().map(this::toResponse).toList(),
+                    run.executionEdges().stream().map(this::toResponse).toList(),
+                    this.toResponse(run.runtimeGraph()),
+                    run.result() == null ? null : this.objectMapper.readTree(run.result().jsonValue()),
+                    run.resultSourceNodeRunId(),
+                    run.createdAt(),
+                    run.startedAt(),
+                    run.finishedAt()
+            );
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalStateException("Stored workflow run result JSON is invalid.", exception);
+        }
     }
 
     private WorkflowRunGraphResponse toResponse(final com.sitionix.forgeagent.domain.model.WorkflowRunGraph graph) {
@@ -211,6 +219,7 @@ class ForgeAgentApiMapper {
         }
         return new WorkflowRunGraphResponse(
                 graph.taskInputPortId(),
+                graph.taskOutputPortId(),
                 graph.nodes().stream().map(this::toResponse).toList(),
                 graph.ports().stream().map(this::toResponse).toList(),
                 graph.connections().stream().map(this::toResponse).toList()
@@ -276,16 +285,21 @@ class ForgeAgentApiMapper {
     }
 
     ProjectTaskResponse toResponse(final ProjectTaskDetails task) {
-        return new ProjectTaskResponse(
-                task.id(),
-                task.projectId(),
-                task.title(),
-                task.input(),
-                task.workflowId(),
-                task.runs().stream().map(this::toSummaryResponse).toList(),
-                task.createdAt(),
-                task.updatedAt()
-        );
+        try {
+            return new ProjectTaskResponse(
+                    task.id(),
+                    task.projectId(),
+                    task.title(),
+                    task.input(),
+                    task.workflowId(),
+                    task.runs().stream().map(this::toSummaryResponse).toList(),
+                    task.result() == null ? null : this.objectMapper.readTree(task.result().jsonValue()),
+                    task.createdAt(),
+                    task.updatedAt()
+            );
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalStateException("Stored task result JSON is invalid.", exception);
+        }
     }
 
     private Node toNode(final NodeRequest request) {

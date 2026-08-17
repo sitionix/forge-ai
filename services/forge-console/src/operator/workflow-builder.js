@@ -10,6 +10,10 @@ const TASK_INPUT_X = 26;
 const TASK_INPUT_Y = 42;
 const TASK_INPUT_WIDTH = 104;
 const TASK_INPUT_HEIGHT = 44;
+const TASK_OUTPUT_X = 1360;
+const TASK_OUTPUT_Y = 42;
+const TASK_OUTPUT_WIDTH = 112;
+const TASK_OUTPUT_HEIGHT = 44;
 const NODE_HORIZONTAL_STEP = 360;
 const NODE_VERTICAL_STEP = 160;
 const MIN_CANVAS_WIDTH = 1600;
@@ -176,6 +180,9 @@ export class WorkflowBuilder {
     if (portIds.has(this.workflow.taskInputPortId)) {
       this.workflow.taskInputPortId = null;
     }
+    if (portIds.has(this.workflow.taskOutputPortId)) {
+      this.workflow.taskOutputPortId = null;
+    }
     if (this.connectionDrag && portIds.has(this.connectionDrag.sourceOutputPortId)) {
       this.cancelConnectionDrag();
     }
@@ -213,6 +220,7 @@ export class WorkflowBuilder {
     const nodes = this.workflow?.nodes || [];
     nodesLayer.innerHTML = nodes.map((node) => this.renderNode(node)).join('');
     nodesLayer.insertAdjacentHTML('afterbegin', this.renderTaskInput());
+    nodesLayer.insertAdjacentHTML('beforeend', this.renderTaskOutput());
     nodesLayer.querySelectorAll('[data-node-id]').forEach((element) => {
       element.addEventListener('pointerdown', (event) => this.onNodePointerDown(event, element.dataset.nodeId));
     });
@@ -230,6 +238,15 @@ export class WorkflowBuilder {
       <article class="workflow-task-input" data-task-input style="left:${TASK_INPUT_X}px; top:${TASK_INPUT_Y}px;">
         <span>TASK INPUT</span>
         <button class="node-handle output" type="button" title="Task input" data-task-input-output aria-label="Task input"></button>
+      </article>
+    `;
+  }
+
+  renderTaskOutput() {
+    return `
+      <article class="workflow-task-output" data-task-output style="left:${TASK_OUTPUT_X}px; top:${TASK_OUTPUT_Y}px;">
+        <button class="node-handle input" type="button" title="Task output" data-task-output-input aria-label="Task output"></button>
+        <span>TASK OUTPUT</span>
       </article>
     `;
   }
@@ -306,6 +323,23 @@ export class WorkflowBuilder {
         </g>
       `);
     }
+    const taskOutputSourcePort = this.workflow?.taskOutputPortId
+      ? this.portById(this.workflow.taskOutputPortId, 'outputs')
+      : null;
+    if (taskOutputSourcePort) {
+      const start = this.connectorPoint(taskOutputSourcePort.port.id, 'output');
+      const end = this.taskOutputConnectorPoint();
+      const path = this.taskOutputPath(taskOutputSourcePort);
+      const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+      groups.push(`
+        <g class="workflow-edge task-output-edge" data-task-output-edge data-edge-source-port="${escapeHtml(this.workflow.taskOutputPortId)}">
+          <path class="edge-visible" d="${path}" marker-end="url(#agentsV2Arrow)" />
+          <path class="edge-hit" d="${path}" />
+          <circle class="edge-remove" data-remove-task-output cx="${midpoint.x}" cy="${midpoint.y}" r="10" />
+          <text class="edge-remove-label" data-remove-task-output x="${midpoint.x}" y="${midpoint.y + 4}">×</text>
+        </g>
+      `);
+    }
     const preview = this.connectionDrag
       ? `<path class="workflow-edge-preview" d="${this.pathD(this.connectionDrag.start, this.connectionDrag.current)}" marker-end="url(#agentsV2Arrow)" />`
       : '';
@@ -328,6 +362,12 @@ export class WorkflowBuilder {
       element.addEventListener('click', (event) => {
         event.stopPropagation();
         this.removeTaskInput();
+      });
+    });
+    svg.querySelectorAll('[data-remove-task-output]').forEach((element) => {
+      element.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.removeTaskOutput();
       });
     });
   }
@@ -408,8 +448,16 @@ export class WorkflowBuilder {
       return;
     }
     const targetInputPortId = this.inputPortIdFromEvent(event);
+    const taskOutputTargeted = this.taskOutputInputFromEvent(event);
     if (this.connectionDrag.taskInput && targetInputPortId && this.canConnectTaskInput(targetInputPortId)) {
       this.workflow.taskInputPortId = targetInputPortId;
+      this.connectionDrag = null;
+      this.clearConnectionTargetClasses();
+      this.render();
+      return;
+    }
+    if (!this.connectionDrag.taskInput && taskOutputTargeted && this.canConnectTaskOutput(this.connectionDrag.sourceOutputPortId)) {
+      this.workflow.taskOutputPortId = this.connectionDrag.sourceOutputPortId;
       this.connectionDrag = null;
       this.clearConnectionTargetClasses();
       this.render();
@@ -468,7 +516,7 @@ export class WorkflowBuilder {
     if (event.button !== 0 || this.nodeDrag || this.connectionDrag) {
       return;
     }
-    if (event.target?.closest?.('.workflow-node, .workflow-task-input, .workflow-edge, button, select, input, textarea')) {
+    if (event.target?.closest?.('.workflow-node, .workflow-task-input, .workflow-task-output, .workflow-edge, button, select, input, textarea')) {
       return;
     }
     event.preventDefault();
@@ -524,6 +572,20 @@ export class WorkflowBuilder {
   updateEdgeGroup(group) {
     const sourcePort = this.portById(group.dataset.edgeSourcePort, 'outputs');
     const targetPort = this.portById(group.dataset.edgeTargetPort, 'inputs');
+    if (group.dataset.taskOutputEdge !== undefined && sourcePort) {
+      const start = this.connectorPoint(sourcePort.port.id, 'output');
+      const end = this.taskOutputConnectorPoint();
+      const path = this.taskOutputPath(sourcePort);
+      group.querySelectorAll('.edge-visible, .edge-hit').forEach((element) => {
+        element.setAttribute('d', path);
+      });
+      const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+      group.querySelector('.edge-remove')?.setAttribute('cx', midpoint.x);
+      group.querySelector('.edge-remove')?.setAttribute('cy', midpoint.y);
+      group.querySelector('.edge-remove-label')?.setAttribute('x', midpoint.x);
+      group.querySelector('.edge-remove-label')?.setAttribute('y', midpoint.y + 4);
+      return;
+    }
     if (!targetPort) {
       return;
     }
@@ -569,11 +631,23 @@ export class WorkflowBuilder {
     return Boolean(this.workflow && this.portById(targetInputPortId, 'inputs'));
   }
 
+  canConnectTaskOutput(sourceOutputPortId) {
+    return Boolean(this.workflow && this.portById(sourceOutputPortId, 'outputs'));
+  }
+
   removeTaskInput() {
     if (!this.workflow) {
       return;
     }
     this.workflow.taskInputPortId = null;
+    this.render();
+  }
+
+  removeTaskOutput() {
+    if (!this.workflow) {
+      return;
+    }
+    this.workflow.taskOutputPortId = null;
     this.render();
   }
 
@@ -843,12 +917,17 @@ export class WorkflowBuilder {
       element.classList.toggle('valid-target', Boolean(valid));
       element.classList.toggle('invalid-target', !valid);
     });
+    this.byId('agentsV2WorkflowNodes').querySelector('[data-task-output-input]')?.classList.toggle(
+      'valid-target',
+      Boolean(!this.connectionDrag?.taskInput && sourceOutputPortId && this.canConnectTaskOutput(sourceOutputPortId))
+    );
   }
 
   clearConnectionTargetClasses() {
     this.byId('agentsV2WorkflowNodes')?.querySelectorAll('[data-node-input-port]').forEach((element) => {
       element.classList.remove('valid-target', 'invalid-target', 'hover-target');
     });
+    this.byId('agentsV2WorkflowNodes')?.querySelector('[data-task-output-input]')?.classList.remove('valid-target', 'invalid-target', 'hover-target');
   }
 
   updateHoveredInput(event) {
@@ -856,6 +935,10 @@ export class WorkflowBuilder {
     this.byId('agentsV2WorkflowNodes').querySelectorAll('[data-node-input-port]').forEach((element) => {
       element.classList.toggle('hover-target', Boolean(targetInputPortId && element.dataset.nodeInputPort === targetInputPortId));
     });
+    this.byId('agentsV2WorkflowNodes').querySelector('[data-task-output-input]')?.classList.toggle(
+      'hover-target',
+      Boolean(!this.connectionDrag?.taskInput && this.taskOutputInputFromEvent(event))
+    );
   }
 
   updatePreviewPath() {
@@ -876,6 +959,15 @@ export class WorkflowBuilder {
     return fromPoint?.dataset.nodeInputPort || null;
   }
 
+  taskOutputInputFromEvent(event) {
+    const direct = event.target?.closest?.('[data-task-output-input]');
+    if (direct) {
+      return true;
+    }
+    return Boolean(this.document.elementsFromPoint?.(event.clientX, event.clientY)
+      .some((element) => element.closest?.('[data-task-output-input]')));
+  }
+
   connectorPoint(portId, kind) {
     const port = this.portById(portId, kind === 'output' ? 'outputs' : 'inputs');
     const node = port?.node;
@@ -889,6 +981,13 @@ export class WorkflowBuilder {
     return {
       x: TASK_INPUT_X + TASK_INPUT_WIDTH,
       y: TASK_INPUT_Y + (TASK_INPUT_HEIGHT / 2)
+    };
+  }
+
+  taskOutputConnectorPoint() {
+    return {
+      x: TASK_OUTPUT_X,
+      y: TASK_OUTPUT_Y + (TASK_OUTPUT_HEIGHT / 2)
     };
   }
 
@@ -909,6 +1008,16 @@ export class WorkflowBuilder {
       this.taskInputBounds(),
       this.nodeBounds(targetPort.node),
       this.edgeObstacles(new Set([targetPort.node.id, 'task-input']))
+    );
+  }
+
+  taskOutputPath(sourcePort) {
+    return this.pathD(
+      this.connectorPoint(sourcePort.port.id, 'output'),
+      this.taskOutputConnectorPoint(),
+      this.nodeBounds(sourcePort.node),
+      this.taskOutputBounds(),
+      this.edgeObstacles(new Set([sourcePort.node.id, 'task-output']))
     );
   }
 
@@ -1061,6 +1170,9 @@ export class WorkflowBuilder {
     if (!excludedIds.has('task-input')) {
       obstacles.push(this.taskInputBounds());
     }
+    if (!excludedIds.has('task-output')) {
+      obstacles.push(this.taskOutputBounds());
+    }
     return obstacles;
   }
 
@@ -1084,6 +1196,15 @@ export class WorkflowBuilder {
     };
   }
 
+  taskOutputBounds() {
+    return {
+      left: TASK_OUTPUT_X,
+      top: TASK_OUTPUT_Y,
+      right: TASK_OUTPUT_X + TASK_OUTPUT_WIDTH,
+      bottom: TASK_OUTPUT_Y + TASK_OUTPUT_HEIGHT
+    };
+  }
+
   nodeHeight(node) {
     const portRows = Math.max(this.nodePorts(node?.inputs).length, this.nodePorts(node?.outputs).length, 1);
     return Math.max(NODE_MIN_HEIGHT, portRows * NODE_PORT_ROW_HEIGHT + NODE_HEIGHT_PADDING);
@@ -1104,6 +1225,8 @@ export class WorkflowBuilder {
     }
     width = Math.max(width, TASK_INPUT_X + TASK_INPUT_WIDTH + CANVAS_PADDING);
     height = Math.max(height, TASK_INPUT_Y + TASK_INPUT_HEIGHT + CANVAS_PADDING);
+    width = Math.max(width, TASK_OUTPUT_X + TASK_OUTPUT_WIDTH + CANVAS_PADDING);
+    height = Math.max(height, TASK_OUTPUT_Y + TASK_OUTPUT_HEIGHT + CANVAS_PADDING);
     const widthValue = `${Math.ceil(width)}px`;
     const heightValue = `${Math.ceil(height)}px`;
     svg.style.width = widthValue;
@@ -1148,10 +1271,17 @@ export class WorkflowBuilder {
         sourceOutputPortId: connection.sourceOutputPortId,
         targetInputPortId: connection.targetInputPortId
       })),
-      taskInputPortId: this.portById(this.workflow.taskInputPortId, 'inputs') ? this.workflow.taskInputPortId : null
+      taskInputPortId: this.portById(this.workflow.taskInputPortId, 'inputs') ? this.workflow.taskInputPortId : null,
+      taskOutputPortId: this.portById(this.workflow.taskOutputPortId, 'outputs') ? this.workflow.taskOutputPortId : null
     };
     if (request.nodes.length > 0 && !request.taskInputPortId) {
       this.showError('Task Input is required before saving this workflow.');
+      this.saving = false;
+      this.byId('agentsV2WorkflowSave').disabled = false;
+      return;
+    }
+    if (request.nodes.length > 0 && !request.taskOutputPortId) {
+      this.showError('Task Output is required before saving this workflow.');
       this.saving = false;
       this.byId('agentsV2WorkflowSave').disabled = false;
       return;
@@ -1201,7 +1331,8 @@ export class WorkflowBuilder {
         sourceOutputPortId: connection.sourceOutputPortId,
         targetInputPortId: connection.targetInputPortId
       })),
-      taskInputPortId: this.portByIdInNodes(workflow.nodes || [], workflow.taskInputPortId, 'inputs') ? workflow.taskInputPortId : null
+      taskInputPortId: this.portByIdInNodes(workflow.nodes || [], workflow.taskInputPortId, 'inputs') ? workflow.taskInputPortId : null,
+      taskOutputPortId: this.portByIdInNodes(workflow.nodes || [], workflow.taskOutputPortId, 'outputs') ? workflow.taskOutputPortId : null
     };
   }
 
@@ -1250,7 +1381,7 @@ export class WorkflowBuilder {
   isPortConnected(portId) {
     return this.workflowConnections().some((connection) =>
       connection.sourceOutputPortId === portId || connection.targetInputPortId === portId
-    ) || this.workflow?.taskInputPortId === portId;
+    ) || this.workflow?.taskInputPortId === portId || this.workflow?.taskOutputPortId === portId;
   }
 
   portByIdInNodes(nodes, portId, direction = null) {

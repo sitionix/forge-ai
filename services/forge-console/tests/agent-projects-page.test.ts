@@ -74,7 +74,7 @@ function unavailableCodexRuntime(status = 'UNAVAILABLE') {
   };
 }
 
-function workflow(id = '33333333-3333-4333-8333-333333333333', nodes: any[] = [], projectId = project().id, connections: any[] | null = null, taskInputPortId: string | null = null) {
+function workflow(id = '33333333-3333-4333-8333-333333333333', nodes: any[] = [], projectId = project().id, connections: any[] | null = null, taskInputPortId: string | null = null, taskOutputPortId: string | null = null) {
   return {
     id,
     projectId,
@@ -82,6 +82,7 @@ function workflow(id = '33333333-3333-4333-8333-333333333333', nodes: any[] = []
     nodes: nodes.map((item) => ({ ...item })),
     connections: connections || [],
     taskInputPortId,
+    taskOutputPortId,
     createdAt: '2026-08-04T00:00:00Z',
     updatedAt: '2026-08-04T00:00:00Z'
   };
@@ -298,7 +299,7 @@ function api(overrides = {}) {
     listProjectWorkflows: vi.fn(() => Promise.resolve([workflow()])),
     createWorkflow: vi.fn(() => Promise.resolve(workflow('44444444-4444-4444-8444-444444444444'))),
     getWorkflow: vi.fn((workflowId: string) => Promise.resolve(workflow(workflowId))),
-    updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections, request.taskInputPortId))),
+    updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections, request.taskInputPortId, request.taskOutputPortId))),
     deleteWorkflow: vi.fn(() => Promise.resolve({})),
     listProjectTasks: vi.fn((projectId: string, page = 0, size = 20) => Promise.resolve(taskPage([task(undefined, 'SUCCEEDED', projectId)], page, size))),
     createProjectTask: vi.fn(() => Promise.resolve(task('77777777-7777-4777-8777-777777777777', 'QUEUED'))),
@@ -806,6 +807,41 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2TaskExecution')?.classList.contains('hidden')).toBe(true);
     expect(dom.window.document.getElementById('agentsV2Workspace')?.classList.contains('hidden')).toBe(false);
     expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it('Task execution Result section waits while active and pretty-prints successful result', async () => {
+    const fakeApi = api({
+      getProjectTask: vi.fn()
+        .mockResolvedValueOnce(taskDetail('task-1', [taskRun('run-active', 'RUNNING', '2026-08-13T10:00:00Z')]))
+        .mockResolvedValueOnce({
+          ...taskDetail('task-1', [taskRun('run-success', 'SUCCEEDED', '2026-08-13T10:01:00Z')]),
+          result: { answer: 'done' }
+        }),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(workflowRunDetail('run-active', 'RUNNING', [
+          nodeRun('node-a', 'Analyzer', 'RUNNING', [], 30, 40)
+        ], 'Active Flow'))
+        .mockResolvedValueOnce({
+          ...workflowRunDetail('run-success', 'SUCCEEDED', [
+            nodeRun('node-b', 'Writer', 'SUCCEEDED', [], 30, 40, { answer: 'done' })
+          ], 'Done Flow'),
+          result: { answer: 'done' },
+          resultSourceNodeRunId: 'node-b'
+        })
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent)
+      .toContain('Result not available yet.');
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const summary = dom.window.document.getElementById('agentsV2TaskExecutionSummary')!;
+    expect(summary.textContent).toContain('Result');
+    expect(summary.querySelector('.task-result-section pre')?.textContent).toContain('"answer": "done"');
   });
 
   it('Execution history is newest first and selecting an older run loads that snapshot', async () => {
@@ -2812,8 +2848,8 @@ describe('Agent projects page', () => {
           { id: 'output-b', name: 'Second output', description: 'Second.', order: 1 },
           { id: 'output-a', name: 'First output', description: 'First.', order: 0 }
         ])
-      ], project().id, [], 'input-a'))),
-      updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections, request.taskInputPortId)))
+      ], project().id, [], 'input-a', 'output-a'))),
+      updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections, request.taskInputPortId, request.taskOutputPortId)))
     });
     const { dom, page } = await openedBuilder(fakeApi);
 
@@ -2838,7 +2874,8 @@ describe('Agent projects page', () => {
         position: { x: 44, y: 55 }
       }],
       connections: [],
-      taskInputPortId: 'input-a'
+      taskInputPortId: 'input-a',
+      taskOutputPortId: 'output-a'
     });
     expect(portTexts(dom, 'node-1', 'input')).toEqual(['First input', 'Second input']);
     expect(portTexts(dom, 'node-1', 'output')).toEqual(['First output', 'Second output']);
@@ -2947,10 +2984,10 @@ describe('Agent projects page', () => {
     const graph = workflow('wf', [
       portedNode('plus', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
       portedNode('reviewer', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20)
-    ], project().id, [portConnection('reviewer-plus-feedback', 'reviewer-output', 'plus-input')], 'plus-input');
+    ], project().id, [portConnection('reviewer-plus-feedback', 'reviewer-output', 'plus-input')], 'plus-input', 'plus-output');
     const fakeApi = api({
       getWorkflow: vi.fn(() => Promise.resolve(graph)),
-      updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections, request.taskInputPortId)))
+      updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections, request.taskInputPortId, request.taskOutputPortId)))
     });
     const { dom, page } = await openedBuilder(fakeApi);
 
@@ -2980,6 +3017,7 @@ describe('Agent projects page', () => {
     await page.workflowBuilder.save();
     expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', expect.objectContaining({
       taskInputPortId: 'reviewer-input',
+      taskOutputPortId: 'plus-output',
       connections: [portConnection('reviewer-plus-feedback', 'reviewer-output', 'plus-input')]
     }));
 
@@ -2987,6 +3025,48 @@ describe('Agent projects page', () => {
       .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     expect(page.workflowBuilder.workflow.taskInputPortId).toBeNull();
     expect(dom.window.document.querySelector('[data-task-input-edge]')).toBeNull();
+  });
+
+  it('Task Output loads, connects, reconnects, saves, blocks port deletion, and disconnects', async () => {
+    const graph = workflow('wf', [
+      portedNode('plus', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('reviewer', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20)
+    ], project().id, [], 'plus-input', 'plus-output');
+    const fakeApi = api({
+      getWorkflow: vi.fn(() => Promise.resolve(graph)),
+      updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections, request.taskInputPortId, request.taskOutputPortId)))
+    });
+    const { dom, page } = await openedBuilder(fakeApi);
+
+    expect(dom.window.document.querySelector('[data-task-output]')?.textContent).toContain('TASK OUTPUT');
+    expect(dom.window.document.querySelector('[data-task-output-edge]')).not.toBeNull();
+    expect(page.workflowBuilder.workflow.taskOutputPortId).toBe('plus-output');
+    expect(page.workflowBuilder.workflow.connections).toEqual([]);
+
+    clickNode(dom, 'plus');
+    dom.window.document.querySelector<HTMLElement>('[data-node-editor-remove="plus-output"]')?.click();
+    expect(dom.window.document.getElementById('agentsV2NodeEditorError')?.textContent)
+      .toContain('Port is connected. Remove its connections first.');
+    dom.window.document.getElementById('agentsV2NodeEditorCancel')?.click();
+
+    dom.window.document.querySelector<HTMLElement>('[data-node-output-port="reviewer-output"]')!
+      .dispatchEvent(pointer(dom, 'pointerdown', 464, 72));
+    dom.window.document.querySelector<HTMLElement>('[data-task-output-input]')!
+      .dispatchEvent(pointer(dom, 'pointerup', 1360, 64));
+
+    expect(page.workflowBuilder.workflow.taskOutputPortId).toBe('reviewer-output');
+    expect(page.workflowBuilder.workflow.connections).toEqual([]);
+    await page.workflowBuilder.save();
+    expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', expect.objectContaining({
+      taskInputPortId: 'plus-input',
+      taskOutputPortId: 'reviewer-output',
+      connections: []
+    }));
+
+    dom.window.document.querySelector<SVGElement>('[data-remove-task-output]')!
+      .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    expect(page.workflowBuilder.workflow.taskOutputPortId).toBeNull();
+    expect(dom.window.document.querySelector('[data-task-output-edge]')).toBeNull();
   });
 
   it('save rejects non-empty Workflow without Task Input before submitting', async () => {
@@ -3003,6 +3083,22 @@ describe('Agent projects page', () => {
     expect(fakeApi.updateWorkflow).not.toHaveBeenCalled();
     expect(dom.window.document.getElementById('agentsV2WorkflowBuilderError')?.textContent)
       .toContain('Task Input is required before saving this workflow.');
+  });
+
+  it('save rejects non-empty Workflow without Task Output before submitting', async () => {
+    const fakeApi = api({
+      getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+        portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+      ], project().id, [], 'node-1-input'))),
+      updateWorkflow: vi.fn()
+    });
+    const { dom, page } = await openedBuilder(fakeApi);
+
+    await page.workflowBuilder.save();
+
+    expect(fakeApi.updateWorkflow).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('agentsV2WorkflowBuilderError')?.textContent)
+      .toContain('Task Output is required before saving this workflow.');
   });
 
   it('dropping connection on empty canvas cancels', async () => {
@@ -3087,11 +3183,11 @@ describe('Agent projects page', () => {
     const fakeApi = api({
       getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
         portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 44, 55)
-      ], project().id, [], 'node-1-input'))),
+      ], project().id, [], 'node-1-input', 'node-1-output'))),
       updateWorkflow: vi.fn()
         .mockResolvedValueOnce(workflow('wf', [
           portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 80, 90)
-        ], project().id, [], 'node-1-input'))
+        ], project().id, [], 'node-1-input', 'node-1-output'))
         .mockRejectedValueOnce(new Error('WORKFLOW_GRAPH_CYCLE: Workflow graph contains a cycle.'))
     });
     const { dom, page } = await openedBuilder(fakeApi);
@@ -3109,7 +3205,8 @@ describe('Agent projects page', () => {
         position: { x: 80, y: 90 }
       }],
       connections: [],
-      taskInputPortId: 'node-1-input'
+      taskInputPortId: 'node-1-input',
+      taskOutputPortId: 'node-1-output'
     });
     expect(page.workflowBuilder.workflow.nodes[0].position).toEqual({ x: 80, y: 90 });
 
@@ -3122,7 +3219,7 @@ describe('Agent projects page', () => {
     const fakeApi = api({
       getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
         portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 44, 55)
-      ], project().id, [], 'node-1-input'))),
+      ], project().id, [], 'node-1-input', 'node-1-output'))),
       updateWorkflow: vi.fn(() => Promise.reject(Object.assign(new Error(inconsistencyMessage), {
         code: 'INCONSISTENT_WORKFLOW_GRAPH'
       })))
@@ -3139,7 +3236,7 @@ describe('Agent projects page', () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
       portedNode('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20)
-    ], project().id, [connection('node-1', 'node-2')], 'node-1-input'))) });
+    ], project().id, [connection('node-1', 'node-2')], 'node-1-input', 'node-2-output'))) });
     const { dom, page } = await openedBuilder(fakeApi);
 
     expect(dom.window.document.querySelector('[data-node-input-mode]')).toBeNull();
@@ -3179,7 +3276,8 @@ describe('Agent projects page', () => {
         sourceOutputPortId: 'node-1-output',
         targetInputPortId: 'node-2-input'
       }],
-      taskInputPortId: 'node-1-input'
+      taskInputPortId: 'node-1-input',
+      taskOutputPortId: 'node-2-output'
     });
   });
 

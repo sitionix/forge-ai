@@ -68,6 +68,7 @@ public class WorkflowUseCases {
                 List.of(),
                 List.of(),
                 null,
+                null,
                 now,
                 now
         ));
@@ -93,6 +94,7 @@ public class WorkflowUseCases {
                 requestedNodes,
                 requestedConnections,
                 command.taskInputPortId(),
+                command.taskOutputPortId(),
                 this.agentDefinitionRepository.findByIds(targetIds(requestedNodes))
         );
         return this.workflowRepository.save(new Workflow(
@@ -103,6 +105,7 @@ public class WorkflowUseCases {
                 graph.nodes(),
                 graph.connections(),
                 graph.taskInputPortId(),
+                graph.taskOutputPortId(),
                 current.createdAt(),
                 Instant.now(this.clock)
         ));

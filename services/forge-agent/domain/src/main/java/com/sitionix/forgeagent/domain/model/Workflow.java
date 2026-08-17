@@ -12,7 +12,19 @@ public record Workflow(
         List<Node> nodes,
         List<WorkflowConnection> connections,
         UUID taskInputPortId,
+        UUID taskOutputPortId,
         Instant createdAt,
         Instant updatedAt
 ) {
+    public Workflow(final UUID id,
+                    final UUID projectId,
+                    final String name,
+                    final String normalizedName,
+                    final List<Node> nodes,
+                    final List<WorkflowConnection> connections,
+                    final UUID taskInputPortId,
+                    final Instant createdAt,
+                    final Instant updatedAt) {
+        this(id, projectId, name, normalizedName, nodes, connections, taskInputPortId, null, createdAt, updatedAt);
+    }
 }

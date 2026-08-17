@@ -75,7 +75,7 @@ class WorkflowGraphValidatorTest {
         final WorkflowGraphValidator.ValidatedGraph graph = this.validate(
                 List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA)),
                         this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputB)),
-                        this.node(this.nodeC, this.agentA, List.of(this.inputC), List.of(this.outputC))),
+                        this.node(this.nodeC, this.agentA, List.of(this.inputC), List.of(this.outputC, this.outputD))),
                 List.of(this.connection(this.connectionAB, this.outputA, this.inputB),
                         this.connection(this.connectionBC, this.outputB, this.inputC),
                         this.connection(this.connectionCD, this.outputC, this.inputA)),
@@ -112,7 +112,7 @@ class WorkflowGraphValidatorTest {
     void acceptsReachableTerminalNodeWithoutOutgoingConnections() {
         final WorkflowGraphValidator.ValidatedGraph graph = this.validate(
                 List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA)),
-                        this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of())),
+                        this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputB))),
                 List.of(this.connection(this.connectionAB, this.outputA, this.inputB)),
                 this.inputA
         );
@@ -123,18 +123,23 @@ class WorkflowGraphValidatorTest {
     @Test
     void nullOutputPortListNormalizesToEmptyList() {
         final Node node = new Node(
-                this.nodeA,
+                this.nodeB,
                 this.agentA,
                 NodeInputMode.DEPENDENCIES_ONLY,
-                List.of(this.port(this.inputA, "Input", "Input description.", 0)),
+                List.of(this.port(this.inputB, "Input", "Input description.", 0)),
                 null,
                 new NodePosition(1.0, 2.0)
         );
 
-        final WorkflowGraphValidator.ValidatedGraph graph = this.validate(List.of(node), List.of());
+        final WorkflowGraphValidator.ValidatedGraph graph = this.validate(
+                List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA, this.outputB)), node),
+                List.of(this.connection(this.connectionAB, this.outputA, this.inputB)),
+                this.inputA,
+                this.outputB
+        );
 
-        assertThat(graph.nodes().getFirst().inputs()).containsExactly(this.port(this.inputA, "Input", "Input description.", 0));
-        assertThat(graph.nodes().getFirst().outputs()).isEmpty();
+        assertThat(graph.nodes().get(1).inputs()).containsExactly(this.port(this.inputB, "Input", "Input description.", 0));
+        assertThat(graph.nodes().get(1).outputs()).isEmpty();
     }
 
     @Test
@@ -217,7 +222,7 @@ class WorkflowGraphValidatorTest {
         final WorkflowGraphValidator.ValidatedGraph graph = this.validate(
                 List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA, this.outputB)),
                         this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputC)),
-                        this.node(this.nodeC, this.agentA, List.of(this.inputC), List.of())),
+                        this.node(this.nodeC, this.agentA, List.of(this.inputC), List.of(this.outputD))),
                 List.of(this.connection(this.connectionAB, this.outputA, this.inputB),
                         this.connection(this.connectionAC, this.outputA, this.inputC),
                         this.connection(this.connectionBC, this.outputC, this.inputC),
@@ -230,7 +235,7 @@ class WorkflowGraphValidatorTest {
     @Test
     void acceptsMultiNodeCyclesForRuntimeReentry() {
         final WorkflowGraphValidator.ValidatedGraph direct = this.validate(
-                List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA)),
+                List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA, this.outputC)),
                         this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputB))),
                 List.of(this.connection(this.connectionAB, this.outputA, this.inputB),
                         this.connection(this.connectionBC, this.outputB, this.inputA))
@@ -238,7 +243,7 @@ class WorkflowGraphValidatorTest {
         final WorkflowGraphValidator.ValidatedGraph indirect = this.validate(
                 List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA)),
                         this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputB)),
-                        this.node(this.nodeC, this.agentA, List.of(this.inputC), List.of(this.outputC))),
+                        this.node(this.nodeC, this.agentA, List.of(this.inputC), List.of(this.outputC, this.outputD))),
                 List.of(this.connection(this.connectionAB, this.outputA, this.inputB),
                         this.connection(this.connectionBC, this.outputB, this.inputC),
                         this.connection(this.connectionAC, this.outputC, this.inputA))
@@ -276,12 +281,26 @@ class WorkflowGraphValidatorTest {
     }
 
     @Test
+    void validatesExplicitTaskOutputPort() {
+        final WorkflowGraphValidator.ValidatedGraph graph = this.validate(
+                List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA)),
+                        this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputB))),
+                List.of(this.connection(this.connectionAB, this.outputA, this.inputB)),
+                this.inputA,
+                this.outputB
+        );
+
+        assertThat(graph.taskOutputPortId()).isEqualTo(this.outputB);
+    }
+
+    @Test
     void rejectsInvalidTaskInputPort() {
         assertThatThrownBy(() -> this.validator.validateAndNormalize(
                 this.projectId,
                 List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA))),
                 List.of(),
                 null,
+                this.outputA,
                 List.of(this.agent(this.agentA, this.projectId), this.agent(this.agentB, this.projectId))
         ))
                 .isInstanceOf(ValidationException.class)
@@ -317,6 +336,62 @@ class WorkflowGraphValidatorTest {
     }
 
     @Test
+    void rejectsInvalidTaskOutputPort() {
+        assertThatThrownBy(() -> this.validator.validateAndNormalize(
+                this.projectId,
+                List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA))),
+                List.of(),
+                this.inputA,
+                null,
+                List.of(this.agent(this.agentA, this.projectId), this.agent(this.agentB, this.projectId))
+        ))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("WORKFLOW_TASK_OUTPUT_REQUIRED");
+
+        assertThatThrownBy(() -> this.validate(
+                List.of(),
+                List.of(),
+                null,
+                UUID.fromString("99999999-9999-4999-8999-999999999999")
+        ))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("UNKNOWN_TASK_OUTPUT_PORT");
+
+        assertThatThrownBy(() -> this.validate(
+                List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA))),
+                List.of(),
+                this.inputA,
+                UUID.fromString("99999999-9999-4999-8999-999999999999")
+        ))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("UNKNOWN_TASK_OUTPUT_PORT");
+
+        assertThatThrownBy(() -> this.validate(
+                List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA))),
+                List.of(),
+                this.inputA,
+                this.inputA
+        ))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("INVALID_TASK_OUTPUT_PORT");
+
+        assertThatThrownBy(() -> this.validate(
+                List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA)),
+                        this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputB))),
+                List.of(this.connection(this.connectionAB, this.outputA, this.inputB)),
+                this.inputA,
+                this.outputA
+        ))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("TASK_OUTPUT_PORT_NOT_TERMINAL");
+    }
+
+    @Test
     void rejectsDuplicateNodeUnknownTargetAndCrossProjectTarget() {
         assertThatThrownBy(() -> this.validate(
                 List.of(this.node(this.nodeA, this.agentA, List.of(), List.of()),
@@ -349,11 +424,19 @@ class WorkflowGraphValidatorTest {
     }
 
     private WorkflowGraphValidator.ValidatedGraph validate(final List<Node> nodes, final List<WorkflowConnection> connections, final UUID taskInputPortId) {
+        return this.validate(nodes, connections, taskInputPortId, this.firstTerminalOutputPortId(nodes, connections));
+    }
+
+    private WorkflowGraphValidator.ValidatedGraph validate(final List<Node> nodes,
+                                                           final List<WorkflowConnection> connections,
+                                                           final UUID taskInputPortId,
+                                                           final UUID taskOutputPortId) {
         return this.validator.validateAndNormalize(
                 this.projectId,
                 nodes,
                 connections,
                 taskInputPortId,
+                taskOutputPortId,
                 List.of(this.agent(this.agentA, this.projectId), this.agent(this.agentB, this.projectId))
         );
     }
@@ -413,6 +496,18 @@ class WorkflowGraphValidatorTest {
         return nodes.stream()
                 .flatMap(node -> node.inputs() == null ? java.util.stream.Stream.empty() : node.inputs().stream())
                 .map(NodePort::id)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private UUID firstTerminalOutputPortId(final List<Node> nodes, final List<WorkflowConnection> connections) {
+        final java.util.Set<UUID> connectedOutputs = connections.stream()
+                .map(WorkflowConnection::sourceOutputPortId)
+                .collect(java.util.stream.Collectors.toSet());
+        return nodes.stream()
+                .flatMap(node -> node.outputs() == null ? java.util.stream.Stream.empty() : node.outputs().stream())
+                .map(NodePort::id)
+                .filter(outputPortId -> !connectedOutputs.contains(outputPortId))
                 .findFirst()
                 .orElse(null);
     }

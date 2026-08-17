@@ -11,7 +11,18 @@ public record ProjectTaskDetails(
         String input,
         UUID workflowId,
         List<WorkflowRunSummary> runs,
+        NodeRunOutput result,
         Instant createdAt,
         Instant updatedAt
 ) {
+    public ProjectTaskDetails(final UUID id,
+                              final UUID projectId,
+                              final String title,
+                              final String input,
+                              final UUID workflowId,
+                              final List<WorkflowRunSummary> runs,
+                              final Instant createdAt,
+                              final Instant updatedAt) {
+        this(id, projectId, title, input, workflowId, runs, null, createdAt, updatedAt);
+    }
 }
