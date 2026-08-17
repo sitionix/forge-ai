@@ -33,6 +33,8 @@ public interface ForgeAgentClient {
 
     List<AgentProjectRepository> listProjectRepositories(UUID projectId);
 
+    AgentProjectRepository cloneProjectRepository(UUID projectId, UUID repositoryId);
+
     AgentProjectTask createProjectTask(UUID projectId, CreateAgentProjectTaskCommand command);
 
     AgentProjectTaskPage listProjectTasks(UUID projectId, int page, int size);

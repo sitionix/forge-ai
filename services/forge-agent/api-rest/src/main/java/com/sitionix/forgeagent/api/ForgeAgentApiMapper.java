@@ -64,7 +64,7 @@ import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
-import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummaryPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
@@ -141,8 +141,8 @@ class ForgeAgentApiMapper {
         return new ProjectResponse(project.id(), project.name(), project.createdAt(), project.updatedAt());
     }
 
-    ProjectRepositoryResponse toResponse(final ProjectRepositoryLink repository) {
-        return new ProjectRepositoryResponse(repository.id(), repository.projectId(), repository.remoteUrl(), repository.createdAt());
+    ProjectRepositoryResponse toResponse(final ProjectRepositoryView repository) {
+        return new ProjectRepositoryResponse(repository.id(), repository.projectId(), repository.name(), repository.cloned(), repository.createdAt());
     }
 
     AgentListResponse toResponse(final AgentListItem agent) {

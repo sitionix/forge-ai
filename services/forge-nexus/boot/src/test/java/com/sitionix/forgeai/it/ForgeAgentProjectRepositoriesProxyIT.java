@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.it;
 
 import static com.sitionix.forgeai.it.ForgeAgentProxyFixtures.PROJECT_ID;
+import static com.sitionix.forgeai.it.ForgeAgentProxyFixtures.REPOSITORY_ID;
 import static com.sitionix.forgeit.wiremock.api.Parameter.equalTo;
 
 import com.sitionix.forgeai.it.infra.ForgeAgentProxyMockMvcEndpoint;
@@ -60,11 +61,34 @@ class ForgeAgentProjectRepositoriesProxyIT extends AbstractForgeAiIT {
         mapping.verify();
     }
 
+    @Test
+    void givenRepositoryId_whenCloneRepository_thenProjectAndRepositoryPathAreForwarded() {
+        final var mapping = this.testManager.wiremock()
+                .createMapping(ForgeAgentProxyWireMockEndpoint.cloneProjectRepository())
+                .pathPattern(repositoryWireMockPathParams())
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(ForgeAgentProxyMockMvcEndpoint.cloneProjectRepository())
+                .withPathParameters(repositoryMockMvcPathParams())
+                .assertDefault();
+
+        mapping.verify();
+    }
+
     private static PathParams projectMockMvcPathParams() {
         return PathParams.create().add("projectId", PROJECT_ID);
     }
 
+    private static PathParams repositoryMockMvcPathParams() {
+        return projectMockMvcPathParams().add("repositoryId", REPOSITORY_ID);
+    }
+
     private static WireMockPathParams projectWireMockPathParams() {
         return WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString()));
+    }
+
+    private static WireMockPathParams repositoryWireMockPathParams() {
+        return projectWireMockPathParams().add("repositoryId", equalTo(REPOSITORY_ID.toString()));
     }
 }

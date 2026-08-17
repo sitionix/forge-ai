@@ -115,12 +115,14 @@ function taskPage(items: any[], page = 0, size = 20, totalItems = items.length, 
 function repository(
   id = '88888888-8888-4888-8888-888888888888',
   projectId = project().id,
-  remoteUrl = 'git@gitlab.com:company/service-a.git'
+  name = 'service-a',
+  cloned = false
 ) {
   return {
     id,
     projectId,
-    remoteUrl,
+    name,
+    cloned,
     createdAt: '2026-08-17T09:00:00Z'
   };
 }
@@ -305,6 +307,7 @@ function api(overrides = {}) {
     deleteProject: vi.fn(() => Promise.resolve({})),
     listProjectRepositories: vi.fn((projectId: string) => Promise.resolve([repository(undefined, projectId)])),
     importProjectRepository: vi.fn(() => Promise.resolve(repository())),
+    cloneProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
     getRuntime: vi.fn(() => Promise.resolve(runtime())),
     listProjectAgents: vi.fn(() => Promise.resolve(agents)),
     createAgent: vi.fn(() => Promise.resolve(agent('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'Analyzer'))),
@@ -533,7 +536,8 @@ describe('Agent projects page', () => {
   it('opening Project switches to workspace and back returns to Projects', async () => {
     const { dom, page } = await openedProject();
     expect(dom.window.document.getElementById('agentsV2ProjectCrumbs')?.textContent).toBe('Projects / Sitionix');
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('git@gitlab.com:company/service-a.git');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).not.toContain('git@gitlab.com:company/service-a.git');
     expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Architect');
     expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
@@ -548,8 +552,8 @@ describe('Agent projects page', () => {
       listProjectRepositories: vi.fn()
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([
-          repository('repo-1', project().id, 'git@gitlab.com:company/service-a.git'),
-          repository('repo-2', project().id, 'https://github.com/company/service-b.git')
+          repository('repo-1', project().id, 'service-a'),
+          repository('repo-2', project().id, 'service-b')
         ]),
       importProjectRepository: vi.fn(() => Promise.resolve(repository('repo-1')))
     });
@@ -567,8 +571,34 @@ describe('Agent projects page', () => {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });
     expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('git@gitlab.com:company/service-a.git');
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('https://github.com/company/service-b.git');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-b');
+  });
+
+  it('shows Clone only for uncloned repositories and refreshes after clone', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn()
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', false),
+          repository('repo-2', project().id, 'service-b', true)
+        ])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true),
+          repository('repo-2', project().id, 'service-b', true)
+        ]),
+      cloneProjectRepository: vi.fn(() => Promise.resolve(repository('repo-1', project().id, 'service-a', true)))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).not.toBeNull();
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-2"]')).toBeNull();
+
+    dom.window.document.querySelector<HTMLElement>('[data-clone-repository-id="repo-1"]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
   });
 
   it('rejects blank repository URL locally', async () => {
@@ -3359,6 +3389,7 @@ describe('Agent projects page', () => {
     client.deleteProject(project().id);
     client.listProjectRepositories(project().id);
     client.importProjectRepository(project().id, { remoteUrl: 'git@gitlab.com:company/service-a.git' });
+    client.cloneProjectRepository(project().id, '88888888-8888-4888-8888-888888888888');
     client.listProjectAgents(project().id);
     client.createAgent(project().id, { name: 'Agent', instructions: 'Do work.', outputSchema: {} });
     client.getAgent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
@@ -3381,6 +3412,7 @@ describe('Agent projects page', () => {
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`, {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });
+    expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888/clone`);
     expect(http.get).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks?page=0&size=20`);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks`, {
       title: 'Check calculation',

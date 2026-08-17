@@ -46,6 +46,9 @@ public interface ForgeAgentHttpClient {
     @GetExchange("/api/v1/projects/{projectId}/repositories")
     List<ProjectRepositoryResponse> listProjectRepositories(@PathVariable UUID projectId);
 
+    @PostExchange("/api/v1/projects/{projectId}/repositories/{repositoryId}/clone")
+    ProjectRepositoryResponse cloneProjectRepository(@PathVariable UUID projectId, @PathVariable UUID repositoryId);
+
     @PostExchange(value = "/api/v1/projects/{projectId}/tasks", contentType = MediaType.APPLICATION_JSON_VALUE)
     ProjectTaskResponse createProjectTask(@PathVariable UUID projectId, @RequestBody CreateProjectTaskRequest request);
 

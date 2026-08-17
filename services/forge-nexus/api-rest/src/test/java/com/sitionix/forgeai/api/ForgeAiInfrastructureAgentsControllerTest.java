@@ -53,6 +53,7 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
+import com.sitionix.forgeai.domain.usecase.CloneAgentProjectRepository;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentProject;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentProjectTask;
@@ -103,6 +104,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
     @Mock
     private ListAgentProjectRepositories listAgentProjectRepositories;
     @Mock
+    private CloneAgentProjectRepository cloneAgentProjectRepository;
+    @Mock
     private CreateAgentProjectTask createAgentProjectTask;
     @Mock
     private ListAgentProjectTasks listAgentProjectTasks;
@@ -151,6 +154,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 this.deleteAgentProject,
                 this.importAgentProjectRepository,
                 this.listAgentProjectRepositories,
+                this.cloneAgentProjectRepository,
                 this.createAgentProjectTask,
                 this.listAgentProjectTasks,
                 this.getAgentProjectTask,
@@ -241,6 +245,21 @@ class ForgeAiInfrastructureAgentsControllerTest {
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(actual.getBody()).containsExactly(response);
         verify(this.listAgentProjectRepositories).execute(PROJECT_ID);
+        verify(this.mapper).toResponse(repository);
+    }
+
+    @Test
+    void cloneProjectRepository() {
+        final var repository = this.projectRepository();
+        final var response = this.projectRepositoryResponse();
+        when(this.cloneAgentProjectRepository.execute(PROJECT_ID, REPOSITORY_ID)).thenReturn(repository);
+        when(this.mapper.toResponse(repository)).thenReturn(response);
+
+        final var actual = this.controller.cloneProjectRepository(PROJECT_ID, REPOSITORY_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.cloneAgentProjectRepository).execute(PROJECT_ID, REPOSITORY_ID);
         verify(this.mapper).toResponse(repository);
     }
 
@@ -520,11 +539,11 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     private AgentProjectRepository projectRepository() {
-        return new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", NOW);
+        return new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "service-a", false, NOW);
     }
 
     private AgentProjectRepositoryResponse projectRepositoryResponse() {
-        return new AgentProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", NOW);
+        return new AgentProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", false, NOW);
     }
 
     private AgentDefinitionRequest agentRequest() {

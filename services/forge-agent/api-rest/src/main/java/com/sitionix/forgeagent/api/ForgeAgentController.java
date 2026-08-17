@@ -93,6 +93,12 @@ public class ForgeAgentController {
                 .toList());
     }
 
+    @PostMapping("/api/v1/projects/{projectId}/repositories/{repositoryId}/clone")
+    public ResponseEntity<ProjectRepositoryResponse> cloneProjectRepository(@PathVariable final UUID projectId,
+                                                                           @PathVariable final UUID repositoryId) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.projectRepositoryUseCases.cloneRepository(projectId, repositoryId)));
+    }
+
     @PostMapping("/api/v1/projects/{projectId}/tasks")
     public ResponseEntity<ProjectTaskResponse> createProjectTask(@PathVariable final UUID projectId,
                                                                  @Valid @RequestBody final CreateProjectTaskRequest request) {

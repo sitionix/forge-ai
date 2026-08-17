@@ -104,7 +104,7 @@ public class AgentProxyApiMapper {
     }
 
     public AgentProjectRepositoryResponse toResponse(final AgentProjectRepository repository) {
-        return new AgentProjectRepositoryResponse(repository.id(), repository.projectId(), repository.remoteUrl(), repository.createdAt());
+        return new AgentProjectRepositoryResponse(repository.id(), repository.projectId(), repository.name(), repository.cloned(), repository.createdAt());
     }
 
     public AgentProjectTaskSummaryResponse toResponse(final AgentProjectTaskSummary task) {

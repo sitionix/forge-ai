@@ -16,5 +16,7 @@
     <modules>
         <module>postgres</module>
         <module>codex</module>
+        <module>git</module>
+        <module>local</module>
     </modules>
 </project>

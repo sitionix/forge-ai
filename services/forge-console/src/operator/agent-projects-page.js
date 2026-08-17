@@ -62,6 +62,7 @@ export class AgentProjectsPage {
       document: this.document,
       onBack: () => this.showProjectsIndex(),
       onImportRepository: () => this.openRepositoryModal(),
+      onCloneRepository: (repositoryId) => this.cloneRepository(repositoryId),
       onNewAgent: () => this.openAgentModal(),
       onEditAgent: (agentId) => this.openAgentModal(agentId),
       onNewWorkflow: () => this.openWorkflowModal(),
@@ -467,6 +468,23 @@ export class AgentProjectsPage {
     } finally {
       this.state.saving = false;
       this.byId('agentsV2RepositoryImport').disabled = false;
+    }
+  }
+
+  async cloneRepository(repositoryId) {
+    if (this.state.saving || !this.repositoriesDataCurrent()) {
+      return;
+    }
+    this.state.saving = true;
+    this.showError('agentsV2RepositoriesError', '');
+    try {
+      await this.api.cloneProjectRepository(this.state.selectedProjectId, repositoryId);
+      await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
+    } catch (error) {
+      this.showError('agentsV2RepositoriesError', error.message || 'Repository could not be cloned.');
+    } finally {
+      this.state.saving = false;
+      this.renderProjectWorkspace();
     }
   }
 

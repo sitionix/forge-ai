@@ -64,6 +64,17 @@ public final class ForgeAgentProxyWireMockEndpoint {
                 "responseAgentProxyProjectRepositories.json");
     }
 
+    public static Endpoint<Void, ProjectRepositoryResponse> cloneProjectRepository() {
+        return Endpoint.createContract("/api/v1/projects/{projectId}/repositories/{repositoryId}/clone",
+                HttpMethod.POST,
+                Void.class,
+                ProjectRepositoryResponse.class,
+                (WiremockDefault) context -> context
+                        .plainUrl()
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseAgentProxyProjectRepositoryCloned.json"));
+    }
+
     public static Endpoint<CreateProjectTaskRequest, ProjectTaskResponse> createProjectTask() {
         return upstreamPost("/api/v1/projects/{projectId}/tasks",
                 CreateProjectTaskRequest.class,
