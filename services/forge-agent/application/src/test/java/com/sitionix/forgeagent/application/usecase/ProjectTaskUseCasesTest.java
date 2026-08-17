@@ -17,6 +17,7 @@ import com.sitionix.forgeagent.domain.model.ProjectTaskPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
@@ -212,6 +213,45 @@ class ProjectTaskUseCasesTest {
         assertThat(details.runs()).containsExactly(run);
     }
 
+    @Test
+    void getDetailsExposesLatestSuccessfulWorkflowRunResult() {
+        final ProjectTask task = this.task("Title", "Input");
+        final NodeRunOutput result = new NodeRunOutput("{\"answer\":\"done\"}");
+        when(this.projectTaskRepository.findById(TASK_ID)).thenReturn(Optional.of(task));
+        when(this.workflowRunRepository.findSummariesByTaskId(TASK_ID)).thenReturn(List.of(
+                this.summary(RUN_ID, TASK_ID, NOW, WorkflowRunStatus.SUCCEEDED)
+        ));
+        when(this.workflowRunRepository.findLatestByTaskId(TASK_ID)).thenReturn(Optional.of(this.run(
+                RUN_ID,
+                WorkflowRunStatus.SUCCEEDED,
+                result
+        )));
+
+        final ProjectTaskDetails details = this.useCases.getProjectTask(TASK_ID);
+
+        assertThat(details.result()).isEqualTo(result);
+    }
+
+    @Test
+    void getDetailsDoesNotFallBackToOlderResultWhenLatestRunIsNotSuccessful() {
+        final ProjectTask task = this.task("Title", "Input");
+        final UUID newerRunId = UUID.fromString("44444444-4444-4444-8444-444444444445");
+        when(this.projectTaskRepository.findById(TASK_ID)).thenReturn(Optional.of(task));
+        when(this.workflowRunRepository.findSummariesByTaskId(TASK_ID)).thenReturn(List.of(
+                this.summary(newerRunId, TASK_ID, NOW.plusSeconds(60), WorkflowRunStatus.RUNNING),
+                this.summary(RUN_ID, TASK_ID, NOW, WorkflowRunStatus.SUCCEEDED)
+        ));
+        when(this.workflowRunRepository.findLatestByTaskId(TASK_ID)).thenReturn(Optional.of(this.run(
+                newerRunId,
+                WorkflowRunStatus.RUNNING,
+                null
+        )));
+
+        final ProjectTaskDetails details = this.useCases.getProjectTask(TASK_ID);
+
+        assertThat(details.result()).isNull();
+    }
+
     private Project project(final UUID projectId) {
         return new Project(projectId, "Sitionix", "sitionix", Instant.EPOCH, Instant.EPOCH);
     }
@@ -226,6 +266,27 @@ class ProjectTaskUseCasesTest {
 
     private WorkflowRun run(final UUID taskId, final String input) {
         return new WorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, taskId, "Full Testing", input, WorkflowRunStatus.QUEUED, List.of(), NOW, null, null);
+    }
+
+    private WorkflowRun run(final UUID runId, final WorkflowRunStatus status, final NodeRunOutput result) {
+        return new WorkflowRun(
+                runId,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                TASK_ID,
+                "Full Testing",
+                "Input",
+                status,
+                List.of(),
+                List.of(),
+                List.of(),
+                null,
+                result,
+                result == null ? null : UUID.fromString("55555555-5555-4555-8555-555555555555"),
+                NOW,
+                status == WorkflowRunStatus.QUEUED ? null : NOW,
+                status == WorkflowRunStatus.SUCCEEDED ? NOW.plusSeconds(1) : null
+        );
     }
 
     private WorkflowRunSummary summary(final UUID runId, final UUID taskId, final Instant createdAt, final WorkflowRunStatus status) {

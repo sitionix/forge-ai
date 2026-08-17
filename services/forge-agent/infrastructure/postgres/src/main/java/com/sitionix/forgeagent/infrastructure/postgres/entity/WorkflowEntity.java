@@ -34,6 +34,9 @@ public class WorkflowEntity {
     @Column(name = "task_input_port_id")
     private UUID taskInputPortId;
 
+    @Column(name = "task_output_port_id")
+    private UUID taskOutputPortId;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

@@ -163,6 +163,7 @@ public class ForgeAgentClientMapper {
                 this.requireList(response.runs(), "task.runs").stream()
                         .map(this::toDomain)
                         .toList(),
+                this.toOutputDocument(response.result()),
                 response.createdAt(),
                 response.updatedAt()
         );
@@ -221,7 +222,8 @@ public class ForgeAgentClientMapper {
                 command.connections() == null ? List.of() : command.connections().stream()
                         .map(this::toRequest)
                         .toList(),
-                command.taskInputPortId()
+                command.taskInputPortId(),
+                command.taskOutputPortId()
         );
     }
 
@@ -245,6 +247,7 @@ public class ForgeAgentClientMapper {
                         .map(this::toDomain)
                         .toList(),
                 response.taskInputPortId(),
+                response.taskOutputPortId(),
                 response.createdAt(),
                 response.updatedAt()
         );
@@ -298,6 +301,8 @@ public class ForgeAgentClientMapper {
                         .map(this::toDomain)
                         .toList(),
                 this.toDomain(response.runtimeGraph()),
+                this.toOutputDocument(response.result()),
+                response.resultSourceNodeRunId(),
                 response.createdAt(),
                 response.startedAt(),
                 response.finishedAt()
@@ -310,6 +315,7 @@ public class ForgeAgentClientMapper {
         }
         return new AgentWorkflowRunGraph(
                 response.taskInputPortId(),
+                response.taskOutputPortId(),
                 this.requireList(response.nodes(), "workflowRun.runtimeGraph.nodes").stream()
                         .map(this::toDomain)
                         .toList(),
@@ -373,6 +379,17 @@ public class ForgeAgentClientMapper {
                 response.targetNodeRunId(),
                 response.sourceType()
         );
+    }
+
+    private AgentNodeRunOutputDocument toOutputDocument(final com.fasterxml.jackson.databind.JsonNode value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return new AgentNodeRunOutputDocument(this.objectMapper.writeValueAsString(value));
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalArgumentException("Forge Agent response output was invalid.", exception);
+        }
     }
 
     AgentRuntimeCatalog toDomain(final AgentRuntimeResponse response) {

@@ -11,7 +11,18 @@ public record AgentProjectTask(
         String input,
         UUID workflowId,
         List<AgentWorkflowRunSummary> runs,
+        AgentNodeRunOutputDocument result,
         Instant createdAt,
         Instant updatedAt
 ) {
+    public AgentProjectTask(final UUID id,
+                            final UUID projectId,
+                            final String title,
+                            final String input,
+                            final UUID workflowId,
+                            final List<AgentWorkflowRunSummary> runs,
+                            final Instant createdAt,
+                            final Instant updatedAt) {
+        this(id, projectId, title, input, workflowId, runs, null, createdAt, updatedAt);
+    }
 }

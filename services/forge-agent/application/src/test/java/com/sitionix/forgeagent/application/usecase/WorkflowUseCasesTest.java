@@ -136,10 +136,11 @@ class WorkflowUseCasesTest {
                 this.workflowId,
                 new SaveWorkflowCommand("Full Testing", List.of(first, second), List.of(
                         new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB)
-                ), this.inputA)
+                ), this.inputA, this.outputB)
         );
 
         assertThat(saved.nodes()).containsExactly(first, second);
+        assertThat(saved.taskOutputPortId()).isEqualTo(this.outputB);
         assertThat(saved.connections()).containsExactly(
                 new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB)
         );
@@ -178,6 +179,32 @@ class WorkflowUseCasesTest {
     }
 
     @Test
+    void updateRejectsNonEmptyWorkflowWithoutTaskOutput() {
+        final Workflow current = this.workflow(List.of());
+        final Node first = new Node(
+                this.nodeA,
+                this.agentId,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
+                List.of(new NodePort(this.outputA, "Output", "Output.", 0)),
+                new NodePosition(1.0, 2.0)
+        );
+        when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
+
+        assertThatThrownBy(() -> this.useCases.updateWorkflow(
+                this.workflowId,
+                new SaveWorkflowCommand("Full Testing", List.of(first), List.of(), this.inputA)
+        ))
+                .isInstanceOf(com.sitionix.forgeagent.domain.exception.ValidationException.class)
+                .extracting("code")
+                .isEqualTo("WORKFLOW_TASK_OUTPUT_REQUIRED");
+
+        verify(this.workflowRepository, never()).save(any());
+    }
+
+    @Test
     void cyclicUpdatePersistsForRuntimeReentry() {
         final Workflow current = this.workflow(List.of(new Node(this.nodeA, this.agentId, new NodePosition(1.0, 2.0))));
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
@@ -190,20 +217,22 @@ class WorkflowUseCasesTest {
                 new SaveWorkflowCommand("Full Testing", List.of(
                         new Node(this.nodeA, this.agentId, NodeInputMode.DEPENDENCIES_ONLY,
                                 List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
-                                List.of(new NodePort(this.outputA, "Output", "Output.", 0)),
+                                List.of(new NodePort(this.outputA, "Output", "Output.", 0),
+                                        new NodePort(this.outputB, "Task Output", "Task output.", 1)),
                                 new NodePosition(1.0, 2.0)),
                         new Node(this.nodeB, this.agentId, NodeInputMode.DEPENDENCIES_ONLY,
                                 List.of(new NodePort(this.inputB, "Input", "Input.", 0)),
-                                List.of(new NodePort(this.outputB, "Output", "Output.", 0)),
+                                List.of(new NodePort(UUID.fromString("20000000-0000-4000-8000-000000000003"), "Output", "Output.", 0)),
                                 new NodePosition(3.0, 4.0))
                 ), List.of(
                         new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB),
-                        new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000002"), this.outputB, this.inputA)
-                ), this.inputA)
+                        new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000002"), UUID.fromString("20000000-0000-4000-8000-000000000003"), this.inputA)
+                ), this.inputA, this.outputB)
         );
 
         assertThat(saved.connections()).hasSize(2);
         assertThat(saved.taskInputPortId()).isEqualTo(this.inputA);
+        assertThat(saved.taskOutputPortId()).isEqualTo(this.outputB);
         verify(this.workflowRepository).save(any());
     }
 

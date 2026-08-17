@@ -989,7 +989,8 @@ body.sidebar-collapsed .sidebar-link {
   cursor: grabbing;
 }
 
-.workflow-task-input {
+.workflow-task-input,
+.workflow-task-output {
   position: absolute;
   display: flex;
   align-items: center;
@@ -1008,7 +1009,15 @@ body.sidebar-collapsed .sidebar-link {
   touch-action: none;
 }
 
-.workflow-task-input span {
+.workflow-task-output {
+  width: 112px;
+  padding: 0 12px 0 10px;
+  background: #f2f0ff;
+  border-color: rgba(84, 67, 168, 0.28);
+}
+
+.workflow-task-input span,
+.workflow-task-output span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1186,6 +1195,33 @@ body.sidebar-collapsed .sidebar-link {
   font-size: 14px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.task-result-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(27, 36, 31, 0.12);
+}
+
+.task-result-section h2 {
+  margin: 0;
+  color: var(--ink);
+  font: 800 12px/1.2 var(--mono);
+  text-transform: uppercase;
+}
+
+.task-result-section pre {
+  max-height: 260px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.56);
+  color: var(--ink);
+  font: 12px/1.5 var(--mono);
 }
 
 .task-execution-layout {

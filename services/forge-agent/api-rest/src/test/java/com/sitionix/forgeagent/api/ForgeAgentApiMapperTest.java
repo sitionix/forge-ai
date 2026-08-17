@@ -128,7 +128,7 @@ class ForgeAgentApiMapperTest {
     }
 
     @Test
-    void mapsProjectTaskRequestsAndResponses() {
+    void mapsProjectTaskRequestsAndResponses() throws Exception {
         assertThat(this.mapper.toCommand(new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID)))
                 .isEqualTo(new CreateProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID));
 
@@ -161,6 +161,7 @@ class ForgeAgentApiMapperTest {
                 "Count letters.",
                 WORKFLOW_ID,
                 List.of(run),
+                new NodeRunOutput("{\"answer\":\"done\"}"),
                 CREATED,
                 UPDATED
         ))).isEqualTo(new ProjectTaskResponse(
@@ -170,6 +171,7 @@ class ForgeAgentApiMapperTest {
                 "Count letters.",
                 WORKFLOW_ID,
                 List.of(new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", WorkflowRunStatus.QUEUED, CREATED, null, null)),
+                this.objectMapper.readTree("{\"answer\":\"done\"}"),
                 CREATED,
                 UPDATED
         ));
@@ -247,14 +249,16 @@ class ForgeAgentApiMapperTest {
                 List.of(new NodeRequest(NODE_A, AGENT_ID, new NodePositionRequest(1.0, 2.0)),
                         new NodeRequest(NODE_B, AGENT_ID, new NodePositionRequest(3.0, 4.0))),
                 List.of(new WorkflowConnectionRequest(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
-                NODE_A
+                NODE_A,
+                NODE_B
         );
         assertThat(this.mapper.toCommand(saveRequest)).isEqualTo(new SaveWorkflowCommand(
                 "Full Testing",
                 List.of(new Node(NODE_A, AGENT_ID, new NodePosition(1.0, 2.0)),
                         new Node(NODE_B, AGENT_ID, new NodePosition(3.0, 4.0))),
                 List.of(new WorkflowConnection(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
-                NODE_A
+                NODE_A,
+                NODE_B
         ));
 
         final Workflow workflow = new Workflow(
@@ -265,6 +269,7 @@ class ForgeAgentApiMapperTest {
                 List.of(new Node(NODE_B, AGENT_ID, new NodePosition(3.0, 4.0))),
                 List.of(new WorkflowConnection(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
                 NODE_A,
+                NODE_B,
                 CREATED,
                 UPDATED
         );
@@ -275,6 +280,7 @@ class ForgeAgentApiMapperTest {
                 List.of(new NodeResponse(NODE_B, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(), new NodePositionResponse(3.0, 4.0))),
                 List.of(new WorkflowConnectionResponse(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
                 NODE_A,
+                NODE_B,
                 CREATED,
                 UPDATED
         ));
@@ -315,6 +321,11 @@ class ForgeAgentApiMapperTest {
                         null,
                         null
                 )),
+                List.of(),
+                List.of(),
+                null,
+                new NodeRunOutput("{\"task\":\"result\"}"),
+                NODE_RUN_ID,
                 CREATED,
                 null,
                 null
@@ -367,6 +378,11 @@ class ForgeAgentApiMapperTest {
                         null,
                         null
                 )),
+                List.of(),
+                List.of(),
+                null,
+                this.objectMapper.readTree("{\"task\":\"result\"}"),
+                NODE_RUN_ID,
                 CREATED,
                 null,
                 null
@@ -415,6 +431,7 @@ class ForgeAgentApiMapperTest {
                 new WorkflowRunGraph(
                         RUN_ID,
                         inputPortId,
+                        outputPortId,
                         List.of(new RunNode(
                                 RUN_ID,
                                 NODE_A,
@@ -441,6 +458,7 @@ class ForgeAgentApiMapperTest {
 
         assertThat(response.runtimeGraph()).isEqualTo(new WorkflowRunGraphResponse(
                 inputPortId,
+                outputPortId,
                 List.of(new RunNodeResponse(
                         NODE_A,
                         "Analyzer",

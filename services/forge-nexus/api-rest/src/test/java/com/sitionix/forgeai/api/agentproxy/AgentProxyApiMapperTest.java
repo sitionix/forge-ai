@@ -19,8 +19,12 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRunConnection;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRunNode;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRunPort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunGraph;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
@@ -64,7 +68,7 @@ class AgentProxyApiMapperTest {
     }
 
     @Test
-    void mapsProjectTaskRequestsAndResponses() {
+    void mapsProjectTaskRequestsAndResponses() throws Exception {
         assertThat(this.mapper.toCommand(new CreateAgentProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID)))
                 .isEqualTo(new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID));
 
@@ -88,6 +92,7 @@ class AgentProxyApiMapperTest {
                 "Count letters.",
                 WORKFLOW_ID,
                 List.of(new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null)),
+                new AgentNodeRunOutputDocument("{\"answer\":\"done\"}"),
                 CREATED,
                 UPDATED
         );
@@ -98,6 +103,7 @@ class AgentProxyApiMapperTest {
                 "Count letters.",
                 WORKFLOW_ID,
                 List.of(new AgentWorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null)),
+                this.objectMapper.readTree("{\"answer\":\"done\"}"),
                 CREATED,
                 UPDATED
         ));
@@ -209,7 +215,7 @@ class AgentProxyApiMapperTest {
                 List.of(outputRequest),
                 new NodePositionRequest(1.0, 2.0)
         );
-        assertThat(this.mapper.toCommand(new SaveAgentWorkflowRequest("Full Testing", List.of(nodeRequest), List.of(connectionRequest), INPUT_ID)))
+        assertThat(this.mapper.toCommand(new SaveAgentWorkflowRequest("Full Testing", List.of(nodeRequest), List.of(connectionRequest), INPUT_ID, OUTPUT_ID)))
                 .isEqualTo(new SaveAgentWorkflowCommand(
                         "Full Testing",
                         List.of(new Node(
@@ -221,7 +227,8 @@ class AgentProxyApiMapperTest {
                                 new NodePosition(1.0, 2.0)
                         )),
                         List.of(connection),
-                        INPUT_ID
+                        INPUT_ID,
+                        OUTPUT_ID
                 ));
 
         final var workflow = new AgentWorkflow(
@@ -238,6 +245,7 @@ class AgentProxyApiMapperTest {
                 )),
                 List.of(connection),
                 INPUT_ID,
+                OUTPUT_ID,
                 CREATED,
                 UPDATED
         );
@@ -255,6 +263,7 @@ class AgentProxyApiMapperTest {
                 )),
                 List.of(new WorkflowConnectionResponse(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
                 INPUT_ID,
+                OUTPUT_ID,
                 CREATED,
                 UPDATED
         ));
@@ -313,6 +322,18 @@ class AgentProxyApiMapperTest {
                         null,
                         null
                 )),
+                List.of(),
+                List.of(),
+                new AgentWorkflowRunGraph(
+                        INPUT_ID,
+                        OUTPUT_ID,
+                        List.of(new AgentRunNode(NODE_ID, "Analyzer", new NodePosition(1.0, 2.0))),
+                        List.of(new AgentRunPort(INPUT_ID, NODE_ID, "INPUT", "Initial", 0),
+                                new AgentRunPort(OUTPUT_ID, NODE_ID, "OUTPUT", "Done", 0)),
+                        List.of(new AgentRunConnection(CONNECTION_ID, OUTPUT_ID, INPUT_ID))
+                ),
+                new AgentNodeRunOutputDocument("{\"task\":\"result\"}"),
+                NODE_RUN_ID,
                 CREATED,
                 null,
                 null
@@ -345,6 +366,18 @@ class AgentProxyApiMapperTest {
                         null,
                         null
                 )),
+                List.of(),
+                List.of(),
+                new AgentWorkflowRunGraphResponse(
+                        INPUT_ID,
+                        OUTPUT_ID,
+                        List.of(new AgentRunNodeResponse(NODE_ID, "Analyzer", new NodePositionResponse(1.0, 2.0))),
+                        List.of(new AgentRunPortResponse(INPUT_ID, NODE_ID, "INPUT", "Initial", 0),
+                                new AgentRunPortResponse(OUTPUT_ID, NODE_ID, "OUTPUT", "Done", 0)),
+                        List.of(new AgentRunConnectionResponse(CONNECTION_ID, OUTPUT_ID, INPUT_ID))
+                ),
+                this.objectMapper.readTree("{\"task\":\"result\"}"),
+                NODE_RUN_ID,
                 CREATED,
                 null,
                 null

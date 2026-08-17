@@ -8,6 +8,8 @@ import java.time.Instant;
 import java.util.UUID;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "workflow_runs")
@@ -30,6 +32,9 @@ public class WorkflowRunEntity {
     @Column(name = "task_input_port_id")
     private UUID taskInputPortId;
 
+    @Column(name = "task_output_port_id")
+    private UUID taskOutputPortId;
+
     @Column(name = "workflow_name", nullable = false, length = 120)
     private String workflowName;
 
@@ -47,4 +52,11 @@ public class WorkflowRunEntity {
 
     @Column(name = "finished_at")
     private Instant finishedAt;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private String result;
+
+    @Column(name = "result_source_node_run_id")
+    private UUID resultSourceNodeRunId;
 }

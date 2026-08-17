@@ -8,6 +8,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentModelSelection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
@@ -83,7 +84,8 @@ public class AgentProxyApiMapper {
                 request.connections() == null ? List.of() : request.connections().stream()
                         .map(this::toDomain)
                         .toList(),
-                request.taskInputPortId()
+                request.taskInputPortId(),
+                request.taskOutputPortId()
         );
     }
 
@@ -127,6 +129,7 @@ public class AgentProxyApiMapper {
                 task.input(),
                 task.workflowId(),
                 task.runs().stream().map(this::toResponse).toList(),
+                this.toJsonNode(task.result()),
                 task.createdAt(),
                 task.updatedAt()
         );
@@ -209,6 +212,7 @@ public class AgentProxyApiMapper {
                 workflow.nodes().stream().map(this::toResponse).toList(),
                 workflow.connections().stream().map(this::toResponse).toList(),
                 workflow.taskInputPortId(),
+                workflow.taskOutputPortId(),
                 workflow.createdAt(),
                 workflow.updatedAt()
         );
@@ -240,6 +244,8 @@ public class AgentProxyApiMapper {
                 run.connectionResolutions().stream().map(this::toResponse).toList(),
                 run.executionEdges().stream().map(this::toResponse).toList(),
                 this.toResponse(run.runtimeGraph()),
+                this.toJsonNode(run.result()),
+                run.resultSourceNodeRunId(),
                 run.createdAt(),
                 run.startedAt(),
                 run.finishedAt()
@@ -252,6 +258,7 @@ public class AgentProxyApiMapper {
         }
         return new AgentWorkflowRunGraphResponse(
                 graph.taskInputPortId(),
+                graph.taskOutputPortId(),
                 graph.nodes().stream().map(this::toResponse).toList(),
                 graph.ports().stream().map(this::toResponse).toList(),
                 graph.connections().stream().map(this::toResponse).toList()
@@ -290,6 +297,17 @@ public class AgentProxyApiMapper {
                 edge.targetNodeRunId(),
                 edge.sourceType()
         );
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode toJsonNode(final AgentNodeRunOutputDocument output) {
+        if (output == null) {
+            return null;
+        }
+        try {
+            return this.objectMapper.readTree(output.jsonValue());
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalStateException("Agent output document is not valid JSON.", exception);
+        }
     }
 
     private Node toDomain(final NodeRequest request) {

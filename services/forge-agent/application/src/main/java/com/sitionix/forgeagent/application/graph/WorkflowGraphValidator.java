@@ -29,6 +29,15 @@ public class WorkflowGraphValidator {
                                                final List<WorkflowConnection> connections,
                                                final UUID taskInputPortId,
                                                final Collection<AgentDefinition> targets) {
+        return this.validateAndNormalize(projectId, nodes, connections, taskInputPortId, null, targets);
+    }
+
+    public ValidatedGraph validateAndNormalize(final UUID projectId,
+                                               final List<Node> nodes,
+                                               final List<WorkflowConnection> connections,
+                                               final UUID taskInputPortId,
+                                               final UUID taskOutputPortId,
+                                               final Collection<AgentDefinition> targets) {
         final List<Node> normalizedNodes = nodes == null ? List.of() : nodes.stream()
                 .map(this::normalizeNode)
                 .toList();
@@ -58,8 +67,9 @@ public class WorkflowGraphValidator {
         }
         this.validateConnections(normalizedConnections, inputOwnersByPortId, outputOwnersByPortId, allOwnersByPortId);
         this.validateTaskInputPort(taskInputPortId, normalizedNodes, inputOwnersByPortId, allOwnersByPortId);
+        this.validateTaskOutputPort(taskOutputPortId, normalizedNodes, normalizedConnections, outputOwnersByPortId, allOwnersByPortId);
         this.validateReachability(normalizedNodes, normalizedConnections, taskInputPortId, inputOwnersByPortId, outputOwnersByPortId);
-        return new ValidatedGraph(normalizedNodes, normalizedConnections, taskInputPortId);
+        return new ValidatedGraph(normalizedNodes, normalizedConnections, taskInputPortId, taskOutputPortId);
     }
 
     private Node normalizeNode(final Node node) {
@@ -193,6 +203,31 @@ public class WorkflowGraphValidator {
         }
     }
 
+    private void validateTaskOutputPort(final UUID taskOutputPortId,
+                                        final List<Node> nodes,
+                                        final List<WorkflowConnection> connections,
+                                        final Map<UUID, UUID> outputOwnersByPortId,
+                                        final Map<UUID, UUID> allOwnersByPortId) {
+        if (nodes.isEmpty()) {
+            if (taskOutputPortId != null) {
+                throw new ValidationException("UNKNOWN_TASK_OUTPUT_PORT", "Workflow task output port must exist.");
+            }
+            return;
+        }
+        if (taskOutputPortId == null) {
+            throw new ValidationException("WORKFLOW_TASK_OUTPUT_REQUIRED", "Workflow task output port is required.");
+        }
+        if (!allOwnersByPortId.containsKey(taskOutputPortId)) {
+            throw new ValidationException("UNKNOWN_TASK_OUTPUT_PORT", "Workflow task output port must exist.");
+        }
+        if (!outputOwnersByPortId.containsKey(taskOutputPortId)) {
+            throw new ValidationException("INVALID_TASK_OUTPUT_PORT", "Workflow task output port must be an OUTPUT port.");
+        }
+        if (connections.stream().anyMatch(connection -> taskOutputPortId.equals(connection.sourceOutputPortId()))) {
+            throw new ValidationException("TASK_OUTPUT_PORT_NOT_TERMINAL", "Workflow Task Output must not have downstream workflow connections.");
+        }
+    }
+
     private void validateReachability(final List<Node> nodes,
                                       final List<WorkflowConnection> connections,
                                       final UUID taskInputPortId,
@@ -233,6 +268,6 @@ public class WorkflowGraphValidator {
     private record PortPair(UUID sourceOutputPortId, UUID targetInputPortId) {
     }
 
-    public record ValidatedGraph(List<Node> nodes, List<WorkflowConnection> connections, UUID taskInputPortId) {
+    public record ValidatedGraph(List<Node> nodes, List<WorkflowConnection> connections, UUID taskInputPortId, UUID taskOutputPortId) {
     }
 }

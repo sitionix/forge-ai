@@ -50,6 +50,9 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
                 this.workflowRunRepository.findById(workflowRunId)
                         .map(com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity::getTaskInputPortId)
                         .orElse(null),
+                this.workflowRunRepository.findById(workflowRunId)
+                        .map(com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity::getTaskOutputPortId)
+                        .orElse(null),
                 this.nodeRepository.findByWorkflowRunIdOrderBySourceNodeIdAsc(workflowRunId).stream().map(this::toDomain).toList(),
                 this.portRepository.findByWorkflowRunIdOrderBySourceNodeIdAscPortOrderAsc(workflowRunId).stream().map(this::toDomain).toList(),
                 this.connectionRepository.findByWorkflowRunIdOrderBySourceConnectionIdAsc(workflowRunId).stream().map(this::toDomain).toList()
