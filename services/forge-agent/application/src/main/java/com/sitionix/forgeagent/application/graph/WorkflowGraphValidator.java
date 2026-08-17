@@ -58,6 +58,7 @@ public class WorkflowGraphValidator {
         }
         this.validateConnections(normalizedConnections, inputOwnersByPortId, outputOwnersByPortId, allOwnersByPortId);
         this.validateTaskInputPort(taskInputPortId, normalizedNodes, inputOwnersByPortId, allOwnersByPortId);
+        this.validateReachability(normalizedNodes, normalizedConnections, taskInputPortId, inputOwnersByPortId, outputOwnersByPortId);
         return new ValidatedGraph(normalizedNodes, normalizedConnections, taskInputPortId);
     }
 
@@ -189,6 +190,43 @@ public class WorkflowGraphValidator {
         }
         if (!inputOwnersByPortId.containsKey(taskInputPortId)) {
             throw new ValidationException("INVALID_TASK_INPUT_PORT", "Workflow task input port must be an INPUT port.");
+        }
+    }
+
+    private void validateReachability(final List<Node> nodes,
+                                      final List<WorkflowConnection> connections,
+                                      final UUID taskInputPortId,
+                                      final Map<UUID, UUID> inputOwnersByPortId,
+                                      final Map<UUID, UUID> outputOwnersByPortId) {
+        if (nodes.isEmpty()) {
+            return;
+        }
+        final Map<UUID, List<UUID>> targetNodeIdsBySourceNodeId = new HashMap<>();
+        for (final WorkflowConnection connection : connections) {
+            final UUID sourceNodeId = outputOwnersByPortId.get(connection.sourceOutputPortId());
+            final UUID targetNodeId = inputOwnersByPortId.get(connection.targetInputPortId());
+            targetNodeIdsBySourceNodeId.computeIfAbsent(sourceNodeId, ignored -> new ArrayList<>()).add(targetNodeId);
+        }
+
+        final UUID startNodeId = inputOwnersByPortId.get(taskInputPortId);
+        final Set<UUID> reachableNodeIds = new HashSet<>();
+        final ArrayList<UUID> pendingNodeIds = new ArrayList<>();
+        pendingNodeIds.add(startNodeId);
+        while (!pendingNodeIds.isEmpty()) {
+            final UUID nodeId = pendingNodeIds.removeLast();
+            if (!reachableNodeIds.add(nodeId)) {
+                continue;
+            }
+            pendingNodeIds.addAll(targetNodeIdsBySourceNodeId.getOrDefault(nodeId, List.of()));
+        }
+
+        for (final Node node : nodes) {
+            if (!reachableNodeIds.contains(node.id())) {
+                throw new ValidationException(
+                        "INCONSISTENT_WORKFLOW_GRAPH",
+                        "Workflow contains nodes that are not reachable from Task Input. Connect all workflow nodes to the execution flow or remove them."
+                );
+            }
         }
     }
 

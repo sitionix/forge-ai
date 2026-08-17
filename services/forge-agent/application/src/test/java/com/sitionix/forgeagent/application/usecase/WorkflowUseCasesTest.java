@@ -134,11 +134,15 @@ class WorkflowUseCasesTest {
 
         final Workflow saved = this.useCases.updateWorkflow(
                 this.workflowId,
-                new SaveWorkflowCommand("Full Testing", List.of(first, second), List.of(), this.inputA)
+                new SaveWorkflowCommand("Full Testing", List.of(first, second), List.of(
+                        new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB)
+                ), this.inputA)
         );
 
         assertThat(saved.nodes()).containsExactly(first, second);
-        assertThat(saved.connections()).isEmpty();
+        assertThat(saved.connections()).containsExactly(
+                new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB)
+        );
         final InOrder order = org.mockito.Mockito.inOrder(this.workflowRepository, this.agentDefinitionRepository);
         order.verify(this.workflowRepository).findById(this.workflowId);
         order.verify(this.workflowRepository).findByIdForUpdate(this.workflowId);

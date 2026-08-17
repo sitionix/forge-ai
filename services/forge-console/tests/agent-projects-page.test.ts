@@ -3099,6 +3099,24 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2WorkflowBuilderError')?.textContent).toContain('WORKFLOW_GRAPH_CYCLE');
   });
 
+  it('save displays backend inconsistent workflow graph messages', async () => {
+    const inconsistencyMessage = 'Workflow contains nodes that are not reachable from Task Input. Connect all workflow nodes to the execution flow or remove them.';
+    const fakeApi = api({
+      getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+        portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 44, 55)
+      ], project().id, [], 'node-1-input'))),
+      updateWorkflow: vi.fn(() => Promise.reject(Object.assign(new Error(inconsistencyMessage), {
+        code: 'INCONSISTENT_WORKFLOW_GRAPH'
+      })))
+    });
+    const { dom, page } = await openedBuilder(fakeApi);
+
+    await page.workflowBuilder.save();
+
+    expect(dom.window.document.getElementById('agentsV2WorkflowBuilderError')?.textContent)
+      .toContain(inconsistencyMessage);
+  });
+
   it('Workflow Builder edits dependency input mode in the Node Editor', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
