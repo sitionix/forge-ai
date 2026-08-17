@@ -1,9 +1,11 @@
 package com.sitionix.forgeagent.infrastructure.local;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneTarget;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
+import com.sitionix.forgeagent.domain.port.LocalProjectWorkspaceException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -68,6 +70,71 @@ class LocalProjectWorkspaceAdapterTest {
         ));
 
         assertThat(states).containsEntry(REPOSITORY_A_ID, false);
+    }
+
+    @Test
+    void rootResolverAcceptsGitDirectory() {
+        assertThat(new ForgeRootResolver(this.forgeRoot.resolve("nested/service")).resolveForgeRoot())
+                .isEqualTo(this.forgeRoot);
+    }
+
+    @Test
+    void rootResolverAcceptsGitFileMarker(@TempDir final Path worktreeRoot) throws Exception {
+        Files.writeString(worktreeRoot.resolve(".git"), "gitdir: /tmp/worktrees/forge-ai/.git");
+
+        assertThat(new ForgeRootResolver(worktreeRoot.resolve("services/forge-agent")).resolveForgeRoot())
+                .isEqualTo(worktreeRoot);
+    }
+
+    @Test
+    void rootResolverFailsClosedWhenNoForgeRoot(@TempDir final Path noRoot) {
+        assertThatThrownBy(() -> new ForgeRootResolver(noRoot.resolve("nested")).resolveForgeRoot())
+                .isInstanceOf(LocalProjectWorkspaceException.class)
+                .hasMessage("Forge root could not be resolved.");
+    }
+
+    @Test
+    void workspaceCreationFailureUsesTypedException() throws Exception {
+        Files.writeString(this.forgeRoot.resolve("forge-projects"), "not a directory");
+
+        assertThatThrownBy(() -> this.adapter.ensureProjectWorkspace(PROJECT_ID))
+                .isInstanceOf(LocalProjectWorkspaceException.class)
+                .hasMessage("Failed to create Forge project workspace.");
+    }
+
+    @Test
+    void cloneTargetOutsideWorkspaceUsesTypedException() {
+        assertThatThrownBy(() -> this.adapter.resolveCloneTarget(
+                PROJECT_ID,
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "../service-a")
+        ))
+                .isInstanceOf(LocalProjectWorkspaceException.class)
+                .hasMessage("Repository name resolves outside Forge project workspace.");
+    }
+
+    @Test
+    void cleanupRemovesIncompleteCloneTarget() throws Exception {
+        final Path target = this.repositoryPath("service-a");
+        Files.createDirectories(target);
+        Files.writeString(target.resolve("partial"), "partial clone");
+
+        this.adapter.cleanupCloneTarget(new ProjectRepositoryCloneTarget(target));
+
+        assertThat(target).doesNotExist();
+        final Map<UUID, Boolean> states = this.adapter.resolveCloneStates(PROJECT_ID, List.of(
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a")
+        ));
+        assertThat(states).containsEntry(REPOSITORY_A_ID, false);
+    }
+
+    @Test
+    void cleanupRemovesIncompleteCloneTargetEvenWhenGitDirectoryExists() throws Exception {
+        final Path target = this.repositoryPath("service-a");
+        Files.createDirectories(target.resolve(".git"));
+
+        this.adapter.cleanupCloneTarget(new ProjectRepositoryCloneTarget(target));
+
+        assertThat(target).doesNotExist();
     }
 
     private Path repositoryPath(final String repositoryName) {

@@ -4,6 +4,7 @@ import com.sitionix.forgeagent.domain.model.GitRemoteInspection;
 import com.sitionix.forgeagent.domain.port.GitOperationException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -12,11 +13,14 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class GitRepositoryAdapter implements GitRepositoryPort {
 
+    private static final GitCommandExecutionPolicy INSPECT_REMOTE_POLICY = new GitCommandExecutionPolicy(Duration.ofSeconds(15));
+    private static final GitCommandExecutionPolicy CLONE_POLICY = new GitCommandExecutionPolicy(Duration.ofMinutes(30));
+
     private final GitCommandRunner commandRunner;
 
     @Override
     public GitRemoteInspection inspectRemote(final String remoteUrl) {
-        final GitCommandResult result = this.commandRunner.run(List.of("git", "ls-remote", remoteUrl));
+        final GitCommandResult result = this.commandRunner.run(List.of("git", "ls-remote", remoteUrl), INSPECT_REMOTE_POLICY);
         if (result.exitCode() != 0) {
             throw new GitOperationException("Git remote is not reachable.");
         }
@@ -42,7 +46,7 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
 
     @Override
     public void clone(final String remoteUrl, final Path targetPath) {
-        final GitCommandResult result = this.commandRunner.run(List.of("git", "clone", remoteUrl, targetPath.toString()));
+        final GitCommandResult result = this.commandRunner.run(List.of("git", "clone", remoteUrl, targetPath.toString()), CLONE_POLICY);
         if (result.exitCode() != 0) {
             throw new GitOperationException("Git clone failed.");
         }

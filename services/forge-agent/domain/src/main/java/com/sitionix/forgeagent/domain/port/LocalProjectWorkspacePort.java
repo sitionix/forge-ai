@@ -13,4 +13,6 @@ public interface LocalProjectWorkspacePort {
     ProjectRepositoryCloneTarget resolveCloneTarget(UUID projectId, ProjectRepositoryWorkspaceReference repository);
 
     void ensureProjectWorkspace(UUID projectId);
+
+    void cleanupCloneTarget(ProjectRepositoryCloneTarget target);
 }

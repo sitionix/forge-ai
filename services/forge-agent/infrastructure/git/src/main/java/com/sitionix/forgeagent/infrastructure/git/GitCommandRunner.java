@@ -4,5 +4,5 @@ import java.util.List;
 
 interface GitCommandRunner {
 
-    GitCommandResult run(List<String> command);
+    GitCommandResult run(List<String> command, GitCommandExecutionPolicy policy);
 }

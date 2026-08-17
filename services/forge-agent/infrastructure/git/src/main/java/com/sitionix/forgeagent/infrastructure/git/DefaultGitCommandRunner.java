@@ -10,17 +10,16 @@ import org.springframework.stereotype.Component;
 @Component
 final class DefaultGitCommandRunner implements GitCommandRunner {
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
-
     @Override
-    public GitCommandResult run(final List<String> command) {
+    public GitCommandResult run(final List<String> command, final GitCommandExecutionPolicy policy) {
+        final Duration timeout = policy.timeout();
         try {
             final ProcessBuilder builder = new ProcessBuilder(List.copyOf(command));
             builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             builder.redirectError(ProcessBuilder.Redirect.DISCARD);
             builder.environment().put("GIT_TERMINAL_PROMPT", "0");
             final Process process = builder.start();
-            final boolean completed = process.waitFor(TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+            final boolean completed = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
             if (!completed) {
                 process.destroyForcibly();
                 throw new GitOperationException("Git command timed out.");

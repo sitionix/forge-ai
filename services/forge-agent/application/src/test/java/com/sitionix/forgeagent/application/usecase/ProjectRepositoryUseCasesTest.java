@@ -20,6 +20,7 @@ import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
 import com.sitionix.forgeagent.domain.port.GitOperationException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
+import com.sitionix.forgeagent.domain.port.LocalProjectWorkspaceException;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspacePort;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import com.sitionix.forgeagent.domain.port.ProjectRepositoryLinkRepository;
@@ -155,6 +156,7 @@ class ProjectRepositoryUseCasesTest {
                 .hasMessage("Project repository is already cloned.");
 
         verify(this.gitRepositoryPort, never()).clone(any(), any());
+        verify(this.localProjectWorkspacePort, never()).cleanupCloneTarget(any());
     }
 
     @Test
@@ -196,6 +198,48 @@ class ProjectRepositoryUseCasesTest {
                 .isInstanceOf(InfrastructureExecutionException.class)
                 .hasMessage("Project repository clone failed.");
 
+        verify(this.localProjectWorkspacePort).cleanupCloneTarget(new ProjectRepositoryCloneTarget(target));
+        verify(this.repositoryLinkRepository, never()).save(any());
+    }
+
+    @Test
+    void cloneCleanupFailureIsInfrastructureFailure() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path target = Path.of("/tmp/forge-projects/project/service-a");
+        final ProjectRepositoryCloneTarget cloneTarget = new ProjectRepositoryCloneTarget(target);
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
+                .thenReturn(Map.of(REPOSITORY_ID, false));
+        when(this.localProjectWorkspacePort.resolveCloneTarget(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
+                .thenReturn(cloneTarget);
+        org.mockito.Mockito.doThrow(new GitOperationException("clone failed"))
+                .when(this.gitRepositoryPort).clone(repository.remoteUrl(), target);
+        org.mockito.Mockito.doThrow(new LocalProjectWorkspaceException("cleanup failed"))
+                .when(this.localProjectWorkspacePort).cleanupCloneTarget(cloneTarget);
+
+        assertThatThrownBy(() -> this.useCases.cloneRepository(PROJECT_ID, REPOSITORY_ID))
+                .isInstanceOf(InfrastructureExecutionException.class)
+                .hasMessage("Project repository clone cleanup failed.");
+
+        verify(this.repositoryLinkRepository, never()).save(any());
+    }
+
+    @Test
+    void localWorkspaceFailureIsInfrastructureFailure() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
+                .thenThrow(new LocalProjectWorkspaceException("root missing"));
+
+        assertThatThrownBy(() -> this.useCases.cloneRepository(PROJECT_ID, REPOSITORY_ID))
+                .isInstanceOf(InfrastructureExecutionException.class)
+                .hasMessage("Project repository workspace operation failed.");
+
+        verify(this.gitRepositoryPort, never()).clone(any(), any());
         verify(this.repositoryLinkRepository, never()).save(any());
     }
 

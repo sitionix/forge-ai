@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeagent.domain.port.GitOperationException;
 import java.io.IOException;
+import java.time.Duration;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -27,7 +28,7 @@ class GitRepositoryAdapterTest {
 
     @Test
     void resolvesRepositoryNameGenerically() {
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(command -> new GitCommandResult(0, ""));
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter((command, policy) -> new GitCommandResult(0, ""));
 
         assertThat(adapter.resolveRepositoryName("git@gitlab.com:company/siteservice-sox.git")).isEqualTo("siteservice-sox");
         assertThat(adapter.resolveRepositoryName("https://github.com/company/backend.git")).isEqualTo("backend");
@@ -36,7 +37,7 @@ class GitRepositoryAdapterTest {
 
     @Test
     void unreachableRemoteFailsInspection() {
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(command -> new GitCommandResult(128, "fatal"));
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter((command, policy) -> new GitCommandResult(128, "fatal"));
 
         assertThatThrownBy(() -> adapter.inspectRemote("git@example.com:missing.git"))
                 .isInstanceOf(GitOperationException.class)
@@ -52,6 +53,8 @@ class GitRepositoryAdapterTest {
         adapter.clone("https://example.com/company/service.git", target);
 
         assertThat(runner.commands()).containsExactly(List.of("git", "clone", "https://example.com/company/service.git", target.toString()));
+        assertThat(runner.policies()).extracting(GitCommandExecutionPolicy::timeout)
+                .containsExactly(Duration.ofMinutes(30));
     }
 
     @Test
@@ -63,6 +66,8 @@ class GitRepositoryAdapterTest {
         adapter.inspectRemote(remoteUrl);
 
         assertThat(runner.commands()).containsExactly(List.of("git", "ls-remote", remoteUrl));
+        assertThat(runner.policies()).extracting(GitCommandExecutionPolicy::timeout)
+                .containsExactly(Duration.ofSeconds(15));
     }
 
     private Path createBareRepository(final String name) throws Exception {
@@ -83,15 +88,18 @@ class GitRepositoryAdapterTest {
         }
     }
 
-    private record CapturingRunner(int exitCode, List<List<String>> commands) implements GitCommandRunner {
+    private record CapturingRunner(int exitCode,
+                                   List<List<String>> commands,
+                                   List<GitCommandExecutionPolicy> policies) implements GitCommandRunner {
 
         CapturingRunner(final int exitCode) {
-            this(exitCode, new ArrayList<>());
+            this(exitCode, new ArrayList<>(), new ArrayList<>());
         }
 
         @Override
-        public GitCommandResult run(final List<String> command) {
+        public GitCommandResult run(final List<String> command, final GitCommandExecutionPolicy policy) {
             this.commands.add(List.copyOf(command));
+            this.policies.add(policy);
             return new GitCommandResult(this.exitCode, "");
         }
     }
