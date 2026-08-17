@@ -30,7 +30,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
         final JsonNode outputSchema = this.parseOutputSchema(claim);
         final String outputText = this.turnClient.execute(new CodexTurnRequest(
                 this.userInput(claim),
-                claim.agentInstructions(),
+                WorkflowExecutionDeveloperInstructions.compose(claim.agentInstructions()),
                 claim.executionModel().modelId(),
                 claim.executionModel().effortId(),
                 outputSchema

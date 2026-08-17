@@ -51,7 +51,7 @@ class CodexAgentExecutorTest {
     }
 
     @Test
-    void usesSnapshotInstructionsAsDeveloperInstructionsAndStructuredUserInput() throws Exception {
+    void prefixesGenericWorkflowContractBeforeSnapshotInstructionsAndKeepsStructuredUserInput() throws Exception {
         final NodeExecutionClaim claim = new NodeExecutionClaim(
                 WORKFLOW_RUN_ID,
                 NODE_RUN_ID,
@@ -70,7 +70,12 @@ class CodexAgentExecutorTest {
 
         this.executor.execute(claim);
 
-        assertThat(this.turnClient.request.developerInstructions()).isEqualTo("Analyze the requested change.");
+        assertThat(this.turnClient.request.developerInstructions())
+                .startsWith(WorkflowExecutionDeveloperInstructions.CONTRACT)
+                .endsWith("\nAnalyze the requested change.");
+        assertThat(this.turnClient.request.developerInstructions().substring(
+                WorkflowExecutionDeveloperInstructions.CONTRACT.length() + 1
+        )).isEqualTo("Analyze the requested change.");
         final JsonNode userInput = this.objectMapper.readTree(this.turnClient.request.userInput());
         assertThat(userInput.path("task").asText()).isEqualTo("Review auth changes.");
         assertThat(userInput.path("entryInput").path("id").asText()).isEqualTo(INPUT_PORT_ID.toString());
@@ -86,6 +91,19 @@ class CodexAgentExecutorTest {
                 "nodeRunId",
                 "nextTask",
                 "nextPrompt"
+        );
+    }
+
+    @Test
+    void genericWorkflowContractDoesNotContainDomainSpecificFieldOrAgentRules() {
+        assertThat(WorkflowExecutionDeveloperInstructions.CONTRACT).doesNotContain(
+                "summ",
+                "actualValue",
+                "threshold",
+                "Reviewer",
+                "if Reviewer",
+                "Agent name",
+                "port name"
         );
     }
 
