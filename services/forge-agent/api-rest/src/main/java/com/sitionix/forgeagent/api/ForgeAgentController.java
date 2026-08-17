@@ -5,9 +5,11 @@ import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
+import com.sitionix.forgeagent.api.dto.ImportProjectRepositoryRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
@@ -18,6 +20,7 @@ import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
 import com.sitionix.forgeagent.application.usecase.GetAiRuntime;
+import com.sitionix.forgeagent.application.usecase.ProjectRepositoryUseCases;
 import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
 import com.sitionix.forgeagent.application.usecase.ProjectTaskUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
@@ -42,6 +45,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class ForgeAgentController {
 
     private final ProjectUseCases projectUseCases;
+    private final ProjectRepositoryUseCases projectRepositoryUseCases;
     private final AgentUseCases agentUseCases;
     private final GetAiRuntime getAiRuntime;
     private final WorkflowUseCases workflowUseCases;
@@ -71,6 +75,22 @@ public class ForgeAgentController {
     public ResponseEntity<Void> deleteProject(@PathVariable final UUID projectId) {
         this.projectUseCases.deleteProject(projectId);
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/api/v1/projects/{projectId}/repositories")
+    public ResponseEntity<ProjectRepositoryResponse> importProjectRepository(@PathVariable final UUID projectId,
+                                                                            @Valid @RequestBody final ImportProjectRepositoryRequest request) {
+        final ProjectRepositoryResponse response = this.mapper.toResponse(
+                this.projectRepositoryUseCases.importRepository(projectId, this.mapper.toCommand(request))
+        );
+        return ResponseEntity.created(URI.create("/api/v1/projects/" + projectId + "/repositories/" + response.id())).body(response);
+    }
+
+    @GetMapping("/api/v1/projects/{projectId}/repositories")
+    public ResponseEntity<List<ProjectRepositoryResponse>> listProjectRepositories(@PathVariable final UUID projectId) {
+        return ResponseEntity.ok(this.projectRepositoryUseCases.listProjectRepositories(projectId).stream()
+                .map(this.mapper::toResponse)
+                .toList());
     }
 
     @PostMapping("/api/v1/projects/{projectId}/tasks")

@@ -10,6 +10,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -24,6 +25,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
@@ -37,7 +39,9 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ImportProjectRepositoryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
@@ -63,6 +67,7 @@ class ForgeAgentClientAdapterTest {
     private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID RUN_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID TASK_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
+    private static final UUID REPOSITORY_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -124,6 +129,40 @@ class ForgeAgentClientAdapterTest {
 
         verify(this.executor).execute(any());
         verify(this.httpClient).deleteProject(PROJECT_ID);
+    }
+
+    @Test
+    void importProjectRepositoryMapsRequestExecutesTypedClientCallAndMapsResponse() {
+        final var command = new ImportAgentProjectRepositoryCommand("git@gitlab.com:company/service-a.git");
+        final var request = new ImportProjectRepositoryRequest("git@gitlab.com:company/service-a.git");
+        final var upstreamResponse = new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", CREATED);
+        final var expected = new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", CREATED);
+        when(this.mapper.toRequest(command)).thenReturn(request);
+        when(this.httpClient.importProjectRepository(PROJECT_ID, request)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.importProjectRepository(PROJECT_ID, command)).isEqualTo(expected);
+
+        verify(this.mapper).toRequest(command);
+        verify(this.executor).execute(any());
+        verify(this.httpClient).importProjectRepository(PROJECT_ID, request);
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void listProjectRepositoriesExecutesTypedClientCallAndMapsResponse() {
+        final var upstreamResponse = new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", CREATED);
+        final var expected = new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", CREATED);
+        when(this.httpClient.listProjectRepositories(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
+        when(this.mapper.requireList(List.of(upstreamResponse), "repositories")).thenReturn(List.of(upstreamResponse));
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.listProjectRepositories(PROJECT_ID)).containsExactly(expected);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).listProjectRepositories(PROJECT_ID);
+        verify(this.mapper).requireList(List.of(upstreamResponse), "repositories");
+        verify(this.mapper).toDomain(upstreamResponse);
     }
 
     @Test

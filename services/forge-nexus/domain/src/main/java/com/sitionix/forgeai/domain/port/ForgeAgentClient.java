@@ -3,6 +3,7 @@ package com.sitionix.forgeai.domain.port;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -14,6 +15,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import java.util.List;
@@ -26,6 +28,10 @@ public interface ForgeAgentClient {
     AgentProject createProject(CreateAgentProjectCommand command);
 
     void deleteProject(UUID projectId);
+
+    AgentProjectRepository importProjectRepository(UUID projectId, ImportAgentProjectRepositoryCommand command);
+
+    List<AgentProjectRepository> listProjectRepositories(UUID projectId);
 
     AgentProjectTask createProjectTask(UUID projectId, CreateAgentProjectTaskCommand command);
 

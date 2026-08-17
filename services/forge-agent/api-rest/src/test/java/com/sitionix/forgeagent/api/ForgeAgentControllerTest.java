@@ -10,6 +10,7 @@ import com.sitionix.forgeagent.api.dto.AgentResponse;
 import com.sitionix.forgeagent.api.dto.AiRuntimeResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
+import com.sitionix.forgeagent.api.dto.ImportProjectRepositoryRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.NodeRunResponse;
@@ -18,6 +19,7 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
@@ -32,6 +34,8 @@ import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.GetAiRuntime;
+import com.sitionix.forgeagent.application.usecase.ImportProjectRepositoryCommand;
+import com.sitionix.forgeagent.application.usecase.ProjectRepositoryUseCases;
 import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
 import com.sitionix.forgeagent.application.usecase.ProjectTaskUseCases;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
@@ -48,6 +52,7 @@ import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummaryPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
@@ -75,11 +80,14 @@ class ForgeAgentControllerTest {
     private static final UUID RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID NODE_RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final UUID TASK_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
+    private static final UUID REPOSITORY_ID = UUID.fromString("88888888-8888-4888-8888-888888888888");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
     private static final AgentOutputSchema OUTPUT_SCHEMA = AgentOutputSchema.ofCanonicalJsonObject("{}");
 
     @Mock
     private ProjectUseCases projectUseCases;
+    @Mock
+    private ProjectRepositoryUseCases projectRepositoryUseCases;
     @Mock
     private AgentUseCases agentUseCases;
     @Mock
@@ -100,6 +108,7 @@ class ForgeAgentControllerTest {
     void setUp() {
         this.controller = new ForgeAgentController(
                 this.projectUseCases,
+                this.projectRepositoryUseCases,
                 this.agentUseCases,
                 this.getAiRuntime,
                 this.workflowUseCases,
@@ -142,6 +151,42 @@ class ForgeAgentControllerTest {
         verify(this.mapper).toCommand(request);
         verify(this.projectUseCases).createProject(command);
         verify(this.mapper).toResponse(project);
+    }
+
+    @Test
+    void importProjectRepository() {
+        final ImportProjectRepositoryRequest request = new ImportProjectRepositoryRequest("git@gitlab.com:company/service-a.git");
+        final ImportProjectRepositoryCommand command = new ImportProjectRepositoryCommand("git@gitlab.com:company/service-a.git");
+        final ProjectRepositoryLink repository = this.projectRepository();
+        final ProjectRepositoryResponse response = this.projectRepositoryResponse();
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.projectRepositoryUseCases.importRepository(PROJECT_ID, command)).thenReturn(repository);
+        when(this.mapper.toResponse(repository)).thenReturn(response);
+
+        final var actual = this.controller.importProjectRepository(PROJECT_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(actual.getHeaders().getLocation().toString())
+                .isEqualTo("/api/v1/projects/" + PROJECT_ID + "/repositories/" + REPOSITORY_ID);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
+        verify(this.projectRepositoryUseCases).importRepository(PROJECT_ID, command);
+        verify(this.mapper).toResponse(repository);
+    }
+
+    @Test
+    void listProjectRepositories() {
+        final ProjectRepositoryLink repository = this.projectRepository();
+        final ProjectRepositoryResponse response = this.projectRepositoryResponse();
+        when(this.projectRepositoryUseCases.listProjectRepositories(PROJECT_ID)).thenReturn(List.of(repository));
+        when(this.mapper.toResponse(repository)).thenReturn(response);
+
+        final var actual = this.controller.listProjectRepositories(PROJECT_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).containsExactly(response);
+        verify(this.projectRepositoryUseCases).listProjectRepositories(PROJECT_ID);
+        verify(this.mapper).toResponse(repository);
     }
 
     @Test
@@ -415,6 +460,14 @@ class ForgeAgentControllerTest {
 
     private ProjectResponse projectResponse() {
         return new ProjectResponse(PROJECT_ID, "Sitionix", NOW, NOW);
+    }
+
+    private ProjectRepositoryLink projectRepository() {
+        return new ProjectRepositoryLink(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", NOW);
+    }
+
+    private ProjectRepositoryResponse projectRepositoryResponse() {
+        return new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", NOW);
     }
 
     private SaveAgentRequest agentRequest() throws Exception {

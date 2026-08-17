@@ -11,6 +11,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -31,6 +32,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
@@ -53,6 +55,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ConnectionResolutionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ImportProjectRepositoryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunFailureResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodePositionRequest;
@@ -61,6 +64,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RunConnectionResponse;
@@ -90,6 +94,10 @@ public class ForgeAgentClientMapper {
         return new CreateProjectTaskRequest(command.title(), command.input(), command.workflowId());
     }
 
+    ImportProjectRepositoryRequest toRequest(final ImportAgentProjectRepositoryCommand command) {
+        return new ImportProjectRepositoryRequest(command.remoteUrl());
+    }
+
     AgentDefinitionRequest toRequest(final SaveAgentDefinitionCommand command) {
         try {
             return new AgentDefinitionRequest(
@@ -108,6 +116,14 @@ public class ForgeAgentClientMapper {
         this.requireId(response.id(), "project.id");
         this.requireText(response.name(), "project.name");
         return new AgentProject(response.id(), response.name(), response.createdAt(), response.updatedAt());
+    }
+
+    AgentProjectRepository toDomain(final ProjectRepositoryResponse response) {
+        this.requireResponse(response, "repository");
+        this.requireId(response.id(), "repository.id");
+        this.requireId(response.projectId(), "repository.projectId");
+        this.requireText(response.remoteUrl(), "repository.remoteUrl");
+        return new AgentProjectRepository(response.id(), response.projectId(), response.remoteUrl(), response.createdAt());
     }
 
     AgentProjectTaskSummary toDomain(final ProjectTaskSummaryResponse response) {

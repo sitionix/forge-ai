@@ -1,0 +1,5 @@
+{
+  "code": "VALIDATION_FAILED",
+  "message": "Validation failed.",
+  "details": "remoteUrl must not be blank (rejected:    )"
+}

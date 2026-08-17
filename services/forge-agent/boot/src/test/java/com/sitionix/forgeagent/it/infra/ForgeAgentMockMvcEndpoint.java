@@ -8,7 +8,9 @@ import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.ForgeAgentErrorResponse;
+import com.sitionix.forgeagent.api.dto.ImportProjectRepositoryRequest;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
@@ -31,6 +33,12 @@ public final class ForgeAgentMockMvcEndpoint {
             Endpoint.createContract("/api/v1/projects/{projectId}", HttpMethod.DELETE, Void.class, Void.class);
     public static final Endpoint<Void, ForgeAgentErrorResponse> DELETE_PROJECT_ERROR =
             Endpoint.createContract("/api/v1/projects/{projectId}", HttpMethod.DELETE, Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<ImportProjectRepositoryRequest, ProjectRepositoryResponse> IMPORT_PROJECT_REPOSITORY =
+            Endpoint.createContract("/api/v1/projects/{projectId}/repositories", HttpMethod.POST, ImportProjectRepositoryRequest.class, ProjectRepositoryResponse.class);
+    public static final Endpoint<ImportProjectRepositoryRequest, ForgeAgentErrorResponse> IMPORT_PROJECT_REPOSITORY_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/repositories", HttpMethod.POST, ImportProjectRepositoryRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, ProjectRepositoryResponse[]> LIST_PROJECT_REPOSITORIES =
+            Endpoint.createContract("/api/v1/projects/{projectId}/repositories", HttpMethod.GET, Void.class, ProjectRepositoryResponse[].class);
     public static final Endpoint<CreateProjectTaskRequest, ProjectTaskResponse> CREATE_PROJECT_TASK =
             Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.POST, CreateProjectTaskRequest.class, ProjectTaskResponse.class);
     public static final Endpoint<CreateProjectTaskRequest, ForgeAgentErrorResponse> CREATE_PROJECT_TASK_ERROR =

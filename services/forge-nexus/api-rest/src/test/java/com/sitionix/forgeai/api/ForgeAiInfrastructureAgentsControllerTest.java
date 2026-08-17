@@ -13,6 +13,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentRuntimeProviderResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentRuntimeResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
@@ -23,11 +24,13 @@ import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse;
 import com.sitionix.forgeai.api.agentproxy.CreateAgentWorkflowRunRequest;
 import com.sitionix.forgeai.api.agentproxy.CreateAgentProjectTaskRequest;
+import com.sitionix.forgeai.api.agentproxy.ImportAgentProjectRepositoryRequest;
 import com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -42,6 +45,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.usecase.CreateAgentDefinition;
@@ -58,6 +62,8 @@ import com.sitionix.forgeai.domain.usecase.GetAgentRuntime;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.GetAgentProjectTask;
+import com.sitionix.forgeai.domain.usecase.ImportAgentProjectRepository;
+import com.sitionix.forgeai.domain.usecase.ListAgentProjectRepositories;
 import com.sitionix.forgeai.domain.usecase.ListAgentProjects;
 import com.sitionix.forgeai.domain.usecase.ListAgentProjectTasks;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflowRuns;
@@ -83,6 +89,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
     private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID RUN_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID TASK_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
+    private static final UUID REPOSITORY_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
 
     @Mock
@@ -91,6 +98,10 @@ class ForgeAiInfrastructureAgentsControllerTest {
     private CreateAgentProject createAgentProject;
     @Mock
     private DeleteAgentProject deleteAgentProject;
+    @Mock
+    private ImportAgentProjectRepository importAgentProjectRepository;
+    @Mock
+    private ListAgentProjectRepositories listAgentProjectRepositories;
     @Mock
     private CreateAgentProjectTask createAgentProjectTask;
     @Mock
@@ -138,6 +149,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 this.listAgentProjects,
                 this.createAgentProject,
                 this.deleteAgentProject,
+                this.importAgentProjectRepository,
+                this.listAgentProjectRepositories,
                 this.createAgentProjectTask,
                 this.listAgentProjectTasks,
                 this.getAgentProjectTask,
@@ -193,6 +206,42 @@ class ForgeAiInfrastructureAgentsControllerTest {
         verify(this.mapper).toCommand(request);
         verify(this.createAgentProject).execute(command);
         verify(this.mapper).toResponse(project);
+    }
+
+    @Test
+    void importProjectRepository() {
+        final var request = new ImportAgentProjectRepositoryRequest("git@gitlab.com:company/service-a.git");
+        final var command = new ImportAgentProjectRepositoryCommand("git@gitlab.com:company/service-a.git");
+        final var repository = this.projectRepository();
+        final var response = this.projectRepositoryResponse();
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.importAgentProjectRepository.execute(PROJECT_ID, command)).thenReturn(repository);
+        when(this.mapper.toResponse(repository)).thenReturn(response);
+
+        final var actual = this.controller.importProjectRepository(PROJECT_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(actual.getHeaders().getLocation().toString())
+                .isEqualTo("/api/v1/infrastructure/agents/projects/" + PROJECT_ID + "/repositories/" + REPOSITORY_ID);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.mapper).toCommand(request);
+        verify(this.importAgentProjectRepository).execute(PROJECT_ID, command);
+        verify(this.mapper).toResponse(repository);
+    }
+
+    @Test
+    void listProjectRepositories() {
+        final var repository = this.projectRepository();
+        final var response = this.projectRepositoryResponse();
+        when(this.listAgentProjectRepositories.execute(PROJECT_ID)).thenReturn(List.of(repository));
+        when(this.mapper.toResponse(repository)).thenReturn(response);
+
+        final var actual = this.controller.listProjectRepositories(PROJECT_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).containsExactly(response);
+        verify(this.listAgentProjectRepositories).execute(PROJECT_ID);
+        verify(this.mapper).toResponse(repository);
     }
 
     @Test
@@ -468,6 +517,14 @@ class ForgeAiInfrastructureAgentsControllerTest {
 
     private AgentProjectResponse projectResponse() {
         return new AgentProjectResponse(PROJECT_ID, "Sitionix", NOW, NOW);
+    }
+
+    private AgentProjectRepository projectRepository() {
+        return new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", NOW);
+    }
+
+    private AgentProjectRepositoryResponse projectRepositoryResponse() {
+        return new AgentProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", NOW);
     }
 
     private AgentDefinitionRequest agentRequest() {

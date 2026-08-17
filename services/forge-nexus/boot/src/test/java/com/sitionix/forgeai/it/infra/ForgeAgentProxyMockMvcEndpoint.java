@@ -5,6 +5,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentDefinitionListResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentRuntimeResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
@@ -15,6 +16,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse;
 import com.sitionix.forgeai.api.agentproxy.CreateAgentWorkflowRunRequest;
 import com.sitionix.forgeai.api.agentproxy.CreateAgentProjectTaskRequest;
+import com.sitionix.forgeai.api.agentproxy.ImportAgentProjectRepositoryRequest;
 import com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
@@ -44,6 +46,22 @@ public final class ForgeAgentProxyMockMvcEndpoint {
 
     public static Endpoint<Void, Void> deleteProject() {
         return nexusDelete("/api/v1/infrastructure/agents/projects/{projectId}");
+    }
+
+    public static Endpoint<ImportAgentProjectRepositoryRequest, AgentProjectRepositoryResponse> importProjectRepository() {
+        return nexusPost("/api/v1/infrastructure/agents/projects/{projectId}/repositories",
+                ImportAgentProjectRepositoryRequest.class,
+                AgentProjectRepositoryResponse.class,
+                "requestAgentProxyImportProjectRepository.json",
+                HttpStatus.CREATED,
+                "responseAgentProxyProjectRepository.json");
+    }
+
+    public static Endpoint<Void, AgentProjectRepositoryResponse[]> listProjectRepositories() {
+        return nexusGet("/api/v1/infrastructure/agents/projects/{projectId}/repositories",
+                AgentProjectRepositoryResponse[].class,
+                HttpStatus.OK,
+                "responseAgentProxyProjectRepositories.json");
     }
 
     public static Endpoint<CreateAgentProjectTaskRequest, AgentProjectTaskResponse> createProjectTask() {

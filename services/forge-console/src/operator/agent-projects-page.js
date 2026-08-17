@@ -26,6 +26,7 @@ export class AgentProjectsPage {
     this.state = {
       view: 'projects',
       projects: [],
+      repositories: [],
       agents: [],
       workflows: [],
       tasks: [],
@@ -35,9 +36,11 @@ export class AgentProjectsPage {
       tasksTotalItems: 0,
       tasksTotalPages: 0,
       selectedProjectId: null,
+      repositoriesProjectId: null,
       agentsProjectId: null,
       workflowsProjectId: null,
       tasksProjectId: null,
+      repositoriesLoadFailed: false,
       tasksLoadFailed: false,
       editingAgentId: null,
       openWorkflowId: null,
@@ -58,6 +61,7 @@ export class AgentProjectsPage {
     this.workspace = new ProjectWorkspace({
       document: this.document,
       onBack: () => this.showProjectsIndex(),
+      onImportRepository: () => this.openRepositoryModal(),
       onNewAgent: () => this.openAgentModal(),
       onEditAgent: (agentId) => this.openAgentModal(agentId),
       onNewWorkflow: () => this.openWorkflowModal(),
@@ -106,6 +110,8 @@ export class AgentProjectsPage {
     this.byId('agentsV2CreateProject')?.addEventListener('click', () => this.openProjectModal());
     this.byId('agentsV2ProjectCancel')?.addEventListener('click', () => this.closeDialog('agentsV2ProjectDialog'));
     this.byId('agentsV2ProjectForm')?.addEventListener('submit', (event) => this.submitProject(event));
+    this.byId('agentsV2RepositoryCancel')?.addEventListener('click', () => this.closeDialog('agentsV2RepositoryDialog'));
+    this.byId('agentsV2RepositoryForm')?.addEventListener('submit', (event) => this.submitRepository(event));
     this.byId('agentsV2AgentCancel')?.addEventListener('click', () => this.closeDialog('agentsV2AgentDialog'));
     this.byId('agentsV2AgentForm')?.addEventListener('submit', (event) => this.submitAgent(event));
     this.byId('agentsV2AgentOutputJson')?.addEventListener('input', () => this.showFieldError(''));
@@ -138,13 +144,16 @@ export class AgentProjectsPage {
     this.stopTaskPolling();
     this.state.view = 'projects';
     this.state.selectedProjectId = null;
+    this.state.repositories = [];
     this.state.agents = [];
     this.state.workflows = [];
     this.state.tasks = [];
     this.resetTaskPage();
+    this.state.repositoriesProjectId = null;
     this.state.agentsProjectId = null;
     this.state.workflowsProjectId = null;
     this.state.tasksProjectId = null;
+    this.state.repositoriesLoadFailed = false;
     this.state.tasksLoadFailed = false;
     this.state.openWorkflowId = null;
     this.state.openTaskId = null;
@@ -166,13 +175,16 @@ export class AgentProjectsPage {
     this.stopTaskPolling();
     this.state.view = 'project';
     this.state.selectedProjectId = projectId;
+    this.state.repositories = [];
     this.state.agents = [];
     this.state.workflows = [];
     this.state.tasks = [];
     this.resetTaskPage();
+    this.state.repositoriesProjectId = null;
     this.state.agentsProjectId = null;
     this.state.workflowsProjectId = null;
     this.state.tasksProjectId = null;
+    this.state.repositoriesLoadFailed = false;
     this.state.tasksLoadFailed = false;
     this.state.openWorkflowId = null;
     this.state.openTaskId = null;
@@ -185,12 +197,40 @@ export class AgentProjectsPage {
     this.renderProjectWorkspace();
     this.workspace.renderLoading();
     await Promise.all([
+      this.loadRepositories(projectId, loadSequence),
       this.loadAgents(projectId, loadSequence),
       this.loadWorkflows(projectId, loadSequence),
       this.loadTasks(projectId, loadSequence, { page: 0 }),
       this.loadRuntimeCatalog(projectId, loadSequence)
     ]);
     if (!this.disposed && this.isCurrentProjectLoad(projectId, loadSequence)) {
+      this.renderProjectWorkspace();
+    }
+  }
+
+  async loadRepositories(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence) {
+    if (!projectId) {
+      return;
+    }
+    this.showError('agentsV2RepositoriesError', '');
+    this.state.repositoriesLoadFailed = false;
+    try {
+      const repositories = await this.api.listProjectRepositories(projectId);
+      if (!this.isCurrentProjectLoad(projectId, loadSequence)) {
+        return;
+      }
+      this.state.repositories = repositories;
+      this.state.repositoriesProjectId = projectId;
+      this.renderProjectWorkspace();
+    } catch (error) {
+      if (!this.isCurrentProjectLoad(projectId, loadSequence)) {
+        return;
+      }
+      this.state.repositories = [];
+      this.state.repositoriesProjectId = projectId;
+      this.state.repositoriesLoadFailed = true;
+      this.byId('agentsV2RepositoriesList').innerHTML = '';
+      this.showError('agentsV2RepositoriesError', error.message || 'Repositories failed to load.');
       this.renderProjectWorkspace();
     }
   }
@@ -355,12 +395,15 @@ export class AgentProjectsPage {
   renderProjectWorkspace() {
     this.workspace.render(
       this.currentProject(),
+      this.state.repositories,
       this.state.agents,
       this.state.workflows,
       this.state.tasks,
+      this.repositoriesDataCurrent(),
       this.projectDataCurrent(),
       this.workflowsDataCurrent(),
       this.tasksDataCurrent(),
+      this.state.repositoriesLoadFailed,
       this.state.tasksLoadFailed,
       this.state.runtime,
       this.currentTaskPage()
@@ -391,6 +434,46 @@ export class AgentProjectsPage {
       this.state.saving = false;
       this.byId('agentsV2ProjectSave').disabled = false;
     }
+  }
+
+  openRepositoryModal() {
+    if (!this.repositoriesDataCurrent()) {
+      return;
+    }
+    this.showError('agentsV2RepositoryModalError', '');
+    this.byId('agentsV2RepositoryUrl').value = '';
+    this.openDialog('agentsV2RepositoryDialog');
+  }
+
+  async submitRepository(event) {
+    event.preventDefault();
+    if (this.state.saving || !this.repositoriesDataCurrent()) {
+      return;
+    }
+    const remoteUrl = this.byId('agentsV2RepositoryUrl').value.trim();
+    if (!remoteUrl) {
+      this.showError('agentsV2RepositoryModalError', 'Repository URL is required.');
+      return;
+    }
+    this.state.saving = true;
+    this.byId('agentsV2RepositoryImport').disabled = true;
+    this.showError('agentsV2RepositoryModalError', '');
+    try {
+      await this.api.importProjectRepository(this.state.selectedProjectId, { remoteUrl });
+      this.closeDialog('agentsV2RepositoryDialog');
+      await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
+    } catch (error) {
+      this.showError('agentsV2RepositoryModalError', error.message || 'Repository could not be imported.');
+    } finally {
+      this.state.saving = false;
+      this.byId('agentsV2RepositoryImport').disabled = false;
+    }
+  }
+
+  repositoriesDataCurrent() {
+    return Boolean(this.state.selectedProjectId)
+      && this.state.repositoriesProjectId === this.state.selectedProjectId
+      && !this.state.repositoriesLoadFailed;
   }
 
   async openAgentModal(agentId = null) {

@@ -35,6 +35,18 @@
       <section class="panel project-section">
         <div class="agents-v2-pane-head">
           <div>
+            <h2>Repositories</h2>
+            <p>Project source remotes.</p>
+          </div>
+          <button id="agentsV2ImportRepository" class="button small secondary" type="button" disabled>Import Repository</button>
+        </div>
+        <div id="agentsV2RepositoriesError" class="error-box hidden"></div>
+        <div id="agentsV2RepositoriesList" class="repository-list" aria-live="polite"></div>
+      </section>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head">
+          <div>
             <h2>Agents</h2>
             <p>Reusable agents available to this project.</p>
           </div>
@@ -152,6 +164,21 @@
         <div class="modal-actions">
           <button id="agentsV2ProjectCancel" class="button secondary" type="button">Cancel</button>
           <button id="agentsV2ProjectSave" class="button" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="agentsV2RepositoryDialog" class="modal-dialog">
+      <form id="agentsV2RepositoryForm" method="dialog" class="modal-form">
+        <div class="modal-head">
+          <h2>Import Repository</h2>
+        </div>
+        <div id="agentsV2RepositoryModalError" class="error-box hidden"></div>
+        <label class="field-label" for="agentsV2RepositoryUrl">Repository URL</label>
+        <input id="agentsV2RepositoryUrl" class="text-input" type="text" required>
+        <div class="modal-actions">
+          <button id="agentsV2RepositoryCancel" class="button secondary" type="button">Cancel</button>
+          <button id="agentsV2RepositoryImport" class="button" type="submit">Import</button>
         </div>
       </form>
     </dialog>

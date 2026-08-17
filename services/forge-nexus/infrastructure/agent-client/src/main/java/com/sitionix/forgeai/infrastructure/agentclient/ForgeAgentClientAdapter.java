@@ -3,6 +3,7 @@ package com.sitionix.forgeai.infrastructure.agentclient;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -14,6 +15,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
@@ -22,6 +24,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ImportProjectRepositoryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import java.util.List;
 import java.util.UUID;
@@ -55,6 +58,19 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
             this.httpClient.deleteProject(projectId);
             return null;
         });
+    }
+
+    @Override
+    public AgentProjectRepository importProjectRepository(final UUID projectId, final ImportAgentProjectRepositoryCommand command) {
+        final ImportProjectRepositoryRequest request = this.mapper.toRequest(command);
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.importProjectRepository(projectId, request)));
+    }
+
+    @Override
+    public List<AgentProjectRepository> listProjectRepositories(final UUID projectId) {
+        return this.mapper.requireList(this.clientCallExecutor.execute(() -> this.httpClient.listProjectRepositories(projectId)), "repositories").stream()
+                .map(this.mapper::toDomain)
+                .toList();
     }
 
     @Override
