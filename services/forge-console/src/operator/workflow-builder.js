@@ -959,6 +959,12 @@ export class WorkflowBuilder {
       })),
       taskInputPortId: this.portById(this.workflow.taskInputPortId, 'inputs') ? this.workflow.taskInputPortId : null
     };
+    if (request.nodes.length > 0 && !request.taskInputPortId) {
+      this.showError('Task Input is required before saving this workflow.');
+      this.saving = false;
+      this.byId('agentsV2WorkflowSave').disabled = false;
+      return;
+    }
     try {
       const saved = await this.api.updateWorkflow(this.workflow.id, request);
       this.workflow = this.cloneWorkflow(saved);

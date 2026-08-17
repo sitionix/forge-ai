@@ -182,7 +182,7 @@ public class WorkflowGraphValidator {
             return;
         }
         if (taskInputPortId == null) {
-            return;
+            throw new ValidationException("WORKFLOW_TASK_INPUT_REQUIRED", "Workflow task input port is required.");
         }
         if (!allOwnersByPortId.containsKey(taskInputPortId)) {
             throw new ValidationException("UNKNOWN_TASK_INPUT_PORT", "Workflow task input port must exist.");

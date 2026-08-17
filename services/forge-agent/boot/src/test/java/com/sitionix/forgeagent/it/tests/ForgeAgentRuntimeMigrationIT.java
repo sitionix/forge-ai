@@ -26,6 +26,19 @@ class ForgeAgentRuntimeMigrationIT {
     private static final UUID SOURCE_NODE_A = UUID.fromString("96000000-0000-4000-8000-000000000009");
     private static final UUID SOURCE_NODE_B = UUID.fromString("96000000-0000-4000-8000-000000000010");
     private static final UUID AGENT_ID = UUID.fromString("96000000-0000-4000-8000-000000000011");
+    private static final UUID V13_PROJECT_ID = UUID.fromString("97000000-0000-4000-8000-000000000001");
+    private static final UUID V13_AGENT_ID = UUID.fromString("97000000-0000-4000-8000-000000000002");
+    private static final UUID V13_UNAMBIGUOUS_WORKFLOW = UUID.fromString("97000000-0000-4000-8000-000000000003");
+    private static final UUID V13_MULTIPLE_INPUTS_WORKFLOW = UUID.fromString("97000000-0000-4000-8000-000000000004");
+    private static final UUID V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW = UUID.fromString("97000000-0000-4000-8000-000000000005");
+    private static final UUID V13_UNAMBIGUOUS_NODE = UUID.fromString("97000000-0000-4000-8000-000000000006");
+    private static final UUID V13_UNAMBIGUOUS_INPUT = UUID.fromString("97000000-0000-4000-8000-000000000007");
+    private static final UUID V13_MULTIPLE_INPUTS_NODE = UUID.fromString("97000000-0000-4000-8000-000000000008");
+    private static final UUID V13_MULTIPLE_INPUT_A = UUID.fromString("97000000-0000-4000-8000-000000000009");
+    private static final UUID V13_MULTIPLE_INPUT_B = UUID.fromString("97000000-0000-4000-8000-000000000010");
+    private static final UUID V13_ZERO_INPUT_NODE = UUID.fromString("97000000-0000-4000-8000-000000000011");
+    private static final UUID V13_ZERO_AMBIGUOUS_INPUT_NODE = UUID.fromString("97000000-0000-4000-8000-000000000012");
+    private static final UUID V13_ZERO_AMBIGUOUS_INPUT = UUID.fromString("97000000-0000-4000-8000-000000000013");
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
@@ -78,6 +91,28 @@ class ForgeAgentRuntimeMigrationIT {
         }
     }
 
+    @Test
+    void v13BackfillsOnlyTrulyUnambiguousLegacyTaskInputs() {
+        final String schema = "task_input_migration_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, MigrationVersion.fromVersion("12")).migrate();
+            this.insertV13BackfillRows(jdbc, schema);
+
+            this.flyway(schema, null).migrate();
+
+            assertThat(this.uuidValue(jdbc, "SELECT task_input_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_UNAMBIGUOUS_WORKFLOW))
+                    .isEqualTo(V13_UNAMBIGUOUS_INPUT);
+            assertThat(this.uuidValue(jdbc, "SELECT task_input_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_MULTIPLE_INPUTS_WORKFLOW))
+                    .isNull();
+            assertThat(this.uuidValue(jdbc, "SELECT task_input_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW))
+                    .isNull();
+        } finally {
+            jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+        }
+    }
+
     private Flyway flyway(final String schema, final MigrationVersion target) {
         final var configuration = Flyway.configure()
                 .dataSource(this.dataSource)
@@ -101,6 +136,64 @@ class ForgeAgentRuntimeMigrationIT {
         this.insertNodeRun(jdbc, schema, TERMINAL_B, TERMINAL_RUN, SOURCE_NODE_B, "SUCCEEDED", TERMINAL_A);
         this.insertNodeRun(jdbc, schema, ACTIVE_A, ACTIVE_RUN, SOURCE_NODE_A, "SUCCEEDED", null);
         this.insertNodeRun(jdbc, schema, ACTIVE_B, ACTIVE_RUN, SOURCE_NODE_B, "PENDING", ACTIVE_A);
+    }
+
+    private void insertV13BackfillRows(final JdbcTemplate jdbc, final String schema) {
+        jdbc.update("""
+                INSERT INTO %s.agent_projects (id, name, normalized_name, created_at, updated_at)
+                VALUES (?, 'Task Input Migration Project', 'task input migration project', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """.formatted(schema), V13_PROJECT_ID);
+        jdbc.update("""
+                INSERT INTO %s.agent_definitions (
+                    id, project_id, name, normalized_name, instructions, output_schema, created_at, updated_at
+                )
+                VALUES (?, ?, 'Migration Agent', 'migration agent', 'Instructions.', CAST(? AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """.formatted(schema), V13_AGENT_ID, V13_PROJECT_ID, "{\"type\":\"object\"}");
+        this.insertWorkflow(jdbc, schema, V13_UNAMBIGUOUS_WORKFLOW, "Unambiguous Workflow", "unambiguous workflow");
+        this.insertWorkflow(jdbc, schema, V13_MULTIPLE_INPUTS_WORKFLOW, "Multiple Inputs Workflow", "multiple inputs workflow");
+        this.insertWorkflow(jdbc, schema, V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW, "Zero Input Ambiguous Workflow", "zero input ambiguous workflow");
+        this.insertWorkflowNode(jdbc, schema, V13_UNAMBIGUOUS_WORKFLOW, V13_UNAMBIGUOUS_NODE);
+        this.insertWorkflowNode(jdbc, schema, V13_MULTIPLE_INPUTS_WORKFLOW, V13_MULTIPLE_INPUTS_NODE);
+        this.insertWorkflowNode(jdbc, schema, V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW, V13_ZERO_INPUT_NODE);
+        this.insertWorkflowNode(jdbc, schema, V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW, V13_ZERO_AMBIGUOUS_INPUT_NODE);
+        this.insertWorkflowInput(jdbc, schema, V13_UNAMBIGUOUS_WORKFLOW, V13_UNAMBIGUOUS_NODE, V13_UNAMBIGUOUS_INPUT, 0);
+        this.insertWorkflowInput(jdbc, schema, V13_MULTIPLE_INPUTS_WORKFLOW, V13_MULTIPLE_INPUTS_NODE, V13_MULTIPLE_INPUT_A, 0);
+        this.insertWorkflowInput(jdbc, schema, V13_MULTIPLE_INPUTS_WORKFLOW, V13_MULTIPLE_INPUTS_NODE, V13_MULTIPLE_INPUT_B, 1);
+        this.insertWorkflowInput(jdbc, schema, V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW, V13_ZERO_AMBIGUOUS_INPUT_NODE, V13_ZERO_AMBIGUOUS_INPUT, 0);
+    }
+
+    private void insertWorkflow(final JdbcTemplate jdbc,
+                                final String schema,
+                                final UUID workflowId,
+                                final String name,
+                                final String normalizedName) {
+        jdbc.update("""
+                INSERT INTO %s.agent_workflows (id, project_id, name, normalized_name, created_at, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """.formatted(schema), workflowId, V13_PROJECT_ID, name, normalizedName);
+    }
+
+    private void insertWorkflowNode(final JdbcTemplate jdbc, final String schema, final UUID workflowId, final UUID nodeId) {
+        jdbc.update("""
+                INSERT INTO %s.workflow_nodes (
+                    id, workflow_id, target_id, position_x, position_y, input_mode
+                )
+                VALUES (?, ?, ?, 0, 0, 'DEPENDENCIES_ONLY')
+                """.formatted(schema), nodeId, workflowId, V13_AGENT_ID);
+    }
+
+    private void insertWorkflowInput(final JdbcTemplate jdbc,
+                                     final String schema,
+                                     final UUID workflowId,
+                                     final UUID nodeId,
+                                     final UUID portId,
+                                     final int order) {
+        jdbc.update("""
+                INSERT INTO %s.workflow_node_ports (
+                    id, workflow_id, node_id, direction, name, description, port_order
+                )
+                VALUES (?, ?, ?, 'INPUT', ?, 'Input description.', ?)
+                """.formatted(schema), portId, workflowId, nodeId, "Input " + order, order);
     }
 
     private void insertRun(final JdbcTemplate jdbc, final String schema, final UUID id, final String status) {
@@ -148,6 +241,10 @@ class ForgeAgentRuntimeMigrationIT {
 
     private String value(final JdbcTemplate jdbc, final String sql, final UUID id) {
         return jdbc.queryForObject(sql, String.class, id);
+    }
+
+    private UUID uuidValue(final JdbcTemplate jdbc, final String sql, final UUID id) {
+        return jdbc.queryForObject(sql, UUID.class, id);
     }
 
     private int count(final JdbcTemplate jdbc, final String sql, final Object... args) {

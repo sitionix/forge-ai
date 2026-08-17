@@ -110,8 +110,22 @@ class WorkflowUseCasesTest {
     @Test
     void updateLocksWorkflowBeforeReloadAndValidatesFinalGraphBeforeSave() {
         final Workflow current = this.workflow(List.of());
-        final Node first = new Node(this.nodeA, this.agentId, new NodePosition(1.0, 2.0));
-        final Node second = new Node(this.nodeB, this.agentId, new NodePosition(3.0, 4.0));
+        final Node first = new Node(
+                this.nodeA,
+                this.agentId,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
+                List.of(new NodePort(this.outputA, "Output", "Output.", 0)),
+                new NodePosition(1.0, 2.0)
+        );
+        final Node second = new Node(
+                this.nodeB,
+                this.agentId,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodePort(this.inputB, "Input", "Input.", 0)),
+                List.of(new NodePort(this.outputB, "Output", "Output.", 0)),
+                new NodePosition(3.0, 4.0)
+        );
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
@@ -120,7 +134,7 @@ class WorkflowUseCasesTest {
 
         final Workflow saved = this.useCases.updateWorkflow(
                 this.workflowId,
-                new SaveWorkflowCommand("Full Testing", List.of(first, second), List.of(), null)
+                new SaveWorkflowCommand("Full Testing", List.of(first, second), List.of(), this.inputA)
         );
 
         assertThat(saved.nodes()).containsExactly(first, second);
@@ -131,6 +145,32 @@ class WorkflowUseCasesTest {
         order.verify(this.workflowRepository).findById(this.workflowId);
         order.verify(this.agentDefinitionRepository).findByIds(any());
         order.verify(this.workflowRepository).save(any());
+    }
+
+    @Test
+    void updateRejectsNonEmptyWorkflowWithoutTaskInput() {
+        final Workflow current = this.workflow(List.of());
+        final Node first = new Node(
+                this.nodeA,
+                this.agentId,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
+                List.of(new NodePort(this.outputA, "Output", "Output.", 0)),
+                new NodePosition(1.0, 2.0)
+        );
+        when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
+
+        assertThatThrownBy(() -> this.useCases.updateWorkflow(
+                this.workflowId,
+                new SaveWorkflowCommand("Full Testing", List.of(first), List.of(), null)
+        ))
+                .isInstanceOf(com.sitionix.forgeagent.domain.exception.ValidationException.class)
+                .extracting("code")
+                .isEqualTo("WORKFLOW_TASK_INPUT_REQUIRED");
+
+        verify(this.workflowRepository, never()).save(any());
     }
 
     @Test

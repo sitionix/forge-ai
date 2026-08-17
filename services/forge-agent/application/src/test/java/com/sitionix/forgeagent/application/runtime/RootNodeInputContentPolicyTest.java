@@ -63,6 +63,19 @@ class RootNodeInputContentPolicyTest {
         assertThat(policy.supports(new NodeInputContentContext(this.workflowRun(), this.nodeRun(ACTIVATION_FRAME_ID), List.of()))).isFalse();
     }
 
+    @Test
+    void legacyRootWithoutEnteredInputReceivesOriginalTaskAndNullEntryInput() {
+        final RootNodeInputContentPolicy policy = new RootNodeInputContentPolicy(this.graphRepository);
+        final NodeRun legacyRoot = this.nodeRun(null, null);
+
+        final NodeExecutionInputContent content = policy.assemble(new NodeInputContentContext(this.workflowRun(), legacyRoot, List.of()));
+
+        assertThat(policy.supports(new NodeInputContentContext(this.workflowRun(), legacyRoot, List.of()))).isTrue();
+        assertThat(content.envelope().originalTask()).isEqualTo("Review auth changes.");
+        assertThat(content.envelope().entryInputPort()).isNull();
+        assertThat(content.envelope().contributions()).isEmpty();
+    }
+
     private WorkflowRun workflowRun() {
         return new WorkflowRun(
                 WORKFLOW_RUN_ID,
@@ -80,6 +93,10 @@ class RootNodeInputContentPolicyTest {
     }
 
     private NodeRun nodeRun(final UUID activationFrameId) {
+        return this.nodeRun(INPUT_PORT_ID, activationFrameId);
+    }
+
+    private NodeRun nodeRun(final UUID enteredViaInputPortId, final UUID activationFrameId) {
         return new NodeRun(
                 NODE_RUN_ID,
                 WORKFLOW_RUN_ID,
@@ -91,7 +108,7 @@ class RootNodeInputContentPolicyTest {
                 NodeInputMode.DEPENDENCIES_ONLY,
                 new NodePosition(1.0, 2.0),
                 FRAME_ID,
-                INPUT_PORT_ID,
+                enteredViaInputPortId,
                 activationFrameId,
                 null,
                 NodeRunStatus.PENDING,

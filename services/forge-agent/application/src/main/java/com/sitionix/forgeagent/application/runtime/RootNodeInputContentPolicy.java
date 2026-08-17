@@ -20,6 +20,13 @@ public class RootNodeInputContentPolicy implements NodeInputContentPolicy {
 
     @Override
     public NodeExecutionInputContent assemble(final NodeInputContentContext context) {
+        if (context.nodeRun().enteredViaInputPortId() == null) {
+            return new NodeExecutionInputContent(new NodeInputEnvelope(
+                    context.workflowRun().input(),
+                    null,
+                    java.util.List.of()
+            ));
+        }
         return new NodeExecutionInputContent(new NodeInputEnvelope(
                 context.workflowRun().input(),
                 this.graphRepository.findPort(context.workflowRun().id(), context.nodeRun().enteredViaInputPortId())

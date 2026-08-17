@@ -2812,8 +2812,8 @@ describe('Agent projects page', () => {
           { id: 'output-b', name: 'Second output', description: 'Second.', order: 1 },
           { id: 'output-a', name: 'First output', description: 'First.', order: 0 }
         ])
-      ]))),
-      updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes)))
+      ], project().id, [], 'input-a'))),
+      updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(_workflowId, request.nodes, project().id, request.connections, request.taskInputPortId)))
     });
     const { dom, page } = await openedBuilder(fakeApi);
 
@@ -2838,7 +2838,7 @@ describe('Agent projects page', () => {
         position: { x: 44, y: 55 }
       }],
       connections: [],
-      taskInputPortId: null
+      taskInputPortId: 'input-a'
     });
     expect(portTexts(dom, 'node-1', 'input')).toEqual(['First input', 'Second input']);
     expect(portTexts(dom, 'node-1', 'output')).toEqual(['First output', 'Second output']);
@@ -2971,6 +2971,22 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-task-input-edge]')).toBeNull();
   });
 
+  it('save rejects non-empty Workflow without Task Input before submitting', async () => {
+    const fakeApi = api({
+      getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+        portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+      ]))),
+      updateWorkflow: vi.fn()
+    });
+    const { dom, page } = await openedBuilder(fakeApi);
+
+    await page.workflowBuilder.save();
+
+    expect(fakeApi.updateWorkflow).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('agentsV2WorkflowBuilderError')?.textContent)
+      .toContain('Task Input is required before saving this workflow.');
+  });
+
   it('dropping connection on empty canvas cancels', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
@@ -3051,9 +3067,13 @@ describe('Agent projects page', () => {
 
   it('save submits complete graph, reload restores positions, and backend cycle errors are shown', async () => {
     const fakeApi = api({
-      getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 44, 55)]))),
+      getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+        portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 44, 55)
+      ], project().id, [], 'node-1-input'))),
       updateWorkflow: vi.fn()
-        .mockResolvedValueOnce(workflow('wf', [node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 80, 90)]))
+        .mockResolvedValueOnce(workflow('wf', [
+          portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 80, 90)
+        ], project().id, [], 'node-1-input'))
         .mockRejectedValueOnce(new Error('WORKFLOW_GRAPH_CYCLE: Workflow graph contains a cycle.'))
     });
     const { dom, page } = await openedBuilder(fakeApi);
@@ -3066,12 +3086,12 @@ describe('Agent projects page', () => {
         id: 'node-1',
         targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         inputMode: 'DEPENDENCIES_ONLY',
-        inputs: [],
-        outputs: [],
+        inputs: [{ id: 'node-1-input', name: 'Input', description: 'Default workflow input.', order: 0 }],
+        outputs: [{ id: 'node-1-output', name: 'Output', description: 'Default workflow output.', order: 0 }],
         position: { x: 80, y: 90 }
       }],
       connections: [],
-      taskInputPortId: null
+      taskInputPortId: 'node-1-input'
     });
     expect(page.workflowBuilder.workflow.nodes[0].position).toEqual({ x: 80, y: 90 });
 
