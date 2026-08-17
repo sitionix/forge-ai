@@ -2912,7 +2912,10 @@ describe('Agent projects page', () => {
     dom.window.document.querySelector<HTMLElement>('[data-node-output-port="node-1-output"]')!
       .dispatchEvent(pointer(dom, 'pointerdown', 214, 72));
     dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 300, 120));
-    expect(dom.window.document.querySelector('.workflow-edge-preview')?.getAttribute('d')).toContain('300 120');
+    const previewPath = dom.window.document.querySelector('.workflow-edge-preview')?.getAttribute('d') || '';
+    expect(previewPath).toContain(' Q ');
+    expect(previewPath).toContain(' H 300');
+    expect(previewPath).not.toContain(' C ');
 
     dom.window.document.querySelector<HTMLElement>('[data-node-input-port="node-2-input"]')!
       .dispatchEvent(pointer(dom, 'pointerup', 10, 72));
@@ -2923,6 +2926,21 @@ describe('Agent projects page', () => {
     }]);
     expect(dom.window.document.querySelector('.workflow-edge-preview')).toBeNull();
     expect(dom.window.document.getElementById('agentsV2WorkflowEdges')?.innerHTML).toContain('workflow-edge');
+  });
+
+  it('routes Workflow Builder feedback edges through the shortest path outside Node bounds', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 70, 95),
+      portedNode('plus', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 82, 272)
+    ], project().id, [connection('reviewer', 'plus')]))) });
+    const { dom } = await openedBuilder(fakeApi);
+
+    const path = dom.window.document.querySelector<SVGPathElement>('[data-edge-id="reviewer-plus-connection"] .edge-visible')?.getAttribute('d') || '';
+
+    expect(path).not.toContain(' C ');
+    expect(path).toContain(' Q ');
+    expect(path).toContain('V 424');
+    expect(path).toContain('Q 50 436');
   });
 
   it('Task Input loads, targets the same input as feedback, reconnects, saves, and disconnects', async () => {

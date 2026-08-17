@@ -21,6 +21,9 @@ const MAX_CANVAS_SCALE = 1.8;
 const DEFAULT_INPUT_MODE = 'DEPENDENCIES_ONLY';
 const TASK_AND_DEPENDENCIES_INPUT_MODE = 'TASK_AND_DEPENDENCIES';
 const NODE_DRAG_THRESHOLD = 3;
+const EDGE_CORNER_RADIUS = 12;
+const EDGE_ROUTE_CLEARANCE = 32;
+const EDGE_ROUTE_MARGIN = 24;
 const DEFAULT_INPUT_PORT = {
   name: 'Input',
   description: 'Default workflow input.',
@@ -268,29 +271,36 @@ export class WorkflowBuilder {
     this.syncCanvasBounds();
     const groups = [];
     for (const connection of this.workflowConnections()) {
-      if (!this.portById(connection.sourceOutputPortId) || !this.portById(connection.targetInputPortId)) {
+      const sourcePort = this.portById(connection.sourceOutputPortId, 'outputs');
+      const targetPort = this.portById(connection.targetInputPortId, 'inputs');
+      if (!sourcePort || !targetPort) {
         continue;
       }
-      const start = this.connectorPoint(connection.sourceOutputPortId, 'output');
-      const end = this.connectorPoint(connection.targetInputPortId, 'input');
+      const start = this.connectorPoint(sourcePort.port.id, 'output');
+      const end = this.connectorPoint(targetPort.port.id, 'input');
+      const path = this.edgePath(sourcePort, targetPort);
       const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
       groups.push(`
         <g class="workflow-edge" data-edge-id="${escapeHtml(connection.id)}" data-edge-source-port="${escapeHtml(connection.sourceOutputPortId)}" data-edge-target-port="${escapeHtml(connection.targetInputPortId)}">
-          <path class="edge-visible" d="${this.pathD(start, end)}" marker-end="url(#agentsV2Arrow)" />
-          <path class="edge-hit" d="${this.pathD(start, end)}" />
+          <path class="edge-visible" d="${path}" marker-end="url(#agentsV2Arrow)" />
+          <path class="edge-hit" d="${path}" />
           <circle class="edge-remove" data-remove-connection="${escapeHtml(connection.id)}" cx="${midpoint.x}" cy="${midpoint.y}" r="10" />
           <text class="edge-remove-label" data-remove-connection="${escapeHtml(connection.id)}" x="${midpoint.x}" y="${midpoint.y + 4}">×</text>
         </g>
       `);
     }
-    if (this.workflow?.taskInputPortId && this.portById(this.workflow.taskInputPortId, 'inputs')) {
+    const taskInputTargetPort = this.workflow?.taskInputPortId
+      ? this.portById(this.workflow.taskInputPortId, 'inputs')
+      : null;
+    if (taskInputTargetPort) {
       const start = this.taskInputConnectorPoint();
-      const end = this.connectorPoint(this.workflow.taskInputPortId, 'input');
+      const end = this.connectorPoint(taskInputTargetPort.port.id, 'input');
+      const path = this.taskInputPath(taskInputTargetPort);
       const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
       groups.push(`
         <g class="workflow-edge task-input-edge" data-task-input-edge data-edge-target-port="${escapeHtml(this.workflow.taskInputPortId)}">
-          <path class="edge-visible" d="${this.pathD(start, end)}" marker-end="url(#agentsV2Arrow)" />
-          <path class="edge-hit" d="${this.pathD(start, end)}" />
+          <path class="edge-visible" d="${path}" marker-end="url(#agentsV2Arrow)" />
+          <path class="edge-hit" d="${path}" />
           <circle class="edge-remove" data-remove-task-input cx="${midpoint.x}" cy="${midpoint.y}" r="10" />
           <text class="edge-remove-label" data-remove-task-input x="${midpoint.x}" y="${midpoint.y + 4}">×</text>
         </g>
@@ -519,7 +529,7 @@ export class WorkflowBuilder {
     }
     const start = sourcePort ? this.connectorPoint(sourcePort.port.id, 'output') : this.taskInputConnectorPoint();
     const end = this.connectorPoint(targetPort.port.id, 'input');
-    const path = this.pathD(start, end);
+    const path = sourcePort ? this.edgePath(sourcePort, targetPort) : this.taskInputPath(targetPort);
     group.querySelectorAll('.edge-visible, .edge-hit').forEach((element) => {
       element.setAttribute('d', path);
     });
@@ -882,6 +892,26 @@ export class WorkflowBuilder {
     };
   }
 
+  edgePath(sourcePort, targetPort) {
+    return this.pathD(
+      this.connectorPoint(sourcePort.port.id, 'output'),
+      this.connectorPoint(targetPort.port.id, 'input'),
+      this.nodeBounds(sourcePort.node),
+      this.nodeBounds(targetPort.node),
+      this.edgeObstacles(new Set([sourcePort.node.id, targetPort.node.id]))
+    );
+  }
+
+  taskInputPath(targetPort) {
+    return this.pathD(
+      this.taskInputConnectorPoint(),
+      this.connectorPoint(targetPort.port.id, 'input'),
+      this.taskInputBounds(),
+      this.nodeBounds(targetPort.node),
+      this.edgeObstacles(new Set([targetPort.node.id, 'task-input']))
+    );
+  }
+
   canvasPoint(event) {
     const canvas = this.byId('agentsV2WorkflowCanvas');
     const rect = canvas.getBoundingClientRect();
@@ -891,9 +921,172 @@ export class WorkflowBuilder {
     };
   }
 
-  pathD(start, end) {
-    const mid = Math.max(40, Math.abs(end.x - start.x) / 2);
-    return `M ${start.x} ${start.y} C ${start.x + mid} ${start.y}, ${end.x - mid} ${end.y}, ${end.x} ${end.y}`;
+  pathD(start, end, sourceBounds = null, targetBounds = null, obstacles = []) {
+    const candidates = this.edgeRouteCandidates(start, end, sourceBounds, targetBounds, obstacles);
+    const bounds = [sourceBounds, targetBounds, ...obstacles].filter(Boolean);
+    const valid = candidates.filter((points) => !this.routeIntersectsBounds(points, bounds));
+    const route = (valid.length ? valid : candidates)
+      .sort((left, right) => this.routeLength(left) - this.routeLength(right))[0];
+    return this.orthogonalRoundedPath(route);
+  }
+
+  edgeRouteCandidates(start, end, sourceBounds = null, targetBounds = null, obstacles = []) {
+    const bounds = [sourceBounds, targetBounds, ...obstacles].filter(Boolean);
+    const left = Math.min(start.x, end.x, ...bounds.map((bound) => bound.left));
+    const right = Math.max(start.x, end.x, ...bounds.map((bound) => bound.right));
+    const top = Math.min(start.y, end.y, ...bounds.map((bound) => bound.top));
+    const bottom = Math.max(start.y, end.y, ...bounds.map((bound) => bound.bottom));
+    const sourceRight = sourceBounds?.right ?? start.x;
+    const targetLeft = targetBounds?.left ?? end.x;
+    const exitX = Math.max(start.x + EDGE_ROUTE_CLEARANCE, sourceRight + EDGE_ROUTE_CLEARANCE);
+    const entryX = Math.min(end.x - EDGE_ROUTE_CLEARANCE, targetLeft - EDGE_ROUTE_CLEARANCE);
+    const directMidX = exitX <= entryX ? (exitX + entryX) / 2 : (start.x + end.x) / 2;
+    const topY = Math.max(EDGE_ROUTE_MARGIN, top - EDGE_ROUTE_CLEARANCE);
+    const bottomY = bottom + EDGE_ROUTE_CLEARANCE;
+    return [
+      [
+        start,
+        { x: directMidX, y: start.y },
+        { x: directMidX, y: end.y },
+        end
+      ],
+      [
+        start,
+        { x: exitX, y: start.y },
+        { x: exitX, y: topY },
+        { x: entryX, y: topY },
+        { x: entryX, y: end.y },
+        end
+      ],
+      [
+        start,
+        { x: exitX, y: start.y },
+        { x: exitX, y: bottomY },
+        { x: entryX, y: bottomY },
+        { x: entryX, y: end.y },
+        end
+      ]
+    ];
+  }
+
+  routeIntersectsBounds(points, bounds) {
+    for (let index = 1; index < points.length; index += 1) {
+      if (bounds.some((bound) => this.segmentIntersectsBounds(points[index - 1], points[index], bound))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  segmentIntersectsBounds(start, end, bounds) {
+    if (start.y === end.y) {
+      const minX = Math.min(start.x, end.x);
+      const maxX = Math.max(start.x, end.x);
+      return start.y > bounds.top && start.y < bounds.bottom && maxX > bounds.left && minX < bounds.right;
+    }
+    if (start.x === end.x) {
+      const minY = Math.min(start.y, end.y);
+      const maxY = Math.max(start.y, end.y);
+      return start.x > bounds.left && start.x < bounds.right && maxY > bounds.top && minY < bounds.bottom;
+    }
+    return true;
+  }
+
+  routeLength(points) {
+    return points.slice(1).reduce((total, point, index) => {
+      const previous = points[index];
+      return total + Math.abs(point.x - previous.x) + Math.abs(point.y - previous.y);
+    }, 0);
+  }
+
+  orthogonalRoundedPath(points) {
+    const clean = points.filter((point, index) => {
+      const previous = points[index - 1];
+      return !previous || previous.x !== point.x || previous.y !== point.y;
+    });
+    if (!clean.length) {
+      return '';
+    }
+    let d = `M ${clean[0].x} ${clean[0].y}`;
+    for (let index = 1; index < clean.length; index += 1) {
+      const current = clean[index];
+      const previous = clean[index - 1];
+      const next = clean[index + 1];
+      if (!next) {
+        d += this.orthogonalLineCommand(previous, current);
+        break;
+      }
+      const incomingHorizontal = previous.y === current.y;
+      const outgoingHorizontal = current.y === next.y;
+      if (incomingHorizontal === outgoingHorizontal) {
+        d += this.orthogonalLineCommand(previous, current);
+        continue;
+      }
+      const incomingDistance = incomingHorizontal ? Math.abs(current.x - previous.x) : Math.abs(current.y - previous.y);
+      const outgoingDistance = outgoingHorizontal ? Math.abs(next.x - current.x) : Math.abs(next.y - current.y);
+      const radius = Math.min(EDGE_CORNER_RADIUS, incomingDistance / 2, outgoingDistance / 2);
+      if (radius <= 0) {
+        d += this.orthogonalLineCommand(previous, current);
+        continue;
+      }
+      const before = incomingHorizontal
+        ? { x: current.x - Math.sign(current.x - previous.x) * radius, y: current.y }
+        : { x: current.x, y: current.y - Math.sign(current.y - previous.y) * radius };
+      const after = outgoingHorizontal
+        ? { x: current.x + Math.sign(next.x - current.x) * radius, y: current.y }
+        : { x: current.x, y: current.y + Math.sign(next.y - current.y) * radius };
+      d += this.orthogonalLineCommand(previous, before);
+      d += ` Q ${current.x} ${current.y} ${after.x} ${after.y}`;
+    }
+    return d;
+  }
+
+  orthogonalLineCommand(from, to) {
+    if (from.x === to.x && from.y === to.y) {
+      return '';
+    }
+    if (from.y === to.y) {
+      return ` H ${to.x}`;
+    }
+    if (from.x === to.x) {
+      return ` V ${to.y}`;
+    }
+    return ` H ${to.x} V ${to.y}`;
+  }
+
+  edgeObstacles(excludedIds = new Set()) {
+    const obstacles = (this.workflow?.nodes || [])
+      .filter((node) => !excludedIds.has(node.id))
+      .map((node) => this.nodeBounds(node));
+    if (!excludedIds.has('task-input')) {
+      obstacles.push(this.taskInputBounds());
+    }
+    return obstacles;
+  }
+
+  nodeBounds(node) {
+    const x = Number(node?.position?.x || 0);
+    const y = Number(node?.position?.y || 0);
+    return {
+      left: x,
+      top: y,
+      right: x + NODE_WIDTH,
+      bottom: y + this.nodeHeight(node)
+    };
+  }
+
+  taskInputBounds() {
+    return {
+      left: TASK_INPUT_X,
+      top: TASK_INPUT_Y,
+      right: TASK_INPUT_X + TASK_INPUT_WIDTH,
+      bottom: TASK_INPUT_Y + TASK_INPUT_HEIGHT
+    };
+  }
+
+  nodeHeight(node) {
+    const portRows = Math.max(this.nodePorts(node?.inputs).length, this.nodePorts(node?.outputs).length, 1);
+    return Math.max(NODE_MIN_HEIGHT, portRows * NODE_PORT_ROW_HEIGHT + NODE_HEIGHT_PADDING);
   }
 
   syncCanvasBounds() {
@@ -906,10 +1099,8 @@ export class WorkflowBuilder {
     let width = Math.max(MIN_CANVAS_WIDTH, canvas.clientWidth || 0);
     let height = Math.max(MIN_CANVAS_HEIGHT, canvas.clientHeight || 0);
     for (const node of this.workflow?.nodes || []) {
-      const portRows = Math.max(this.nodePorts(node.inputs).length, this.nodePorts(node.outputs).length, 1);
-      const nodeHeight = Math.max(NODE_MIN_HEIGHT, portRows * NODE_PORT_ROW_HEIGHT + NODE_HEIGHT_PADDING);
       width = Math.max(width, Number(node.position?.x || 0) + NODE_WIDTH + NODE_PORT_LABEL_EXTENT + CANVAS_PADDING);
-      height = Math.max(height, Number(node.position?.y || 0) + nodeHeight + CANVAS_PADDING);
+      height = Math.max(height, Number(node.position?.y || 0) + this.nodeHeight(node) + CANVAS_PADDING);
     }
     width = Math.max(width, TASK_INPUT_X + TASK_INPUT_WIDTH + CANVAS_PADDING);
     height = Math.max(height, TASK_INPUT_Y + TASK_INPUT_HEIGHT + CANVAS_PADDING);

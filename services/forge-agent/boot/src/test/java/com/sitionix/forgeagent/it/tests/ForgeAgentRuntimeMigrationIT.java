@@ -107,13 +107,28 @@ class ForgeAgentRuntimeMigrationIT {
     }
 
     @Test
-    void v13BackfillsOnlyTrulyUnambiguousLegacyTaskInputs() {
+    void v14ClearsPreexistingUnreachableTaskInput() {
         final String schema = "task_input_migration_" + UUID.randomUUID().toString().replace("-", "");
         final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
         jdbc.execute("CREATE SCHEMA " + schema);
         try {
             this.flyway(schema, MigrationVersion.fromVersion("12")).migrate();
             this.insertV13BackfillRows(jdbc, schema);
+
+            this.flyway(schema, MigrationVersion.fromVersion("13")).migrate();
+
+            assertThat(this.uuidValue(jdbc, "SELECT task_input_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_UNAMBIGUOUS_WORKFLOW))
+                    .isEqualTo(V13_UNAMBIGUOUS_INPUT);
+            assertThat(this.uuidValue(jdbc, "SELECT task_input_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_MULTIPLE_INPUTS_WORKFLOW))
+                    .isNull();
+            assertThat(this.uuidValue(jdbc, "SELECT task_input_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW))
+                    .isNull();
+            assertThat(this.uuidValue(jdbc, "SELECT task_input_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_UNREACHABLE_ISLAND_WORKFLOW))
+                    .isNull();
+
+            jdbc.update("UPDATE %s.agent_workflows SET task_input_port_id = ? WHERE id = ?".formatted(schema),
+                    V13_UNREACHABLE_INPUT_A,
+                    V13_UNREACHABLE_ISLAND_WORKFLOW);
 
             this.flyway(schema, null).migrate();
 

@@ -922,6 +922,8 @@ body.sidebar-collapsed .sidebar-link {
   fill: none;
   stroke: #2b6f62;
   stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .workflow-edges .workflow-edge-preview {
