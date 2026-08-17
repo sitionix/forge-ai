@@ -587,6 +587,29 @@ body.sidebar-collapsed .sidebar-link {
   gap: 12px;
 }
 
+.repository-list {
+  display: grid;
+  gap: 8px;
+}
+
+.repository-row {
+  display: grid;
+  min-height: 42px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.repository-row code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 700 12px/1.4 var(--mono);
+}
+
 .agents-v2-card {
   position: relative;
   display: grid;

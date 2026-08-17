@@ -1,0 +1,14 @@
+[
+  {
+    "id": "ignored",
+    "projectId": "10000000-0000-4000-8000-000000000001",
+    "remoteUrl": "git@gitlab.com:company/service-a.git",
+    "createdAt": "ignored"
+  },
+  {
+    "id": "ignored",
+    "projectId": "10000000-0000-4000-8000-000000000001",
+    "remoteUrl": "https://github.com/company/service-b.git",
+    "createdAt": "ignored"
+  }
+]

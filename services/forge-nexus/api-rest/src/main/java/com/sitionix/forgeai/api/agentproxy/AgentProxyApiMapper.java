@@ -11,6 +11,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -30,6 +31,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
@@ -53,6 +55,10 @@ public class AgentProxyApiMapper {
 
     public CreateAgentProjectTaskCommand toCommand(final CreateAgentProjectTaskRequest request) {
         return new CreateAgentProjectTaskCommand(request.title(), request.input(), request.workflowId());
+    }
+
+    public ImportAgentProjectRepositoryCommand toCommand(final ImportAgentProjectRepositoryRequest request) {
+        return new ImportAgentProjectRepositoryCommand(request.remoteUrl());
     }
 
     public SaveAgentDefinitionCommand toCommand(final AgentDefinitionRequest request) {
@@ -95,6 +101,10 @@ public class AgentProxyApiMapper {
 
     public AgentProjectResponse toResponse(final AgentProject project) {
         return new AgentProjectResponse(project.id(), project.name(), project.createdAt(), project.updatedAt());
+    }
+
+    public AgentProjectRepositoryResponse toResponse(final AgentProjectRepository repository) {
+        return new AgentProjectRepositoryResponse(repository.id(), repository.projectId(), repository.remoteUrl(), repository.createdAt());
     }
 
     public AgentProjectTaskSummaryResponse toResponse(final AgentProjectTaskSummary task) {

@@ -10,6 +10,12 @@ export function createAgentProjectsApi(http) {
     deleteProject(projectId) {
       return http.delete(`${root}/projects/${encodeURIComponent(projectId)}`);
     },
+    listProjectRepositories(projectId) {
+      return http.get(`${root}/projects/${encodeURIComponent(projectId)}/repositories`);
+    },
+    importProjectRepository(projectId, request) {
+      return http.post(`${root}/projects/${encodeURIComponent(projectId)}/repositories`, request);
+    },
     getRuntime() {
       return http.get(`${root}/runtime`);
     },

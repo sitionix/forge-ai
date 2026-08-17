@@ -5,6 +5,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
@@ -15,6 +16,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse;
 import com.sitionix.forgeai.api.agentproxy.CreateAgentWorkflowRunRequest;
 import com.sitionix.forgeai.api.agentproxy.CreateAgentProjectTaskRequest;
+import com.sitionix.forgeai.api.agentproxy.ImportAgentProjectRepositoryRequest;
 import com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.domain.usecase.CreateAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
@@ -30,6 +32,8 @@ import com.sitionix.forgeai.domain.usecase.GetAgentRuntime;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.GetAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.GetAgentProjectTask;
+import com.sitionix.forgeai.domain.usecase.ImportAgentProjectRepository;
+import com.sitionix.forgeai.domain.usecase.ListAgentProjectRepositories;
 import com.sitionix.forgeai.domain.usecase.ListAgentProjects;
 import com.sitionix.forgeai.domain.usecase.ListAgentProjectTasks;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflowRuns;
@@ -59,6 +63,8 @@ public class ForgeAiInfrastructureAgentsController {
     private final ListAgentProjects listAgentProjects;
     private final CreateAgentProject createAgentProject;
     private final DeleteAgentProject deleteAgentProject;
+    private final ImportAgentProjectRepository importAgentProjectRepository;
+    private final ListAgentProjectRepositories listAgentProjectRepositories;
     private final CreateAgentProjectTask createAgentProjectTask;
     private final ListAgentProjectTasks listAgentProjectTasks;
     private final GetAgentProjectTask getAgentProjectTask;
@@ -96,6 +102,23 @@ public class ForgeAiInfrastructureAgentsController {
     public ResponseEntity<Void> deleteProject(@PathVariable final UUID projectId) {
         this.deleteAgentProject.execute(projectId);
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/repositories")
+    public ResponseEntity<AgentProjectRepositoryResponse> importProjectRepository(@PathVariable final UUID projectId,
+                                                                                  @Valid @RequestBody final ImportAgentProjectRepositoryRequest request) {
+        final AgentProjectRepositoryResponse response = this.mapper.toResponse(
+                this.importAgentProjectRepository.execute(projectId, this.mapper.toCommand(request))
+        );
+        return ResponseEntity.created(URI.create("/api/v1/infrastructure/agents/projects/" + projectId + "/repositories/" + response.id()))
+                .body(response);
+    }
+
+    @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/repositories")
+    public ResponseEntity<List<AgentProjectRepositoryResponse>> listProjectRepositories(@PathVariable final UUID projectId) {
+        return ResponseEntity.ok(this.listAgentProjectRepositories.execute(projectId).stream()
+                .map(this.mapper::toResponse)
+                .toList());
     }
 
     @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/tasks")

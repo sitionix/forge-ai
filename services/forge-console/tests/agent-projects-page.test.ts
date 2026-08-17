@@ -112,6 +112,19 @@ function taskPage(items: any[], page = 0, size = 20, totalItems = items.length, 
   return { items, page, size, totalItems, totalPages };
 }
 
+function repository(
+  id = '88888888-8888-4888-8888-888888888888',
+  projectId = project().id,
+  remoteUrl = 'git@gitlab.com:company/service-a.git'
+) {
+  return {
+    id,
+    projectId,
+    remoteUrl,
+    createdAt: '2026-08-17T09:00:00Z'
+  };
+}
+
 function taskRun(id: string, status: string, createdAt: string, workflowName = 'Full Testing') {
   return {
     id,
@@ -290,6 +303,8 @@ function api(overrides = {}) {
     listProjects: vi.fn(() => Promise.resolve([project()])),
     createProject: vi.fn(() => Promise.resolve(project('22222222-2222-4222-8222-222222222222', 'Forge AI'))),
     deleteProject: vi.fn(() => Promise.resolve({})),
+    listProjectRepositories: vi.fn((projectId: string) => Promise.resolve([repository(undefined, projectId)])),
+    importProjectRepository: vi.fn(() => Promise.resolve(repository())),
     getRuntime: vi.fn(() => Promise.resolve(runtime())),
     listProjectAgents: vi.fn(() => Promise.resolve(agents)),
     createAgent: vi.fn(() => Promise.resolve(agent('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'Analyzer'))),
@@ -518,6 +533,7 @@ describe('Agent projects page', () => {
   it('opening Project switches to workspace and back returns to Projects', async () => {
     const { dom, page } = await openedProject();
     expect(dom.window.document.getElementById('agentsV2ProjectCrumbs')?.textContent).toBe('Projects / Sitionix');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('git@gitlab.com:company/service-a.git');
     expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Architect');
     expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
@@ -525,6 +541,46 @@ describe('Agent projects page', () => {
     page.showProjectsIndex();
     expect(page.state.selectedProjectId).toBeNull();
     expect(dom.window.document.getElementById('agentsV2ProjectsView')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('imports repository into Project and refreshes repository list', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'git@gitlab.com:company/service-a.git'),
+          repository('repo-2', project().id, 'https://github.com/company/service-b.git')
+        ]),
+      importProjectRepository: vi.fn(() => Promise.resolve(repository('repo-1')))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('No repositories yet.');
+
+    dom.window.document.getElementById('agentsV2ImportRepository')?.click();
+    const input = dom.window.document.getElementById('agentsV2RepositoryUrl') as HTMLInputElement;
+    input.value = ' git@gitlab.com:company/service-a.git ';
+    dom.window.document.getElementById('agentsV2RepositoryForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.importProjectRepository).toHaveBeenCalledWith(project().id, {
+      remoteUrl: 'git@gitlab.com:company/service-a.git'
+    });
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('git@gitlab.com:company/service-a.git');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('https://github.com/company/service-b.git');
+  });
+
+  it('rejects blank repository URL locally', async () => {
+    const { dom, fakeApi } = await openedProject();
+
+    dom.window.document.getElementById('agentsV2ImportRepository')?.click();
+    (dom.window.document.getElementById('agentsV2RepositoryUrl') as HTMLInputElement).value = '   ';
+    dom.window.document.getElementById('agentsV2RepositoryForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.importProjectRepository).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('agentsV2RepositoryModalError')?.textContent).toContain('Repository URL is required.');
   });
 
   it('opening Project loads Tasks and renders title workflow status and created date', async () => {
@@ -3301,6 +3357,8 @@ describe('Agent projects page', () => {
     client.listProjects();
     client.createProject({ name: 'Sitionix' });
     client.deleteProject(project().id);
+    client.listProjectRepositories(project().id);
+    client.importProjectRepository(project().id, { remoteUrl: 'git@gitlab.com:company/service-a.git' });
     client.listProjectAgents(project().id);
     client.createAgent(project().id, { name: 'Agent', instructions: 'Do work.', outputSchema: {} });
     client.getAgent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
@@ -3319,6 +3377,10 @@ describe('Agent projects page', () => {
 
     const calls = [...http.get.mock.calls, ...http.post.mock.calls, ...http.put.mock.calls, ...http.delete.mock.calls].map(([path]) => path);
     expect(calls.every((path) => path.startsWith('/agents'))).toBe(true);
+    expect(http.get).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`);
+    expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`, {
+      remoteUrl: 'git@gitlab.com:company/service-a.git'
+    });
     expect(http.get).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks?page=0&size=20`);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks`, {
       title: 'Check calculation',

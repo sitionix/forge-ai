@@ -6,6 +6,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionReques
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ImportProjectRepositoryRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
@@ -44,6 +46,22 @@ public final class ForgeAgentProxyWireMockEndpoint {
 
     public static Endpoint<Void, Void> deleteProject() {
         return upstreamDelete("/api/v1/projects/{projectId}");
+    }
+
+    public static Endpoint<ImportProjectRepositoryRequest, ProjectRepositoryResponse> importProjectRepository() {
+        return upstreamPost("/api/v1/projects/{projectId}/repositories",
+                ImportProjectRepositoryRequest.class,
+                ProjectRepositoryResponse.class,
+                "requestAgentProxyImportProjectRepository.json",
+                HttpStatus.CREATED,
+                "responseAgentProxyProjectRepository.json");
+    }
+
+    public static Endpoint<Void, ProjectRepositoryResponse[]> listProjectRepositories() {
+        return upstreamGet("/api/v1/projects/{projectId}/repositories",
+                ProjectRepositoryResponse[].class,
+                HttpStatus.OK,
+                "responseAgentProxyProjectRepositories.json");
     }
 
     public static Endpoint<CreateProjectTaskRequest, ProjectTaskResponse> createProjectTask() {

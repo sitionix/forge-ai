@@ -10,6 +10,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ImportProjectRepositoryRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
@@ -37,6 +39,12 @@ public interface ForgeAgentHttpClient {
 
     @DeleteExchange("/api/v1/projects/{projectId}")
     void deleteProject(@PathVariable UUID projectId);
+
+    @PostExchange(value = "/api/v1/projects/{projectId}/repositories", contentType = MediaType.APPLICATION_JSON_VALUE)
+    ProjectRepositoryResponse importProjectRepository(@PathVariable UUID projectId, @RequestBody ImportProjectRepositoryRequest request);
+
+    @GetExchange("/api/v1/projects/{projectId}/repositories")
+    List<ProjectRepositoryResponse> listProjectRepositories(@PathVariable UUID projectId);
 
     @PostExchange(value = "/api/v1/projects/{projectId}/tasks", contentType = MediaType.APPLICATION_JSON_VALUE)
     ProjectTaskResponse createProjectTask(@PathVariable UUID projectId, @RequestBody CreateProjectTaskRequest request);

@@ -5,6 +5,7 @@ export class ProjectWorkspace {
     this.document = options.document;
     this.onBack = options.onBack;
     this.onNewAgent = options.onNewAgent;
+    this.onImportRepository = options.onImportRepository;
     this.onEditAgent = options.onEditAgent;
     this.onNewWorkflow = options.onNewWorkflow;
     this.onOpenWorkflow = options.onOpenWorkflow;
@@ -18,17 +19,20 @@ export class ProjectWorkspace {
 
   bind() {
     this.byId('agentsV2WorkspaceBack')?.addEventListener('click', () => this.onBack());
+    this.byId('agentsV2ImportRepository')?.addEventListener('click', () => this.onImportRepository());
     this.byId('agentsV2CreateAgent')?.addEventListener('click', () => this.onNewAgent());
     this.byId('agentsV2CreateWorkflow')?.addEventListener('click', () => this.onNewWorkflow());
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, agents, workflows, tasks, dataCurrent, workflowsCurrent, tasksCurrent, tasksLoadFailed, runtimeCatalog = null, taskPage = null) {
+  render(project, repositories, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
+    this.byId('agentsV2ImportRepository').disabled = !project || !repositoriesCurrent;
     this.byId('agentsV2CreateAgent').disabled = !dataCurrent;
     this.byId('agentsV2CreateWorkflow').disabled = !dataCurrent;
     this.byId('agentsV2CreateTask').disabled = !project || !workflowsCurrent || !tasksCurrent || !workflows.length;
+    this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed);
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
     this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed, taskPage);
@@ -36,11 +40,34 @@ export class ProjectWorkspace {
 
   renderLoading() {
     this.byId('agentsV2CreateAgent').disabled = true;
+    this.byId('agentsV2ImportRepository').disabled = true;
     this.byId('agentsV2CreateWorkflow').disabled = true;
     this.byId('agentsV2CreateTask').disabled = true;
+    this.byId('agentsV2RepositoriesList').innerHTML = '<div class="muted-state">Loading repositories...</div>';
     this.byId('agentsV2AgentsList').innerHTML = '<div class="muted-state">Loading agents...</div>';
     this.byId('agentsV2WorkflowsList').innerHTML = '<div class="muted-state">Loading workflows...</div>';
     this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
+  }
+
+  renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed) {
+    const list = this.byId('agentsV2RepositoriesList');
+    if (repositoriesLoadFailed) {
+      list.innerHTML = '';
+      return;
+    }
+    if (!repositoriesCurrent) {
+      list.innerHTML = '<div class="muted-state">Loading repositories...</div>';
+      return;
+    }
+    if (!repositories.length) {
+      list.innerHTML = '<div class="muted-state">No repositories yet.</div>';
+      return;
+    }
+    list.innerHTML = repositories.map((repository) => `
+      <article class="repository-row">
+        <code>${escapeHtml(repository.remoteUrl || '')}</code>
+      </article>
+    `).join('');
   }
 
   renderAgents(agents, runtimeCatalog = null) {

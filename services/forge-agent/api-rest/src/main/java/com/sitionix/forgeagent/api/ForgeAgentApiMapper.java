@@ -14,6 +14,7 @@ import com.sitionix.forgeagent.api.dto.CodexRuntimeProviderResponse;
 import com.sitionix.forgeagent.api.dto.ConnectionResolutionResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
+import com.sitionix.forgeagent.api.dto.ImportProjectRepositoryRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.NodeRunFailureResponse;
@@ -24,6 +25,7 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
@@ -43,6 +45,7 @@ import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
 import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
+import com.sitionix.forgeagent.application.usecase.ImportProjectRepositoryCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
@@ -61,6 +64,7 @@ import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummaryPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
@@ -84,6 +88,10 @@ class ForgeAgentApiMapper {
 
     CreateProjectCommand toCommand(final CreateProjectRequest request) {
         return new CreateProjectCommand(request.name());
+    }
+
+    ImportProjectRepositoryCommand toCommand(final ImportProjectRepositoryRequest request) {
+        return new ImportProjectRepositoryCommand(request.remoteUrl());
     }
 
     SaveAgentCommand toCommand(final SaveAgentRequest request) {
@@ -131,6 +139,10 @@ class ForgeAgentApiMapper {
 
     ProjectResponse toResponse(final Project project) {
         return new ProjectResponse(project.id(), project.name(), project.createdAt(), project.updatedAt());
+    }
+
+    ProjectRepositoryResponse toResponse(final ProjectRepositoryLink repository) {
+        return new ProjectRepositoryResponse(repository.id(), repository.projectId(), repository.remoteUrl(), repository.createdAt());
     }
 
     AgentListResponse toResponse(final AgentListItem agent) {
