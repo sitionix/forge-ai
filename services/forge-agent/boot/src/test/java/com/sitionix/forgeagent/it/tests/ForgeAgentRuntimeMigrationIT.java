@@ -31,6 +31,7 @@ class ForgeAgentRuntimeMigrationIT {
     private static final UUID V13_UNAMBIGUOUS_WORKFLOW = UUID.fromString("97000000-0000-4000-8000-000000000003");
     private static final UUID V13_MULTIPLE_INPUTS_WORKFLOW = UUID.fromString("97000000-0000-4000-8000-000000000004");
     private static final UUID V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW = UUID.fromString("97000000-0000-4000-8000-000000000005");
+    private static final UUID V13_UNREACHABLE_ISLAND_WORKFLOW = UUID.fromString("97000000-0000-4000-8000-000000000014");
     private static final UUID V13_UNAMBIGUOUS_NODE = UUID.fromString("97000000-0000-4000-8000-000000000006");
     private static final UUID V13_UNAMBIGUOUS_INPUT = UUID.fromString("97000000-0000-4000-8000-000000000007");
     private static final UUID V13_MULTIPLE_INPUTS_NODE = UUID.fromString("97000000-0000-4000-8000-000000000008");
@@ -39,6 +40,20 @@ class ForgeAgentRuntimeMigrationIT {
     private static final UUID V13_ZERO_INPUT_NODE = UUID.fromString("97000000-0000-4000-8000-000000000011");
     private static final UUID V13_ZERO_AMBIGUOUS_INPUT_NODE = UUID.fromString("97000000-0000-4000-8000-000000000012");
     private static final UUID V13_ZERO_AMBIGUOUS_INPUT = UUID.fromString("97000000-0000-4000-8000-000000000013");
+    private static final UUID V13_UNREACHABLE_NODE_A = UUID.fromString("97000000-0000-4000-8000-000000000015");
+    private static final UUID V13_UNREACHABLE_NODE_B = UUID.fromString("97000000-0000-4000-8000-000000000016");
+    private static final UUID V13_UNREACHABLE_NODE_C = UUID.fromString("97000000-0000-4000-8000-000000000017");
+    private static final UUID V13_UNREACHABLE_NODE_D = UUID.fromString("97000000-0000-4000-8000-000000000018");
+    private static final UUID V13_UNREACHABLE_INPUT_A = UUID.fromString("97000000-0000-4000-8000-000000000019");
+    private static final UUID V13_UNREACHABLE_INPUT_B = UUID.fromString("97000000-0000-4000-8000-000000000020");
+    private static final UUID V13_UNREACHABLE_INPUT_C = UUID.fromString("97000000-0000-4000-8000-000000000021");
+    private static final UUID V13_UNREACHABLE_INPUT_D = UUID.fromString("97000000-0000-4000-8000-000000000022");
+    private static final UUID V13_UNREACHABLE_OUTPUT_A = UUID.fromString("97000000-0000-4000-8000-000000000023");
+    private static final UUID V13_UNREACHABLE_OUTPUT_C = UUID.fromString("97000000-0000-4000-8000-000000000024");
+    private static final UUID V13_UNREACHABLE_OUTPUT_D = UUID.fromString("97000000-0000-4000-8000-000000000025");
+    private static final UUID V13_UNREACHABLE_CONNECTION_AB = UUID.fromString("97000000-0000-4000-8000-000000000026");
+    private static final UUID V13_UNREACHABLE_CONNECTION_CD = UUID.fromString("97000000-0000-4000-8000-000000000027");
+    private static final UUID V13_UNREACHABLE_CONNECTION_DC = UUID.fromString("97000000-0000-4000-8000-000000000028");
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
@@ -108,6 +123,8 @@ class ForgeAgentRuntimeMigrationIT {
                     .isNull();
             assertThat(this.uuidValue(jdbc, "SELECT task_input_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW))
                     .isNull();
+            assertThat(this.uuidValue(jdbc, "SELECT task_input_port_id FROM %s.agent_workflows WHERE id = ?".formatted(schema), V13_UNREACHABLE_ISLAND_WORKFLOW))
+                    .isNull();
         } finally {
             jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
         }
@@ -152,14 +169,29 @@ class ForgeAgentRuntimeMigrationIT {
         this.insertWorkflow(jdbc, schema, V13_UNAMBIGUOUS_WORKFLOW, "Unambiguous Workflow", "unambiguous workflow");
         this.insertWorkflow(jdbc, schema, V13_MULTIPLE_INPUTS_WORKFLOW, "Multiple Inputs Workflow", "multiple inputs workflow");
         this.insertWorkflow(jdbc, schema, V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW, "Zero Input Ambiguous Workflow", "zero input ambiguous workflow");
+        this.insertWorkflow(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, "Unreachable Island Workflow", "unreachable island workflow");
         this.insertWorkflowNode(jdbc, schema, V13_UNAMBIGUOUS_WORKFLOW, V13_UNAMBIGUOUS_NODE);
         this.insertWorkflowNode(jdbc, schema, V13_MULTIPLE_INPUTS_WORKFLOW, V13_MULTIPLE_INPUTS_NODE);
         this.insertWorkflowNode(jdbc, schema, V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW, V13_ZERO_INPUT_NODE);
         this.insertWorkflowNode(jdbc, schema, V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW, V13_ZERO_AMBIGUOUS_INPUT_NODE);
+        this.insertWorkflowNode(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_A);
+        this.insertWorkflowNode(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_B);
+        this.insertWorkflowNode(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_C);
+        this.insertWorkflowNode(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_D);
         this.insertWorkflowInput(jdbc, schema, V13_UNAMBIGUOUS_WORKFLOW, V13_UNAMBIGUOUS_NODE, V13_UNAMBIGUOUS_INPUT, 0);
         this.insertWorkflowInput(jdbc, schema, V13_MULTIPLE_INPUTS_WORKFLOW, V13_MULTIPLE_INPUTS_NODE, V13_MULTIPLE_INPUT_A, 0);
         this.insertWorkflowInput(jdbc, schema, V13_MULTIPLE_INPUTS_WORKFLOW, V13_MULTIPLE_INPUTS_NODE, V13_MULTIPLE_INPUT_B, 1);
         this.insertWorkflowInput(jdbc, schema, V13_ZERO_INPUT_AMBIGUOUS_WORKFLOW, V13_ZERO_AMBIGUOUS_INPUT_NODE, V13_ZERO_AMBIGUOUS_INPUT, 0);
+        this.insertWorkflowInput(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_A, V13_UNREACHABLE_INPUT_A, 0);
+        this.insertWorkflowInput(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_B, V13_UNREACHABLE_INPUT_B, 0);
+        this.insertWorkflowInput(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_C, V13_UNREACHABLE_INPUT_C, 0);
+        this.insertWorkflowInput(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_D, V13_UNREACHABLE_INPUT_D, 0);
+        this.insertWorkflowOutput(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_A, V13_UNREACHABLE_OUTPUT_A);
+        this.insertWorkflowOutput(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_C, V13_UNREACHABLE_OUTPUT_C);
+        this.insertWorkflowOutput(jdbc, schema, V13_UNREACHABLE_ISLAND_WORKFLOW, V13_UNREACHABLE_NODE_D, V13_UNREACHABLE_OUTPUT_D);
+        this.insertWorkflowConnection(jdbc, schema, V13_UNREACHABLE_CONNECTION_AB, V13_UNREACHABLE_OUTPUT_A, V13_UNREACHABLE_INPUT_B);
+        this.insertWorkflowConnection(jdbc, schema, V13_UNREACHABLE_CONNECTION_CD, V13_UNREACHABLE_OUTPUT_C, V13_UNREACHABLE_INPUT_D);
+        this.insertWorkflowConnection(jdbc, schema, V13_UNREACHABLE_CONNECTION_DC, V13_UNREACHABLE_OUTPUT_D, V13_UNREACHABLE_INPUT_C);
     }
 
     private void insertWorkflow(final JdbcTemplate jdbc,
@@ -194,6 +226,32 @@ class ForgeAgentRuntimeMigrationIT {
                 )
                 VALUES (?, ?, ?, 'INPUT', ?, 'Input description.', ?)
                 """.formatted(schema), portId, workflowId, nodeId, "Input " + order, order);
+    }
+
+    private void insertWorkflowOutput(final JdbcTemplate jdbc,
+                                      final String schema,
+                                      final UUID workflowId,
+                                      final UUID nodeId,
+                                      final UUID portId) {
+        jdbc.update("""
+                INSERT INTO %s.workflow_node_ports (
+                    id, workflow_id, node_id, direction, name, description, port_order
+                )
+                VALUES (?, ?, ?, 'OUTPUT', 'Output', 'Output description.', 0)
+                """.formatted(schema), portId, workflowId, nodeId);
+    }
+
+    private void insertWorkflowConnection(final JdbcTemplate jdbc,
+                                          final String schema,
+                                          final UUID connectionId,
+                                          final UUID sourceOutputPortId,
+                                          final UUID targetInputPortId) {
+        jdbc.update("""
+                INSERT INTO %s.workflow_connections (
+                    id, source_output_port_id, target_input_port_id
+                )
+                VALUES (?, ?, ?)
+                """.formatted(schema), connectionId, sourceOutputPortId, targetInputPortId);
     }
 
     private void insertRun(final JdbcTemplate jdbc, final String schema, final UUID id, final String status) {
