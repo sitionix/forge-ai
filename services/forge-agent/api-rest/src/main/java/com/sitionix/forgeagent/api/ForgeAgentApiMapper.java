@@ -147,20 +147,17 @@ class ForgeAgentApiMapper {
                 repository.id(),
                 repository.projectId(),
                 repository.name(),
+                repository.cloned(),
                 this.toGitStateResponse(repository),
                 repository.createdAt()
         );
     }
 
     private ProjectRepositoryGitStateResponse toGitStateResponse(final ProjectRepositoryView repository) {
-        if (!repository.cloned() || repository.gitState() == null) {
-            return new ProjectRepositoryGitStateResponse(false, null, null, false);
-        }
-        if (!repository.gitState().valid()) {
-            return new ProjectRepositoryGitStateResponse(true, null, null, false);
+        if (!repository.cloned() || repository.gitState() == null || !repository.gitState().valid()) {
+            return null;
         }
         return new ProjectRepositoryGitStateResponse(
-                true,
                 repository.gitState().head().ref(),
                 repository.gitState().workingTree().name(),
                 repository.gitState().pullAvailable()

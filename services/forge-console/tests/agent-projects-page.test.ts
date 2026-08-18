@@ -117,20 +117,20 @@ function repository(
   projectId = project().id,
   name = 'service-a',
   cloned = false,
-  git: any = repositoryGitState(cloned)
+  git: any = cloned ? repositoryGitState() : null
 ) {
   return {
     id,
     projectId,
     name,
+    cloned,
     git,
     createdAt: '2026-08-17T09:00:00Z'
   };
 }
 
-function repositoryGitState(cloned = true, branch: string | null = cloned ? 'main' : null, workingTree: string | null = cloned ? 'CLEAN' : null, pullAvailable = false) {
+function repositoryGitState(branch: string | null = 'main', workingTree: string | null = 'CLEAN', pullAvailable = false) {
   return {
-    cloned,
     branch,
     workingTree,
     pullAvailable
@@ -138,7 +138,7 @@ function repositoryGitState(cloned = true, branch: string | null = cloned ? 'mai
 }
 
 function branchGitState(workingTree = 'CLEAN', ref = 'main', pullAvailable = false) {
-  return repositoryGitState(true, ref, workingTree, pullAvailable);
+  return repositoryGitState(ref, workingTree, pullAvailable);
 }
 
 function behindGitState(ref = 'main') {
@@ -146,7 +146,7 @@ function behindGitState(ref = 'main') {
 }
 
 function detachedGitState(workingTree = 'CLEAN') {
-  return repositoryGitState(true, null, workingTree, false);
+  return repositoryGitState(null, workingTree, false);
 }
 
 function conflictedGitState() {
@@ -744,7 +744,7 @@ describe('Agent projects page', () => {
   it('renders invalid local checkout for cloned invalid repositories', async () => {
     const fakeApi = api({
       listProjectRepositories: vi.fn(() => Promise.resolve([
-        repository('repo-1', project().id, 'service-a', true, repositoryGitState(true, null, null, false))
+        repository('repo-1', project().id, 'service-a', true, null)
       ]))
     });
     const { dom } = await openedProject(fakeApi);

@@ -130,6 +130,7 @@ public class ForgeAgentClientMapper {
                 response.id(),
                 response.projectId(),
                 response.name(),
+                response.cloned(),
                 this.toDomain(response.git()),
                 response.createdAt()
         );
@@ -140,7 +141,6 @@ public class ForgeAgentClientMapper {
             return null;
         }
         return new AgentProjectRepositoryGitState(
-                response.cloned(),
                 response.branch(),
                 response.workingTree() == null ? null : this.toWorkingTree(response.workingTree()),
                 response.pullAvailable()

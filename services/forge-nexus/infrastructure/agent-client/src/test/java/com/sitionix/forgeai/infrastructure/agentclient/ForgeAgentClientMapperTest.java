@@ -219,7 +219,8 @@ class ForgeAgentClientMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
-                new ProjectRepositoryGitStateResponse(true, "main", "DIRTY", false),
+                true,
+                new ProjectRepositoryGitStateResponse("main", "DIRTY", false),
                 CREATED
         );
 
@@ -227,7 +228,8 @@ class ForgeAgentClientMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
-                new AgentProjectRepositoryGitState(true, "main", AgentProjectRepositoryWorkingTreeState.DIRTY, false),
+                true,
+                new AgentProjectRepositoryGitState("main", AgentProjectRepositoryWorkingTreeState.DIRTY, false),
                 CREATED
         ));
     }
@@ -239,7 +241,8 @@ class ForgeAgentClientMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
-                new ProjectRepositoryGitStateResponse(true, null, null, false),
+                true,
+                null,
                 CREATED
         );
 
@@ -247,7 +250,8 @@ class ForgeAgentClientMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
-                new AgentProjectRepositoryGitState(true, null, null, false),
+                true,
+                null,
                 CREATED
         ));
     }

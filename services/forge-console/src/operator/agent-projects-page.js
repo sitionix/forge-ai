@@ -503,7 +503,7 @@ export class AgentProjectsPage {
       return;
     }
     const repository = this.state.repositories.find((candidate) => candidate.id === repositoryId);
-    if (!repository?.git?.pullAvailable) {
+    if (!repository?.cloned || !repository.git?.pullAvailable) {
       return;
     }
     this.state.pullingRepositoryIds.add(repositoryId);

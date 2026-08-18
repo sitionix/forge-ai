@@ -109,6 +109,7 @@ public class AgentProxyApiMapper {
                 repository.id(),
                 repository.projectId(),
                 repository.name(),
+                repository.cloned(),
                 this.toResponse(repository.git()),
                 repository.createdAt()
         );
@@ -119,7 +120,6 @@ public class AgentProxyApiMapper {
             return null;
         }
         return new AgentProjectRepositoryGitStateResponse(
-                gitState.cloned(),
                 gitState.branch(),
                 gitState.workingTree() == null ? null : gitState.workingTree().name(),
                 gitState.pullAvailable()

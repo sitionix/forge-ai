@@ -7,6 +7,7 @@ public record AgentProjectRepository(
         UUID id,
         UUID projectId,
         String name,
+        boolean cloned,
         AgentProjectRepositoryGitState git,
         Instant createdAt
 ) {

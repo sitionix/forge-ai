@@ -3,12 +3,8 @@
     "id": "ignored",
     "projectId": "10000000-0000-4000-8000-000000000001",
     "name": "invalid-checkout",
-    "git": {
-      "cloned": true,
-      "branch": null,
-      "workingTree": null,
-      "pullAvailable": false
-    },
+    "cloned": true,
+    "git": null,
     "createdAt": "ignored"
   }
 ]

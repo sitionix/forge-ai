@@ -148,7 +148,8 @@ class ForgeAgentApiMapperTest {
                         repositoryId,
                         PROJECT_ID,
                         "service-a",
-                        new ProjectRepositoryGitStateResponse(false, null, null, false),
+                        false,
+                        null,
                         CREATED
                 ));
     }
@@ -169,7 +170,8 @@ class ForgeAgentApiMapperTest {
                         repositoryId,
                         PROJECT_ID,
                         "service-a",
-                        new ProjectRepositoryGitStateResponse(true, "main", "CLEAN", true),
+                        true,
+                        new ProjectRepositoryGitStateResponse("main", "CLEAN", true),
                         CREATED
                 ));
     }
@@ -183,7 +185,8 @@ class ForgeAgentApiMapperTest {
                         repositoryId,
                         PROJECT_ID,
                         "service-a",
-                        new ProjectRepositoryGitStateResponse(true, null, null, false),
+                        true,
+                        null,
                         CREATED
                 ));
     }
@@ -195,7 +198,8 @@ class ForgeAgentApiMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
-                new ProjectRepositoryGitStateResponse(true, "main", "CLEAN", false),
+                true,
+                new ProjectRepositoryGitStateResponse("main", "CLEAN", false),
                 CREATED
         );
 
@@ -204,12 +208,18 @@ class ForgeAgentApiMapperTest {
                 .toList();
         final var json = this.objectMapper.valueToTree(response.git());
 
-        assertThat(responseFields).doesNotContain("cloned");
-        assertThat(json.size()).isEqualTo(4);
-        assertThat(json.has("cloned")).isTrue();
+        assertThat(responseFields).containsExactly("id", "projectId", "name", "cloned", "git", "createdAt");
+        assertThat(json.size()).isEqualTo(3);
         assertThat(json.has("branch")).isTrue();
         assertThat(json.has("workingTree")).isTrue();
         assertThat(json.has("pullAvailable")).isTrue();
+        assertThat(json.has("cloned")).isFalse();
+        assertThat(json.has("valid")).isFalse();
+        assertThat(json.has("head")).isFalse();
+        assertThat(json.has("upstream")).isFalse();
+        assertThat(json.has("conflictState")).isFalse();
+        assertThat(json.has("operationState")).isFalse();
+        assertThat(json.has("blockedReason")).isFalse();
     }
 
     @Test

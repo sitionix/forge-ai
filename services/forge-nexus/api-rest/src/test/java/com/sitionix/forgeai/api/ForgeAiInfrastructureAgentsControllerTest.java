@@ -564,7 +564,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new AgentProjectRepositoryGitState(false, null, null, false),
+                false,
+                null,
                 NOW
         );
     }
@@ -574,7 +575,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new AgentProjectRepositoryGitStateResponse(false, null, null, false),
+                false,
+                null,
                 NOW
         );
     }

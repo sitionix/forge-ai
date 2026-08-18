@@ -141,14 +141,16 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new ProjectRepositoryGitStateResponse(false, null, null, false),
+                false,
+                null,
                 CREATED
         );
         final var expected = new AgentProjectRepository(
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new AgentProjectRepositoryGitState(false, null, null, false),
+                false,
+                null,
                 CREATED
         );
         when(this.mapper.toRequest(command)).thenReturn(request);
@@ -169,14 +171,16 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new ProjectRepositoryGitStateResponse(false, null, null, false),
+                false,
+                null,
                 CREATED
         );
         final var expected = new AgentProjectRepository(
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new AgentProjectRepositoryGitState(false, null, null, false),
+                false,
+                null,
                 CREATED
         );
         when(this.httpClient.listProjectRepositories(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
@@ -197,14 +201,16 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new ProjectRepositoryGitStateResponse(true, null, null, false),
+                true,
+                null,
                 CREATED
         );
         final var expected = new AgentProjectRepository(
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new AgentProjectRepositoryGitState(true, null, null, false),
+                true,
+                null,
                 CREATED
         );
         when(this.httpClient.cloneProjectRepository(PROJECT_ID, REPOSITORY_ID)).thenReturn(upstreamResponse);
@@ -223,14 +229,16 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new ProjectRepositoryGitStateResponse(true, null, null, false),
+                true,
+                null,
                 CREATED
         );
         final var expected = new AgentProjectRepository(
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new AgentProjectRepositoryGitState(true, null, null, false),
+                true,
+                null,
                 CREATED
         );
         when(this.httpClient.pullProjectRepository(PROJECT_ID, REPOSITORY_ID)).thenReturn(upstreamResponse);

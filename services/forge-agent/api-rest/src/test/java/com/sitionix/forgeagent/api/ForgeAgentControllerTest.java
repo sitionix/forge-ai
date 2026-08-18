@@ -502,7 +502,8 @@ class ForgeAgentControllerTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
-                new ProjectRepositoryGitStateResponse(false, null, null, false),
+                false,
+                null,
                 NOW
         );
     }

@@ -71,7 +71,7 @@ export class ProjectWorkspace {
           <code>${escapeHtml(repository.name || '')}</code>
           ${this.renderRepositoryGitState(repository)}
         </span>
-        ${repository.git?.cloned === false ? `
+        ${repository.cloned === false ? `
           <button class="button tiny secondary" type="button" data-clone-repository-id="${escapeHtml(repository.id)}"${cloningRepositoryIds.has(repository.id) ? ' disabled' : ''}>Clone</button>
         ` : ''}
         ${this.renderRepositoryAction(repository, pullingRepositoryIds)}
@@ -87,7 +87,7 @@ export class ProjectWorkspace {
 
   renderRepositoryAction(repository, pullingRepositoryIds = new Set()) {
     const git = repository.git;
-    if (!git?.cloned || !git.workingTree) {
+    if (!repository.cloned || !git?.workingTree) {
       return '';
     }
     const disabled = !git.pullAvailable || pullingRepositoryIds.has(repository.id);
@@ -96,7 +96,7 @@ export class ProjectWorkspace {
 
   renderRepositoryGitState(repository) {
     const git = repository.git;
-    if (git?.cloned === false) {
+    if (!repository.cloned) {
       return '';
     }
     if (!git || !git.workingTree) {
