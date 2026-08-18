@@ -12,6 +12,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -104,7 +105,32 @@ public class AgentProxyApiMapper {
     }
 
     public AgentProjectRepositoryResponse toResponse(final AgentProjectRepository repository) {
-        return new AgentProjectRepositoryResponse(repository.id(), repository.projectId(), repository.name(), repository.cloned(), repository.createdAt());
+        return new AgentProjectRepositoryResponse(
+                repository.id(),
+                repository.projectId(),
+                repository.name(),
+                repository.cloned(),
+                this.toResponse(repository.gitState()),
+                repository.createdAt()
+        );
+    }
+
+    private AgentProjectRepositoryGitStateResponse toResponse(final AgentProjectRepositoryGitState gitState) {
+        if (gitState == null) {
+            return null;
+        }
+        if (!gitState.valid()) {
+            return new AgentProjectRepositoryGitStateResponse(false, null, null);
+        }
+        return new AgentProjectRepositoryGitStateResponse(
+                true,
+                new AgentProjectRepositoryGitHeadResponse(
+                        gitState.head().type().name(),
+                        gitState.head().ref(),
+                        gitState.head().commit()
+                ),
+                gitState.workingTree().name()
+        );
     }
 
     public AgentProjectTaskSummaryResponse toResponse(final AgentProjectTaskSummary task) {

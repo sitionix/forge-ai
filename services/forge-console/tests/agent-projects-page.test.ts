@@ -116,14 +116,32 @@ function repository(
   id = '88888888-8888-4888-8888-888888888888',
   projectId = project().id,
   name = 'service-a',
-  cloned = false
+  cloned = false,
+  gitState: any = cloned ? branchGitState() : null
 ) {
   return {
     id,
     projectId,
     name,
     cloned,
+    gitState,
     createdAt: '2026-08-17T09:00:00Z'
+  };
+}
+
+function branchGitState(workingTree = 'CLEAN', ref = 'main') {
+  return {
+    valid: true,
+    head: { type: 'BRANCH', ref, commit: 'abcdef1234567890' },
+    workingTree
+  };
+}
+
+function detachedGitState(workingTree = 'CLEAN') {
+  return {
+    valid: true,
+    head: { type: 'DETACHED', ref: null, commit: 'a1b2c3d4e5f6' },
+    workingTree
   };
 }
 
@@ -617,6 +635,55 @@ describe('Agent projects page', () => {
 
     expect(fakeApi.cloneProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
     expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
+  });
+
+  it('renders branch and Clean state for cloned repositories', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([
+        repository('repo-1', project().id, 'service-a', true, branchGitState('CLEAN', 'main'))
+      ]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    const text = dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent || '';
+    expect(text).toContain('service-a');
+    expect(text).toContain('main · Clean');
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
+  });
+
+  it('renders Dirty state for cloned repositories', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([
+        repository('repo-1', project().id, 'service-a', true, branchGitState('DIRTY', 'main'))
+      ]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Dirty');
+  });
+
+  it('renders detached HEAD state with a short commit', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([
+        repository('repo-1', project().id, 'service-a', true, detachedGitState())
+      ]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('detached@a1b2c3d · Clean');
+  });
+
+  it('renders invalid local checkout for cloned invalid repositories', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([
+        repository('repo-1', project().id, 'service-a', true, { valid: false })
+      ]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    const text = dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent || '';
+    expect(text).toContain('Invalid Git checkout');
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
   });
 

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceState;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspaceException;
 import java.nio.file.Files;
@@ -62,22 +63,25 @@ class LocalProjectWorkspaceAdapterTest {
         Files.createDirectories(this.repositoryPath("service-a").resolve(".git"));
         Files.createDirectories(this.repositoryPath("service-b"));
 
-        final Map<UUID, Boolean> states = this.adapter.resolveCloneStates(PROJECT_ID, List.of(
+        final Map<UUID, ProjectRepositoryWorkspaceState> states = this.adapter.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(
                 new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a"),
                 new ProjectRepositoryWorkspaceReference(REPOSITORY_B_ID, "service-b")
         ));
 
-        assertThat(states).containsEntry(REPOSITORY_A_ID, true);
-        assertThat(states).containsEntry(REPOSITORY_B_ID, false);
+        assertThat(states.get(REPOSITORY_A_ID).cloned()).isTrue();
+        assertThat(states.get(REPOSITORY_A_ID).path()).isEqualTo(this.repositoryPath("service-a"));
+        assertThat(states.get(REPOSITORY_B_ID).cloned()).isFalse();
+        assertThat(states.get(REPOSITORY_B_ID).path()).isEqualTo(this.repositoryPath("service-b"));
     }
 
     @Test
     void nonexistentRepositoryIsNotCloned() {
-        final Map<UUID, Boolean> states = this.adapter.resolveCloneStates(PROJECT_ID, List.of(
+        final Map<UUID, ProjectRepositoryWorkspaceState> states = this.adapter.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(
                 new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a")
         ));
 
-        assertThat(states).containsEntry(REPOSITORY_A_ID, false);
+        assertThat(states.get(REPOSITORY_A_ID).cloned()).isFalse();
+        assertThat(states.get(REPOSITORY_A_ID).path()).isEqualTo(this.repositoryPath("service-a"));
     }
 
     @Test
@@ -129,13 +133,13 @@ class LocalProjectWorkspaceAdapterTest {
         final ProjectRepositoryCloneAttempt attempt = this.adapter.prepareCloneAttempt(PROJECT_ID, reference);
         Files.createDirectories(attempt.stagingPath().resolve(".git"));
 
-        assertThat(this.adapter.resolveCloneStates(PROJECT_ID, List.of(reference))).containsEntry(REPOSITORY_A_ID, false);
+        assertThat(this.adapter.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(reference)).get(REPOSITORY_A_ID).cloned()).isFalse();
 
         this.adapter.finalizeCloneAttempt(attempt);
 
         assertThat(attempt.stagingPath()).doesNotExist();
         assertThat(attempt.finalPath()).isDirectory();
-        assertThat(this.adapter.resolveCloneStates(PROJECT_ID, List.of(reference))).containsEntry(REPOSITORY_A_ID, true);
+        assertThat(this.adapter.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(reference)).get(REPOSITORY_A_ID).cloned()).isTrue();
     }
 
     @Test
@@ -148,7 +152,7 @@ class LocalProjectWorkspaceAdapterTest {
 
         assertThat(attempt.stagingPath()).doesNotExist();
         assertThat(attempt.finalPath()).doesNotExist();
-        assertThat(this.adapter.resolveCloneStates(PROJECT_ID, List.of(reference))).containsEntry(REPOSITORY_A_ID, false);
+        assertThat(this.adapter.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(reference)).get(REPOSITORY_A_ID).cloned()).isFalse();
     }
 
     @Test

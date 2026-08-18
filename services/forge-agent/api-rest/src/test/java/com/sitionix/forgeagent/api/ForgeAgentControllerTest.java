@@ -478,11 +478,11 @@ class ForgeAgentControllerTest {
     }
 
     private ProjectRepositoryView projectRepository() {
-        return new ProjectRepositoryView(REPOSITORY_ID, PROJECT_ID, "service-a", false, NOW);
+        return new ProjectRepositoryView(REPOSITORY_ID, PROJECT_ID, "service-a", false, null, NOW);
     }
 
     private ProjectRepositoryResponse projectRepositoryResponse() {
-        return new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", false, NOW);
+        return new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", false, null, NOW);
     }
 
     private SaveAgentRequest agentRequest() throws Exception {

@@ -25,6 +25,8 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitHeadResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitStateResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
@@ -142,7 +144,32 @@ class ForgeAgentApiMapper {
     }
 
     ProjectRepositoryResponse toResponse(final ProjectRepositoryView repository) {
-        return new ProjectRepositoryResponse(repository.id(), repository.projectId(), repository.name(), repository.cloned(), repository.createdAt());
+        return new ProjectRepositoryResponse(
+                repository.id(),
+                repository.projectId(),
+                repository.name(),
+                repository.cloned(),
+                this.toGitStateResponse(repository),
+                repository.createdAt()
+        );
+    }
+
+    private ProjectRepositoryGitStateResponse toGitStateResponse(final ProjectRepositoryView repository) {
+        if (!repository.cloned() || repository.gitState() == null) {
+            return null;
+        }
+        if (!repository.gitState().valid()) {
+            return new ProjectRepositoryGitStateResponse(false, null, null);
+        }
+        return new ProjectRepositoryGitStateResponse(
+                true,
+                new ProjectRepositoryGitHeadResponse(
+                        repository.gitState().head().type().name(),
+                        repository.gitState().head().ref(),
+                        repository.gitState().head().commit()
+                ),
+                repository.gitState().workingTree().name()
+        );
     }
 
     AgentListResponse toResponse(final AgentListItem agent) {

@@ -129,6 +129,35 @@ class ForgeAgentProjectRepositoryIT {
     }
 
     @Test
+    void givenInvalidClonedCheckout_whenListRepositories_thenCheckoutRemainsClonedButGitStateIsInvalid() {
+        this.seedProject();
+
+        this.forgeIt.mockMvc()
+                .ping(IMPORT_PROJECT_REPOSITORY)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestImportInvalidCheckoutProjectRepository.json")
+                .expectStatus(HttpStatus.CREATED)
+                .assertAndCreate();
+
+        final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
+
+        this.forgeIt.mockMvc()
+                .ping(CLONE_PROJECT_REPOSITORY)
+                .withPathParameters(PathParams.create()
+                        .add("projectId", PROJECT_ALPHA_ID)
+                        .add("repositoryId", repositoryId))
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(LIST_PROJECT_REPOSITORIES)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseListProjectRepositoriesInvalidCheckout.json", "id", "createdAt")
+                .assertAndCreate();
+    }
+
+    @Test
     void givenProjectWithRepositories_whenDeleteProject_thenRepositoriesAreDeletedByCascade() {
         this.seedProject();
 

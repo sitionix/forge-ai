@@ -12,6 +12,11 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHead;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHeadType;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryWorkingTreeState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
@@ -134,6 +139,35 @@ class AgentProxyApiMapperTest {
     void mapsProjectToTypedResponse() {
         assertThat(this.mapper.toResponse(new AgentProject(PROJECT_ID, "Sitionix", CREATED, UPDATED)))
                 .isEqualTo(new AgentProjectResponse(PROJECT_ID, "Sitionix", CREATED, UPDATED));
+    }
+
+    @Test
+    void mapsProjectRepositoryToTypedResponse() {
+        final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+
+        assertThat(this.mapper.toResponse(new AgentProjectRepository(
+                repositoryId,
+                PROJECT_ID,
+                "service-a",
+                true,
+                new AgentProjectRepositoryGitState(
+                        true,
+                        new AgentProjectRepositoryGitHead(AgentProjectRepositoryGitHeadType.DETACHED, null, "abcdef"),
+                        AgentProjectRepositoryWorkingTreeState.CLEAN
+                ),
+                CREATED
+        ))).isEqualTo(new AgentProjectRepositoryResponse(
+                repositoryId,
+                PROJECT_ID,
+                "service-a",
+                true,
+                new AgentProjectRepositoryGitStateResponse(
+                        true,
+                        new AgentProjectRepositoryGitHeadResponse("DETACHED", null, "abcdef"),
+                        "CLEAN"
+                ),
+                CREATED
+        ));
     }
 
     @Test

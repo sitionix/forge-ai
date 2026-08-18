@@ -612,6 +612,30 @@ body.sidebar-collapsed .sidebar-link {
   font: 700 12px/1.4 var(--mono);
 }
 
+.repository-main {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.repository-git-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(27, 36, 31, 0.62);
+  font: 600 11px/1.35 var(--font);
+}
+
+.repository-git-state-clean {
+  color: #2f6f4e;
+}
+
+.repository-git-state-dirty,
+.repository-git-state-invalid {
+  color: #a14c22;
+}
+
 .repository-row .button {
   justify-self: end;
   width: max-content;

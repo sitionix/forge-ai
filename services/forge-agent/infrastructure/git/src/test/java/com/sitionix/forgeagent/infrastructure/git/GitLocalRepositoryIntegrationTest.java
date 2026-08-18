@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceState;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
 import com.sitionix.forgeagent.domain.port.GitOperationException;
 import com.sitionix.forgeagent.infrastructure.local.ForgeRootResolver;
@@ -45,7 +46,7 @@ class GitLocalRepositoryIntegrationTest {
         assertThat(attempt.stagingPath()).doesNotExist();
         assertThat(attempt.finalPath()).isDirectory();
         assertThat(attempt.finalPath().resolve(".git")).isDirectory();
-        assertThat(local.resolveCloneStates(PROJECT_ID, List.of(reference))).containsEntry(REPOSITORY_ID, true);
+        assertThat(local.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(reference)).get(REPOSITORY_ID).cloned()).isTrue();
     }
 
     @Test
@@ -63,8 +64,8 @@ class GitLocalRepositoryIntegrationTest {
 
         local.cleanupCloneAttempt(attempt);
 
-        final Map<UUID, Boolean> states = local.resolveCloneStates(PROJECT_ID, List.of(reference));
-        assertThat(states).containsEntry(REPOSITORY_ID, false);
+        final Map<UUID, ProjectRepositoryWorkspaceState> states = local.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(reference));
+        assertThat(states.get(REPOSITORY_ID).cloned()).isFalse();
         assertThat(attempt.stagingPath()).doesNotExist();
         assertThat(attempt.finalPath()).doesNotExist();
     }

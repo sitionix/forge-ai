@@ -35,6 +35,39 @@ class DefaultGitCommandRunnerTest {
     }
 
     @Test
+    void capturesStdoutCorrectly() {
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+
+        final GitCommandResult result = runner.run(List.of("/bin/sh", "-c", "printf 'hello\\nworld\\n'"),
+                new GitCommandExecutionPolicy(Duration.ofSeconds(5)));
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.stdout()).isEqualTo("hello\nworld\n");
+    }
+
+    @Test
+    void largeStdoutDoesNotDeadlock() {
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+
+        final GitCommandResult result = runner.run(List.of("/bin/sh", "-c", "yes output | head -n 200000"),
+                new GitCommandExecutionPolicy(Duration.ofSeconds(5)));
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.stdout()).startsWith("output\n");
+        assertThat(result.stdout().length()).isGreaterThan(100_000);
+    }
+
+    @Test
+    void timeoutStillAppliesWhileOutputIsBeingProduced() {
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+
+        assertThatThrownBy(() -> runner.run(List.of("/bin/sh", "-c", "while true; do printf 'output\\n'; done"),
+                new GitCommandExecutionPolicy(Duration.ofMillis(200))))
+                .isInstanceOf(GitExecutionException.class)
+                .hasMessage("Git command timed out.");
+    }
+
+    @Test
     void interruptionTerminatesStartedProcessAndDescendantBeforeThrowingAndPreservesInterruptStatus() throws Exception {
         final Path parentPidFile = this.tempDir.resolve("parent.pid");
         final Path childPidFile = this.tempDir.resolve("child.pid");

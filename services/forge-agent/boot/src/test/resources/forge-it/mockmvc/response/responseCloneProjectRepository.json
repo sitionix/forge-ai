@@ -3,5 +3,14 @@
   "projectId": "10000000-0000-4000-8000-000000000001",
   "name": "service-a",
   "cloned": true,
+  "gitState": {
+    "valid": true,
+    "head": {
+      "type": "BRANCH",
+      "ref": "main",
+      "commit": "abcdef1234567890"
+    },
+    "workingTree": "CLEAN"
+  },
   "createdAt": "ignored"
 }

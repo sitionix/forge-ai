@@ -20,6 +20,9 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitHeadResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitStateResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeagent.api.dto.RunConnectionResponse;
@@ -47,6 +50,10 @@ import com.sitionix.forgeagent.domain.model.AiRuntimeCatalog;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeEffort;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeModel;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
+import com.sitionix.forgeagent.domain.model.GitHeadState;
+import com.sitionix.forgeagent.domain.model.GitHeadType;
+import com.sitionix.forgeagent.domain.model.GitLocalRepositoryState;
+import com.sitionix.forgeagent.domain.model.GitWorkingTreeState;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeRun;
@@ -56,6 +63,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.Project;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.RunConnection;
@@ -125,6 +133,53 @@ class ForgeAgentApiMapperTest {
     void mapsProjectToResponse() {
         assertThat(this.mapper.toResponse(new Project(PROJECT_ID, "Sitionix", "sitionix", CREATED, UPDATED)))
                 .isEqualTo(new ProjectResponse(PROJECT_ID, "Sitionix", CREATED, UPDATED));
+    }
+
+    @Test
+    void mapsUnclonedProjectRepositoryWithNullGitState() {
+        final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+
+        assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", false, null, CREATED)))
+                .isEqualTo(new ProjectRepositoryResponse(repositoryId, PROJECT_ID, "service-a", false, null, CREATED));
+    }
+
+    @Test
+    void mapsValidProjectRepositoryGitState() {
+        final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+        final GitLocalRepositoryState gitState = new GitLocalRepositoryState(
+                true,
+                new GitHeadState(GitHeadType.BRANCH, "main", "abcdef"),
+                GitWorkingTreeState.CLEAN
+        );
+
+        assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", true, gitState, CREATED)))
+                .isEqualTo(new ProjectRepositoryResponse(
+                        repositoryId,
+                        PROJECT_ID,
+                        "service-a",
+                        true,
+                        new ProjectRepositoryGitStateResponse(
+                                true,
+                                new ProjectRepositoryGitHeadResponse("BRANCH", "main", "abcdef"),
+                                "CLEAN"
+                        ),
+                        CREATED
+                ));
+    }
+
+    @Test
+    void mapsInvalidProjectRepositoryGitState() {
+        final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+
+        assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", true, GitLocalRepositoryState.invalid(), CREATED)))
+                .isEqualTo(new ProjectRepositoryResponse(
+                        repositoryId,
+                        PROJECT_ID,
+                        "service-a",
+                        true,
+                        new ProjectRepositoryGitStateResponse(false, null, null),
+                        CREATED
+                ));
     }
 
     @Test

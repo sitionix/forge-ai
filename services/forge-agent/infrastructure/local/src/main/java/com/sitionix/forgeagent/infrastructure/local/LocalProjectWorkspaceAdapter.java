@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceState;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspaceException;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspacePort;
@@ -29,12 +30,14 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
     private final ForgeRootResolver forgeRootResolver;
 
     @Override
-    public Map<UUID, Boolean> resolveCloneStates(final UUID projectId, final List<ProjectRepositoryWorkspaceReference> repositories) {
-        final Map<UUID, Boolean> cloneStates = new LinkedHashMap<>();
+    public Map<UUID, ProjectRepositoryWorkspaceState> resolveRepositoryWorkspaceStates(final UUID projectId,
+                                                                                       final List<ProjectRepositoryWorkspaceReference> repositories) {
+        final Map<UUID, ProjectRepositoryWorkspaceState> workspaceStates = new LinkedHashMap<>();
         for (final ProjectRepositoryWorkspaceReference repository : repositories) {
-            cloneStates.put(repository.id(), this.isCloned(this.repositoryPath(projectId, repository)));
+            final Path repositoryPath = this.repositoryPath(projectId, repository);
+            workspaceStates.put(repository.id(), new ProjectRepositoryWorkspaceState(repository.id(), repositoryPath, this.isCloned(repositoryPath)));
         }
-        return cloneStates;
+        return workspaceStates;
     }
 
     @Override
