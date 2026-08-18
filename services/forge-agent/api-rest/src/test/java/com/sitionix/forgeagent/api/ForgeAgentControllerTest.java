@@ -220,6 +220,21 @@ class ForgeAgentControllerTest {
     }
 
     @Test
+    void checkProjectRepositoryUpdates() {
+        final ProjectRepositoryView repository = this.projectRepository();
+        final ProjectRepositoryResponse response = this.projectRepositoryResponse();
+        when(this.projectRepositoryUseCases.checkRepositoryUpdates(PROJECT_ID, REPOSITORY_ID)).thenReturn(repository);
+        when(this.mapper.toResponse(repository)).thenReturn(response);
+
+        final var actual = this.controller.checkProjectRepositoryUpdates(PROJECT_ID, REPOSITORY_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.projectRepositoryUseCases).checkRepositoryUpdates(PROJECT_ID, REPOSITORY_ID);
+        verify(this.mapper).toResponse(repository);
+    }
+
+    @Test
     void createProjectTask() {
         final CreateProjectTaskRequest request = new CreateProjectTaskRequest("Check calculation", "Count the letters in Sitionix.", WORKFLOW_ID);
         final CreateProjectTaskCommand command = new CreateProjectTaskCommand("Check calculation", "Count the letters in Sitionix.", WORKFLOW_ID);

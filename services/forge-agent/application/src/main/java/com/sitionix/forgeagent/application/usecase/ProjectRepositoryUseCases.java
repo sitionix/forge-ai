@@ -121,6 +121,32 @@ public class ProjectRepositoryUseCases {
         }
     }
 
+    public ProjectRepositoryView checkRepositoryUpdates(final UUID projectId, final UUID repositoryId) {
+        this.requireProject(projectId);
+        final ProjectRepositoryLink repository = this.requireRepository(projectId, repositoryId);
+        try {
+            final ProjectRepositoryWorkspaceReference reference = this.toWorkspaceReference(repository);
+            final ProjectRepositoryWorkspaceState workspaceState =
+                    this.localProjectWorkspacePort.resolveRepositoryWorkspaceState(projectId, reference);
+            if (workspaceState == null || !workspaceState.cloned()) {
+                throw new ConflictException("PROJECT_REPOSITORY_NOT_CLONED", "Project repository is not cloned.");
+            }
+            final GitLocalRepositoryState initialState = this.gitRepositoryPort.inspectLocalRepository(workspaceState.path());
+            this.requireCheckUpdatesAllowed(initialState);
+            final GitLocalRepositoryState finalState = this.gitRepositoryPort.checkUpdates(workspaceState.path());
+            return this.toView(projectId, repository, reference.name(), true, finalState);
+        } catch (final GitUnsafeRepositoryStateException exception) {
+            throw new ConflictException("PROJECT_REPOSITORY_CHECK_UPDATES_BLOCKED",
+                    "Project repository is not safe to check for updates.");
+        } catch (final GitOperationException exception) {
+            throw new InfrastructureExecutionException("PROJECT_REPOSITORY_CHECK_UPDATES_FAILED",
+                    "Project repository check for updates failed.");
+        } catch (final LocalProjectWorkspaceException exception) {
+            throw new InfrastructureExecutionException("PROJECT_REPOSITORY_WORKSPACE_FAILED",
+                    "Project repository workspace operation failed.");
+        }
+    }
+
     private void requireProject(final UUID projectId) {
         this.projectRepository.findById(projectId)
                 .orElseThrow(() -> new NotFoundException("PROJECT_NOT_FOUND", "Project was not found."));
@@ -184,6 +210,13 @@ public class ProjectRepositoryUseCases {
     private void requirePullAllowed(final GitLocalRepositoryState gitState) {
         if (gitState == null || !gitState.valid() || !gitState.pullAllowed()) {
             throw this.pullBlocked();
+        }
+    }
+
+    private void requireCheckUpdatesAllowed(final GitLocalRepositoryState gitState) {
+        if (gitState == null || !gitState.valid() || !gitState.checkUpdatesAllowed()) {
+            throw new ConflictException("PROJECT_REPOSITORY_CHECK_UPDATES_BLOCKED",
+                    "Project repository is not safe to check for updates.");
         }
     }
 

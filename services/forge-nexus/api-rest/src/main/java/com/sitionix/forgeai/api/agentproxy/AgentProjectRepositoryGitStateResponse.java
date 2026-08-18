@@ -11,6 +11,8 @@ public record AgentProjectRepositoryGitStateResponse(
         String operationState,
         AgentProjectRepositoryGitUpstreamResponse upstream,
         boolean pullAllowed,
-        String pullBlockedReason
+        String pullBlockedReason,
+        boolean checkUpdatesAllowed,
+        String checkUpdatesBlockedReason
 ) {
 }

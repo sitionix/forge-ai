@@ -4,5 +4,6 @@ public enum GitUpstreamRelation {
     UP_TO_DATE,
     BEHIND,
     AHEAD,
-    DIVERGED
+    DIVERGED,
+    MISSING
 }

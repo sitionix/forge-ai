@@ -173,6 +173,8 @@ class ForgeAgentApiMapperTest {
                                 "NORMAL",
                                 new ProjectRepositoryGitUpstreamResponse("origin/main", "BEHIND"),
                                 true,
+                                null,
+                                true,
                                 null
                         ),
                         CREATED
@@ -189,7 +191,8 @@ class ForgeAgentApiMapperTest {
                         PROJECT_ID,
                         "service-a",
                         true,
-                        new ProjectRepositoryGitStateResponse(false, null, null, null, null, null, false, "INVALID_CHECKOUT"),
+                        new ProjectRepositoryGitStateResponse(false, null, null, null, null, null, false, "INVALID_CHECKOUT",
+                                false, "INVALID_CHECKOUT"),
                         CREATED
                 ));
     }

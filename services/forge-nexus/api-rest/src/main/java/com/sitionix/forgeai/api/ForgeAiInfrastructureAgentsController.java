@@ -24,6 +24,7 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.CloneAgentProjectRepository;
+import com.sitionix.forgeai.domain.usecase.CheckAgentProjectRepositoryUpdates;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentProject;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentProjectTask;
@@ -68,6 +69,7 @@ public class ForgeAiInfrastructureAgentsController {
     private final ImportAgentProjectRepository importAgentProjectRepository;
     private final ListAgentProjectRepositories listAgentProjectRepositories;
     private final CloneAgentProjectRepository cloneAgentProjectRepository;
+    private final CheckAgentProjectRepositoryUpdates checkAgentProjectRepositoryUpdates;
     private final PullAgentProjectRepository pullAgentProjectRepository;
     private final CreateAgentProjectTask createAgentProjectTask;
     private final ListAgentProjectTasks listAgentProjectTasks;
@@ -129,6 +131,12 @@ public class ForgeAiInfrastructureAgentsController {
     public ResponseEntity<AgentProjectRepositoryResponse> cloneProjectRepository(@PathVariable final UUID projectId,
                                                                                  @PathVariable final UUID repositoryId) {
         return ResponseEntity.ok(this.mapper.toResponse(this.cloneAgentProjectRepository.execute(projectId, repositoryId)));
+    }
+
+    @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/repositories/{repositoryId}/check-updates")
+    public ResponseEntity<AgentProjectRepositoryResponse> checkProjectRepositoryUpdates(@PathVariable final UUID projectId,
+                                                                                       @PathVariable final UUID repositoryId) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.checkAgentProjectRepositoryUpdates.execute(projectId, repositoryId)));
     }
 
     @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/repositories/{repositoryId}/pull")

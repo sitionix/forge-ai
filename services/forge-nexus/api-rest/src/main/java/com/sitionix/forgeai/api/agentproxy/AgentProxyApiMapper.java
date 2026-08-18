@@ -121,7 +121,8 @@ public class AgentProxyApiMapper {
             return null;
         }
         if (!gitState.valid()) {
-            return new AgentProjectRepositoryGitStateResponse(false, null, null, null, null, null, false, gitState.pullBlockedReason());
+            return new AgentProjectRepositoryGitStateResponse(false, null, null, null, null, null, false, gitState.pullBlockedReason(),
+                    false, gitState.checkUpdatesBlockedReason());
         }
         return new AgentProjectRepositoryGitStateResponse(
                 true,
@@ -135,7 +136,9 @@ public class AgentProxyApiMapper {
                 gitState.operationState().name(),
                 this.toResponse(gitState.upstream()),
                 gitState.pullAllowed(),
-                gitState.pullBlockedReason()
+                gitState.pullBlockedReason(),
+                gitState.checkUpdatesAllowed(),
+                gitState.checkUpdatesBlockedReason()
         );
     }
 

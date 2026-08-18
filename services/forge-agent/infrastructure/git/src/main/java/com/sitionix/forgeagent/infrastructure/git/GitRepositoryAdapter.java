@@ -102,19 +102,33 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
     }
 
     @Override
+    public GitLocalRepositoryState checkUpdates(final Path repositoryPath) {
+        final GitLocalRepositoryState initialState = this.inspectLocalRepository(repositoryPath);
+        this.requireCheckUpdatesAllowed(initialState);
+        final GitUpstreamFetchTarget fetchTarget = this.resolveFetchTarget(repositoryPath, initialState);
+        final GitCommandResult fetchResult = this.fetchUpstream(repositoryPath, fetchTarget);
+        if (fetchResult.exitCode() != 0) {
+            if (this.isMissingRemoteRef(fetchResult)) {
+                return initialState.withUpstreamRelation(GitUpstreamRelation.MISSING);
+            }
+            throw new GitExecutionException("Git fetch failed.");
+        }
+        final GitLocalRepositoryState afterFetchState = this.inspectLocalRepository(repositoryPath);
+        this.requireStableCheckTarget(initialState, afterFetchState);
+        return afterFetchState;
+    }
+
+    @Override
     public GitLocalRepositoryState pullFastForward(final Path repositoryPath) {
         final GitLocalRepositoryState initialState = this.inspectLocalRepository(repositoryPath);
         this.requirePullAllowed(initialState);
         final GitUpstreamFetchTarget fetchTarget = this.resolveFetchTarget(repositoryPath, initialState);
-        final GitCommandResult fetchResult = this.commandRunner.run(List.of(
-                "git",
-                "-C",
-                repositoryPath.toString(),
-                "fetch",
-                fetchTarget.remote(),
-                fetchTarget.mergeRef() + ":" + fetchTarget.remoteTrackingRef()
-        ), FETCH_POLICY);
+        final GitCommandResult fetchResult = this.fetchUpstream(repositoryPath, fetchTarget);
         if (fetchResult.exitCode() != 0) {
+            if (this.isMissingRemoteRef(fetchResult)) {
+                throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.",
+                        initialState.withUpstreamRelation(GitUpstreamRelation.MISSING));
+            }
             throw new GitExecutionException("Git fetch failed.");
         }
 
@@ -133,7 +147,7 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
                 repositoryPath.toString(),
                 "merge",
                 "--ff-only",
-                afterFetchState.upstream().ref()
+                fetchTarget.remoteTrackingRef()
         ), FAST_FORWARD_POLICY);
         if (mergeResult.exitCode() != 0) {
             throw new GitExecutionException("Git fast-forward pull failed.");
@@ -150,11 +164,11 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
                 continue;
             }
             if (line.startsWith("# branch.")) {
-                final int separator = line.indexOf(' ', "# branch.".length());
+                final int separator = this.firstWhitespaceIndex(line, "# branch.".length());
                 if (separator < 0 || separator == line.length() - 1) {
                     throw new GitExecutionException("Git local repository status output is malformed.");
                 }
-                branchHeaders.put(line.substring("# branch.".length(), separator), line.substring(separator + 1));
+                branchHeaders.put(line.substring("# branch.".length(), separator), line.substring(separator + 1).trim());
             } else if (!line.startsWith("#")) {
                 dirty = true;
                 if (line.startsWith("u ")) {
@@ -187,9 +201,9 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         }
         final String aheadBehind = branchHeaders.get("ab");
         if (aheadBehind == null) {
-            throw new GitExecutionException("Git local repository status output is malformed.");
+            return new GitUpstreamState(upstream, GitUpstreamRelation.MISSING);
         }
-        final String[] parts = aheadBehind.split(" ");
+        final String[] parts = aheadBehind.trim().split("\\s+");
         if (parts.length != 2 || !parts[0].startsWith("+") || !parts[1].startsWith("-")) {
             throw new GitExecutionException("Git local repository status output is malformed.");
         }
@@ -227,11 +241,15 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
                 "--git-path",
                 "CHERRY_PICK_HEAD",
                 "--git-path",
+                "REVERT_HEAD",
+                "--git-path",
                 "REBASE_HEAD",
                 "--git-path",
                 "rebase-merge",
                 "--git-path",
-                "rebase-apply"
+                "rebase-apply",
+                "--git-path",
+                "sequencer"
         ), INSPECT_LOCAL_POLICY);
         if (result.exitCode() != 0) {
             throw new GitExecutionException("Git operation state inspection failed.");
@@ -248,17 +266,28 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         final String branch = state.head().ref();
         final String remote = this.readBranchConfig(repositoryPath, branch, "remote");
         final String mergeRef = this.readBranchConfig(repositoryPath, branch, "merge");
-        if (remote.isBlank() || mergeRef.isBlank()) {
+        if (remote.isBlank() || ".".equals(remote) || !mergeRef.startsWith("refs/heads/")) {
             throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", state);
         }
-        return new GitUpstreamFetchTarget(remote, mergeRef, this.toRemoteTrackingRef(state.upstream().ref()));
+        final String remoteBranch = mergeRef.substring("refs/heads/".length());
+        final String expectedUpstream = remote + "/" + remoteBranch;
+        final String expectedRemoteTrackingRef = "refs/remotes/" + expectedUpstream;
+        if (state.upstream() == null
+                || !(expectedUpstream.equals(state.upstream().ref()) || expectedRemoteTrackingRef.equals(state.upstream().ref()))) {
+            throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", state);
+        }
+        return new GitUpstreamFetchTarget(remote, mergeRef, expectedRemoteTrackingRef);
     }
 
-    private String toRemoteTrackingRef(final String upstreamRef) {
-        if (upstreamRef.startsWith("refs/remotes/")) {
-            return upstreamRef;
-        }
-        return "refs/remotes/" + upstreamRef;
+    private GitCommandResult fetchUpstream(final Path repositoryPath, final GitUpstreamFetchTarget fetchTarget) {
+        return this.commandRunner.run(List.of(
+                "git",
+                "-C",
+                repositoryPath.toString(),
+                "fetch",
+                fetchTarget.remote(),
+                "+" + fetchTarget.mergeRef() + ":" + fetchTarget.remoteTrackingRef()
+        ), FETCH_POLICY);
     }
 
     private String readBranchConfig(final Path repositoryPath, final String branch, final String key) {
@@ -282,9 +311,37 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         }
     }
 
+    private void requireCheckUpdatesAllowed(final GitLocalRepositoryState state) {
+        if (!state.valid() || !state.checkUpdatesAllowed()) {
+            throw new GitUnsafeRepositoryStateException("Git repository is not safe to check for updates.", state);
+        }
+    }
+
+    private void requireStableCheckTarget(final GitLocalRepositoryState initialState, final GitLocalRepositoryState candidateState) {
+        if (!candidateState.valid()
+                || candidateState.head().type() != GitHeadType.BRANCH
+                || candidateState.head().commit() == null
+                || candidateState.conflictState() == GitConflictState.CONFLICTED
+                || candidateState.workingTree() != GitWorkingTreeState.CLEAN
+                || candidateState.operationState() == GitOperationState.IN_PROGRESS
+                || initialState.head().type() != candidateState.head().type()
+                || !initialState.head().ref().equals(candidateState.head().ref())
+                || !initialState.head().commit().equals(candidateState.head().commit())
+                || initialState.upstream() == null
+                || candidateState.upstream() == null
+                || !initialState.upstream().ref().equals(candidateState.upstream().ref())) {
+            throw new GitUnsafeRepositoryStateException("Git repository is not safe to check for updates.", candidateState);
+        }
+    }
+
     private void requireStablePullTarget(final GitLocalRepositoryState initialState, final GitLocalRepositoryState candidateState) {
-        this.requirePullAllowed(candidateState);
-        if (initialState.head().type() != candidateState.head().type()
+        if (!candidateState.valid()
+                || candidateState.head().type() != GitHeadType.BRANCH
+                || candidateState.head().commit() == null
+                || candidateState.conflictState() == GitConflictState.CONFLICTED
+                || candidateState.workingTree() != GitWorkingTreeState.CLEAN
+                || candidateState.operationState() == GitOperationState.IN_PROGRESS
+                || initialState.head().type() != candidateState.head().type()
                 || !initialState.head().ref().equals(candidateState.head().ref())
                 || !initialState.head().commit().equals(candidateState.head().commit())
                 || initialState.upstream() == null
@@ -292,6 +349,20 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
                 || !initialState.upstream().ref().equals(candidateState.upstream().ref())) {
             throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", candidateState);
         }
+    }
+
+    private int firstWhitespaceIndex(final String line, final int start) {
+        for (int i = start; i < line.length(); i++) {
+            if (Character.isWhitespace(line.charAt(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private boolean isMissingRemoteRef(final GitCommandResult result) {
+        final String output = result.stdout() + "\n" + result.stderr();
+        return output.contains("couldn't find remote ref") || output.contains("could not find remote ref");
     }
 
     private boolean isRequestedRepositoryRoot(final Path repositoryPath, final String output) {

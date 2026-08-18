@@ -161,7 +161,7 @@ class ForgeAgentApiMapper {
         }
         if (!repository.gitState().valid()) {
             return new ProjectRepositoryGitStateResponse(false, null, null, null, null, null, false,
-                    repository.gitState().pullBlockedReason());
+                    repository.gitState().pullBlockedReason(), false, repository.gitState().checkUpdatesBlockedReason());
         }
         return new ProjectRepositoryGitStateResponse(
                 true,
@@ -178,7 +178,9 @@ class ForgeAgentApiMapper {
                         repository.gitState().upstream().relation().name()
                 ),
                 repository.gitState().pullAllowed(),
-                repository.gitState().pullBlockedReason()
+                repository.gitState().pullBlockedReason(),
+                repository.gitState().checkUpdatesAllowed(),
+                repository.gitState().checkUpdatesBlockedReason()
         );
     }
 

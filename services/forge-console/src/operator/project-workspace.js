@@ -7,6 +7,7 @@ export class ProjectWorkspace {
     this.onNewAgent = options.onNewAgent;
     this.onImportRepository = options.onImportRepository;
     this.onCloneRepository = options.onCloneRepository || (() => {});
+    this.onCheckRepositoryUpdates = options.onCheckRepositoryUpdates || (() => {});
     this.onPullRepository = options.onPullRepository || (() => {});
     this.onEditAgent = options.onEditAgent;
     this.onNewWorkflow = options.onNewWorkflow;
@@ -27,14 +28,14 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, repositories, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set()) {
+  render(project, repositories, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null, cloningRepositoryIds = new Set(), checkingRepositoryIds = new Set(), pullingRepositoryIds = new Set()) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2ImportRepository').disabled = !project || !repositoriesCurrent;
     this.byId('agentsV2CreateAgent').disabled = !dataCurrent;
     this.byId('agentsV2CreateWorkflow').disabled = !dataCurrent;
     this.byId('agentsV2CreateTask').disabled = !project || !workflowsCurrent || !tasksCurrent || !workflows.length;
-    this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds, pullingRepositoryIds);
+    this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds, checkingRepositoryIds, pullingRepositoryIds);
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
     this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed, taskPage);
@@ -51,7 +52,7 @@ export class ProjectWorkspace {
     this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
   }
 
-  renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set()) {
+  renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set(), checkingRepositoryIds = new Set(), pullingRepositoryIds = new Set()) {
     const list = this.byId('agentsV2RepositoriesList');
     if (repositoriesLoadFailed) {
       list.innerHTML = '';
@@ -74,7 +75,7 @@ export class ProjectWorkspace {
         ${repository.cloned === false ? `
           <button class="button tiny secondary" type="button" data-clone-repository-id="${escapeHtml(repository.id)}"${cloningRepositoryIds.has(repository.id) ? ' disabled' : ''}>Clone</button>
         ` : ''}
-        ${this.renderPullAction(repository, pullingRepositoryIds)}
+        ${this.renderRepositoryAction(repository, checkingRepositoryIds, pullingRepositoryIds)}
       </article>
     `).join('');
     list.querySelectorAll('[data-clone-repository-id]').forEach((element) => {
@@ -83,17 +84,29 @@ export class ProjectWorkspace {
     list.querySelectorAll('[data-pull-repository-id]').forEach((element) => {
       element.addEventListener('click', () => this.onPullRepository(element.dataset.pullRepositoryId));
     });
+    list.querySelectorAll('[data-check-repository-id]').forEach((element) => {
+      element.addEventListener('click', () => this.onCheckRepositoryUpdates(element.dataset.checkRepositoryId));
+    });
   }
 
-  renderPullAction(repository, pullingRepositoryIds = new Set()) {
+  renderRepositoryAction(repository, checkingRepositoryIds = new Set(), pullingRepositoryIds = new Set()) {
     const gitState = repository.gitState;
     if (repository.cloned === false || !gitState || gitState.valid === false) {
       return '';
     }
-    const disabled = !gitState.pullAllowed || pullingRepositoryIds.has(repository.id);
-    return `
-      <button class="button tiny secondary" type="button" data-pull-repository-id="${escapeHtml(repository.id)}"${disabled ? ' disabled' : ''}>Pull</button>
-    `;
+    const relation = gitState.upstream?.relation || null;
+    if (relation === 'BEHIND') {
+      const disabled = !gitState.pullAllowed || pullingRepositoryIds.has(repository.id);
+      return `<button class="button tiny secondary" type="button" data-pull-repository-id="${escapeHtml(repository.id)}"${disabled ? ' disabled' : ''}>Pull</button>`;
+    }
+    if (relation === 'UP_TO_DATE' || relation === 'MISSING') {
+      if (!gitState.checkUpdatesAllowed && !checkingRepositoryIds.has(repository.id)) {
+        return '';
+      }
+      const disabled = !gitState.checkUpdatesAllowed || checkingRepositoryIds.has(repository.id);
+      return `<button class="button tiny secondary" type="button" data-check-repository-id="${escapeHtml(repository.id)}"${disabled ? ' disabled' : ''}>Check</button>`;
+    }
+    return '';
   }
 
   renderRepositoryGitState(repository) {
@@ -109,9 +122,10 @@ export class ProjectWorkspace {
     const conflicted = gitState.conflictState === 'CONFLICTED';
     const stateLabel = conflicted ? 'Conflicted' : workingTree;
     const tone = conflicted ? 'dirty' : (gitState.workingTree === 'DIRTY' ? 'dirty' : 'clean');
+    const upstreamLabel = gitState.upstream?.relation === 'UP_TO_DATE' ? ' · Up to date' : '';
     return `
       <span class="repository-git-state">
-        ${escapeHtml(headLabel)} · <span class="repository-git-state-${tone}">${escapeHtml(stateLabel)}</span>
+        ${escapeHtml(headLabel)} · <span class="repository-git-state-${tone}">${escapeHtml(stateLabel)}</span>${escapeHtml(upstreamLabel)}
       </span>
     `;
   }

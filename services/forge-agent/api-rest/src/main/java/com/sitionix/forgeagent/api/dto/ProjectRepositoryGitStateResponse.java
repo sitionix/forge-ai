@@ -11,6 +11,8 @@ public record ProjectRepositoryGitStateResponse(
         String operationState,
         ProjectRepositoryGitUpstreamResponse upstream,
         boolean pullAllowed,
-        String pullBlockedReason
+        String pullBlockedReason,
+        boolean checkUpdatesAllowed,
+        String checkUpdatesBlockedReason
 ) {
 }

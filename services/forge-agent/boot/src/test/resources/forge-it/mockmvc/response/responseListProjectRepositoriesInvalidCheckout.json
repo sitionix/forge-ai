@@ -5,7 +5,11 @@
     "name": "invalid-checkout",
     "cloned": true,
     "gitState": {
-      "valid": false
+      "valid": false,
+      "pullAllowed": false,
+      "pullBlockedReason": "INVALID_CHECKOUT",
+      "checkUpdatesAllowed": false,
+      "checkUpdatesBlockedReason": "INVALID_CHECKOUT"
     },
     "createdAt": "ignored"
   }

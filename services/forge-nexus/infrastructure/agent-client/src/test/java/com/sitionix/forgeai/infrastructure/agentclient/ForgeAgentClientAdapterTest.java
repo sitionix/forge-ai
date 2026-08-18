@@ -180,6 +180,20 @@ class ForgeAgentClientAdapterTest {
     }
 
     @Test
+    void checkProjectRepositoryUpdatesExecutesTypedClientCallAndMapsResponse() {
+        final var upstreamResponse = new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", true, null, CREATED);
+        final var expected = new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "service-a", true, null, CREATED);
+        when(this.httpClient.checkProjectRepositoryUpdates(PROJECT_ID, REPOSITORY_ID)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.checkProjectRepositoryUpdates(PROJECT_ID, REPOSITORY_ID)).isEqualTo(expected);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).checkProjectRepositoryUpdates(PROJECT_ID, REPOSITORY_ID);
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
     void pullProjectRepositoryExecutesTypedClientCallAndMapsResponse() {
         final var upstreamResponse = new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", true, null, CREATED);
         final var expected = new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "service-a", true, null, CREATED);

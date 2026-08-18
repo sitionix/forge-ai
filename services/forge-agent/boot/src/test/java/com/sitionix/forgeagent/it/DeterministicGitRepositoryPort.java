@@ -51,13 +51,18 @@ public class DeterministicGitRepositoryPort implements GitRepositoryPort {
                 GitWorkingTreeState.CLEAN,
                 GitConflictState.NONE,
                 GitOperationState.NORMAL,
-                new GitUpstreamState("origin/main", GitUpstreamRelation.UP_TO_DATE)
+                new GitUpstreamState("origin/main", GitUpstreamRelation.BEHIND)
         );
     }
 
     @Override
+    public GitLocalRepositoryState checkUpdates(final Path repositoryPath) {
+        return this.inspectLocalRepository(repositoryPath).withUpstreamRelation(GitUpstreamRelation.UP_TO_DATE);
+    }
+
+    @Override
     public GitLocalRepositoryState pullFastForward(final Path repositoryPath) {
-        return this.inspectLocalRepository(repositoryPath);
+        return this.inspectLocalRepository(repositoryPath).withUpstreamRelation(GitUpstreamRelation.UP_TO_DATE);
     }
 
     @Override

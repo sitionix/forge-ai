@@ -17,7 +17,9 @@
       "ref": "origin/main",
       "relation": "UP_TO_DATE"
     },
-    "pullAllowed": true
+    "pullAllowed": false,
+    "pullBlockedReason": "UP_TO_DATE",
+    "checkUpdatesAllowed": true
   },
   "createdAt": "2026-08-17T09:00:00Z"
 }

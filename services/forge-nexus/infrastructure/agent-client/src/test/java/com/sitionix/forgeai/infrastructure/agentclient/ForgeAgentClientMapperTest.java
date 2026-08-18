@@ -236,7 +236,9 @@ class ForgeAgentClientMapperTest {
                         "NORMAL",
                         new ProjectRepositoryGitUpstreamResponse("origin/main", "AHEAD"),
                         false,
-                        "AHEAD"
+                        "AHEAD",
+                        true,
+                        null
                 ),
                 CREATED
         );
@@ -254,7 +256,9 @@ class ForgeAgentClientMapperTest {
                         AgentProjectRepositoryOperationState.NORMAL,
                         new AgentProjectRepositoryUpstream("origin/main", AgentProjectRepositoryUpstreamRelation.AHEAD),
                         false,
-                        "AHEAD"
+                        "AHEAD",
+                        true,
+                        null
                 ),
                 CREATED
         ));

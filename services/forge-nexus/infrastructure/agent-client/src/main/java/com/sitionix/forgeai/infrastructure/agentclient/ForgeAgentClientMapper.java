@@ -149,7 +149,8 @@ public class ForgeAgentClientMapper {
             return null;
         }
         if (!response.valid()) {
-            return new AgentProjectRepositoryGitState(false, null, null, null, null, null, false, response.pullBlockedReason());
+            return new AgentProjectRepositoryGitState(false, null, null, null, null, null, false, response.pullBlockedReason(),
+                    false, response.checkUpdatesBlockedReason());
         }
         if (response.head() == null) {
             throw this.invalid("repository.gitState.head must not be null when valid is true");
@@ -171,7 +172,9 @@ public class ForgeAgentClientMapper {
                 this.toOperationState(response.operationState()),
                 this.toDomain(response.upstream()),
                 response.pullAllowed(),
-                response.pullBlockedReason()
+                response.pullBlockedReason(),
+                response.checkUpdatesAllowed(),
+                response.checkUpdatesBlockedReason()
         );
     }
 

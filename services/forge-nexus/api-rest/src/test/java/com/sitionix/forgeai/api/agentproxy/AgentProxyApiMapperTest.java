@@ -162,6 +162,8 @@ class AgentProxyApiMapperTest {
                         AgentProjectRepositoryOperationState.NORMAL,
                         new AgentProjectRepositoryUpstream("origin/main", AgentProjectRepositoryUpstreamRelation.UP_TO_DATE),
                         false,
+                        "DETACHED_HEAD",
+                        false,
                         "DETACHED_HEAD"
                 ),
                 CREATED
@@ -177,6 +179,8 @@ class AgentProxyApiMapperTest {
                         "NONE",
                         "NORMAL",
                         new AgentProjectRepositoryGitUpstreamResponse("origin/main", "UP_TO_DATE"),
+                        false,
+                        "DETACHED_HEAD",
                         false,
                         "DETACHED_HEAD"
                 ),

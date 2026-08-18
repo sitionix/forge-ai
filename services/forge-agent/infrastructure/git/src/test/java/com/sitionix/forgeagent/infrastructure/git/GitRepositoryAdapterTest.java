@@ -35,6 +35,15 @@ class GitRepositoryAdapterTest {
     }
 
     @Test
+    void remoteBackedFixtureExplicitlySetsBareHeadAndCheckedOutBranch() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+
+        assertThat(this.runGitOutput(repositories.remote(), "git", "symbolic-ref", "HEAD")).isEqualTo("refs/heads/main");
+        assertThat(this.runGitOutput(repositories.local(), "git", "branch", "--show-current")).isEqualTo("main");
+        assertThat(this.runGitOutput(repositories.writer(), "git", "branch", "--show-current")).isEqualTo("main");
+    }
+
+    @Test
     void resolvesRepositoryNameGenerically() {
         final GitRepositoryAdapter adapter = new GitRepositoryAdapter((command, policy) -> new GitCommandResult(0, ""));
 
@@ -256,20 +265,67 @@ class GitRepositoryAdapterTest {
         assertThat(state.upstream().relation()).isEqualTo(GitUpstreamRelation.BEHIND);
         assertThat(state.pullAllowed()).isTrue();
         assertThat(result.upstream().relation()).isEqualTo(GitUpstreamRelation.UP_TO_DATE);
-        assertThat(result.pullAllowed()).isTrue();
+        assertThat(result.pullAllowed()).isFalse();
+        assertThat(result.pullBlockedReason()).isEqualTo("UP_TO_DATE");
         assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isNotEqualTo(before);
     }
 
     @Test
-    void pullFastForwardSucceedsAsNoOpWhenAlreadyUpToDate() throws Exception {
+    void checkUpdatesSucceedsAsNoOpWhenAlreadyUpToDate() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
         final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
 
-        final var result = adapter.pullFastForward(repositories.local());
+        final var state = adapter.inspectLocalRepository(repositories.local());
+        final var result = adapter.checkUpdates(repositories.local());
 
+        assertThat(state.pullAllowed()).isFalse();
+        assertThat(state.pullBlockedReason()).isEqualTo("UP_TO_DATE");
+        assertThat(state.checkUpdatesAllowed()).isTrue();
         assertThat(result.upstream().relation()).isEqualTo(GitUpstreamRelation.UP_TO_DATE);
         assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isEqualTo(before);
+    }
+
+    @Test
+    void pullFastForwardBlocksWhenAlreadyUpToDate() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
+                .isInstanceOf(GitUnsafeRepositoryStateException.class);
+    }
+
+    @Test
+    void checkUpdatesRefreshesStaleUpToDateTrackingRefAndEnablesPullWhenRemoteAdvanced() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var beforeCheck = adapter.inspectLocalRepository(repositories.local());
+        final var afterCheck = adapter.checkUpdates(repositories.local());
+
+        assertThat(beforeCheck.upstream().relation()).isEqualTo(GitUpstreamRelation.UP_TO_DATE);
+        assertThat(beforeCheck.pullAllowed()).isFalse();
+        assertThat(beforeCheck.checkUpdatesAllowed()).isTrue();
+        assertThat(afterCheck.upstream().relation()).isEqualTo(GitUpstreamRelation.BEHIND);
+        assertThat(afterCheck.pullAllowed()).isTrue();
+    }
+
+    @Test
+    void configuredUpstreamWithMissingLocalTrackingRefIsTypedAndCheckCanRefreshIt() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.runGit(repositories.local(), "git", "update-ref", "-d", "refs/remotes/origin/main");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var missing = adapter.inspectLocalRepository(repositories.local());
+        final var refreshed = adapter.checkUpdates(repositories.local());
+
+        assertThat(missing.upstream().ref()).isEqualTo("origin/main");
+        assertThat(missing.upstream().relation()).isEqualTo(GitUpstreamRelation.MISSING);
+        assertThat(missing.pullAllowed()).isFalse();
+        assertThat(missing.pullBlockedReason()).isEqualTo("UPSTREAM_MISSING");
+        assertThat(missing.checkUpdatesAllowed()).isTrue();
+        assertThat(refreshed.upstream().relation()).isEqualTo(GitUpstreamRelation.UP_TO_DATE);
     }
 
     @Test
@@ -320,6 +376,7 @@ class GitRepositoryAdapterTest {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
         this.commit(repositories.local(), "local\n", "Local update");
+        this.runGit(repositories.local(), "git", "fetch", "origin");
         final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
         final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
 
@@ -332,9 +389,51 @@ class GitRepositoryAdapterTest {
     }
 
     @Test
+    void checkUpdatesForceRefreshesRemoteTrackingRefAfterRemoteRewriteAndClassifiesDivergence() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        this.runGit(repositories.local(), "git", "fetch", "origin");
+        this.commit(repositories.local(), "local\n", "Local update");
+        this.runGit(repositories.writer(), "git", "reset", "--hard", "HEAD~1");
+        this.commitAndPushForce(repositories.writer(), "rewritten\n", "Rewritten update");
+        final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var result = adapter.checkUpdates(repositories.local());
+
+        assertThat(result.upstream().relation()).isEqualTo(GitUpstreamRelation.DIVERGED);
+        assertThat(result.pullAllowed()).isFalse();
+        assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isEqualTo(before);
+    }
+
+    @Test
+    void pullFastForwardUsesCurrentNonDefaultBranchUpstreamOnly() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.runGit(repositories.writer(), "git", "checkout", "-b", "feature/test");
+        this.commitAndPushCurrentBranch(repositories.writer(), "feature\n", "Feature initial");
+        this.runGit(repositories.local(), "git", "fetch", "origin", "+refs/heads/feature/test:refs/remotes/origin/feature/test");
+        this.runGit(repositories.local(), "git", "checkout", "-b", "feature/test", "--track", "origin/feature/test");
+        final String mainBefore = this.runGitOutput(repositories.local(), "git", "rev-parse", "main");
+        final String featureBefore = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
+        this.commitAndPushCurrentBranch(repositories.writer(), "feature advanced\n", "Feature update");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var checked = adapter.checkUpdates(repositories.local());
+        final var pulled = adapter.pullFastForward(repositories.local());
+
+        assertThat(checked.head().ref()).isEqualTo("feature/test");
+        assertThat(checked.upstream().ref()).isEqualTo("origin/feature/test");
+        assertThat(checked.upstream().relation()).isEqualTo(GitUpstreamRelation.BEHIND);
+        assertThat(pulled.head().ref()).isEqualTo("feature/test");
+        assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "main")).isEqualTo(mainBefore);
+        assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isNotEqualTo(featureBefore);
+    }
+
+    @Test
     void pullFastForwardSupportsRepositoryPathWithSpacesAndSpecialCharacters() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service a [special]");
         this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        this.runGit(repositories.local(), "git", "fetch", "origin");
         final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
 
         final var result = adapter.pullFastForward(repositories.local());
@@ -347,6 +446,8 @@ class GitRepositoryAdapterTest {
     void pullFastForwardRevalidatesAfterFetchAndAbortsIfCheckoutBecomesDirty() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        this.runGit(repositories.local(), "git", "fetch", "origin");
+        this.commitAndPush(repositories.writer(), "remote again\n", "Remote update again");
         final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
         final MutatingGitCommandRunner runner = new MutatingGitCommandRunner(repositories.local());
         final GitRepositoryAdapter adapter = new GitRepositoryAdapter(runner);
@@ -356,6 +457,79 @@ class GitRepositoryAdapterTest {
 
         assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isEqualTo(before);
         assertThat(runner.commands().stream()).noneMatch(command -> command.contains("merge"));
+    }
+
+    @Test
+    void pullFastForwardRevalidatesAfterFetchAndAbortsIfCurrentBranchChanges() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        this.runGit(repositories.local(), "git", "fetch", "origin");
+        this.runGit(repositories.local(), "git", "branch", "other");
+        this.commitAndPush(repositories.writer(), "remote again\n", "Remote update again");
+        final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
+        final MutatingGitCommandRunner runner = new MutatingGitCommandRunner(repositories.local(), RaceMutation.CHECKOUT_OTHER_BRANCH);
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(runner);
+
+        assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
+                .isInstanceOf(GitUnsafeRepositoryStateException.class);
+
+        assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "other")).isEqualTo(before);
+        assertThat(runner.commands().stream()).noneMatch(command -> command.contains("merge"));
+    }
+
+    @Test
+    void pullFastForwardRevalidatesAfterFetchAndAbortsIfHeadCommitChanges() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        this.runGit(repositories.local(), "git", "fetch", "origin");
+        this.commitAndPush(repositories.writer(), "remote again\n", "Remote update again");
+        final MutatingGitCommandRunner runner = new MutatingGitCommandRunner(repositories.local(), RaceMutation.LOCAL_COMMIT);
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(runner);
+
+        assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
+                .isInstanceOf(GitUnsafeRepositoryStateException.class);
+
+        assertThat(runner.commands().stream()).noneMatch(command -> command.contains("merge"));
+    }
+
+    @Test
+    void pullFastForwardRevalidatesAfterFetchAndAbortsIfUpstreamChanges() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.runGit(repositories.writer(), "git", "checkout", "-b", "other");
+        this.commitAndPushCurrentBranch(repositories.writer(), "other\n", "Other branch");
+        this.runGit(repositories.writer(), "git", "checkout", "main");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        this.runGit(repositories.local(), "git", "fetch", "origin");
+        this.commitAndPush(repositories.writer(), "remote again\n", "Remote update again");
+        final MutatingGitCommandRunner runner = new MutatingGitCommandRunner(repositories.local(), RaceMutation.CHANGE_UPSTREAM);
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(runner);
+
+        assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
+                .isInstanceOf(GitUnsafeRepositoryStateException.class);
+
+        assertThat(runner.commands().stream()).noneMatch(command -> command.contains("merge"));
+    }
+
+    @Test
+    void unfinishedGitOperationsAreDetectedWithoutResolvingThem() throws Exception {
+        final Path repository = this.createRepositoryWithCommit("service-operation-state");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final List<String> gitPaths = List.of("MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD", "REVERT_HEAD", "sequencer/todo");
+        for (final String gitPath : gitPaths) {
+            final Path rawMarker = Path.of(this.runGitOutput(repository, "git", "rev-parse", "--git-path", gitPath));
+            final Path marker = rawMarker.isAbsolute() ? rawMarker : repository.resolve(rawMarker);
+            Files.createDirectories(marker.getParent());
+            Files.writeString(marker, "marker\n");
+
+            final var state = adapter.inspectLocalRepository(repository);
+
+            assertThat(state.operationState()).isEqualTo(GitOperationState.IN_PROGRESS);
+            assertThat(state.pullAllowed()).isFalse();
+            Files.deleteIfExists(marker);
+            if (gitPath.startsWith("sequencer/")) {
+                Files.deleteIfExists(marker.getParent());
+            }
+        }
     }
 
     @Test
@@ -458,11 +632,15 @@ class GitRepositoryAdapterTest {
                 "--git-path",
                 "CHERRY_PICK_HEAD",
                 "--git-path",
+                "REVERT_HEAD",
+                "--git-path",
                 "REBASE_HEAD",
                 "--git-path",
                 "rebase-merge",
                 "--git-path",
-                "rebase-apply"
+                "rebase-apply",
+                "--git-path",
+                "sequencer"
         ));
         assertThat(runner.policies()).extracting(GitCommandExecutionPolicy::timeout)
                 .containsExactly(Duration.ofSeconds(10), Duration.ofSeconds(10), Duration.ofSeconds(10));
@@ -471,7 +649,8 @@ class GitRepositoryAdapterTest {
     private Path createBareRepository(final String name) throws Exception {
         final Path remote = this.tempDir.resolve(name);
         Files.createDirectories(remote);
-        this.runGit("git", "init", "--bare", remote.toString());
+        this.runGit("git", "init", "--bare", "-b", "main", remote.toString());
+        this.runGit(remote, "git", "symbolic-ref", "HEAD", "refs/heads/main");
         return remote;
     }
 
@@ -490,6 +669,7 @@ class GitRepositoryAdapterTest {
         final Path remote = this.createBareRepository(name + ".git");
         this.runGit(seed, "git", "remote", "add", "origin", remote.toString());
         this.runGit(seed, "git", "push", "-u", "origin", "main");
+        this.runGit(remote, "git", "symbolic-ref", "HEAD", "refs/heads/main");
         final Path local = this.tempDir.resolve(name + "-local");
         final Path writer = this.tempDir.resolve(name + "-writer");
         this.runGit("git", "clone", remote.toString(), local.toString());
@@ -500,6 +680,17 @@ class GitRepositoryAdapterTest {
     private void commitAndPush(final Path repository, final String content, final String message) throws Exception {
         this.commit(repository, content, message);
         this.runGit(repository, "git", "push", "origin", "main");
+    }
+
+    private void commitAndPushForce(final Path repository, final String content, final String message) throws Exception {
+        this.commit(repository, content, message);
+        this.runGit(repository, "git", "push", "--force", "origin", "main");
+    }
+
+    private void commitAndPushCurrentBranch(final Path repository, final String content, final String message) throws Exception {
+        this.commit(repository, content, message);
+        final String branch = this.runGitOutput(repository, "git", "branch", "--show-current");
+        this.runGit(repository, "git", "push", "-u", "origin", branch);
     }
 
     private void commit(final Path repository, final String content, final String message) throws Exception {
@@ -549,15 +740,28 @@ class GitRepositoryAdapterTest {
     private record RemoteBackedRepository(Path remote, Path local, Path writer) {
     }
 
+    private enum RaceMutation {
+        DIRTY_WORKTREE,
+        CHECKOUT_OTHER_BRANCH,
+        LOCAL_COMMIT,
+        CHANGE_UPSTREAM
+    }
+
     private static final class MutatingGitCommandRunner implements GitCommandRunner {
 
         private final DefaultGitCommandRunner delegate = new DefaultGitCommandRunner();
         private final Path repositoryPath;
+        private final RaceMutation mutation;
         private final List<List<String>> commands = new ArrayList<>();
         private boolean mutated;
 
         private MutatingGitCommandRunner(final Path repositoryPath) {
+            this(repositoryPath, RaceMutation.DIRTY_WORKTREE);
+        }
+
+        private MutatingGitCommandRunner(final Path repositoryPath, final RaceMutation mutation) {
             this.repositoryPath = repositoryPath;
+            this.mutation = mutation;
         }
 
         @Override
@@ -566,13 +770,39 @@ class GitRepositoryAdapterTest {
             final GitCommandResult result = this.delegate.run(command, policy);
             if (!this.mutated && command.contains("fetch")) {
                 try {
-                    Files.writeString(this.repositoryPath.resolve("race.txt"), "dirty\n");
+                    this.mutate();
                     this.mutated = true;
                 } catch (final IOException exception) {
                     throw new GitExecutionException("Race mutation failed.", exception);
                 }
             }
             return result;
+        }
+
+        private void mutate() throws IOException {
+            switch (this.mutation) {
+                case DIRTY_WORKTREE -> Files.writeString(this.repositoryPath.resolve("race.txt"), "dirty\n");
+                case CHECKOUT_OTHER_BRANCH -> this.run("git", "checkout", "other");
+                case LOCAL_COMMIT -> {
+                    Files.writeString(this.repositoryPath.resolve("race.txt"), "local\n");
+                    this.run("git", "add", "race.txt");
+                    this.run("git", "-c", "user.name=Forge Test", "-c", "user.email=forge@example.com",
+                            "commit", "-m", "Race local commit");
+                }
+                case CHANGE_UPSTREAM -> this.run("git", "branch", "--set-upstream-to=origin/other", "main");
+            }
+        }
+
+        private void run(final String... command) throws IOException {
+            final List<String> args = new ArrayList<>();
+            args.add(command[0]);
+            args.add("-C");
+            args.add(this.repositoryPath.toString());
+            args.addAll(List.of(command).subList(1, command.length));
+            final GitCommandResult result = this.delegate.run(args, new GitCommandExecutionPolicy(Duration.ofSeconds(10)));
+            if (result.exitCode() != 0) {
+                throw new GitExecutionException("Race mutation failed.");
+            }
         }
 
         private List<List<String>> commands() {

@@ -41,6 +41,12 @@ public final class ForgeAgentMockMvcEndpoint {
             Endpoint.createContract("/api/v1/projects/{projectId}/repositories", HttpMethod.GET, Void.class, ProjectRepositoryResponse[].class);
     public static final Endpoint<Void, ProjectRepositoryResponse> CLONE_PROJECT_REPOSITORY =
             Endpoint.createContract("/api/v1/projects/{projectId}/repositories/{repositoryId}/clone", HttpMethod.POST, Void.class, ProjectRepositoryResponse.class);
+    public static final Endpoint<Void, ProjectRepositoryResponse> CHECK_PROJECT_REPOSITORY_UPDATES =
+            Endpoint.createContract("/api/v1/projects/{projectId}/repositories/{repositoryId}/check-updates", HttpMethod.POST, Void.class, ProjectRepositoryResponse.class);
+    public static final Endpoint<Void, ProjectRepositoryResponse> PULL_PROJECT_REPOSITORY =
+            Endpoint.createContract("/api/v1/projects/{projectId}/repositories/{repositoryId}/pull", HttpMethod.POST, Void.class, ProjectRepositoryResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> PULL_PROJECT_REPOSITORY_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/repositories/{repositoryId}/pull", HttpMethod.POST, Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<CreateProjectTaskRequest, ProjectTaskResponse> CREATE_PROJECT_TASK =
             Endpoint.createContract("/api/v1/projects/{projectId}/tasks", HttpMethod.POST, CreateProjectTaskRequest.class, ProjectTaskResponse.class);
     public static final Endpoint<CreateProjectTaskRequest, ForgeAgentErrorResponse> CREATE_PROJECT_TASK_ERROR =
