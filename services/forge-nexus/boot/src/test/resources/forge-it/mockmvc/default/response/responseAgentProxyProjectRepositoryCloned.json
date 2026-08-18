@@ -10,7 +10,14 @@
       "ref": "main",
       "commit": "abcdef1234567890"
     },
-    "workingTree": "CLEAN"
+    "workingTree": "CLEAN",
+    "conflictState": "NONE",
+    "operationState": "NORMAL",
+    "upstream": {
+      "ref": "origin/main",
+      "relation": "UP_TO_DATE"
+    },
+    "pullAllowed": true
   },
   "createdAt": "2026-08-17T09:00:00Z"
 }

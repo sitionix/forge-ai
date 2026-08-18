@@ -27,6 +27,7 @@ import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitHeadResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitStateResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitUpstreamResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
@@ -159,7 +160,8 @@ class ForgeAgentApiMapper {
             return null;
         }
         if (!repository.gitState().valid()) {
-            return new ProjectRepositoryGitStateResponse(false, null, null);
+            return new ProjectRepositoryGitStateResponse(false, null, null, null, null, null, false,
+                    repository.gitState().pullBlockedReason());
         }
         return new ProjectRepositoryGitStateResponse(
                 true,
@@ -168,7 +170,15 @@ class ForgeAgentApiMapper {
                         repository.gitState().head().ref(),
                         repository.gitState().head().commit()
                 ),
-                repository.gitState().workingTree().name()
+                repository.gitState().workingTree().name(),
+                repository.gitState().conflictState().name(),
+                repository.gitState().operationState().name(),
+                repository.gitState().upstream() == null ? null : new ProjectRepositoryGitUpstreamResponse(
+                        repository.gitState().upstream().ref(),
+                        repository.gitState().upstream().relation().name()
+                ),
+                repository.gitState().pullAllowed(),
+                repository.gitState().pullBlockedReason()
         );
     }
 

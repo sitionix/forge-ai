@@ -22,6 +22,7 @@ import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitHeadResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitStateResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitUpstreamResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
@@ -53,6 +54,10 @@ import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
 import com.sitionix.forgeagent.domain.model.GitHeadState;
 import com.sitionix.forgeagent.domain.model.GitHeadType;
 import com.sitionix.forgeagent.domain.model.GitLocalRepositoryState;
+import com.sitionix.forgeagent.domain.model.GitConflictState;
+import com.sitionix.forgeagent.domain.model.GitOperationState;
+import com.sitionix.forgeagent.domain.model.GitUpstreamRelation;
+import com.sitionix.forgeagent.domain.model.GitUpstreamState;
 import com.sitionix.forgeagent.domain.model.GitWorkingTreeState;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
@@ -146,10 +151,12 @@ class ForgeAgentApiMapperTest {
     @Test
     void mapsValidProjectRepositoryGitState() {
         final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
-        final GitLocalRepositoryState gitState = new GitLocalRepositoryState(
-                true,
+        final GitLocalRepositoryState gitState = GitLocalRepositoryState.valid(
                 new GitHeadState(GitHeadType.BRANCH, "main", "abcdef"),
-                GitWorkingTreeState.CLEAN
+                GitWorkingTreeState.CLEAN,
+                GitConflictState.NONE,
+                GitOperationState.NORMAL,
+                new GitUpstreamState("origin/main", GitUpstreamRelation.BEHIND)
         );
 
         assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", true, gitState, CREATED)))
@@ -161,7 +168,12 @@ class ForgeAgentApiMapperTest {
                         new ProjectRepositoryGitStateResponse(
                                 true,
                                 new ProjectRepositoryGitHeadResponse("BRANCH", "main", "abcdef"),
-                                "CLEAN"
+                                "CLEAN",
+                                "NONE",
+                                "NORMAL",
+                                new ProjectRepositoryGitUpstreamResponse("origin/main", "BEHIND"),
+                                true,
+                                null
                         ),
                         CREATED
                 ));
@@ -177,7 +189,7 @@ class ForgeAgentApiMapperTest {
                         PROJECT_ID,
                         "service-a",
                         true,
-                        new ProjectRepositoryGitStateResponse(false, null, null),
+                        new ProjectRepositoryGitStateResponse(false, null, null, null, null, null, false, "INVALID_CHECKOUT"),
                         CREATED
                 ));
     }

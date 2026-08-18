@@ -70,6 +70,7 @@ import com.sitionix.forgeai.domain.usecase.ListAgentProjectTasks;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflowRuns;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflows;
 import com.sitionix.forgeai.domain.usecase.ListProjectAgentDefinitions;
+import com.sitionix.forgeai.domain.usecase.PullAgentProjectRepository;
 import com.sitionix.forgeai.domain.usecase.UpdateAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.UpdateAgentWorkflow;
 import java.time.Instant;
@@ -105,6 +106,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
     private ListAgentProjectRepositories listAgentProjectRepositories;
     @Mock
     private CloneAgentProjectRepository cloneAgentProjectRepository;
+    @Mock
+    private PullAgentProjectRepository pullAgentProjectRepository;
     @Mock
     private CreateAgentProjectTask createAgentProjectTask;
     @Mock
@@ -155,6 +158,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 this.importAgentProjectRepository,
                 this.listAgentProjectRepositories,
                 this.cloneAgentProjectRepository,
+                this.pullAgentProjectRepository,
                 this.createAgentProjectTask,
                 this.listAgentProjectTasks,
                 this.getAgentProjectTask,
@@ -260,6 +264,21 @@ class ForgeAiInfrastructureAgentsControllerTest {
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(actual.getBody()).isSameAs(response);
         verify(this.cloneAgentProjectRepository).execute(PROJECT_ID, REPOSITORY_ID);
+        verify(this.mapper).toResponse(repository);
+    }
+
+    @Test
+    void pullProjectRepository() {
+        final var repository = this.projectRepository();
+        final var response = this.projectRepositoryResponse();
+        when(this.pullAgentProjectRepository.execute(PROJECT_ID, REPOSITORY_ID)).thenReturn(repository);
+        when(this.mapper.toResponse(repository)).thenReturn(response);
+
+        final var actual = this.controller.pullProjectRepository(PROJECT_ID, REPOSITORY_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.pullAgentProjectRepository).execute(PROJECT_ID, REPOSITORY_ID);
         verify(this.mapper).toResponse(repository);
     }
 

@@ -13,9 +13,13 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryConflictState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHead;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHeadType;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryOperationState;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryUpstream;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryUpstreamRelation;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryWorkingTreeState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -153,7 +157,12 @@ class AgentProxyApiMapperTest {
                 new AgentProjectRepositoryGitState(
                         true,
                         new AgentProjectRepositoryGitHead(AgentProjectRepositoryGitHeadType.DETACHED, null, "abcdef"),
-                        AgentProjectRepositoryWorkingTreeState.CLEAN
+                        AgentProjectRepositoryWorkingTreeState.CLEAN,
+                        AgentProjectRepositoryConflictState.NONE,
+                        AgentProjectRepositoryOperationState.NORMAL,
+                        new AgentProjectRepositoryUpstream("origin/main", AgentProjectRepositoryUpstreamRelation.UP_TO_DATE),
+                        false,
+                        "DETACHED_HEAD"
                 ),
                 CREATED
         ))).isEqualTo(new AgentProjectRepositoryResponse(
@@ -164,7 +173,12 @@ class AgentProxyApiMapperTest {
                 new AgentProjectRepositoryGitStateResponse(
                         true,
                         new AgentProjectRepositoryGitHeadResponse("DETACHED", null, "abcdef"),
-                        "CLEAN"
+                        "CLEAN",
+                        "NONE",
+                        "NORMAL",
+                        new AgentProjectRepositoryGitUpstreamResponse("origin/main", "UP_TO_DATE"),
+                        false,
+                        "DETACHED_HEAD"
                 ),
                 CREATED
         ));

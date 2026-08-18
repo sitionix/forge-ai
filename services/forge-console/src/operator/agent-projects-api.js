@@ -19,6 +19,9 @@ export function createAgentProjectsApi(http) {
     cloneProjectRepository(projectId, repositoryId) {
       return http.post(`${root}/projects/${encodeURIComponent(projectId)}/repositories/${encodeURIComponent(repositoryId)}/clone`);
     },
+    pullProjectRepository(projectId, repositoryId) {
+      return http.post(`${root}/projects/${encodeURIComponent(projectId)}/repositories/${encodeURIComponent(repositoryId)}/pull`);
+    },
     getRuntime() {
       return http.get(`${root}/runtime`);
     },

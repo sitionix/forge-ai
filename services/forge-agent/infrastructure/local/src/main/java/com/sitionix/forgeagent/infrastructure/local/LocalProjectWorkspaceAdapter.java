@@ -34,10 +34,16 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
                                                                                        final List<ProjectRepositoryWorkspaceReference> repositories) {
         final Map<UUID, ProjectRepositoryWorkspaceState> workspaceStates = new LinkedHashMap<>();
         for (final ProjectRepositoryWorkspaceReference repository : repositories) {
-            final Path repositoryPath = this.repositoryPath(projectId, repository);
-            workspaceStates.put(repository.id(), new ProjectRepositoryWorkspaceState(repository.id(), repositoryPath, this.isCloned(repositoryPath)));
+            workspaceStates.put(repository.id(), this.resolveRepositoryWorkspaceState(projectId, repository));
         }
         return workspaceStates;
+    }
+
+    @Override
+    public ProjectRepositoryWorkspaceState resolveRepositoryWorkspaceState(final UUID projectId,
+                                                                          final ProjectRepositoryWorkspaceReference repository) {
+        final Path repositoryPath = this.repositoryPath(projectId, repository);
+        return new ProjectRepositoryWorkspaceState(repository.id(), repositoryPath, this.isCloned(repositoryPath));
     }
 
     @Override

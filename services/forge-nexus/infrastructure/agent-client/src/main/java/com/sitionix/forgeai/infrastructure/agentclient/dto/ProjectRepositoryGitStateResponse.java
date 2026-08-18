@@ -6,6 +6,11 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 public record ProjectRepositoryGitStateResponse(
         boolean valid,
         ProjectRepositoryGitHeadResponse head,
-        String workingTree
+        String workingTree,
+        String conflictState,
+        String operationState,
+        ProjectRepositoryGitUpstreamResponse upstream,
+        boolean pullAllowed,
+        String pullBlockedReason
 ) {
 }

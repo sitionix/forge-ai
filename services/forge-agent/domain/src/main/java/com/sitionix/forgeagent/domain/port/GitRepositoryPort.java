@@ -12,5 +12,7 @@ public interface GitRepositoryPort {
 
     GitLocalRepositoryState inspectLocalRepository(Path repositoryPath);
 
+    GitLocalRepositoryState pullFastForward(Path repositoryPath);
+
     void clone(String remoteUrl, Path targetPath);
 }

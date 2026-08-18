@@ -5,9 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeagent.domain.model.GitHeadType;
+import com.sitionix.forgeagent.domain.model.GitConflictState;
+import com.sitionix.forgeagent.domain.model.GitOperationState;
+import com.sitionix.forgeagent.domain.model.GitUpstreamRelation;
 import com.sitionix.forgeagent.domain.model.GitWorkingTreeState;
 import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
+import com.sitionix.forgeagent.domain.port.GitUnsafeRepositoryStateException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -60,6 +64,11 @@ class GitRepositoryAdapterTest {
         assertThat(state.head().ref()).isEqualTo("main");
         assertThat(state.head().commit()).isNotBlank();
         assertThat(state.workingTree()).isEqualTo(GitWorkingTreeState.CLEAN);
+        assertThat(state.conflictState()).isEqualTo(GitConflictState.NONE);
+        assertThat(state.operationState()).isEqualTo(GitOperationState.NORMAL);
+        assertThat(state.upstream()).isNull();
+        assertThat(state.pullAllowed()).isFalse();
+        assertThat(state.pullBlockedReason()).isEqualTo("NO_UPSTREAM");
     }
 
     @Test
@@ -88,6 +97,8 @@ class GitRepositoryAdapterTest {
         final var state = adapter.inspectLocalRepository(repository);
 
         assertThat(state.workingTree()).isEqualTo(GitWorkingTreeState.DIRTY);
+        assertThat(state.pullAllowed()).isFalse();
+        assertThat(state.pullBlockedReason()).isEqualTo("DIRTY_WORKING_TREE");
     }
 
     @Test
@@ -126,6 +137,8 @@ class GitRepositoryAdapterTest {
         assertThat(state.head().ref()).isNull();
         assertThat(state.head().commit()).isNotBlank();
         assertThat(state.workingTree()).isEqualTo(GitWorkingTreeState.CLEAN);
+        assertThat(state.pullAllowed()).isFalse();
+        assertThat(state.pullBlockedReason()).isEqualTo("DETACHED_HEAD");
     }
 
     @Test
@@ -224,6 +237,125 @@ class GitRepositoryAdapterTest {
         assertThat(state.head().ref()).isEqualTo("main");
         assertThat(state.head().commit()).isNull();
         assertThat(state.workingTree()).isEqualTo(GitWorkingTreeState.CLEAN);
+        assertThat(state.pullAllowed()).isFalse();
+        assertThat(state.pullBlockedReason()).isEqualTo("UNBORN_BRANCH");
+    }
+
+    @Test
+    void inspectsTrackingBranchBehindRemoteAsPullAllowedAndFastForwards() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        this.runGit(repositories.local(), "git", "fetch", "origin");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var state = adapter.inspectLocalRepository(repositories.local());
+        final var result = adapter.pullFastForward(repositories.local());
+
+        assertThat(state.upstream().ref()).isEqualTo("origin/main");
+        assertThat(state.upstream().relation()).isEqualTo(GitUpstreamRelation.BEHIND);
+        assertThat(state.pullAllowed()).isTrue();
+        assertThat(result.upstream().relation()).isEqualTo(GitUpstreamRelation.UP_TO_DATE);
+        assertThat(result.pullAllowed()).isTrue();
+        assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isNotEqualTo(before);
+    }
+
+    @Test
+    void pullFastForwardSucceedsAsNoOpWhenAlreadyUpToDate() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var result = adapter.pullFastForward(repositories.local());
+
+        assertThat(result.upstream().relation()).isEqualTo(GitUpstreamRelation.UP_TO_DATE);
+        assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isEqualTo(before);
+    }
+
+    @Test
+    void pullFastForwardBlocksDirtyRepositoryBeforeFetch() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        Files.writeString(repositories.local().resolve("README.md"), "dirty\n");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
+                .isInstanceOf(GitUnsafeRepositoryStateException.class);
+    }
+
+    @Test
+    void inspectsUnresolvedConflictAndBlocksPull() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        this.commit(repositories.local(), "local\n", "Local update");
+        this.runGit(repositories.local(), "git", "fetch", "origin");
+        this.runGitAllowFailure(repositories.local(), "git", "merge", "origin/main");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var state = adapter.inspectLocalRepository(repositories.local());
+
+        assertThat(state.conflictState()).isEqualTo(GitConflictState.CONFLICTED);
+        assertThat(state.operationState()).isEqualTo(GitOperationState.IN_PROGRESS);
+        assertThat(state.pullAllowed()).isFalse();
+        assertThat(state.pullBlockedReason()).isEqualTo("CONFLICTED");
+        assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
+                .isInstanceOf(GitUnsafeRepositoryStateException.class);
+    }
+
+    @Test
+    void pullFastForwardBlocksLocalAheadRepository() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.commit(repositories.local(), "local\n", "Local update");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var state = adapter.inspectLocalRepository(repositories.local());
+
+        assertThat(state.upstream().relation()).isEqualTo(GitUpstreamRelation.AHEAD);
+        assertThat(state.pullAllowed()).isFalse();
+        assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
+                .isInstanceOf(GitUnsafeRepositoryStateException.class);
+    }
+
+    @Test
+    void pullFastForwardBlocksDivergedRepositoryWithoutMergeCommitOrRebase() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        this.commit(repositories.local(), "local\n", "Local update");
+        final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
+                .isInstanceOf(GitUnsafeRepositoryStateException.class);
+
+        assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isEqualTo(before);
+        assertThat(this.runGitOutput(repositories.local(), "git", "rev-list", "--parents", "-n", "1", "HEAD").split(" ")).hasSize(2);
+        assertThat(this.runGitAllowFailure(repositories.local(), "git", "rebase", "--show-current-patch")).isNotZero();
+    }
+
+    @Test
+    void pullFastForwardSupportsRepositoryPathWithSpacesAndSpecialCharacters() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service a [special]");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var result = adapter.pullFastForward(repositories.local());
+
+        assertThat(result.valid()).isTrue();
+        assertThat(result.upstream().relation()).isEqualTo(GitUpstreamRelation.UP_TO_DATE);
+    }
+
+    @Test
+    void pullFastForwardRevalidatesAfterFetchAndAbortsIfCheckoutBecomesDirty() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
+        final MutatingGitCommandRunner runner = new MutatingGitCommandRunner(repositories.local());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(runner);
+
+        assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
+                .isInstanceOf(GitUnsafeRepositoryStateException.class);
+
+        assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isEqualTo(before);
+        assertThat(runner.commands().stream()).noneMatch(command -> command.contains("merge"));
     }
 
     @Test
@@ -316,9 +448,24 @@ class GitRepositoryAdapterTest {
                 "--porcelain=v2",
                 "--branch",
                 "--untracked-files=normal"
+        ), List.of(
+                "git",
+                "-C",
+                repositoryPath.toString(),
+                "rev-parse",
+                "--git-path",
+                "MERGE_HEAD",
+                "--git-path",
+                "CHERRY_PICK_HEAD",
+                "--git-path",
+                "REBASE_HEAD",
+                "--git-path",
+                "rebase-merge",
+                "--git-path",
+                "rebase-apply"
         ));
         assertThat(runner.policies()).extracting(GitCommandExecutionPolicy::timeout)
-                .containsExactly(Duration.ofSeconds(10), Duration.ofSeconds(10));
+                .containsExactly(Duration.ofSeconds(10), Duration.ofSeconds(10), Duration.ofSeconds(10));
     }
 
     private Path createBareRepository(final String name) throws Exception {
@@ -338,6 +485,29 @@ class GitRepositoryAdapterTest {
         return repository;
     }
 
+    private RemoteBackedRepository createRemoteBackedRepository(final String name) throws Exception {
+        final Path seed = this.createRepositoryWithCommit(name + "-seed");
+        final Path remote = this.createBareRepository(name + ".git");
+        this.runGit(seed, "git", "remote", "add", "origin", remote.toString());
+        this.runGit(seed, "git", "push", "-u", "origin", "main");
+        final Path local = this.tempDir.resolve(name + "-local");
+        final Path writer = this.tempDir.resolve(name + "-writer");
+        this.runGit("git", "clone", remote.toString(), local.toString());
+        this.runGit("git", "clone", remote.toString(), writer.toString());
+        return new RemoteBackedRepository(remote, local, writer);
+    }
+
+    private void commitAndPush(final Path repository, final String content, final String message) throws Exception {
+        this.commit(repository, content, message);
+        this.runGit(repository, "git", "push", "origin", "main");
+    }
+
+    private void commit(final Path repository, final String content, final String message) throws Exception {
+        Files.writeString(repository.resolve("README.md"), content);
+        this.runGit(repository, "git", "add", "README.md");
+        this.runGit(repository, "git", "-c", "user.name=Forge Test", "-c", "user.email=forge@example.com", "commit", "-m", message);
+    }
+
     private void runGit(final String... command) throws IOException, InterruptedException {
         this.runGit(null, command);
     }
@@ -351,6 +521,62 @@ class GitRepositoryAdapterTest {
         final int exitCode = process.waitFor();
         if (exitCode != 0) {
             throw new IllegalStateException("Git test command failed.");
+        }
+    }
+
+    private int runGitAllowFailure(final Path workingDirectory, final String... command) throws IOException, InterruptedException {
+        final Process process = new ProcessBuilder(command)
+                .directory(workingDirectory == null ? null : workingDirectory.toFile())
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+        return process.waitFor();
+    }
+
+    private String runGitOutput(final Path workingDirectory, final String... command) throws IOException, InterruptedException {
+        final Process process = new ProcessBuilder(command)
+                .directory(workingDirectory == null ? null : workingDirectory.toFile())
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+        final String output = new String(process.getInputStream().readAllBytes()).trim();
+        final int exitCode = process.waitFor();
+        if (exitCode != 0) {
+            throw new IllegalStateException("Git test command failed.");
+        }
+        return output;
+    }
+
+    private record RemoteBackedRepository(Path remote, Path local, Path writer) {
+    }
+
+    private static final class MutatingGitCommandRunner implements GitCommandRunner {
+
+        private final DefaultGitCommandRunner delegate = new DefaultGitCommandRunner();
+        private final Path repositoryPath;
+        private final List<List<String>> commands = new ArrayList<>();
+        private boolean mutated;
+
+        private MutatingGitCommandRunner(final Path repositoryPath) {
+            this.repositoryPath = repositoryPath;
+        }
+
+        @Override
+        public GitCommandResult run(final List<String> command, final GitCommandExecutionPolicy policy) {
+            this.commands.add(List.copyOf(command));
+            final GitCommandResult result = this.delegate.run(command, policy);
+            if (!this.mutated && command.contains("fetch")) {
+                try {
+                    Files.writeString(this.repositoryPath.resolve("race.txt"), "dirty\n");
+                    this.mutated = true;
+                } catch (final IOException exception) {
+                    throw new GitExecutionException("Race mutation failed.", exception);
+                }
+            }
+            return result;
+        }
+
+        private List<List<String>> commands() {
+            return this.commands;
         }
     }
 

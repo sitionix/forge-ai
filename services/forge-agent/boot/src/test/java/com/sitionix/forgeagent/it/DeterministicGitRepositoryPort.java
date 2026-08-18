@@ -3,7 +3,11 @@ package com.sitionix.forgeagent.it;
 import com.sitionix.forgeagent.domain.model.GitHeadState;
 import com.sitionix.forgeagent.domain.model.GitHeadType;
 import com.sitionix.forgeagent.domain.model.GitLocalRepositoryState;
+import com.sitionix.forgeagent.domain.model.GitConflictState;
+import com.sitionix.forgeagent.domain.model.GitOperationState;
 import com.sitionix.forgeagent.domain.model.GitRemoteInspection;
+import com.sitionix.forgeagent.domain.model.GitUpstreamRelation;
+import com.sitionix.forgeagent.domain.model.GitUpstreamState;
 import com.sitionix.forgeagent.domain.model.GitWorkingTreeState;
 import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
@@ -42,11 +46,18 @@ public class DeterministicGitRepositoryPort implements GitRepositoryPort {
         if (Files.exists(repositoryPath.resolve("invalid-git-checkout"))) {
             return GitLocalRepositoryState.invalid();
         }
-        return new GitLocalRepositoryState(
-                true,
+        return GitLocalRepositoryState.valid(
                 new GitHeadState(GitHeadType.BRANCH, "main", "abcdef1234567890"),
-                GitWorkingTreeState.CLEAN
+                GitWorkingTreeState.CLEAN,
+                GitConflictState.NONE,
+                GitOperationState.NORMAL,
+                new GitUpstreamState("origin/main", GitUpstreamRelation.UP_TO_DATE)
         );
+    }
+
+    @Override
+    public GitLocalRepositoryState pullFastForward(final Path repositoryPath) {
+        return this.inspectLocalRepository(repositoryPath);
     }
 
     @Override
