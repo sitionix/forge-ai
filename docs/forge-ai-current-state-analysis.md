@@ -20,7 +20,6 @@ Root modules:
 - `infrastructure/codex-cli` - Codex app-server JSON-RPC adapter over stdio.
 - `infrastructure/github-cli` - GitHub evidence adapter.
 - `boot` - Spring Boot entrypoint and runtime config.
-- `jacoco-report` - reporting module.
 
 ## Local Startup
 

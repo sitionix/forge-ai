@@ -21,7 +21,6 @@ Root modules:
 - `infrastructure/mongodb` - Mongo adapters and repositories.
 - `infrastructure/codex-cli` - Codex app-server JSON-RPC transport adapter for supervised lane execution.
 - `boot` - Spring Boot entrypoint and runtime configuration binding.
-- `jacoco-report` - reporting module.
 
 ## 3. Runtime Entry Points
 

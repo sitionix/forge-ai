@@ -46,7 +46,6 @@ Root `pom.xml` is a Maven multi-module build with Java 21 and Spring Boot 3.3.4.
 | `infrastructure/resources` | jar | Classpath-backed instruction, strategy, and completion contract repositories. |
 | `infrastructure/github-cli` | jar | GitHub evidence CLI adapter. |
 | `boot` | jar | Spring Boot application entrypoint, config binding, static Operator UI. |
-| `jacoco-report` | jar/pom | Test coverage reporting module. |
 
 `infrastructure/pom.xml` currently lists only the Java infrastructure submodules:
 

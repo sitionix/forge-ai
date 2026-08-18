@@ -39,7 +39,6 @@ No Knowledge analysis, graph API, Jarvis chat, Jarvis command execution, REST en
 - `services/forge-nexus/application`
 - `services/forge-nexus/domain`
 - `services/forge-nexus/infrastructure`
-- `services/forge-nexus/jacoco-report`
 
 Root platform locations are canonical:
 

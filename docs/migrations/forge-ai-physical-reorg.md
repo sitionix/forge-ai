@@ -9,7 +9,7 @@ The repository already contained the previous logical-boundary pass:
 - root `config/`
 - root platform scripts
 - placeholder `services/forge-*` directories with README files
-- old implementation roots still present at `boot`, `api-rest`, `application`, `domain`, `infrastructure`, and `jacoco-report`
+- old implementation roots still present at `boot`, `api-rest`, `application`, `domain`, and `infrastructure`
 
 Baseline commands:
 
@@ -27,7 +27,6 @@ Physical implementation roots before this task:
 - `api-rest`
 - `application`
 - `domain`
-- `jacoco-report`
 - `infrastructure`
 - `infrastructure/knowledge`
 - `infrastructure/jarvis`
@@ -50,7 +49,6 @@ Completed moves:
 - `api-rest` -> `services/forge-nexus/api-rest`
 - `application` -> `services/forge-nexus/application`
 - `domain` -> `services/forge-nexus/domain`
-- `jacoco-report` -> `services/forge-nexus/jacoco-report`
 - Java `infrastructure/*` modules -> `services/forge-nexus/infrastructure/*`
 - `infrastructure/knowledge` -> `services/forge-knowledge`
 - `infrastructure/jarvis` -> `services/forge-jarvis`
