@@ -1,6 +1,10 @@
 package com.sitionix.forgeagent.it;
 
+import com.sitionix.forgeagent.domain.model.GitHeadState;
+import com.sitionix.forgeagent.domain.model.GitHeadType;
+import com.sitionix.forgeagent.domain.model.GitLocalRepositoryState;
 import com.sitionix.forgeagent.domain.model.GitRemoteInspection;
+import com.sitionix.forgeagent.domain.model.GitWorkingTreeState;
 import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
@@ -34,9 +38,24 @@ public class DeterministicGitRepositoryPort implements GitRepositoryPort {
     }
 
     @Override
+    public GitLocalRepositoryState inspectLocalRepository(final Path repositoryPath) {
+        if (Files.exists(repositoryPath.resolve("invalid-git-checkout"))) {
+            return GitLocalRepositoryState.invalid();
+        }
+        return new GitLocalRepositoryState(
+                true,
+                new GitHeadState(GitHeadType.BRANCH, "main", "abcdef1234567890"),
+                GitWorkingTreeState.CLEAN
+        );
+    }
+
+    @Override
     public void clone(final String remoteUrl, final Path targetPath) {
         try {
             Files.createDirectories(targetPath.resolve(".git"));
+            if (remoteUrl.contains("invalid-checkout")) {
+                Files.writeString(targetPath.resolve("invalid-git-checkout"), "invalid");
+            }
         } catch (final IOException exception) {
             throw new GitExecutionException("Clone failed.", exception);
         }

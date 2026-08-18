@@ -539,11 +539,11 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     private AgentProjectRepository projectRepository() {
-        return new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "service-a", false, NOW);
+        return new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "service-a", false, null, NOW);
     }
 
     private AgentProjectRepositoryResponse projectRepositoryResponse() {
-        return new AgentProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", false, NOW);
+        return new AgentProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", false, null, NOW);
     }
 
     private AgentDefinitionRequest agentRequest() {

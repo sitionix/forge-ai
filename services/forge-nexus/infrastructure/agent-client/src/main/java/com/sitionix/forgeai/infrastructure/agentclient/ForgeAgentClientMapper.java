@@ -12,6 +12,10 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHead;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHeadType;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryWorkingTreeState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -64,6 +68,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryGitHeadResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryGitStateResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
@@ -123,7 +129,53 @@ public class ForgeAgentClientMapper {
         this.requireId(response.id(), "repository.id");
         this.requireId(response.projectId(), "repository.projectId");
         this.requireText(response.name(), "repository.name");
-        return new AgentProjectRepository(response.id(), response.projectId(), response.name(), response.cloned(), response.createdAt());
+        return new AgentProjectRepository(
+                response.id(),
+                response.projectId(),
+                response.name(),
+                response.cloned(),
+                this.toDomain(response.gitState()),
+                response.createdAt()
+        );
+    }
+
+    private AgentProjectRepositoryGitState toDomain(final ProjectRepositoryGitStateResponse response) {
+        if (response == null) {
+            return null;
+        }
+        if (!response.valid()) {
+            return new AgentProjectRepositoryGitState(false, null, null);
+        }
+        if (response.head() == null) {
+            throw this.invalid("repository.gitState.head must not be null when valid is true");
+        }
+        if (response.workingTree() == null) {
+            throw this.invalid("repository.gitState.workingTree must not be null when valid is true");
+        }
+        return new AgentProjectRepositoryGitState(true, this.toDomain(response.head()), this.toWorkingTree(response.workingTree()));
+    }
+
+    private AgentProjectRepositoryGitHead toDomain(final ProjectRepositoryGitHeadResponse response) {
+        if (response.type() == null) {
+            throw this.invalid("repository.gitState.head.type must not be null");
+        }
+        return new AgentProjectRepositoryGitHead(this.toHeadType(response.type()), response.ref(), response.commit());
+    }
+
+    private AgentProjectRepositoryGitHeadType toHeadType(final String value) {
+        try {
+            return AgentProjectRepositoryGitHeadType.valueOf(value);
+        } catch (final IllegalArgumentException exception) {
+            throw this.invalid("repository.gitState.head.type is invalid");
+        }
+    }
+
+    private AgentProjectRepositoryWorkingTreeState toWorkingTree(final String value) {
+        try {
+            return AgentProjectRepositoryWorkingTreeState.valueOf(value);
+        } catch (final IllegalArgumentException exception) {
+            throw this.invalid("repository.gitState.workingTree is invalid");
+        }
     }
 
     AgentProjectTaskSummary toDomain(final ProjectTaskSummaryResponse response) {

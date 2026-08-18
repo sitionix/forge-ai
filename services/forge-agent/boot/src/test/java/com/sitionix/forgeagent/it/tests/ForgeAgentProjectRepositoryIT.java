@@ -129,6 +129,27 @@ class ForgeAgentProjectRepositoryIT {
     }
 
     @Test
+    void givenInvalidClonedCheckout_whenListRepositories_thenCheckoutRemainsClonedButGitStateIsInvalid() {
+        this.seedProject();
+
+        this.forgeIt.mockMvc()
+                .ping(IMPORT_PROJECT_REPOSITORY)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestImportInvalidCheckoutProjectRepository.json")
+                .expectStatus(HttpStatus.CREATED)
+                .assertAndCreate();
+
+        this.createInvalidManagedCheckout("invalid-checkout");
+
+        this.forgeIt.mockMvc()
+                .ping(LIST_PROJECT_REPOSITORIES)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseListProjectRepositoriesInvalidCheckout.json", "id", "createdAt")
+                .assertAndCreate();
+    }
+
+    @Test
     void givenProjectWithRepositories_whenDeleteProject_thenRepositoriesAreDeletedByCascade() {
         this.seedProject();
 
@@ -153,6 +174,19 @@ class ForgeAgentProjectRepositoryIT {
                 .create()
                 .to(PROJECT.withJson("project_alpha.json"))
                 .build();
+    }
+
+    private void createInvalidManagedCheckout(final String repositoryName) {
+        try {
+            final Path repositoryPath = this.forgeRoot()
+                    .resolve("forge-projects")
+                    .resolve(PROJECT_ALPHA_ID.toString())
+                    .resolve(repositoryName);
+            Files.createDirectories(repositoryPath.resolve(".git"));
+            Files.writeString(repositoryPath.resolve("invalid-git-checkout"), "invalid");
+        } catch (final IOException exception) {
+            throw new IllegalStateException("Failed to create invalid checkout fixture.", exception);
+        }
     }
 
     private Path forgeRoot() {

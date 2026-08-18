@@ -66,7 +66,10 @@ export class ProjectWorkspace {
     }
     list.innerHTML = repositories.map((repository) => `
       <article class="repository-row">
-        <code>${escapeHtml(repository.name || '')}</code>
+        <span class="repository-main">
+          <code>${escapeHtml(repository.name || '')}</code>
+          ${this.renderRepositoryGitState(repository)}
+        </span>
         ${repository.cloned === false ? `
           <button class="button tiny secondary" type="button" data-clone-repository-id="${escapeHtml(repository.id)}"${cloningRepositoryIds.has(repository.id) ? ' disabled' : ''}>Clone</button>
         ` : ''}
@@ -75,6 +78,38 @@ export class ProjectWorkspace {
     list.querySelectorAll('[data-clone-repository-id]').forEach((element) => {
       element.addEventListener('click', () => this.onCloneRepository(element.dataset.cloneRepositoryId));
     });
+  }
+
+  renderRepositoryGitState(repository) {
+    if (repository.cloned === false) {
+      return '';
+    }
+    const gitState = repository.gitState;
+    if (!gitState || gitState.valid === false) {
+      return '<span class="repository-git-state repository-git-state-invalid">Invalid Git checkout</span>';
+    }
+    const headLabel = this.repositoryHeadLabel(gitState.head);
+    const workingTree = gitState.workingTree === 'DIRTY' ? 'Dirty' : 'Clean';
+    const tone = gitState.workingTree === 'DIRTY' ? 'dirty' : 'clean';
+    return `
+      <span class="repository-git-state">
+        ${escapeHtml(headLabel)} · <span class="repository-git-state-${tone}">${escapeHtml(workingTree)}</span>
+      </span>
+    `;
+  }
+
+  repositoryHeadLabel(head) {
+    if (!head) {
+      return 'Unknown HEAD';
+    }
+    if (head.type === 'DETACHED') {
+      return `detached@${this.shortCommit(head.commit)}`;
+    }
+    return head.ref || 'Unborn branch';
+  }
+
+  shortCommit(commit) {
+    return commit ? String(commit).slice(0, 7) : 'unknown';
   }
 
   renderAgents(agents, runtimeCatalog = null) {

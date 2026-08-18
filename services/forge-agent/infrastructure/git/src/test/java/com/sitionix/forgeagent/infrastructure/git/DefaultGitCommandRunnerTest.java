@@ -7,6 +7,7 @@ import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -31,6 +32,55 @@ class DefaultGitCommandRunnerTest {
                 .hasMessage("Git command timed out.");
 
         assertThatProcessIsDead(this.readPid(parentPidFile));
+        assertThatProcessIsDead(this.readPid(childPidFile));
+    }
+
+    @Test
+    void capturesStdoutCorrectly() {
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+
+        final GitCommandResult result = runner.run(List.of("/bin/sh", "-c", "printf 'hello\\nworld\\n'"),
+                new GitCommandExecutionPolicy(Duration.ofSeconds(5)));
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.stdout()).isEqualTo("hello\nworld\n");
+    }
+
+    @Test
+    void largeStdoutDoesNotDeadlock() {
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+
+        final GitCommandResult result = runner.run(List.of("/bin/sh", "-c", "yes output | head -n 200000"),
+                new GitCommandExecutionPolicy(Duration.ofSeconds(5)));
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.stdout()).startsWith("output\n");
+        assertThat(result.stdout().length()).isGreaterThan(100_000);
+    }
+
+    @Test
+    void timeoutStillAppliesWhileOutputIsBeingProduced() {
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+
+        assertThatThrownBy(() -> runner.run(List.of("/bin/sh", "-c", "while true; do printf 'output\\n'; done"),
+                new GitCommandExecutionPolicy(Duration.ofMillis(200))))
+                .isInstanceOf(GitExecutionException.class)
+                .hasMessage("Git command timed out.");
+    }
+
+    @Test
+    void timeoutCoversInheritedOutputPipesAfterRootProcessExits() throws Exception {
+        final Path childPidFile = this.tempDir.resolve("inherited-pipe-child.pid");
+        final Path script = this.writeInheritedPipeScript(childPidFile);
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+        final Instant startedAt = Instant.now();
+
+        assertThatThrownBy(() -> runner.run(List.of("/bin/sh", script.toString()),
+                new GitCommandExecutionPolicy(Duration.ofMillis(300))))
+                .isInstanceOf(GitExecutionException.class)
+                .hasMessage("Git command timed out.");
+
+        assertThat(Duration.between(startedAt, Instant.now())).isLessThan(Duration.ofSeconds(5));
         assertThatProcessIsDead(this.readPid(childPidFile));
     }
 
@@ -73,6 +123,16 @@ class DefaultGitCommandRunnerTest {
                 echo $! > '%s'
                 wait $!
                 """.formatted(parentPidFile, childPidFile));
+        return script;
+    }
+
+    private Path writeInheritedPipeScript(final Path childPidFile) throws Exception {
+        final Path script = this.tempDir.resolve("inherited-pipe.sh");
+        Files.writeString(script, """
+                sleep 60 &
+                echo $! > '%s'
+                exit 0
+                """.formatted(childPidFile));
         return script;
     }
 

@@ -12,12 +12,17 @@ import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
+import com.sitionix.forgeagent.domain.model.GitHeadState;
+import com.sitionix.forgeagent.domain.model.GitHeadType;
+import com.sitionix.forgeagent.domain.model.GitLocalRepositoryState;
 import com.sitionix.forgeagent.domain.model.GitRemoteInspection;
+import com.sitionix.forgeagent.domain.model.GitWorkingTreeState;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceState;
 import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
@@ -140,19 +145,120 @@ class ProjectRepositoryUseCasesTest {
         when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(first, second));
         when(this.gitRepositoryPort.resolveRepositoryName(first.remoteUrl())).thenReturn("service-a");
         when(this.gitRepositoryPort.resolveRepositoryName(second.remoteUrl())).thenReturn("service-b");
-        when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(
+        final Path firstPath = Path.of("/tmp/forge-projects/project/service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(
                 new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"),
                 new ProjectRepositoryWorkspaceReference(secondId, "service-b")
-        ))).thenReturn(Map.of(REPOSITORY_ID, true, secondId, false));
+        ))).thenReturn(Map.of(
+                REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, firstPath, true),
+                secondId, new ProjectRepositoryWorkspaceState(secondId, Path.of("/tmp/forge-projects/project/service-b"), false)
+        ));
+        when(this.gitRepositoryPort.inspectLocalRepository(firstPath)).thenReturn(this.branchState(GitWorkingTreeState.CLEAN));
 
         final List<ProjectRepositoryView> repositories = this.useCases.listProjectRepositories(PROJECT_ID);
 
         assertThat(repositories).extracting(ProjectRepositoryView::name).containsExactly("service-a", "service-b");
         assertThat(repositories).extracting(ProjectRepositoryView::cloned).containsExactly(true, false);
-        verify(this.localProjectWorkspacePort).resolveCloneStates(PROJECT_ID, List.of(
+        assertThat(repositories.get(0).gitState()).isEqualTo(this.branchState(GitWorkingTreeState.CLEAN));
+        assertThat(repositories.get(1).gitState()).isNull();
+        verify(this.localProjectWorkspacePort).resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(
                 new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"),
                 new ProjectRepositoryWorkspaceReference(secondId, "service-b")
         ));
+        verify(this.gitRepositoryPort).inspectLocalRepository(firstPath);
+    }
+
+    @Test
+    void listDoesNotInspectGitStateForUnclonedRepositories() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")
+        ))).thenReturn(Map.of(REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, Path.of("/tmp/service-a"), false)));
+
+        final List<ProjectRepositoryView> repositories = this.useCases.listProjectRepositories(PROJECT_ID);
+
+        assertThat(repositories.getFirst().cloned()).isFalse();
+        assertThat(repositories.getFirst().gitState()).isNull();
+        verify(this.gitRepositoryPort, never()).inspectLocalRepository(any());
+    }
+
+    @Test
+    void listMapsDirtyGitStateForClonedRepository() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
+        final GitLocalRepositoryState dirtyState = this.branchState(GitWorkingTreeState.DIRTY);
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")
+        ))).thenReturn(Map.of(REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, repositoryPath, true)));
+        when(this.gitRepositoryPort.inspectLocalRepository(repositoryPath)).thenReturn(dirtyState);
+
+        final List<ProjectRepositoryView> repositories = this.useCases.listProjectRepositories(PROJECT_ID);
+
+        assertThat(repositories.getFirst().gitState()).isEqualTo(dirtyState);
+        verify(this.repositoryLinkRepository, never()).save(any());
+    }
+
+    @Test
+    void listMapsDetachedGitStateForClonedRepository() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
+        final GitLocalRepositoryState detachedState = new GitLocalRepositoryState(
+                true,
+                new GitHeadState(GitHeadType.DETACHED, null, "a1b2c3"),
+                GitWorkingTreeState.CLEAN
+        );
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")
+        ))).thenReturn(Map.of(REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, repositoryPath, true)));
+        when(this.gitRepositoryPort.inspectLocalRepository(repositoryPath)).thenReturn(detachedState);
+
+        final List<ProjectRepositoryView> repositories = this.useCases.listProjectRepositories(PROJECT_ID);
+
+        assertThat(repositories.getFirst().gitState()).isEqualTo(detachedState);
+    }
+
+    @Test
+    void listMapsInvalidClonedCheckoutWithoutChangingClonedState() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")
+        ))).thenReturn(Map.of(REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, repositoryPath, true)));
+        when(this.gitRepositoryPort.inspectLocalRepository(repositoryPath)).thenReturn(GitLocalRepositoryState.invalid());
+
+        final List<ProjectRepositoryView> repositories = this.useCases.listProjectRepositories(PROJECT_ID);
+
+        assertThat(repositories.getFirst().cloned()).isTrue();
+        assertThat(repositories.getFirst().gitState()).isEqualTo(GitLocalRepositoryState.invalid());
+    }
+
+    @Test
+    void localGitInspectionFailureMapsToInfrastructureFailure() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")
+        ))).thenReturn(Map.of(REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, repositoryPath, true)));
+        when(this.gitRepositoryPort.inspectLocalRepository(repositoryPath)).thenThrow(new GitExecutionException("timeout"));
+
+        assertThatThrownBy(() -> this.useCases.listProjectRepositories(PROJECT_ID))
+                .isInstanceOf(InfrastructureExecutionException.class)
+                .hasMessage("Project repository state could not be resolved.");
     }
 
     @Test
@@ -161,8 +267,8 @@ class ProjectRepositoryUseCasesTest {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
         when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
         when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
-        when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
-                .thenReturn(Map.of(REPOSITORY_ID, true));
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
+                .thenReturn(Map.of(REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, Path.of("/tmp/service-a"), true)));
 
         assertThatThrownBy(() -> this.useCases.cloneRepository(PROJECT_ID, REPOSITORY_ID))
                 .isInstanceOf(ConflictException.class)
@@ -181,20 +287,53 @@ class ProjectRepositoryUseCasesTest {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
         when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
         when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
-        when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
-                .thenReturn(Map.of(REPOSITORY_ID, false));
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
+                .thenReturn(Map.of(REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, finalTarget, false)));
         when(this.localProjectWorkspacePort.prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
                 .thenReturn(attempt);
+        when(this.gitRepositoryPort.inspectLocalRepository(stagingTarget)).thenReturn(this.branchState(GitWorkingTreeState.CLEAN));
 
         final ProjectRepositoryView result = this.useCases.cloneRepository(PROJECT_ID, REPOSITORY_ID);
 
         final InOrder ordered = inOrder(this.localProjectWorkspacePort, this.gitRepositoryPort);
         ordered.verify(this.localProjectWorkspacePort).prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"));
         ordered.verify(this.gitRepositoryPort).clone(repository.remoteUrl(), stagingTarget);
+        ordered.verify(this.gitRepositoryPort).inspectLocalRepository(stagingTarget);
         ordered.verify(this.localProjectWorkspacePort).finalizeCloneAttempt(attempt);
+        verify(this.gitRepositoryPort, never()).inspectLocalRepository(finalTarget);
         verify(this.repositoryLinkRepository, never()).save(any());
         assertThat(result.name()).isEqualTo("service-a");
         assertThat(result.cloned()).isTrue();
+        assertThat(result.gitState()).isEqualTo(this.branchState(GitWorkingTreeState.CLEAN));
+    }
+
+    @Test
+    void cloneInspectionFailureDoesNotPublishFinalRepository() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path stagingTarget = Path.of("/tmp/forge-projects/project/.forge-clone-attempts/service-a-attempt");
+        final Path finalTarget = Path.of("/tmp/forge-projects/project/service-a");
+        final ProjectRepositoryCloneAttempt attempt = new ProjectRepositoryCloneAttempt(stagingTarget, finalTarget);
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
+                .thenReturn(Map.of(REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, finalTarget, false)));
+        when(this.localProjectWorkspacePort.prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
+                .thenReturn(attempt);
+        when(this.gitRepositoryPort.inspectLocalRepository(stagingTarget)).thenThrow(new GitExecutionException("inspection failed"));
+
+        assertThatThrownBy(() -> this.useCases.cloneRepository(PROJECT_ID, REPOSITORY_ID))
+                .isInstanceOf(InfrastructureExecutionException.class)
+                .hasMessage("Project repository clone failed.");
+
+        final InOrder ordered = inOrder(this.gitRepositoryPort, this.localProjectWorkspacePort);
+        ordered.verify(this.localProjectWorkspacePort).prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"));
+        ordered.verify(this.gitRepositoryPort).clone(repository.remoteUrl(), stagingTarget);
+        ordered.verify(this.gitRepositoryPort).inspectLocalRepository(stagingTarget);
+        ordered.verify(this.localProjectWorkspacePort).cleanupCloneAttempt(attempt);
+        verify(this.localProjectWorkspacePort, never()).finalizeCloneAttempt(attempt);
+        verify(this.gitRepositoryPort, never()).inspectLocalRepository(finalTarget);
+        verify(this.repositoryLinkRepository, never()).save(any());
     }
 
     @Test
@@ -206,8 +345,8 @@ class ProjectRepositoryUseCasesTest {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
         when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
         when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
-        when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
-                .thenReturn(Map.of(REPOSITORY_ID, false));
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
+                .thenReturn(Map.of(REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, finalTarget, false)));
         when(this.localProjectWorkspacePort.prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
                 .thenReturn(attempt);
         org.mockito.Mockito.doThrow(new GitExecutionException("clone failed"))
@@ -231,8 +370,8 @@ class ProjectRepositoryUseCasesTest {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
         when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
         when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
-        when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
-                .thenReturn(Map.of(REPOSITORY_ID, false));
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
+                .thenReturn(Map.of(REPOSITORY_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_ID, finalTarget, false)));
         when(this.localProjectWorkspacePort.prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
                 .thenReturn(attempt);
         org.mockito.Mockito.doThrow(new GitExecutionException("clone failed"))
@@ -253,7 +392,7 @@ class ProjectRepositoryUseCasesTest {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
         when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
         when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
-        when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
                 .thenThrow(new LocalProjectWorkspaceException("root missing"));
 
         assertThatThrownBy(() -> this.useCases.cloneRepository(PROJECT_ID, REPOSITORY_ID))
@@ -294,5 +433,13 @@ class ProjectRepositoryUseCasesTest {
 
     private ProjectRepositoryLink repositoryLink(final UUID repositoryId, final String remoteUrl) {
         return new ProjectRepositoryLink(repositoryId, PROJECT_ID, remoteUrl, NOW);
+    }
+
+    private GitLocalRepositoryState branchState(final GitWorkingTreeState workingTreeState) {
+        return new GitLocalRepositoryState(
+                true,
+                new GitHeadState(GitHeadType.BRANCH, "main", "abcdef"),
+                workingTreeState
+        );
     }
 }

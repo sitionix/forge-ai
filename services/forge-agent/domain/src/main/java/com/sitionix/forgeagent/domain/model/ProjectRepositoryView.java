@@ -8,6 +8,7 @@ public record ProjectRepositoryView(
         UUID projectId,
         String name,
         boolean cloned,
+        GitLocalRepositoryState gitState,
         Instant createdAt
 ) {
 }

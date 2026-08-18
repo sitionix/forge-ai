@@ -4,11 +4,14 @@ import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
+import com.sitionix.forgeagent.domain.model.GitLocalRepositoryState;
 import com.sitionix.forgeagent.domain.model.GitRemoteInspection;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceState;
+import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import com.sitionix.forgeagent.domain.port.GitOperationException;
 import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
@@ -42,7 +45,7 @@ public class ProjectRepositoryUseCases {
         this.rejectDuplicateRepositoryName(projectId, inspection.name());
         final Instant now = Instant.now(this.clock);
         final ProjectRepositoryLink saved = this.repositoryLinkRepository.save(new ProjectRepositoryLink(UUID.randomUUID(), projectId, remoteUrl, now));
-        return this.toView(projectId, saved, inspection.name(), false);
+        return this.toView(projectId, saved, inspection.name(), false, null);
     }
 
     public List<ProjectRepositoryView> listProjectRepositories(final UUID projectId) {
@@ -52,10 +55,10 @@ public class ProjectRepositoryUseCases {
             final List<ProjectRepositoryWorkspaceReference> references = repositories.stream()
                     .map(this::toWorkspaceReference)
                     .toList();
-            final Map<UUID, Boolean> cloneStates = this.localProjectWorkspacePort.resolveCloneStates(projectId, references);
+            final Map<UUID, ProjectRepositoryWorkspaceState> workspaceStates =
+                    this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(projectId, references);
             return repositories.stream()
-                    .map(repository -> this.toView(projectId, repository, this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl()),
-                            Boolean.TRUE.equals(cloneStates.get(repository.id()))))
+                    .map(repository -> this.toListedView(projectId, repository, workspaceStates.get(repository.id())))
                     .toList();
         } catch (final GitOperationException | LocalProjectWorkspaceException exception) {
             throw new InfrastructureExecutionException("PROJECT_REPOSITORY_STATE_RESOLUTION_FAILED",
@@ -73,14 +76,20 @@ public class ProjectRepositoryUseCases {
         ProjectRepositoryCloneAttempt attempt = null;
         try {
             final ProjectRepositoryWorkspaceReference reference = this.toWorkspaceReference(repository);
-            final Map<UUID, Boolean> cloneStates = this.localProjectWorkspacePort.resolveCloneStates(projectId, List.of(reference));
-            if (Boolean.TRUE.equals(cloneStates.get(repository.id()))) {
+            final Map<UUID, ProjectRepositoryWorkspaceState> workspaceStates =
+                    this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(projectId, List.of(reference));
+            final ProjectRepositoryWorkspaceState workspaceState = workspaceStates.get(repository.id());
+            if (workspaceState != null && workspaceState.cloned()) {
                 throw new ConflictException("PROJECT_REPOSITORY_ALREADY_CLONED", "Project repository is already cloned.");
             }
             attempt = this.localProjectWorkspacePort.prepareCloneAttempt(projectId, reference);
             this.gitRepositoryPort.clone(repository.remoteUrl(), attempt.stagingPath());
+            final GitLocalRepositoryState gitState = this.gitRepositoryPort.inspectLocalRepository(attempt.stagingPath());
+            if (!gitState.valid()) {
+                throw new GitExecutionException("Git clone produced invalid checkout.");
+            }
             this.localProjectWorkspacePort.finalizeCloneAttempt(attempt);
-            return this.toView(projectId, repository, reference.name(), true);
+            return this.toView(projectId, repository, reference.name(), true, gitState);
         } catch (final GitOperationException exception) {
             this.cleanupCloneAttempt(attempt);
             throw new InfrastructureExecutionException("PROJECT_REPOSITORY_CLONE_FAILED", "Project repository clone failed.");
@@ -146,10 +155,22 @@ public class ProjectRepositoryUseCases {
         return new ProjectRepositoryWorkspaceReference(repository.id(), this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl()));
     }
 
+    private ProjectRepositoryView toListedView(final UUID projectId,
+                                               final ProjectRepositoryLink repository,
+                                               final ProjectRepositoryWorkspaceState workspaceState) {
+        final String name = this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl());
+        final boolean cloned = workspaceState != null && workspaceState.cloned();
+        final GitLocalRepositoryState gitState = cloned
+                ? this.gitRepositoryPort.inspectLocalRepository(workspaceState.path())
+                : null;
+        return this.toView(projectId, repository, name, cloned, gitState);
+    }
+
     private ProjectRepositoryView toView(final UUID projectId,
                                          final ProjectRepositoryLink repository,
                                          final String name,
-                                         final boolean cloned) {
-        return new ProjectRepositoryView(repository.id(), projectId, name, cloned, repository.createdAt());
+                                         final boolean cloned,
+                                         final GitLocalRepositoryState gitState) {
+        return new ProjectRepositoryView(repository.id(), projectId, name, cloned, gitState, repository.createdAt());
     }
 }
