@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Component;
 @Component
 final class DefaultGitCommandRunner implements GitCommandRunner {
 
+    private static final Duration PROCESS_TRACK_INTERVAL = Duration.ofMillis(2);
     private static final Duration TERMINATION_WAIT_INTERVAL = Duration.ofMillis(20);
     private static final Duration GRACEFUL_TERMINATION_TIMEOUT = Duration.ofSeconds(1);
     private static final int MAX_CAPTURED_OUTPUT_BYTES = 1024 * 1024;
@@ -30,23 +33,20 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         Process process = null;
         Future<String> stdout = null;
         Future<String> stderr = null;
+        Future<?> processTracker = null;
+        final Set<ProcessHandle> trackedProcesses = ConcurrentHashMap.newKeySet();
         final var streamReaders = Executors.newFixedThreadPool(2);
+        final var processTrackers = Executors.newSingleThreadExecutor();
         try {
             final ProcessBuilder builder = new ProcessBuilder(List.copyOf(command));
             builder.environment().put("GIT_TERMINAL_PROMPT", "0");
             process = builder.start();
             final Process startedProcess = process;
+            processTracker = processTrackers.submit(() -> this.trackProcessTree(startedProcess.toHandle(), trackedProcesses));
             stdout = streamReaders.submit(() -> this.readLimited(startedProcess.getInputStream()));
             stderr = streamReaders.submit(() -> this.readLimited(startedProcess.getErrorStream()));
             final boolean completed = process.waitFor(this.remainingNanos(deadline), TimeUnit.NANOSECONDS);
             if (!completed) {
-                final boolean interrupted = this.terminateProcessTree(process);
-                this.closeProcessStreams(process);
-                this.cancel(stdout);
-                this.cancel(stderr);
-                if (interrupted) {
-                    Thread.currentThread().interrupt();
-                }
                 throw new GitExecutionException("Git command timed out.");
             }
             return new GitCommandResult(
@@ -57,25 +57,24 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         } catch (final IOException exception) {
             throw new GitExecutionException("Git command failed to start.", exception);
         } catch (final TimeoutException exception) {
-            if (process != null && process.isAlive()) {
-                this.terminateProcessTree(process);
+            final boolean interrupted = this.cleanupFailedProcess(process, trackedProcesses, stdout, stderr);
+            if (interrupted) {
+                Thread.currentThread().interrupt();
             }
-            if (process != null) {
-                this.closeProcessStreams(process);
-            }
-            this.cancel(stdout);
-            this.cancel(stderr);
             throw new GitExecutionException("Git command timed out.", exception);
         } catch (final InterruptedException exception) {
-            if (process != null) {
-                this.terminateProcessTree(process);
-                this.closeProcessStreams(process);
-            }
-            this.cancel(stdout);
-            this.cancel(stderr);
+            this.cleanupFailedProcess(process, trackedProcesses, stdout, stderr);
             Thread.currentThread().interrupt();
             throw new GitExecutionException("Git command was interrupted.", exception);
+        } catch (final GitExecutionException exception) {
+            final boolean interrupted = this.cleanupFailedProcess(process, trackedProcesses, stdout, stderr);
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            throw exception;
         } finally {
+            this.cancel(processTracker);
+            processTrackers.shutdownNow();
             streamReaders.shutdownNow();
         }
     }
@@ -115,9 +114,9 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         return remaining;
     }
 
-    private void cancel(final Future<String> reader) {
-        if (reader != null) {
-            reader.cancel(true);
+    private void cancel(final Future<?> future) {
+        if (future != null) {
+            future.cancel(true);
         }
     }
 
@@ -132,10 +131,40 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         }
     }
 
-    private boolean terminateProcessTree(final Process process) {
+    private boolean cleanupFailedProcess(final Process process,
+                                         final Set<ProcessHandle> trackedProcesses,
+                                         final Future<String> stdout,
+                                         final Future<String> stderr) {
+        boolean interrupted = false;
+        if (process != null) {
+            interrupted = this.terminateProcessTree(process, trackedProcesses) || interrupted;
+            this.closeProcessStreams(process);
+        }
+        this.cancel(stdout);
+        this.cancel(stderr);
+        return interrupted;
+    }
+
+    private void trackProcessTree(final ProcessHandle root, final Set<ProcessHandle> trackedProcesses) {
+        trackedProcesses.add(root);
+        while (root.isAlive()) {
+            trackedProcesses.add(root);
+            root.descendants().forEach(trackedProcesses::add);
+            try {
+                TimeUnit.MILLISECONDS.sleep(PROCESS_TRACK_INTERVAL.toMillis());
+            } catch (final InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        trackedProcesses.add(root);
+        root.descendants().forEach(trackedProcesses::add);
+    }
+
+    private boolean terminateProcessTree(final Process process, final Set<ProcessHandle> trackedProcesses) {
         boolean interrupted = false;
         final ProcessHandle root = process.toHandle();
-        final List<ProcessHandle> handles = this.collectProcessTree(root);
+        final List<ProcessHandle> handles = this.merge(new ArrayList<>(trackedProcesses), this.collectProcessTree(root));
 
         for (final ProcessHandle handle : handles) {
             if (handle.isAlive()) {
@@ -144,7 +173,10 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         }
         interrupted = this.waitUntilDead(handles, GRACEFUL_TERMINATION_TIMEOUT) || interrupted;
 
-        final List<ProcessHandle> remainingHandles = this.merge(handles, this.collectProcessTree(root));
+        final List<ProcessHandle> remainingHandles = this.merge(
+                this.merge(handles, new ArrayList<>(trackedProcesses)),
+                this.collectProcessTree(root)
+        );
         for (final ProcessHandle handle : remainingHandles) {
             if (handle.isAlive()) {
                 handle.destroyForcibly();

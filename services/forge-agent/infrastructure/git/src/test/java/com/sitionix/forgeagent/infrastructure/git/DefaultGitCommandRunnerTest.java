@@ -81,12 +81,7 @@ class DefaultGitCommandRunnerTest {
                 .hasMessage("Git command timed out.");
 
         assertThat(Duration.between(startedAt, Instant.now())).isLessThan(Duration.ofSeconds(5));
-        final long childPid = this.readPid(childPidFile);
-        assertThat(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false)).isTrue();
-        ProcessHandle.of(childPid).ifPresent(process -> {
-            process.destroyForcibly();
-            process.onExit().join();
-        });
+        assertThatProcessIsDead(this.readPid(childPidFile));
     }
 
     @Test
@@ -136,6 +131,7 @@ class DefaultGitCommandRunnerTest {
         Files.writeString(script, """
                 sleep 60 &
                 echo $! > '%s'
+                sleep 0.2
                 exit 0
                 """.formatted(childPidFile));
         return script;
