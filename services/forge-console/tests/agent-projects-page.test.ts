@@ -644,6 +644,60 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(false);
   });
 
+  it('tracks simultaneous repository clones independently', async () => {
+    const repoOneClone = deferred<any>();
+    const repoTwoClone = deferred<any>();
+    const fakeApi = api({
+      listProjectRepositories: vi.fn()
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', false),
+          repository('repo-2', project().id, 'service-b', false)
+        ])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true),
+          repository('repo-2', project().id, 'service-b', false)
+        ])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true),
+          repository('repo-2', project().id, 'service-b', true)
+        ]),
+      cloneProjectRepository: vi.fn((_projectId: string, repositoryId: string) => {
+        if (repositoryId === 'repo-1') {
+          return repoOneClone.promise;
+        }
+        return repoTwoClone.promise;
+      })
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.click();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.disabled).toBe(true);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(false);
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.click();
+    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(2);
+    expect(fakeApi.cloneProjectRepository).toHaveBeenNthCalledWith(1, project().id, 'repo-1');
+    expect(fakeApi.cloneProjectRepository).toHaveBeenNthCalledWith(2, project().id, 'repo-2');
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.disabled).toBe(true);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(true);
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.click();
+    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(2);
+
+    repoOneClone.resolve(repository('repo-1', project().id, 'service-a', true));
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(true);
+
+    repoTwoClone.resolve(repository('repo-2', project().id, 'service-b', true));
+    await flushAsync();
+
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(3);
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-2"]')).toBeNull();
+  });
+
   it('rejects blank repository URL locally', async () => {
     const { dom, fakeApi } = await openedProject();
 

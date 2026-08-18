@@ -49,7 +49,7 @@ export class AgentProjectsPage {
       agentModelSelection: null,
       savedAgentModelSelection: null,
       openTaskId: null,
-      cloningRepositoryId: null,
+      cloningRepositoryIds: new Set(),
       saving: false
     };
     this.projectLoadSequence = 0;
@@ -409,7 +409,7 @@ export class AgentProjectsPage {
       this.state.tasksLoadFailed,
       this.state.runtime,
       this.currentTaskPage(),
-      this.state.cloningRepositoryId
+      this.state.cloningRepositoryIds
     );
   }
 
@@ -474,11 +474,10 @@ export class AgentProjectsPage {
   }
 
   async cloneRepository(repositoryId) {
-    if (this.state.saving || !this.repositoriesDataCurrent()) {
+    if (!this.repositoriesDataCurrent() || this.state.cloningRepositoryIds.has(repositoryId)) {
       return;
     }
-    this.state.saving = true;
-    this.state.cloningRepositoryId = repositoryId;
+    this.state.cloningRepositoryIds.add(repositoryId);
     this.showError('agentsV2RepositoriesError', '');
     this.renderProjectWorkspace();
     try {
@@ -487,8 +486,7 @@ export class AgentProjectsPage {
     } catch (error) {
       this.showError('agentsV2RepositoriesError', error.message || 'Repository could not be cloned.');
     } finally {
-      this.state.saving = false;
-      this.state.cloningRepositoryId = null;
+      this.state.cloningRepositoryIds.delete(repositoryId);
       this.renderProjectWorkspace();
     }
   }
