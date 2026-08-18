@@ -284,7 +284,7 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
     }
 
     private Process killProcess(final String signal, final long processGroupId) throws IOException {
-        return new ProcessBuilder(this.killExecutable(), signal, "-" + processGroupId)
+        return new ProcessBuilder(this.killExecutable(), signal, "--", "-" + processGroupId)
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.DISCARD)
                 .start();
