@@ -26,14 +26,14 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, repositories, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null) {
+  render(project, repositories, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null, cloningRepositoryId = null) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2ImportRepository').disabled = !project || !repositoriesCurrent;
     this.byId('agentsV2CreateAgent').disabled = !dataCurrent;
     this.byId('agentsV2CreateWorkflow').disabled = !dataCurrent;
     this.byId('agentsV2CreateTask').disabled = !project || !workflowsCurrent || !tasksCurrent || !workflows.length;
-    this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed);
+    this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryId);
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
     this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed, taskPage);
@@ -50,7 +50,7 @@ export class ProjectWorkspace {
     this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
   }
 
-  renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed) {
+  renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryId = null) {
     const list = this.byId('agentsV2RepositoriesList');
     if (repositoriesLoadFailed) {
       list.innerHTML = '';
@@ -68,7 +68,7 @@ export class ProjectWorkspace {
       <article class="repository-row">
         <code>${escapeHtml(repository.name || '')}</code>
         ${repository.cloned === false ? `
-          <button class="button tiny secondary" type="button" data-clone-repository-id="${escapeHtml(repository.id)}">Clone</button>
+          <button class="button tiny secondary" type="button" data-clone-repository-id="${escapeHtml(repository.id)}"${repository.id === cloningRepositoryId ? ' disabled' : ''}>Clone</button>
         ` : ''}
       </article>
     `).join('');
