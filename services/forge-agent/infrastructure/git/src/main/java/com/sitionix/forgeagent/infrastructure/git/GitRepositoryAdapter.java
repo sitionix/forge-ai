@@ -106,10 +106,13 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         final GitLocalRepositoryState initialState = this.inspectLocalRepository(repositoryPath);
         this.requireCheckUpdatesAllowed(initialState);
         final GitUpstreamFetchTarget fetchTarget = this.resolveFetchTarget(repositoryPath, initialState);
+        if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
+            return this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget, initialState, GitSafeOperation.CHECK_UPDATES);
+        }
         final GitCommandResult fetchResult = this.fetchUpstream(repositoryPath, fetchTarget);
         if (fetchResult.exitCode() != 0) {
-            if (this.isMissingRemoteRef(fetchResult)) {
-                return initialState.withUpstreamRelation(GitUpstreamRelation.MISSING);
+            if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
+                return this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget, initialState, GitSafeOperation.CHECK_UPDATES);
             }
             throw new GitExecutionException("Git fetch failed.");
         }
@@ -123,15 +126,38 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         final GitLocalRepositoryState initialState = this.inspectLocalRepository(repositoryPath);
         this.requirePullAllowed(initialState);
         final GitUpstreamFetchTarget fetchTarget = this.resolveFetchTarget(repositoryPath, initialState);
+        if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
+            final GitLocalRepositoryState missingState = this.deleteRemoteTrackingRefAndInspect(
+                    repositoryPath,
+                    fetchTarget,
+                    initialState,
+                    GitSafeOperation.PULL
+            );
+            throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", missingState);
+        }
         final GitCommandResult fetchResult = this.fetchUpstream(repositoryPath, fetchTarget);
         if (fetchResult.exitCode() != 0) {
-            if (this.isMissingRemoteRef(fetchResult)) {
-                throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.",
-                        initialState.withUpstreamRelation(GitUpstreamRelation.MISSING));
+            if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
+                final GitLocalRepositoryState missingState = this.deleteRemoteTrackingRefAndInspect(
+                        repositoryPath,
+                        fetchTarget,
+                        initialState,
+                        GitSafeOperation.PULL
+                );
+                throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", missingState);
             }
             throw new GitExecutionException("Git fetch failed.");
         }
 
+        if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
+            final GitLocalRepositoryState missingState = this.deleteRemoteTrackingRefAndInspect(
+                    repositoryPath,
+                    fetchTarget,
+                    initialState,
+                    GitSafeOperation.PULL
+            );
+            throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", missingState);
+        }
         final GitLocalRepositoryState afterFetchState = this.inspectLocalRepository(repositoryPath);
         this.requireStablePullTarget(initialState, afterFetchState);
         if (afterFetchState.upstream().relation() == GitUpstreamRelation.UP_TO_DATE) {
@@ -290,6 +316,49 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         ), FETCH_POLICY);
     }
 
+    private GitRemoteRefState probeRemoteRef(final Path repositoryPath, final GitUpstreamFetchTarget fetchTarget) {
+        final GitCommandResult result = this.commandRunner.run(List.of(
+                "git",
+                "-C",
+                repositoryPath.toString(),
+                "ls-remote",
+                "--exit-code",
+                fetchTarget.remote(),
+                fetchTarget.mergeRef()
+        ), INSPECT_REMOTE_POLICY);
+        if (result.exitCode() == 0) {
+            return GitRemoteRefState.EXISTS;
+        }
+        if (result.exitCode() == 2) {
+            return GitRemoteRefState.MISSING;
+        }
+        throw new GitExecutionException("Git upstream remote ref inspection failed.");
+    }
+
+    private GitLocalRepositoryState deleteRemoteTrackingRefAndInspect(final Path repositoryPath,
+                                                                      final GitUpstreamFetchTarget fetchTarget,
+                                                                      final GitLocalRepositoryState initialState,
+                                                                      final GitSafeOperation operation) {
+        final GitCommandResult result = this.commandRunner.run(List.of(
+                "git",
+                "-C",
+                repositoryPath.toString(),
+                "update-ref",
+                "-d",
+                fetchTarget.remoteTrackingRef()
+        ), INSPECT_LOCAL_POLICY);
+        if (result.exitCode() != 0) {
+            throw new GitExecutionException("Git stale upstream tracking ref cleanup failed.");
+        }
+        final GitLocalRepositoryState missingState = this.inspectLocalRepository(repositoryPath);
+        if (operation == GitSafeOperation.PULL) {
+            this.requireStablePullTarget(initialState, missingState);
+        } else {
+            this.requireStableCheckTarget(initialState, missingState);
+        }
+        return missingState;
+    }
+
     private String readBranchConfig(final Path repositoryPath, final String branch, final String key) {
         final GitCommandResult result = this.commandRunner.run(List.of(
                 "git",
@@ -360,11 +429,6 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         return -1;
     }
 
-    private boolean isMissingRemoteRef(final GitCommandResult result) {
-        final String output = result.stdout() + "\n" + result.stderr();
-        return output.contains("couldn't find remote ref") || output.contains("could not find remote ref");
-    }
-
     private boolean isRequestedRepositoryRoot(final Path repositoryPath, final String output) {
         final List<String> roots = output.lines()
                 .filter(line -> !line.isBlank())
@@ -382,5 +446,15 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
     }
 
     private record GitUpstreamFetchTarget(String remote, String mergeRef, String remoteTrackingRef) {
+    }
+
+    private enum GitRemoteRefState {
+        EXISTS,
+        MISSING
+    }
+
+    private enum GitSafeOperation {
+        CHECK_UPDATES,
+        PULL
     }
 }

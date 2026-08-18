@@ -330,6 +330,115 @@ class GitRepositoryAdapterTest {
     }
 
     @Test
+    void checkUpdatesDeletesStaleTrackingRefWhenConfiguredRemoteBranchWasDeleted() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        this.runGit(repositories.remote(), "git", "update-ref", "-d", "refs/heads/main");
+
+        final var result = adapter.checkUpdates(repositories.local());
+        final var inspectedAgain = adapter.inspectLocalRepository(repositories.local());
+
+        assertThat(result.upstream().ref()).isEqualTo("origin/main");
+        assertThat(result.upstream().relation()).isEqualTo(GitUpstreamRelation.MISSING);
+        assertThat(result.pullAllowed()).isFalse();
+        assertThat(result.pullBlockedReason()).isEqualTo("UPSTREAM_MISSING");
+        assertThat(result.checkUpdatesAllowed()).isTrue();
+        assertThat(inspectedAgain.upstream().relation()).isEqualTo(GitUpstreamRelation.MISSING);
+        assertThat(this.gitRefExists(repositories.local(), "refs/remotes/origin/main")).isFalse();
+    }
+
+    @Test
+    void checkUpdatesRecreatesTrackingRefWhenDeletedConfiguredRemoteBranchReturns() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        this.runGit(repositories.remote(), "git", "update-ref", "-d", "refs/heads/main");
+        final var missing = adapter.checkUpdates(repositories.local());
+        this.commitAndPush(repositories.writer(), "remote recreated\n", "Recreate remote branch");
+
+        final var result = adapter.checkUpdates(repositories.local());
+
+        assertThat(missing.upstream().relation()).isEqualTo(GitUpstreamRelation.MISSING);
+        assertThat(result.upstream().ref()).isEqualTo("origin/main");
+        assertThat(result.upstream().relation()).isEqualTo(GitUpstreamRelation.BEHIND);
+        assertThat(result.pullAllowed()).isTrue();
+        assertThat(this.gitRefExists(repositories.local(), "refs/remotes/origin/main")).isTrue();
+    }
+
+    @Test
+    void checkUpdatesClassifiesMissingRemoteRefByLsRemoteExitCodeWithoutStderrText() {
+        final Path repositoryPath = this.tempDir;
+        final CapturingRunner runner = new CapturingRunner(
+                new GitCommandResult(0, repositoryPath.toString() + "\n", ""),
+                new GitCommandResult(0, """
+                # branch.oid abcdef
+                # branch.head main
+                # branch.upstream origin/main
+                # branch.ab +0 -0
+                """, ""),
+                new GitCommandResult(0, "", ""),
+                new GitCommandResult(0, "origin\n", ""),
+                new GitCommandResult(0, "refs/heads/main\n", ""),
+                new GitCommandResult(2, "", "branche distante absente"),
+                new GitCommandResult(0, "", ""),
+                new GitCommandResult(0, repositoryPath.toString() + "\n", ""),
+                new GitCommandResult(0, """
+                # branch.oid abcdef
+                # branch.head main
+                # branch.upstream origin/main
+                """, ""),
+                new GitCommandResult(0, "", "")
+        );
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(runner);
+
+        final var result = adapter.checkUpdates(repositoryPath);
+
+        assertThat(result.upstream().relation()).isEqualTo(GitUpstreamRelation.MISSING);
+        assertThat(runner.commands()).contains(List.of(
+                "git",
+                "-C",
+                repositoryPath.toString(),
+                "ls-remote",
+                "--exit-code",
+                "origin",
+                "refs/heads/main"
+        ));
+    }
+
+    @Test
+    void checkUpdatesTreatsRemoteFailureAsInfrastructureFailureNotMissing() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.runGit(repositories.local(), "git", "remote", "set-url", "origin", this.tempDir.resolve("missing.git").toString());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        assertThatThrownBy(() -> adapter.checkUpdates(repositories.local()))
+                .isInstanceOf(GitExecutionException.class)
+                .hasMessage("Git upstream remote ref inspection failed.");
+
+        assertThat(adapter.inspectLocalRepository(repositories.local()).upstream().relation())
+                .isEqualTo(GitUpstreamRelation.UP_TO_DATE);
+    }
+
+    @Test
+    void pullFastForwardDeletesStaleTrackingRefAndDoesNotMergeWhenRemoteBranchDisappears() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        this.runGit(repositories.local(), "git", "fetch", "origin");
+        final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
+        this.runGit(repositories.remote(), "git", "update-ref", "-d", "refs/heads/main");
+        final RecordingGitCommandRunner runner = new RecordingGitCommandRunner();
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(runner);
+
+        assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
+                .isInstanceOf(GitUnsafeRepositoryStateException.class);
+
+        assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isEqualTo(before);
+        assertThat(adapter.inspectLocalRepository(repositories.local()).upstream().relation())
+                .isEqualTo(GitUpstreamRelation.MISSING);
+        assertThat(this.gitRefExists(repositories.local(), "refs/remotes/origin/main")).isFalse();
+        assertThat(runner.commands().stream()).noneMatch(command -> command.contains("merge"));
+    }
+
+    @Test
     void pullFastForwardBlocksDirtyRepositoryBeforeFetch() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         Files.writeString(repositories.local().resolve("README.md"), "dirty\n");
@@ -428,6 +537,26 @@ class GitRepositoryAdapterTest {
         assertThat(pulled.head().ref()).isEqualTo("feature/test");
         assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "main")).isEqualTo(mainBefore);
         assertThat(this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD")).isNotEqualTo(featureBefore);
+    }
+
+    @Test
+    void checkUpdatesMissingNonDefaultBranchDeletesOnlyCurrentBranchTrackingRef() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        this.runGit(repositories.writer(), "git", "checkout", "-b", "feature/test");
+        this.commitAndPushCurrentBranch(repositories.writer(), "feature\n", "Feature initial");
+        this.runGit(repositories.local(), "git", "fetch", "origin", "+refs/heads/feature/test:refs/remotes/origin/feature/test");
+        this.runGit(repositories.local(), "git", "checkout", "-b", "feature/test", "--track", "origin/feature/test");
+        this.runGit(repositories.remote(), "git", "update-ref", "-d", "refs/heads/feature/test");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var result = adapter.checkUpdates(repositories.local());
+
+        assertThat(result.head().ref()).isEqualTo("feature/test");
+        assertThat(result.upstream().ref()).isEqualTo("origin/feature/test");
+        assertThat(result.upstream().relation()).isEqualTo(GitUpstreamRelation.MISSING);
+        assertThat(this.gitRefExists(repositories.local(), "refs/remotes/origin/feature/test")).isFalse();
+        assertThat(this.gitRefExists(repositories.local(), "refs/remotes/origin/main")).isTrue();
+        assertThat(this.runGitOutput(repositories.local(), "git", "branch", "--show-current")).isEqualTo("feature/test");
     }
 
     @Test
@@ -795,6 +924,10 @@ class GitRepositoryAdapterTest {
         return output;
     }
 
+    private boolean gitRefExists(final Path repository, final String ref) throws IOException, InterruptedException {
+        return this.runGitAllowFailure(repository, "git", "rev-parse", "--verify", "--quiet", ref) == 0;
+    }
+
     private record RemoteBackedRepository(Path remote, Path local, Path writer) {
     }
 
@@ -861,6 +994,22 @@ class GitRepositoryAdapterTest {
             if (result.exitCode() != 0) {
                 throw new GitExecutionException("Race mutation failed.");
             }
+        }
+
+        private List<List<String>> commands() {
+            return this.commands;
+        }
+    }
+
+    private static final class RecordingGitCommandRunner implements GitCommandRunner {
+
+        private final DefaultGitCommandRunner delegate = new DefaultGitCommandRunner();
+        private final List<List<String>> commands = new ArrayList<>();
+
+        @Override
+        public GitCommandResult run(final List<String> command, final GitCommandExecutionPolicy policy) {
+            this.commands.add(List.copyOf(command));
+            return this.delegate.run(command, policy);
         }
 
         private List<List<String>> commands() {
