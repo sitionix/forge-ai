@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -25,6 +26,7 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
     @Override
     public GitCommandResult run(final List<String> command, final GitCommandExecutionPolicy policy) {
         final Duration timeout = policy.timeout();
+        final long deadline = System.nanoTime() + timeout.toNanos();
         Process process = null;
         Future<String> stdout = null;
         Future<String> stderr = null;
@@ -36,22 +38,38 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
             final Process startedProcess = process;
             stdout = streamReaders.submit(() -> this.readLimited(startedProcess.getInputStream()));
             stderr = streamReaders.submit(() -> this.readLimited(startedProcess.getErrorStream()));
-            final boolean completed = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            final boolean completed = process.waitFor(this.remainingNanos(deadline), TimeUnit.NANOSECONDS);
             if (!completed) {
                 final boolean interrupted = this.terminateProcessTree(process);
-                this.awaitStreamReader(stdout);
-                this.awaitStreamReader(stderr);
+                this.closeProcessStreams(process);
+                this.cancel(stdout);
+                this.cancel(stderr);
                 if (interrupted) {
                     Thread.currentThread().interrupt();
                 }
                 throw new GitExecutionException("Git command timed out.");
             }
-            return new GitCommandResult(process.exitValue(), this.awaitStreamReader(stdout), this.awaitStreamReader(stderr));
+            return new GitCommandResult(
+                    process.exitValue(),
+                    this.awaitStreamReader(stdout, deadline),
+                    this.awaitStreamReader(stderr, deadline)
+            );
         } catch (final IOException exception) {
             throw new GitExecutionException("Git command failed to start.", exception);
+        } catch (final TimeoutException exception) {
+            if (process != null && process.isAlive()) {
+                this.terminateProcessTree(process);
+            }
+            if (process != null) {
+                this.closeProcessStreams(process);
+            }
+            this.cancel(stdout);
+            this.cancel(stderr);
+            throw new GitExecutionException("Git command timed out.", exception);
         } catch (final InterruptedException exception) {
             if (process != null) {
                 this.terminateProcessTree(process);
+                this.closeProcessStreams(process);
             }
             this.cancel(stdout);
             this.cancel(stderr);
@@ -78,20 +96,39 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         return new String(captured, 0, capturedBytes, StandardCharsets.UTF_8);
     }
 
-    private String awaitStreamReader(final Future<String> reader) throws InterruptedException {
+    private String awaitStreamReader(final Future<String> reader, final long deadline) throws InterruptedException, TimeoutException {
         if (reader == null) {
             return "";
         }
         try {
-            return reader.get();
+            return reader.get(this.remainingNanos(deadline), TimeUnit.NANOSECONDS);
         } catch (final ExecutionException exception) {
             throw new GitExecutionException("Git command output could not be read.", exception);
         }
     }
 
+    private long remainingNanos(final long deadline) throws TimeoutException {
+        final long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) {
+            throw new TimeoutException("Git command deadline expired.");
+        }
+        return remaining;
+    }
+
     private void cancel(final Future<String> reader) {
         if (reader != null) {
             reader.cancel(true);
+        }
+    }
+
+    private void closeProcessStreams(final Process process) {
+        try {
+            process.getInputStream().close();
+        } catch (final IOException ignored) {
+        }
+        try {
+            process.getErrorStream().close();
+        } catch (final IOException ignored) {
         }
     }
 

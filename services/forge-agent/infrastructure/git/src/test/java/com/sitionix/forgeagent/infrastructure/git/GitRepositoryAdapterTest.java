@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.infrastructure.git;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeagent.domain.model.GitHeadType;
@@ -57,6 +58,23 @@ class GitRepositoryAdapterTest {
         assertThat(state.valid()).isTrue();
         assertThat(state.head().type()).isEqualTo(GitHeadType.BRANCH);
         assertThat(state.head().ref()).isEqualTo("main");
+        assertThat(state.head().commit()).isNotBlank();
+        assertThat(state.workingTree()).isEqualTo(GitWorkingTreeState.CLEAN);
+    }
+
+    @Test
+    void inspectsGitFileWorktreeCheckoutAsValid() throws Exception {
+        final Path repository = this.createRepositoryWithCommit("service-a");
+        final Path worktree = this.tempDir.resolve("service-a-worktree");
+        this.runGit(repository, "git", "worktree", "add", "--detach", worktree.toString(), "HEAD");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var state = adapter.inspectLocalRepository(worktree);
+
+        assertThat(Files.isRegularFile(worktree.resolve(".git"))).isTrue();
+        assertThat(state.valid()).isTrue();
+        assertThat(state.head().type()).isEqualTo(GitHeadType.DETACHED);
+        assertThat(state.head().ref()).isNull();
         assertThat(state.head().commit()).isNotBlank();
         assertThat(state.workingTree()).isEqualTo(GitWorkingTreeState.CLEAN);
     }
@@ -124,6 +142,63 @@ class GitRepositoryAdapterTest {
     }
 
     @Test
+    void malformedGitFileIsInvalidWithoutInfrastructureFailure() throws Exception {
+        final Path repository = this.tempDir.resolve("malformed-git-file");
+        Files.createDirectories(repository);
+        Files.writeString(repository.resolve(".git"), "gitdir: missing\n");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var state = adapter.inspectLocalRepository(repository);
+
+        assertThat(state.valid()).isFalse();
+        assertThat(state.head()).isNull();
+        assertThat(state.workingTree()).isNull();
+    }
+
+    @Test
+    void malformedGitDirectoryIsInvalidWithoutInfrastructureFailure() throws Exception {
+        final Path repository = this.tempDir.resolve("malformed-git-directory");
+        Files.createDirectories(repository.resolve(".git"));
+        Files.writeString(repository.resolve(".git").resolve("HEAD"), "ref: refs/heads/main\n");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var state = adapter.inspectLocalRepository(repository);
+
+        assertThat(state.valid()).isFalse();
+        assertThat(state.head()).isNull();
+        assertThat(state.workingTree()).isNull();
+    }
+
+    @Test
+    void nestedBrokenChildCheckoutDoesNotFallBackToParentRepositoryState() throws Exception {
+        final Path parent = this.createRepositoryWithCommit("forge-source-parent");
+        final Path child = parent.resolve("forge-projects/project-id/service-a");
+        Files.createDirectories(child.resolve(".git"));
+        Files.writeString(child.resolve(".git").resolve("HEAD"), "ref: refs/heads/main\n");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var state = adapter.inspectLocalRepository(child);
+
+        assertThat(state.valid()).isFalse();
+        assertThat(state.head()).isNull();
+        assertThat(state.workingTree()).isNull();
+    }
+
+    @Test
+    void nestedDirectoryWithoutOwnGitRootDoesNotReturnParentRepositoryState() throws Exception {
+        final Path parent = this.createRepositoryWithCommit("forge-source-parent");
+        final Path child = parent.resolve("forge-projects/project-id/service-a");
+        Files.createDirectories(child);
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var state = adapter.inspectLocalRepository(child);
+
+        assertThat(state.valid()).isFalse();
+        assertThat(state.head()).isNull();
+        assertThat(state.workingTree()).isNull();
+    }
+
+    @Test
     void inspectsRepositoryPathWithSpacesAndSpecialCharacters() throws Exception {
         final Path repository = this.createRepositoryWithCommit("service a [special]");
         final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
@@ -153,11 +228,37 @@ class GitRepositoryAdapterTest {
 
     @Test
     void malformedSuccessfulLocalInspectionOutputIsInfrastructureFailure() {
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter((command, policy) -> new GitCommandResult(0, "# branch.head main\n", ""));
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new CapturingRunner(
+                new GitCommandResult(0, this.tempDir.toString() + "\n", ""),
+                new GitCommandResult(0, "# branch.head main\n", "")
+        ));
 
         assertThatThrownBy(() -> adapter.inspectLocalRepository(this.tempDir))
                 .isInstanceOf(GitExecutionException.class)
                 .hasMessage("Git local repository status output is malformed.");
+    }
+
+    @Test
+    void localStatusFailureAfterPositiveRootIsInfrastructureFailure() {
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new CapturingRunner(
+                new GitCommandResult(0, this.tempDir.toString() + "\n", ""),
+                new GitCommandResult(1, "", "")
+        ));
+
+        assertThatThrownBy(() -> adapter.inspectLocalRepository(this.tempDir))
+                .isInstanceOf(GitExecutionException.class)
+                .hasMessage("Git local repository inspection failed.");
+    }
+
+    @Test
+    void localGitRunnerFailureRemainsInfrastructureFailure() {
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter((command, policy) -> {
+            throw new GitExecutionException("git executable missing");
+        });
+
+        assertThatThrownBy(() -> adapter.inspectLocalRepository(this.tempDir))
+                .isInstanceOf(GitExecutionException.class)
+                .hasMessage("git executable missing");
     }
 
     @Test
@@ -188,16 +289,26 @@ class GitRepositoryAdapterTest {
 
     @Test
     void inspectLocalRepositoryUsesArgumentBasedGitCommand() {
-        final CapturingRunner runner = new CapturingRunner(0, """
+        final Path repositoryPath = this.tempDir.resolve("repository path");
+        assertThatCode(() -> Files.createDirectories(repositoryPath)).doesNotThrowAnyException();
+        final CapturingRunner runner = new CapturingRunner(
+                new GitCommandResult(0, repositoryPath.toString() + "\n", ""),
+                new GitCommandResult(0, """
                 # branch.oid abcdef
                 # branch.head main
-                """);
+                """, "")
+        );
         final GitRepositoryAdapter adapter = new GitRepositoryAdapter(runner);
-        final Path repositoryPath = this.tempDir.resolve("repository path");
 
         adapter.inspectLocalRepository(repositoryPath);
 
         assertThat(runner.commands()).containsExactly(List.of(
+                "git",
+                "-C",
+                repositoryPath.toString(),
+                "rev-parse",
+                "--show-toplevel"
+        ), List.of(
                 "git",
                 "-C",
                 repositoryPath.toString(),
@@ -207,7 +318,7 @@ class GitRepositoryAdapterTest {
                 "--untracked-files=normal"
         ));
         assertThat(runner.policies()).extracting(GitCommandExecutionPolicy::timeout)
-                .containsExactly(Duration.ofSeconds(10));
+                .containsExactly(Duration.ofSeconds(10), Duration.ofSeconds(10));
     }
 
     private Path createBareRepository(final String name) throws Exception {
@@ -243,24 +354,33 @@ class GitRepositoryAdapterTest {
         }
     }
 
-    private record CapturingRunner(int exitCode,
-                                   String stdout,
+    private record CapturingRunner(List<GitCommandResult> results,
                                    List<List<String>> commands,
                                    List<GitCommandExecutionPolicy> policies) implements GitCommandRunner {
 
         CapturingRunner(final int exitCode) {
-            this(exitCode, "", new ArrayList<>(), new ArrayList<>());
+            this(new GitCommandResult(exitCode, ""), new ArrayList<>(), new ArrayList<>());
         }
 
         CapturingRunner(final int exitCode, final String stdout) {
-            this(exitCode, stdout, new ArrayList<>(), new ArrayList<>());
+            this(new GitCommandResult(exitCode, stdout), new ArrayList<>(), new ArrayList<>());
+        }
+
+        CapturingRunner(final GitCommandResult... results) {
+            this(List.of(results), new ArrayList<>(), new ArrayList<>());
+        }
+
+        private CapturingRunner(final GitCommandResult result,
+                                final List<List<String>> commands,
+                                final List<GitCommandExecutionPolicy> policies) {
+            this(List.of(result), commands, policies);
         }
 
         @Override
         public GitCommandResult run(final List<String> command, final GitCommandExecutionPolicy policy) {
             this.commands.add(List.copyOf(command));
             this.policies.add(policy);
-            return new GitCommandResult(this.exitCode, this.stdout, "");
+            return this.results.get(Math.min(this.commands.size() - 1, this.results.size() - 1));
         }
     }
 }

@@ -624,7 +624,7 @@ body.sidebar-collapsed .sidebar-link {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: rgba(27, 36, 31, 0.62);
-  font: 600 11px/1.35 var(--font);
+  font: 600 11px/1.35 var(--mono);
 }
 
 .repository-git-state-clean {

@@ -139,15 +139,7 @@ class ForgeAgentProjectRepositoryIT {
                 .expectStatus(HttpStatus.CREATED)
                 .assertAndCreate();
 
-        final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
-
-        this.forgeIt.mockMvc()
-                .ping(CLONE_PROJECT_REPOSITORY)
-                .withPathParameters(PathParams.create()
-                        .add("projectId", PROJECT_ALPHA_ID)
-                        .add("repositoryId", repositoryId))
-                .expectStatus(HttpStatus.OK)
-                .assertAndCreate();
+        this.createInvalidManagedCheckout("invalid-checkout");
 
         this.forgeIt.mockMvc()
                 .ping(LIST_PROJECT_REPOSITORIES)
@@ -182,6 +174,19 @@ class ForgeAgentProjectRepositoryIT {
                 .create()
                 .to(PROJECT.withJson("project_alpha.json"))
                 .build();
+    }
+
+    private void createInvalidManagedCheckout(final String repositoryName) {
+        try {
+            final Path repositoryPath = this.forgeRoot()
+                    .resolve("forge-projects")
+                    .resolve(PROJECT_ALPHA_ID.toString())
+                    .resolve(repositoryName);
+            Files.createDirectories(repositoryPath.resolve(".git"));
+            Files.writeString(repositoryPath.resolve("invalid-git-checkout"), "invalid");
+        } catch (final IOException exception) {
+            throw new IllegalStateException("Failed to create invalid checkout fixture.", exception);
+        }
     }
 
     private Path forgeRoot() {

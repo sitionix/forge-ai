@@ -11,6 +11,7 @@ import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceState;
+import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import com.sitionix.forgeagent.domain.port.GitOperationException;
 import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
@@ -83,8 +84,12 @@ public class ProjectRepositoryUseCases {
             }
             attempt = this.localProjectWorkspacePort.prepareCloneAttempt(projectId, reference);
             this.gitRepositoryPort.clone(repository.remoteUrl(), attempt.stagingPath());
+            final GitLocalRepositoryState gitState = this.gitRepositoryPort.inspectLocalRepository(attempt.stagingPath());
+            if (!gitState.valid()) {
+                throw new GitExecutionException("Git clone produced invalid checkout.");
+            }
             this.localProjectWorkspacePort.finalizeCloneAttempt(attempt);
-            return this.toView(projectId, repository, reference.name(), true, this.gitRepositoryPort.inspectLocalRepository(attempt.finalPath()));
+            return this.toView(projectId, repository, reference.name(), true, gitState);
         } catch (final GitOperationException exception) {
             this.cleanupCloneAttempt(attempt);
             throw new InfrastructureExecutionException("PROJECT_REPOSITORY_CLONE_FAILED", "Project repository clone failed.");

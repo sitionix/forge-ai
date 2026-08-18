@@ -11,6 +11,7 @@ import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +56,20 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
 
     @Override
     public GitLocalRepositoryState inspectLocalRepository(final Path repositoryPath) {
+        final GitCommandResult rootResult = this.commandRunner.run(List.of(
+                "git",
+                "-C",
+                repositoryPath.toString(),
+                "rev-parse",
+                "--show-toplevel"
+        ), INSPECT_LOCAL_POLICY);
+        if (rootResult.exitCode() != 0) {
+            return GitLocalRepositoryState.invalid();
+        }
+        if (!this.isRequestedRepositoryRoot(repositoryPath, rootResult.stdout())) {
+            return GitLocalRepositoryState.invalid();
+        }
+
         final GitCommandResult result = this.commandRunner.run(List.of(
                 "git",
                 "-C",
@@ -65,9 +80,6 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
                 "--untracked-files=normal"
         ), INSPECT_LOCAL_POLICY);
         if (result.exitCode() != 0) {
-            if (this.isInvalidRepository(result.stderr())) {
-                return GitLocalRepositoryState.invalid();
-            }
             throw new GitExecutionException("Git local repository inspection failed.");
         }
         return this.parseStatus(result.stdout());
@@ -110,10 +122,19 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         return new GitLocalRepositoryState(true, headState, dirty ? GitWorkingTreeState.DIRTY : GitWorkingTreeState.CLEAN);
     }
 
-    private boolean isInvalidRepository(final String stderr) {
-        final String normalized = stderr == null ? "" : stderr.toLowerCase();
-        return normalized.contains("not a git repository")
-                || normalized.contains("not a git directory")
-                || normalized.contains("cannot change to");
+    private boolean isRequestedRepositoryRoot(final Path repositoryPath, final String output) {
+        final List<String> roots = output.lines()
+                .filter(line -> !line.isBlank())
+                .toList();
+        if (roots.size() != 1) {
+            throw new GitExecutionException("Git local repository root output is malformed.");
+        }
+        try {
+            final Path requestedPath = repositoryPath.toRealPath();
+            final Path recognizedRoot = Path.of(roots.getFirst()).toRealPath();
+            return requestedPath.equals(recognizedRoot);
+        } catch (final IOException exception) {
+            throw new GitExecutionException("Git local repository root could not be resolved.", exception);
+        }
     }
 }

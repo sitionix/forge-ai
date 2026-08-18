@@ -7,6 +7,7 @@ import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -68,6 +69,27 @@ class DefaultGitCommandRunnerTest {
     }
 
     @Test
+    void timeoutCoversInheritedOutputPipesAfterRootProcessExits() throws Exception {
+        final Path childPidFile = this.tempDir.resolve("inherited-pipe-child.pid");
+        final Path script = this.writeInheritedPipeScript(childPidFile);
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+        final Instant startedAt = Instant.now();
+
+        assertThatThrownBy(() -> runner.run(List.of("/bin/sh", script.toString()),
+                new GitCommandExecutionPolicy(Duration.ofMillis(300))))
+                .isInstanceOf(GitExecutionException.class)
+                .hasMessage("Git command timed out.");
+
+        assertThat(Duration.between(startedAt, Instant.now())).isLessThan(Duration.ofSeconds(5));
+        final long childPid = this.readPid(childPidFile);
+        assertThat(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false)).isTrue();
+        ProcessHandle.of(childPid).ifPresent(process -> {
+            process.destroyForcibly();
+            process.onExit().join();
+        });
+    }
+
+    @Test
     void interruptionTerminatesStartedProcessAndDescendantBeforeThrowingAndPreservesInterruptStatus() throws Exception {
         final Path parentPidFile = this.tempDir.resolve("parent.pid");
         final Path childPidFile = this.tempDir.resolve("child.pid");
@@ -106,6 +128,16 @@ class DefaultGitCommandRunnerTest {
                 echo $! > '%s'
                 wait $!
                 """.formatted(parentPidFile, childPidFile));
+        return script;
+    }
+
+    private Path writeInheritedPipeScript(final Path childPidFile) throws Exception {
+        final Path script = this.tempDir.resolve("inherited-pipe.sh");
+        Files.writeString(script, """
+                sleep 60 &
+                echo $! > '%s'
+                exit 0
+                """.formatted(childPidFile));
         return script;
     }
 
