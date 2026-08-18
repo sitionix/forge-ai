@@ -13,6 +13,7 @@ import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitUnsafeRepositoryStateException;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -341,10 +342,10 @@ class GitRepositoryAdapterTest {
     @Test
     void inspectsUnresolvedConflictAndBlocksPull() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
-        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
-        this.commit(repositories.local(), "local\n", "Local update");
+        this.commitFileAndPush(repositories.writer(), "CONFLICT.txt", "remote\n", "Remote add");
+        this.commitFile(repositories.local(), "CONFLICT.txt", "local\n", "Local add");
         this.runGit(repositories.local(), "git", "fetch", "origin");
-        this.runGitAllowFailure(repositories.local(), "git", "merge", "origin/main");
+        this.createUnmergedIndexEntry(repositories.local(), "CONFLICT.txt");
         final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
 
         final var state = adapter.inspectLocalRepository(repositories.local());
@@ -682,6 +683,14 @@ class GitRepositoryAdapterTest {
         this.runGit(repository, "git", "push", "origin", "main");
     }
 
+    private void commitFileAndPush(final Path repository,
+                                   final String relativePath,
+                                   final String content,
+                                   final String message) throws Exception {
+        this.commitFile(repository, relativePath, content, message);
+        this.runGit(repository, "git", "push", "origin", "main");
+    }
+
     private void commitAndPushForce(final Path repository, final String content, final String message) throws Exception {
         this.commit(repository, content, message);
         this.runGit(repository, "git", "push", "--force", "origin", "main");
@@ -694,9 +703,43 @@ class GitRepositoryAdapterTest {
     }
 
     private void commit(final Path repository, final String content, final String message) throws Exception {
-        Files.writeString(repository.resolve("README.md"), content);
-        this.runGit(repository, "git", "add", "README.md");
+        this.commitFile(repository, "README.md", content, message);
+    }
+
+    private void commitFile(final Path repository,
+                            final String relativePath,
+                            final String content,
+                            final String message) throws Exception {
+        Files.writeString(repository.resolve(relativePath), content);
+        this.runGit(repository, "git", "add", relativePath);
         this.runGit(repository, "git", "-c", "user.name=Forge Test", "-c", "user.email=forge@example.com", "commit", "-m", message);
+    }
+
+    private void createUnmergedIndexEntry(final Path repository, final String relativePath) throws Exception {
+        final String base = this.writeBlob(repository, "base\n");
+        final String local = this.writeBlob(repository, "local\n");
+        final String remote = this.writeBlob(repository, "remote\n");
+        this.runGit(repository, "git", "update-index", "--force-remove", relativePath);
+        this.runGitWithInput(repository, """
+                100644 %s 1\t%s
+                100644 %s 2\t%s
+                100644 %s 3\t%s
+                """.formatted(base, relativePath, local, relativePath, remote, relativePath), "git", "update-index", "--index-info");
+        Files.writeString(repository.resolve(relativePath), """
+                <<<<<<< HEAD
+                local
+                =======
+                remote
+                >>>>>>> origin/main
+                """);
+        final Path mergeHead = repository.resolve(this.runGitOutput(repository, "git", "rev-parse", "--git-path", "MERGE_HEAD"));
+        Files.writeString(mergeHead, this.runGitOutput(repository, "git", "rev-parse", "origin/main") + "\n");
+    }
+
+    private String writeBlob(final Path repository, final String content) throws Exception {
+        final Path file = Files.createTempFile(this.tempDir, "git-conflict-blob", ".txt");
+        Files.writeString(file, content);
+        return this.runGitOutput(repository, "git", "hash-object", "-w", file.toString());
     }
 
     private void runGit(final String... command) throws IOException, InterruptedException {
@@ -709,6 +752,21 @@ class GitRepositoryAdapterTest {
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.DISCARD)
                 .start();
+        final int exitCode = process.waitFor();
+        if (exitCode != 0) {
+            throw new IllegalStateException("Git test command failed.");
+        }
+    }
+
+    private void runGitWithInput(final Path workingDirectory, final String input, final String... command)
+            throws IOException, InterruptedException {
+        final Process process = new ProcessBuilder(command)
+                .directory(workingDirectory == null ? null : workingDirectory.toFile())
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+        process.getOutputStream().write(input.getBytes(StandardCharsets.UTF_8));
+        process.getOutputStream().close();
         final int exitCode = process.waitFor();
         if (exitCode != 0) {
             throw new IllegalStateException("Git test command failed.");
