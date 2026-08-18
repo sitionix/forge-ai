@@ -11,6 +11,8 @@ public interface LocalProjectWorkspacePort {
 
     Map<UUID, ProjectRepositoryWorkspaceState> resolveRepositoryWorkspaceStates(UUID projectId, List<ProjectRepositoryWorkspaceReference> repositories);
 
+    ProjectRepositoryWorkspaceState resolveRepositoryWorkspaceState(UUID projectId, ProjectRepositoryWorkspaceReference repository);
+
     ProjectRepositoryCloneAttempt prepareCloneAttempt(UUID projectId, ProjectRepositoryWorkspaceReference repository);
 
     void finalizeCloneAttempt(ProjectRepositoryCloneAttempt attempt);

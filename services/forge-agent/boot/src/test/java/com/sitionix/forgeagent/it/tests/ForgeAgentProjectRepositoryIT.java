@@ -5,6 +5,8 @@ import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.DELETE_
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.IMPORT_PROJECT_REPOSITORY;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.IMPORT_PROJECT_REPOSITORY_ERROR;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_PROJECT_REPOSITORIES;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.PULL_PROJECT_REPOSITORY;
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.PULL_PROJECT_REPOSITORY_ERROR;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -125,6 +127,67 @@ class ForgeAgentProjectRepositoryIT {
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListProjectRepositoriesCloned.json", "id", "createdAt")
+                .assertAndCreate();
+    }
+
+    @Test
+    void givenClonedRepository_whenPullRepository_thenTypedResponseIsReturnedAndNoGitStateIsPersisted() {
+        this.seedProject();
+
+        this.forgeIt.mockMvc()
+                .ping(IMPORT_PROJECT_REPOSITORY)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestImportProjectRepository.json")
+                .expectStatus(HttpStatus.CREATED)
+                .assertAndCreate();
+
+        final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
+
+        this.forgeIt.mockMvc()
+                .ping(CLONE_PROJECT_REPOSITORY)
+                .withPathParameters(PathParams.create()
+                        .add("projectId", PROJECT_ALPHA_ID)
+                        .add("repositoryId", repositoryId))
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(PULL_PROJECT_REPOSITORY)
+                .withPathParameters(PathParams.create()
+                        .add("projectId", PROJECT_ALPHA_ID)
+                        .add("repositoryId", repositoryId))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responsePullProjectRepository.json", "id", "createdAt")
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll())
+                .singleElement()
+                .satisfies(entity -> {
+                    assertThat(entity.getId()).isEqualTo(repositoryId);
+                    assertThat(entity.getRemoteUrl()).isEqualTo("git@gitlab.com:company/service-a.git");
+                });
+    }
+
+    @Test
+    void givenUnclonedRepository_whenPullRepository_thenConflictIsReturned() {
+        this.seedProject();
+
+        this.forgeIt.mockMvc()
+                .ping(IMPORT_PROJECT_REPOSITORY)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestImportProjectRepository.json")
+                .expectStatus(HttpStatus.CREATED)
+                .assertAndCreate();
+
+        final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
+
+        this.forgeIt.mockMvc()
+                .ping(PULL_PROJECT_REPOSITORY_ERROR)
+                .withPathParameters(PathParams.create()
+                        .add("projectId", PROJECT_ALPHA_ID)
+                        .add("repositoryId", repositoryId))
+                .expectStatus(HttpStatus.CONFLICT)
+                .expectResponse("responseProjectRepositoryNotClonedError.json")
                 .assertAndCreate();
     }
 

@@ -13,8 +13,6 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHead;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHeadType;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryWorkingTreeState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
@@ -44,6 +42,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -151,9 +150,9 @@ class AgentProxyApiMapperTest {
                 "service-a",
                 true,
                 new AgentProjectRepositoryGitState(
-                        true,
-                        new AgentProjectRepositoryGitHead(AgentProjectRepositoryGitHeadType.DETACHED, null, "abcdef"),
-                        AgentProjectRepositoryWorkingTreeState.CLEAN
+                        null,
+                        AgentProjectRepositoryWorkingTreeState.CLEAN,
+                        false
                 ),
                 CREATED
         ))).isEqualTo(new AgentProjectRepositoryResponse(
@@ -161,13 +160,40 @@ class AgentProxyApiMapperTest {
                 PROJECT_ID,
                 "service-a",
                 true,
-                new AgentProjectRepositoryGitStateResponse(
-                        true,
-                        new AgentProjectRepositoryGitHeadResponse("DETACHED", null, "abcdef"),
-                        "CLEAN"
-                ),
+                new AgentProjectRepositoryGitStateResponse(null, "CLEAN", false),
                 CREATED
         ));
+    }
+
+    @Test
+    void projectRepositoryResponseSerializesGitContractOnly() {
+        final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+        final var response = new AgentProjectRepositoryResponse(
+                repositoryId,
+                PROJECT_ID,
+                "service-a",
+                true,
+                new AgentProjectRepositoryGitStateResponse("main", "CLEAN", false),
+                CREATED
+        );
+
+        final var responseFields = Arrays.stream(AgentProjectRepositoryResponse.class.getRecordComponents())
+                .map(component -> component.getName())
+                .toList();
+        final var json = this.objectMapper.valueToTree(response.git());
+
+        assertThat(responseFields).containsExactly("id", "projectId", "name", "cloned", "git", "createdAt");
+        assertThat(json.size()).isEqualTo(3);
+        assertThat(json.has("branch")).isTrue();
+        assertThat(json.has("workingTree")).isTrue();
+        assertThat(json.has("pullAvailable")).isTrue();
+        assertThat(json.has("cloned")).isFalse();
+        assertThat(json.has("valid")).isFalse();
+        assertThat(json.has("head")).isFalse();
+        assertThat(json.has("upstream")).isFalse();
+        assertThat(json.has("conflictState")).isFalse();
+        assertThat(json.has("operationState")).isFalse();
+        assertThat(json.has("blockedReason")).isFalse();
     }
 
     @Test

@@ -4,9 +4,7 @@
     "projectId": "10000000-0000-4000-8000-000000000001",
     "name": "invalid-checkout",
     "cloned": true,
-    "gitState": {
-      "valid": false
-    },
+    "git": null,
     "createdAt": "ignored"
   }
 ]

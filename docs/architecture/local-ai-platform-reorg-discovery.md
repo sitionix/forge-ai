@@ -11,7 +11,6 @@ Root aggregator modules:
 - `application`
 - `domain`
 - `infrastructure`
-- `jacoco-report`
 
 Infrastructure aggregator modules:
 

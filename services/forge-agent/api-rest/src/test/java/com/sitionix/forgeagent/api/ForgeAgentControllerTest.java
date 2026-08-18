@@ -19,6 +19,7 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitStateResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
@@ -201,6 +202,21 @@ class ForgeAgentControllerTest {
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(actual.getBody()).isSameAs(response);
         verify(this.projectRepositoryUseCases).cloneRepository(PROJECT_ID, REPOSITORY_ID);
+        verify(this.mapper).toResponse(repository);
+    }
+
+    @Test
+    void pullProjectRepository() {
+        final ProjectRepositoryView repository = this.projectRepository();
+        final ProjectRepositoryResponse response = this.projectRepositoryResponse();
+        when(this.projectRepositoryUseCases.pullRepository(PROJECT_ID, REPOSITORY_ID)).thenReturn(repository);
+        when(this.mapper.toResponse(repository)).thenReturn(response);
+
+        final var actual = this.controller.pullProjectRepository(PROJECT_ID, REPOSITORY_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.projectRepositoryUseCases).pullRepository(PROJECT_ID, REPOSITORY_ID);
         verify(this.mapper).toResponse(repository);
     }
 
@@ -482,7 +498,14 @@ class ForgeAgentControllerTest {
     }
 
     private ProjectRepositoryResponse projectRepositoryResponse() {
-        return new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", false, null, NOW);
+        return new ProjectRepositoryResponse(
+                REPOSITORY_ID,
+                PROJECT_ID,
+                "service-a",
+                false,
+                null,
+                NOW
+        );
     }
 
     private SaveAgentRequest agentRequest() throws Exception {

@@ -15,7 +15,11 @@ import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.GitHeadState;
 import com.sitionix.forgeagent.domain.model.GitHeadType;
 import com.sitionix.forgeagent.domain.model.GitLocalRepositoryState;
+import com.sitionix.forgeagent.domain.model.GitConflictState;
+import com.sitionix.forgeagent.domain.model.GitOperationState;
 import com.sitionix.forgeagent.domain.model.GitRemoteInspection;
+import com.sitionix.forgeagent.domain.model.GitUpstreamRelation;
+import com.sitionix.forgeagent.domain.model.GitUpstreamState;
 import com.sitionix.forgeagent.domain.model.GitWorkingTreeState;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
@@ -26,6 +30,7 @@ import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceState;
 import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
+import com.sitionix.forgeagent.domain.port.GitUnsafeRepositoryStateException;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspaceException;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspacePort;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
@@ -208,10 +213,12 @@ class ProjectRepositoryUseCasesTest {
     void listMapsDetachedGitStateForClonedRepository() {
         final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
         final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
-        final GitLocalRepositoryState detachedState = new GitLocalRepositoryState(
-                true,
+        final GitLocalRepositoryState detachedState = GitLocalRepositoryState.valid(
                 new GitHeadState(GitHeadType.DETACHED, null, "a1b2c3"),
-                GitWorkingTreeState.CLEAN
+                GitWorkingTreeState.CLEAN,
+                GitConflictState.NONE,
+                GitOperationState.NORMAL,
+                null
         );
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
         when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(repository));
@@ -404,6 +411,90 @@ class ProjectRepositoryUseCasesTest {
     }
 
     @Test
+    void pullRejectsUnclonedRepositoryBeforeGitMutation() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceState(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
+                .thenReturn(new ProjectRepositoryWorkspaceState(REPOSITORY_ID, repositoryPath, false));
+
+        assertThatThrownBy(() -> this.useCases.pullRepository(PROJECT_ID, REPOSITORY_ID))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Project repository is not cloned.");
+
+        verify(this.gitRepositoryPort, never()).inspectLocalRepository(any());
+        verify(this.gitRepositoryPort, never()).pullFastForward(any());
+        verify(this.repositoryLinkRepository, never()).save(any());
+    }
+
+    @Test
+    void pullMapsUnsafeGitStateToConflict() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceState(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
+                .thenReturn(new ProjectRepositoryWorkspaceState(REPOSITORY_ID, repositoryPath, true));
+        when(this.gitRepositoryPort.pullFastForward(repositoryPath))
+                .thenThrow(new GitUnsafeRepositoryStateException("unsafe", this.branchState(GitWorkingTreeState.DIRTY)));
+
+        assertThatThrownBy(() -> this.useCases.pullRepository(PROJECT_ID, REPOSITORY_ID))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Project repository is not safe to pull.");
+
+        verify(this.gitRepositoryPort).pullFastForward(repositoryPath);
+        verify(this.repositoryLinkRepository, never()).save(any());
+    }
+
+    @Test
+    void pullUsesManagedWorkspaceAndReturnsRefreshedState() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
+        final GitLocalRepositoryState finalState = GitLocalRepositoryState.valid(
+                new GitHeadState(GitHeadType.BRANCH, "main", "fedcba"),
+                GitWorkingTreeState.CLEAN,
+                GitConflictState.NONE,
+                GitOperationState.NORMAL,
+                new GitUpstreamState("origin/main", GitUpstreamRelation.UP_TO_DATE)
+        );
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceState(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
+                .thenReturn(new ProjectRepositoryWorkspaceState(REPOSITORY_ID, repositoryPath, true));
+        when(this.gitRepositoryPort.pullFastForward(repositoryPath)).thenReturn(finalState);
+
+        final ProjectRepositoryView result = this.useCases.pullRepository(PROJECT_ID, REPOSITORY_ID);
+
+        final InOrder ordered = inOrder(this.localProjectWorkspacePort, this.gitRepositoryPort);
+        ordered.verify(this.localProjectWorkspacePort).resolveRepositoryWorkspaceState(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"));
+        ordered.verify(this.gitRepositoryPort).pullFastForward(repositoryPath);
+        assertThat(result.gitState()).isEqualTo(finalState);
+        verify(this.repositoryLinkRepository, never()).save(any());
+    }
+
+    @Test
+    void pullGitFailureMapsToInfrastructureFailure() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceState(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
+                .thenReturn(new ProjectRepositoryWorkspaceState(REPOSITORY_ID, repositoryPath, true));
+        when(this.gitRepositoryPort.pullFastForward(repositoryPath)).thenThrow(new GitExecutionException("fetch failed"));
+
+        assertThatThrownBy(() -> this.useCases.pullRepository(PROJECT_ID, REPOSITORY_ID))
+                .isInstanceOf(InfrastructureExecutionException.class)
+                .hasMessage("Project repository pull failed.");
+
+        verify(this.repositoryLinkRepository, never()).save(any());
+    }
+
+    @Test
     void rejectsBlankRemoteUrl() {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
 
@@ -436,10 +527,16 @@ class ProjectRepositoryUseCasesTest {
     }
 
     private GitLocalRepositoryState branchState(final GitWorkingTreeState workingTreeState) {
-        return new GitLocalRepositoryState(
-                true,
+        return this.branchState(workingTreeState, GitUpstreamRelation.UP_TO_DATE);
+    }
+
+    private GitLocalRepositoryState branchState(final GitWorkingTreeState workingTreeState, final GitUpstreamRelation relation) {
+        return GitLocalRepositoryState.valid(
                 new GitHeadState(GitHeadType.BRANCH, "main", "abcdef"),
-                workingTreeState
+                workingTreeState,
+                GitConflictState.NONE,
+                GitOperationState.NORMAL,
+                new GitUpstreamState("origin/main", relation)
         );
     }
 }

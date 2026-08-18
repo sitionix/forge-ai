@@ -14,8 +14,6 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHead;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHeadType;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
@@ -60,7 +58,6 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
-import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryGitHeadResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryGitStateResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
@@ -223,11 +220,7 @@ class ForgeAgentClientMapperTest {
                 PROJECT_ID,
                 "service-a",
                 true,
-                new ProjectRepositoryGitStateResponse(
-                        true,
-                        new ProjectRepositoryGitHeadResponse("BRANCH", "main", "abcdef"),
-                        "DIRTY"
-                ),
+                new ProjectRepositoryGitStateResponse("main", "DIRTY", false),
                 CREATED
         );
 
@@ -236,11 +229,29 @@ class ForgeAgentClientMapperTest {
                 PROJECT_ID,
                 "service-a",
                 true,
-                new AgentProjectRepositoryGitState(
-                        true,
-                        new AgentProjectRepositoryGitHead(AgentProjectRepositoryGitHeadType.BRANCH, "main", "abcdef"),
-                        AgentProjectRepositoryWorkingTreeState.DIRTY
-                ),
+                new AgentProjectRepositoryGitState("main", AgentProjectRepositoryWorkingTreeState.DIRTY, false),
+                CREATED
+        ));
+    }
+
+    @Test
+    void projectRepositoryResponseMapsInvalidClonedCheckoutGitState() {
+        final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+        final var response = new ProjectRepositoryResponse(
+                repositoryId,
+                PROJECT_ID,
+                "service-a",
+                true,
+                null,
+                CREATED
+        );
+
+        assertThat(this.mapper.toDomain(response)).isEqualTo(new AgentProjectRepository(
+                repositoryId,
+                PROJECT_ID,
+                "service-a",
+                true,
+                null,
                 CREATED
         ));
     }

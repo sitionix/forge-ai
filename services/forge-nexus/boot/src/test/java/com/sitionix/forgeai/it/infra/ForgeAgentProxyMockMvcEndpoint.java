@@ -74,6 +74,16 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                         .expectResponse("responseAgentProxyProjectRepositoryCloned.json"));
     }
 
+    public static Endpoint<Void, AgentProjectRepositoryResponse> pullProjectRepository() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/projects/{projectId}/repositories/{repositoryId}/pull",
+                HttpMethod.POST,
+                Void.class,
+                AgentProjectRepositoryResponse.class,
+                (MockmvcDefault) context -> context
+                        .expectStatus(HttpStatus.OK.value())
+                        .expectResponse("responseAgentProxyProjectRepositoryCloned.json"));
+    }
+
     public static Endpoint<CreateAgentProjectTaskRequest, AgentProjectTaskResponse> createProjectTask() {
         return nexusPost("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
                 CreateAgentProjectTaskRequest.class,

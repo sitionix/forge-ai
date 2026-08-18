@@ -44,4 +44,4 @@ Forge Jarvis is the flat Python project under `services/forge-jarvis`, with `pyp
 
 ## Physical Layout
 
-The root implementation directories `boot`, `api-rest`, `application`, `domain`, `infrastructure`, and `jacoco-report` were removed from the root layout. The implementation now lives under `services/forge-*`. Root `config/`, `docs/`, `scripts/`, and `var/` are the canonical platform-level locations.
+The root implementation directories `boot`, `api-rest`, `application`, `domain`, and `infrastructure` were removed from the root layout. The implementation now lives under `services/forge-*`. Root `config/`, `docs/`, `scripts/`, and `var/` are the canonical platform-level locations.

@@ -15,6 +15,7 @@ import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import com.sitionix.forgeagent.domain.port.GitOperationException;
 import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
+import com.sitionix.forgeagent.domain.port.GitUnsafeRepositoryStateException;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspaceException;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspacePort;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
@@ -68,11 +69,7 @@ public class ProjectRepositoryUseCases {
 
     public ProjectRepositoryView cloneRepository(final UUID projectId, final UUID repositoryId) {
         this.requireProject(projectId);
-        final ProjectRepositoryLink repository = this.repositoryLinkRepository.findById(repositoryId)
-                .orElseThrow(() -> new NotFoundException("PROJECT_REPOSITORY_NOT_FOUND", "Project repository was not found."));
-        if (!Objects.equals(repository.projectId(), projectId)) {
-            throw new NotFoundException("PROJECT_REPOSITORY_NOT_FOUND", "Project repository was not found.");
-        }
+        final ProjectRepositoryLink repository = this.requireRepository(projectId, repositoryId);
         ProjectRepositoryCloneAttempt attempt = null;
         try {
             final ProjectRepositoryWorkspaceReference reference = this.toWorkspaceReference(repository);
@@ -100,9 +97,40 @@ public class ProjectRepositoryUseCases {
         }
     }
 
+    public ProjectRepositoryView pullRepository(final UUID projectId, final UUID repositoryId) {
+        this.requireProject(projectId);
+        final ProjectRepositoryLink repository = this.requireRepository(projectId, repositoryId);
+        try {
+            final ProjectRepositoryWorkspaceReference reference = this.toWorkspaceReference(repository);
+            final ProjectRepositoryWorkspaceState workspaceState =
+                    this.localProjectWorkspacePort.resolveRepositoryWorkspaceState(projectId, reference);
+            if (workspaceState == null || !workspaceState.cloned()) {
+                throw new ConflictException("PROJECT_REPOSITORY_NOT_CLONED", "Project repository is not cloned.");
+            }
+            final GitLocalRepositoryState finalState = this.gitRepositoryPort.pullFastForward(workspaceState.path());
+            return this.toView(projectId, repository, reference.name(), true, finalState);
+        } catch (final GitUnsafeRepositoryStateException exception) {
+            throw this.pullBlocked();
+        } catch (final GitOperationException exception) {
+            throw new InfrastructureExecutionException("PROJECT_REPOSITORY_PULL_FAILED", "Project repository pull failed.");
+        } catch (final LocalProjectWorkspaceException exception) {
+            throw new InfrastructureExecutionException("PROJECT_REPOSITORY_WORKSPACE_FAILED",
+                    "Project repository workspace operation failed.");
+        }
+    }
+
     private void requireProject(final UUID projectId) {
         this.projectRepository.findById(projectId)
                 .orElseThrow(() -> new NotFoundException("PROJECT_NOT_FOUND", "Project was not found."));
+    }
+
+    private ProjectRepositoryLink requireRepository(final UUID projectId, final UUID repositoryId) {
+        final ProjectRepositoryLink repository = this.repositoryLinkRepository.findById(repositoryId)
+                .orElseThrow(() -> new NotFoundException("PROJECT_REPOSITORY_NOT_FOUND", "Project repository was not found."));
+        if (!Objects.equals(repository.projectId(), projectId)) {
+            throw new NotFoundException("PROJECT_REPOSITORY_NOT_FOUND", "Project repository was not found.");
+        }
+        return repository;
     }
 
     private String requireRemoteUrl(final String candidate) {
@@ -149,6 +177,10 @@ public class ProjectRepositoryUseCases {
         if (duplicate) {
             throw new ConflictException("PROJECT_REPOSITORY_NAME_EXISTS", "Project repository name already exists.");
         }
+    }
+
+    private ConflictException pullBlocked() {
+        return new ConflictException("PROJECT_REPOSITORY_PULL_BLOCKED", "Project repository is not safe to pull.");
     }
 
     private ProjectRepositoryWorkspaceReference toWorkspaceReference(final ProjectRepositoryLink repository) {

@@ -117,32 +117,48 @@ function repository(
   projectId = project().id,
   name = 'service-a',
   cloned = false,
-  gitState: any = cloned ? branchGitState() : null
+  git: any = cloned ? repositoryGitState() : null
 ) {
   return {
     id,
     projectId,
     name,
     cloned,
-    gitState,
+    git,
     createdAt: '2026-08-17T09:00:00Z'
   };
 }
 
-function branchGitState(workingTree = 'CLEAN', ref = 'main') {
+function repositoryGitState(branch: string | null = 'main', workingTree: string | null = 'CLEAN', pullAvailable = false) {
   return {
-    valid: true,
-    head: { type: 'BRANCH', ref, commit: 'abcdef1234567890' },
-    workingTree
+    branch,
+    workingTree,
+    pullAvailable
   };
 }
 
+function branchGitState(workingTree = 'CLEAN', ref = 'main', pullAvailable = false) {
+  return repositoryGitState(ref, workingTree, pullAvailable);
+}
+
+function behindGitState(ref = 'main') {
+  return branchGitState('CLEAN', ref, true);
+}
+
 function detachedGitState(workingTree = 'CLEAN') {
-  return {
-    valid: true,
-    head: { type: 'DETACHED', ref: null, commit: 'a1b2c3d4e5f6' },
-    workingTree
-  };
+  return repositoryGitState(null, workingTree, false);
+}
+
+function conflictedGitState() {
+  return branchGitState('DIRTY', 'main', false);
+}
+
+function noUpstreamGitState() {
+  return branchGitState('CLEAN', 'main', false);
+}
+
+function divergedGitState() {
+  return branchGitState('CLEAN', 'main', false);
 }
 
 function taskRun(id: string, status: string, createdAt: string, workflowName = 'Full Testing') {
@@ -328,6 +344,7 @@ function api(overrides = {}) {
     listProjectRepositories: vi.fn((projectId: string) => Promise.resolve([repository(undefined, projectId)])),
     importProjectRepository: vi.fn(() => Promise.resolve(repository())),
     cloneProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
+    pullProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
     getRuntime: vi.fn(() => Promise.resolve(runtime())),
     listProjectAgents: vi.fn(() => Promise.resolve(agents)),
     createAgent: vi.fn(() => Promise.resolve(agent('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'Analyzer'))),
@@ -650,9 +667,22 @@ describe('Agent projects page', () => {
     expect(text).toContain('service-a');
     expect(text).toContain('main · Clean');
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
 
-  it('renders Dirty state for cloned repositories', async () => {
+  it('renders enabled Pull action when backend reports pullAvailable', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([
+        repository('repo-1', project().id, 'service-a', true, behindGitState())
+      ]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Clean');
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(false);
+  });
+
+  it('renders Dirty state with disabled Pull', async () => {
     const fakeApi = api({
       listProjectRepositories: vi.fn(() => Promise.resolve([
         repository('repo-1', project().id, 'service-a', true, branchGitState('DIRTY', 'main'))
@@ -661,9 +691,22 @@ describe('Agent projects page', () => {
     const { dom } = await openedProject(fakeApi);
 
     expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Dirty');
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
 
-  it('renders detached HEAD state with a short commit', async () => {
+  it('renders unsafe dirty repository with disabled Pull', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([
+        repository('repo-1', project().id, 'service-a', true, conflictedGitState())
+      ]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Dirty');
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
+  });
+
+  it('renders detached HEAD state with disabled Pull', async () => {
     const fakeApi = api({
       listProjectRepositories: vi.fn(() => Promise.resolve([
         repository('repo-1', project().id, 'service-a', true, detachedGitState())
@@ -671,13 +714,37 @@ describe('Agent projects page', () => {
     });
     const { dom } = await openedProject(fakeApi);
 
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('detached@a1b2c3d · Clean');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('detached · Clean');
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
+  });
+
+  it('disables Pull when cloned repository has no upstream', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([
+        repository('repo-1', project().id, 'service-a', true, noUpstreamGitState())
+      ]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Clean');
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
+  });
+
+  it('disables Pull when cloned repository is diverged', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([
+        repository('repo-1', project().id, 'service-a', true, divergedGitState())
+      ]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
 
   it('renders invalid local checkout for cloned invalid repositories', async () => {
     const fakeApi = api({
       listProjectRepositories: vi.fn(() => Promise.resolve([
-        repository('repo-1', project().id, 'service-a', true, { valid: false })
+        repository('repo-1', project().id, 'service-a', true, null)
       ]))
     });
     const { dom } = await openedProject(fakeApi);
@@ -685,6 +752,82 @@ describe('Agent projects page', () => {
     const text = dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent || '';
     expect(text).toContain('Invalid Git checkout');
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
+    expect(dom.window.document.querySelector('[data-pull-repository-id="repo-1"]')).toBeNull();
+  });
+
+  it('does not render any Check action for repositories', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([
+        repository('repo-1', project().id, 'service-a', false),
+        repository('repo-2', project().id, 'service-b', true, branchGitState('CLEAN', 'main')),
+        repository('repo-3', project().id, 'service-c', true, behindGitState())
+      ]))
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).not.toContain('Check');
+  });
+
+  it('pulls a safe repository with per-row loading and refreshes state', async () => {
+    const pullRequest = deferred<any>();
+    const fakeApi = api({
+      listProjectRepositories: vi.fn()
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true, behindGitState()),
+          repository('repo-2', project().id, 'service-b', true, behindGitState())
+        ])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true, branchGitState('CLEAN', 'main', false)),
+          repository('repo-2', project().id, 'service-b', true, behindGitState())
+        ]),
+      pullProjectRepository: vi.fn(() => pullRequest.promise)
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    const repoOnePull = dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]');
+    const repoTwoPull = dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-2"]');
+    expect(repoOnePull?.disabled).toBe(false);
+    expect(repoTwoPull?.disabled).toBe(false);
+
+    repoOnePull?.click();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-2"]')?.disabled).toBe(false);
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.click();
+    expect(fakeApi.pullProjectRepository).toHaveBeenCalledTimes(1);
+
+    pullRequest.resolve(repository('repo-1', project().id, 'service-a', true));
+    await flushAsync();
+
+    expect(fakeApi.pullProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
+  });
+
+  it('pull failure refreshes repositories and restores backend-derived disabled state', async () => {
+    const pullRequest = deferred<any>();
+    const fakeApi = api({
+      listProjectRepositories: vi.fn()
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true, behindGitState())
+        ])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true, divergedGitState())
+        ]),
+      pullProjectRepository: vi.fn(() => pullRequest.promise)
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.click();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
+
+    pullRequest.reject(new Error('Pull blocked.'));
+    await flushAsync();
+
+    expect(fakeApi.pullProjectRepository).toHaveBeenCalledTimes(1);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.getElementById('agentsV2RepositoriesError')?.textContent).toContain('Pull blocked.');
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
 
   it('re-enables repository Clone button after clone failure', async () => {
@@ -3554,6 +3697,7 @@ describe('Agent projects page', () => {
     client.listProjectRepositories(project().id);
     client.importProjectRepository(project().id, { remoteUrl: 'git@gitlab.com:company/service-a.git' });
     client.cloneProjectRepository(project().id, '88888888-8888-4888-8888-888888888888');
+    client.pullProjectRepository(project().id, '88888888-8888-4888-8888-888888888888');
     client.listProjectAgents(project().id);
     client.createAgent(project().id, { name: 'Agent', instructions: 'Do work.', outputSchema: {} });
     client.getAgent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
@@ -3577,6 +3721,7 @@ describe('Agent projects page', () => {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888/clone`);
+    expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888/pull`);
     expect(http.get).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks?page=0&size=20`);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks`, {
       title: 'Check calculation',

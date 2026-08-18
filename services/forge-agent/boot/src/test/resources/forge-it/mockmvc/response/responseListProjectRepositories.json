@@ -4,7 +4,7 @@
     "projectId": "10000000-0000-4000-8000-000000000001",
     "name": "service-a",
     "cloned": false,
-    "gitState": null,
+    "git": null,
     "createdAt": "ignored"
   },
   {
@@ -12,7 +12,7 @@
     "projectId": "10000000-0000-4000-8000-000000000001",
     "name": "service-b",
     "cloned": false,
-    "gitState": null,
+    "git": null,
     "createdAt": "ignored"
   }
 ]

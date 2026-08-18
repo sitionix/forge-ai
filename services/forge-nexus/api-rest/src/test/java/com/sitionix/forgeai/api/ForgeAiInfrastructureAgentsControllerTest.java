@@ -15,6 +15,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryGitStateResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskResponse;
@@ -30,6 +31,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
@@ -70,6 +72,7 @@ import com.sitionix.forgeai.domain.usecase.ListAgentProjectTasks;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflowRuns;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflows;
 import com.sitionix.forgeai.domain.usecase.ListProjectAgentDefinitions;
+import com.sitionix.forgeai.domain.usecase.PullAgentProjectRepository;
 import com.sitionix.forgeai.domain.usecase.UpdateAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.UpdateAgentWorkflow;
 import java.time.Instant;
@@ -105,6 +108,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
     private ListAgentProjectRepositories listAgentProjectRepositories;
     @Mock
     private CloneAgentProjectRepository cloneAgentProjectRepository;
+    @Mock
+    private PullAgentProjectRepository pullAgentProjectRepository;
     @Mock
     private CreateAgentProjectTask createAgentProjectTask;
     @Mock
@@ -155,6 +160,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 this.importAgentProjectRepository,
                 this.listAgentProjectRepositories,
                 this.cloneAgentProjectRepository,
+                this.pullAgentProjectRepository,
                 this.createAgentProjectTask,
                 this.listAgentProjectTasks,
                 this.getAgentProjectTask,
@@ -260,6 +266,21 @@ class ForgeAiInfrastructureAgentsControllerTest {
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(actual.getBody()).isSameAs(response);
         verify(this.cloneAgentProjectRepository).execute(PROJECT_ID, REPOSITORY_ID);
+        verify(this.mapper).toResponse(repository);
+    }
+
+    @Test
+    void pullProjectRepository() {
+        final var repository = this.projectRepository();
+        final var response = this.projectRepositoryResponse();
+        when(this.pullAgentProjectRepository.execute(PROJECT_ID, REPOSITORY_ID)).thenReturn(repository);
+        when(this.mapper.toResponse(repository)).thenReturn(response);
+
+        final var actual = this.controller.pullProjectRepository(PROJECT_ID, REPOSITORY_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.pullAgentProjectRepository).execute(PROJECT_ID, REPOSITORY_ID);
         verify(this.mapper).toResponse(repository);
     }
 
@@ -539,11 +560,25 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     private AgentProjectRepository projectRepository() {
-        return new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "service-a", false, null, NOW);
+        return new AgentProjectRepository(
+                REPOSITORY_ID,
+                PROJECT_ID,
+                "service-a",
+                false,
+                null,
+                NOW
+        );
     }
 
     private AgentProjectRepositoryResponse projectRepositoryResponse() {
-        return new AgentProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", false, null, NOW);
+        return new AgentProjectRepositoryResponse(
+                REPOSITORY_ID,
+                PROJECT_ID,
+                "service-a",
+                false,
+                null,
+                NOW
+        );
     }
 
     private AgentDefinitionRequest agentRequest() {

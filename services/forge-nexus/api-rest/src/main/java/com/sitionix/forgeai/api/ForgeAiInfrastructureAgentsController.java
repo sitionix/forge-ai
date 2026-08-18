@@ -40,6 +40,7 @@ import com.sitionix.forgeai.domain.usecase.ListAgentProjectTasks;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflowRuns;
 import com.sitionix.forgeai.domain.usecase.ListAgentWorkflows;
 import com.sitionix.forgeai.domain.usecase.ListProjectAgentDefinitions;
+import com.sitionix.forgeai.domain.usecase.PullAgentProjectRepository;
 import com.sitionix.forgeai.domain.usecase.UpdateAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.UpdateAgentWorkflow;
 import jakarta.validation.Valid;
@@ -67,6 +68,7 @@ public class ForgeAiInfrastructureAgentsController {
     private final ImportAgentProjectRepository importAgentProjectRepository;
     private final ListAgentProjectRepositories listAgentProjectRepositories;
     private final CloneAgentProjectRepository cloneAgentProjectRepository;
+    private final PullAgentProjectRepository pullAgentProjectRepository;
     private final CreateAgentProjectTask createAgentProjectTask;
     private final ListAgentProjectTasks listAgentProjectTasks;
     private final GetAgentProjectTask getAgentProjectTask;
@@ -127,6 +129,12 @@ public class ForgeAiInfrastructureAgentsController {
     public ResponseEntity<AgentProjectRepositoryResponse> cloneProjectRepository(@PathVariable final UUID projectId,
                                                                                  @PathVariable final UUID repositoryId) {
         return ResponseEntity.ok(this.mapper.toResponse(this.cloneAgentProjectRepository.execute(projectId, repositoryId)));
+    }
+
+    @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/repositories/{repositoryId}/pull")
+    public ResponseEntity<AgentProjectRepositoryResponse> pullProjectRepository(@PathVariable final UUID projectId,
+                                                                                @PathVariable final UUID repositoryId) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.pullAgentProjectRepository.execute(projectId, repositoryId)));
     }
 
     @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/tasks")

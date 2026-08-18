@@ -7,6 +7,7 @@ export class ProjectWorkspace {
     this.onNewAgent = options.onNewAgent;
     this.onImportRepository = options.onImportRepository;
     this.onCloneRepository = options.onCloneRepository || (() => {});
+    this.onPullRepository = options.onPullRepository || (() => {});
     this.onEditAgent = options.onEditAgent;
     this.onNewWorkflow = options.onNewWorkflow;
     this.onOpenWorkflow = options.onOpenWorkflow;
@@ -26,14 +27,14 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, repositories, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null, cloningRepositoryIds = new Set()) {
+  render(project, repositories, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set()) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2ImportRepository').disabled = !project || !repositoriesCurrent;
     this.byId('agentsV2CreateAgent').disabled = !dataCurrent;
     this.byId('agentsV2CreateWorkflow').disabled = !dataCurrent;
     this.byId('agentsV2CreateTask').disabled = !project || !workflowsCurrent || !tasksCurrent || !workflows.length;
-    this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds);
+    this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds, pullingRepositoryIds);
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
     this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed, taskPage);
@@ -50,7 +51,7 @@ export class ProjectWorkspace {
     this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
   }
 
-  renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set()) {
+  renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set()) {
     const list = this.byId('agentsV2RepositoriesList');
     if (repositoriesLoadFailed) {
       list.innerHTML = '';
@@ -73,43 +74,42 @@ export class ProjectWorkspace {
         ${repository.cloned === false ? `
           <button class="button tiny secondary" type="button" data-clone-repository-id="${escapeHtml(repository.id)}"${cloningRepositoryIds.has(repository.id) ? ' disabled' : ''}>Clone</button>
         ` : ''}
+        ${this.renderRepositoryAction(repository, pullingRepositoryIds)}
       </article>
     `).join('');
     list.querySelectorAll('[data-clone-repository-id]').forEach((element) => {
       element.addEventListener('click', () => this.onCloneRepository(element.dataset.cloneRepositoryId));
     });
+    list.querySelectorAll('[data-pull-repository-id]').forEach((element) => {
+      element.addEventListener('click', () => this.onPullRepository(element.dataset.pullRepositoryId));
+    });
+  }
+
+  renderRepositoryAction(repository, pullingRepositoryIds = new Set()) {
+    const git = repository.git;
+    if (!repository.cloned || !git?.workingTree) {
+      return '';
+    }
+    const disabled = !git.pullAvailable || pullingRepositoryIds.has(repository.id);
+    return `<button class="button tiny secondary" type="button" data-pull-repository-id="${escapeHtml(repository.id)}"${disabled ? ' disabled' : ''}>Pull</button>`;
   }
 
   renderRepositoryGitState(repository) {
-    if (repository.cloned === false) {
+    const git = repository.git;
+    if (!repository.cloned) {
       return '';
     }
-    const gitState = repository.gitState;
-    if (!gitState || gitState.valid === false) {
+    if (!git || !git.workingTree) {
       return '<span class="repository-git-state repository-git-state-invalid">Invalid Git checkout</span>';
     }
-    const headLabel = this.repositoryHeadLabel(gitState.head);
-    const workingTree = gitState.workingTree === 'DIRTY' ? 'Dirty' : 'Clean';
-    const tone = gitState.workingTree === 'DIRTY' ? 'dirty' : 'clean';
+    const headLabel = git.branch || 'detached';
+    const workingTree = git.workingTree === 'DIRTY' ? 'Dirty' : 'Clean';
+    const tone = git.workingTree === 'DIRTY' ? 'dirty' : 'clean';
     return `
       <span class="repository-git-state">
         ${escapeHtml(headLabel)} · <span class="repository-git-state-${tone}">${escapeHtml(workingTree)}</span>
       </span>
     `;
-  }
-
-  repositoryHeadLabel(head) {
-    if (!head) {
-      return 'Unknown HEAD';
-    }
-    if (head.type === 'DETACHED') {
-      return `detached@${this.shortCommit(head.commit)}`;
-    }
-    return head.ref || 'Unborn branch';
-  }
-
-  shortCommit(commit) {
-    return commit ? String(commit).slice(0, 7) : 'unknown';
   }
 
   renderAgents(agents, runtimeCatalog = null) {

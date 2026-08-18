@@ -6,7 +6,7 @@
   "git": {
     "branch": "main",
     "workingTree": "CLEAN",
-    "pullAvailable": true
+    "pullAvailable": false
   },
   "createdAt": "ignored"
 }

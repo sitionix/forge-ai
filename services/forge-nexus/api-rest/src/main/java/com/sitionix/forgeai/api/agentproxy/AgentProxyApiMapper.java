@@ -110,7 +110,7 @@ public class AgentProxyApiMapper {
                 repository.projectId(),
                 repository.name(),
                 repository.cloned(),
-                this.toResponse(repository.gitState()),
+                this.toResponse(repository.git()),
                 repository.createdAt()
         );
     }
@@ -119,17 +119,10 @@ public class AgentProxyApiMapper {
         if (gitState == null) {
             return null;
         }
-        if (!gitState.valid()) {
-            return new AgentProjectRepositoryGitStateResponse(false, null, null);
-        }
         return new AgentProjectRepositoryGitStateResponse(
-                true,
-                new AgentProjectRepositoryGitHeadResponse(
-                        gitState.head().type().name(),
-                        gitState.head().ref(),
-                        gitState.head().commit()
-                ),
-                gitState.workingTree().name()
+                gitState.branch(),
+                gitState.workingTree() == null ? null : gitState.workingTree().name(),
+                gitState.pullAvailable()
         );
     }
 

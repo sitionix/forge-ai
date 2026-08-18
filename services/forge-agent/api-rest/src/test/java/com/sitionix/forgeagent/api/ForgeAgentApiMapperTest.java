@@ -20,7 +20,6 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
-import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitHeadResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitStateResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
@@ -53,6 +52,10 @@ import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
 import com.sitionix.forgeagent.domain.model.GitHeadState;
 import com.sitionix.forgeagent.domain.model.GitHeadType;
 import com.sitionix.forgeagent.domain.model.GitLocalRepositoryState;
+import com.sitionix.forgeagent.domain.model.GitConflictState;
+import com.sitionix.forgeagent.domain.model.GitOperationState;
+import com.sitionix.forgeagent.domain.model.GitUpstreamRelation;
+import com.sitionix.forgeagent.domain.model.GitUpstreamState;
 import com.sitionix.forgeagent.domain.model.GitWorkingTreeState;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
@@ -77,6 +80,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -140,16 +144,25 @@ class ForgeAgentApiMapperTest {
         final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
 
         assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", false, null, CREATED)))
-                .isEqualTo(new ProjectRepositoryResponse(repositoryId, PROJECT_ID, "service-a", false, null, CREATED));
+                .isEqualTo(new ProjectRepositoryResponse(
+                        repositoryId,
+                        PROJECT_ID,
+                        "service-a",
+                        false,
+                        null,
+                        CREATED
+                ));
     }
 
     @Test
     void mapsValidProjectRepositoryGitState() {
         final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
-        final GitLocalRepositoryState gitState = new GitLocalRepositoryState(
-                true,
+        final GitLocalRepositoryState gitState = GitLocalRepositoryState.valid(
                 new GitHeadState(GitHeadType.BRANCH, "main", "abcdef"),
-                GitWorkingTreeState.CLEAN
+                GitWorkingTreeState.CLEAN,
+                GitConflictState.NONE,
+                GitOperationState.NORMAL,
+                new GitUpstreamState("origin/main", GitUpstreamRelation.BEHIND)
         );
 
         assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", true, gitState, CREATED)))
@@ -158,11 +171,7 @@ class ForgeAgentApiMapperTest {
                         PROJECT_ID,
                         "service-a",
                         true,
-                        new ProjectRepositoryGitStateResponse(
-                                true,
-                                new ProjectRepositoryGitHeadResponse("BRANCH", "main", "abcdef"),
-                                "CLEAN"
-                        ),
+                        new ProjectRepositoryGitStateResponse("main", "CLEAN", true),
                         CREATED
                 ));
     }
@@ -177,9 +186,40 @@ class ForgeAgentApiMapperTest {
                         PROJECT_ID,
                         "service-a",
                         true,
-                        new ProjectRepositoryGitStateResponse(false, null, null),
+                        null,
                         CREATED
                 ));
+    }
+
+    @Test
+    void projectRepositoryResponseSerializesGitContractOnly() {
+        final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+        final var response = new ProjectRepositoryResponse(
+                repositoryId,
+                PROJECT_ID,
+                "service-a",
+                true,
+                new ProjectRepositoryGitStateResponse("main", "CLEAN", false),
+                CREATED
+        );
+
+        final var responseFields = Arrays.stream(ProjectRepositoryResponse.class.getRecordComponents())
+                .map(component -> component.getName())
+                .toList();
+        final var json = this.objectMapper.valueToTree(response.git());
+
+        assertThat(responseFields).containsExactly("id", "projectId", "name", "cloned", "git", "createdAt");
+        assertThat(json.size()).isEqualTo(3);
+        assertThat(json.has("branch")).isTrue();
+        assertThat(json.has("workingTree")).isTrue();
+        assertThat(json.has("pullAvailable")).isTrue();
+        assertThat(json.has("cloned")).isFalse();
+        assertThat(json.has("valid")).isFalse();
+        assertThat(json.has("head")).isFalse();
+        assertThat(json.has("upstream")).isFalse();
+        assertThat(json.has("conflictState")).isFalse();
+        assertThat(json.has("operationState")).isFalse();
+        assertThat(json.has("blockedReason")).isFalse();
     }
 
     @Test
