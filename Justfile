@@ -67,6 +67,10 @@ _ollama-stop:
 
 _console-build:
     @echo "Building Forge Console static assets..."
+    @if [[ ! -x "{{root}}/services/forge-console/node_modules/.bin/vite" ]]; then \
+        echo "Installing Forge Console dependencies..."; \
+        npm --prefix "{{root}}/services/forge-console" ci; \
+    fi
     @npm --prefix "{{root}}/services/forge-console" run build
 
 _app-start:
