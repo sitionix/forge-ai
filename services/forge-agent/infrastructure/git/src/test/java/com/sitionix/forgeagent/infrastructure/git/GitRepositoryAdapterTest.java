@@ -3,7 +3,7 @@ package com.sitionix.forgeagent.infrastructure.git;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.sitionix.forgeagent.domain.port.GitOperationException;
+import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import java.io.IOException;
 import java.time.Duration;
 import java.nio.file.Files;
@@ -40,7 +40,7 @@ class GitRepositoryAdapterTest {
         final GitRepositoryAdapter adapter = new GitRepositoryAdapter((command, policy) -> new GitCommandResult(128, "fatal"));
 
         assertThatThrownBy(() -> adapter.inspectRemote("git@example.com:missing.git"))
-                .isInstanceOf(GitOperationException.class)
+                .isInstanceOf(GitRemoteRejectedException.class)
                 .hasMessage("Git remote is not reachable.");
     }
 

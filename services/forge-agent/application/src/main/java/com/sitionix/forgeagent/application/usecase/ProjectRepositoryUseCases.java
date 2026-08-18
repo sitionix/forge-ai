@@ -5,11 +5,12 @@ import com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.GitRemoteInspection;
-import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneTarget;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
 import com.sitionix.forgeagent.domain.port.GitOperationException;
+import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspaceException;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspacePort;
@@ -69,28 +70,22 @@ public class ProjectRepositoryUseCases {
         if (!Objects.equals(repository.projectId(), projectId)) {
             throw new NotFoundException("PROJECT_REPOSITORY_NOT_FOUND", "Project repository was not found.");
         }
-        ProjectRepositoryCloneTarget target = null;
+        ProjectRepositoryCloneAttempt attempt = null;
         try {
             final ProjectRepositoryWorkspaceReference reference = this.toWorkspaceReference(repository);
             final Map<UUID, Boolean> cloneStates = this.localProjectWorkspacePort.resolveCloneStates(projectId, List.of(reference));
             if (Boolean.TRUE.equals(cloneStates.get(repository.id()))) {
                 throw new ConflictException("PROJECT_REPOSITORY_ALREADY_CLONED", "Project repository is already cloned.");
             }
-            target = this.localProjectWorkspacePort.resolveCloneTarget(projectId, reference);
-            this.localProjectWorkspacePort.ensureProjectWorkspace(projectId);
-            this.gitRepositoryPort.clone(repository.remoteUrl(), target.path());
+            attempt = this.localProjectWorkspacePort.prepareCloneAttempt(projectId, reference);
+            this.gitRepositoryPort.clone(repository.remoteUrl(), attempt.stagingPath());
+            this.localProjectWorkspacePort.finalizeCloneAttempt(attempt);
             return this.toView(projectId, repository, reference.name(), true);
         } catch (final GitOperationException exception) {
-            if (target != null) {
-                try {
-                    this.localProjectWorkspacePort.cleanupCloneTarget(target);
-                } catch (final LocalProjectWorkspaceException cleanupException) {
-                    throw new InfrastructureExecutionException("PROJECT_REPOSITORY_CLONE_CLEANUP_FAILED",
-                            "Project repository clone cleanup failed.");
-                }
-            }
+            this.cleanupCloneAttempt(attempt);
             throw new InfrastructureExecutionException("PROJECT_REPOSITORY_CLONE_FAILED", "Project repository clone failed.");
         } catch (final LocalProjectWorkspaceException exception) {
+            this.cleanupCloneAttempt(attempt);
             throw new InfrastructureExecutionException("PROJECT_REPOSITORY_WORKSPACE_FAILED",
                     "Project repository workspace operation failed.");
         }
@@ -111,8 +106,23 @@ public class ProjectRepositoryUseCases {
     private GitRemoteInspection inspectRemote(final String remoteUrl) {
         try {
             return this.gitRepositoryPort.inspectRemote(remoteUrl);
-        } catch (final GitOperationException exception) {
+        } catch (final GitRemoteRejectedException exception) {
             throw new ValidationException("INVALID_REPOSITORY_URL", "Repository remote is not reachable.");
+        } catch (final GitOperationException exception) {
+            throw new InfrastructureExecutionException("PROJECT_REPOSITORY_REMOTE_INSPECTION_FAILED",
+                    "Project repository remote inspection failed.");
+        }
+    }
+
+    private void cleanupCloneAttempt(final ProjectRepositoryCloneAttempt attempt) {
+        if (attempt == null) {
+            return;
+        }
+        try {
+            this.localProjectWorkspacePort.cleanupCloneAttempt(attempt);
+        } catch (final LocalProjectWorkspaceException cleanupException) {
+            throw new InfrastructureExecutionException("PROJECT_REPOSITORY_CLONE_CLEANUP_FAILED",
+                    "Project repository clone cleanup failed.");
         }
     }
 

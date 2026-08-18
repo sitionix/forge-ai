@@ -1,7 +1,9 @@
 package com.sitionix.forgeagent.infrastructure.git;
 
 import com.sitionix.forgeagent.domain.model.GitRemoteInspection;
+import com.sitionix.forgeagent.domain.port.GitExecutionException;
 import com.sitionix.forgeagent.domain.port.GitOperationException;
+import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -22,7 +24,7 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
     public GitRemoteInspection inspectRemote(final String remoteUrl) {
         final GitCommandResult result = this.commandRunner.run(List.of("git", "ls-remote", remoteUrl), INSPECT_REMOTE_POLICY);
         if (result.exitCode() != 0) {
-            throw new GitOperationException("Git remote is not reachable.");
+            throw new GitRemoteRejectedException("Git remote is not reachable.");
         }
         return new GitRemoteInspection(this.resolveRepositoryName(remoteUrl));
     }
@@ -48,7 +50,7 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
     public void clone(final String remoteUrl, final Path targetPath) {
         final GitCommandResult result = this.commandRunner.run(List.of("git", "clone", remoteUrl, targetPath.toString()), CLONE_POLICY);
         if (result.exitCode() != 0) {
-            throw new GitOperationException("Git clone failed.");
+            throw new GitExecutionException("Git clone failed.");
         }
     }
 }

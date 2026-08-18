@@ -3,7 +3,7 @@ package com.sitionix.forgeagent.infrastructure.git;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneTarget;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
 import com.sitionix.forgeagent.domain.port.GitOperationException;
 import com.sitionix.forgeagent.infrastructure.local.ForgeRootResolver;
@@ -38,12 +38,13 @@ class GitLocalRepositoryIntegrationTest {
         assertThat(git.resolveRepositoryName(remote.toString())).isEqualTo("service-a");
 
         final ProjectRepositoryWorkspaceReference reference = new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a");
-        final ProjectRepositoryCloneTarget target = local.resolveCloneTarget(PROJECT_ID, reference);
-        local.ensureProjectWorkspace(PROJECT_ID);
-        git.clone(remote.toString(), target.path());
+        final ProjectRepositoryCloneAttempt attempt = local.prepareCloneAttempt(PROJECT_ID, reference);
+        git.clone(remote.toString(), attempt.stagingPath());
+        local.finalizeCloneAttempt(attempt);
 
-        assertThat(target.path()).isDirectory();
-        assertThat(target.path().resolve(".git")).isDirectory();
+        assertThat(attempt.stagingPath()).doesNotExist();
+        assertThat(attempt.finalPath()).isDirectory();
+        assertThat(attempt.finalPath().resolve(".git")).isDirectory();
         assertThat(local.resolveCloneStates(PROJECT_ID, List.of(reference))).containsEntry(REPOSITORY_ID, true);
     }
 
@@ -53,19 +54,19 @@ class GitLocalRepositoryIntegrationTest {
         final GitRepositoryAdapter git = new GitRepositoryAdapter(new DefaultGitCommandRunner());
         final LocalProjectWorkspaceAdapter local = new LocalProjectWorkspaceAdapter(new ForgeRootResolver(forgeRoot));
         final ProjectRepositoryWorkspaceReference reference = new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "missing");
-        final ProjectRepositoryCloneTarget target = local.resolveCloneTarget(PROJECT_ID, reference);
-        local.ensureProjectWorkspace(PROJECT_ID);
+        final ProjectRepositoryCloneAttempt attempt = local.prepareCloneAttempt(PROJECT_ID, reference);
 
-        assertThatThrownBy(() -> git.clone(this.tempDir.resolve("missing.git").toString(), target.path()))
+        assertThatThrownBy(() -> git.clone(this.tempDir.resolve("missing.git").toString(), attempt.stagingPath()))
                 .isInstanceOf(GitOperationException.class)
                 .hasMessage("Git clone failed.");
-        Files.createDirectories(target.path().resolve(".git"));
+        Files.createDirectories(attempt.stagingPath().resolve(".git"));
 
-        local.cleanupCloneTarget(target);
+        local.cleanupCloneAttempt(attempt);
 
         final Map<UUID, Boolean> states = local.resolveCloneStates(PROJECT_ID, List.of(reference));
         assertThat(states).containsEntry(REPOSITORY_ID, false);
-        assertThat(target.path()).doesNotExist();
+        assertThat(attempt.stagingPath()).doesNotExist();
+        assertThat(attempt.finalPath()).doesNotExist();
     }
 
     private Path forgeRoot() throws IOException {

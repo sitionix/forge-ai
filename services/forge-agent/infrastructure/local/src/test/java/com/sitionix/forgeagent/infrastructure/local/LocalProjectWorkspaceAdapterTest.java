@@ -3,7 +3,7 @@ package com.sitionix.forgeagent.infrastructure.local;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneTarget;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspaceException;
 import java.nio.file.Files;
@@ -33,18 +33,26 @@ class LocalProjectWorkspaceAdapterTest {
     }
 
     @Test
-    void resolvesForgeProjectTargetPath() {
-        final ProjectRepositoryCloneTarget target = this.adapter.resolveCloneTarget(
+    void preparesUniqueManagedStagingTargetAndFinalTarget() {
+        final ProjectRepositoryCloneAttempt firstAttempt = this.adapter.prepareCloneAttempt(
+                PROJECT_ID,
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a")
+        );
+        final ProjectRepositoryCloneAttempt secondAttempt = this.adapter.prepareCloneAttempt(
                 PROJECT_ID,
                 new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a")
         );
 
-        assertThat(target.path()).isEqualTo(this.forgeRoot.resolve("forge-projects").resolve(PROJECT_ID.toString()).resolve("service-a"));
+        final Path projectWorkspace = this.forgeRoot.resolve("forge-projects").resolve(PROJECT_ID.toString());
+        assertThat(firstAttempt.finalPath()).isEqualTo(projectWorkspace.resolve("service-a"));
+        assertThat(firstAttempt.stagingPath()).isDirectory();
+        assertThat(firstAttempt.stagingPath().getParent()).isEqualTo(projectWorkspace.resolve(".forge-clone-attempts"));
+        assertThat(secondAttempt.stagingPath()).isNotEqualTo(firstAttempt.stagingPath());
     }
 
     @Test
-    void createsProjectWorkspaceWhenRequired() {
-        this.adapter.ensureProjectWorkspace(PROJECT_ID);
+    void prepareCreatesProjectWorkspaceWhenRequired() {
+        this.adapter.prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a"));
 
         assertThat(this.forgeRoot.resolve("forge-projects").resolve(PROJECT_ID.toString())).isDirectory();
     }
@@ -97,14 +105,17 @@ class LocalProjectWorkspaceAdapterTest {
     void workspaceCreationFailureUsesTypedException() throws Exception {
         Files.writeString(this.forgeRoot.resolve("forge-projects"), "not a directory");
 
-        assertThatThrownBy(() -> this.adapter.ensureProjectWorkspace(PROJECT_ID))
+        assertThatThrownBy(() -> this.adapter.prepareCloneAttempt(
+                PROJECT_ID,
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a")
+        ))
                 .isInstanceOf(LocalProjectWorkspaceException.class)
-                .hasMessage("Failed to create Forge project workspace.");
+                .hasMessage("Failed to prepare Forge repository clone attempt.");
     }
 
     @Test
     void cloneTargetOutsideWorkspaceUsesTypedException() {
-        assertThatThrownBy(() -> this.adapter.resolveCloneTarget(
+        assertThatThrownBy(() -> this.adapter.prepareCloneAttempt(
                 PROJECT_ID,
                 new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "../service-a")
         ))
@@ -113,28 +124,76 @@ class LocalProjectWorkspaceAdapterTest {
     }
 
     @Test
-    void cleanupRemovesIncompleteCloneTarget() throws Exception {
-        final Path target = this.repositoryPath("service-a");
-        Files.createDirectories(target);
-        Files.writeString(target.resolve("partial"), "partial clone");
+    void finalRepositoryBecomesClonedOnlyAfterFinalization() throws Exception {
+        final ProjectRepositoryWorkspaceReference reference = new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a");
+        final ProjectRepositoryCloneAttempt attempt = this.adapter.prepareCloneAttempt(PROJECT_ID, reference);
+        Files.createDirectories(attempt.stagingPath().resolve(".git"));
 
-        this.adapter.cleanupCloneTarget(new ProjectRepositoryCloneTarget(target));
+        assertThat(this.adapter.resolveCloneStates(PROJECT_ID, List.of(reference))).containsEntry(REPOSITORY_A_ID, false);
 
-        assertThat(target).doesNotExist();
-        final Map<UUID, Boolean> states = this.adapter.resolveCloneStates(PROJECT_ID, List.of(
-                new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a")
-        ));
-        assertThat(states).containsEntry(REPOSITORY_A_ID, false);
+        this.adapter.finalizeCloneAttempt(attempt);
+
+        assertThat(attempt.stagingPath()).doesNotExist();
+        assertThat(attempt.finalPath()).isDirectory();
+        assertThat(this.adapter.resolveCloneStates(PROJECT_ID, List.of(reference))).containsEntry(REPOSITORY_A_ID, true);
     }
 
     @Test
-    void cleanupRemovesIncompleteCloneTargetEvenWhenGitDirectoryExists() throws Exception {
-        final Path target = this.repositoryPath("service-a");
-        Files.createDirectories(target.resolve(".git"));
+    void cleanupRemovesOnlyIncompleteStagingAttempt() throws Exception {
+        final ProjectRepositoryWorkspaceReference reference = new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a");
+        final ProjectRepositoryCloneAttempt attempt = this.adapter.prepareCloneAttempt(PROJECT_ID, reference);
+        Files.writeString(attempt.stagingPath().resolve("partial"), "partial clone");
 
-        this.adapter.cleanupCloneTarget(new ProjectRepositoryCloneTarget(target));
+        this.adapter.cleanupCloneAttempt(attempt);
 
-        assertThat(target).doesNotExist();
+        assertThat(attempt.stagingPath()).doesNotExist();
+        assertThat(attempt.finalPath()).doesNotExist();
+        assertThat(this.adapter.resolveCloneStates(PROJECT_ID, List.of(reference))).containsEntry(REPOSITORY_A_ID, false);
+    }
+
+    @Test
+    void cleanupRemovesIncompleteStagingAttemptEvenWhenGitDirectoryExists() throws Exception {
+        final ProjectRepositoryCloneAttempt attempt = this.adapter.prepareCloneAttempt(
+                PROJECT_ID,
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a")
+        );
+        Files.createDirectories(attempt.stagingPath().resolve(".git"));
+
+        this.adapter.cleanupCloneAttempt(attempt);
+
+        assertThat(attempt.stagingPath()).doesNotExist();
+    }
+
+    @Test
+    void cleanupDoesNotDeleteExistingFinalClone() throws Exception {
+        final ProjectRepositoryCloneAttempt attempt = this.adapter.prepareCloneAttempt(
+                PROJECT_ID,
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a")
+        );
+        Files.createDirectories(attempt.finalPath().resolve(".git"));
+        Files.createDirectories(attempt.stagingPath().resolve(".git"));
+
+        this.adapter.cleanupCloneAttempt(attempt);
+
+        assertThat(attempt.stagingPath()).doesNotExist();
+        assertThat(attempt.finalPath().resolve(".git")).isDirectory();
+    }
+
+    @Test
+    void concurrentCloneAttemptCannotReplaceAlreadyFinalizedRepository() throws Exception {
+        final ProjectRepositoryWorkspaceReference reference = new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a");
+        final ProjectRepositoryCloneAttempt firstAttempt = this.adapter.prepareCloneAttempt(PROJECT_ID, reference);
+        final ProjectRepositoryCloneAttempt secondAttempt = this.adapter.prepareCloneAttempt(PROJECT_ID, reference);
+        Files.createDirectories(firstAttempt.stagingPath().resolve(".git"));
+        Files.createDirectories(secondAttempt.stagingPath().resolve(".git"));
+
+        this.adapter.finalizeCloneAttempt(firstAttempt);
+
+        assertThatThrownBy(() -> this.adapter.finalizeCloneAttempt(secondAttempt))
+                .isInstanceOf(LocalProjectWorkspaceException.class)
+                .hasMessage("Forge repository clone target already exists.");
+        assertThat(firstAttempt.finalPath().resolve(".git")).isDirectory();
+        assertThat(secondAttempt.stagingPath().resolve(".git")).isDirectory();
     }
 
     private Path repositoryPath(final String repositoryName) {

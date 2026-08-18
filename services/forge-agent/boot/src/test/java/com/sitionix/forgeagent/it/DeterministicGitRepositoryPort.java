@@ -1,7 +1,8 @@
 package com.sitionix.forgeagent.it;
 
 import com.sitionix.forgeagent.domain.model.GitRemoteInspection;
-import com.sitionix.forgeagent.domain.port.GitOperationException;
+import com.sitionix.forgeagent.domain.port.GitExecutionException;
+import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -16,7 +17,7 @@ public class DeterministicGitRepositoryPort implements GitRepositoryPort {
     @Override
     public GitRemoteInspection inspectRemote(final String remoteUrl) {
         if (remoteUrl.contains("missing")) {
-            throw new GitOperationException("Remote is not reachable.");
+            throw new GitRemoteRejectedException("Remote is not reachable.");
         }
         return new GitRemoteInspection(this.resolveRepositoryName(remoteUrl));
     }
@@ -37,7 +38,7 @@ public class DeterministicGitRepositoryPort implements GitRepositoryPort {
         try {
             Files.createDirectories(targetPath.resolve(".git"));
         } catch (final IOException exception) {
-            throw new GitOperationException("Clone failed.", exception);
+            throw new GitExecutionException("Clone failed.", exception);
         }
     }
 }

@@ -14,11 +14,12 @@ import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.GitRemoteInspection;
 import com.sitionix.forgeagent.domain.model.Project;
-import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneTarget;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
-import com.sitionix.forgeagent.domain.port.GitOperationException;
+import com.sitionix.forgeagent.domain.port.GitExecutionException;
+import com.sitionix.forgeagent.domain.port.GitRemoteRejectedException;
 import com.sitionix.forgeagent.domain.port.GitRepositoryPort;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspaceException;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspacePort;
@@ -94,11 +95,23 @@ class ProjectRepositoryUseCasesTest {
     @Test
     void invalidRemoteIsNotPersisted() {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
-        when(this.gitRepositoryPort.inspectRemote("git@example.com:missing.git")).thenThrow(new GitOperationException("missing"));
+        when(this.gitRepositoryPort.inspectRemote("git@example.com:missing.git")).thenThrow(new GitRemoteRejectedException("missing"));
 
         assertThatThrownBy(() -> this.useCases.importRepository(PROJECT_ID, new ImportProjectRepositoryCommand("git@example.com:missing.git")))
                 .isInstanceOf(ValidationException.class)
                 .hasMessage("Repository remote is not reachable.");
+
+        verify(this.repositoryLinkRepository, never()).save(any());
+    }
+
+    @Test
+    void remoteInspectionInfrastructureFailureIsNotValidationError() {
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.gitRepositoryPort.inspectRemote("git@example.com:service-a.git")).thenThrow(new GitExecutionException("timeout"));
+
+        assertThatThrownBy(() -> this.useCases.importRepository(PROJECT_ID, new ImportProjectRepositoryCommand("git@example.com:service-a.git")))
+                .isInstanceOf(InfrastructureExecutionException.class)
+                .hasMessage("Project repository remote inspection failed.");
 
         verify(this.repositoryLinkRepository, never()).save(any());
     }
@@ -156,25 +169,29 @@ class ProjectRepositoryUseCasesTest {
                 .hasMessage("Project repository is already cloned.");
 
         verify(this.gitRepositoryPort, never()).clone(any(), any());
-        verify(this.localProjectWorkspacePort, never()).cleanupCloneTarget(any());
+        verify(this.localProjectWorkspacePort, never()).cleanupCloneAttempt(any());
     }
 
     @Test
-    void cloneResolvesWorkspaceAndDelegatesToGit() {
+    void clonePreparesStagingTargetDelegatesToGitAndFinalizes() {
         final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
-        final Path target = Path.of("/tmp/forge-projects/project/service-a");
+        final Path stagingTarget = Path.of("/tmp/forge-projects/project/.forge-clone-attempts/service-a-attempt");
+        final Path finalTarget = Path.of("/tmp/forge-projects/project/service-a");
+        final ProjectRepositoryCloneAttempt attempt = new ProjectRepositoryCloneAttempt(stagingTarget, finalTarget);
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
         when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
         when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
         when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
                 .thenReturn(Map.of(REPOSITORY_ID, false));
-        when(this.localProjectWorkspacePort.resolveCloneTarget(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
-                .thenReturn(new ProjectRepositoryCloneTarget(target));
+        when(this.localProjectWorkspacePort.prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
+                .thenReturn(attempt);
 
         final ProjectRepositoryView result = this.useCases.cloneRepository(PROJECT_ID, REPOSITORY_ID);
 
-        verify(this.localProjectWorkspacePort).ensureProjectWorkspace(PROJECT_ID);
-        verify(this.gitRepositoryPort).clone(repository.remoteUrl(), target);
+        final InOrder ordered = inOrder(this.localProjectWorkspacePort, this.gitRepositoryPort);
+        ordered.verify(this.localProjectWorkspacePort).prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"));
+        ordered.verify(this.gitRepositoryPort).clone(repository.remoteUrl(), stagingTarget);
+        ordered.verify(this.localProjectWorkspacePort).finalizeCloneAttempt(attempt);
         verify(this.repositoryLinkRepository, never()).save(any());
         assertThat(result.name()).isEqualTo("service-a");
         assertThat(result.cloned()).isTrue();
@@ -183,41 +200,45 @@ class ProjectRepositoryUseCasesTest {
     @Test
     void cloneFailureDoesNotCreatePersistedCloneState() {
         final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
-        final Path target = Path.of("/tmp/forge-projects/project/service-a");
+        final Path stagingTarget = Path.of("/tmp/forge-projects/project/.forge-clone-attempts/service-a-attempt");
+        final Path finalTarget = Path.of("/tmp/forge-projects/project/service-a");
+        final ProjectRepositoryCloneAttempt attempt = new ProjectRepositoryCloneAttempt(stagingTarget, finalTarget);
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
         when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
         when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
         when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
                 .thenReturn(Map.of(REPOSITORY_ID, false));
-        when(this.localProjectWorkspacePort.resolveCloneTarget(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
-                .thenReturn(new ProjectRepositoryCloneTarget(target));
-        org.mockito.Mockito.doThrow(new GitOperationException("clone failed"))
-                .when(this.gitRepositoryPort).clone(repository.remoteUrl(), target);
+        when(this.localProjectWorkspacePort.prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
+                .thenReturn(attempt);
+        org.mockito.Mockito.doThrow(new GitExecutionException("clone failed"))
+                .when(this.gitRepositoryPort).clone(repository.remoteUrl(), stagingTarget);
 
         assertThatThrownBy(() -> this.useCases.cloneRepository(PROJECT_ID, REPOSITORY_ID))
                 .isInstanceOf(InfrastructureExecutionException.class)
                 .hasMessage("Project repository clone failed.");
 
-        verify(this.localProjectWorkspacePort).cleanupCloneTarget(new ProjectRepositoryCloneTarget(target));
+        verify(this.localProjectWorkspacePort).cleanupCloneAttempt(attempt);
+        verify(this.localProjectWorkspacePort, never()).finalizeCloneAttempt(attempt);
         verify(this.repositoryLinkRepository, never()).save(any());
     }
 
     @Test
     void cloneCleanupFailureIsInfrastructureFailure() {
         final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
-        final Path target = Path.of("/tmp/forge-projects/project/service-a");
-        final ProjectRepositoryCloneTarget cloneTarget = new ProjectRepositoryCloneTarget(target);
+        final Path stagingTarget = Path.of("/tmp/forge-projects/project/.forge-clone-attempts/service-a-attempt");
+        final Path finalTarget = Path.of("/tmp/forge-projects/project/service-a");
+        final ProjectRepositoryCloneAttempt attempt = new ProjectRepositoryCloneAttempt(stagingTarget, finalTarget);
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
         when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
         when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
         when(this.localProjectWorkspacePort.resolveCloneStates(PROJECT_ID, List.of(new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a"))))
                 .thenReturn(Map.of(REPOSITORY_ID, false));
-        when(this.localProjectWorkspacePort.resolveCloneTarget(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
-                .thenReturn(cloneTarget);
-        org.mockito.Mockito.doThrow(new GitOperationException("clone failed"))
-                .when(this.gitRepositoryPort).clone(repository.remoteUrl(), target);
+        when(this.localProjectWorkspacePort.prepareCloneAttempt(PROJECT_ID, new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")))
+                .thenReturn(attempt);
+        org.mockito.Mockito.doThrow(new GitExecutionException("clone failed"))
+                .when(this.gitRepositoryPort).clone(repository.remoteUrl(), stagingTarget);
         org.mockito.Mockito.doThrow(new LocalProjectWorkspaceException("cleanup failed"))
-                .when(this.localProjectWorkspacePort).cleanupCloneTarget(cloneTarget);
+                .when(this.localProjectWorkspacePort).cleanupCloneAttempt(attempt);
 
         assertThatThrownBy(() -> this.useCases.cloneRepository(PROJECT_ID, REPOSITORY_ID))
                 .isInstanceOf(InfrastructureExecutionException.class)
