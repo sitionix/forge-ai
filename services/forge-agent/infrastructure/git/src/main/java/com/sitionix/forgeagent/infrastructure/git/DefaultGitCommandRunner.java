@@ -89,13 +89,6 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         if (!this.isExecutableCommand(copiedCommand.getFirst())) {
             throw new GitExecutionException("Git command failed to start.");
         }
-        final String setsid = this.findExecutable("setsid", "/usr/bin/setsid", "/bin/setsid");
-        if (setsid != null) {
-            final List<String> sessionCommand = new ArrayList<>(copiedCommand.size() + 1);
-            sessionCommand.add(setsid);
-            sessionCommand.addAll(copiedCommand);
-            return sessionCommand;
-        }
         final String python = this.findExecutable("python3", "/usr/bin/python3", "/opt/homebrew/bin/python3");
         if (python != null) {
             final List<String> sessionCommand = new ArrayList<>(copiedCommand.size() + 3);
