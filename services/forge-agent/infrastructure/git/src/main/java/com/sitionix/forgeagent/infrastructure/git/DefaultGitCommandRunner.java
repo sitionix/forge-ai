@@ -5,12 +5,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashSet;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -21,10 +20,17 @@ import org.springframework.stereotype.Component;
 @Component
 final class DefaultGitCommandRunner implements GitCommandRunner {
 
-    private static final Duration PROCESS_TRACK_INTERVAL = Duration.ofMillis(2);
     private static final Duration TERMINATION_WAIT_INTERVAL = Duration.ofMillis(20);
+    private static final Duration SIGNAL_COMMAND_TIMEOUT = Duration.ofSeconds(1);
     private static final Duration GRACEFUL_TERMINATION_TIMEOUT = Duration.ofSeconds(1);
+    private static final Duration FORCED_TERMINATION_TIMEOUT = Duration.ofSeconds(5);
     private static final int MAX_CAPTURED_OUTPUT_BYTES = 1024 * 1024;
+    private static final String PYTHON_SESSION_LAUNCHER = """
+            import os
+            import sys
+            os.setsid()
+            os.execvp(sys.argv[1], sys.argv[1:])
+            """;
 
     @Override
     public GitCommandResult run(final List<String> command, final GitCommandExecutionPolicy policy) {
@@ -33,16 +39,14 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         Process process = null;
         Future<String> stdout = null;
         Future<String> stderr = null;
-        Future<?> processTracker = null;
-        final Set<ProcessHandle> trackedProcesses = ConcurrentHashMap.newKeySet();
+        long processGroupId = -1L;
         final var streamReaders = Executors.newFixedThreadPool(2);
-        final var processTrackers = Executors.newSingleThreadExecutor();
         try {
-            final ProcessBuilder builder = new ProcessBuilder(List.copyOf(command));
+            final ProcessBuilder builder = new ProcessBuilder(this.sessionCommand(command));
             builder.environment().put("GIT_TERMINAL_PROMPT", "0");
             process = builder.start();
+            processGroupId = process.pid();
             final Process startedProcess = process;
-            processTracker = processTrackers.submit(() -> this.trackProcessTree(startedProcess.toHandle(), trackedProcesses));
             stdout = streamReaders.submit(() -> this.readLimited(startedProcess.getInputStream()));
             stderr = streamReaders.submit(() -> this.readLimited(startedProcess.getErrorStream()));
             final boolean completed = process.waitFor(this.remainingNanos(deadline), TimeUnit.NANOSECONDS);
@@ -57,26 +61,61 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         } catch (final IOException exception) {
             throw new GitExecutionException("Git command failed to start.", exception);
         } catch (final TimeoutException exception) {
-            final boolean interrupted = this.cleanupFailedProcess(process, trackedProcesses, stdout, stderr);
+            final boolean interrupted = this.cleanupFailedProcess(process, processGroupId, stdout, stderr);
             if (interrupted) {
                 Thread.currentThread().interrupt();
             }
             throw new GitExecutionException("Git command timed out.", exception);
         } catch (final InterruptedException exception) {
-            this.cleanupFailedProcess(process, trackedProcesses, stdout, stderr);
+            this.cleanupFailedProcess(process, processGroupId, stdout, stderr);
             Thread.currentThread().interrupt();
             throw new GitExecutionException("Git command was interrupted.", exception);
         } catch (final GitExecutionException exception) {
-            final boolean interrupted = this.cleanupFailedProcess(process, trackedProcesses, stdout, stderr);
+            final boolean interrupted = this.cleanupFailedProcess(process, processGroupId, stdout, stderr);
             if (interrupted) {
                 Thread.currentThread().interrupt();
             }
             throw exception;
         } finally {
-            this.cancel(processTracker);
-            processTrackers.shutdownNow();
             streamReaders.shutdownNow();
         }
+    }
+
+    private List<String> sessionCommand(final List<String> command) {
+        final List<String> copiedCommand = List.copyOf(command);
+        if (copiedCommand.isEmpty()) {
+            throw new GitExecutionException("Git command is empty.");
+        }
+        if (!this.isExecutableCommand(copiedCommand.getFirst())) {
+            throw new GitExecutionException("Git command failed to start.");
+        }
+        final String setsid = this.findExecutable("setsid", "/usr/bin/setsid", "/bin/setsid");
+        if (setsid != null) {
+            final List<String> sessionCommand = new ArrayList<>(copiedCommand.size() + 1);
+            sessionCommand.add(setsid);
+            sessionCommand.addAll(copiedCommand);
+            return sessionCommand;
+        }
+        final String python = this.findExecutable("python3", "/usr/bin/python3", "/opt/homebrew/bin/python3");
+        if (python != null) {
+            final List<String> sessionCommand = new ArrayList<>(copiedCommand.size() + 3);
+            sessionCommand.add(python);
+            sessionCommand.add("-c");
+            sessionCommand.add(PYTHON_SESSION_LAUNCHER);
+            sessionCommand.addAll(copiedCommand);
+            return sessionCommand;
+        }
+        final String perl = this.findExecutable("perl", "/usr/bin/perl");
+        if (perl != null) {
+            final List<String> sessionCommand = new ArrayList<>(copiedCommand.size() + 3);
+            sessionCommand.add(perl);
+            sessionCommand.add("-MPOSIX=setsid");
+            sessionCommand.add("-e");
+            sessionCommand.add("setsid() or die 'setsid failed'; exec @ARGV; die 'exec failed';");
+            sessionCommand.addAll(copiedCommand);
+            return sessionCommand;
+        }
+        throw new GitExecutionException("Git command session launcher is unavailable.");
     }
 
     private String readLimited(final InputStream stream) throws IOException {
@@ -132,12 +171,15 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
     }
 
     private boolean cleanupFailedProcess(final Process process,
-                                         final Set<ProcessHandle> trackedProcesses,
+                                         final long processGroupId,
                                          final Future<String> stdout,
                                          final Future<String> stderr) {
         boolean interrupted = false;
+        if (processGroupId > 0) {
+            interrupted = this.terminateProcessGroup(processGroupId) || interrupted;
+        }
         if (process != null) {
-            interrupted = this.terminateProcessTree(process, trackedProcesses) || interrupted;
+            interrupted = this.terminateRootProcess(process) || interrupted;
             this.closeProcessStreams(process);
         }
         this.cancel(stdout);
@@ -145,65 +187,61 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         return interrupted;
     }
 
-    private void trackProcessTree(final ProcessHandle root, final Set<ProcessHandle> trackedProcesses) {
-        trackedProcesses.add(root);
-        while (root.isAlive()) {
-            trackedProcesses.add(root);
-            root.descendants().forEach(trackedProcesses::add);
-            try {
-                TimeUnit.MILLISECONDS.sleep(PROCESS_TRACK_INTERVAL.toMillis());
-            } catch (final InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-        }
-        trackedProcesses.add(root);
-        root.descendants().forEach(trackedProcesses::add);
-    }
-
-    private boolean terminateProcessTree(final Process process, final Set<ProcessHandle> trackedProcesses) {
+    private boolean terminateProcessGroup(final long processGroupId) {
         boolean interrupted = false;
-        final ProcessHandle root = process.toHandle();
-        final List<ProcessHandle> handles = this.merge(new ArrayList<>(trackedProcesses), this.collectProcessTree(root));
-
-        for (final ProcessHandle handle : handles) {
-            if (handle.isAlive()) {
-                handle.destroy();
-            }
+        interrupted = this.signalProcessGroup("-TERM", processGroupId) || interrupted;
+        interrupted = this.waitUntilProcessGroupDead(processGroupId, GRACEFUL_TERMINATION_TIMEOUT) || interrupted;
+        ProcessGroupProbe probe = this.isProcessGroupAlive(processGroupId);
+        interrupted = probe.interrupted() || interrupted;
+        if (!probe.alive()) {
+            return interrupted;
         }
-        interrupted = this.waitUntilDead(handles, GRACEFUL_TERMINATION_TIMEOUT) || interrupted;
-
-        final List<ProcessHandle> remainingHandles = this.merge(
-                this.merge(handles, new ArrayList<>(trackedProcesses)),
-                this.collectProcessTree(root)
-        );
-        for (final ProcessHandle handle : remainingHandles) {
-            if (handle.isAlive()) {
-                handle.destroyForcibly();
-            }
+        interrupted = this.signalProcessGroup("-KILL", processGroupId) || interrupted;
+        interrupted = this.waitUntilProcessGroupDead(processGroupId, FORCED_TERMINATION_TIMEOUT) || interrupted;
+        probe = this.isProcessGroupAlive(processGroupId);
+        interrupted = probe.interrupted() || interrupted;
+        if (probe.alive()) {
+            throw new GitExecutionException("Git command process group could not be terminated.");
         }
-        interrupted = this.waitUntilDead(remainingHandles, null) || interrupted;
         return interrupted;
     }
 
-    private List<ProcessHandle> collectProcessTree(final ProcessHandle root) {
-        final List<ProcessHandle> handles = new ArrayList<>(root.descendants()
-                .sorted(Comparator.comparingLong(ProcessHandle::pid).reversed())
-                .toList());
-        handles.add(root);
-        return handles;
-    }
-
-    private List<ProcessHandle> merge(final List<ProcessHandle> first, final List<ProcessHandle> second) {
-        final LinkedHashSet<ProcessHandle> handles = new LinkedHashSet<>(first);
-        handles.addAll(second);
-        return new ArrayList<>(handles);
-    }
-
-    private boolean waitUntilDead(final List<ProcessHandle> handles, final Duration timeout) {
+    private boolean terminateRootProcess(final Process process) {
         boolean interrupted = false;
-        final long deadline = timeout == null ? Long.MAX_VALUE : System.nanoTime() + timeout.toNanos();
-        while (handles.stream().anyMatch(ProcessHandle::isAlive) && System.nanoTime() < deadline) {
+        if (!process.isAlive()) {
+            return false;
+        }
+        process.destroy();
+        interrupted = this.waitForProcessExit(process, GRACEFUL_TERMINATION_TIMEOUT) || interrupted;
+        if (!process.isAlive()) {
+            return interrupted;
+        }
+        process.destroyForcibly();
+        interrupted = this.waitForProcessExit(process, FORCED_TERMINATION_TIMEOUT) || interrupted;
+        if (process.isAlive()) {
+            throw new GitExecutionException("Git command root process could not be terminated.");
+        }
+        return interrupted;
+    }
+
+    private boolean waitForProcessExit(final Process process, final Duration timeout) {
+        try {
+            process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            return false;
+        } catch (final InterruptedException exception) {
+            return true;
+        }
+    }
+
+    private boolean waitUntilProcessGroupDead(final long processGroupId, final Duration timeout) {
+        boolean interrupted = false;
+        final long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            final ProcessGroupProbe probe = this.isProcessGroupAlive(processGroupId);
+            interrupted = probe.interrupted() || interrupted;
+            if (!probe.alive()) {
+                return interrupted;
+            }
             try {
                 TimeUnit.MILLISECONDS.sleep(TERMINATION_WAIT_INTERVAL.toMillis());
             } catch (final InterruptedException exception) {
@@ -211,5 +249,85 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
             }
         }
         return interrupted;
+    }
+
+    private ProcessGroupProbe isProcessGroupAlive(final long processGroupId) {
+        final Process process;
+        try {
+            process = this.killProcess("-0", processGroupId);
+        } catch (final IOException exception) {
+            throw new GitExecutionException("Git command process group could not be inspected.", exception);
+        }
+        try {
+            final boolean completed = process.waitFor(SIGNAL_COMMAND_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                return new ProcessGroupProbe(true, false);
+            }
+            return new ProcessGroupProbe(process.exitValue() == 0, false);
+        } catch (final InterruptedException exception) {
+            process.destroyForcibly();
+            return new ProcessGroupProbe(true, true);
+        }
+    }
+
+    private boolean signalProcessGroup(final String signal, final long processGroupId) {
+        final Process process;
+        try {
+            process = this.killProcess(signal, processGroupId);
+        } catch (final IOException exception) {
+            throw new GitExecutionException("Git command process group could not be terminated.", exception);
+        }
+        try {
+            final boolean completed = process.waitFor(SIGNAL_COMMAND_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+            }
+            return false;
+        } catch (final InterruptedException exception) {
+            process.destroyForcibly();
+            return true;
+        }
+    }
+
+    private Process killProcess(final String signal, final long processGroupId) throws IOException {
+        return new ProcessBuilder(this.killExecutable(), signal, "-" + processGroupId)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+    }
+
+    private String killExecutable() {
+        final String kill = this.findExecutable("kill", "/bin/kill", "/usr/bin/kill");
+        if (kill == null) {
+            throw new GitExecutionException("Git command process group killer is unavailable.");
+        }
+        return kill;
+    }
+
+    private String findExecutable(final String name, final String... candidates) {
+        for (final String candidate : candidates) {
+            if (Files.isExecutable(Path.of(candidate))) {
+                return candidate;
+            }
+        }
+        return Arrays.stream(System.getenv().getOrDefault("PATH", "").split(":"))
+                .filter(path -> !path.isBlank())
+                .map(path -> Path.of(path, name))
+                .filter(Files::isExecutable)
+                .map(Path::toString)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean isExecutableCommand(final String command) {
+        final Path commandPath = Path.of(command);
+        if (commandPath.getNameCount() > 1 || commandPath.isAbsolute()) {
+            return Files.isExecutable(commandPath);
+        }
+        return this.findExecutable(command) != null;
+    }
+
+    private record ProcessGroupProbe(boolean alive, boolean interrupted) {
     }
 }

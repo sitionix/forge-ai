@@ -131,7 +131,6 @@ class DefaultGitCommandRunnerTest {
         Files.writeString(script, """
                 sleep 60 &
                 echo $! > '%s'
-                sleep 0.2
                 exit 0
                 """.formatted(childPidFile));
         return script;
