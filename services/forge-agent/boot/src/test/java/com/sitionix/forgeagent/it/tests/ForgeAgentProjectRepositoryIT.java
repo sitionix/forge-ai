@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.it.tests;
 
+import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CLONE_PROJECT_REPOSITORY;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.DELETE_PROJECT;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.IMPORT_PROJECT_REPOSITORY;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.IMPORT_PROJECT_REPOSITORY_ERROR;
@@ -11,7 +12,12 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryE
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -23,6 +29,11 @@ class ForgeAgentProjectRepositoryIT {
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
+
+    @BeforeEach
+    void cleanLocalWorkspace() throws IOException {
+        this.deleteRecursively(this.forgeRoot().resolve("forge-projects").resolve(PROJECT_ALPHA_ID.toString()));
+    }
 
     @Test
     void givenProject_whenImportRepositories_thenRepositoriesArePersistedAndListed() {
@@ -73,6 +84,51 @@ class ForgeAgentProjectRepositoryIT {
     }
 
     @Test
+    void givenUnreachableRemote_whenImportRepository_thenValidationErrorIsReturnedAndNothingIsPersisted() {
+        this.seedProject();
+
+        this.forgeIt.mockMvc()
+                .ping(IMPORT_PROJECT_REPOSITORY_ERROR)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestImportInvalidProjectRepository.json")
+                .expectStatus(HttpStatus.BAD_REQUEST)
+                .expectResponse("responseUnreachableRepositoryUrlError.json")
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll()).isEmpty();
+    }
+
+    @Test
+    void givenImportedRepository_whenCloneRepository_thenListReturnsClonedStateFromFilesystem() {
+        this.seedProject();
+
+        this.forgeIt.mockMvc()
+                .ping(IMPORT_PROJECT_REPOSITORY)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestImportProjectRepository.json")
+                .expectStatus(HttpStatus.CREATED)
+                .assertAndCreate();
+
+        final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
+
+        this.forgeIt.mockMvc()
+                .ping(CLONE_PROJECT_REPOSITORY)
+                .withPathParameters(PathParams.create()
+                        .add("projectId", PROJECT_ALPHA_ID)
+                        .add("repositoryId", repositoryId))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseCloneProjectRepository.json", "id", "createdAt")
+                .assertAndCreate();
+
+        this.forgeIt.mockMvc()
+                .ping(LIST_PROJECT_REPOSITORIES)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .expectStatus(HttpStatus.OK)
+                .expectResponse("responseListProjectRepositoriesCloned.json", "id", "createdAt")
+                .assertAndCreate();
+    }
+
+    @Test
     void givenProjectWithRepositories_whenDeleteProject_thenRepositoriesAreDeletedByCascade() {
         this.seedProject();
 
@@ -97,5 +153,27 @@ class ForgeAgentProjectRepositoryIT {
                 .create()
                 .to(PROJECT.withJson("project_alpha.json"))
                 .build();
+    }
+
+    private Path forgeRoot() {
+        Path current = Path.of("").toAbsolutePath().normalize();
+        while (current != null) {
+            if (Files.isDirectory(current.resolve(".git"))) {
+                return current;
+            }
+            current = current.getParent();
+        }
+        return Path.of("").toAbsolutePath().normalize();
+    }
+
+    private void deleteRecursively(final Path path) throws IOException {
+        if (!Files.exists(path)) {
+            return;
+        }
+        try (var stream = Files.walk(path)) {
+            for (final Path item : stream.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(item);
+            }
+        }
     }
 }

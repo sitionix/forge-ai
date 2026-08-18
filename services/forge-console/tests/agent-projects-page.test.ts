@@ -115,12 +115,14 @@ function taskPage(items: any[], page = 0, size = 20, totalItems = items.length, 
 function repository(
   id = '88888888-8888-4888-8888-888888888888',
   projectId = project().id,
-  remoteUrl = 'git@gitlab.com:company/service-a.git'
+  name = 'service-a',
+  cloned = false
 ) {
   return {
     id,
     projectId,
-    remoteUrl,
+    name,
+    cloned,
     createdAt: '2026-08-17T09:00:00Z'
   };
 }
@@ -287,10 +289,12 @@ function portConnection(id: string, sourceOutputPortId: string, targetInputPortI
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((promiseResolve) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
     resolve = promiseResolve;
+    reject = promiseReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function api(overrides = {}) {
@@ -305,6 +309,7 @@ function api(overrides = {}) {
     deleteProject: vi.fn(() => Promise.resolve({})),
     listProjectRepositories: vi.fn((projectId: string) => Promise.resolve([repository(undefined, projectId)])),
     importProjectRepository: vi.fn(() => Promise.resolve(repository())),
+    cloneProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
     getRuntime: vi.fn(() => Promise.resolve(runtime())),
     listProjectAgents: vi.fn(() => Promise.resolve(agents)),
     createAgent: vi.fn(() => Promise.resolve(agent('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'Analyzer'))),
@@ -533,7 +538,8 @@ describe('Agent projects page', () => {
   it('opening Project switches to workspace and back returns to Projects', async () => {
     const { dom, page } = await openedProject();
     expect(dom.window.document.getElementById('agentsV2ProjectCrumbs')?.textContent).toBe('Projects / Sitionix');
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('git@gitlab.com:company/service-a.git');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).not.toContain('git@gitlab.com:company/service-a.git');
     expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Architect');
     expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
@@ -548,8 +554,8 @@ describe('Agent projects page', () => {
       listProjectRepositories: vi.fn()
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([
-          repository('repo-1', project().id, 'git@gitlab.com:company/service-a.git'),
-          repository('repo-2', project().id, 'https://github.com/company/service-b.git')
+          repository('repo-1', project().id, 'service-a'),
+          repository('repo-2', project().id, 'service-b')
         ]),
       importProjectRepository: vi.fn(() => Promise.resolve(repository('repo-1')))
     });
@@ -567,8 +573,129 @@ describe('Agent projects page', () => {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });
     expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('git@gitlab.com:company/service-a.git');
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('https://github.com/company/service-b.git');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-b');
+  });
+
+  it('shows Clone only for uncloned repositories and refreshes after clone', async () => {
+    const cloneRequest = deferred<any>();
+    const fakeApi = api({
+      listProjectRepositories: vi.fn()
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', false),
+          repository('repo-2', project().id, 'service-b', true),
+          repository('repo-3', project().id, 'service-c', false)
+        ])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true),
+          repository('repo-2', project().id, 'service-b', true),
+          repository('repo-3', project().id, 'service-c', false)
+        ]),
+      cloneProjectRepository: vi.fn(() => cloneRequest.promise)
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    const repoOneClone = dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]');
+    const repoThreeClone = dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-3"]');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
+    expect(repoOneClone).not.toBeNull();
+    expect(repoOneClone?.disabled).toBe(false);
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-2"]')).toBeNull();
+    expect(repoThreeClone).not.toBeNull();
+    expect(repoThreeClone?.disabled).toBe(false);
+
+    repoOneClone?.click();
+    const repoOneCloneInFlight = dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]');
+    const repoThreeCloneInFlight = dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-3"]');
+    expect(repoOneCloneInFlight?.disabled).toBe(true);
+    expect(repoThreeCloneInFlight?.disabled).toBe(false);
+    repoOneCloneInFlight?.click();
+    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(1);
+
+    cloneRequest.resolve(repository('repo-1', project().id, 'service-a', true));
+    await flushAsync();
+
+    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
+  });
+
+  it('re-enables repository Clone button after clone failure', async () => {
+    const cloneRequest = deferred<any>();
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([
+        repository('repo-1', project().id, 'service-a', false),
+        repository('repo-2', project().id, 'service-b', false)
+      ])),
+      cloneProjectRepository: vi.fn(() => cloneRequest.promise)
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.click();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.disabled).toBe(true);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(false);
+
+    cloneRequest.reject(new Error('Clone failed.'));
+    await flushAsync();
+
+    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(1);
+    expect(dom.window.document.getElementById('agentsV2RepositoriesError')?.textContent).toContain('Clone failed.');
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.disabled).toBe(false);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(false);
+  });
+
+  it('tracks simultaneous repository clones independently', async () => {
+    const repoOneClone = deferred<any>();
+    const repoTwoClone = deferred<any>();
+    const fakeApi = api({
+      listProjectRepositories: vi.fn()
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', false),
+          repository('repo-2', project().id, 'service-b', false)
+        ])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true),
+          repository('repo-2', project().id, 'service-b', false)
+        ])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true),
+          repository('repo-2', project().id, 'service-b', true)
+        ]),
+      cloneProjectRepository: vi.fn((_projectId: string, repositoryId: string) => {
+        if (repositoryId === 'repo-1') {
+          return repoOneClone.promise;
+        }
+        return repoTwoClone.promise;
+      })
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.click();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.disabled).toBe(true);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(false);
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.click();
+    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(2);
+    expect(fakeApi.cloneProjectRepository).toHaveBeenNthCalledWith(1, project().id, 'repo-1');
+    expect(fakeApi.cloneProjectRepository).toHaveBeenNthCalledWith(2, project().id, 'repo-2');
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.disabled).toBe(true);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(true);
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.click();
+    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(2);
+
+    repoOneClone.resolve(repository('repo-1', project().id, 'service-a', true));
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(true);
+
+    repoTwoClone.resolve(repository('repo-2', project().id, 'service-b', true));
+    await flushAsync();
+
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(3);
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
+    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-2"]')).toBeNull();
   });
 
   it('rejects blank repository URL locally', async () => {
@@ -3359,6 +3486,7 @@ describe('Agent projects page', () => {
     client.deleteProject(project().id);
     client.listProjectRepositories(project().id);
     client.importProjectRepository(project().id, { remoteUrl: 'git@gitlab.com:company/service-a.git' });
+    client.cloneProjectRepository(project().id, '88888888-8888-4888-8888-888888888888');
     client.listProjectAgents(project().id);
     client.createAgent(project().id, { name: 'Agent', instructions: 'Do work.', outputSchema: {} });
     client.getAgent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
@@ -3381,6 +3509,7 @@ describe('Agent projects page', () => {
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`, {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });
+    expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888/clone`);
     expect(http.get).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks?page=0&size=20`);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks`, {
       title: 'Check calculation',

@@ -49,6 +49,7 @@ export class AgentProjectsPage {
       agentModelSelection: null,
       savedAgentModelSelection: null,
       openTaskId: null,
+      cloningRepositoryIds: new Set(),
       saving: false
     };
     this.projectLoadSequence = 0;
@@ -62,6 +63,7 @@ export class AgentProjectsPage {
       document: this.document,
       onBack: () => this.showProjectsIndex(),
       onImportRepository: () => this.openRepositoryModal(),
+      onCloneRepository: (repositoryId) => this.cloneRepository(repositoryId),
       onNewAgent: () => this.openAgentModal(),
       onEditAgent: (agentId) => this.openAgentModal(agentId),
       onNewWorkflow: () => this.openWorkflowModal(),
@@ -406,7 +408,8 @@ export class AgentProjectsPage {
       this.state.repositoriesLoadFailed,
       this.state.tasksLoadFailed,
       this.state.runtime,
-      this.currentTaskPage()
+      this.currentTaskPage(),
+      this.state.cloningRepositoryIds
     );
   }
 
@@ -467,6 +470,24 @@ export class AgentProjectsPage {
     } finally {
       this.state.saving = false;
       this.byId('agentsV2RepositoryImport').disabled = false;
+    }
+  }
+
+  async cloneRepository(repositoryId) {
+    if (!this.repositoriesDataCurrent() || this.state.cloningRepositoryIds.has(repositoryId)) {
+      return;
+    }
+    this.state.cloningRepositoryIds.add(repositoryId);
+    this.showError('agentsV2RepositoriesError', '');
+    this.renderProjectWorkspace();
+    try {
+      await this.api.cloneProjectRepository(this.state.selectedProjectId, repositoryId);
+      await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
+    } catch (error) {
+      this.showError('agentsV2RepositoriesError', error.message || 'Repository could not be cloned.');
+    } finally {
+      this.state.cloningRepositoryIds.delete(repositoryId);
+      this.renderProjectWorkspace();
     }
   }
 

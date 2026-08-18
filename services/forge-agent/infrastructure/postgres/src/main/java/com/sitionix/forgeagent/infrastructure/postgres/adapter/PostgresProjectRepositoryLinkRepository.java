@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.domain.port.ProjectRepositoryLinkRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataProjectRepositoryLinkRepository;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
@@ -25,6 +26,11 @@ public class PostgresProjectRepositoryLinkRepository implements ProjectRepositor
         return this.repository.findByProjectIdOrderByCreatedAtAscIdAsc(projectId).stream()
                 .map(this::toDomain)
                 .toList();
+    }
+
+    @Override
+    public Optional<ProjectRepositoryLink> findById(final UUID repositoryId) {
+        return this.repository.findById(repositoryId).map(this::toDomain);
     }
 
     private ProjectRepositoryLink toDomain(final ProjectRepositoryEntity entity) {

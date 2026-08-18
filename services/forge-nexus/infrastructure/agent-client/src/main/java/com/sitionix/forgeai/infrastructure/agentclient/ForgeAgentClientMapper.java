@@ -122,8 +122,8 @@ public class ForgeAgentClientMapper {
         this.requireResponse(response, "repository");
         this.requireId(response.id(), "repository.id");
         this.requireId(response.projectId(), "repository.projectId");
-        this.requireText(response.remoteUrl(), "repository.remoteUrl");
-        return new AgentProjectRepository(response.id(), response.projectId(), response.remoteUrl(), response.createdAt());
+        this.requireText(response.name(), "repository.name");
+        return new AgentProjectRepository(response.id(), response.projectId(), response.name(), response.cloned(), response.createdAt());
     }
 
     AgentProjectTaskSummary toDomain(final ProjectTaskSummaryResponse response) {

@@ -6,7 +6,8 @@ import java.util.UUID;
 public record AgentProjectRepository(
         UUID id,
         UUID projectId,
-        String remoteUrl,
+        String name,
+        boolean cloned,
         Instant createdAt
 ) {
 }

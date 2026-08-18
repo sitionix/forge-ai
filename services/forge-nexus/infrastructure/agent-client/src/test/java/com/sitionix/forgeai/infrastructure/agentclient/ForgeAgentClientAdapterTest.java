@@ -135,8 +135,8 @@ class ForgeAgentClientAdapterTest {
     void importProjectRepositoryMapsRequestExecutesTypedClientCallAndMapsResponse() {
         final var command = new ImportAgentProjectRepositoryCommand("git@gitlab.com:company/service-a.git");
         final var request = new ImportProjectRepositoryRequest("git@gitlab.com:company/service-a.git");
-        final var upstreamResponse = new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", CREATED);
-        final var expected = new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", CREATED);
+        final var upstreamResponse = new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", false, CREATED);
+        final var expected = new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "service-a", false, CREATED);
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.importProjectRepository(PROJECT_ID, request)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
@@ -151,8 +151,8 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void listProjectRepositoriesExecutesTypedClientCallAndMapsResponse() {
-        final var upstreamResponse = new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", CREATED);
-        final var expected = new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", CREATED);
+        final var upstreamResponse = new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", false, CREATED);
+        final var expected = new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "service-a", false, CREATED);
         when(this.httpClient.listProjectRepositories(PROJECT_ID)).thenReturn(List.of(upstreamResponse));
         when(this.mapper.requireList(List.of(upstreamResponse), "repositories")).thenReturn(List.of(upstreamResponse));
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
@@ -162,6 +162,20 @@ class ForgeAgentClientAdapterTest {
         verify(this.executor).execute(any());
         verify(this.httpClient).listProjectRepositories(PROJECT_ID);
         verify(this.mapper).requireList(List.of(upstreamResponse), "repositories");
+        verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void cloneProjectRepositoryExecutesTypedClientCallAndMapsResponse() {
+        final var upstreamResponse = new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", true, CREATED);
+        final var expected = new AgentProjectRepository(REPOSITORY_ID, PROJECT_ID, "service-a", true, CREATED);
+        when(this.httpClient.cloneProjectRepository(PROJECT_ID, REPOSITORY_ID)).thenReturn(upstreamResponse);
+        when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
+
+        assertThat(this.adapter.cloneProjectRepository(PROJECT_ID, REPOSITORY_ID)).isEqualTo(expected);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).cloneProjectRepository(PROJECT_ID, REPOSITORY_ID);
         verify(this.mapper).toDomain(upstreamResponse);
     }
 

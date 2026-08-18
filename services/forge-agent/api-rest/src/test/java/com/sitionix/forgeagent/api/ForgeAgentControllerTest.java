@@ -52,7 +52,7 @@ import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.Project;
-import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummaryPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
@@ -157,7 +157,7 @@ class ForgeAgentControllerTest {
     void importProjectRepository() {
         final ImportProjectRepositoryRequest request = new ImportProjectRepositoryRequest("git@gitlab.com:company/service-a.git");
         final ImportProjectRepositoryCommand command = new ImportProjectRepositoryCommand("git@gitlab.com:company/service-a.git");
-        final ProjectRepositoryLink repository = this.projectRepository();
+        final ProjectRepositoryView repository = this.projectRepository();
         final ProjectRepositoryResponse response = this.projectRepositoryResponse();
         when(this.mapper.toCommand(request)).thenReturn(command);
         when(this.projectRepositoryUseCases.importRepository(PROJECT_ID, command)).thenReturn(repository);
@@ -176,7 +176,7 @@ class ForgeAgentControllerTest {
 
     @Test
     void listProjectRepositories() {
-        final ProjectRepositoryLink repository = this.projectRepository();
+        final ProjectRepositoryView repository = this.projectRepository();
         final ProjectRepositoryResponse response = this.projectRepositoryResponse();
         when(this.projectRepositoryUseCases.listProjectRepositories(PROJECT_ID)).thenReturn(List.of(repository));
         when(this.mapper.toResponse(repository)).thenReturn(response);
@@ -186,6 +186,21 @@ class ForgeAgentControllerTest {
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(actual.getBody()).containsExactly(response);
         verify(this.projectRepositoryUseCases).listProjectRepositories(PROJECT_ID);
+        verify(this.mapper).toResponse(repository);
+    }
+
+    @Test
+    void cloneProjectRepository() {
+        final ProjectRepositoryView repository = this.projectRepository();
+        final ProjectRepositoryResponse response = this.projectRepositoryResponse();
+        when(this.projectRepositoryUseCases.cloneRepository(PROJECT_ID, REPOSITORY_ID)).thenReturn(repository);
+        when(this.mapper.toResponse(repository)).thenReturn(response);
+
+        final var actual = this.controller.cloneProjectRepository(PROJECT_ID, REPOSITORY_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.projectRepositoryUseCases).cloneRepository(PROJECT_ID, REPOSITORY_ID);
         verify(this.mapper).toResponse(repository);
     }
 
@@ -462,12 +477,12 @@ class ForgeAgentControllerTest {
         return new ProjectResponse(PROJECT_ID, "Sitionix", NOW, NOW);
     }
 
-    private ProjectRepositoryLink projectRepository() {
-        return new ProjectRepositoryLink(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", NOW);
+    private ProjectRepositoryView projectRepository() {
+        return new ProjectRepositoryView(REPOSITORY_ID, PROJECT_ID, "service-a", false, NOW);
     }
 
     private ProjectRepositoryResponse projectRepositoryResponse() {
-        return new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "git@gitlab.com:company/service-a.git", NOW);
+        return new ProjectRepositoryResponse(REPOSITORY_ID, PROJECT_ID, "service-a", false, NOW);
     }
 
     private SaveAgentRequest agentRequest() throws Exception {

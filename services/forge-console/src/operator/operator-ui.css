@@ -594,8 +594,10 @@ body.sidebar-collapsed .sidebar-link {
 
 .repository-row {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-height: 42px;
   align-items: center;
+  gap: 10px;
   padding: 10px 12px;
   border: 1px solid rgba(27, 36, 31, 0.12);
   border-radius: 8px;
@@ -608,6 +610,11 @@ body.sidebar-collapsed .sidebar-link {
   text-overflow: ellipsis;
   white-space: nowrap;
   font: 700 12px/1.4 var(--mono);
+}
+
+.repository-row .button {
+  justify-self: end;
+  width: max-content;
 }
 
 .agents-v2-card {

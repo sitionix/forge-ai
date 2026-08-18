@@ -25,6 +25,7 @@ services/forge-knowledge/.venv/
 services/forge-knowledge/src/*.egg-info/
 
 # Local runtime state
+forge-projects/
 var/
 *.pid
 *.log

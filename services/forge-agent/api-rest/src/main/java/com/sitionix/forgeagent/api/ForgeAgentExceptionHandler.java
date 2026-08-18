@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.api;
 import com.sitionix.forgeagent.api.dto.ForgeAgentErrorResponse;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.ForgeAgentException;
+import com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,6 +37,12 @@ public class ForgeAgentExceptionHandler {
     ResponseEntity<ForgeAgentErrorResponse> handleConflict(final ConflictException exception,
                                                            final HttpServletRequest request) {
         return this.response(HttpStatus.CONFLICT, exception, request);
+    }
+
+    @ExceptionHandler(InfrastructureExecutionException.class)
+    ResponseEntity<ForgeAgentErrorResponse> handleInfrastructureExecution(final InfrastructureExecutionException exception,
+                                                                          final HttpServletRequest request) {
+        return this.response(HttpStatus.INTERNAL_SERVER_ERROR, exception, request);
     }
 
     @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class, HttpMessageNotReadableException.class})

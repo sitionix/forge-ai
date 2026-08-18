@@ -23,6 +23,7 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
+import com.sitionix.forgeai.domain.usecase.CloneAgentProjectRepository;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentProject;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentProjectTask;
@@ -65,6 +66,7 @@ public class ForgeAiInfrastructureAgentsController {
     private final DeleteAgentProject deleteAgentProject;
     private final ImportAgentProjectRepository importAgentProjectRepository;
     private final ListAgentProjectRepositories listAgentProjectRepositories;
+    private final CloneAgentProjectRepository cloneAgentProjectRepository;
     private final CreateAgentProjectTask createAgentProjectTask;
     private final ListAgentProjectTasks listAgentProjectTasks;
     private final GetAgentProjectTask getAgentProjectTask;
@@ -119,6 +121,12 @@ public class ForgeAiInfrastructureAgentsController {
         return ResponseEntity.ok(this.listAgentProjectRepositories.execute(projectId).stream()
                 .map(this.mapper::toResponse)
                 .toList());
+    }
+
+    @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/repositories/{repositoryId}/clone")
+    public ResponseEntity<AgentProjectRepositoryResponse> cloneProjectRepository(@PathVariable final UUID projectId,
+                                                                                 @PathVariable final UUID repositoryId) {
+        return ResponseEntity.ok(this.mapper.toResponse(this.cloneAgentProjectRepository.execute(projectId, repositoryId)));
     }
 
     @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/tasks")
