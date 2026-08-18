@@ -276,6 +276,52 @@ case_jarvis_start_has_no_ollama_gate() {
   ! grep -E 'OLLAMA|ollama' "${ROOT_DIR}/scripts/jarvis/start.sh" >/dev/null
 }
 
+write_fake_npm_logger() {
+  local bin_dir="$1"
+  cat > "${bin_dir}/npm" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TEST_NPM_LOG}"
+if [[ "$*" == *" ci" ]]; then
+  mkdir -p "${TEST_CONSOLE_ROOT}/node_modules/.bin"
+  printf '#!/usr/bin/env bash\n' > "${TEST_CONSOLE_ROOT}/node_modules/.bin/vite"
+  chmod +x "${TEST_CONSOLE_ROOT}/node_modules/.bin/vite"
+fi
+EOF
+  chmod +x "${bin_dir}/npm"
+}
+
+case_console_build_installs_dependencies_when_vite_missing() {
+  local dir bin output
+  dir="$(new_temp_dir)"
+  bin="${dir}/bin"
+  mkdir -p "${bin}" "${dir}/console"
+  export TEST_NPM_LOG="${dir}/npm.log"
+  export TEST_CONSOLE_ROOT="${dir}/console"
+  write_fake_npm_logger "${bin}"
+
+  output="$(PATH="${bin}:${SYSTEM_PATH}" FORGE_CONSOLE_ROOT="${TEST_CONSOLE_ROOT}" "${ROOT_DIR}/scripts/console/build.sh")"
+  [[ "${output}" == *"Installing Forge Console dependencies"* ]]
+  grep -qx -- "--prefix ${TEST_CONSOLE_ROOT} ci" "${TEST_NPM_LOG}"
+  grep -qx -- "--prefix ${TEST_CONSOLE_ROOT} run build" "${TEST_NPM_LOG}"
+}
+
+case_console_build_skips_install_when_vite_exists() {
+  local dir bin output
+  dir="$(new_temp_dir)"
+  bin="${dir}/bin"
+  mkdir -p "${bin}" "${dir}/console/node_modules/.bin"
+  printf '#!/usr/bin/env bash\n' > "${dir}/console/node_modules/.bin/vite"
+  chmod +x "${dir}/console/node_modules/.bin/vite"
+  export TEST_NPM_LOG="${dir}/npm.log"
+  export TEST_CONSOLE_ROOT="${dir}/console"
+  write_fake_npm_logger "${bin}"
+
+  output="$(PATH="${bin}:${SYSTEM_PATH}" FORGE_CONSOLE_ROOT="${TEST_CONSOLE_ROOT}" "${ROOT_DIR}/scripts/console/build.sh")"
+  [[ "${output}" != *"Installing Forge Console dependencies"* ]]
+  ! grep -q ' ci$' "${TEST_NPM_LOG}"
+  grep -qx -- "--prefix ${TEST_CONSOLE_ROOT} run build" "${TEST_NPM_LOG}"
+}
+
 run_case "ollama API already reachable" case_ollama_api_already_reachable
 run_case "ollama API unavailable and CLI absent" case_ollama_cli_absent
 run_case "ollama CLI start succeeds" case_ollama_start_succeeds
@@ -289,5 +335,7 @@ run_case "setsid absent" case_setsid_absent
 run_case "sha256sum absent with shasum fallback" case_sha256sum_absent_shasum_fallback
 run_case "GNU stat absent with BSD stat fallback" case_gnu_stat_absent_bsd_fallback
 run_case "Jarvis startup has no mandatory Ollama gate" case_jarvis_start_has_no_ollama_gate
+run_case "Console build installs dependencies when Vite is missing" case_console_build_installs_dependencies_when_vite_missing
+run_case "Console build skips dependency install when Vite exists" case_console_build_skips_install_when_vite_exists
 
 printf 'Portable startup shell tests: PASS %s/%s\n' "${PASSED}" "${TOTAL}"
