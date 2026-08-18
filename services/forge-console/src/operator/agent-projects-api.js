@@ -19,9 +19,6 @@ export function createAgentProjectsApi(http) {
     cloneProjectRepository(projectId, repositoryId) {
       return http.post(`${root}/projects/${encodeURIComponent(projectId)}/repositories/${encodeURIComponent(repositoryId)}/clone`);
     },
-    checkProjectRepositoryUpdates(projectId, repositoryId) {
-      return http.post(`${root}/projects/${encodeURIComponent(projectId)}/repositories/${encodeURIComponent(repositoryId)}/check-updates`);
-    },
     pullProjectRepository(projectId, repositoryId) {
       return http.post(`${root}/projects/${encodeURIComponent(projectId)}/repositories/${encodeURIComponent(repositoryId)}/pull`);
     },

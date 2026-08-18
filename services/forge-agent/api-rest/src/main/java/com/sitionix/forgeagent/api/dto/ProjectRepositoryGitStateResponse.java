@@ -1,18 +1,9 @@
 package com.sitionix.forgeagent.api.dto;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public record ProjectRepositoryGitStateResponse(
-        boolean valid,
-        ProjectRepositoryGitHeadResponse head,
+        boolean cloned,
+        String branch,
         String workingTree,
-        String conflictState,
-        String operationState,
-        ProjectRepositoryGitUpstreamResponse upstream,
-        boolean pullAllowed,
-        String pullBlockedReason,
-        boolean checkUpdatesAllowed,
-        String checkUpdatesBlockedReason
+        boolean pullAvailable
 ) {
 }

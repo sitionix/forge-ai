@@ -1,7 +1,6 @@
 package com.sitionix.forgeagent.it.tests;
 
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CLONE_PROJECT_REPOSITORY;
-import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.CHECK_PROJECT_REPOSITORY_UPDATES;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.DELETE_PROJECT;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.IMPORT_PROJECT_REPOSITORY;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.IMPORT_PROJECT_REPOSITORY_ERROR;
@@ -167,37 +166,6 @@ class ForgeAgentProjectRepositoryIT {
                     assertThat(entity.getId()).isEqualTo(repositoryId);
                     assertThat(entity.getRemoteUrl()).isEqualTo("git@gitlab.com:company/service-a.git");
                 });
-    }
-
-    @Test
-    void givenClonedRepository_whenCheckRepositoryUpdates_thenTypedResponseIsReturned() {
-        this.seedProject();
-
-        this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY)
-                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
-                .withRequest("requestImportProjectRepository.json")
-                .expectStatus(HttpStatus.CREATED)
-                .assertAndCreate();
-
-        final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
-
-        this.forgeIt.mockMvc()
-                .ping(CLONE_PROJECT_REPOSITORY)
-                .withPathParameters(PathParams.create()
-                        .add("projectId", PROJECT_ALPHA_ID)
-                        .add("repositoryId", repositoryId))
-                .expectStatus(HttpStatus.OK)
-                .assertAndCreate();
-
-        this.forgeIt.mockMvc()
-                .ping(CHECK_PROJECT_REPOSITORY_UPDATES)
-                .withPathParameters(PathParams.create()
-                        .add("projectId", PROJECT_ALPHA_ID)
-                        .add("repositoryId", repositoryId))
-                .expectStatus(HttpStatus.OK)
-                .expectResponse("responsePullProjectRepository.json", "id", "createdAt")
-                .assertAndCreate();
     }
 
     @Test

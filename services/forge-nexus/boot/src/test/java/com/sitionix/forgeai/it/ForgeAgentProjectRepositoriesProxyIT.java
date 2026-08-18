@@ -77,21 +77,6 @@ class ForgeAgentProjectRepositoriesProxyIT extends AbstractForgeAiIT {
     }
 
     @Test
-    void givenRepositoryId_whenCheckRepositoryUpdates_thenProjectAndRepositoryPathAreForwarded() {
-        final var mapping = this.testManager.wiremock()
-                .createMapping(ForgeAgentProxyWireMockEndpoint.checkProjectRepositoryUpdates())
-                .pathPattern(repositoryWireMockPathParams())
-                .createDefault();
-
-        this.testManager.mockMvc()
-                .ping(ForgeAgentProxyMockMvcEndpoint.checkProjectRepositoryUpdates())
-                .withPathParameters(repositoryMockMvcPathParams())
-                .assertDefault();
-
-        mapping.verify();
-    }
-
-    @Test
     void givenRepositoryId_whenPullRepository_thenProjectAndRepositoryPathAreForwarded() {
         final var mapping = this.testManager.wiremock()
                 .createMapping(ForgeAgentProxyWireMockEndpoint.pullProjectRepository())

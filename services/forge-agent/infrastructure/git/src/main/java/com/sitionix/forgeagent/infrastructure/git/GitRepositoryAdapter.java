@@ -64,6 +64,11 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
 
     @Override
     public GitLocalRepositoryState inspectLocalRepository(final Path repositoryPath) {
+        final GitLocalRepositoryState localState = this.inspectLocalRepositoryOnly(repositoryPath);
+        return this.refreshPullAvailability(repositoryPath, localState);
+    }
+
+    private GitLocalRepositoryState inspectLocalRepositoryOnly(final Path repositoryPath) {
         final GitCommandResult rootResult = this.commandRunner.run(List.of(
                 "git",
                 "-C",
@@ -102,67 +107,32 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
     }
 
     @Override
-    public GitLocalRepositoryState checkUpdates(final Path repositoryPath) {
-        final GitLocalRepositoryState initialState = this.inspectLocalRepository(repositoryPath);
-        this.requireCheckUpdatesAllowed(initialState);
-        final GitUpstreamFetchTarget fetchTarget = this.resolveFetchTarget(repositoryPath, initialState);
-        if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
-            return this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget, initialState, GitSafeOperation.CHECK_UPDATES);
-        }
-        final GitCommandResult fetchResult = this.fetchUpstream(repositoryPath, fetchTarget);
-        if (fetchResult.exitCode() != 0) {
-            if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
-                return this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget, initialState, GitSafeOperation.CHECK_UPDATES);
-            }
-            throw new GitExecutionException("Git fetch failed.");
-        }
-        final GitLocalRepositoryState afterFetchState = this.inspectLocalRepository(repositoryPath);
-        this.requireStableCheckTarget(initialState, afterFetchState);
-        return afterFetchState;
-    }
-
-    @Override
     public GitLocalRepositoryState pullFastForward(final Path repositoryPath) {
-        final GitLocalRepositoryState initialState = this.inspectLocalRepository(repositoryPath);
-        this.requirePullAllowed(initialState);
+        final GitLocalRepositoryState initialState = this.inspectLocalRepositoryOnly(repositoryPath);
+        this.requirePullSafeCheckout(initialState);
         final GitUpstreamFetchTarget fetchTarget = this.resolveFetchTarget(repositoryPath, initialState);
         if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
-            final GitLocalRepositoryState missingState = this.deleteRemoteTrackingRefAndInspect(
-                    repositoryPath,
-                    fetchTarget,
-                    initialState,
-                    GitSafeOperation.PULL
-            );
+            final GitLocalRepositoryState missingState = this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget);
+            this.requireStablePullTarget(initialState, missingState);
             throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", missingState);
         }
         final GitCommandResult fetchResult = this.fetchUpstream(repositoryPath, fetchTarget);
         if (fetchResult.exitCode() != 0) {
             if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
-                final GitLocalRepositoryState missingState = this.deleteRemoteTrackingRefAndInspect(
-                        repositoryPath,
-                        fetchTarget,
-                        initialState,
-                        GitSafeOperation.PULL
-                );
+                final GitLocalRepositoryState missingState = this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget);
+                this.requireStablePullTarget(initialState, missingState);
                 throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", missingState);
             }
             throw new GitExecutionException("Git fetch failed.");
         }
 
         if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
-            final GitLocalRepositoryState missingState = this.deleteRemoteTrackingRefAndInspect(
-                    repositoryPath,
-                    fetchTarget,
-                    initialState,
-                    GitSafeOperation.PULL
-            );
+            final GitLocalRepositoryState missingState = this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget);
+            this.requireStablePullTarget(initialState, missingState);
             throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", missingState);
         }
-        final GitLocalRepositoryState afterFetchState = this.inspectLocalRepository(repositoryPath);
+        final GitLocalRepositoryState afterFetchState = this.inspectLocalRepositoryOnly(repositoryPath);
         this.requireStablePullTarget(initialState, afterFetchState);
-        if (afterFetchState.upstream().relation() == GitUpstreamRelation.UP_TO_DATE) {
-            return afterFetchState;
-        }
         if (afterFetchState.upstream().relation() != GitUpstreamRelation.BEHIND) {
             throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", afterFetchState);
         }
@@ -179,6 +149,33 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
             throw new GitExecutionException("Git fast-forward pull failed.");
         }
         return this.inspectLocalRepository(repositoryPath);
+    }
+
+    private GitLocalRepositoryState refreshPullAvailability(final Path repositoryPath, final GitLocalRepositoryState localState) {
+        if (!isLocallyPullCandidate(localState)) {
+            return localState.withoutPullAvailable();
+        }
+        final GitUpstreamFetchTarget fetchTarget;
+        try {
+            fetchTarget = this.resolveFetchTarget(repositoryPath, localState);
+        } catch (final GitUnsafeRepositoryStateException exception) {
+            return localState.withoutPullAvailable();
+        }
+        try {
+            if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
+                return this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget).withoutPullAvailable();
+            }
+            final GitCommandResult fetchResult = this.fetchUpstream(repositoryPath, fetchTarget);
+            if (fetchResult.exitCode() != 0) {
+                if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
+                    return this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget).withoutPullAvailable();
+                }
+                return localState.withoutPullAvailable();
+            }
+            return this.inspectLocalRepositoryOnly(repositoryPath);
+        } catch (final GitOperationException exception) {
+            return localState.withoutPullAvailable();
+        }
     }
 
     private GitLocalRepositoryState parseStatus(final String output, final GitOperationState operationState) {
@@ -316,6 +313,16 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         ), FETCH_POLICY);
     }
 
+    private boolean isLocallyPullCandidate(final GitLocalRepositoryState state) {
+        return state.valid()
+                && state.head().type() == GitHeadType.BRANCH
+                && state.head().commit() != null
+                && state.conflictState() != GitConflictState.CONFLICTED
+                && state.workingTree() == GitWorkingTreeState.CLEAN
+                && state.operationState() != GitOperationState.IN_PROGRESS
+                && state.upstream() != null;
+    }
+
     private GitRemoteRefState probeRemoteRef(final Path repositoryPath, final GitUpstreamFetchTarget fetchTarget) {
         final GitCommandResult result = this.commandRunner.run(List.of(
                 "git",
@@ -336,9 +343,7 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
     }
 
     private GitLocalRepositoryState deleteRemoteTrackingRefAndInspect(final Path repositoryPath,
-                                                                      final GitUpstreamFetchTarget fetchTarget,
-                                                                      final GitLocalRepositoryState initialState,
-                                                                      final GitSafeOperation operation) {
+                                                                      final GitUpstreamFetchTarget fetchTarget) {
         final GitCommandResult result = this.commandRunner.run(List.of(
                 "git",
                 "-C",
@@ -350,13 +355,7 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         if (result.exitCode() != 0) {
             throw new GitExecutionException("Git stale upstream tracking ref cleanup failed.");
         }
-        final GitLocalRepositoryState missingState = this.inspectLocalRepository(repositoryPath);
-        if (operation == GitSafeOperation.PULL) {
-            this.requireStablePullTarget(initialState, missingState);
-        } else {
-            this.requireStableCheckTarget(initialState, missingState);
-        }
-        return missingState;
+        return this.inspectLocalRepositoryOnly(repositoryPath);
     }
 
     private String readBranchConfig(final Path repositoryPath, final String branch, final String key) {
@@ -374,32 +373,9 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         return result.stdout().trim();
     }
 
-    private void requirePullAllowed(final GitLocalRepositoryState state) {
-        if (!state.valid() || !state.pullAllowed()) {
+    private void requirePullSafeCheckout(final GitLocalRepositoryState state) {
+        if (!this.isLocallyPullCandidate(state)) {
             throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", state);
-        }
-    }
-
-    private void requireCheckUpdatesAllowed(final GitLocalRepositoryState state) {
-        if (!state.valid() || !state.checkUpdatesAllowed()) {
-            throw new GitUnsafeRepositoryStateException("Git repository is not safe to check for updates.", state);
-        }
-    }
-
-    private void requireStableCheckTarget(final GitLocalRepositoryState initialState, final GitLocalRepositoryState candidateState) {
-        if (!candidateState.valid()
-                || candidateState.head().type() != GitHeadType.BRANCH
-                || candidateState.head().commit() == null
-                || candidateState.conflictState() == GitConflictState.CONFLICTED
-                || candidateState.workingTree() != GitWorkingTreeState.CLEAN
-                || candidateState.operationState() == GitOperationState.IN_PROGRESS
-                || initialState.head().type() != candidateState.head().type()
-                || !initialState.head().ref().equals(candidateState.head().ref())
-                || !initialState.head().commit().equals(candidateState.head().commit())
-                || initialState.upstream() == null
-                || candidateState.upstream() == null
-                || !initialState.upstream().ref().equals(candidateState.upstream().ref())) {
-            throw new GitUnsafeRepositoryStateException("Git repository is not safe to check for updates.", candidateState);
         }
     }
 
@@ -453,8 +429,4 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         MISSING
     }
 
-    private enum GitSafeOperation {
-        CHECK_UPDATES,
-        PULL
-    }
 }

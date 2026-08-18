@@ -56,11 +56,6 @@ public class DeterministicGitRepositoryPort implements GitRepositoryPort {
     }
 
     @Override
-    public GitLocalRepositoryState checkUpdates(final Path repositoryPath) {
-        return this.inspectLocalRepository(repositoryPath).withUpstreamRelation(GitUpstreamRelation.UP_TO_DATE);
-    }
-
-    @Override
     public GitLocalRepositoryState pullFastForward(final Path repositoryPath) {
         return this.inspectLocalRepository(repositoryPath).withUpstreamRelation(GitUpstreamRelation.UP_TO_DATE);
     }

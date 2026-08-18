@@ -3,23 +3,11 @@
     "id": "ignored",
     "projectId": "10000000-0000-4000-8000-000000000001",
     "name": "service-a",
-    "cloned": true,
-    "gitState": {
-      "valid": true,
-      "head": {
-        "type": "BRANCH",
-        "ref": "main",
-        "commit": "abcdef1234567890"
-      },
+    "git": {
+      "cloned": true,
+      "branch": "main",
       "workingTree": "CLEAN",
-      "conflictState": "NONE",
-      "operationState": "NORMAL",
-      "upstream": {
-        "ref": "origin/main",
-        "relation": "BEHIND"
-      },
-      "pullAllowed": true,
-      "checkUpdatesAllowed": true
+      "pullAvailable": true
     },
     "createdAt": "ignored"
   }

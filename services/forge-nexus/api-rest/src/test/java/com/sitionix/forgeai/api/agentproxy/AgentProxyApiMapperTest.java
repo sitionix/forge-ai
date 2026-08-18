@@ -13,13 +13,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryConflictState;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHead;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHeadType;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryOperationState;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryUpstream;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryUpstreamRelation;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryWorkingTreeState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -48,6 +42,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -153,39 +148,44 @@ class AgentProxyApiMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
-                true,
                 new AgentProjectRepositoryGitState(
                         true,
-                        new AgentProjectRepositoryGitHead(AgentProjectRepositoryGitHeadType.DETACHED, null, "abcdef"),
+                        null,
                         AgentProjectRepositoryWorkingTreeState.CLEAN,
-                        AgentProjectRepositoryConflictState.NONE,
-                        AgentProjectRepositoryOperationState.NORMAL,
-                        new AgentProjectRepositoryUpstream("origin/main", AgentProjectRepositoryUpstreamRelation.UP_TO_DATE),
-                        false,
-                        "DETACHED_HEAD",
-                        false,
-                        "DETACHED_HEAD"
+                        false
                 ),
                 CREATED
         ))).isEqualTo(new AgentProjectRepositoryResponse(
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
-                true,
-                new AgentProjectRepositoryGitStateResponse(
-                        true,
-                        new AgentProjectRepositoryGitHeadResponse("DETACHED", null, "abcdef"),
-                        "CLEAN",
-                        "NONE",
-                        "NORMAL",
-                        new AgentProjectRepositoryGitUpstreamResponse("origin/main", "UP_TO_DATE"),
-                        false,
-                        "DETACHED_HEAD",
-                        false,
-                        "DETACHED_HEAD"
-                ),
+                new AgentProjectRepositoryGitStateResponse(true, null, "CLEAN", false),
                 CREATED
         ));
+    }
+
+    @Test
+    void projectRepositoryResponseSerializesGitContractOnly() {
+        final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+        final var response = new AgentProjectRepositoryResponse(
+                repositoryId,
+                PROJECT_ID,
+                "service-a",
+                new AgentProjectRepositoryGitStateResponse(true, "main", "CLEAN", false),
+                CREATED
+        );
+
+        final var responseFields = Arrays.stream(AgentProjectRepositoryResponse.class.getRecordComponents())
+                .map(component -> component.getName())
+                .toList();
+        final var json = this.objectMapper.valueToTree(response.git());
+
+        assertThat(responseFields).doesNotContain("cloned");
+        assertThat(json.size()).isEqualTo(4);
+        assertThat(json.has("cloned")).isTrue();
+        assertThat(json.has("branch")).isTrue();
+        assertThat(json.has("workingTree")).isTrue();
+        assertThat(json.has("pullAvailable")).isTrue();
     }
 
     @Test

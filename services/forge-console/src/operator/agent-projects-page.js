@@ -50,7 +50,6 @@ export class AgentProjectsPage {
       savedAgentModelSelection: null,
       openTaskId: null,
       cloningRepositoryIds: new Set(),
-      checkingRepositoryIds: new Set(),
       pullingRepositoryIds: new Set(),
       saving: false
     };
@@ -66,7 +65,6 @@ export class AgentProjectsPage {
       onBack: () => this.showProjectsIndex(),
       onImportRepository: () => this.openRepositoryModal(),
       onCloneRepository: (repositoryId) => this.cloneRepository(repositoryId),
-      onCheckRepositoryUpdates: (repositoryId) => this.checkRepositoryUpdates(repositoryId),
       onPullRepository: (repositoryId) => this.pullRepository(repositoryId),
       onNewAgent: () => this.openAgentModal(),
       onEditAgent: (agentId) => this.openAgentModal(agentId),
@@ -164,7 +162,6 @@ export class AgentProjectsPage {
     this.state.openWorkflowId = null;
     this.state.openTaskId = null;
     this.state.cloningRepositoryIds.clear();
-    this.state.checkingRepositoryIds.clear();
     this.state.pullingRepositoryIds.clear();
     this.taskExecutionView.close();
     this.workflowBuilder.close();
@@ -198,7 +195,6 @@ export class AgentProjectsPage {
     this.state.openWorkflowId = null;
     this.state.openTaskId = null;
     this.state.cloningRepositoryIds.clear();
-    this.state.checkingRepositoryIds.clear();
     this.state.pullingRepositoryIds.clear();
     this.taskExecutionView.close();
     this.workflowBuilder.close();
@@ -420,7 +416,6 @@ export class AgentProjectsPage {
       this.state.runtime,
       this.currentTaskPage(),
       this.state.cloningRepositoryIds,
-      this.state.checkingRepositoryIds,
       this.state.pullingRepositoryIds
     );
   }
@@ -508,7 +503,7 @@ export class AgentProjectsPage {
       return;
     }
     const repository = this.state.repositories.find((candidate) => candidate.id === repositoryId);
-    if (!repository?.gitState?.pullAllowed) {
+    if (!repository?.git?.pullAvailable) {
       return;
     }
     this.state.pullingRepositoryIds.add(repositoryId);
@@ -522,29 +517,6 @@ export class AgentProjectsPage {
       this.showError('agentsV2RepositoriesError', error.message || 'Repository could not be pulled.');
     } finally {
       this.state.pullingRepositoryIds.delete(repositoryId);
-      this.renderProjectWorkspace();
-    }
-  }
-
-  async checkRepositoryUpdates(repositoryId) {
-    if (!this.repositoriesDataCurrent() || this.state.checkingRepositoryIds.has(repositoryId)) {
-      return;
-    }
-    const repository = this.state.repositories.find((candidate) => candidate.id === repositoryId);
-    if (!repository?.gitState?.checkUpdatesAllowed) {
-      return;
-    }
-    this.state.checkingRepositoryIds.add(repositoryId);
-    this.showError('agentsV2RepositoriesError', '');
-    this.renderProjectWorkspace();
-    try {
-      await this.api.checkProjectRepositoryUpdates(this.state.selectedProjectId, repositoryId);
-      await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
-    } catch (error) {
-      await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
-      this.showError('agentsV2RepositoriesError', error.message || 'Repository updates could not be checked.');
-    } finally {
-      this.state.checkingRepositoryIds.delete(repositoryId);
       this.renderProjectWorkspace();
     }
   }

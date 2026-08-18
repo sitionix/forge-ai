@@ -13,7 +13,6 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryUpstream;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -110,8 +109,7 @@ public class AgentProxyApiMapper {
                 repository.id(),
                 repository.projectId(),
                 repository.name(),
-                repository.cloned(),
-                this.toResponse(repository.gitState()),
+                this.toResponse(repository.git()),
                 repository.createdAt()
         );
     }
@@ -120,33 +118,12 @@ public class AgentProxyApiMapper {
         if (gitState == null) {
             return null;
         }
-        if (!gitState.valid()) {
-            return new AgentProjectRepositoryGitStateResponse(false, null, null, null, null, null, false, gitState.pullBlockedReason(),
-                    false, gitState.checkUpdatesBlockedReason());
-        }
         return new AgentProjectRepositoryGitStateResponse(
-                true,
-                new AgentProjectRepositoryGitHeadResponse(
-                        gitState.head().type().name(),
-                        gitState.head().ref(),
-                        gitState.head().commit()
-                ),
-                gitState.workingTree().name(),
-                gitState.conflictState().name(),
-                gitState.operationState().name(),
-                this.toResponse(gitState.upstream()),
-                gitState.pullAllowed(),
-                gitState.pullBlockedReason(),
-                gitState.checkUpdatesAllowed(),
-                gitState.checkUpdatesBlockedReason()
+                gitState.cloned(),
+                gitState.branch(),
+                gitState.workingTree() == null ? null : gitState.workingTree().name(),
+                gitState.pullAvailable()
         );
-    }
-
-    private AgentProjectRepositoryGitUpstreamResponse toResponse(final AgentProjectRepositoryUpstream upstream) {
-        if (upstream == null) {
-            return null;
-        }
-        return new AgentProjectRepositoryGitUpstreamResponse(upstream.ref(), upstream.relation().name());
     }
 
     public AgentProjectTaskSummaryResponse toResponse(final AgentProjectTaskSummary task) {

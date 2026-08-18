@@ -20,9 +20,7 @@ import com.sitionix.forgeagent.api.dto.NodePositionResponse;
 import com.sitionix.forgeagent.api.dto.NodeRequest;
 import com.sitionix.forgeagent.api.dto.NodeResponse;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
-import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitHeadResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitStateResponse;
-import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitUpstreamResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
@@ -82,6 +80,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -145,7 +144,13 @@ class ForgeAgentApiMapperTest {
         final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
 
         assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", false, null, CREATED)))
-                .isEqualTo(new ProjectRepositoryResponse(repositoryId, PROJECT_ID, "service-a", false, null, CREATED));
+                .isEqualTo(new ProjectRepositoryResponse(
+                        repositoryId,
+                        PROJECT_ID,
+                        "service-a",
+                        new ProjectRepositoryGitStateResponse(false, null, null, false),
+                        CREATED
+                ));
     }
 
     @Test
@@ -164,19 +169,7 @@ class ForgeAgentApiMapperTest {
                         repositoryId,
                         PROJECT_ID,
                         "service-a",
-                        true,
-                        new ProjectRepositoryGitStateResponse(
-                                true,
-                                new ProjectRepositoryGitHeadResponse("BRANCH", "main", "abcdef"),
-                                "CLEAN",
-                                "NONE",
-                                "NORMAL",
-                                new ProjectRepositoryGitUpstreamResponse("origin/main", "BEHIND"),
-                                true,
-                                null,
-                                true,
-                                null
-                        ),
+                        new ProjectRepositoryGitStateResponse(true, "main", "CLEAN", true),
                         CREATED
                 ));
     }
@@ -190,11 +183,33 @@ class ForgeAgentApiMapperTest {
                         repositoryId,
                         PROJECT_ID,
                         "service-a",
-                        true,
-                        new ProjectRepositoryGitStateResponse(false, null, null, null, null, null, false, "INVALID_CHECKOUT",
-                                false, "INVALID_CHECKOUT"),
+                        new ProjectRepositoryGitStateResponse(true, null, null, false),
                         CREATED
                 ));
+    }
+
+    @Test
+    void projectRepositoryResponseSerializesGitContractOnly() {
+        final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+        final var response = new ProjectRepositoryResponse(
+                repositoryId,
+                PROJECT_ID,
+                "service-a",
+                new ProjectRepositoryGitStateResponse(true, "main", "CLEAN", false),
+                CREATED
+        );
+
+        final var responseFields = Arrays.stream(ProjectRepositoryResponse.class.getRecordComponents())
+                .map(component -> component.getName())
+                .toList();
+        final var json = this.objectMapper.valueToTree(response.git());
+
+        assertThat(responseFields).doesNotContain("cloned");
+        assertThat(json.size()).isEqualTo(4);
+        assertThat(json.has("cloned")).isTrue();
+        assertThat(json.has("branch")).isTrue();
+        assertThat(json.has("workingTree")).isTrue();
+        assertThat(json.has("pullAvailable")).isTrue();
     }
 
     @Test

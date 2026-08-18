@@ -35,8 +35,6 @@ public interface ForgeAgentClient {
 
     AgentProjectRepository cloneProjectRepository(UUID projectId, UUID repositoryId);
 
-    AgentProjectRepository checkProjectRepositoryUpdates(UUID projectId, UUID repositoryId);
-
     AgentProjectRepository pullProjectRepository(UUID projectId, UUID repositoryId);
 
     AgentProjectTask createProjectTask(UUID projectId, CreateAgentProjectTaskCommand command);

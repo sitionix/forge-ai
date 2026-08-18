@@ -49,9 +49,6 @@ public interface ForgeAgentHttpClient {
     @PostExchange("/api/v1/projects/{projectId}/repositories/{repositoryId}/clone")
     ProjectRepositoryResponse cloneProjectRepository(@PathVariable UUID projectId, @PathVariable UUID repositoryId);
 
-    @PostExchange("/api/v1/projects/{projectId}/repositories/{repositoryId}/check-updates")
-    ProjectRepositoryResponse checkProjectRepositoryUpdates(@PathVariable UUID projectId, @PathVariable UUID repositoryId);
-
     @PostExchange("/api/v1/projects/{projectId}/repositories/{repositoryId}/pull")
     ProjectRepositoryResponse pullProjectRepository(@PathVariable UUID projectId, @PathVariable UUID repositoryId);
 

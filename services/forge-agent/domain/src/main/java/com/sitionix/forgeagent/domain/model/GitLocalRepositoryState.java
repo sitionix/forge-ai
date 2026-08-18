@@ -7,14 +7,11 @@ public record GitLocalRepositoryState(
         GitConflictState conflictState,
         GitOperationState operationState,
         GitUpstreamState upstream,
-        boolean pullAllowed,
-        String pullBlockedReason,
-        boolean checkUpdatesAllowed,
-        String checkUpdatesBlockedReason
+        boolean pullAvailable
 ) {
 
     public static GitLocalRepositoryState invalid() {
-        return new GitLocalRepositoryState(false, null, null, null, null, null, false, "INVALID_CHECKOUT", false, "INVALID_CHECKOUT");
+        return new GitLocalRepositoryState(false, null, null, null, null, null, false);
     }
 
     public static GitLocalRepositoryState valid(final GitHeadState head,
@@ -22,8 +19,6 @@ public record GitLocalRepositoryState(
                                                 final GitConflictState conflictState,
                                                 final GitOperationState operationState,
                                                 final GitUpstreamState upstream) {
-        final String blockedReason = resolvePullBlockedReason(head, workingTree, conflictState, operationState, upstream);
-        final String checkBlockedReason = resolveCheckUpdatesBlockedReason(head, workingTree, conflictState, operationState, upstream);
         return new GitLocalRepositoryState(
                 true,
                 head,
@@ -31,10 +26,7 @@ public record GitLocalRepositoryState(
                 conflictState,
                 operationState,
                 upstream,
-                blockedReason == null,
-                blockedReason,
-                checkBlockedReason == null,
-                checkBlockedReason
+                isPullAvailable(head, workingTree, conflictState, operationState, upstream)
         );
     }
 
@@ -46,73 +38,33 @@ public record GitLocalRepositoryState(
                 new GitUpstreamState(this.upstream.ref(), relation));
     }
 
-    private static String resolvePullBlockedReason(final GitHeadState head,
-                                                   final GitWorkingTreeState workingTree,
-                                                   final GitConflictState conflictState,
-                                                   final GitOperationState operationState,
-                                                   final GitUpstreamState upstream) {
-        if (head == null) {
-            return "UNKNOWN_HEAD";
+    public GitLocalRepositoryState withoutPullAvailable() {
+        if (!this.valid) {
+            return this;
         }
-        if (head.type() != GitHeadType.BRANCH) {
-            return "DETACHED_HEAD";
-        }
-        if (head.commit() == null) {
-            return "UNBORN_BRANCH";
-        }
-        if (conflictState == GitConflictState.CONFLICTED) {
-            return "CONFLICTED";
-        }
-        if (workingTree != GitWorkingTreeState.CLEAN) {
-            return "DIRTY_WORKING_TREE";
-        }
-        if (operationState == GitOperationState.IN_PROGRESS) {
-            return "GIT_OPERATION_IN_PROGRESS";
-        }
-        if (upstream == null) {
-            return "NO_UPSTREAM";
-        }
-        if (upstream.relation() == GitUpstreamRelation.UP_TO_DATE) {
-            return "UP_TO_DATE";
-        }
-        if (upstream.relation() == GitUpstreamRelation.AHEAD) {
-            return "AHEAD";
-        }
-        if (upstream.relation() == GitUpstreamRelation.DIVERGED) {
-            return "DIVERGED";
-        }
-        if (upstream.relation() == GitUpstreamRelation.MISSING) {
-            return "UPSTREAM_MISSING";
-        }
-        return null;
+        return new GitLocalRepositoryState(
+                true,
+                this.head,
+                this.workingTree,
+                this.conflictState,
+                this.operationState,
+                this.upstream,
+                false
+        );
     }
 
-    private static String resolveCheckUpdatesBlockedReason(final GitHeadState head,
-                                                           final GitWorkingTreeState workingTree,
-                                                           final GitConflictState conflictState,
-                                                           final GitOperationState operationState,
-                                                           final GitUpstreamState upstream) {
-        if (head == null) {
-            return "UNKNOWN_HEAD";
-        }
-        if (head.type() != GitHeadType.BRANCH) {
-            return "DETACHED_HEAD";
-        }
-        if (head.commit() == null) {
-            return "UNBORN_BRANCH";
-        }
-        if (conflictState == GitConflictState.CONFLICTED) {
-            return "CONFLICTED";
-        }
-        if (workingTree != GitWorkingTreeState.CLEAN) {
-            return "DIRTY_WORKING_TREE";
-        }
-        if (operationState == GitOperationState.IN_PROGRESS) {
-            return "GIT_OPERATION_IN_PROGRESS";
-        }
-        if (upstream == null) {
-            return "NO_UPSTREAM";
-        }
-        return null;
+    private static boolean isPullAvailable(final GitHeadState head,
+                                           final GitWorkingTreeState workingTree,
+                                           final GitConflictState conflictState,
+                                           final GitOperationState operationState,
+                                           final GitUpstreamState upstream) {
+        return head != null
+                && head.type() == GitHeadType.BRANCH
+                && head.commit() != null
+                && conflictState != GitConflictState.CONFLICTED
+                && workingTree == GitWorkingTreeState.CLEAN
+                && operationState != GitOperationState.IN_PROGRESS
+                && upstream != null
+                && upstream.relation() == GitUpstreamRelation.BEHIND;
     }
 }

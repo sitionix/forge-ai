@@ -7,8 +7,7 @@ public record ProjectRepositoryResponse(
         UUID id,
         UUID projectId,
         String name,
-        boolean cloned,
-        ProjectRepositoryGitStateResponse gitState,
+        ProjectRepositoryGitStateResponse git,
         Instant createdAt
 ) {
 }

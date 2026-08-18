@@ -12,13 +12,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryConflictState;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHead;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitHeadType;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryOperationState;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryUpstream;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryUpstreamRelation;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryWorkingTreeState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
@@ -72,9 +66,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
-import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryGitHeadResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryGitStateResponse;
-import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryGitUpstreamResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
@@ -138,8 +130,7 @@ public class ForgeAgentClientMapper {
                 response.id(),
                 response.projectId(),
                 response.name(),
-                response.cloned(),
-                this.toDomain(response.gitState()),
+                this.toDomain(response.git()),
                 response.createdAt()
         );
     }
@@ -148,89 +139,19 @@ public class ForgeAgentClientMapper {
         if (response == null) {
             return null;
         }
-        if (!response.valid()) {
-            return new AgentProjectRepositoryGitState(false, null, null, null, null, null, false, response.pullBlockedReason(),
-                    false, response.checkUpdatesBlockedReason());
-        }
-        if (response.head() == null) {
-            throw this.invalid("repository.gitState.head must not be null when valid is true");
-        }
-        if (response.workingTree() == null) {
-            throw this.invalid("repository.gitState.workingTree must not be null when valid is true");
-        }
-        if (response.conflictState() == null) {
-            throw this.invalid("repository.gitState.conflictState must not be null when valid is true");
-        }
-        if (response.operationState() == null) {
-            throw this.invalid("repository.gitState.operationState must not be null when valid is true");
-        }
         return new AgentProjectRepositoryGitState(
-                true,
-                this.toDomain(response.head()),
-                this.toWorkingTree(response.workingTree()),
-                this.toConflictState(response.conflictState()),
-                this.toOperationState(response.operationState()),
-                this.toDomain(response.upstream()),
-                response.pullAllowed(),
-                response.pullBlockedReason(),
-                response.checkUpdatesAllowed(),
-                response.checkUpdatesBlockedReason()
+                response.cloned(),
+                response.branch(),
+                response.workingTree() == null ? null : this.toWorkingTree(response.workingTree()),
+                response.pullAvailable()
         );
-    }
-
-    private AgentProjectRepositoryGitHead toDomain(final ProjectRepositoryGitHeadResponse response) {
-        if (response.type() == null) {
-            throw this.invalid("repository.gitState.head.type must not be null");
-        }
-        return new AgentProjectRepositoryGitHead(this.toHeadType(response.type()), response.ref(), response.commit());
-    }
-
-    private AgentProjectRepositoryGitHeadType toHeadType(final String value) {
-        try {
-            return AgentProjectRepositoryGitHeadType.valueOf(value);
-        } catch (final IllegalArgumentException exception) {
-            throw this.invalid("repository.gitState.head.type is invalid");
-        }
     }
 
     private AgentProjectRepositoryWorkingTreeState toWorkingTree(final String value) {
         try {
             return AgentProjectRepositoryWorkingTreeState.valueOf(value);
         } catch (final IllegalArgumentException exception) {
-            throw this.invalid("repository.gitState.workingTree is invalid");
-        }
-    }
-
-    private AgentProjectRepositoryConflictState toConflictState(final String value) {
-        try {
-            return AgentProjectRepositoryConflictState.valueOf(value);
-        } catch (final IllegalArgumentException exception) {
-            throw this.invalid("repository.gitState.conflictState is invalid");
-        }
-    }
-
-    private AgentProjectRepositoryOperationState toOperationState(final String value) {
-        try {
-            return AgentProjectRepositoryOperationState.valueOf(value);
-        } catch (final IllegalArgumentException exception) {
-            throw this.invalid("repository.gitState.operationState is invalid");
-        }
-    }
-
-    private AgentProjectRepositoryUpstream toDomain(final ProjectRepositoryGitUpstreamResponse response) {
-        if (response == null) {
-            return null;
-        }
-        if (response.ref() == null || response.ref().isBlank()) {
-            throw this.invalid("repository.gitState.upstream.ref must not be blank");
-        }
-        if (response.relation() == null) {
-            throw this.invalid("repository.gitState.upstream.relation must not be null");
-        }
-        try {
-            return new AgentProjectRepositoryUpstream(response.ref(), AgentProjectRepositoryUpstreamRelation.valueOf(response.relation()));
-        } catch (final IllegalArgumentException exception) {
-            throw this.invalid("repository.gitState.upstream.relation is invalid");
+            throw this.invalid("repository.git.workingTree is invalid");
         }
     }
 
