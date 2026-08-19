@@ -11,6 +11,7 @@ import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.UPDATE_
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT_TASK;
+import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT_REPOSITORY;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW_RUN;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -20,6 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ExecutionFrameEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
@@ -37,6 +39,8 @@ import org.springframework.http.HttpStatus;
 
 @IntegrationTest
 class ForgeAgentProjectTaskIT {
+
+    private static final UUID REPOSITORY_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
@@ -239,10 +243,20 @@ class ForgeAgentProjectTaskIT {
         this.forgeIt.postgresql()
                 .create()
                 .to(PROJECT.withJson("project_alpha.json"))
+                .to(PROJECT_REPOSITORY.withEntity(this.projectRepositoryEntity()))
                 .to(AGENT_DEFINITION.withJson("agent_a.json"))
                 .to(AGENT_DEFINITION.withJson("agent_b.json"))
                 .to(AGENT_DEFINITION.withJson("agent_c.json"))
                 .to(WORKFLOW.withJson("workflow_alpha.json"))
                 .build();
+    }
+
+    private ProjectRepositoryEntity projectRepositoryEntity() {
+        final ProjectRepositoryEntity entity = new ProjectRepositoryEntity();
+        entity.setId(REPOSITORY_ID);
+        entity.setProjectId(PROJECT_ALPHA_ID);
+        entity.setRemoteUrl("https://example.com/forge/repository.git");
+        entity.setCreatedAt(Instant.parse("2026-08-10T10:00:00Z"));
+        return entity;
     }
 }

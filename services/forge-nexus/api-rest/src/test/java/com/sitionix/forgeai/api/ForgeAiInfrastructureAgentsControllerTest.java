@@ -286,8 +286,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
 
     @Test
     void createProjectTask() {
-        final var request = new CreateAgentProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID);
-        final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID);
+        final var request = new CreateAgentProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID, List.of(REPOSITORY_ID));
+        final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID, List.of(REPOSITORY_ID));
         final var task = this.task();
         final var response = this.taskResponse();
         when(this.mapper.toCommand(request)).thenReturn(command);
@@ -620,6 +620,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 "Check calculation",
                 "Count letters.",
                 WORKFLOW_ID,
+                List.of(REPOSITORY_ID),
                 List.of(new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, NOW, null, null)),
                 NOW,
                 NOW
@@ -633,6 +634,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 "Check calculation",
                 "Count letters.",
                 WORKFLOW_ID,
+                List.of(REPOSITORY_ID),
                 List.of(new AgentWorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, NOW, null, null)),
                 NOW,
                 NOW

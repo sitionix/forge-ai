@@ -222,8 +222,8 @@ class ForgeAgentControllerTest {
 
     @Test
     void createProjectTask() {
-        final CreateProjectTaskRequest request = new CreateProjectTaskRequest("Check calculation", "Count the letters in Sitionix.", WORKFLOW_ID);
-        final CreateProjectTaskCommand command = new CreateProjectTaskCommand("Check calculation", "Count the letters in Sitionix.", WORKFLOW_ID);
+        final CreateProjectTaskRequest request = new CreateProjectTaskRequest("Check calculation", "Count the letters in Sitionix.", WORKFLOW_ID, List.of(REPOSITORY_ID));
+        final CreateProjectTaskCommand command = new CreateProjectTaskCommand("Check calculation", "Count the letters in Sitionix.", WORKFLOW_ID, List.of(REPOSITORY_ID));
         final ProjectTaskDetails task = this.taskDetails();
         final ProjectTaskResponse response = this.taskResponse();
         when(this.mapper.toCommand(request)).thenReturn(command);
@@ -626,6 +626,7 @@ class ForgeAgentControllerTest {
                 "Check calculation",
                 "Count the letters in Sitionix.",
                 WORKFLOW_ID,
+                List.of(REPOSITORY_ID),
                 List.of(new WorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null)),
                 NOW,
                 NOW
@@ -639,6 +640,7 @@ class ForgeAgentControllerTest {
                 "Check calculation",
                 "Count the letters in Sitionix.",
                 WORKFLOW_ID,
+                List.of(REPOSITORY_ID),
                 List.of(new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", WorkflowRunStatus.QUEUED, NOW, null, null)),
                 NOW,
                 NOW

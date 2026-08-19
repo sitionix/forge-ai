@@ -6,6 +6,7 @@ import com.sitionix.forgeagent.domain.port.ProjectTaskRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataProjectTaskRepository;
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -61,6 +62,7 @@ public class PostgresProjectTaskRepository implements ProjectTaskRepository {
                 entity.getTitle(),
                 entity.getInput(),
                 entity.getWorkflowId(),
+                List.copyOf(entity.getRepositoryIds()),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
@@ -73,6 +75,7 @@ public class PostgresProjectTaskRepository implements ProjectTaskRepository {
         entity.setTitle(task.title());
         entity.setInput(task.input());
         entity.setWorkflowId(task.workflowId());
+        entity.setRepositoryIds(new java.util.ArrayList<>(task.repositoryIds()));
         entity.setCreatedAt(task.createdAt());
         entity.setUpdatedAt(task.updatedAt());
         return entity;

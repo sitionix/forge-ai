@@ -253,10 +253,11 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void createProjectTaskMapsRequestExecutesTypedClientCallAndMapsResponse() {
-        final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID);
-        final var request = new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID);
-        final var upstreamResponse = new ProjectTaskResponse(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), CREATED, UPDATED);
-        final var expected = new AgentProjectTask(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), CREATED, UPDATED);
+        final var repositoryIds = List.of(REPOSITORY_ID);
+        final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds);
+        final var request = new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds);
+        final var upstreamResponse = new ProjectTaskResponse(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds, List.of(), CREATED, UPDATED);
+        final var expected = new AgentProjectTask(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds, List.of(), CREATED, UPDATED);
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.createProjectTask(PROJECT_ID, request)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
@@ -287,8 +288,8 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void getProjectTaskExecutesTypedClientCallAndMapsResponse() {
-        final var upstreamResponse = new ProjectTaskResponse(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), CREATED, UPDATED);
-        final var expected = new AgentProjectTask(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), CREATED, UPDATED);
+        final var upstreamResponse = new ProjectTaskResponse(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(REPOSITORY_ID), List.of(), CREATED, UPDATED);
+        final var expected = new AgentProjectTask(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(REPOSITORY_ID), List.of(), CREATED, UPDATED);
         when(this.httpClient.getProjectTask(TASK_ID)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 

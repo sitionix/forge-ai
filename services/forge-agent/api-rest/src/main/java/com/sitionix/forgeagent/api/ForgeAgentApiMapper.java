@@ -135,7 +135,7 @@ class ForgeAgentApiMapper {
     }
 
     CreateProjectTaskCommand toCommand(final CreateProjectTaskRequest request) {
-        return new CreateProjectTaskCommand(request.title(), request.input(), request.workflowId());
+        return new CreateProjectTaskCommand(request.title(), request.input(), request.workflowId(), request.repositoryIds());
     }
 
     ProjectResponse toResponse(final Project project) {
@@ -323,6 +323,7 @@ class ForgeAgentApiMapper {
                     task.title(),
                     task.input(),
                     task.workflowId(),
+                    task.repositoryIds(),
                     task.runs().stream().map(this::toSummaryResponse).toList(),
                     task.result() == null ? null : this.objectMapper.readTree(task.result().jsonValue()),
                     task.createdAt(),

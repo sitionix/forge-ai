@@ -55,7 +55,7 @@ public class AgentProxyApiMapper {
     }
 
     public CreateAgentProjectTaskCommand toCommand(final CreateAgentProjectTaskRequest request) {
-        return new CreateAgentProjectTaskCommand(request.title(), request.input(), request.workflowId());
+        return new CreateAgentProjectTaskCommand(request.title(), request.input(), request.workflowId(), request.repositoryIds());
     }
 
     public ImportAgentProjectRepositoryCommand toCommand(final ImportAgentProjectRepositoryRequest request) {
@@ -157,6 +157,7 @@ public class AgentProxyApiMapper {
                 task.title(),
                 task.input(),
                 task.workflowId(),
+                task.repositoryIds(),
                 task.runs().stream().map(this::toResponse).toList(),
                 this.toJsonNode(task.result()),
                 task.createdAt(),

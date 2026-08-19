@@ -1058,6 +1058,7 @@ describe('Agent projects page', () => {
     (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = 'Fresh task';
     (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Run this now.';
     (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+    (dom.window.document.querySelector('#agentsV2TaskRepositories input') as HTMLInputElement).checked = true;
     dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
 
@@ -1943,7 +1944,7 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).not.toContain('First Flow');
   });
 
-  it('New Task modal sends title input and workflowId through createProjectTask only', async () => {
+  it('New Task modal uses loaded repositories and sends ordered repositoryIds', async () => {
     const workflows = [
       workflow('wf-1', [], project().id),
       { ...workflow('wf-2', [], project().id), name: 'Deploy Review' }
@@ -1964,14 +1965,19 @@ describe('Agent projects page', () => {
     (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = '  Test chain  ';
     (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = '  Find X and pass the result forward  ';
     workflowSelect.value = 'wf-2';
+    const repositoryOptions = [...dom.window.document.querySelectorAll<HTMLInputElement>('#agentsV2TaskRepositories input')];
+    expect(repositoryOptions.map((option) => option.parentElement?.textContent?.trim())).toEqual(['service-a']);
+    repositoryOptions[0].checked = true;
     dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
 
     expect(fakeApi.createProjectTask).toHaveBeenCalledWith(project().id, {
       title: 'Test chain',
       input: 'Find X and pass the result forward',
-      workflowId: 'wf-2'
+      workflowId: 'wf-2',
+      repositoryIds: [repositoryOptions[0].value]
     });
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(1);
     expect(fakeApi.createWorkflowRun).not.toHaveBeenCalled();
     expect(dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(false);
     expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
@@ -1988,6 +1994,7 @@ describe('Agent projects page', () => {
     (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = 'Check calculation';
     (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Count letters.';
     (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+    (dom.window.document.querySelector('#agentsV2TaskRepositories input') as HTMLInputElement).checked = true;
     dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
 
@@ -2002,11 +2009,12 @@ describe('Agent projects page', () => {
     (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = ' ';
     (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Count letters.';
     (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+    (dom.window.document.querySelector('#agentsV2TaskRepositories input') as HTMLInputElement).checked = true;
     dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
 
     expect(fakeApi.createProjectTask).not.toHaveBeenCalled();
-    expect(dom.window.document.getElementById('agentsV2TaskModalError')?.textContent).toContain('Enter a title, task, and workflow.');
+    expect(dom.window.document.getElementById('agentsV2TaskModalError')?.textContent).toContain('Enter a title, task, workflow');
     expect(dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(true);
   });
 
@@ -2205,6 +2213,7 @@ describe('Agent projects page', () => {
     (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = 'Fresh task';
     (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Run this now.';
     (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+    (dom.window.document.querySelector('#agentsV2TaskRepositories input') as HTMLInputElement).checked = true;
     dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
     expect(fakeApi.createProjectTask).toHaveBeenCalledTimes(1);

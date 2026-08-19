@@ -95,6 +95,7 @@ class ForgeAgentApiMapperTest {
     private static final UUID RUN_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID NODE_RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID TASK_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
+    private static final UUID REPOSITORY_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -224,8 +225,8 @@ class ForgeAgentApiMapperTest {
 
     @Test
     void mapsProjectTaskRequestsAndResponses() throws Exception {
-        assertThat(this.mapper.toCommand(new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID)))
-                .isEqualTo(new CreateProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID));
+        assertThat(this.mapper.toCommand(new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID, List.of(REPOSITORY_ID))))
+                .isEqualTo(new CreateProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID, List.of(REPOSITORY_ID)));
 
         final WorkflowRunSummary run = new WorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", WorkflowRunStatus.QUEUED, CREATED, null, null);
         assertThat(this.mapper.toResponse(new ProjectTaskSummary(
@@ -255,6 +256,7 @@ class ForgeAgentApiMapperTest {
                 "Check calculation",
                 "Count letters.",
                 WORKFLOW_ID,
+                List.of(REPOSITORY_ID),
                 List.of(run),
                 new NodeRunOutput("{\"answer\":\"done\"}"),
                 CREATED,
@@ -265,6 +267,7 @@ class ForgeAgentApiMapperTest {
                 "Check calculation",
                 "Count letters.",
                 WORKFLOW_ID,
+                List.of(REPOSITORY_ID),
                 List.of(new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", WorkflowRunStatus.QUEUED, CREATED, null, null)),
                 this.objectMapper.readTree("{\"answer\":\"done\"}"),
                 CREATED,

@@ -638,6 +638,7 @@ export class AgentProjectsPage {
     this.byId('agentsV2TaskTitle').value = '';
     this.byId('agentsV2TaskInput').value = '';
     this.renderTaskWorkflowSelect();
+    this.renderTaskRepositorySelect();
     this.openDialog('agentsV2TaskDialog');
   }
 
@@ -649,6 +650,16 @@ export class AgentProjectsPage {
     select.disabled = !this.state.workflows.length;
   }
 
+  renderTaskRepositorySelect() {
+    this.byId('agentsV2TaskRepositories').innerHTML = this.state.repositories
+      .map((repository) => `
+        <label class="agents-v2-checkbox-option">
+          <input type="checkbox" name="repositoryIds" value="${escapeHtml(repository.id)}">
+          <span>${escapeHtml(repository.name)}</span>
+        </label>`)
+      .join('');
+  }
+
   async submitTask(event) {
     event.preventDefault();
     if (this.state.saving || !this.canCreateTask()) {
@@ -657,15 +668,22 @@ export class AgentProjectsPage {
     const title = this.byId('agentsV2TaskTitle').value.trim();
     const input = this.byId('agentsV2TaskInput').value.trim();
     const workflowId = this.byId('agentsV2TaskWorkflow').value;
-    if (!title || title.length > 120 || !input || !workflowId) {
-      this.showError('agentsV2TaskModalError', 'Enter a title, task, and workflow.');
+    const selectedRepositoryIds = new Set(Array.from(
+      this.byId('agentsV2TaskRepositories').querySelectorAll('input[name="repositoryIds"]:checked'),
+      (input) => input.value
+    ));
+    const repositoryIds = this.state.repositories
+      .map((repository) => repository.id)
+      .filter((repositoryId) => selectedRepositoryIds.has(repositoryId));
+    if (!title || title.length > 120 || !input || !workflowId || !repositoryIds.length) {
+      this.showError('agentsV2TaskModalError', 'Enter a title, task, workflow, and select at least one repository.');
       return;
     }
     this.state.saving = true;
     this.byId('agentsV2TaskCreateSave').disabled = true;
     this.showError('agentsV2TaskModalError', '');
     try {
-      await this.api.createProjectTask(this.state.selectedProjectId, { title, input, workflowId });
+      await this.api.createProjectTask(this.state.selectedProjectId, { title, input, workflowId, repositoryIds });
       this.closeDialog('agentsV2TaskDialog');
       this.state.tasksPage = 0;
       if (this.taskPollInFlight) {

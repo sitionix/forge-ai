@@ -11,6 +11,7 @@ public record ProjectTaskResponse(
         String title,
         String input,
         UUID workflowId,
+        List<UUID> repositoryIds,
         List<WorkflowRunSummaryResponse> runs,
         JsonNode result,
         Instant createdAt,
@@ -21,9 +22,10 @@ public record ProjectTaskResponse(
                                final String title,
                                final String input,
                                final UUID workflowId,
+                               final List<UUID> repositoryIds,
                                final List<WorkflowRunSummaryResponse> runs,
                                final Instant createdAt,
                                final Instant updatedAt) {
-        this(id, projectId, title, input, workflowId, runs, null, createdAt, updatedAt);
+        this(id, projectId, title, input, workflowId, repositoryIds, runs, null, createdAt, updatedAt);
     }
 }
