@@ -111,6 +111,15 @@ public final class ForgeAgentProxyMockMvcEndpoint {
                 "responseAgentProxyEmptyWorkflow.json");
     }
 
+    public static Endpoint<CreateAgentProjectTaskRequest, InfrastructureErrorResponse> createProjectTaskRepositoryNotFound() {
+        return nexusPost("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
+                CreateAgentProjectTaskRequest.class,
+                InfrastructureErrorResponse.class,
+                "requestAgentProxyCreateProjectTask.json",
+                HttpStatus.NOT_FOUND,
+                "responseAgentProxyRepositoryNotFound.json");
+    }
+
     public static Endpoint<Void, AgentProjectTaskPageResponse> listProjectTasks() {
         return nexusGet("/api/v1/infrastructure/agents/projects/{projectId}/tasks",
                 AgentProjectTaskPageResponse.class,

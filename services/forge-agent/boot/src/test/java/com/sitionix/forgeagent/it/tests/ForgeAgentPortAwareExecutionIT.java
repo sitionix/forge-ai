@@ -7,6 +7,7 @@ import static com.sitionix.forgeagent.it.ForgeAgentFixtures.PROJECT_ALPHA_ID;
 import static com.sitionix.forgeagent.it.ForgeAgentFixtures.WORKFLOW_ID;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.AGENT_DEFINITION;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
+import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT_REPOSITORY;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -48,6 +49,7 @@ import com.sitionix.forgeagent.domain.port.InputActivationResolutionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import jakarta.persistence.EntityManager;
 import java.util.Comparator;
@@ -72,6 +74,7 @@ class ForgeAgentPortAwareExecutionIT {
     private static final UUID IMPLEMENTER = UUID.fromString("90000000-0000-4000-8000-000000000006");
     private static final UUID STRATEGY = UUID.fromString("90000000-0000-4000-8000-000000000007");
     private static final UUID CODE = UUID.fromString("90000000-0000-4000-8000-000000000008");
+    private static final UUID REPOSITORY_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
 
     private static final UUID A_OUT = UUID.fromString("91000000-0000-4000-8000-000000000001");
     private static final UUID A_IN = UUID.fromString("92000000-0000-4000-8000-000000000001");
@@ -163,7 +166,8 @@ class ForgeAgentPortAwareExecutionIT {
         final ProjectTaskDetails created = this.projectTaskUseCases.createProjectTask(PROJECT_ALPHA_ID, new CreateProjectTaskCommand(
                 "Build feature",
                 "Build feature.",
-                WORKFLOW_ID
+                WORKFLOW_ID,
+                List.of(REPOSITORY_ID)
         ));
         final UUID runId = created.runs().getFirst().id();
         this.complete(this.onlyPending(runId, A), "{\"step\":\"A\"}");
@@ -508,11 +512,21 @@ class ForgeAgentPortAwareExecutionIT {
         this.forgeIt.postgresql()
                 .create()
                 .to(PROJECT.withJson("project_alpha.json"))
+                .to(PROJECT_REPOSITORY.withEntity(this.projectRepositoryEntity()))
                 .to(AGENT_DEFINITION.withJson("agent_a.json"))
                 .to(AGENT_DEFINITION.withJson("agent_b.json"))
                 .to(AGENT_DEFINITION.withJson("agent_c.json"))
                 .to(WORKFLOW.withJson("workflow_alpha.json"))
                 .build();
+    }
+
+    private ProjectRepositoryEntity projectRepositoryEntity() {
+        final ProjectRepositoryEntity entity = new ProjectRepositoryEntity();
+        entity.setId(REPOSITORY_ID);
+        entity.setProjectId(PROJECT_ALPHA_ID);
+        entity.setRemoteUrl("https://example.com/forge/repository.git");
+        entity.setCreatedAt(java.time.Instant.parse("2026-08-10T10:00:00Z"));
+        return entity;
     }
 
     private void saveLinearWorkflow() {

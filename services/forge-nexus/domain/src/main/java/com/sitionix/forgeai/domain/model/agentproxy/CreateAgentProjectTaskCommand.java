@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.domain.model.agentproxy;
 
+import java.util.List;
 import java.util.UUID;
 
-public record CreateAgentProjectTaskCommand(String title, String input, UUID workflowId) {
+public record CreateAgentProjectTaskCommand(String title, String input, UUID workflowId, List<UUID> repositoryIds) {
 }

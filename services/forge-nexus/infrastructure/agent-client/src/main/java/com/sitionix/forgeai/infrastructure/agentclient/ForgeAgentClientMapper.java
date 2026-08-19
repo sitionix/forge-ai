@@ -94,7 +94,7 @@ public class ForgeAgentClientMapper {
     }
 
     CreateProjectTaskRequest toRequest(final CreateAgentProjectTaskCommand command) {
-        return new CreateProjectTaskRequest(command.title(), command.input(), command.workflowId());
+        return new CreateProjectTaskRequest(command.title(), command.input(), command.workflowId(), command.repositoryIds());
     }
 
     ImportProjectRepositoryRequest toRequest(final ImportAgentProjectRepositoryCommand command) {
@@ -199,12 +199,14 @@ public class ForgeAgentClientMapper {
         this.requireText(response.title(), "task.title");
         this.requireText(response.input(), "task.input");
         this.requireId(response.workflowId(), "task.workflowId");
+        final List<UUID> repositoryIds = this.requireList(response.repositoryIds(), "task.repositoryIds");
         return new AgentProjectTask(
                 response.id(),
                 response.projectId(),
                 response.title(),
                 response.input(),
                 response.workflowId(),
+                repositoryIds,
                 this.requireList(response.runs(), "task.runs").stream()
                         .map(this::toDomain)
                         .toList(),

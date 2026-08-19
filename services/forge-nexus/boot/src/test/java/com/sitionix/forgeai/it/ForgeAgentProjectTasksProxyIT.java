@@ -77,6 +77,21 @@ class ForgeAgentProjectTasksProxyIT extends AbstractForgeAiIT {
     }
 
     @Test
+    void givenRepositoryNotFoundUpstreamError_whenCreateTask_thenControlledErrorIsForwardedWithoutLocalRepositoryLookup() {
+        final var mapping = this.testManager.wiremock()
+                .createMapping(ForgeAgentProxyWireMockEndpoint.createProjectTaskRepositoryNotFound())
+                .pathPattern(projectWireMockPathParams())
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(ForgeAgentProxyMockMvcEndpoint.createProjectTaskRepositoryNotFound())
+                .withPathParameters(projectMockMvcPathParams())
+                .assertDefault();
+
+        mapping.verify();
+    }
+
+    @Test
     void givenProjectId_whenListTasks_thenPathAndPaginationAreForwarded() {
         final var mapping = this.testManager.wiremock()
                 .createMapping(ForgeAgentProxyWireMockEndpoint.listProjectTasks())

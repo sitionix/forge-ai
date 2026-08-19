@@ -73,10 +73,11 @@ class AgentProxyUseCaseTest {
 
     @Test
     void projectTaskUseCasesDelegateToClient() {
-        final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID);
+        final var repositoryIds = List.of(UUID.fromString("55555555-5555-4555-8555-555555555555"));
+        final var command = new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds);
         final var summary = new AgentProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, NOW, NOW);
         final var page = new AgentProjectTaskPage(List.of(summary), 2, 10, 21, 3);
-        final var task = new AgentProjectTask(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(), NOW, NOW);
+        final var task = new AgentProjectTask(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds, List.of(), NOW, NOW);
         when(this.forgeAgentClient.createProjectTask(PROJECT_ID, command)).thenReturn(task);
         when(this.forgeAgentClient.listProjectTasks(PROJECT_ID, 2, 10)).thenReturn(page);
         when(this.forgeAgentClient.getProjectTask(TASK_ID)).thenReturn(task);

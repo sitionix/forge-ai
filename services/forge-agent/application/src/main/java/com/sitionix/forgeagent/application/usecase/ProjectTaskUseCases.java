@@ -13,12 +13,14 @@ import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
+import com.sitionix.forgeagent.domain.port.ProjectRepositoryLinkRepository;
 import com.sitionix.forgeagent.domain.port.ProjectTaskRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +34,7 @@ public class ProjectTaskUseCases {
     private static final int MAX_TITLE_LENGTH = 120;
 
     private final ProjectRepository projectRepository;
+    private final ProjectRepositoryLinkRepository projectRepositoryLinkRepository;
     private final WorkflowRepository workflowRepository;
     private final ProjectTaskRepository projectTaskRepository;
     private final WorkflowRunRepository workflowRunRepository;
@@ -49,6 +52,7 @@ public class ProjectTaskUseCases {
         if (!projectId.equals(workflow.projectId())) {
             throw new ValidationException("WORKFLOW_PROJECT_MISMATCH", "Workflow does not belong to the project.");
         }
+        final List<UUID> repositoryIds = this.requireRepositoryIds(projectId, command.repositoryIds());
 
         final Instant now = Instant.now(this.clock);
         final ProjectTask task = this.projectTaskRepository.save(new ProjectTask(
@@ -57,6 +61,7 @@ public class ProjectTaskUseCases {
                 title,
                 input,
                 workflowId,
+                repositoryIds,
                 now,
                 now
         ));
@@ -121,6 +126,26 @@ public class ProjectTaskUseCases {
         return workflowId;
     }
 
+    private List<UUID> requireRepositoryIds(final UUID projectId, final List<UUID> repositoryIds) {
+        if (repositoryIds == null || repositoryIds.isEmpty()) {
+            throw new ValidationException("INVALID_PROJECT_TASK_REPOSITORIES", "Task repositoryIds must contain at least one repository.");
+        }
+        if (repositoryIds.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new ValidationException("INVALID_PROJECT_TASK_REPOSITORIES", "Task repositoryIds must not contain null values.");
+        }
+        if (new HashSet<>(repositoryIds).size() != repositoryIds.size()) {
+            throw new ValidationException("INVALID_PROJECT_TASK_REPOSITORIES", "Task repositoryIds must not contain duplicates.");
+        }
+        for (final UUID repositoryId : repositoryIds) {
+            final var repository = this.projectRepositoryLinkRepository.findById(repositoryId)
+                    .orElseThrow(() -> new NotFoundException("PROJECT_REPOSITORY_NOT_FOUND", "Project repository was not found."));
+            if (!projectId.equals(repository.projectId())) {
+                throw new ValidationException("PROJECT_REPOSITORY_PROJECT_MISMATCH", "Project repository does not belong to the project.");
+            }
+        }
+        return List.copyOf(repositoryIds);
+    }
+
     private String requireTitle(final String candidate) {
         if (candidate == null || candidate.trim().isBlank()) {
             throw new ValidationException("INVALID_PROJECT_TASK_TITLE", "Task title is required.");
@@ -173,6 +198,7 @@ public class ProjectTaskUseCases {
                 task.title(),
                 task.input(),
                 task.workflowId(),
+                task.repositoryIds(),
                 runs,
                 result,
                 task.createdAt(),

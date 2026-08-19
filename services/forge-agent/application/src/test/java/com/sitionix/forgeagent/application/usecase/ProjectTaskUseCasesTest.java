@@ -15,12 +15,14 @@ import com.sitionix.forgeagent.domain.model.ProjectTask;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskPage;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
+import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
+import com.sitionix.forgeagent.domain.port.ProjectRepositoryLinkRepository;
 import com.sitionix.forgeagent.domain.port.ProjectTaskRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
@@ -47,9 +49,13 @@ class ProjectTaskUseCasesTest {
     private static final UUID WORKFLOW_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID TASK_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID RUN_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
+    private static final UUID REPOSITORY_ID = UUID.fromString("55555555-5555-4555-8555-555555555551");
+    private static final UUID OTHER_REPOSITORY_ID = UUID.fromString("55555555-5555-4555-8555-555555555552");
 
     @Mock
     private ProjectRepository projectRepository;
+    @Mock
+    private ProjectRepositoryLinkRepository projectRepositoryLinkRepository;
     @Mock
     private WorkflowRepository workflowRepository;
     @Mock
@@ -65,6 +71,7 @@ class ProjectTaskUseCasesTest {
     void setUp() {
         this.useCases = new ProjectTaskUseCases(
                 this.projectRepository,
+                this.projectRepositoryLinkRepository,
                 this.workflowRepository,
                 this.projectTaskRepository,
                 this.workflowRunRepository,
@@ -77,13 +84,15 @@ class ProjectTaskUseCasesTest {
     void createsTaskAndExactlyOneInitialWorkflowRun() {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project(PROJECT_ID)));
         when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(this.workflow(PROJECT_ID)));
+        when(this.projectRepositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(this.repository(REPOSITORY_ID, PROJECT_ID)));
         when(this.projectTaskRepository.save(any())).thenReturn(this.task("Simple analysis", "Find X and explain Y"));
         when(this.workflowRunUseCases.createWorkflowRunForTask(any(), any(), any())).thenReturn(this.run(TASK_ID, "Find X and explain Y"));
 
         final ProjectTaskDetails created = this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand(
                 "  Simple analysis  ",
                 "  Find X and explain Y  ",
-                WORKFLOW_ID
+                WORKFLOW_ID,
+                List.of(REPOSITORY_ID)
         ));
 
         assertThat(created.id()).isEqualTo(TASK_ID);
@@ -91,6 +100,7 @@ class ProjectTaskUseCasesTest {
         assertThat(created.title()).isEqualTo("Simple analysis");
         assertThat(created.input()).isEqualTo("Find X and explain Y");
         assertThat(created.workflowId()).isEqualTo(WORKFLOW_ID);
+        assertThat(created.repositoryIds()).containsExactly(REPOSITORY_ID);
         assertThat(created.runs()).singleElement().satisfies(run -> {
             assertThat(run.id()).isEqualTo(RUN_ID);
             assertThat(run.taskId()).isEqualTo(TASK_ID);
@@ -103,6 +113,7 @@ class ProjectTaskUseCasesTest {
         assertThat(taskCaptor.getValue().title()).isEqualTo("Simple analysis");
         assertThat(taskCaptor.getValue().input()).isEqualTo("Find X and explain Y");
         assertThat(taskCaptor.getValue().workflowId()).isEqualTo(WORKFLOW_ID);
+        assertThat(taskCaptor.getValue().repositoryIds()).containsExactly(REPOSITORY_ID);
         assertThat(taskCaptor.getValue().createdAt()).isEqualTo(NOW);
         assertThat(taskCaptor.getValue().updatedAt()).isEqualTo(NOW);
 
@@ -116,7 +127,7 @@ class ProjectTaskUseCasesTest {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project(PROJECT_ID)));
         when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(this.workflow(OTHER_PROJECT_ID)));
 
-        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand("Title", "Input", WORKFLOW_ID)))
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("Title", "Input", WORKFLOW_ID)))
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
                 .isEqualTo("WORKFLOW_PROJECT_MISMATCH");
@@ -128,7 +139,7 @@ class ProjectTaskUseCasesTest {
     void rejectsMissingProject() {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand("Title", "Input", WORKFLOW_ID)))
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("Title", "Input", WORKFLOW_ID)))
                 .isInstanceOf(NotFoundException.class)
                 .extracting("code")
                 .isEqualTo("PROJECT_NOT_FOUND");
@@ -141,7 +152,7 @@ class ProjectTaskUseCasesTest {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project(PROJECT_ID)));
         when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand("Title", "Input", WORKFLOW_ID)))
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("Title", "Input", WORKFLOW_ID)))
                 .isInstanceOf(NotFoundException.class)
                 .extracting("code")
                 .isEqualTo("WORKFLOW_NOT_FOUND");
@@ -150,19 +161,19 @@ class ProjectTaskUseCasesTest {
 
     @Test
     void rejectsInvalidRequestFields() {
-        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand(" ", "Input", WORKFLOW_ID)))
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command(" ", "Input", WORKFLOW_ID)))
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
                 .isEqualTo("INVALID_PROJECT_TASK_TITLE");
-        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand("a".repeat(121), "Input", WORKFLOW_ID)))
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("a".repeat(121), "Input", WORKFLOW_ID)))
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
                 .isEqualTo("INVALID_PROJECT_TASK_TITLE");
-        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand("Title", " ", WORKFLOW_ID)))
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("Title", " ", WORKFLOW_ID)))
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
                 .isEqualTo("INVALID_PROJECT_TASK_INPUT");
-        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand("Title", "Input", null)))
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("Title", "Input", null)))
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
                 .isEqualTo("INVALID_PROJECT_TASK_WORKFLOW");
@@ -173,14 +184,63 @@ class ProjectTaskUseCasesTest {
     void workflowRunCreationFailurePropagatesSoTransactionCanRollBackTask() {
         when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project(PROJECT_ID)));
         when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(this.workflow(PROJECT_ID)));
+        when(this.projectRepositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(this.repository(REPOSITORY_ID, PROJECT_ID)));
         when(this.projectTaskRepository.save(any())).thenReturn(this.task("Title", "Input"));
         when(this.workflowRunUseCases.createWorkflowRunForTask(WORKFLOW_ID, new CreateWorkflowRunCommand("Input"), TASK_ID))
                 .thenThrow(new ConflictException("EMPTY_WORKFLOW", "Workflow must contain at least one node before a run can be created."));
 
-        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand("Title", "Input", WORKFLOW_ID)))
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("Title", "Input", WORKFLOW_ID)))
                 .isInstanceOf(ConflictException.class)
                 .extracting("code")
                 .isEqualTo("EMPTY_WORKFLOW");
+    }
+
+    @Test
+    void acceptsMultipleRepositoriesWithoutChangingTheirOrder() {
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project(PROJECT_ID)));
+        when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(this.workflow(PROJECT_ID)));
+        when(this.projectRepositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(this.repository(REPOSITORY_ID, PROJECT_ID)));
+        when(this.projectRepositoryLinkRepository.findById(OTHER_REPOSITORY_ID)).thenReturn(Optional.of(this.repository(OTHER_REPOSITORY_ID, PROJECT_ID)));
+        when(this.projectTaskRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(this.workflowRunUseCases.createWorkflowRunForTask(any(), any(), any())).thenReturn(this.run(TASK_ID, "Input"));
+
+        this.useCases.createProjectTask(PROJECT_ID,
+                new CreateProjectTaskCommand("Title", "Input", WORKFLOW_ID, List.of(OTHER_REPOSITORY_ID, REPOSITORY_ID)));
+
+        final ArgumentCaptor<ProjectTask> task = ArgumentCaptor.forClass(ProjectTask.class);
+        verify(this.projectTaskRepository).save(task.capture());
+        assertThat(task.getValue().repositoryIds()).containsExactly(OTHER_REPOSITORY_ID, REPOSITORY_ID);
+        verify(this.workflowRunUseCases).createWorkflowRunForTask(any(), any(), any());
+    }
+
+    @Test
+    void rejectsInvalidRepositoryIdShapesBeforePersistenceOrRunCreation() {
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project(PROJECT_ID)));
+        when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(this.workflow(PROJECT_ID)));
+
+        for (final List<UUID> repositoryIds : java.util.Arrays.<List<UUID>>asList(null, List.of(), java.util.Arrays.asList(REPOSITORY_ID, null), List.of(REPOSITORY_ID, REPOSITORY_ID))) {
+            assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID,
+                    new CreateProjectTaskCommand("Title", "Input", WORKFLOW_ID, repositoryIds)))
+                    .isInstanceOf(ValidationException.class)
+                    .extracting("code").isEqualTo("INVALID_PROJECT_TASK_REPOSITORIES");
+        }
+        verify(this.projectTaskRepository, never()).save(any());
+        verify(this.workflowRunUseCases, never()).createWorkflowRunForTask(any(), any(), any());
+    }
+
+    @Test
+    void rejectsUnknownAndCrossProjectRepositoriesBeforePersistenceOrRunCreation() {
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project(PROJECT_ID)));
+        when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(this.workflow(PROJECT_ID)));
+        when(this.projectRepositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("Title", "Input", WORKFLOW_ID)))
+                .isInstanceOf(NotFoundException.class).extracting("code").isEqualTo("PROJECT_REPOSITORY_NOT_FOUND");
+
+        when(this.projectRepositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(this.repository(REPOSITORY_ID, OTHER_PROJECT_ID)));
+        assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("Title", "Input", WORKFLOW_ID)))
+                .isInstanceOf(ValidationException.class).extracting("code").isEqualTo("PROJECT_REPOSITORY_PROJECT_MISMATCH");
+        verify(this.projectTaskRepository, never()).save(any());
+        verify(this.workflowRunUseCases, never()).createWorkflowRunForTask(any(), any(), any());
     }
 
     @Test
@@ -261,7 +321,15 @@ class ProjectTaskUseCasesTest {
     }
 
     private ProjectTask task(final String title, final String input) {
-        return new ProjectTask(TASK_ID, PROJECT_ID, title, input, WORKFLOW_ID, NOW, NOW);
+        return new ProjectTask(TASK_ID, PROJECT_ID, title, input, WORKFLOW_ID, List.of(REPOSITORY_ID), NOW, NOW);
+    }
+
+    private CreateProjectTaskCommand command(final String title, final String input, final UUID workflowId) {
+        return new CreateProjectTaskCommand(title, input, workflowId, List.of(REPOSITORY_ID));
+    }
+
+    private ProjectRepositoryLink repository(final UUID id, final UUID projectId) {
+        return new ProjectRepositoryLink(id, projectId, "git@example.com:forge/repo.git", NOW);
     }
 
     private WorkflowRun run(final UUID taskId, final String input) {

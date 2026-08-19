@@ -102,8 +102,9 @@ class ForgeAgentClientMapperTest {
 
     @Test
     void projectTaskCommandsAndResponsesMapSuccessfully() throws Exception {
-        assertThat(this.mapper.toRequest(new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID)))
-                .isEqualTo(new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID));
+        final var repositoryIds = List.of(UUID.fromString("88888888-8888-4888-8888-888888888888"));
+        assertThat(this.mapper.toRequest(new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds)))
+                .isEqualTo(new CreateProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds));
 
         final var summaryResponse = new ProjectTaskSummaryResponse(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, CREATED, UPDATED);
         assertThat(this.mapper.toDomain(summaryResponse)).isEqualTo(new AgentProjectTaskSummary(
@@ -138,13 +139,14 @@ class ForgeAgentClientMapperTest {
                 ));
 
         final var run = new WorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null);
-        final var taskResponse = new ProjectTaskResponse(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, List.of(run), this.objectMapper.readTree("{\"answer\":\"done\"}"), CREATED, UPDATED);
+        final var taskResponse = new ProjectTaskResponse(TASK_ID, PROJECT_ID, "Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds, List.of(run), this.objectMapper.readTree("{\"answer\":\"done\"}"), CREATED, UPDATED);
         assertThat(this.mapper.toDomain(taskResponse)).isEqualTo(new AgentProjectTask(
                 TASK_ID,
                 PROJECT_ID,
                 "Check calculation",
                 "Count letters.",
                 WORKFLOW_ID,
+                repositoryIds,
                 List.of(new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null)),
                 new AgentNodeRunOutputDocument("{\"answer\":\"done\"}"),
                 CREATED,

@@ -73,8 +73,9 @@ class AgentProxyApiMapperTest {
 
     @Test
     void mapsProjectTaskRequestsAndResponses() throws Exception {
-        assertThat(this.mapper.toCommand(new CreateAgentProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID)))
-                .isEqualTo(new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID));
+        final var repositoryIds = List.of(UUID.fromString("55555555-5555-4555-8555-555555555555"));
+        assertThat(this.mapper.toCommand(new CreateAgentProjectTaskRequest("Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds)))
+                .isEqualTo(new CreateAgentProjectTaskCommand("Check calculation", "Count letters.", WORKFLOW_ID, repositoryIds));
 
         final var summary = new AgentProjectTaskSummary(TASK_ID, PROJECT_ID, "Check calculation", WORKFLOW_ID, "Full Testing", RUN_ID, AgentWorkflowRunStatus.QUEUED, CREATED, UPDATED);
         assertThat(this.mapper.toResponse(summary)).isEqualTo(new AgentProjectTaskSummaryResponse(
@@ -95,6 +96,7 @@ class AgentProxyApiMapperTest {
                 "Check calculation",
                 "Count letters.",
                 WORKFLOW_ID,
+                repositoryIds,
                 List.of(new AgentWorkflowRunSummary(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null)),
                 new AgentNodeRunOutputDocument("{\"answer\":\"done\"}"),
                 CREATED,
@@ -106,6 +108,7 @@ class AgentProxyApiMapperTest {
                 "Check calculation",
                 "Count letters.",
                 WORKFLOW_ID,
+                repositoryIds,
                 List.of(new AgentWorkflowRunSummaryResponse(RUN_ID, WORKFLOW_ID, TASK_ID, "Full Testing", AgentWorkflowRunStatus.QUEUED, CREATED, null, null)),
                 this.objectMapper.readTree("{\"answer\":\"done\"}"),
                 CREATED,

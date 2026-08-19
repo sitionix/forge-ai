@@ -33,7 +33,13 @@ export class ProjectWorkspace {
     this.byId('agentsV2ImportRepository').disabled = !project || !repositoriesCurrent;
     this.byId('agentsV2CreateAgent').disabled = !dataCurrent;
     this.byId('agentsV2CreateWorkflow').disabled = !dataCurrent;
-    this.byId('agentsV2CreateTask').disabled = !project || !workflowsCurrent || !tasksCurrent || !workflows.length;
+    this.byId('agentsV2CreateTask').disabled = !project
+      || !repositoriesCurrent
+      || repositoriesLoadFailed
+      || !workflowsCurrent
+      || !tasksCurrent
+      || !workflows.length
+      || !repositories.length;
     this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds, pullingRepositoryIds);
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);

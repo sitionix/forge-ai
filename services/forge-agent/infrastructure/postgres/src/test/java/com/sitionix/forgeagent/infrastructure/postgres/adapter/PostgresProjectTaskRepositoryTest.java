@@ -28,6 +28,7 @@ class PostgresProjectTaskRepositoryTest {
     private static final UUID PROJECT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final UUID WORKFLOW_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID TASK_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+    private static final UUID REPOSITORY_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final Instant CREATED = Instant.parse("2026-08-10T12:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-10T12:01:00Z");
 
@@ -88,7 +89,7 @@ class PostgresProjectTaskRepositoryTest {
     }
 
     private ProjectTask task(final UUID taskId, final Instant createdAt) {
-        return new ProjectTask(taskId, PROJECT_ID, "Check calculation", "Count the letters in Sitionix.", WORKFLOW_ID, createdAt, UPDATED);
+        return new ProjectTask(taskId, PROJECT_ID, "Check calculation", "Count the letters in Sitionix.", WORKFLOW_ID, List.of(REPOSITORY_ID), createdAt, UPDATED);
     }
 
     private ProjectTaskEntity entity(final UUID taskId, final Instant createdAt) {
@@ -98,6 +99,7 @@ class PostgresProjectTaskRepositoryTest {
         entity.setTitle("Check calculation");
         entity.setInput("Count the letters in Sitionix.");
         entity.setWorkflowId(WORKFLOW_ID);
+        entity.setRepositoryIds(new java.util.ArrayList<>(List.of(REPOSITORY_ID)));
         entity.setCreatedAt(createdAt);
         entity.setUpdatedAt(UPDATED);
         return entity;
