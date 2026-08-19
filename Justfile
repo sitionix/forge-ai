@@ -11,7 +11,7 @@ knowledge_url := "http://127.0.0.1:7081"
 jarvis_url := "http://127.0.0.1:7071"
 sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 
-start: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _mongo-start _sqlite-start _ollama-start _console-build _knowledge-start _jarvis-start _app-start _console-live-check
+start: _start-preflight _app-stop _jarvis-stop _knowledge-stop _ollama-stop _mongo-start _sqlite-start _ollama-start _console-build _knowledge-start _jarvis-start _app-start _console-live-check
     @echo "Forge AI stack is up:"
     @echo "  app:       {{app_url}}"
     @echo "  agent:     {{agent_url}}"
@@ -26,6 +26,24 @@ stop: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _mongo-stop
 
 status:
     @scripts/status.sh
+
+_start-preflight:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    missing=()
+    for command in curl docker java mvn npm python3; do
+        if ! command -v "${command}" >/dev/null 2>&1; then
+            missing+=("${command}")
+        fi
+    done
+    if (( ${#missing[@]} > 0 )); then
+        echo "Cannot start Forge AI stack; missing required command(s): ${missing[*]}" >&2
+        exit 1
+    fi
+    if ! docker compose version >/dev/null 2>&1; then
+        echo "Cannot start Forge AI stack; Docker Compose is required." >&2
+        exit 1
+    fi
 
 _mongo-start:
     @docker compose up -d forge-ai-mongo forge-agent-postgres
@@ -66,8 +84,7 @@ _ollama-stop:
     @scripts/ollama/stop-owned.sh
 
 _console-build:
-    @echo "Building Forge Console static assets..."
-    @npm --prefix "{{root}}/services/forge-console" run build
+    @scripts/console/build.sh
 
 _app-start:
     #!/usr/bin/env bash
