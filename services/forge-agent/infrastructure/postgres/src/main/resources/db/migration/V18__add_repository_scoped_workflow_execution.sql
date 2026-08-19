@@ -36,7 +36,15 @@ CREATE UNIQUE INDEX uk_node_runs_repository_activation
     WHERE activation_frame_id IS NOT NULL AND entered_via_input_port_id IS NOT NULL AND repository_id IS NOT NULL;
 
 ALTER TABLE workflow_connection_resolutions
+    DROP CONSTRAINT uk_connection_resolutions_source_connection,
     ADD COLUMN target_repository_id UUID NULL;
+
+CREATE UNIQUE INDEX uk_connection_resolutions_global_target
+    ON workflow_connection_resolutions(source_node_run_id, source_connection_id)
+    WHERE target_repository_id IS NULL;
+CREATE UNIQUE INDEX uk_connection_resolutions_repository_target
+    ON workflow_connection_resolutions(source_node_run_id, source_connection_id, target_repository_id)
+    WHERE target_repository_id IS NOT NULL;
 
 ALTER TABLE workflow_input_activation_resolutions
     DROP CONSTRAINT uk_input_activation_resolutions_frame_port,

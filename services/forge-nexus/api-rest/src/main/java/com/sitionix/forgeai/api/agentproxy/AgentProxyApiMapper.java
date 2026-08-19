@@ -302,7 +302,7 @@ public class AgentProxyApiMapper {
                 node.sourceNodeId(),
                 node.agentName(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
-                (node.scopeMode() == null ? WorkflowNodeScopeMode.GLOBAL : node.scopeMode()).name()
+                node.scopeMode().name()
         );
     }
 
@@ -351,7 +351,7 @@ public class AgentProxyApiMapper {
                 request.inputs() == null ? List.of() : request.inputs().stream().map(this::toDomain).toList(),
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toDomain).toList(),
                 request.position() == null ? new NodePosition(0.0, 0.0) : new NodePosition(request.position().x(), request.position().y()),
-                WorkflowNodeScopeMode.valueOf(request.scopeMode() == null ? "GLOBAL" : request.scopeMode())
+                scopeMode(request.scopeMode())
         );
     }
 
@@ -363,7 +363,7 @@ public class AgentProxyApiMapper {
                 node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
-                (node.scopeMode() == null ? WorkflowNodeScopeMode.GLOBAL : node.scopeMode()).name()
+                node.scopeMode().name()
         );
     }
 
@@ -432,7 +432,8 @@ public class AgentProxyApiMapper {
                     resolution.resolutionType(),
                     resolution.payload() == null ? null : this.objectMapper.readTree(resolution.payload().jsonValue()),
                     resolution.consumedByNodeRunId(),
-                    resolution.createdAt()
+                    resolution.createdAt(),
+                    resolution.targetRepositoryId()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Agent connection resolution payload is not valid JSON.", exception);
@@ -455,6 +456,17 @@ public class AgentProxyApiMapper {
             return NodeInputMode.valueOf(inputMode);
         } catch (final IllegalArgumentException exception) {
             throw new IllegalArgumentException("Workflow node input mode is invalid.", exception);
+        }
+    }
+
+    private static WorkflowNodeScopeMode scopeMode(final String scopeMode) {
+        if (scopeMode == null || scopeMode.isBlank()) {
+            throw new IllegalArgumentException("Workflow node scope mode is required.");
+        }
+        try {
+            return WorkflowNodeScopeMode.valueOf(scopeMode);
+        } catch (final IllegalArgumentException exception) {
+            throw new IllegalArgumentException("Workflow node scope mode is invalid.", exception);
         }
     }
 }

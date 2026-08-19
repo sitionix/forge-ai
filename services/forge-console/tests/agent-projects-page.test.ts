@@ -3778,6 +3778,14 @@ describe('Agent projects page', () => {
     });
   });
 
+  it('Workflow Builder rejects malformed node scope mode instead of defaulting to global', async () => {
+    const { page } = await openedBuilder();
+
+    expect(page.workflowBuilder.nodeScopeMode({ scopeMode: 'PER_SCOPE' })).toBe('PER_SCOPE');
+    expect(page.workflowBuilder.nodeScopeMode({})).toBe('GLOBAL');
+    expect(() => page.workflowBuilder.nodeScopeMode({ scopeMode: 'repository' })).toThrow('Workflow node scope mode is invalid.');
+  });
+
   it('UUID fallback produces valid UUIDs and missing crypto fails clearly', async () => {
     const { dom, page } = await openedBuilder();
     Object.defineProperty(dom.window, 'crypto', {

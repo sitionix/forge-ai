@@ -26,7 +26,8 @@
           "description": "Default workflow output.",
           "order": 0
         }
-      ]
+      ],
+      "scopeMode": "GLOBAL"
     }
   ],
   "createdAt": "2026-01-01T00:00:00Z",

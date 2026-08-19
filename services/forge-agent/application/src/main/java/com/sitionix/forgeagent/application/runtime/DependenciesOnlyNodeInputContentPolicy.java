@@ -19,10 +19,6 @@ public class DependenciesOnlyNodeInputContentPolicy implements NodeInputContentP
     private final WorkflowRunGraphRepository graphRepository;
     private final NodeRunRepository nodeRunRepository;
 
-    public DependenciesOnlyNodeInputContentPolicy(final WorkflowRunGraphRepository graphRepository) {
-        this(graphRepository, null);
-    }
-
     @Override
     public boolean supports(final NodeInputContentContext context) {
         return context.nodeRun().inputMode() == NodeInputMode.DEPENDENCIES_ONLY;
@@ -46,8 +42,7 @@ public class DependenciesOnlyNodeInputContentPolicy implements NodeInputContentP
                         resolution.sourceNodeRunId(),
                         resolution.sourceConnectionId(),
                         resolution.payload(),
-                        this.nodeRunRepository == null ? null
-                                : this.nodeRunRepository.findById(resolution.sourceNodeRunId()).orElseThrow().repositoryId()
+                        this.nodeRunRepository.findById(resolution.sourceNodeRunId()).orElseThrow().repositoryId()
                 ))
                 .toList();
     }

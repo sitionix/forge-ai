@@ -24,7 +24,8 @@
           "description": "Default workflow output.",
           "order": 0
         }
-      ]
+      ],
+      "scopeMode": "GLOBAL"
     },
     {
       "id": "40000000-0000-4000-8000-000000000005",
@@ -49,7 +50,8 @@
           "description": "Default workflow output.",
           "order": 0
         }
-      ]
+      ],
+      "scopeMode": "GLOBAL"
     }
   ],
   "connections": [

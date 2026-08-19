@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.domain.model;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 public record Node(
@@ -13,7 +14,7 @@ public record Node(
         NodeScopeMode scopeMode
 ) {
     public Node {
-        scopeMode = scopeMode == null ? NodeScopeMode.GLOBAL : scopeMode;
+        Objects.requireNonNull(scopeMode, "scopeMode must not be null");
     }
 
     public Node(final UUID id, final UUID targetId, final NodeInputMode inputMode,

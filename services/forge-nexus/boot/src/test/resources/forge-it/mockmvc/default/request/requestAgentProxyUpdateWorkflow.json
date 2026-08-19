@@ -24,7 +24,8 @@
       "position": {
         "x": 120,
         "y": 100
-      }
+      },
+      "scopeMode": "GLOBAL"
     },
     {
       "id": "55555555-5555-4555-8555-555555555555",
@@ -49,7 +50,8 @@
       "position": {
         "x": 420,
         "y": 100
-      }
+      },
+      "scopeMode": "GLOBAL"
     }
   ],
   "connections": [

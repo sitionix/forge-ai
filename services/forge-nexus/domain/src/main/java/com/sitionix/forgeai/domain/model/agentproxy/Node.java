@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.domain.model.agentproxy;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 public record Node(
@@ -12,6 +13,10 @@ public record Node(
         NodePosition position,
         WorkflowNodeScopeMode scopeMode
 ) {
+    public Node {
+        Objects.requireNonNull(scopeMode, "scopeMode must not be null");
+    }
+
     public Node(final UUID id, final UUID targetId, final NodeInputMode inputMode, final List<NodePort> inputs,
                 final List<NodePort> outputs, final NodePosition position) {
         this(id, targetId, inputMode, inputs, outputs, position, WorkflowNodeScopeMode.GLOBAL);

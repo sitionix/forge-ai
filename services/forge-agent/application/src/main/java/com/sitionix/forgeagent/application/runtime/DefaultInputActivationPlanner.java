@@ -20,6 +20,7 @@ import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -38,6 +39,7 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
     private final InputParticipationResolver participationResolver;
     private final InputResolutionEvaluator resolutionEvaluator;
     private final FrameTransitionPolicy frameTransitionPolicy;
+    private final ScopeProjectionPolicy scopeProjectionPolicy;
     private final NodeRunFactory nodeRunFactory;
     private final ExecutionBudgetPolicy budgetPolicy;
     private final Clock clock;
@@ -49,14 +51,6 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                 .map(resolution -> new ActivationWorkItem(resolution.executionFrameId(), resolution.targetInputPortId(), resolution.targetRepositoryId()))
                 .distinct()
                 .forEach(queue::add);
-        this.drain(workflowRun, queue);
-    }
-
-    @Override
-    public void planFromClosedActivation(final WorkflowRun workflowRun, final UUID activationFrameId, final UUID targetInputPortId) {
-        final WorkflowRunGraph graph = this.graphRepository.findByWorkflowRunId(workflowRun.id());
-        final ArrayDeque<ActivationWorkItem> queue = new ArrayDeque<>();
-        this.downstreamInputs(graph, targetInputPortId).forEach(portId -> queue.add(new ActivationWorkItem(activationFrameId, portId, null)));
         this.drain(workflowRun, queue);
     }
 
@@ -131,7 +125,12 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
             DefaultInputActivationPlanner.this.downstreamInputs(
                     DefaultInputActivationPlanner.this.graphRepository.findByWorkflowRunId(decision.workflowRunId()),
                     decision.targetInputPortId()
-            ).forEach(portId -> this.queue.add(new ActivationWorkItem(decision.activationFrameId(), portId, decision.repositoryId())));
+            ).forEach(portId -> DefaultInputActivationPlanner.this.targetRepositories(
+                            workflowRun,
+                            decision.targetInputPortId(),
+                            portId,
+                            decision.repositoryId()
+                    ).forEach(repositoryId -> this.queue.add(new ActivationWorkItem(decision.activationFrameId(), portId, repositoryId))));
         }
 
         @Override
@@ -153,7 +152,7 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                     .orElseThrow(() -> new ConflictException("RUN_NODE_NOT_FOUND", "Runtime node was not found."));
             DefaultInputActivationPlanner.this.budgetPolicy.assertNodeRunCanBeCreated(this.workflowRun);
             final ExecutionFrame executionFrame = DefaultInputActivationPlanner.this.frameTransitionPolicy.frameForActivation(
-                    this.workflowRun, activationFrame, targetNode, decision.repositoryId());
+                    this.workflowRun, activationFrame, targetNode, decision.targetInputPortId(), decision.repositoryId());
             final com.sitionix.forgeagent.domain.model.NodeRun nodeRun = DefaultInputActivationPlanner.this.nodeRunRepository.saveAndFlush(
                     DefaultInputActivationPlanner.this.nodeRunFactory.activated(
                             this.workflowRun,
@@ -181,5 +180,32 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                     decision.repositoryId()
             ));
         }
+    }
+
+    private List<UUID> targetRepositories(final WorkflowRun workflowRun, final UUID sourceInputPortId,
+                                          final UUID targetInputPortId, final UUID sourceRepositoryId) {
+        final WorkflowRunGraph graph = this.graphRepository.findByWorkflowRunId(workflowRun.id());
+        final RunPort sourceInputPort = graph.ports().stream()
+                .filter(port -> port.sourcePortId().equals(sourceInputPortId))
+                .findFirst()
+                .orElseThrow();
+        final RunNode sourceNode = graph.nodes().stream()
+                .filter(node -> node.sourceNodeId().equals(sourceInputPort.sourceNodeId()))
+                .findFirst()
+                .orElseThrow();
+        final RunPort targetInputPort = graph.ports().stream()
+                .filter(port -> port.sourcePortId().equals(targetInputPortId))
+                .findFirst()
+                .orElseThrow();
+        final RunNode targetNode = graph.nodes().stream()
+                .filter(node -> node.sourceNodeId().equals(targetInputPort.sourceNodeId()))
+                .findFirst()
+                .orElseThrow();
+        return this.scopeProjectionPolicy.project(
+                sourceNode.scopeMode(),
+                targetNode.scopeMode(),
+                sourceRepositoryId,
+                workflowRun.repositoryIds()
+        );
     }
 }

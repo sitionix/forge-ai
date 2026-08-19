@@ -8,5 +8,5 @@ import java.util.UUID;
 public interface FrameTransitionPolicy {
 
     ExecutionFrame frameForActivation(WorkflowRun workflowRun, ExecutionFrame activationFrame, RunNode targetNode,
-                                      UUID repositoryId);
+                                      UUID targetInputPortId, UUID repositoryId);
 }

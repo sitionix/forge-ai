@@ -1374,11 +1374,17 @@ export class WorkflowBuilder {
   }
 
   nodeScopeMode(node) {
-    return this.normalizeScopeMode(node?.scopeMode);
+    if (!node?.scopeMode) {
+      return GLOBAL_SCOPE_MODE;
+    }
+    return this.normalizeScopeMode(node.scopeMode);
   }
 
   normalizeScopeMode(scopeMode) {
-    return scopeMode === PER_SCOPE_MODE ? PER_SCOPE_MODE : GLOBAL_SCOPE_MODE;
+    if (scopeMode === GLOBAL_SCOPE_MODE || scopeMode === PER_SCOPE_MODE) {
+      return scopeMode;
+    }
+    throw new Error('Workflow node scope mode is invalid.');
   }
 
   nodePorts(ports) {

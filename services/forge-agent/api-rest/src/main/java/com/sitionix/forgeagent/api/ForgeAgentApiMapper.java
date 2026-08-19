@@ -348,7 +348,7 @@ class ForgeAgentApiMapper {
                 request.inputs() == null ? List.of() : request.inputs().stream().map(this::toNodePort).toList(),
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toNodePort).toList(),
                 position,
-                request.scopeMode() == null ? NodeScopeMode.GLOBAL : NodeScopeMode.valueOf(request.scopeMode())
+                this.scopeMode(request.scopeMode())
         );
     }
 
@@ -486,6 +486,17 @@ class ForgeAgentApiMapper {
             return NodeInputMode.valueOf(inputMode);
         } catch (final IllegalArgumentException exception) {
             throw new ValidationException("INVALID_NODE_INPUT_MODE", "Workflow node input mode is invalid.");
+        }
+    }
+
+    private NodeScopeMode scopeMode(final String scopeMode) {
+        if (scopeMode == null || scopeMode.isBlank()) {
+            throw new ValidationException("INVALID_NODE_SCOPE_MODE", "Workflow node scope mode is required.");
+        }
+        try {
+            return NodeScopeMode.valueOf(scopeMode);
+        } catch (final IllegalArgumentException exception) {
+            throw new ValidationException("INVALID_NODE_SCOPE_MODE", "Workflow node scope mode is invalid.");
         }
     }
 }

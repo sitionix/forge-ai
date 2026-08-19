@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
@@ -30,6 +31,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunGraph;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
+import com.sitionix.forgeai.domain.model.agentproxy.ConnectionResolutionType;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
@@ -59,6 +61,7 @@ class AgentProxyApiMapperTest {
     private static final UUID RUN_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID NODE_RUN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final UUID TASK_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
+    private static final UUID REPOSITORY_ID = UUID.fromString("88888888-8888-4888-8888-888888888888");
     private static final Instant CREATED = Instant.parse("2026-08-04T00:00:00Z");
     private static final Instant UPDATED = Instant.parse("2026-08-04T00:01:00Z");
 
@@ -385,7 +388,18 @@ class AgentProxyApiMapperTest {
                         null,
                         null
                 )),
-                List.of(),
+                List.of(new AgentConnectionResolution(
+                        UUID.fromString("77777777-0000-4000-8000-000000000001"),
+                        UUID.fromString("99999999-0000-4000-8000-000000000001"),
+                        NODE_RUN_ID,
+                        CONNECTION_ID,
+                        INPUT_ID,
+                        ConnectionResolutionType.DELIVERED,
+                        new AgentNodeRunOutputDocument("{\"summary\":\"done\"}"),
+                        null,
+                        CREATED,
+                        REPOSITORY_ID
+                )),
                 List.of(),
                 new AgentWorkflowRunGraph(
                         INPUT_ID,
@@ -429,7 +443,18 @@ class AgentProxyApiMapperTest {
                         null,
                         null
                 )),
-                List.of(),
+                List.of(new AgentConnectionResolutionResponse(
+                        UUID.fromString("77777777-0000-4000-8000-000000000001"),
+                        UUID.fromString("99999999-0000-4000-8000-000000000001"),
+                        NODE_RUN_ID,
+                        CONNECTION_ID,
+                        INPUT_ID,
+                        ConnectionResolutionType.DELIVERED,
+                        this.objectMapper.readTree("{\"summary\":\"done\"}"),
+                        null,
+                        CREATED,
+                        REPOSITORY_ID
+                )),
                 List.of(),
                 new AgentWorkflowRunGraphResponse(
                         INPUT_ID,
@@ -445,5 +470,30 @@ class AgentProxyApiMapperTest {
                 null,
                 null
         ));
+    }
+
+    @Test
+    void workflowNodeRequestRequiresValidScopeMode() {
+        assertThatThrownBy(() -> this.mapper.toCommand(new SaveAgentWorkflowRequest(
+                "Full Testing",
+                List.of(new NodeRequest(NODE_ID, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        List.of(), List.of(), new NodePositionRequest(1.0, 2.0), null)),
+                List.of(),
+                INPUT_ID,
+                OUTPUT_ID
+        )))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("scope mode");
+
+        assertThatThrownBy(() -> this.mapper.toCommand(new SaveAgentWorkflowRequest(
+                "Full Testing",
+                List.of(new NodeRequest(NODE_ID, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        List.of(), List.of(), new NodePositionRequest(1.0, 2.0), "repository")),
+                List.of(),
+                INPUT_ID,
+                OUTPUT_ID
+        )))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("scope mode");
     }
 }

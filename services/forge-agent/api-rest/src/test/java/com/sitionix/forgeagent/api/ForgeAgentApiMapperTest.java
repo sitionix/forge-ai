@@ -64,6 +64,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
+import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
@@ -382,6 +383,44 @@ class ForgeAgentApiMapperTest {
                 CREATED,
                 UPDATED
         ));
+    }
+
+    @Test
+    void workflowNodeRequestRequiresValidScopeMode() {
+        assertThatThrownBy(() -> this.mapper.toCommand(new SaveWorkflowRequest(
+                "Full Testing",
+                List.of(new NodeRequest(NODE_A, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        List.of(), List.of(), new NodePositionRequest(1.0, 2.0), null)),
+                List.of(),
+                NODE_A,
+                NODE_A
+        )))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("INVALID_NODE_SCOPE_MODE");
+
+        assertThatThrownBy(() -> this.mapper.toCommand(new SaveWorkflowRequest(
+                "Full Testing",
+                List.of(new NodeRequest(NODE_A, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        List.of(), List.of(), new NodePositionRequest(1.0, 2.0), "repository")),
+                List.of(),
+                NODE_A,
+                NODE_A
+        )))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("INVALID_NODE_SCOPE_MODE");
+
+        assertThat(this.mapper.toCommand(new SaveWorkflowRequest(
+                "Full Testing",
+                List.of(new NodeRequest(NODE_A, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        List.of(), List.of(), new NodePositionRequest(1.0, 2.0), "PER_SCOPE")),
+                List.of(),
+                NODE_A,
+                NODE_A
+        )).nodes()).singleElement()
+                .extracting(Node::scopeMode)
+                .isEqualTo(NodeScopeMode.PER_SCOPE);
     }
 
     @Test

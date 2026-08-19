@@ -87,7 +87,8 @@ public class WorkflowGraphValidator {
                 inputMode,
                 this.normalizePorts(node.inputs()),
                 this.normalizePorts(node.outputs()),
-                position
+                position,
+                node.scopeMode()
         );
     }
 

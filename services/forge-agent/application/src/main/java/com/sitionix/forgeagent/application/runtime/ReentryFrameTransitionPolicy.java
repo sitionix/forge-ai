@@ -23,6 +23,7 @@ public class ReentryFrameTransitionPolicy implements FrameTransitionPolicy {
     public ExecutionFrame frameForActivation(final WorkflowRun workflowRun,
                                              final ExecutionFrame activationFrame,
                                              final RunNode targetNode,
+                                             final UUID targetInputPortId,
                                              final UUID repositoryId) {
         final boolean reentry = this.nodeRunRepository.findByWorkflowRunIdAndExecutionFrameId(workflowRun.id(), activationFrame.id()).stream()
                 .anyMatch(run -> run.sourceNodeId().equals(targetNode.sourceNodeId())
@@ -32,7 +33,9 @@ public class ReentryFrameTransitionPolicy implements FrameTransitionPolicy {
         }
         return this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
                 .filter(run -> activationFrame.id().equals(run.activationFrameId()))
+                .filter(run -> !activationFrame.id().equals(run.executionFrameId()))
                 .filter(run -> run.sourceNodeId().equals(targetNode.sourceNodeId()))
+                .filter(run -> targetInputPortId.equals(run.enteredViaInputPortId()))
                 .map(com.sitionix.forgeagent.domain.model.NodeRun::executionFrameId)
                 .distinct()
                 .map(this.frameRepository::findById)

@@ -11,10 +11,6 @@ import org.springframework.stereotype.Component;
 @Order(30)
 public class TaskAndDependenciesNodeInputContentPolicy extends DependenciesOnlyNodeInputContentPolicy {
 
-    public TaskAndDependenciesNodeInputContentPolicy(final WorkflowRunGraphRepository graphRepository) {
-        super(graphRepository);
-    }
-
     public TaskAndDependenciesNodeInputContentPolicy(final WorkflowRunGraphRepository graphRepository,
                                                      final NodeRunRepository nodeRunRepository) {
         super(graphRepository, nodeRunRepository);
