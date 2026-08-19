@@ -60,8 +60,7 @@ _sqlite-start:
     fi
 
 _knowledge-start: _sqlite-start
-    @if [[ ! -x "{{root}}/services/forge-knowledge/.venv/bin/uvicorn" ]] || \
-        ! "{{root}}/services/forge-knowledge/.venv/bin/python" -c "import fastapi, pydantic; assert fastapi.__version__ == '0.103.2'; assert pydantic.VERSION.startswith('1.')" >/dev/null 2>&1; then \
+    @if [[ ! -x "{{root}}/services/forge-knowledge/.venv/bin/uvicorn" ]]; then \
         scripts/knowledge/bootstrap.sh; \
     fi
     @scripts/knowledge/start.sh
@@ -70,8 +69,7 @@ _knowledge-stop:
     @scripts/knowledge/stop.sh
 
 _jarvis-start:
-    @if [[ ! -x "{{root}}/services/forge-jarvis/.venv/bin/uvicorn" ]] || \
-        ! "{{root}}/services/forge-jarvis/.venv/bin/python" -c "import fastapi, pydantic; assert fastapi.__version__ == '0.103.2'; assert pydantic.VERSION.startswith('1.')" >/dev/null 2>&1; then \
+    @if [[ ! -x "{{root}}/services/forge-jarvis/.venv/bin/uvicorn" ]]; then \
         scripts/jarvis/bootstrap.sh; \
     fi
     @scripts/jarvis/start.sh

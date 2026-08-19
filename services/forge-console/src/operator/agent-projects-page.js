@@ -1213,7 +1213,10 @@ export class AgentProjectsPage {
     return Boolean(this.state.selectedProjectId)
       && this.workflowsDataCurrent()
       && this.tasksDataCurrent()
-      && this.state.workflows.length > 0;
+      && this.repositoriesDataCurrent()
+      && !this.state.repositoriesLoadFailed
+      && this.state.workflows.length > 0
+      && this.state.repositories.length > 0;
   }
 
   isCurrentProjectLoad(projectId, loadSequence) {

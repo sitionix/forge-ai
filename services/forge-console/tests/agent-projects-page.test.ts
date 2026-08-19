@@ -20,6 +20,14 @@ async function flushAsync() {
   }
 }
 
+function taskRepositoryOption(document: Document, index = 0) {
+  const option = document.querySelectorAll<HTMLInputElement>('#agentsV2TaskRepositories input').item(index);
+  if (!option) {
+    throw new Error(`Task repository option ${index} was not rendered.`);
+  }
+  return option;
+}
+
 function project(id = '11111111-1111-4111-8111-111111111111', name = 'Sitionix') {
   return { id, name, createdAt: '2026-08-04T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z' };
 }
@@ -1967,7 +1975,8 @@ describe('Agent projects page', () => {
     workflowSelect.value = 'wf-2';
     const repositoryOptions = [...dom.window.document.querySelectorAll<HTMLInputElement>('#agentsV2TaskRepositories input')];
     expect(repositoryOptions.map((option) => option.parentElement?.textContent?.trim())).toEqual(['service-a']);
-    repositoryOptions[0].checked = true;
+    const repositoryOption = taskRepositoryOption(dom.window.document);
+    repositoryOption.checked = true;
     dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
 
@@ -1975,13 +1984,91 @@ describe('Agent projects page', () => {
       title: 'Test chain',
       input: 'Find X and pass the result forward',
       workflowId: 'wf-2',
-      repositoryIds: [repositoryOptions[0].value]
+      repositoryIds: [repositoryOption.value]
     });
     expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(1);
     expect(fakeApi.createWorkflowRun).not.toHaveBeenCalled();
     expect(dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(false);
     expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Deploy Review');
+  });
+
+  it('does not submit a Task without a selected repository', async () => {
+    const { dom, fakeApi } = await openedProject();
+    dom.window.document.getElementById('agentsV2CreateTask')?.click();
+    (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = 'Check calculation';
+    (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Count letters.';
+    (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+
+    dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.createProjectTask).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('agentsV2TaskModalError')?.textContent).toContain('select at least one repository');
+  });
+
+  it('submits multiple repository IDs in displayed Project repository order including uncloned repositories', async () => {
+    const repoB = repository('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', project().id, 'service-b', true);
+    const repoA = repository('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', project().id, 'service-a', false);
+    const fakeApi = api({ listProjectRepositories: vi.fn(() => Promise.resolve([repoB, repoA])) });
+    const { dom } = await openedProject(fakeApi);
+    dom.window.document.getElementById('agentsV2CreateTask')?.click();
+
+    const first = taskRepositoryOption(dom.window.document, 0);
+    const second = taskRepositoryOption(dom.window.document, 1);
+    expect([first.parentElement?.textContent?.trim(), second.parentElement?.textContent?.trim()]).toEqual(['service-b', 'service-a']);
+    expect(repoA.cloned).toBe(false);
+    second.checked = true;
+    first.checked = true;
+    (dom.window.document.getElementById('agentsV2TaskTitle') as HTMLInputElement).value = 'Cross-service task';
+    (dom.window.document.getElementById('agentsV2TaskInput') as HTMLTextAreaElement).value = 'Update both services.';
+    (dom.window.document.getElementById('agentsV2TaskWorkflow') as HTMLSelectElement).value = workflow().id;
+    dom.window.document.getElementById('agentsV2TaskForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(fakeApi.createProjectTask).toHaveBeenCalledWith(project().id, {
+      title: 'Cross-service task',
+      input: 'Update both services.',
+      workflowId: workflow().id,
+      repositoryIds: [repoB.id, repoA.id]
+    });
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps New Task disabled while repositories load and cannot open the modal', async () => {
+    const repositories = deferred<any>();
+    const fakeApi = api({ listProjectRepositories: vi.fn(() => repositories.promise) });
+    const context = await mountedPage(fakeApi);
+    const opening = context.page.openProject(project().id);
+    await flushAsync();
+
+    const newTask = context.dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement;
+    expect(newTask.disabled).toBe(true);
+    newTask.click();
+    expect(context.dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(false);
+
+    repositories.resolve([repository()]);
+    await opening;
+  });
+
+  it('keeps New Task disabled when repository loading fails or returns no repositories', async () => {
+    const failed = await openedProject(api({ listProjectRepositories: vi.fn(() => Promise.reject(new Error('Repositories unavailable'))) }));
+    expect((failed.dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(true);
+    failed.page.openTaskModal();
+    expect(failed.dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(false);
+
+    const empty = await openedProject(api({ listProjectRepositories: vi.fn(() => Promise.resolve([])) }));
+    expect((empty.dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(true);
+    empty.page.openTaskModal();
+    expect(empty.dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(false);
+  });
+
+  it('opens New Task normally when repository, workflow, and task state are current', async () => {
+    const { dom, page, fakeApi } = await openedProject();
+    expect(page.canCreateTask()).toBe(true);
+    dom.window.document.getElementById('agentsV2CreateTask')?.click();
+    expect(dom.window.document.getElementById('agentsV2TaskDialog')?.hasAttribute('open')).toBe(true);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(1);
   });
 
   it('failed Task creation keeps modal open and shows the controlled error', async () => {

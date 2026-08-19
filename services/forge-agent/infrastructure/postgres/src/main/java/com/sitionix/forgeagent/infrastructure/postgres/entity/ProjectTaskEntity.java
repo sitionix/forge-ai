@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.entity;
 import jakarta.persistence.Column;
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.ElementCollection;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
@@ -36,7 +37,7 @@ public class ProjectTaskEntity {
     @Column(name = "workflow_id", nullable = false)
     private UUID workflowId;
 
-    @ElementCollection
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "project_task_repositories", joinColumns = @JoinColumn(name = "task_id"))
     @Column(name = "repository_id", nullable = false)
     @OrderColumn(name = "repository_ordinal")

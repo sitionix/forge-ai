@@ -15,6 +15,7 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT_
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW_RUN;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -22,28 +23,41 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ExecutionFrameEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunNodeEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunPortEntity;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
+import com.sitionix.forgeagent.domain.model.ProjectTask;
+import com.sitionix.forgeagent.domain.port.ProjectTaskRepository;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
 import com.sitionix.forgeit.mockmvc.api.QueryParams;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 @IntegrationTest
 class ForgeAgentProjectTaskIT {
 
-    private static final UUID REPOSITORY_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
+    private static final UUID REPOSITORY_A1_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
+    private static final UUID REPOSITORY_A2_ID = UUID.fromString("70000000-0000-4000-8000-000000000002");
+    private static final UUID REPOSITORY_B1_ID = UUID.fromString("70000000-0000-4000-8000-000000000003");
+    private static final UUID PROJECT_B_ID = UUID.fromString("10000000-0000-4000-8000-000000000002");
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
+    @Autowired
+    private ProjectTaskRepository projectTaskRepository;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void givenPortAwareWorkflow_whenCreateTask_thenRuntimeSnapshotAndRootRunArePersisted() {
@@ -55,9 +69,12 @@ class ForgeAgentProjectTaskIT {
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateProjectTask.json")
                 .expectStatus(HttpStatus.CREATED)
+                .andExpectPath(jsonPath("$.repositoryIds[0]").value(REPOSITORY_A2_ID.toString()))
+                .andExpectPath(jsonPath("$.repositoryIds[1]").value(REPOSITORY_A1_ID.toString()))
                 .assertAndCreate();
 
-        assertThat(this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll()).hasSize(1);
+        final ProjectTaskEntity persistedTask = this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll().getFirst();
+        assertThat(persistedTask.getRepositoryIds()).containsExactly(REPOSITORY_A2_ID, REPOSITORY_A1_ID);
         assertThat(this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll()).singleElement().satisfies(run -> {
             assertThat(run.getSourceWorkflowId()).isEqualTo(WORKFLOW_ID);
             assertThat(run.getTaskId()).isNotNull();
@@ -74,6 +91,74 @@ class ForgeAgentProjectTaskIT {
             assertThat(nodeRun.getActivationFrameId()).isNull();
             assertThat(nodeRun.getEnteredViaInputPortId()).isEqualTo(UUID.fromString("61000000-0000-4000-8000-000000000001"));
         });
+
+        this.forgeIt.mockMvc()
+                .ping(GET_PROJECT_TASK)
+                .withPathParameters(PathParams.create().add("taskId", persistedTask.getId()))
+                .expectStatus(HttpStatus.OK)
+                .andExpectPath(jsonPath("$.repositoryIds[0]").value(REPOSITORY_A2_ID.toString()))
+                .andExpectPath(jsonPath("$.repositoryIds[1]").value(REPOSITORY_A1_ID.toString()))
+                .assertAndCreate();
+    }
+
+    @Test
+    void givenUnknownRepository_whenCreateTask_thenControlledErrorLeavesNoTaskOrRun() {
+        this.seedProjectAgentsAndWorkflow();
+        this.updateWorkflow();
+
+        this.forgeIt.mockMvc()
+                .ping(CREATE_PROJECT_TASK_ERROR)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestCreateProjectTaskUnknownRepository.json")
+                .expectStatus(HttpStatus.NOT_FOUND)
+                .andExpectPath(jsonPath("$.code").value("PROJECT_REPOSITORY_NOT_FOUND"))
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll()).isEmpty();
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll()).isEmpty();
+    }
+
+    @Test
+    void givenCrossProjectRepository_whenCreateTask_thenControlledErrorLeavesNoTaskOrRun() {
+        this.seedProjectAgentsAndWorkflow();
+        this.updateWorkflow();
+
+        this.forgeIt.mockMvc()
+                .ping(CREATE_PROJECT_TASK_ERROR)
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
+                .withRequest("requestCreateProjectTaskCrossProjectRepository.json")
+                .expectStatus(HttpStatus.BAD_REQUEST)
+                .andExpectPath(jsonPath("$.code").value("PROJECT_REPOSITORY_PROJECT_MISMATCH"))
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(ProjectTaskEntity.class).getAll()).isEmpty();
+        assertThat(this.forgeIt.postgresql().get(WorkflowRunEntity.class).getAll()).isEmpty();
+    }
+
+    @Test
+    void projectTaskRepositoryPersistsOrderedAssociationsAndDatabaseConstraints() {
+        this.seedProjectAgentsAndWorkflow();
+        final UUID taskId = UUID.fromString("50000000-0000-4000-8000-000000000020");
+        final Instant createdAt = Instant.parse("2026-08-10T12:00:00Z");
+
+        this.projectTaskRepository.save(new ProjectTask(
+                taskId, PROJECT_ALPHA_ID, "Persistence contract", "Verify ordering.", WORKFLOW_ID,
+                List.of(REPOSITORY_A2_ID, REPOSITORY_A1_ID), createdAt, createdAt));
+
+        assertThat(this.projectTaskRepository.findById(taskId).orElseThrow().repositoryIds())
+                .containsExactly(REPOSITORY_A2_ID, REPOSITORY_A1_ID);
+        assertThat(this.projectTaskRepository.findPageByProjectId(PROJECT_ALPHA_ID, 0, 20).items())
+                .extracting(ProjectTask::id).contains(taskId);
+        assertThat(this.jdbcTemplate.queryForList(
+                "SELECT repository_ordinal FROM project_task_repositories WHERE task_id = ? ORDER BY repository_ordinal",
+                Integer.class, taskId)).containsExactly(0, 1);
+        assertThatThrownBy(() -> this.jdbcTemplate.update(
+                "INSERT INTO project_task_repositories(task_id, repository_id, repository_ordinal) VALUES (?, ?, ?)",
+                taskId, REPOSITORY_A2_ID, 2)).isInstanceOf(DataIntegrityViolationException.class);
+
+        this.projectTaskRepository.deleteById(taskId);
+        assertThat(this.jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM project_task_repositories WHERE task_id = ?", Long.class, taskId)).isZero();
     }
 
     @Test
@@ -243,7 +328,10 @@ class ForgeAgentProjectTaskIT {
         this.forgeIt.postgresql()
                 .create()
                 .to(PROJECT.withJson("project_alpha.json"))
-                .to(PROJECT_REPOSITORY.withEntity(this.projectRepositoryEntity()))
+                .to(PROJECT.withEntity(this.projectBEntity()))
+                .to(PROJECT_REPOSITORY.withEntity(this.projectRepositoryEntity(REPOSITORY_A1_ID, PROJECT_ALPHA_ID, "repo-a1")))
+                .to(PROJECT_REPOSITORY.withEntity(this.projectRepositoryEntity(REPOSITORY_A2_ID, PROJECT_ALPHA_ID, "repo-a2")))
+                .to(PROJECT_REPOSITORY.withEntity(this.projectRepositoryEntity(REPOSITORY_B1_ID, PROJECT_B_ID, "repo-b1")))
                 .to(AGENT_DEFINITION.withJson("agent_a.json"))
                 .to(AGENT_DEFINITION.withJson("agent_b.json"))
                 .to(AGENT_DEFINITION.withJson("agent_c.json"))
@@ -251,12 +339,22 @@ class ForgeAgentProjectTaskIT {
                 .build();
     }
 
-    private ProjectRepositoryEntity projectRepositoryEntity() {
+    private ProjectRepositoryEntity projectRepositoryEntity(final UUID id, final UUID projectId, final String name) {
         final ProjectRepositoryEntity entity = new ProjectRepositoryEntity();
-        entity.setId(REPOSITORY_ID);
-        entity.setProjectId(PROJECT_ALPHA_ID);
-        entity.setRemoteUrl("https://example.com/forge/repository.git");
+        entity.setId(id);
+        entity.setProjectId(projectId);
+        entity.setRemoteUrl("https://example.com/forge/" + name + ".git");
         entity.setCreatedAt(Instant.parse("2026-08-10T10:00:00Z"));
+        return entity;
+    }
+
+    private ProjectEntity projectBEntity() {
+        final ProjectEntity entity = new ProjectEntity();
+        entity.setId(PROJECT_B_ID);
+        entity.setName("Project B");
+        entity.setNormalizedName("project b");
+        entity.setCreatedAt(Instant.parse("2026-08-10T09:00:00Z"));
+        entity.setUpdatedAt(Instant.parse("2026-08-10T09:00:00Z"));
         return entity;
     }
 }
