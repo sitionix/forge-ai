@@ -39,6 +39,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
+import com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
@@ -352,7 +353,8 @@ public class ForgeAgentClientMapper {
                 response.resultSourceNodeRunId(),
                 response.createdAt(),
                 response.startedAt(),
-                response.finishedAt()
+                response.finishedAt(),
+                response.repositoryIds() == null ? List.of() : response.repositoryIds()
         );
     }
 
@@ -385,7 +387,8 @@ public class ForgeAgentClientMapper {
         return new AgentRunNode(
                 response.sourceNodeId(),
                 response.agentName(),
-                new NodePosition(response.position().x(), response.position().y())
+                new NodePosition(response.position().x(), response.position().y()),
+                WorkflowNodeScopeMode.valueOf(response.scopeMode() == null ? "GLOBAL" : response.scopeMode())
         );
     }
 
@@ -502,7 +505,8 @@ public class ForgeAgentClientMapper {
                 inputMode(node.inputMode()).name(),
                 node.inputs() == null ? List.of() : node.inputs().stream().map(this::toRequest).toList(),
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toRequest).toList(),
-                node.position() == null ? new NodePositionRequest(0.0, 0.0) : new NodePositionRequest(node.position().x(), node.position().y())
+                node.position() == null ? new NodePositionRequest(0.0, 0.0) : new NodePositionRequest(node.position().x(), node.position().y()),
+                (node.scopeMode() == null ? WorkflowNodeScopeMode.GLOBAL : node.scopeMode()).name()
         );
     }
 
@@ -520,7 +524,8 @@ public class ForgeAgentClientMapper {
                 inputMode(response.inputMode(), "node.inputMode"),
                 response.inputs() == null ? List.of() : response.inputs().stream().map(this::toDomain).toList(),
                 response.outputs() == null ? List.of() : response.outputs().stream().map(this::toDomain).toList(),
-                new NodePosition(position.x(), position.y())
+                new NodePosition(position.x(), position.y()),
+                WorkflowNodeScopeMode.valueOf(response.scopeMode() == null ? "GLOBAL" : response.scopeMode())
         );
     }
 
@@ -592,7 +597,8 @@ public class ForgeAgentClientMapper {
                     response.failure() == null ? null : this.toDomain(response.failure()),
                     response.createdAt(),
                     response.startedAt(),
-                    response.finishedAt()
+                    response.finishedAt(),
+                    response.repositoryId()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Forge Agent node run JSON was invalid.", exception);

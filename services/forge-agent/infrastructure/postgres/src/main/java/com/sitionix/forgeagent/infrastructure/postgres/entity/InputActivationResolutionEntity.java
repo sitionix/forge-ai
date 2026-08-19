@@ -27,6 +27,9 @@ public class InputActivationResolutionEntity {
     @Column(name = "target_input_port_id", nullable = false)
     private UUID targetInputPortId;
 
+    @Column(name = "repository_id")
+    private UUID repositoryId;
+
     @Column(name = "activated_node_run_id")
     private UUID activatedNodeRunId;
 

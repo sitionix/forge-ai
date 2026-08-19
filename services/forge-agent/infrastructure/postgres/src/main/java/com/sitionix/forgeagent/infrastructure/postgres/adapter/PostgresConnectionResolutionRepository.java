@@ -36,7 +36,8 @@ public class PostgresConnectionResolutionRepository implements ConnectionResolut
                 ConnectionResolutionType.valueOf(entity.getResolutionType()),
                 entity.getPayload() == null ? null : new NodeRunOutput(entity.getPayload()),
                 entity.getConsumedByNodeRunId(),
-                entity.getCreatedAt()
+                entity.getCreatedAt(),
+                entity.getTargetRepositoryId()
         );
     }
 
@@ -75,6 +76,7 @@ public class PostgresConnectionResolutionRepository implements ConnectionResolut
         entity.setSourceNodeRunId(resolution.sourceNodeRunId());
         entity.setSourceConnectionId(resolution.sourceConnectionId());
         entity.setTargetInputPortId(resolution.targetInputPortId());
+        entity.setTargetRepositoryId(resolution.targetRepositoryId());
         entity.setResolutionType(resolution.type().name());
         entity.setPayload(resolution.payload() == null ? null : resolution.payload().jsonValue());
         entity.setConsumedByNodeRunId(resolution.consumedByNodeRunId());

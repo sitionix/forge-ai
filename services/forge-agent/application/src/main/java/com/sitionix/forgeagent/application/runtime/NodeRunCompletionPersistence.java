@@ -117,7 +117,8 @@ public class NodeRunCompletionPersistence {
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
-                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt()
+                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
+                nodeRun.repositoryId()
         );
     }
 
@@ -142,7 +143,8 @@ public class NodeRunCompletionPersistence {
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
-                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt()
+                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
+                nodeRun.repositoryId()
         );
     }
 

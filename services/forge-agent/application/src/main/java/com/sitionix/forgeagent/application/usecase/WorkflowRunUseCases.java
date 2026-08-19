@@ -7,6 +7,7 @@ import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.ExecutionFrame;
 import com.sitionix.forgeagent.domain.model.NodeRun;
+import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunNode;
 import com.sitionix.forgeagent.domain.model.RunPort;
@@ -44,18 +45,25 @@ public class WorkflowRunUseCases {
 
     @Transactional
     public WorkflowRun createWorkflowRun(final UUID workflowId, final CreateWorkflowRunCommand command) {
-        return this.createWorkflowRun(workflowId, command, null);
+        return this.createWorkflowRun(workflowId, command, null, List.of());
     }
 
     @Transactional
     public WorkflowRun createWorkflowRunForTask(final UUID workflowId, final CreateWorkflowRunCommand command, final UUID taskId) {
+        return this.createWorkflowRunForTask(workflowId, command, taskId, List.of());
+    }
+
+    @Transactional
+    public WorkflowRun createWorkflowRunForTask(final UUID workflowId, final CreateWorkflowRunCommand command,
+                                                final UUID taskId, final List<UUID> repositoryIds) {
         if (taskId == null) {
             throw new ValidationException("INVALID_WORKFLOW_RUN_TASK", "Workflow run taskId is required.");
         }
-        return this.createWorkflowRun(workflowId, command, taskId);
+        return this.createWorkflowRun(workflowId, command, taskId, repositoryIds);
     }
 
-    private WorkflowRun createWorkflowRun(final UUID workflowId, final CreateWorkflowRunCommand command, final UUID taskId) {
+    private WorkflowRun createWorkflowRun(final UUID workflowId, final CreateWorkflowRunCommand command,
+                                          final UUID taskId, final List<UUID> repositoryIds) {
         final String input = this.requireInput(command == null ? null : command.input());
         final Workflow workflow = this.workflowRepository.findByIdForUpdate(workflowId)
                 .orElseThrow(() -> new NotFoundException("WORKFLOW_NOT_FOUND", "Workflow was not found."));
@@ -64,6 +72,16 @@ public class WorkflowRunUseCases {
         final RunPort taskInputPort = this.requireTaskInputPort(graph);
         this.requireTaskOutputPort(graph);
         final RunNode entry = this.requireTaskInputNode(graph, taskInputPort);
+        final List<UUID> repositorySnapshot = List.copyOf(repositoryIds == null ? List.of() : repositoryIds);
+        if (entry.scopeMode() == NodeScopeMode.PER_SCOPE && repositorySnapshot.isEmpty()) {
+            throw new ValidationException("PER_SCOPE_ROOT_REQUIRES_REPOSITORIES", "PER_SCOPE workflow root requires selected repositories.");
+        }
+        final RunPort outputPort = this.requireTaskOutputPort(graph);
+        final RunNode outputNode = graph.nodes().stream().filter(node -> node.sourceNodeId().equals(outputPort.sourceNodeId()))
+                .findFirst().orElseThrow(() -> new ValidationException("WORKFLOW_OUTPUT_NOT_FOUND", "Workflow output node was not found."));
+        if (repositorySnapshot.size() > 1 && outputNode.scopeMode() == NodeScopeMode.PER_SCOPE) {
+            throw new ValidationException("AMBIGUOUS_PER_SCOPE_TASK_OUTPUT", "Task Output node must be GLOBAL for multi-repository runs.");
+        }
         if (graph.nodes().isEmpty()) {
             throw new ValidationException("WORKFLOW_ENTRY_NOT_FOUND", "Workflow entry node was not found.");
         }
@@ -84,11 +102,16 @@ public class WorkflowRunUseCases {
                 null,
                 now,
                 null,
-                null
+                null,
+                repositorySnapshot
         ));
         this.graphRepository.saveSnapshot(graph);
         final ExecutionFrame rootFrame = this.executionFrameRepository.save(new ExecutionFrame(UUID.randomUUID(), run.id(), null, now));
-        final List<NodeRun> rootNodeRuns = List.of(this.createRootNodeRun(run, rootFrame, entry, taskInputPort.sourcePortId()));
+        final List<UUID> rootRepositories = entry.scopeMode() == NodeScopeMode.GLOBAL
+                ? java.util.Collections.singletonList(null) : repositorySnapshot;
+        final List<NodeRun> rootNodeRuns = rootRepositories.stream()
+                .map(repositoryId -> this.createRootNodeRun(run, rootFrame, entry, taskInputPort.sourcePortId(), repositoryId))
+                .toList();
         return new WorkflowRun(
                 run.id(),
                 run.projectId(),
@@ -105,7 +128,8 @@ public class WorkflowRunUseCases {
                 run.resultSourceNodeRunId(),
                 run.createdAt(),
                 run.startedAt(),
-                run.finishedAt()
+                run.finishedAt(),
+                run.repositoryIds()
         );
     }
 
@@ -173,8 +197,9 @@ public class WorkflowRunUseCases {
                 .orElseThrow(() -> new ValidationException("WORKFLOW_ENTRY_NOT_FOUND", "Workflow entry node was not found."));
     }
 
-    private NodeRun createRootNodeRun(final WorkflowRun run, final ExecutionFrame rootFrame, final RunNode entry, final UUID taskInputPortId) {
+    private NodeRun createRootNodeRun(final WorkflowRun run, final ExecutionFrame rootFrame, final RunNode entry,
+                                      final UUID taskInputPortId, final UUID repositoryId) {
         this.executionBudgetPolicy.assertNodeRunCanBeCreated(run);
-        return this.nodeRunRepository.save(this.nodeRunFactory.root(run, rootFrame, entry, taskInputPortId));
+        return this.nodeRunRepository.save(this.nodeRunFactory.root(run, rootFrame, entry, taskInputPortId, repositoryId));
     }
 }

@@ -143,7 +143,8 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getResultSourceNodeRunId(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
-                entity.getFinishedAt()
+                entity.getFinishedAt(),
+                entity.getRepositoryIds()
         );
     }
 
@@ -164,7 +165,8 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 source.resultSourceNodeRunId(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
-                entity.getFinishedAt()
+                entity.getFinishedAt(),
+                entity.getRepositoryIds()
         );
     }
 
@@ -185,7 +187,8 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getResultSourceNodeRunId(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
-                entity.getFinishedAt()
+                entity.getFinishedAt(),
+                entity.getRepositoryIds()
         );
     }
 
@@ -213,6 +216,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         entity.setFinishedAt(run.finishedAt());
         entity.setResult(run.result() == null ? null : run.result().jsonValue());
         entity.setResultSourceNodeRunId(run.resultSourceNodeRunId());
+        entity.setRepositoryIds(new java.util.ArrayList<>(run.repositoryIds()));
         return entity;
     }
 

@@ -24,8 +24,20 @@ public record NodeRun(
         NodeRunExecutionModel executionModel,
         Instant createdAt,
         Instant startedAt,
-        Instant finishedAt
+        Instant finishedAt,
+        UUID repositoryId
 ) {
+    public NodeRun(final UUID id, final UUID workflowRunId, final UUID sourceNodeId, final UUID sourceAgentId,
+                   final String agentName, final String agentInstructions, final AgentOutputSchema agentOutputSchema,
+                   final NodeInputMode inputMode, final NodePosition position, final UUID executionFrameId,
+                   final UUID enteredViaInputPortId, final UUID activationFrameId, final UUID selectedOutputPortId,
+                   final Instant routingCompletedAt, final NodeRunStatus status, final NodeRunOutput output,
+                   final NodeRunFailure failure, final NodeRunExecutionModel executionModel, final Instant createdAt,
+                   final Instant startedAt, final Instant finishedAt) {
+        this(id, workflowRunId, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema,
+                inputMode, position, executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId,
+                routingCompletedAt, status, output, failure, executionModel, createdAt, startedAt, finishedAt, null);
+    }
     public NodeRun(final UUID id,
                    final UUID workflowRunId,
                    final UUID sourceNodeId,
@@ -110,5 +122,17 @@ public record NodeRun(
                 startedAt,
                 finishedAt
         );
+    }
+
+    public NodeRun(final UUID id, final UUID workflowRunId, final UUID sourceNodeId, final UUID sourceAgentId,
+                   final String agentName, final String agentInstructions, final AgentOutputSchema agentOutputSchema,
+                   final NodeInputMode inputMode, final NodePosition position, final UUID executionFrameId,
+                   final UUID enteredViaInputPortId, final UUID activationFrameId, final UUID selectedOutputPortId,
+                   final NodeRunStatus status, final NodeRunOutput output, final NodeRunFailure failure,
+                   final NodeRunExecutionModel executionModel, final Instant createdAt, final Instant startedAt,
+                   final Instant finishedAt, final UUID repositoryId) {
+        this(id, workflowRunId, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema,
+                inputMode, position, executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId,
+                null, status, output, failure, executionModel, createdAt, startedAt, finishedAt, repositoryId);
     }
 }

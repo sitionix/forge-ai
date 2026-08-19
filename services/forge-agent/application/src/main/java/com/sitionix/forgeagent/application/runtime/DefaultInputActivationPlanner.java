@@ -46,7 +46,7 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
     public void planFromResolutions(final WorkflowRun workflowRun, final Collection<ConnectionResolution> resolutions) {
         final ArrayDeque<ActivationWorkItem> queue = new ArrayDeque<>();
         resolutions.stream()
-                .map(resolution -> new ActivationWorkItem(resolution.executionFrameId(), resolution.targetInputPortId()))
+                .map(resolution -> new ActivationWorkItem(resolution.executionFrameId(), resolution.targetInputPortId(), resolution.targetRepositoryId()))
                 .distinct()
                 .forEach(queue::add);
         this.drain(workflowRun, queue);
@@ -56,7 +56,7 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
     public void planFromClosedActivation(final WorkflowRun workflowRun, final UUID activationFrameId, final UUID targetInputPortId) {
         final WorkflowRunGraph graph = this.graphRepository.findByWorkflowRunId(workflowRun.id());
         final ArrayDeque<ActivationWorkItem> queue = new ArrayDeque<>();
-        this.downstreamInputs(graph, targetInputPortId).forEach(portId -> queue.add(new ActivationWorkItem(activationFrameId, portId)));
+        this.downstreamInputs(graph, targetInputPortId).forEach(portId -> queue.add(new ActivationWorkItem(activationFrameId, portId, null)));
         this.drain(workflowRun, queue);
     }
 
@@ -68,7 +68,7 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                 continue;
             }
             this.resolutionEvaluator
-                    .evaluate(this.participationResolver.resolve(workflowRun.id(), item.activationFrameId(), item.targetInputPortId()))
+                    .evaluate(this.participationResolver.resolve(workflowRun.id(), item.activationFrameId(), item.targetInputPortId(), item.repositoryId()))
                     .apply(new PlannerActivationDecisionHandler(workflowRun, queue));
         }
     }
@@ -94,7 +94,7 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                 .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
     }
 
-    private record ActivationWorkItem(UUID activationFrameId, UUID targetInputPortId) {
+    private record ActivationWorkItem(UUID activationFrameId, UUID targetInputPortId, UUID repositoryId) {
     }
 
     private final class PlannerActivationDecisionHandler implements ActivationDecisionHandler {
@@ -117,19 +117,21 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
             DefaultInputActivationPlanner.this.activationResolutionRepository.find(
                     decision.workflowRunId(),
                     decision.activationFrameId(),
-                    decision.targetInputPortId()
+                    decision.targetInputPortId(),
+                    decision.repositoryId()
             ).orElseGet(() -> DefaultInputActivationPlanner.this.activationResolutionRepository.save(new InputActivationResolution(
                     UUID.randomUUID(),
                     decision.workflowRunId(),
                     decision.activationFrameId(),
                     decision.targetInputPortId(),
                     null,
-                    Instant.now(DefaultInputActivationPlanner.this.clock)
+                    Instant.now(DefaultInputActivationPlanner.this.clock),
+                    decision.repositoryId()
             )));
             DefaultInputActivationPlanner.this.downstreamInputs(
                     DefaultInputActivationPlanner.this.graphRepository.findByWorkflowRunId(decision.workflowRunId()),
                     decision.targetInputPortId()
-            ).forEach(portId -> this.queue.add(new ActivationWorkItem(decision.activationFrameId(), portId)));
+            ).forEach(portId -> this.queue.add(new ActivationWorkItem(decision.activationFrameId(), portId, decision.repositoryId())));
         }
 
         @Override
@@ -139,7 +141,8 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
             final java.util.Optional<InputActivationResolution> alreadyResolved = DefaultInputActivationPlanner.this.activationResolutionRepository.find(
                     decision.workflowRunId(),
                     decision.activationFrameId(),
-                    decision.targetInputPortId()
+                    decision.targetInputPortId(),
+                    decision.repositoryId()
             );
             if (alreadyResolved.isPresent()) {
                 return;
@@ -149,14 +152,16 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
             final RunNode targetNode = DefaultInputActivationPlanner.this.graphRepository.findNode(decision.workflowRunId(), inputPort.sourceNodeId())
                     .orElseThrow(() -> new ConflictException("RUN_NODE_NOT_FOUND", "Runtime node was not found."));
             DefaultInputActivationPlanner.this.budgetPolicy.assertNodeRunCanBeCreated(this.workflowRun);
-            final ExecutionFrame executionFrame = DefaultInputActivationPlanner.this.frameTransitionPolicy.frameForActivation(this.workflowRun, activationFrame, targetNode);
+            final ExecutionFrame executionFrame = DefaultInputActivationPlanner.this.frameTransitionPolicy.frameForActivation(
+                    this.workflowRun, activationFrame, targetNode, decision.repositoryId());
             final com.sitionix.forgeagent.domain.model.NodeRun nodeRun = DefaultInputActivationPlanner.this.nodeRunRepository.saveAndFlush(
                     DefaultInputActivationPlanner.this.nodeRunFactory.activated(
                             this.workflowRun,
                             executionFrame,
                             activationFrame,
                             targetNode,
-                            decision.targetInputPortId()
+                            decision.targetInputPortId(),
+                            decision.repositoryId()
                     )
             );
             final int consumed = DefaultInputActivationPlanner.this.resolutionRepository.markConsumed(
@@ -172,7 +177,8 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                     decision.activationFrameId(),
                     decision.targetInputPortId(),
                     nodeRun.id(),
-                    Instant.now(DefaultInputActivationPlanner.this.clock)
+                    Instant.now(DefaultInputActivationPlanner.this.clock),
+                    decision.repositoryId()
             ));
         }
     }

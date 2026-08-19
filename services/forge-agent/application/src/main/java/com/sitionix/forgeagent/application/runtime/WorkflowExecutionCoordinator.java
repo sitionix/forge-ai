@@ -51,7 +51,8 @@ public class WorkflowExecutionCoordinator {
                 workflowRun.resultSourceNodeRunId(),
                 workflowRun.createdAt(),
                 workflowRun.startedAt(),
-                workflowRun.finishedAt() == null ? Instant.now(this.clock) : workflowRun.finishedAt()
+                workflowRun.finishedAt() == null ? Instant.now(this.clock) : workflowRun.finishedAt(),
+                workflowRun.repositoryIds()
         );
     }
 
@@ -89,7 +90,8 @@ public class WorkflowExecutionCoordinator {
                 selected.id(),
                 workflowRun.createdAt(),
                 workflowRun.startedAt(),
-                workflowRun.finishedAt() == null ? Instant.now(this.clock) : workflowRun.finishedAt()
+                workflowRun.finishedAt() == null ? Instant.now(this.clock) : workflowRun.finishedAt(),
+                workflowRun.repositoryIds()
         );
     }
 

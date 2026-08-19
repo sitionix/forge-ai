@@ -3352,6 +3352,7 @@ describe('Agent projects page', () => {
         id: 'node-1',
         targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         inputMode: 'DEPENDENCIES_ONLY',
+        scopeMode: 'GLOBAL',
         inputs: [
           { id: 'input-a', name: 'First input', description: 'First.', order: 0 },
           { id: 'input-b', name: 'Second input', description: 'Second.', order: 1 }
@@ -3689,6 +3690,7 @@ describe('Agent projects page', () => {
         id: 'node-1',
         targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         inputMode: 'DEPENDENCIES_ONLY',
+        scopeMode: 'GLOBAL',
         inputs: [{ id: 'node-1-input', name: 'Input', description: 'Default workflow input.', order: 0 }],
         outputs: [{ id: 'node-1-output', name: 'Output', description: 'Default workflow output.', order: 0 }],
         position: { x: 80, y: 90 }
@@ -3721,7 +3723,7 @@ describe('Agent projects page', () => {
       .toContain(inconsistencyMessage);
   });
 
-  it('Workflow Builder edits dependency input mode in the Node Editor', async () => {
+  it('Workflow Builder edits dependency input and repository scope modes in the Node Editor', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
       portedNode('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20)
@@ -3737,6 +3739,10 @@ describe('Agent projects page', () => {
     const dependentSelect = dom.window.document.querySelector<HTMLSelectElement>('[data-node-editor-input-mode]')!;
     expect([...dependentSelect.options].map((option) => option.textContent)).toEqual(['Dependencies only', 'Task + dependencies']);
     dependentSelect.value = 'TASK_AND_DEPENDENCIES';
+    const scopeSelect = dom.window.document.querySelector<HTMLSelectElement>('[data-node-editor-scope-mode]')!;
+    expect([...scopeSelect.options].map((option) => option.textContent)).toEqual(['Once', 'Per repository']);
+    expect(scopeSelect.value).toBe('GLOBAL');
+    scopeSelect.value = 'PER_SCOPE';
     dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
     await page.workflowBuilder.save();
 
@@ -3747,6 +3753,7 @@ describe('Agent projects page', () => {
           id: 'node-1',
           targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
           inputMode: 'DEPENDENCIES_ONLY',
+          scopeMode: 'GLOBAL',
           inputs: [{ id: 'node-1-input', name: 'Input', description: 'Default workflow input.', order: 0 }],
           outputs: [{ id: 'node-1-output', name: 'Output', description: 'Default workflow output.', order: 0 }],
           position: { x: 10, y: 20 }
@@ -3755,6 +3762,7 @@ describe('Agent projects page', () => {
           id: 'node-2',
           targetId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
           inputMode: 'TASK_AND_DEPENDENCIES',
+          scopeMode: 'PER_SCOPE',
           inputs: [{ id: 'node-2-input', name: 'Input', description: 'Default workflow input.', order: 0 }],
           outputs: [{ id: 'node-2-output', name: 'Output', description: 'Default workflow output.', order: 0 }],
           position: { x: 260, y: 20 }

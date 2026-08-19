@@ -2,10 +2,16 @@ package com.sitionix.forgeagent.infrastructure.postgres.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.CollectionTable;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -59,4 +65,10 @@ public class WorkflowRunEntity {
 
     @Column(name = "result_source_node_run_id")
     private UUID resultSourceNodeRunId;
+
+    @ElementCollection
+    @CollectionTable(name = "workflow_run_repositories", joinColumns = @JoinColumn(name = "workflow_run_id"))
+    @OrderColumn(name = "repository_ordinal")
+    @Column(name = "repository_id", nullable = false)
+    private List<UUID> repositoryIds = new ArrayList<>();
 }

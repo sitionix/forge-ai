@@ -7,11 +7,15 @@ import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunConnection;
 import com.sitionix.forgeagent.domain.model.RunPort;
+import com.sitionix.forgeagent.domain.model.RunNode;
+import com.sitionix.forgeagent.domain.model.NodeScopeMode;
+import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.port.ConnectionResolutionRepository;
 import com.sitionix.forgeagent.domain.port.InputActivationResolutionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
+import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -32,34 +36,43 @@ public class GraphStateInputParticipationResolver implements InputParticipationR
     private final NodeRunRepository nodeRunRepository;
     private final ConnectionResolutionRepository resolutionRepository;
     private final InputActivationResolutionRepository activationResolutionRepository;
+    private final WorkflowRunRepository workflowRunRepository;
 
     @Override
-    public InputParticipation resolve(final UUID workflowRunId, final UUID activationFrameId, final UUID targetInputPortId) {
+    public InputParticipation resolve(final UUID workflowRunId, final UUID activationFrameId,
+                                      final UUID targetInputPortId, final UUID repositoryId) {
         final WorkflowRunGraph graph = this.graphRepository.findByWorkflowRunId(workflowRunId);
+        final WorkflowRun workflowRun = this.workflowRunRepository.findById(workflowRunId).orElseThrow();
         final List<NodeRun> frameNodeRuns = this.nodeRunRepository.findByWorkflowRunIdAndExecutionFrameId(workflowRunId, activationFrameId);
         final List<ConnectionResolution> resolutions = this.resolutionRepository.findByWorkflowRunAndFrame(workflowRunId, activationFrameId);
         final ParticipationIndex index = new ParticipationIndex(graph, activationFrameId, frameNodeRuns, resolutions);
         final List<ConnectionResolution> delivered = new ArrayList<>();
         boolean open = false;
         for (final RunConnection incoming : this.graphRepository.findIncomingConnections(workflowRunId, targetInputPortId)) {
-            final Optional<ConnectionResolution> resolution = index.resolutionForConnection(incoming.sourceConnectionId());
-            if (resolution.filter(value -> value.type() == ConnectionResolutionType.DELIVERED).isPresent()) {
-                delivered.add(resolution.orElseThrow());
-            }
-            if (resolution.isEmpty() && this.canStillContribute(incoming, index, new HashSet<>())) {
-                open = true;
+            final UUID sourceNodeId = index.outputOwner(incoming.sourceOutputPortId());
+            final RunNode sourceNode = graph.nodes().stream().filter(node -> node.sourceNodeId().equals(sourceNodeId)).findFirst().orElseThrow();
+            final List<UUID> expectedRepositories = sourceNode.scopeMode() == NodeScopeMode.GLOBAL
+                    ? java.util.Collections.singletonList(null)
+                    : repositoryId == null ? workflowRun.repositoryIds() : List.of(repositoryId);
+            for (final UUID sourceRepositoryId : expectedRepositories) {
+                final Optional<ConnectionResolution> resolution = index.resolutionForConnection(incoming.sourceConnectionId(), repositoryId, sourceRepositoryId);
+                resolution.filter(value -> value.type() == ConnectionResolutionType.DELIVERED).ifPresent(delivered::add);
+                if (resolution.isEmpty() && this.canStillContribute(incoming, index, sourceRepositoryId, new HashSet<>())) {
+                    open = true;
+                }
             }
         }
-        return new InputParticipation(workflowRunId, activationFrameId, targetInputPortId, open, delivered);
+        return new InputParticipation(workflowRunId, activationFrameId, targetInputPortId, open, delivered, repositoryId);
     }
 
     private boolean canStillContribute(final RunConnection connection,
                                        final ParticipationIndex index,
+                                       final UUID repositoryId,
                                        final Set<UUID> visitingNodes) {
         final UUID sourceNodeId = index.outputOwner(connection.sourceOutputPortId());
-        final NodeRun sourceRun = index.nodeRun(sourceNodeId);
+        final NodeRun sourceRun = index.nodeRun(sourceNodeId, repositoryId);
         if (sourceRun != null) {
-            return !this.isTerminal(sourceRun.status()) || index.resolutionForConnection(connection.sourceConnectionId()).isEmpty();
+            return !this.isTerminal(sourceRun.status()) || index.resolutionForConnection(connection.sourceConnectionId(), null, repositoryId).isEmpty();
         }
         if (!visitingNodes.add(sourceNodeId)) {
             return false;
@@ -69,15 +82,15 @@ public class GraphStateInputParticipationResolver implements InputParticipationR
             return false;
         }
         for (final RunPort inputPort : inputPorts) {
-            if (this.activationResolutionRepository.find(inputPort.workflowRunId(), index.frameId(), inputPort.sourcePortId()).isPresent()) {
+            if (this.activationResolutionRepository.find(inputPort.workflowRunId(), index.frameId(), inputPort.sourcePortId(), repositoryId).isPresent()) {
                 continue;
             }
             for (final RunConnection incoming : index.incoming(inputPort.sourcePortId())) {
-                final Optional<ConnectionResolution> resolution = index.resolutionForConnection(incoming.sourceConnectionId());
+                final Optional<ConnectionResolution> resolution = index.resolutionForConnection(incoming.sourceConnectionId(), repositoryId, repositoryId);
                 if (resolution.filter(value -> value.type() == ConnectionResolutionType.DELIVERED).isPresent()) {
                     return true;
                 }
-                if (resolution.isEmpty() && this.canStillContribute(incoming, index, visitingNodes)) {
+                if (resolution.isEmpty() && this.canStillContribute(incoming, index, repositoryId, visitingNodes)) {
                     return true;
                 }
             }
@@ -95,8 +108,8 @@ public class GraphStateInputParticipationResolver implements InputParticipationR
     private static final class ParticipationIndex {
         private final WorkflowRunGraph graph;
         private final UUID frameId;
-        private final Map<UUID, NodeRun> nodeRunsBySourceNodeId;
-        private final Map<UUID, ConnectionResolution> resolutionsByConnectionId;
+        private final List<NodeRun> nodeRuns;
+        private final List<ConnectionResolution> resolutions;
         private final Map<UUID, UUID> outputOwners;
         private final Map<UUID, List<RunPort>> inputPortsByNode;
         private final Map<UUID, List<RunConnection>> incomingByInputPort;
@@ -107,10 +120,8 @@ public class GraphStateInputParticipationResolver implements InputParticipationR
                                    final List<ConnectionResolution> resolutions) {
             this.graph = graph;
             this.frameId = frameId;
-            this.nodeRunsBySourceNodeId = nodeRuns.stream()
-                    .collect(Collectors.toMap(NodeRun::sourceNodeId, nodeRun -> nodeRun, (left, right) -> left));
-            this.resolutionsByConnectionId = resolutions.stream()
-                    .collect(Collectors.toMap(ConnectionResolution::sourceConnectionId, resolution -> resolution, (left, right) -> left));
+            this.nodeRuns = nodeRuns;
+            this.resolutions = resolutions;
             this.outputOwners = graph.ports().stream()
                     .filter(port -> port.direction() == PortDirection.OUTPUT)
                     .collect(Collectors.toMap(RunPort::sourcePortId, RunPort::sourceNodeId));
@@ -129,8 +140,9 @@ public class GraphStateInputParticipationResolver implements InputParticipationR
             return this.outputOwners.get(outputPortId);
         }
 
-        private NodeRun nodeRun(final UUID sourceNodeId) {
-            return this.nodeRunsBySourceNodeId.get(sourceNodeId);
+        private NodeRun nodeRun(final UUID sourceNodeId, final UUID repositoryId) {
+            return this.nodeRuns.stream().filter(run -> run.sourceNodeId().equals(sourceNodeId))
+                    .filter(run -> java.util.Objects.equals(run.repositoryId(), repositoryId)).findFirst().orElse(null);
         }
 
         private List<RunPort> inputPorts(final UUID sourceNodeId) {
@@ -141,8 +153,14 @@ public class GraphStateInputParticipationResolver implements InputParticipationR
             return this.incomingByInputPort.getOrDefault(inputPortId, List.of());
         }
 
-        private Optional<ConnectionResolution> resolutionForConnection(final UUID connectionId) {
-            return Optional.ofNullable(this.resolutionsByConnectionId.get(connectionId));
+        private Optional<ConnectionResolution> resolutionForConnection(final UUID connectionId,
+                                                                        final UUID targetRepositoryId,
+                                                                        final UUID sourceRepositoryId) {
+            return this.resolutions.stream().filter(resolution -> resolution.sourceConnectionId().equals(connectionId))
+                    .filter(resolution -> java.util.Objects.equals(resolution.targetRepositoryId(), targetRepositoryId))
+                    .filter(resolution -> this.nodeRuns.stream().anyMatch(run -> run.id().equals(resolution.sourceNodeRunId())
+                            && java.util.Objects.equals(run.repositoryId(), sourceRepositoryId)))
+                    .findFirst();
         }
     }
 }

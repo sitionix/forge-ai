@@ -22,8 +22,18 @@ public record AgentWorkflowRunResponse(
         UUID resultSourceNodeRunId,
         Instant createdAt,
         Instant startedAt,
-        Instant finishedAt
+        Instant finishedAt,
+        List<UUID> repositoryIds
 ) {
+    public AgentWorkflowRunResponse(final UUID id, final UUID projectId, final UUID sourceWorkflowId, final UUID taskId,
+                                    final String workflowName, final String input, final AgentWorkflowRunStatus status,
+                                    final List<AgentNodeRunResponse> nodeRuns, final List<AgentConnectionResolutionResponse> connectionResolutions,
+                                    final List<AgentWorkflowRunExecutionEdgeResponse> executionEdges, final AgentWorkflowRunGraphResponse runtimeGraph,
+                                    final JsonNode result, final UUID resultSourceNodeRunId, final Instant createdAt,
+                                    final Instant startedAt, final Instant finishedAt) {
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, connectionResolutions,
+                executionEdges, runtimeGraph, result, resultSourceNodeRunId, createdAt, startedAt, finishedAt, List.of());
+    }
     public AgentWorkflowRunResponse(final UUID id,
                                     final UUID projectId,
                                     final UUID sourceWorkflowId,

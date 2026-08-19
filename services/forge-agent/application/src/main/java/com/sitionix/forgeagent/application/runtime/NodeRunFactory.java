@@ -20,23 +20,23 @@ public class NodeRunFactory {
     public NodeRun root(final WorkflowRun workflowRun,
                         final ExecutionFrame executionFrame,
                         final RunNode runNode,
-                        final UUID enteredViaInputPortId) {
-        return this.create(workflowRun, executionFrame, runNode, null, enteredViaInputPortId);
+                        final UUID enteredViaInputPortId, final UUID repositoryId) {
+        return this.create(workflowRun, executionFrame, runNode, null, enteredViaInputPortId, repositoryId);
     }
 
     public NodeRun activated(final WorkflowRun workflowRun,
                              final ExecutionFrame executionFrame,
                              final ExecutionFrame activationFrame,
                              final RunNode runNode,
-                             final UUID enteredViaInputPortId) {
-        return this.create(workflowRun, executionFrame, runNode, activationFrame.id(), enteredViaInputPortId);
+                             final UUID enteredViaInputPortId, final UUID repositoryId) {
+        return this.create(workflowRun, executionFrame, runNode, activationFrame.id(), enteredViaInputPortId, repositoryId);
     }
 
     private NodeRun create(final WorkflowRun workflowRun,
                            final ExecutionFrame executionFrame,
                            final RunNode runNode,
                            final UUID activationFrameId,
-                           final UUID enteredViaInputPortId) {
+                           final UUID enteredViaInputPortId, final UUID repositoryId) {
         return new NodeRun(
                 UUID.randomUUID(),
                 workflowRun.id(),
@@ -51,13 +51,15 @@ public class NodeRunFactory {
                 enteredViaInputPortId,
                 activationFrameId,
                 null,
+                null,
                 NodeRunStatus.PENDING,
                 null,
                 null,
                 runNode.executionModel(),
                 Instant.now(this.clock),
                 null,
-                null
+                null,
+                repositoryId
         );
     }
 }

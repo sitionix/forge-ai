@@ -23,8 +23,19 @@ public record NodeRunResponse(
         NodeRunFailureResponse failure,
         Instant createdAt,
         Instant startedAt,
-        Instant finishedAt
+        Instant finishedAt,
+        UUID repositoryId
 ) {
+    public NodeRunResponse(final UUID id, final UUID sourceNodeId, final UUID sourceAgentId, final String agentName,
+                           final String agentInstructions, final JsonNode agentOutputSchema, final String inputMode,
+                           final NodePositionResponse position, final UUID executionFrameId, final UUID enteredViaInputPortId,
+                           final UUID activationFrameId, final UUID selectedOutputPortId, final AgentNodeRunStatus status,
+                           final JsonNode output, final NodeRunFailureResponse failure, final Instant createdAt,
+                           final Instant startedAt, final Instant finishedAt) {
+        this(id, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema, inputMode, position,
+                executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId, status, output,
+                failure, createdAt, startedAt, finishedAt, null);
+    }
     public NodeRunResponse(final UUID id,
                            final UUID sourceNodeId,
                            final UUID sourceAgentId,
@@ -56,7 +67,8 @@ public record NodeRunResponse(
                 failure,
                 createdAt,
                 startedAt,
-                finishedAt
+                finishedAt,
+                null
         );
     }
 }

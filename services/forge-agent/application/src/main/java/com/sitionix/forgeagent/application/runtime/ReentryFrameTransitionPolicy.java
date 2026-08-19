@@ -22,14 +22,23 @@ public class ReentryFrameTransitionPolicy implements FrameTransitionPolicy {
     @Override
     public ExecutionFrame frameForActivation(final WorkflowRun workflowRun,
                                              final ExecutionFrame activationFrame,
-                                             final RunNode targetNode) {
-        return this.nodeRunRepository.findByWorkflowRunIdAndExecutionFrameIdAndSourceNodeId(
-                        workflowRun.id(),
-                        activationFrame.id(),
-                        targetNode.sourceNodeId()
-                )
-                .map(existing -> this.createChildFrame(workflowRun, activationFrame))
-                .orElse(activationFrame);
+                                             final RunNode targetNode,
+                                             final UUID repositoryId) {
+        final boolean reentry = this.nodeRunRepository.findByWorkflowRunIdAndExecutionFrameId(workflowRun.id(), activationFrame.id()).stream()
+                .anyMatch(run -> run.sourceNodeId().equals(targetNode.sourceNodeId())
+                        && java.util.Objects.equals(run.repositoryId(), repositoryId));
+        if (!reentry) {
+            return activationFrame;
+        }
+        return this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
+                .filter(run -> activationFrame.id().equals(run.activationFrameId()))
+                .filter(run -> run.sourceNodeId().equals(targetNode.sourceNodeId()))
+                .map(com.sitionix.forgeagent.domain.model.NodeRun::executionFrameId)
+                .distinct()
+                .map(this.frameRepository::findById)
+                .flatMap(java.util.Optional::stream)
+                .findFirst()
+                .orElseGet(() -> this.createChildFrame(workflowRun, activationFrame));
     }
 
     private ExecutionFrame createChildFrame(final WorkflowRun workflowRun, final ExecutionFrame parentFrame) {

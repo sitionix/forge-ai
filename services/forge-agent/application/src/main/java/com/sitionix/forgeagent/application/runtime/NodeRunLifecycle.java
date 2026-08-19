@@ -98,7 +98,8 @@ public class NodeRunLifecycle {
                     workflowRun.nodeRuns(),
                     workflowRun.createdAt(),
                     workflowRun.startedAt() == null ? now : workflowRun.startedAt(),
-                    workflowRun.finishedAt()
+                    workflowRun.finishedAt(),
+                    workflowRun.repositoryIds()
             ));
         }
 
@@ -222,7 +223,8 @@ public class NodeRunLifecycle {
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt() == null ? now : nodeRun.startedAt(),
-                nodeRun.finishedAt()
+                nodeRun.finishedAt(),
+                nodeRun.repositoryId()
         );
     }
 
@@ -247,7 +249,8 @@ public class NodeRunLifecycle {
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
-                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt()
+                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
+                nodeRun.repositoryId()
         );
     }
 

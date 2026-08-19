@@ -17,7 +17,8 @@ public class ResolvedEmptyCloseRule implements InputResolutionRule {
         return new CloseActivationDecision(
                 participation.workflowRunId(),
                 participation.activationFrameId(),
-                participation.targetInputPortId()
+                participation.targetInputPortId(),
+                participation.repositoryId()
         );
     }
 }

@@ -9,6 +9,11 @@ public record InputActivationResolution(
         UUID activationFrameId,
         UUID targetInputPortId,
         UUID activatedNodeRunId,
-        Instant createdAt
+        Instant createdAt,
+        UUID repositoryId
 ) {
+    public InputActivationResolution(final UUID id, final UUID workflowRunId, final UUID activationFrameId,
+                                     final UUID targetInputPortId, final UUID activatedNodeRunId, final Instant createdAt) {
+        this(id, workflowRunId, activationFrameId, targetInputPortId, activatedNodeRunId, createdAt, null);
+    }
 }

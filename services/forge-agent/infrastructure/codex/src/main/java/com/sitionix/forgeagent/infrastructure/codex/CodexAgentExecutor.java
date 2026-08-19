@@ -56,6 +56,11 @@ public final class CodexAgentExecutor implements AgentExecutor {
                 final ObjectNode contributionNode = this.objectMapper.createObjectNode();
                 contributionNode.put("sourceNodeRunId", contribution.sourceNodeRunId().toString());
                 contributionNode.put("sourceConnectionId", contribution.sourceConnectionId().toString());
+                if (contribution.sourceRepositoryId() == null) {
+                    contributionNode.putNull("sourceRepositoryId");
+                } else {
+                    contributionNode.put("sourceRepositoryId", contribution.sourceRepositoryId().toString());
+                }
                 contributionNode.set("payload", this.parsePayload(contribution.payload()));
                 contributions.add(contributionNode);
             }

@@ -5,6 +5,10 @@ import com.sitionix.forgeagent.domain.model.ConnectionResolutionType;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.RunConnection;
+import com.sitionix.forgeagent.domain.model.RunNode;
+import com.sitionix.forgeagent.domain.model.RunPort;
+import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -17,18 +21,25 @@ import org.springframework.stereotype.Component;
 public class ConnectionResolutionProjector {
 
     private final Clock clock;
+    private final WorkflowRunGraphRepository graphRepository;
+    private final ScopeProjectionPolicy scopeProjectionPolicy;
 
     public List<ConnectionResolution> terminal(final NodeRun nodeRun) {
         return List.of();
     }
 
-    public List<ConnectionResolution> selected(final NodeRun nodeRun,
+    public List<ConnectionResolution> selected(final WorkflowRun workflowRun, final NodeRun nodeRun,
                                                final NodeRunOutput output,
                                                final UUID selectedOutputPortId,
                                                final List<RunConnection> outgoingConnections) {
         final Instant now = Instant.now(this.clock);
-        return outgoingConnections.stream()
-                .map(connection -> this.resolution(nodeRun, output, selectedOutputPortId, connection, now))
+        final RunNode sourceNode = this.graphRepository.findNode(nodeRun.workflowRunId(), nodeRun.sourceNodeId()).orElseThrow();
+        return outgoingConnections.stream().flatMap(connection -> {
+            final RunPort targetPort = this.graphRepository.findPort(nodeRun.workflowRunId(), connection.targetInputPortId()).orElseThrow();
+            final RunNode targetNode = this.graphRepository.findNode(nodeRun.workflowRunId(), targetPort.sourceNodeId()).orElseThrow();
+            return this.scopeProjectionPolicy.project(sourceNode.scopeMode(), targetNode.scopeMode(), nodeRun.repositoryId(), workflowRun.repositoryIds())
+                    .stream().map(repositoryId -> this.resolution(nodeRun, output, selectedOutputPortId, connection, now, repositoryId));
+        })
                 .toList();
     }
 
@@ -36,7 +47,7 @@ public class ConnectionResolutionProjector {
                                             final NodeRunOutput output,
                                             final UUID selectedOutputPortId,
                                             final RunConnection connection,
-                                            final Instant now) {
+                                            final Instant now, final UUID targetRepositoryId) {
         final boolean delivered = selectedOutputPortId.equals(connection.sourceOutputPortId());
         return new ConnectionResolution(
                 UUID.randomUUID(),
@@ -48,7 +59,8 @@ public class ConnectionResolutionProjector {
                 delivered ? ConnectionResolutionType.DELIVERED : ConnectionResolutionType.CLOSED,
                 delivered ? output : null,
                 null,
-                now
+                now,
+                targetRepositoryId
         );
     }
 }

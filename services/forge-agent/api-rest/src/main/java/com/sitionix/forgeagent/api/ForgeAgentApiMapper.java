@@ -64,6 +64,7 @@ import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodePosition;
+import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
@@ -237,7 +238,8 @@ class ForgeAgentApiMapper {
                     run.resultSourceNodeRunId(),
                     run.createdAt(),
                     run.startedAt(),
-                    run.finishedAt()
+                    run.finishedAt(),
+                    run.repositoryIds()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored workflow run result JSON is invalid.", exception);
@@ -261,7 +263,8 @@ class ForgeAgentApiMapper {
         return new RunNodeResponse(
                 node.sourceNodeId(),
                 node.agentName(),
-                new NodePositionResponse(node.position().x(), node.position().y())
+                new NodePositionResponse(node.position().x(), node.position().y()),
+                node.scopeMode().name()
         );
     }
 
@@ -344,7 +347,8 @@ class ForgeAgentApiMapper {
                 inputMode(request.inputMode()),
                 request.inputs() == null ? List.of() : request.inputs().stream().map(this::toNodePort).toList(),
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toNodePort).toList(),
-                position
+                position,
+                request.scopeMode() == null ? NodeScopeMode.GLOBAL : NodeScopeMode.valueOf(request.scopeMode())
         );
     }
 
@@ -355,7 +359,8 @@ class ForgeAgentApiMapper {
                 inputMode(node.inputMode()).name(),
                 node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
-                new NodePositionResponse(node.position().x(), node.position().y())
+                new NodePositionResponse(node.position().x(), node.position().y()),
+                node.scopeMode().name()
         );
     }
 
@@ -401,7 +406,8 @@ class ForgeAgentApiMapper {
                     nodeRun.failure() == null ? null : new NodeRunFailureResponse(nodeRun.failure().code(), nodeRun.failure().message()),
                     nodeRun.createdAt(),
                     nodeRun.startedAt(),
-                    nodeRun.finishedAt()
+                    nodeRun.finishedAt(),
+                    nodeRun.repositoryId()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored node run JSON is invalid.", exception);
@@ -419,7 +425,8 @@ class ForgeAgentApiMapper {
                     resolution.type(),
                     resolution.payload() == null ? null : this.objectMapper.readTree(resolution.payload().jsonValue()),
                     resolution.consumedByNodeRunId(),
-                    resolution.createdAt()
+                    resolution.createdAt(),
+                    resolution.targetRepositoryId()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored connection resolution JSON is invalid.", exception);

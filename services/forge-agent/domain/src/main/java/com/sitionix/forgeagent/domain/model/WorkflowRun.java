@@ -20,8 +20,22 @@ public record WorkflowRun(
         UUID resultSourceNodeRunId,
         Instant createdAt,
         Instant startedAt,
-        Instant finishedAt
+        Instant finishedAt,
+        List<UUID> repositoryIds
 ) {
+    public WorkflowRun {
+        repositoryIds = repositoryIds == null ? List.of() : List.copyOf(repositoryIds);
+    }
+
+    public WorkflowRun(final UUID id, final UUID projectId, final UUID sourceWorkflowId, final UUID taskId,
+                       final String workflowName, final String input, final WorkflowRunStatus status,
+                       final List<NodeRun> nodeRuns, final List<ConnectionResolution> connectionResolutions,
+                       final List<WorkflowRunExecutionEdge> executionEdges, final WorkflowRunGraph runtimeGraph,
+                       final NodeRunOutput result, final UUID resultSourceNodeRunId, final Instant createdAt,
+                       final Instant startedAt, final Instant finishedAt) {
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, connectionResolutions,
+                executionEdges, runtimeGraph, result, resultSourceNodeRunId, createdAt, startedAt, finishedAt, List.of());
+    }
     public WorkflowRun(final UUID id,
                        final UUID projectId,
                        final UUID sourceWorkflowId,
@@ -34,6 +48,14 @@ public record WorkflowRun(
                        final Instant startedAt,
                        final Instant finishedAt) {
         this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), List.of(), null, null, null, createdAt, startedAt, finishedAt);
+    }
+
+    public WorkflowRun(final UUID id, final UUID projectId, final UUID sourceWorkflowId, final UUID taskId,
+                       final String workflowName, final String input, final WorkflowRunStatus status,
+                       final List<NodeRun> nodeRuns, final Instant createdAt, final Instant startedAt,
+                       final Instant finishedAt, final List<UUID> repositoryIds) {
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns, List.of(), List.of(),
+                null, null, null, createdAt, startedAt, finishedAt, repositoryIds);
     }
 
     public WorkflowRun(final UUID id,

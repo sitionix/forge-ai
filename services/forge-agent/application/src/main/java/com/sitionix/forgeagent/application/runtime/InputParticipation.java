@@ -9,6 +9,11 @@ public record InputParticipation(
         UUID activationFrameId,
         UUID targetInputPortId,
         boolean open,
-        List<ConnectionResolution> delivered
+        List<ConnectionResolution> delivered,
+        UUID repositoryId
 ) {
+    public InputParticipation(final UUID workflowRunId, final UUID activationFrameId, final UUID targetInputPortId,
+                              final boolean open, final List<ConnectionResolution> delivered) {
+        this(workflowRunId, activationFrameId, targetInputPortId, open, delivered, null);
+    }
 }

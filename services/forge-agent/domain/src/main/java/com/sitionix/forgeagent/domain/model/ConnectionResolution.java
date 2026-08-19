@@ -13,6 +13,14 @@ public record ConnectionResolution(
         ConnectionResolutionType type,
         NodeRunOutput payload,
         UUID consumedByNodeRunId,
-        Instant createdAt
+        Instant createdAt,
+        UUID targetRepositoryId
 ) {
+    public ConnectionResolution(final UUID id, final UUID workflowRunId, final UUID executionFrameId,
+                                final UUID sourceNodeRunId, final UUID sourceConnectionId, final UUID targetInputPortId,
+                                final ConnectionResolutionType type, final NodeRunOutput payload,
+                                final UUID consumedByNodeRunId, final Instant createdAt) {
+        this(id, workflowRunId, executionFrameId, sourceNodeRunId, sourceConnectionId, targetInputPortId,
+                type, payload, consumedByNodeRunId, createdAt, null);
+    }
 }

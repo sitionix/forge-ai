@@ -8,8 +8,13 @@ public record ActivateNodeDecision(
         UUID workflowRunId,
         UUID activationFrameId,
         UUID targetInputPortId,
-        List<ConnectionResolution> delivered
+        List<ConnectionResolution> delivered,
+        UUID repositoryId
 ) implements ActivationDecision {
+    public ActivateNodeDecision(final UUID workflowRunId, final UUID activationFrameId,
+                                final UUID targetInputPortId, final List<ConnectionResolution> delivered) {
+        this(workflowRunId, activationFrameId, targetInputPortId, delivered, null);
+    }
 
     @Override
     public void apply(final ActivationDecisionHandler handler) {

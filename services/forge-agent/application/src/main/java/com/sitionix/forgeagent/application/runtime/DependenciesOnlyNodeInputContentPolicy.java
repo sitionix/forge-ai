@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.domain.model.NodeInputContribution;
 import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
+import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import java.util.Comparator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.annotation.Order;
@@ -16,6 +17,11 @@ import org.springframework.stereotype.Component;
 public class DependenciesOnlyNodeInputContentPolicy implements NodeInputContentPolicy {
 
     private final WorkflowRunGraphRepository graphRepository;
+    private final NodeRunRepository nodeRunRepository;
+
+    public DependenciesOnlyNodeInputContentPolicy(final WorkflowRunGraphRepository graphRepository) {
+        this(graphRepository, null);
+    }
 
     @Override
     public boolean supports(final NodeInputContentContext context) {
@@ -39,7 +45,9 @@ public class DependenciesOnlyNodeInputContentPolicy implements NodeInputContentP
                 .map(resolution -> new NodeInputContribution(
                         resolution.sourceNodeRunId(),
                         resolution.sourceConnectionId(),
-                        resolution.payload()
+                        resolution.payload(),
+                        this.nodeRunRepository == null ? null
+                                : this.nodeRunRepository.findById(resolution.sourceNodeRunId()).orElseThrow().repositoryId()
                 ))
                 .toList();
     }
