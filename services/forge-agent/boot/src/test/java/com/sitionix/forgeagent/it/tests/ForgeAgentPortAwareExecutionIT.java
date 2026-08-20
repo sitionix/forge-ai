@@ -638,6 +638,82 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.frameRepository.findByWorkflowRunId(runId)).hasSize(2);
     }
 
+    @Test
+    void childFrameActivationReevaluatesWaitingParentDownstreamInput() {
+        this.seed();
+        this.saveAsymmetricScopedReentryWorkflow();
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation -> {
+            final NodeRunOutput output = invocation.getArgument(0);
+            return output.jsonValue().contains("direct") ? B_OUT : C_OTHER;
+        });
+
+        final ProjectTaskDetails created = this.projectTaskUseCases.createProjectTask(PROJECT_ALPHA_ID, new CreateProjectTaskCommand(
+                "Asymmetric scoped reentry",
+                "Reevaluate a waiting parent activation after child-frame activation.",
+                WORKFLOW_ID,
+                List.of(REPOSITORY_ID, REPOSITORY_B_ID)
+        ));
+        final UUID runId = created.runs().getFirst().id();
+        final UUID frameA = this.rootFrame(runId);
+
+        this.complete(this.onlyPending(runId, A, REPOSITORY_ID), "{\"step\":\"root-a\"}");
+        this.complete(this.onlyPending(runId, A, REPOSITORY_B_ID), "{\"step\":\"root-b\"}");
+        this.complete(this.onlyPending(runId, B, REPOSITORY_ID), "{\"route\":\"direct\"}");
+        this.complete(this.onlyPending(runId, B, REPOSITORY_B_ID), "{\"route\":\"delay\"}");
+
+        final NodeRun parentTarget = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_ID);
+        assertThat(parentTarget.executionFrameId()).isEqualTo(frameA);
+        this.complete(parentTarget, "{\"generation\":\"parent\"}");
+        final ConnectionResolution parentContribution = this.resolutionRepository.findByWorkflowRunAndFrame(runId, frameA).stream()
+                .filter(resolution -> resolution.sourceNodeRunId().equals(parentTarget.id()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(parentContribution.consumedByNodeRunId()).isNull();
+        assertThat(this.pendingForSource(runId, STRATEGY)).isEmpty();
+
+        this.complete(this.onlyPending(runId, C, REPOSITORY_B_ID), "{\"step\":\"delay-one\"}");
+        this.complete(this.onlyPending(runId, D, REPOSITORY_B_ID), "{\"step\":\"delay-two\"}");
+        this.complete(this.onlyPending(runId, X), "{\"step\":\"gate\"}");
+
+        final List<NodeRun> childTargets = this.pendingForSource(runId, IMPLEMENTER);
+        assertThat(childTargets).hasSize(2);
+        assertThat(childTargets).extracting(NodeRun::repositoryId)
+                .containsExactlyInAnyOrder(REPOSITORY_ID, REPOSITORY_B_ID);
+        final UUID frameB = childTargets.getFirst().executionFrameId();
+        assertThat(frameB).isNotEqualTo(frameA);
+        assertThat(childTargets).extracting(NodeRun::executionFrameId).containsOnly(frameB);
+
+        final NodeRun parentFinal = this.onlyPending(runId, STRATEGY);
+        assertThat(parentFinal.activationFrameId()).isEqualTo(frameA);
+        assertThat(parentFinal.executionFrameId()).isEqualTo(frameA);
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(parentFinal.id()))
+                .extracting(ConnectionResolution::id)
+                .containsExactly(parentContribution.id());
+        assertThat(this.activationResolutionRepository.find(runId, frameA, STRATEGY_IN, null))
+                .hasValueSatisfying(resolution -> assertThat(resolution.activatedNodeRunId()).isEqualTo(parentFinal.id()));
+        assertThat(this.nodeRuns(runId, STRATEGY)).containsExactly(parentFinal);
+        this.complete(parentFinal, "{\"result\":\"parent\"}");
+
+        childTargets.forEach(nodeRun -> this.complete(nodeRun, "{\"generation\":\"child\"}"));
+        final NodeRun childFinal = this.onlyPending(runId, STRATEGY);
+        assertThat(childFinal.activationFrameId()).isEqualTo(frameB);
+        assertThat(childFinal.executionFrameId()).isEqualTo(frameB);
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(childFinal.id()))
+                .hasSize(2)
+                .allSatisfy(resolution -> {
+                    assertThat(resolution.executionFrameId()).isEqualTo(frameB);
+                    assertThat(resolution.sourceNodeRunId()).isIn(childTargets.stream().map(NodeRun::id).toList());
+                });
+        this.complete(childFinal, "{\"result\":\"child\"}");
+
+        final WorkflowRun finished = this.workflowRunRepository.findById(runId).orElseThrow();
+        assertThat(finished.status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+        assertThat(finished.result()).isEqualTo(new NodeRunOutput("{\"result\": \"child\"}"));
+        assertThat(finished.resultSourceNodeRunId()).isEqualTo(childFinal.id());
+        assertThat(this.nodeRuns(runId, STRATEGY)).extracting(NodeRun::id)
+                .containsExactly(parentFinal.id(), childFinal.id());
+    }
+
     private void seed() {
         this.forgeIt.postgresql()
                 .create()
@@ -822,6 +898,41 @@ class ForgeAgentPortAwareExecutionIT {
                 ),
                 IMPLEMENTER_INITIAL_IN,
                 D_OUT
+        ));
+    }
+
+    private void saveAsymmetricScopedReentryWorkflow() {
+        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
+                "Full Testing",
+                List.of(
+                        this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Done")), 0,
+                                NodeScopeMode.PER_SCOPE),
+                        this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")),
+                                List.of(this.port(B_OUT, "Direct", 0), this.port(C_OTHER, "Delay", 1)), 1,
+                                NodeScopeMode.PER_SCOPE),
+                        this.node(C, AGENT_C_ID, List.of(this.port(C_IN, "Input")), List.of(this.port(C_OUT, "Done")), 2,
+                                NodeScopeMode.PER_SCOPE),
+                        this.node(D, AGENT_A_ID, List.of(this.port(D_IN, "Input")), List.of(this.port(D_OUT, "Done")), 3,
+                                NodeScopeMode.PER_SCOPE),
+                        this.node(X, AGENT_B_ID, List.of(this.port(X_IN, "Input")), List.of(this.port(X_OUT, "Done")), 4,
+                                NodeScopeMode.GLOBAL),
+                        this.node(IMPLEMENTER, AGENT_A_ID,
+                                List.of(this.port(IMPLEMENTER_INITIAL_IN, "Direct", 0), this.port(IMPLEMENTER_REVIEW_IN, "Gate", 1)),
+                                List.of(this.port(IMPLEMENTER_OUT, "Done")), 5, NodeScopeMode.PER_SCOPE),
+                        this.node(STRATEGY, AGENT_C_ID, List.of(this.port(STRATEGY_IN, "Input")),
+                                List.of(this.port(STRATEGY_PASS, "Result")), 6, NodeScopeMode.GLOBAL)
+                ),
+                List.of(
+                        this.connection(1, A_OUT, B_IN),
+                        this.connection(2, B_OUT, IMPLEMENTER_INITIAL_IN),
+                        this.connection(3, C_OTHER, C_IN),
+                        this.connection(4, C_OUT, D_IN),
+                        this.connection(5, D_OUT, X_IN),
+                        this.connection(6, X_OUT, IMPLEMENTER_REVIEW_IN),
+                        this.connection(7, IMPLEMENTER_OUT, STRATEGY_IN)
+                ),
+                A_IN,
+                STRATEGY_PASS
         ));
     }
 

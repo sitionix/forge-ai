@@ -63,7 +63,7 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
             }
             this.resolutionEvaluator
                     .evaluate(this.participationResolver.resolve(workflowRun.id(), item.activationFrameId(), item.targetInputPortId(), item.repositoryId()))
-                    .apply(new PlannerActivationDecisionHandler(workflowRun, queue));
+                    .apply(new PlannerActivationDecisionHandler(workflowRun, queue, seen));
         }
     }
 
@@ -94,10 +94,13 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
     private final class PlannerActivationDecisionHandler implements ActivationDecisionHandler {
         private final WorkflowRun workflowRun;
         private final ArrayDeque<ActivationWorkItem> queue;
+        private final Set<ActivationWorkItem> seen;
 
-        private PlannerActivationDecisionHandler(final WorkflowRun workflowRun, final ArrayDeque<ActivationWorkItem> queue) {
+        private PlannerActivationDecisionHandler(final WorkflowRun workflowRun, final ArrayDeque<ActivationWorkItem> queue,
+                                                  final Set<ActivationWorkItem> seen) {
             this.workflowRun = workflowRun;
             this.queue = queue;
+            this.seen = seen;
         }
 
         @Override
@@ -122,15 +125,8 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                     Instant.now(DefaultInputActivationPlanner.this.clock),
                     decision.repositoryId()
             )));
-            DefaultInputActivationPlanner.this.downstreamInputs(
-                    DefaultInputActivationPlanner.this.graphRepository.findByWorkflowRunId(decision.workflowRunId()),
-                    decision.targetInputPortId()
-            ).forEach(portId -> DefaultInputActivationPlanner.this.targetRepositories(
-                            workflowRun,
-                            decision.targetInputPortId(),
-                            portId,
-                            decision.repositoryId()
-                    ).forEach(repositoryId -> this.queue.add(new ActivationWorkItem(decision.activationFrameId(), portId, repositoryId))));
+            this.enqueueProjectedDownstream(decision.activationFrameId(), decision.targetInputPortId(),
+                    decision.repositoryId());
         }
 
         @Override
@@ -179,6 +175,27 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                     Instant.now(DefaultInputActivationPlanner.this.clock),
                     decision.repositoryId()
             ));
+            if (!executionFrame.id().equals(activationFrame.id())) {
+                this.enqueueProjectedDownstream(decision.activationFrameId(), decision.targetInputPortId(),
+                        decision.repositoryId());
+            }
+        }
+
+        private void enqueueProjectedDownstream(final UUID activationFrameId, final UUID sourceInputPortId,
+                                                final UUID sourceRepositoryId) {
+            DefaultInputActivationPlanner.this.downstreamInputs(
+                    DefaultInputActivationPlanner.this.graphRepository.findByWorkflowRunId(this.workflowRun.id()),
+                    sourceInputPortId
+            ).forEach(portId -> DefaultInputActivationPlanner.this.targetRepositories(
+                            this.workflowRun,
+                            sourceInputPortId,
+                            portId,
+                            sourceRepositoryId
+                    ).forEach(repositoryId -> {
+                        final ActivationWorkItem item = new ActivationWorkItem(activationFrameId, portId, repositoryId);
+                        this.seen.remove(item);
+                        this.queue.add(item);
+                    }));
         }
     }
 
