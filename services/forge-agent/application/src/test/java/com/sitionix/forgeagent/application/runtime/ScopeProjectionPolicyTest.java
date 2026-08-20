@@ -47,4 +47,12 @@ class ScopeProjectionPolicyTest {
                 .isInstanceOf(ValidationException.class)
                 .extracting("code").isEqualTo("MISSING_NODE_RUN_REPOSITORY");
     }
+
+    @Test
+    void perScopeSourceOutsideWorkflowSnapshotFailsClosed() {
+        assertThatThrownBy(() -> this.policy.project(
+                NodeScopeMode.PER_SCOPE, NodeScopeMode.GLOBAL, AGENT, List.of(NEXUS)))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code").isEqualTo("NODE_RUN_REPOSITORY_OUTSIDE_SNAPSHOT");
+    }
 }

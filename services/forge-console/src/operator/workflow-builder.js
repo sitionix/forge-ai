@@ -1374,10 +1374,7 @@ export class WorkflowBuilder {
   }
 
   nodeScopeMode(node) {
-    if (!node?.scopeMode) {
-      return GLOBAL_SCOPE_MODE;
-    }
-    return this.normalizeScopeMode(node.scopeMode);
+    return this.normalizeScopeMode(node?.scopeMode);
   }
 
   normalizeScopeMode(scopeMode) {

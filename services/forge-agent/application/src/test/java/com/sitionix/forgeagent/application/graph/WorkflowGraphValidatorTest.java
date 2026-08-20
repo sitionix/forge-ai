@@ -128,7 +128,8 @@ class WorkflowGraphValidatorTest {
                 NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(this.port(this.inputB, "Input", "Input description.", 0)),
                 null,
-                new NodePosition(1.0, 2.0)
+                new NodePosition(1.0, 2.0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
         );
 
         final WorkflowGraphValidator.ValidatedGraph graph = this.validate(
@@ -153,7 +154,8 @@ class WorkflowGraphValidatorTest {
                 List.of(this.port(this.outputA, "Result", "Output result.", 0),
                         this.port(this.outputB, "Return", "Needs changes.", 1),
                         this.port(this.outputC, "Reject", "Reject the work.", 2)),
-                new NodePosition(1.0, 2.0)
+                new NodePosition(1.0, 2.0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
         );
 
         final WorkflowGraphValidator.ValidatedGraph graph = this.validate(List.of(node), List.of());
@@ -172,36 +174,86 @@ class WorkflowGraphValidatorTest {
     @Test
     void rejectsInvalidPorts() {
         this.expectPortError(
-                new Node(this.nodeA, this.agentA, NodeInputMode.DEPENDENCIES_ONLY,
+                new Node(
+                        this.nodeA,
+                        this.agentA,
+                        NodeInputMode.DEPENDENCIES_ONLY,
                         List.of(this.port(this.inputA, "Approved", "One.", 0), this.port(this.inputB, "Approved", "Two.", 1)),
-                        List.of(), new NodePosition(0, 0)),
+                        List.of(),
+                        new NodePosition(0, 0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                ),
                 "DUPLICATE_NODE_PORT_NAME"
         );
         this.expectPortError(
-                new Node(this.nodeA, this.agentA, NodeInputMode.DEPENDENCIES_ONLY,
-                        List.of(), List.of(this.port(this.outputA, "Approved", "One.", 0), this.port(this.outputB, "Approved", "Two.", 1)),
-                        new NodePosition(0, 0)),
+                new Node(
+                        this.nodeA,
+                        this.agentA,
+                        NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(),
+                        List.of(this.port(this.outputA, "Approved", "One.", 0), this.port(this.outputB, "Approved", "Two.", 1)),
+                        new NodePosition(0, 0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                ),
                 "DUPLICATE_NODE_PORT_NAME"
         );
         this.expectPortError(
-                new Node(this.nodeA, this.agentA, NodeInputMode.DEPENDENCIES_ONLY,
+                new Node(
+                        this.nodeA,
+                        this.agentA,
+                        NodeInputMode.DEPENDENCIES_ONLY,
                         List.of(this.port(this.inputA, "Review", "One.", 0)),
                         List.of(this.port(this.inputA, "Approved", "Two.", 0)),
-                        new NodePosition(0, 0)),
+                        new NodePosition(0, 0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                ),
                 "DUPLICATE_NODE_PORT_ID"
         );
-        this.expectPortError(new Node(this.nodeA, this.agentA, NodeInputMode.DEPENDENCIES_ONLY,
-                List.of(this.port(this.inputA, " ", "Description.", 0)), List.of(), new NodePosition(0, 0)), "INVALID_NODE_PORT");
-        this.expectPortError(new Node(this.nodeA, this.agentA, NodeInputMode.DEPENDENCIES_ONLY,
-                List.of(this.port(this.inputA, "Review", " ", 0)), List.of(), new NodePosition(0, 0)), "INVALID_NODE_PORT");
-        this.expectPortError(new Node(this.nodeA, this.agentA, NodeInputMode.DEPENDENCIES_ONLY,
-                List.of(this.port(this.inputA, "Review", "Description.", -1)), List.of(), new NodePosition(0, 0)), "INVALID_NODE_PORT_ORDER");
-        this.expectPortError(new Node(this.nodeA, this.agentA, NodeInputMode.DEPENDENCIES_ONLY,
+        this.expectPortError(new Node(
+                this.nodeA,
+                this.agentA,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(this.port(this.inputA, " ", "Description.", 0)),
+                List.of(),
+                new NodePosition(0, 0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+        ), "INVALID_NODE_PORT");
+        this.expectPortError(new Node(
+                this.nodeA,
+                this.agentA,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(this.port(this.inputA, "Review", " ", 0)),
+                List.of(),
+                new NodePosition(0, 0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+        ), "INVALID_NODE_PORT");
+        this.expectPortError(new Node(
+                this.nodeA,
+                this.agentA,
+                NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(this.port(this.inputA, "Review", "Description.", -1)),
+                List.of(),
+                new NodePosition(0, 0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+        ), "INVALID_NODE_PORT_ORDER");
+        this.expectPortError(new Node(
+                this.nodeA,
+                this.agentA,
+                NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(this.port(this.inputA, "Review", "One.", 0), this.port(this.inputB, "Context", "Two.", 0)),
-                List.of(), new NodePosition(0, 0)), "INVALID_NODE_PORT_ORDER");
-        this.expectPortError(new Node(this.nodeA, this.agentA, NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(),
+                new NodePosition(0, 0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+        ), "INVALID_NODE_PORT_ORDER");
+        this.expectPortError(new Node(
+                this.nodeA,
+                this.agentA,
+                NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(this.port(this.inputA, "Review", "One.", 0), this.port(this.inputB, "Context", "Two.", 2)),
-                List.of(), new NodePosition(0, 0)), "INVALID_NODE_PORT_ORDER");
+                List.of(),
+                new NodePosition(0, 0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+        ), "INVALID_NODE_PORT_ORDER");
     }
 
     @Test
@@ -256,9 +308,15 @@ class WorkflowGraphValidatorTest {
     @Test
     void portRenameDoesNotAffectConnectionIdentity() {
         final WorkflowGraphValidator.ValidatedGraph graph = this.validate(
-                List.of(new Node(this.nodeA, this.agentA, NodeInputMode.DEPENDENCIES_ONLY,
-                                List.of(this.port(this.inputA, "Input", "Input description.", 0)),
-                                List.of(this.port(this.outputA, "Ready for testing", "Renamed.", 0)), new NodePosition(0, 0)),
+                List.of(new Node(
+                        this.nodeA,
+                        this.agentA,
+                        NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(this.inputA, "Input", "Input description.", 0)),
+                        List.of(this.port(this.outputA, "Ready for testing", "Renamed.", 0)),
+                        new NodePosition(0, 0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                ),
                         this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputB))),
                 List.of(this.connection(this.connectionAB, this.outputA, this.inputB)),
                 this.inputA
@@ -448,7 +506,8 @@ class WorkflowGraphValidatorTest {
                 NodeInputMode.DEPENDENCIES_ONLY,
                 inputIds.stream().map(inputId -> this.port(inputId, "Input " + inputId, "Input description.", inputIds.indexOf(inputId))).toList(),
                 outputIds.stream().map(outputId -> this.port(outputId, "Output " + outputId, "Output description.", outputIds.indexOf(outputId))).toList(),
-                new NodePosition(0, 0)
+                new NodePosition(0, 0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
         );
     }
 

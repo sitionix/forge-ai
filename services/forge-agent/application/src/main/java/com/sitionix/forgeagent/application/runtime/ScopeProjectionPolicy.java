@@ -17,6 +17,10 @@ public class ScopeProjectionPolicy {
         if (sourceMode == NodeScopeMode.PER_SCOPE && sourceRepositoryId == null) {
             throw new ValidationException("MISSING_NODE_RUN_REPOSITORY", "PER_SCOPE node run requires repositoryId.");
         }
+        if (sourceMode == NodeScopeMode.PER_SCOPE && !repositoryIds.contains(sourceRepositoryId)) {
+            throw new ValidationException("NODE_RUN_REPOSITORY_OUTSIDE_SNAPSHOT",
+                    "PER_SCOPE source repositoryId must belong to the workflow run repository snapshot.");
+        }
         if (targetMode == NodeScopeMode.GLOBAL) {
             return Collections.singletonList(null);
         }

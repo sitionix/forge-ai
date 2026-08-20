@@ -25,13 +25,7 @@ public class ReentryFrameTransitionPolicy implements FrameTransitionPolicy {
                                              final RunNode targetNode,
                                              final UUID targetInputPortId,
                                              final UUID repositoryId) {
-        final boolean reentry = this.nodeRunRepository.findByWorkflowRunIdAndExecutionFrameId(workflowRun.id(), activationFrame.id()).stream()
-                .anyMatch(run -> run.sourceNodeId().equals(targetNode.sourceNodeId())
-                        && java.util.Objects.equals(run.repositoryId(), repositoryId));
-        if (!reentry) {
-            return activationFrame;
-        }
-        return this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
+        final java.util.Optional<ExecutionFrame> existingChild = this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
                 .filter(run -> activationFrame.id().equals(run.activationFrameId()))
                 .filter(run -> !activationFrame.id().equals(run.executionFrameId()))
                 .filter(run -> run.sourceNodeId().equals(targetNode.sourceNodeId()))
@@ -40,8 +34,14 @@ public class ReentryFrameTransitionPolicy implements FrameTransitionPolicy {
                 .distinct()
                 .map(this.frameRepository::findById)
                 .flatMap(java.util.Optional::stream)
-                .findFirst()
-                .orElseGet(() -> this.createChildFrame(workflowRun, activationFrame));
+                .findFirst();
+        if (existingChild.isPresent()) {
+            return existingChild.get();
+        }
+        final boolean reentry = this.nodeRunRepository
+                .findByWorkflowRunIdAndExecutionFrameId(workflowRun.id(), activationFrame.id()).stream()
+                .anyMatch(run -> run.sourceNodeId().equals(targetNode.sourceNodeId()));
+        return reentry ? this.createChildFrame(workflowRun, activationFrame) : activationFrame;
     }
 
     private ExecutionFrame createChildFrame(final WorkflowRun workflowRun, final ExecutionFrame parentFrame) {

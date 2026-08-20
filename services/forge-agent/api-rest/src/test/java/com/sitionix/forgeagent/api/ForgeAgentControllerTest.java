@@ -410,13 +410,29 @@ class ForgeAgentControllerTest {
     void updateWorkflow() {
         final SaveWorkflowRequest request = new SaveWorkflowRequest(
                 "Full Testing",
-                List.of(new NodeRequest(NODE_ID, AGENT_ID, new NodePositionRequest(1.0, 2.0))),
+                List.of(new NodeRequest(
+                        NODE_ID,
+                        AGENT_ID,
+                        null,
+                        null,
+                        null,
+                        new NodePositionRequest(1.0, 2.0),
+                        "GLOBAL"
+                )),
                 List.of(),
                 NODE_ID
         );
         final SaveWorkflowCommand command = new SaveWorkflowCommand(
                 "Full Testing",
-                List.of(new Node(NODE_ID, AGENT_ID, new NodePosition(1.0, 2.0))),
+                List.of(new Node(
+                        NODE_ID,
+                        AGENT_ID,
+                        com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                        java.util.List.of(),
+                        java.util.List.of(),
+                        new NodePosition(1.0, 2.0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                )),
                 List.of(),
                 NODE_ID
         );
@@ -530,7 +546,15 @@ class ForgeAgentControllerTest {
                 PROJECT_ID,
                 "Full Testing",
                 "full testing",
-                List.of(new Node(NODE_ID, AGENT_ID, new NodePosition(1.0, 2.0))),
+                List.of(new Node(
+                        NODE_ID,
+                        AGENT_ID,
+                        com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                        java.util.List.of(),
+                        java.util.List.of(),
+                        new NodePosition(1.0, 2.0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                )),
                 List.of(),
                 NODE_ID,
                 NOW,
@@ -543,7 +567,15 @@ class ForgeAgentControllerTest {
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new NodeResponse(NODE_ID, AGENT_ID, new NodePositionResponse(1.0, 2.0))),
+                List.of(new NodeResponse(
+                        NODE_ID,
+                        AGENT_ID,
+                        null,
+                        java.util.List.of(),
+                        java.util.List.of(),
+                        new NodePositionResponse(1.0, 2.0),
+                        "GLOBAL"
+                )),
                 List.of(),
                 NODE_ID,
                 NOW,
@@ -568,19 +600,31 @@ class ForgeAgentControllerTest {
                         "Backend",
                         "Do work.",
                         OUTPUT_SCHEMA,
-                        UUID.fromString("99999999-0000-4000-8000-000000000001"),
+                        com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
                         new NodePosition(1.0, 2.0),
+                        UUID.fromString("99999999-0000-4000-8000-000000000001"),
+                        null,
+                        null,
+                        null,
+                        null,
                         NodeRunStatus.PENDING,
                         null,
                         null,
                         null,
                         NOW,
                         null,
+                        null,
                         null
                 )),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
                 NOW,
                 null,
-                null
+                null,
+                java.util.List.of()
         );
     }
 
@@ -611,11 +655,18 @@ class ForgeAgentControllerTest {
                         null,
                         NOW,
                         null,
+                        null,
                         null
                 )),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
                 NOW,
                 null,
-                null
+                null,
+                java.util.List.of()
         );
     }
 

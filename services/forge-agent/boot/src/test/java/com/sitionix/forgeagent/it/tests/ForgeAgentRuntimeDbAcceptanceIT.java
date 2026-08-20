@@ -3,7 +3,6 @@ package com.sitionix.forgeagent.it.tests;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -14,8 +13,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 @IntegrationTest
 class ForgeAgentRuntimeDbAcceptanceIT {
 
-    @Autowired
-    private ForgeAgentTestManager forgeIt;
     @Autowired
     private JdbcTemplate jdbc;
 
@@ -119,7 +116,6 @@ class ForgeAgentRuntimeDbAcceptanceIT {
         final UUID runId = UUID.randomUUID();
         final UUID frameId = UUID.randomUUID();
         final UUID nodeA = UUID.randomUUID();
-        final UUID nodeB = UUID.randomUUID();
         this.jdbc.update("""
                 INSERT INTO agent_projects (id, name, normalized_name, created_at, updated_at)
                 VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)

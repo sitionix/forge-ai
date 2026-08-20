@@ -86,9 +86,15 @@ class RootNodeInputContentPolicyTest {
                 "Review auth changes.",
                 WorkflowRunStatus.RUNNING,
                 List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
                 NOW,
                 NOW,
-                null
+                null,
+                java.util.List.of()
         );
     }
 
@@ -111,11 +117,13 @@ class RootNodeInputContentPolicyTest {
                 enteredViaInputPortId,
                 activationFrameId,
                 null,
+                null,
                 NodeRunStatus.PENDING,
                 null,
                 null,
                 new NodeRunExecutionModel("codex", "gpt-5", null),
                 NOW,
+                null,
                 null,
                 null
         );

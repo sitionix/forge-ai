@@ -12,20 +12,4 @@ public record NodeRequest(
         NodePositionRequest position,
         String scopeMode
 ) {
-    public NodeRequest(final UUID id, final UUID targetId, final String inputMode, final List<NodePortRequest> inputs,
-                       final List<NodePortRequest> outputs, final NodePositionRequest position) {
-        this(id, targetId, inputMode, inputs, outputs, position, "GLOBAL");
-    }
-    public NodeRequest(final UUID id,
-                       final UUID targetId,
-                       final String inputMode,
-                       final NodePositionRequest position) {
-        this(id, targetId, inputMode, null, null, position, "GLOBAL");
-    }
-
-    public NodeRequest(final UUID id,
-                       final UUID targetId,
-                       final NodePositionRequest position) {
-        this(id, targetId, null, null, null, position, "GLOBAL");
-    }
 }

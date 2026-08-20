@@ -24,14 +24,28 @@ class DefaultInputResolutionEvaluatorTest {
 
     @Test
     void waitsWhileAnyRelevantPathCanStillContribute() {
-        final ActivationDecision decision = this.evaluator.evaluate(new InputParticipation(RUN_ID, FRAME_ID, INPUT_ID, true, List.of(this.delivered())));
+        final ActivationDecision decision = this.evaluator.evaluate(new InputParticipation(
+                RUN_ID,
+                FRAME_ID,
+                INPUT_ID,
+                true,
+                List.of(this.delivered()),
+                null
+        ));
 
         assertThat(decision).isInstanceOf(WaitActivationDecision.class);
     }
 
     @Test
     void closesResolvedEmptyActivation() {
-        final ActivationDecision decision = this.evaluator.evaluate(new InputParticipation(RUN_ID, FRAME_ID, INPUT_ID, false, List.of()));
+        final ActivationDecision decision = this.evaluator.evaluate(new InputParticipation(
+                RUN_ID,
+                FRAME_ID,
+                INPUT_ID,
+                false,
+                List.of(),
+                null
+        ));
 
         assertThat(decision)
                 .isInstanceOfSatisfying(CloseActivationDecision.class, close -> {
@@ -46,7 +60,14 @@ class DefaultInputResolutionEvaluatorTest {
         final ConnectionResolution first = this.delivered();
         final ConnectionResolution second = this.delivered();
 
-        final ActivationDecision decision = this.evaluator.evaluate(new InputParticipation(RUN_ID, FRAME_ID, INPUT_ID, false, List.of(first, second)));
+        final ActivationDecision decision = this.evaluator.evaluate(new InputParticipation(
+                RUN_ID,
+                FRAME_ID,
+                INPUT_ID,
+                false,
+                List.of(first, second),
+                null
+        ));
 
         assertThat(decision)
                 .isInstanceOfSatisfying(ActivateNodeDecision.class, activate -> {
@@ -68,7 +89,8 @@ class DefaultInputResolutionEvaluatorTest {
                 ConnectionResolutionType.DELIVERED,
                 new NodeRunOutput("{\"feedback\":\"review\"}"),
                 null,
-                Instant.parse("2026-08-15T00:00:00Z")
+                Instant.parse("2026-08-15T00:00:00Z"),
+                null
         );
     }
 }

@@ -606,11 +606,47 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     private AgentWorkflowRun workflowRun() {
-        return new AgentWorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), NOW, null, null);
+        return new AgentWorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                null,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.QUEUED,
+                List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
+                NOW,
+                null,
+                null,
+                java.util.List.of()
+        );
     }
 
     private AgentWorkflowRunResponse workflowRunResponse() {
-        return new AgentWorkflowRunResponse(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), NOW, null, null);
+        return new AgentWorkflowRunResponse(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                null,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.QUEUED,
+                List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
+                NOW,
+                null,
+                null,
+                java.util.List.of()
+        );
     }
 
     private AgentProjectTask task() {

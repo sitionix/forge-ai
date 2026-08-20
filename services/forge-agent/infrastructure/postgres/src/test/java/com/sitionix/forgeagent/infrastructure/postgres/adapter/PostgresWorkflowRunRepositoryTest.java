@@ -151,7 +151,8 @@ class PostgresWorkflowRunRepositoryTest {
                         AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
                         new NodeRunExecutionModel("codex", "model-a", "medium"),
                         com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
-                        new NodePosition(10.0, 20.0)
+                        new NodePosition(10.0, 20.0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
                 )),
                 List.of(new RunPort(RUN_ID, OUTPUT_PORT_ID, SOURCE_NODE_A, PortDirection.OUTPUT, "Done", "Terminal output.", 0)),
                 List.of()
@@ -168,9 +169,12 @@ class PostgresWorkflowRunRepositoryTest {
                 List.of(),
                 List.of(),
                 graph,
+                null,
+                null,
                 NOW,
                 null,
-                null
+                null,
+                java.util.List.of()
         );
         when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -227,7 +231,8 @@ class PostgresWorkflowRunRepositoryTest {
                         AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
                         new NodeRunExecutionModel("codex", "model-a", "medium"),
                         com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
-                        new NodePosition(10.0, 20.0)
+                        new NodePosition(10.0, 20.0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
                 )),
                 List.of(
                         new RunPort(RUN_ID, INPUT_PORT_ID, SOURCE_NODE_A, PortDirection.INPUT, "Initial", "Root input.", 0),
@@ -318,11 +323,14 @@ class PostgresWorkflowRunRepositoryTest {
 
     @Test
     void saveLifecyclePreservesSnapshotAndResultFieldsForLightweightUpdates() {
+        final UUID repositoryA = UUID.fromString("77777777-7777-4777-8777-777777777771");
+        final UUID repositoryB = UUID.fromString("77777777-7777-4777-8777-777777777772");
         final WorkflowRunEntity existing = this.runEntity(RUN_ID, NOW);
         existing.setTaskInputPortId(INPUT_PORT_ID);
         existing.setTaskOutputPortId(OUTPUT_PORT_ID);
         existing.setResult("{\"summary\":\"done\"}");
         existing.setResultSourceNodeRunId(NODE_RUN_A);
+        existing.setRepositoryIds(new java.util.ArrayList<>(List.of(repositoryA, repositoryB)));
         when(this.workflowRunRepository.findById(RUN_ID)).thenReturn(Optional.of(existing));
         when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -335,9 +343,15 @@ class PostgresWorkflowRunRepositoryTest {
                 "Review auth changes.",
                 WorkflowRunStatus.RUNNING,
                 List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
                 NOW,
                 NOW,
-                null
+                null,
+                List.of(UUID.fromString("77777777-7777-4777-8777-777777777773"))
         ));
 
         final WorkflowRunEntity savedEntity = this.savedRun();
@@ -345,6 +359,8 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(savedEntity.getTaskOutputPortId()).isEqualTo(OUTPUT_PORT_ID);
         assertThat(savedEntity.getResult()).isEqualTo("{\"summary\":\"done\"}");
         assertThat(savedEntity.getResultSourceNodeRunId()).isEqualTo(NODE_RUN_A);
+        assertThat(savedEntity.getRepositoryIds()).containsExactly(repositoryA, repositoryB);
+        assertThat(saved.repositoryIds()).containsExactly(repositoryA, repositoryB);
         assertThat(saved.result()).isEqualTo(new NodeRunOutput("{\"summary\":\"done\"}"));
         assertThat(saved.resultSourceNodeRunId()).isEqualTo(NODE_RUN_A);
     }
@@ -373,7 +389,8 @@ class PostgresWorkflowRunRepositoryTest {
                 NODE_RUN_B,
                 NOW,
                 NOW,
-                NOW.plusSeconds(1)
+                NOW.plusSeconds(1),
+                java.util.List.of()
         ));
 
         final WorkflowRunEntity savedEntity = this.savedRun();
@@ -384,7 +401,25 @@ class PostgresWorkflowRunRepositoryTest {
     }
 
     private WorkflowRun run(final List<NodeRun> nodeRuns) {
-        return new WorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, TASK_ID, "Full Testing", "Review auth changes.", WorkflowRunStatus.QUEUED, nodeRuns, NOW, null, null);
+        return new WorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                TASK_ID,
+                "Full Testing",
+                "Review auth changes.",
+                WorkflowRunStatus.QUEUED,
+                nodeRuns,
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
+                NOW,
+                null,
+                null,
+                java.util.List.of()
+        );
     }
 
     private NodeRun nodeRun(final UUID id,
@@ -408,11 +443,13 @@ class PostgresWorkflowRunRepositoryTest {
                 null,
                 null,
                 null,
+                null,
                 NodeRunStatus.PENDING,
                 output,
                 failure,
                 null,
                 NOW,
+                null,
                 null,
                 null
         );
@@ -433,13 +470,15 @@ class PostgresWorkflowRunRepositoryTest {
                 nodeRun.enteredViaInputPortId(),
                 nodeRun.activationFrameId(),
                 nodeRun.selectedOutputPortId(),
+                null,
                 nodeRun.status(),
                 nodeRun.output(),
                 nodeRun.failure(),
                 executionModel,
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
-                nodeRun.finishedAt()
+                nodeRun.finishedAt(),
+                null
         );
     }
 

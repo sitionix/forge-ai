@@ -49,11 +49,6 @@ public class WorkflowRunUseCases {
     }
 
     @Transactional
-    public WorkflowRun createWorkflowRunForTask(final UUID workflowId, final CreateWorkflowRunCommand command, final UUID taskId) {
-        return this.createWorkflowRunForTask(workflowId, command, taskId, List.of());
-    }
-
-    @Transactional
     public WorkflowRun createWorkflowRunForTask(final UUID workflowId, final CreateWorkflowRunCommand command,
                                                 final UUID taskId, final List<UUID> repositoryIds) {
         if (taskId == null) {
@@ -70,11 +65,17 @@ public class WorkflowRunUseCases {
         final UUID runId = UUID.randomUUID();
         final WorkflowRunGraph graph = this.snapshotBuilder.build(runId, workflow);
         final RunPort taskInputPort = this.requireTaskInputPort(graph);
-        this.requireTaskOutputPort(graph);
         final RunNode entry = this.requireTaskInputNode(graph, taskInputPort);
-        final List<UUID> repositorySnapshot = List.copyOf(repositoryIds == null ? List.of() : repositoryIds);
-        if (entry.scopeMode() == NodeScopeMode.PER_SCOPE && repositorySnapshot.isEmpty()) {
-            throw new ValidationException("PER_SCOPE_ROOT_REQUIRES_REPOSITORIES", "PER_SCOPE workflow root requires selected repositories.");
+        final List<UUID> repositorySnapshot = List.copyOf(java.util.Objects.requireNonNull(
+                repositoryIds, "repositoryIds must not be null"));
+        if (taskId != null && repositorySnapshot.isEmpty()) {
+            throw new ValidationException("TASK_RUN_REQUIRES_REPOSITORIES",
+                    "Task-owned workflow run requires an explicit repository snapshot.");
+        }
+        if (repositorySnapshot.isEmpty()
+                && graph.nodes().stream().anyMatch(node -> node.scopeMode() == NodeScopeMode.PER_SCOPE)) {
+            throw new ValidationException("PER_SCOPE_RUN_REQUIRES_REPOSITORIES",
+                    "A workflow containing any PER_SCOPE node requires selected repositories.");
         }
         final RunPort outputPort = this.requireTaskOutputPort(graph);
         final RunNode outputNode = graph.nodes().stream().filter(node -> node.sourceNodeId().equals(outputPort.sourceNodeId()))

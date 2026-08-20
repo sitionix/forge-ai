@@ -30,7 +30,7 @@ public class WorkflowNodeEntity {
     private String inputMode = "DEPENDENCIES_ONLY";
 
     @Column(name = "scope_mode", nullable = false, length = 32)
-    private String scopeMode = "GLOBAL";
+    private String scopeMode;
 
     @Column(name = "position_x", nullable = false)
     private double positionX;

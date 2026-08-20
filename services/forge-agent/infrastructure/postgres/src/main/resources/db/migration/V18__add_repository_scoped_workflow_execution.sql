@@ -1,10 +1,18 @@
 ALTER TABLE workflow_nodes
-    ADD COLUMN scope_mode VARCHAR(32) NOT NULL DEFAULT 'GLOBAL',
-    ADD CONSTRAINT chk_workflow_nodes_scope_mode CHECK (scope_mode IN ('GLOBAL', 'PER_SCOPE'));
+    ADD COLUMN scope_mode VARCHAR(32) DEFAULT 'GLOBAL';
+UPDATE workflow_nodes SET scope_mode = 'GLOBAL' WHERE scope_mode IS NULL;
+ALTER TABLE workflow_nodes
+    ALTER COLUMN scope_mode SET NOT NULL,
+    ADD CONSTRAINT chk_workflow_nodes_scope_mode CHECK (scope_mode IN ('GLOBAL', 'PER_SCOPE')),
+    ALTER COLUMN scope_mode DROP DEFAULT;
 
 ALTER TABLE workflow_run_nodes
-    ADD COLUMN scope_mode VARCHAR(32) NOT NULL DEFAULT 'GLOBAL',
-    ADD CONSTRAINT chk_workflow_run_nodes_scope_mode CHECK (scope_mode IN ('GLOBAL', 'PER_SCOPE'));
+    ADD COLUMN scope_mode VARCHAR(32) DEFAULT 'GLOBAL';
+UPDATE workflow_run_nodes SET scope_mode = 'GLOBAL' WHERE scope_mode IS NULL;
+ALTER TABLE workflow_run_nodes
+    ALTER COLUMN scope_mode SET NOT NULL,
+    ADD CONSTRAINT chk_workflow_run_nodes_scope_mode CHECK (scope_mode IN ('GLOBAL', 'PER_SCOPE')),
+    ALTER COLUMN scope_mode DROP DEFAULT;
 
 CREATE TABLE workflow_run_repositories (
     workflow_run_id UUID NOT NULL,

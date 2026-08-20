@@ -13,7 +13,4 @@ public record AgentRunNode(
         Objects.requireNonNull(scopeMode, "scopeMode must not be null");
     }
 
-    public AgentRunNode(final UUID sourceNodeId, final String agentName, final NodePosition position) {
-        this(sourceNodeId, agentName, position, WorkflowNodeScopeMode.GLOBAL);
-    }
 }

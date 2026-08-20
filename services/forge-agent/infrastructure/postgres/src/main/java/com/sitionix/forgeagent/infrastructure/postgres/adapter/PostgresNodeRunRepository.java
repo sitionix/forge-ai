@@ -72,22 +72,6 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     }
 
     @Override
-    public Optional<NodeRun> findByWorkflowRunIdAndExecutionFrameIdAndSourceNodeId(final UUID workflowRunId,
-                                                                                   final UUID executionFrameId,
-                                                                                   final UUID sourceNodeId) {
-        return this.repository.findByWorkflowRunIdAndExecutionFrameIdAndSourceNodeId(workflowRunId, executionFrameId, sourceNodeId)
-                .map(PostgresNodeRunMapper::toDomain);
-    }
-
-    @Override
-    public Optional<NodeRun> findByWorkflowRunIdAndActivationFrameIdAndEnteredViaInputPortId(final UUID workflowRunId,
-                                                                                             final UUID activationFrameId,
-                                                                                             final UUID enteredViaInputPortId) {
-        return this.repository.findByWorkflowRunIdAndActivationFrameIdAndEnteredViaInputPortId(workflowRunId, activationFrameId, enteredViaInputPortId)
-                .map(PostgresNodeRunMapper::toDomain);
-    }
-
-    @Override
     public NodeRun save(final NodeRun nodeRun) {
         return PostgresNodeRunMapper.toDomain(this.repository.save(PostgresNodeRunMapper.toEntity(nodeRun)));
     }

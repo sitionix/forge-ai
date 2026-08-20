@@ -116,7 +116,8 @@ class WorkflowUseCasesTest {
                 NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
                 List.of(new NodePort(this.outputA, "Output", "Output.", 0)),
-                new NodePosition(1.0, 2.0)
+                new NodePosition(1.0, 2.0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
         );
         final Node second = new Node(
                 this.nodeB,
@@ -124,7 +125,8 @@ class WorkflowUseCasesTest {
                 NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(new NodePort(this.inputB, "Input", "Input.", 0)),
                 List.of(new NodePort(this.outputB, "Output", "Output.", 0)),
-                new NodePosition(3.0, 4.0)
+                new NodePosition(3.0, 4.0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
         );
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
@@ -161,7 +163,8 @@ class WorkflowUseCasesTest {
                 NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
                 List.of(new NodePort(this.outputA, "Output", "Output.", 0)),
-                new NodePosition(1.0, 2.0)
+                new NodePosition(1.0, 2.0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
         );
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
@@ -187,7 +190,8 @@ class WorkflowUseCasesTest {
                 NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
                 List.of(new NodePort(this.outputA, "Output", "Output.", 0)),
-                new NodePosition(1.0, 2.0)
+                new NodePosition(1.0, 2.0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
         );
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
@@ -206,7 +210,15 @@ class WorkflowUseCasesTest {
 
     @Test
     void cyclicUpdatePersistsForRuntimeReentry() {
-        final Workflow current = this.workflow(List.of(new Node(this.nodeA, this.agentId, new NodePosition(1.0, 2.0))));
+        final Workflow current = this.workflow(List.of(new Node(
+                this.nodeA,
+                this.agentId,
+                com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                java.util.List.of(),
+                java.util.List.of(),
+                new NodePosition(1.0, 2.0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+        )));
         when(this.workflowRepository.findById(this.workflowId)).thenReturn(Optional.of(current), Optional.of(current));
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(current));
         when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
@@ -215,15 +227,25 @@ class WorkflowUseCasesTest {
         final Workflow saved = this.useCases.updateWorkflow(
                 this.workflowId,
                 new SaveWorkflowCommand("Full Testing", List.of(
-                        new Node(this.nodeA, this.agentId, NodeInputMode.DEPENDENCIES_ONLY,
+                        new Node(
+                                this.nodeA,
+                                this.agentId,
+                                NodeInputMode.DEPENDENCIES_ONLY,
                                 List.of(new NodePort(this.inputA, "Input", "Input.", 0)),
                                 List.of(new NodePort(this.outputA, "Output", "Output.", 0),
                                         new NodePort(this.outputB, "Task Output", "Task output.", 1)),
-                                new NodePosition(1.0, 2.0)),
-                        new Node(this.nodeB, this.agentId, NodeInputMode.DEPENDENCIES_ONLY,
+                                new NodePosition(1.0, 2.0),
+                                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                        ),
+                        new Node(
+                                this.nodeB,
+                                this.agentId,
+                                NodeInputMode.DEPENDENCIES_ONLY,
                                 List.of(new NodePort(this.inputB, "Input", "Input.", 0)),
                                 List.of(new NodePort(UUID.fromString("20000000-0000-4000-8000-000000000003"), "Output", "Output.", 0)),
-                                new NodePosition(3.0, 4.0))
+                                new NodePosition(3.0, 4.0),
+                                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                        )
                 ), List.of(
                         new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000001"), this.outputA, this.inputB),
                         new WorkflowConnection(UUID.fromString("30000000-0000-4000-8000-000000000002"), UUID.fromString("20000000-0000-4000-8000-000000000003"), this.inputA)

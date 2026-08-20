@@ -188,19 +188,19 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
         final RunPort sourceInputPort = graph.ports().stream()
                 .filter(port -> port.sourcePortId().equals(sourceInputPortId))
                 .findFirst()
-                .orElseThrow();
+                .orElseThrow(() -> new ConflictException("RUN_PORT_NOT_FOUND", "Runtime source input port was not found."));
         final RunNode sourceNode = graph.nodes().stream()
                 .filter(node -> node.sourceNodeId().equals(sourceInputPort.sourceNodeId()))
                 .findFirst()
-                .orElseThrow();
+                .orElseThrow(() -> new ConflictException("RUN_NODE_NOT_FOUND", "Runtime source node was not found."));
         final RunPort targetInputPort = graph.ports().stream()
                 .filter(port -> port.sourcePortId().equals(targetInputPortId))
                 .findFirst()
-                .orElseThrow();
+                .orElseThrow(() -> new ConflictException("RUN_PORT_NOT_FOUND", "Runtime target input port was not found."));
         final RunNode targetNode = graph.nodes().stream()
                 .filter(node -> node.sourceNodeId().equals(targetInputPort.sourceNodeId()))
                 .findFirst()
-                .orElseThrow();
+                .orElseThrow(() -> new ConflictException("RUN_NODE_NOT_FOUND", "Runtime target node was not found."));
         return this.scopeProjectionPolicy.project(
                 sourceNode.scopeMode(),
                 targetNode.scopeMode(),

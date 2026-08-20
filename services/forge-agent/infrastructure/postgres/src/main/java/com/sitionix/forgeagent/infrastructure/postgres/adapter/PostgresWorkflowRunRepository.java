@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.WorkflowRunExecutionEdge;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
@@ -78,17 +79,18 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     @Override
     public WorkflowRun saveLifecycle(final WorkflowRun run) {
         final WorkflowRunEntity entity = this.toEntity(run);
-        this.workflowRunRepository.findById(run.id())
-                .ifPresent(existing -> {
-                    entity.setTaskInputPortId(existing.getTaskInputPortId());
-                    entity.setTaskOutputPortId(existing.getTaskOutputPortId());
-                    if (run.result() == null && existing.getResult() != null) {
-                        entity.setResult(existing.getResult());
-                    }
-                    if (run.resultSourceNodeRunId() == null && existing.getResultSourceNodeRunId() != null) {
-                        entity.setResultSourceNodeRunId(existing.getResultSourceNodeRunId());
-                    }
-                });
+        final WorkflowRunEntity existing = this.workflowRunRepository.findById(run.id())
+                .orElseThrow(() -> new ConflictException(
+                        "WORKFLOW_RUN_LIFECYCLE_STATE_NOT_FOUND", "Persisted workflow run lifecycle state was not found."));
+        entity.setTaskInputPortId(existing.getTaskInputPortId());
+        entity.setTaskOutputPortId(existing.getTaskOutputPortId());
+        entity.setRepositoryIds(new java.util.ArrayList<>(existing.getRepositoryIds()));
+        if (run.result() == null && existing.getResult() != null) {
+            entity.setResult(existing.getResult());
+        }
+        if (run.resultSourceNodeRunId() == null && existing.getResultSourceNodeRunId() != null) {
+            entity.setResultSourceNodeRunId(existing.getResultSourceNodeRunId());
+        }
         return this.toLifecycleDomain(this.workflowRunRepository.save(entity));
     }
 

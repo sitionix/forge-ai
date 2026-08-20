@@ -211,9 +211,15 @@ class NodeRunLifecycleTest {
                 "Review auth changes.",
                 status,
                 List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
                 Instant.EPOCH,
                 startedAt,
-                finishedAt
+                finishedAt,
+                java.util.List.of()
         );
     }
 
@@ -232,11 +238,13 @@ class NodeRunLifecycleTest {
                 null,
                 null,
                 null,
+                null,
                 status,
                 null,
                 null,
                 executionModel,
                 Instant.EPOCH,
+                null,
                 null,
                 null
         );

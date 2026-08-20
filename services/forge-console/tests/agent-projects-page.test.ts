@@ -87,7 +87,7 @@ function workflow(id = '33333333-3333-4333-8333-333333333333', nodes: any[] = []
     id,
     projectId,
     name: 'Full Testing',
-    nodes: nodes.map((item) => ({ ...item })),
+    nodes: nodes.map((item) => ({ scopeMode: 'GLOBAL', ...item })),
     connections: connections || [],
     taskInputPortId,
     taskOutputPortId,
@@ -296,7 +296,7 @@ function node(
   inputs: any[] = [],
   outputs: any[] = []
 ) {
-  return { id, targetId, inputMode, inputs, outputs, position: { x, y } };
+  return { id, targetId, inputMode, scopeMode: 'GLOBAL', inputs, outputs, position: { x, y } };
 }
 
 function portedNode(
@@ -3782,7 +3782,7 @@ describe('Agent projects page', () => {
     const { page } = await openedBuilder();
 
     expect(page.workflowBuilder.nodeScopeMode({ scopeMode: 'PER_SCOPE' })).toBe('PER_SCOPE');
-    expect(page.workflowBuilder.nodeScopeMode({})).toBe('GLOBAL');
+    expect(() => page.workflowBuilder.nodeScopeMode({})).toThrow('Workflow node scope mode is invalid.');
     expect(() => page.workflowBuilder.nodeScopeMode({ scopeMode: 'repository' })).toThrow('Workflow node scope mode is invalid.');
   });
 

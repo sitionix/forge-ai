@@ -333,7 +333,25 @@ class ProjectTaskUseCasesTest {
     }
 
     private WorkflowRun run(final UUID taskId, final String input) {
-        return new WorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, taskId, "Full Testing", input, WorkflowRunStatus.QUEUED, List.of(), NOW, null, null);
+        return new WorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                taskId,
+                "Full Testing",
+                input,
+                WorkflowRunStatus.QUEUED,
+                List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
+                NOW,
+                null,
+                null,
+                java.util.List.of()
+        );
     }
 
     private WorkflowRun run(final UUID runId, final WorkflowRunStatus status, final NodeRunOutput result) {
@@ -353,7 +371,8 @@ class ProjectTaskUseCasesTest {
                 result == null ? null : UUID.fromString("55555555-5555-4555-8555-555555555555"),
                 NOW,
                 status == WorkflowRunStatus.QUEUED ? null : NOW,
-                status == WorkflowRunStatus.SUCCEEDED ? NOW.plusSeconds(1) : null
+                status == WorkflowRunStatus.SUCCEEDED ? NOW.plusSeconds(1) : null,
+                java.util.List.of()
         );
     }
 

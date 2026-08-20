@@ -65,10 +65,12 @@ class DependenciesOnlyNodeInputContentPolicyTest {
                 ConnectionResolutionType.DELIVERED,
                 payload,
                 NODE_RUN_ID,
-                NOW
+                NOW,
+                null
         );
         when(this.graphRepository.findPort(WORKFLOW_RUN_ID, INPUT_PORT_ID)).thenReturn(Optional.of(inputPort));
-        when(this.nodeRunRepository.findById(SOURCE_NODE_RUN_ID)).thenReturn(Optional.of(this.sourceNodeRun(SOURCE_REPOSITORY_ID)));
+        when(this.nodeRunRepository.findByIds(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(this.sourceNodeRun(SOURCE_REPOSITORY_ID)));
 
         final NodeExecutionInputContent content = policy.assemble(new NodeInputContentContext(this.workflowRun(), this.nodeRun(), List.of(resolution)));
 
@@ -96,10 +98,12 @@ class DependenciesOnlyNodeInputContentPolicyTest {
                 ConnectionResolutionType.DELIVERED,
                 new NodeRunOutput("{\"review\":\"retry\"}"),
                 NODE_RUN_ID,
-                NOW
+                NOW,
+                null
         );
         when(this.graphRepository.findPort(WORKFLOW_RUN_ID, INPUT_PORT_ID)).thenReturn(Optional.of(inputPort));
-        when(this.nodeRunRepository.findById(SOURCE_NODE_RUN_ID)).thenReturn(Optional.of(this.sourceNodeRun(null)));
+        when(this.nodeRunRepository.findByIds(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(this.sourceNodeRun(null)));
 
         final NodeExecutionInputContent content = policy.assemble(new NodeInputContentContext(this.workflowRun(), this.nodeRun(), List.of(resolution)));
 
@@ -117,9 +121,15 @@ class DependenciesOnlyNodeInputContentPolicyTest {
                 "Original task.",
                 WorkflowRunStatus.RUNNING,
                 List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
                 NOW,
                 NOW,
-                null
+                null,
+                java.util.List.of()
         );
     }
 
@@ -138,11 +148,13 @@ class DependenciesOnlyNodeInputContentPolicyTest {
                 INPUT_PORT_ID,
                 ACTIVATION_FRAME_ID,
                 null,
+                null,
                 NodeRunStatus.PENDING,
                 null,
                 null,
                 new NodeRunExecutionModel("codex", "gpt-5", null),
                 NOW,
+                null,
                 null,
                 null
         );
@@ -160,6 +172,7 @@ class DependenciesOnlyNodeInputContentPolicyTest {
                 NodeInputMode.DEPENDENCIES_ONLY,
                 new NodePosition(3.0, 4.0),
                 FRAME_ID,
+                null,
                 null,
                 null,
                 null,

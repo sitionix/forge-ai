@@ -22,6 +22,7 @@ import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
+import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
@@ -130,12 +131,14 @@ class WorkflowRunUseCasesTest {
                 .extracting(connection -> connection.sourceConnectionId())
                 .containsExactly(this.connectionId, UUID.fromString("99999999-9999-4999-8999-999999999998"));
         assertThat(run.nodeRuns()).hasSize(1);
+        assertThat(run.repositoryIds()).isEmpty();
         assertThat(run.nodeRuns().get(0)).satisfies(nodeRun -> {
             assertThat(nodeRun.sourceNodeId()).isEqualTo(this.nodeId);
             assertThat(nodeRun.status()).isEqualTo(NodeRunStatus.PENDING);
             assertThat(nodeRun.executionFrameId()).isNotNull();
             assertThat(nodeRun.activationFrameId()).isNull();
             assertThat(nodeRun.enteredViaInputPortId()).isEqualTo(this.inputPortId);
+            assertThat(nodeRun.repositoryId()).isNull();
         });
         final ArgumentCaptor<WorkflowRun> savedRunCaptor = ArgumentCaptor.forClass(WorkflowRun.class);
         verify(this.workflowRunRepository).save(savedRunCaptor.capture());
@@ -153,11 +156,49 @@ class WorkflowRunUseCasesTest {
         when(this.executionFrameRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(this.nodeRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        final WorkflowRun run = this.useCases.createWorkflowRunForTask(this.workflowId, new CreateWorkflowRunCommand("Run it"), this.taskId);
+        final WorkflowRun run = this.useCases.createWorkflowRunForTask(
+                this.workflowId, new CreateWorkflowRunCommand("Run it"), this.taskId, List.of(UUID.randomUUID()));
 
         assertThat(run.taskId()).isEqualTo(this.taskId);
         assertThat(run.runtimeGraph()).isNotNull();
         assertThat(run.runtimeGraph().nodes()).hasSize(1);
+    }
+
+    @Test
+    void directRunRejectsAnyPerScopeNodeEvenWhenItIsNotTheRoot() {
+        final Workflow base = this.workflowWithTwoNodes();
+        final List<Node> nodes = List.of(base.nodes().getFirst(), this.withScope(base.nodes().get(1), NodeScopeMode.PER_SCOPE));
+        final Workflow workflow = new Workflow(base.id(), base.projectId(), base.name(), base.normalizedName(), nodes,
+                base.connections(), base.taskInputPortId(), base.taskOutputPortId(), base.createdAt(), base.updatedAt());
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent(), this.secondAgent()));
+
+        assertThatThrownBy(() -> this.useCases.createWorkflowRun(
+                this.workflowId, new CreateWorkflowRunCommand("Run it")))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code").isEqualTo("PER_SCOPE_RUN_REQUIRES_REPOSITORIES");
+        verify(this.workflowRunRepository, never()).save(any());
+    }
+
+    @Test
+    void perScopeTaskRootCreatesOneNodeRunPerRepositoryInSnapshotOrder() {
+        final UUID repositoryA = UUID.fromString("77777777-7777-4777-8777-777777777771");
+        final UUID repositoryB = UUID.fromString("77777777-7777-4777-8777-777777777772");
+        final Workflow base = this.workflowWithTwoNodes();
+        final Workflow workflow = new Workflow(base.id(), base.projectId(), base.name(), base.normalizedName(),
+                List.of(this.withScope(base.nodes().getFirst(), NodeScopeMode.PER_SCOPE), base.nodes().get(1)), base.connections(),
+                base.taskInputPortId(), base.taskOutputPortId(), base.createdAt(), base.updatedAt());
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent(), this.secondAgent()));
+        when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(this.executionFrameRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(this.nodeRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        final WorkflowRun run = this.useCases.createWorkflowRunForTask(this.workflowId,
+                new CreateWorkflowRunCommand("Run it"), this.taskId, List.of(repositoryA, repositoryB));
+
+        assertThat(run.repositoryIds()).containsExactly(repositoryA, repositoryB);
+        assertThat(run.nodeRuns()).extracting(NodeRun::repositoryId).containsExactly(repositoryA, repositoryB);
     }
 
     @Test
@@ -250,10 +291,24 @@ class WorkflowRunUseCasesTest {
 
     @Test
     void rejectsMissingTaskId() {
-        assertThatThrownBy(() -> this.useCases.createWorkflowRunForTask(this.workflowId, new CreateWorkflowRunCommand("Run it"), null))
+        assertThatThrownBy(() -> this.useCases.createWorkflowRunForTask(
+                this.workflowId, new CreateWorkflowRunCommand("Run it"), null, List.of(UUID.randomUUID())))
                 .isInstanceOf(ValidationException.class)
                 .extracting("code")
                 .isEqualTo("INVALID_WORKFLOW_RUN_TASK");
+    }
+
+    @Test
+    void rejectsTaskRunWithEmptyRepositorySnapshotBeforePersistence() {
+        final Workflow workflow = this.workflow();
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
+
+        assertThatThrownBy(() -> this.useCases.createWorkflowRunForTask(
+                this.workflowId, new CreateWorkflowRunCommand("Run it"), this.taskId, List.of()))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code").isEqualTo("TASK_RUN_REQUIRES_REPOSITORIES");
+        verify(this.workflowRunRepository, never()).save(any());
     }
 
     @Test
@@ -309,7 +364,8 @@ class WorkflowRunUseCasesTest {
                                 new NodePort(this.secondInputPortId, "Alternate Input", "Alternate Input", 1)
                         ),
                         List.of(new NodePort(taskOutputPortId, outputName, outputDescription, 0)),
-                        new NodePosition(1.0, 2.0)
+                        new NodePosition(1.0, 2.0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
                 )),
                 List.of(),
                 taskInputPortId,
@@ -332,7 +388,8 @@ class WorkflowRunUseCasesTest {
                                 com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
                                 List.of(new NodePort(this.inputPortId, "Input", "Input", 0)),
                                 List.of(new NodePort(this.outputPortId, "Done", "Done", 0)),
-                                new NodePosition(1.0, 2.0)
+                                new NodePosition(1.0, 2.0),
+                                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
                         ),
                         new Node(
                                 this.secondNodeId,
@@ -341,7 +398,8 @@ class WorkflowRunUseCasesTest {
                                 List.of(new NodePort(this.secondInputPortId, "Review feedback", "Review feedback", 0)),
                                 List.of(new NodePort(this.secondOutputPortId, "Approved", "Approved", 0),
                                         new NodePort(this.terminalOutputPortId, "Task Result", "Task Result", 1)),
-                                new NodePosition(3.0, 4.0)
+                                new NodePosition(3.0, 4.0),
+                                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
                         )
                 ),
                 List.of(
@@ -353,6 +411,10 @@ class WorkflowRunUseCasesTest {
                 NOW,
                 NOW
         );
+    }
+
+    private Node withScope(final Node node, final NodeScopeMode scopeMode) {
+        return new Node(node.id(), node.targetId(), node.inputMode(), node.inputs(), node.outputs(), node.position(), scopeMode);
     }
 
     private AgentDefinition agent() {

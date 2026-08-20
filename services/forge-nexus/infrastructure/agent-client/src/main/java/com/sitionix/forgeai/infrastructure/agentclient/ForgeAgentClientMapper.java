@@ -354,7 +354,7 @@ public class ForgeAgentClientMapper {
                 response.createdAt(),
                 response.startedAt(),
                 response.finishedAt(),
-                response.repositoryIds() == null ? List.of() : response.repositoryIds()
+                this.requireList(response.repositoryIds(), "workflowRun.repositoryIds")
         );
     }
 

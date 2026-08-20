@@ -7,6 +7,10 @@ import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import java.util.Comparator;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import com.sitionix.forgeagent.domain.exception.ConflictException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -34,6 +38,12 @@ public class DependenciesOnlyNodeInputContentPolicy implements NodeInputContentP
     }
 
     protected java.util.List<NodeInputContribution> contributions(final NodeInputContentContext context) {
+        final Map<java.util.UUID, com.sitionix.forgeagent.domain.model.NodeRun> sourceRuns = this.nodeRunRepository
+                .findByIds(context.consumedContributions().stream()
+                        .map(com.sitionix.forgeagent.domain.model.ConnectionResolution::sourceNodeRunId)
+                        .collect(Collectors.toSet()))
+                .stream()
+                .collect(Collectors.toMap(com.sitionix.forgeagent.domain.model.NodeRun::id, Function.identity()));
         return context.consumedContributions().stream()
                 .sorted(Comparator
                         .comparing(com.sitionix.forgeagent.domain.model.ConnectionResolution::sourceConnectionId)
@@ -42,13 +52,16 @@ public class DependenciesOnlyNodeInputContentPolicy implements NodeInputContentP
                         resolution.sourceNodeRunId(),
                         resolution.sourceConnectionId(),
                         resolution.payload(),
-                        this.nodeRunRepository.findById(resolution.sourceNodeRunId()).orElseThrow().repositoryId()
+                        java.util.Optional.ofNullable(sourceRuns.get(resolution.sourceNodeRunId()))
+                                .orElseThrow(() -> new ConflictException("SOURCE_NODE_RUN_NOT_FOUND",
+                                        "Source node run for input contribution was not found."))
+                                .repositoryId()
                 ))
                 .toList();
     }
 
     protected RunPort entryInputPort(final NodeInputContentContext context) {
         return this.graphRepository.findPort(context.workflowRun().id(), context.nodeRun().enteredViaInputPortId())
-                .orElseThrow();
+                .orElseThrow(() -> new ConflictException("RUN_PORT_NOT_FOUND", "Runtime entry input port was not found."));
     }
 }

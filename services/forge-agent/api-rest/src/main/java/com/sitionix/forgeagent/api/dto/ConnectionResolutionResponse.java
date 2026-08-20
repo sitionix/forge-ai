@@ -17,11 +17,4 @@ public record ConnectionResolutionResponse(
         Instant createdAt,
         UUID targetRepositoryId
 ) {
-    public ConnectionResolutionResponse(final UUID id, final UUID executionFrameId, final UUID sourceNodeRunId,
-                                        final UUID sourceConnectionId, final UUID targetInputPortId,
-                                        final ConnectionResolutionType resolutionType, final JsonNode payload,
-                                        final UUID consumedByNodeRunId, final Instant createdAt) {
-        this(id, executionFrameId, sourceNodeRunId, sourceConnectionId, targetInputPortId, resolutionType,
-                payload, consumedByNodeRunId, createdAt, null);
-    }
 }

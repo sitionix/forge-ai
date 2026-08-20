@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.application.runtime;
 
 import com.sitionix.forgeagent.domain.model.ConnectionResolution;
+import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.ConnectionResolutionType;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
@@ -42,7 +43,8 @@ public class GraphStateInputParticipationResolver implements InputParticipationR
     public InputParticipation resolve(final UUID workflowRunId, final UUID activationFrameId,
                                       final UUID targetInputPortId, final UUID repositoryId) {
         final WorkflowRunGraph graph = this.graphRepository.findByWorkflowRunId(workflowRunId);
-        final WorkflowRun workflowRun = this.workflowRunRepository.findById(workflowRunId).orElseThrow();
+        final WorkflowRun workflowRun = this.workflowRunRepository.findById(workflowRunId)
+                .orElseThrow(() -> new ConflictException("WORKFLOW_RUN_NOT_FOUND", "Workflow run runtime state was not found."));
         final List<NodeRun> frameNodeRuns = this.nodeRunRepository.findByWorkflowRunIdAndExecutionFrameId(workflowRunId, activationFrameId);
         final List<ConnectionResolution> resolutions = this.resolutionRepository.findByWorkflowRunAndFrame(workflowRunId, activationFrameId);
         final ParticipationIndex index = new ParticipationIndex(graph, activationFrameId, frameNodeRuns, resolutions);
@@ -50,7 +52,8 @@ public class GraphStateInputParticipationResolver implements InputParticipationR
         boolean open = false;
         for (final RunConnection incoming : this.graphRepository.findIncomingConnections(workflowRunId, targetInputPortId)) {
             final UUID sourceNodeId = index.outputOwner(incoming.sourceOutputPortId());
-            final RunNode sourceNode = graph.nodes().stream().filter(node -> node.sourceNodeId().equals(sourceNodeId)).findFirst().orElseThrow();
+            final RunNode sourceNode = graph.nodes().stream().filter(node -> node.sourceNodeId().equals(sourceNodeId))
+                    .findFirst().orElseThrow(() -> new ConflictException("RUN_NODE_NOT_FOUND", "Runtime source node was not found."));
             final RunNode targetNode = index.inputOwner(targetInputPortId);
             for (final UUID sourceRepositoryId : this.expectedSourceRepositories(sourceNode, targetNode, repositoryId, workflowRun.repositoryIds())) {
                 final Optional<ConnectionResolution> resolution = index.resolutionForConnection(incoming.sourceConnectionId(), repositoryId, sourceRepositoryId);

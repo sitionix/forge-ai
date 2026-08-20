@@ -273,7 +273,8 @@ class ForgeAgentClientMapperTest {
                 NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(input),
                 List.of(output),
-                new NodePosition(1.0, 2.0)
+                new NodePosition(1.0, 2.0),
+                com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
         );
         assertThat(this.mapper.toRequest(new CreateAgentWorkflowCommand("Full Testing")))
                 .isEqualTo(new AgentWorkflowRequest("Full Testing"));
@@ -286,7 +287,8 @@ class ForgeAgentClientMapperTest {
                                 NodeInputMode.DEPENDENCIES_ONLY.name(),
                                 List.of(new NodePortRequest(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                                 List.of(new NodePortRequest(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
-                                new NodePositionRequest(1.0, 2.0)
+                                new NodePositionRequest(1.0, 2.0),
+                                "GLOBAL"
                         )),
                         List.of(new WorkflowConnectionRequest(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
                         INPUT_ID,
@@ -303,7 +305,8 @@ class ForgeAgentClientMapperTest {
                         NodeInputMode.DEPENDENCIES_ONLY.name(),
                         List.of(new NodePortResponse(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                         List.of(new NodePortResponse(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
-                        new NodePositionResponse(1.0, 2.0)
+                        new NodePositionResponse(1.0, 2.0),
+                        "GLOBAL"
                 )),
                 List.of(new WorkflowConnectionResponse(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
                 INPUT_ID,
@@ -356,6 +359,7 @@ class ForgeAgentClientMapperTest {
                 new NodeRunFailureResponse("ERR", "Failed"),
                 CREATED,
                 null,
+                null,
                 null
         );
         final UUID resolutionId = UUID.fromString("77777777-0000-4000-8000-000000000001");
@@ -388,7 +392,8 @@ class ForgeAgentClientMapperTest {
                 NODE_RUN_ID,
                 CREATED,
                 null,
-                null
+                null,
+                java.util.List.of()
         ))).isEqualTo(new AgentWorkflowRun(
                 RUN_ID,
                 PROJECT_ID,
@@ -415,6 +420,7 @@ class ForgeAgentClientMapperTest {
                         new AgentNodeRunFailure("ERR", "Failed"),
                         CREATED,
                         null,
+                        null,
                         null
                 )),
                 List.of(new AgentConnectionResolution(
@@ -435,7 +441,8 @@ class ForgeAgentClientMapperTest {
                 NODE_RUN_ID,
                 CREATED,
                 null,
-                null
+                null,
+                java.util.List.of()
         ));
     }
 
@@ -464,7 +471,8 @@ class ForgeAgentClientMapperTest {
                 null,
                 CREATED,
                 CREATED,
-                finishedAt
+                finishedAt,
+                null
         );
         final WorkflowRunGraphResponse graph = new WorkflowRunGraphResponse(
                 inputPortId,
@@ -472,7 +480,8 @@ class ForgeAgentClientMapperTest {
                 List.of(new RunNodeResponse(
                         NODE_ID,
                         "Analyzer",
-                        new NodePositionResponse(1.0, 2.0)
+                        new NodePositionResponse(1.0, 2.0),
+                        "GLOBAL"
                 )),
                 List.of(
                         new RunPortResponse(inputPortId, NODE_ID, "INPUT", "Initial", 0),
@@ -497,7 +506,8 @@ class ForgeAgentClientMapperTest {
                 null,
                 CREATED,
                 CREATED,
-                null
+                null,
+                java.util.List.of()
         ))).isEqualTo(new AgentWorkflowRun(
                 RUN_ID,
                 PROJECT_ID,
@@ -524,7 +534,8 @@ class ForgeAgentClientMapperTest {
                         null,
                         CREATED,
                         CREATED,
-                        finishedAt
+                        finishedAt,
+                        null
                 )),
                 List.of(),
                 List.of(),
@@ -534,7 +545,8 @@ class ForgeAgentClientMapperTest {
                         List.of(new AgentRunNode(
                                 NODE_ID,
                                 "Analyzer",
-                                new NodePosition(1.0, 2.0)
+                                new NodePosition(1.0, 2.0),
+                                com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
                         )),
                         List.of(
                                 new AgentRunPort(inputPortId, NODE_ID, "INPUT", "Initial", 0),
@@ -546,7 +558,8 @@ class ForgeAgentClientMapperTest {
                 null,
                 CREATED,
                 CREATED,
-                null
+                null,
+                java.util.List.of()
         ));
     }
 
@@ -565,7 +578,15 @@ class ForgeAgentClientMapperTest {
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new NodeResponse(NODE_ID, null, new NodePositionResponse(1.0, 2.0))),
+                List.of(new NodeResponse(
+                        NODE_ID,
+                        null,
+                        null,
+                        java.util.List.of(),
+                        java.util.List.of(),
+                        new NodePositionResponse(1.0, 2.0),
+                        "GLOBAL"
+                )),
                 List.of(),
                 null,
                 CREATED,
@@ -577,6 +598,12 @@ class ForgeAgentClientMapperTest {
                 .isInstanceOf(HttpMessageConversionException.class)
                 .hasMessageContaining("agents");
         assertThatThrownBy(() -> this.mapper.toDomain(new WorkflowRunResponse(
+                RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.",
+                AgentWorkflowRunStatus.QUEUED, List.of(), List.of(), List.of(), null, null, null,
+                CREATED, null, null, null)))
+                .isInstanceOf(HttpMessageConversionException.class)
+                .hasMessageContaining("workflowRun.repositoryIds");
+        assertThatThrownBy(() -> this.mapper.toDomain(new WorkflowRunResponse(
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
@@ -584,10 +611,36 @@ class ForgeAgentClientMapperTest {
                 "Full Testing",
                 "Review auth changes.",
                 AgentWorkflowRunStatus.QUEUED,
-                List.of(new NodeRunResponse(NODE_RUN_ID, NODE_ID, AGENT_ID, "Analyzer", "Analyze", this.objectMapper.readTree("[]"), new NodePositionResponse(1.0, 2.0), AgentNodeRunStatus.PENDING, null, null, CREATED, null, null)),
+                List.of(new NodeRunResponse(
+                        NODE_RUN_ID,
+                        NODE_ID,
+                        AGENT_ID,
+                        "Analyzer",
+                        "Analyze",
+                        this.objectMapper.readTree("[]"),
+                        null,
+                        new NodePositionResponse(1.0, 2.0),
+                        null,
+                        null,
+                        null,
+                        null,
+                        AgentNodeRunStatus.PENDING,
+                        null,
+                        null,
+                        CREATED,
+                        null,
+                        null,
+                        null
+                )),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
                 CREATED,
                 null,
-                null
+                null,
+                java.util.List.of()
         )))
                 .isInstanceOf(HttpMessageConversionException.class)
                 .hasMessageContaining("nodeRun.agentOutputSchema");
@@ -626,7 +679,8 @@ class ForgeAgentClientMapperTest {
                 null,
                 CREATED,
                 CREATED,
-                null
+                null,
+                java.util.List.of()
         )))
                 .isInstanceOf(HttpMessageConversionException.class)
                 .hasMessageContaining("runtimeGraph.nodes.scopeMode");

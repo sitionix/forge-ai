@@ -10,8 +10,4 @@ public interface InputActivationResolutionRepository {
 
     Optional<InputActivationResolution> find(UUID workflowRunId, UUID activationFrameId, UUID targetInputPortId, UUID repositoryId);
 
-    default Optional<InputActivationResolution> find(final UUID workflowRunId, final UUID activationFrameId,
-                                                     final UUID targetInputPortId) {
-        return this.find(workflowRunId, activationFrameId, targetInputPortId, null);
-    }
 }

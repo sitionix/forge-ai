@@ -279,7 +279,8 @@ class AgentProxyApiMapperTest {
                 NodeInputMode.TASK_AND_DEPENDENCIES.name(),
                 List.of(inputRequest),
                 List.of(outputRequest),
-                new NodePositionRequest(1.0, 2.0)
+                new NodePositionRequest(1.0, 2.0),
+                "GLOBAL"
         );
         assertThat(this.mapper.toCommand(new SaveAgentWorkflowRequest("Full Testing", List.of(nodeRequest), List.of(connectionRequest), INPUT_ID, OUTPUT_ID)))
                 .isEqualTo(new SaveAgentWorkflowCommand(
@@ -290,7 +291,8 @@ class AgentProxyApiMapperTest {
                                 NodeInputMode.TASK_AND_DEPENDENCIES,
                                 List.of(input),
                                 List.of(output),
-                                new NodePosition(1.0, 2.0)
+                                new NodePosition(1.0, 2.0),
+                                com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
                         )),
                         List.of(connection),
                         INPUT_ID,
@@ -307,7 +309,8 @@ class AgentProxyApiMapperTest {
                         NodeInputMode.DEPENDENCIES_ONLY,
                         List.of(input),
                         List.of(output),
-                        new NodePosition(1.0, 2.0)
+                        new NodePosition(1.0, 2.0),
+                        com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
                 )),
                 List.of(connection),
                 INPUT_ID,
@@ -325,7 +328,8 @@ class AgentProxyApiMapperTest {
                         NodeInputMode.DEPENDENCIES_ONLY.name(),
                         List.of(new NodePortResponse(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                         List.of(new NodePortResponse(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
-                        new NodePositionResponse(1.0, 2.0)
+                        new NodePositionResponse(1.0, 2.0),
+                        "GLOBAL"
                 )),
                 List.of(new WorkflowConnectionResponse(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
                 INPUT_ID,
@@ -386,6 +390,7 @@ class AgentProxyApiMapperTest {
                         new AgentNodeRunFailure("ERR", "Failed"),
                         CREATED,
                         null,
+                        null,
                         null
                 )),
                 List.of(new AgentConnectionResolution(
@@ -404,7 +409,12 @@ class AgentProxyApiMapperTest {
                 new AgentWorkflowRunGraph(
                         INPUT_ID,
                         OUTPUT_ID,
-                        List.of(new AgentRunNode(NODE_ID, "Analyzer", new NodePosition(1.0, 2.0))),
+                        List.of(new AgentRunNode(
+                                NODE_ID,
+                                "Analyzer",
+                                new NodePosition(1.0, 2.0),
+                                com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
+                        )),
                         List.of(new AgentRunPort(INPUT_ID, NODE_ID, "INPUT", "Initial", 0),
                                 new AgentRunPort(OUTPUT_ID, NODE_ID, "OUTPUT", "Done", 0)),
                         List.of(new AgentRunConnection(CONNECTION_ID, OUTPUT_ID, INPUT_ID))
@@ -413,7 +423,8 @@ class AgentProxyApiMapperTest {
                 NODE_RUN_ID,
                 CREATED,
                 null,
-                null
+                null,
+                java.util.List.of()
         );
         assertThat(this.mapper.toResponse(run)).isEqualTo(new AgentWorkflowRunResponse(
                 RUN_ID,
@@ -441,6 +452,7 @@ class AgentProxyApiMapperTest {
                         new AgentNodeRunFailureResponse("ERR", "Failed"),
                         CREATED,
                         null,
+                        null,
                         null
                 )),
                 List.of(new AgentConnectionResolutionResponse(
@@ -459,7 +471,12 @@ class AgentProxyApiMapperTest {
                 new AgentWorkflowRunGraphResponse(
                         INPUT_ID,
                         OUTPUT_ID,
-                        List.of(new AgentRunNodeResponse(NODE_ID, "Analyzer", new NodePositionResponse(1.0, 2.0))),
+                        List.of(new AgentRunNodeResponse(
+                                NODE_ID,
+                                "Analyzer",
+                                new NodePositionResponse(1.0, 2.0),
+                                "GLOBAL"
+                        )),
                         List.of(new AgentRunPortResponse(INPUT_ID, NODE_ID, "INPUT", "Initial", 0),
                                 new AgentRunPortResponse(OUTPUT_ID, NODE_ID, "OUTPUT", "Done", 0)),
                         List.of(new AgentRunConnectionResponse(CONNECTION_ID, OUTPUT_ID, INPUT_ID))
@@ -468,7 +485,8 @@ class AgentProxyApiMapperTest {
                 NODE_RUN_ID,
                 CREATED,
                 null,
-                null
+                null,
+                java.util.List.of()
         ));
     }
 
