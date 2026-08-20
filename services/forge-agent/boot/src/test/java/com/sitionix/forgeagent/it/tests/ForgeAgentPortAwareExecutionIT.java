@@ -59,6 +59,7 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -252,6 +253,28 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.activationResolutionRepository.find(run.id(), this.rootFrame(run.id()), IMPLEMENTER_REVIEW_IN, null)).isPresent()
                 .get()
                 .satisfies(resolution -> assertThat(resolution.activatedNodeRunId()).isNull());
+        assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+    }
+
+    @Test
+    @Timeout(value = 5, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void closedCycleStopsAtExistingActivationResolution() {
+        this.seed();
+        this.saveClosedCycleWorkflow();
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(A_PASS);
+
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Close cycle."));
+        final UUID frameId = this.rootFrame(run.id());
+        final NodeRun a = this.onlyPending(run.id(), A);
+
+        this.complete(a, "{\"result\":\"done\"}");
+
+        assertThat(this.nodeRuns(run.id(), A)).extracting(NodeRun::id).containsExactly(a.id());
+        assertThat(this.nodeRuns(run.id(), B)).isEmpty();
+        assertThat(this.activationResolutionRepository.find(run.id(), frameId, B_IN, null))
+                .hasValueSatisfying(resolution -> assertThat(resolution.activatedNodeRunId()).isNull());
+        assertThat(this.activationResolutionRepository.find(run.id(), frameId, IMPLEMENTER_REVIEW_IN, null))
+                .hasValueSatisfying(resolution -> assertThat(resolution.activatedNodeRunId()).isNull());
         assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
     }
 
@@ -817,6 +840,24 @@ class ForgeAgentPortAwareExecutionIT {
                 ),
                 IMPLEMENTER_INITIAL_IN,
                 CODE_PASS
+        ));
+    }
+
+    private void saveClosedCycleWorkflow() {
+        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
+                "Full Testing",
+                List.of(
+                        this.node(A, AGENT_A_ID,
+                                List.of(this.port(A_IN, "Initial", 0), this.port(IMPLEMENTER_REVIEW_IN, "Review", 1)),
+                                List.of(this.port(A_PASS, "Finish", 0), this.port(A_RETURN, "To B", 1)), 0),
+                        this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")), List.of(this.port(B_OUT, "To A")), 1)
+                ),
+                List.of(
+                        this.connection(1, A_RETURN, B_IN),
+                        this.connection(2, B_OUT, IMPLEMENTER_REVIEW_IN)
+                ),
+                A_IN,
+                A_PASS
         ));
     }
 

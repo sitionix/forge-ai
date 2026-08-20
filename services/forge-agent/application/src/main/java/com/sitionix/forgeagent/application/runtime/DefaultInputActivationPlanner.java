@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -111,12 +112,16 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
         public void handle(final CloseActivationDecision decision) {
             DefaultInputActivationPlanner.this.frameRepository.findByIdForUpdate(decision.activationFrameId())
                     .orElseThrow(() -> new ConflictException("EXECUTION_FRAME_NOT_FOUND", "Execution frame was not found."));
-            DefaultInputActivationPlanner.this.activationResolutionRepository.find(
+            final Optional<InputActivationResolution> alreadyResolved = DefaultInputActivationPlanner.this.activationResolutionRepository.find(
                     decision.workflowRunId(),
                     decision.activationFrameId(),
                     decision.targetInputPortId(),
                     decision.repositoryId()
-            ).orElseGet(() -> DefaultInputActivationPlanner.this.activationResolutionRepository.save(new InputActivationResolution(
+            );
+            if (alreadyResolved.isPresent()) {
+                return;
+            }
+            DefaultInputActivationPlanner.this.activationResolutionRepository.save(new InputActivationResolution(
                     UUID.randomUUID(),
                     decision.workflowRunId(),
                     decision.activationFrameId(),
@@ -124,7 +129,7 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                     null,
                     Instant.now(DefaultInputActivationPlanner.this.clock),
                     decision.repositoryId()
-            )));
+            ));
             this.enqueueProjectedDownstream(decision.activationFrameId(), decision.targetInputPortId(),
                     decision.repositoryId());
         }
