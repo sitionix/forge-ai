@@ -57,7 +57,7 @@ class ReentryFrameTransitionPolicyTest {
     void originalActivationFrameIsNeverReusedAsItsOwnChild() {
         final ExecutionFrame frameA = this.frame(FRAME_A_ID, null);
         final ExecutionFrame frameB = this.frame(FRAME_B_ID, FRAME_A_ID);
-        final NodeRun original = this.nodeRun(FRAME_A_ID, FRAME_A_ID, REPOSITORY_A);
+        final NodeRun original = this.nodeRun(FRAME_A_ID, null, REPOSITORY_A);
         when(this.nodeRunRepository.findByWorkflowRunIdAndExecutionFrameId(RUN_ID, FRAME_A_ID))
                 .thenReturn(List.of(original));
         when(this.nodeRunRepository.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(original));
@@ -65,6 +65,18 @@ class ReentryFrameTransitionPolicyTest {
 
         assertThat(this.policy.frameForActivation(
                 this.workflowRun(), frameA, this.targetNode(), INPUT_ID, REPOSITORY_A)).isEqualTo(frameB);
+    }
+
+    @Test
+    void allRepositoriesInFirstActivationWaveRemainInParentFrame() {
+        final ExecutionFrame frameA = this.frame(FRAME_A_ID, null);
+        final NodeRun activatedA = this.nodeRun(FRAME_A_ID, FRAME_A_ID, REPOSITORY_A);
+        when(this.nodeRunRepository.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(activatedA));
+        when(this.nodeRunRepository.findByWorkflowRunIdAndExecutionFrameId(RUN_ID, FRAME_A_ID))
+                .thenReturn(List.of(activatedA));
+
+        assertThat(this.policy.frameForActivation(
+                this.workflowRun(), frameA, this.targetNode(), INPUT_ID, REPOSITORY_B)).isEqualTo(frameA);
     }
 
     @Test
@@ -84,7 +96,7 @@ class ReentryFrameTransitionPolicyTest {
     void nextReentryGenerationCreatesNextChildFrame() {
         final ExecutionFrame frameB = this.frame(FRAME_B_ID, FRAME_A_ID);
         final ExecutionFrame frameC = this.frame(FRAME_C_ID, FRAME_B_ID);
-        final NodeRun generationTwo = this.nodeRun(FRAME_B_ID, FRAME_B_ID, REPOSITORY_A);
+        final NodeRun generationTwo = this.nodeRun(FRAME_B_ID, null, REPOSITORY_A);
         when(this.nodeRunRepository.findByWorkflowRunIdAndExecutionFrameId(RUN_ID, FRAME_B_ID))
                 .thenReturn(List.of(generationTwo));
         when(this.nodeRunRepository.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(generationTwo));
