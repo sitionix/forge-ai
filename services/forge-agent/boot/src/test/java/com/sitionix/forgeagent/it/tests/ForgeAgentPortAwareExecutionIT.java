@@ -249,7 +249,7 @@ class ForgeAgentPortAwareExecutionIT {
         this.complete(this.onlyPending(run.id(), CODE), "{\"code\":\"pass\"}");
 
         assertThat(this.nodeRuns(run.id(), IMPLEMENTER)).hasSize(1);
-        assertThat(this.activationResolutionRepository.find(run.id(), this.rootFrame(run.id()), IMPLEMENTER_REVIEW_IN)).isPresent()
+        assertThat(this.activationResolutionRepository.find(run.id(), this.rootFrame(run.id()), IMPLEMENTER_REVIEW_IN, null)).isPresent()
                 .get()
                 .satisfies(resolution -> assertThat(resolution.activatedNodeRunId()).isNull());
         assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
@@ -420,7 +420,7 @@ class ForgeAgentPortAwareExecutionIT {
                 .satisfies(resolution -> assertThat(resolution.sourceNodeRunId()).isEqualTo(runningA.id()));
         assertThat(this.pendingForSource(run.id(), B)).hasSize(1);
         final NodeRun b = this.onlyPending(run.id(), B);
-        assertThat(this.activationResolutionRepository.find(run.id(), runningA.executionFrameId(), B_IN)).isPresent()
+        assertThat(this.activationResolutionRepository.find(run.id(), runningA.executionFrameId(), B_IN, null)).isPresent()
                 .get()
                 .satisfies(resolution -> assertThat(resolution.activatedNodeRunId()).isEqualTo(b.id()));
         assertThat(this.frameRepository.findByWorkflowRunId(run.id())).hasSize(1);
