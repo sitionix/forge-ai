@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeit.core.test.IntegrationTest;
+import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +14,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 @IntegrationTest
 class ForgeAgentRuntimeDbAcceptanceIT {
 
+    // ForgeIT discovers the test contract from a non-static ForgeIT-typed field.
+    @Autowired
+    private ForgeAgentTestManager forgeItContract;
     @Autowired
     private JdbcTemplate jdbc;
 

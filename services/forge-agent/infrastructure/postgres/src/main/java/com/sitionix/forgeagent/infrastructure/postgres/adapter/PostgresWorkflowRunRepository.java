@@ -78,20 +78,19 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
 
     @Override
     public WorkflowRun saveLifecycle(final WorkflowRun run) {
-        final WorkflowRunEntity entity = this.toEntity(run);
         final WorkflowRunEntity existing = this.workflowRunRepository.findById(run.id())
                 .orElseThrow(() -> new ConflictException(
                         "WORKFLOW_RUN_LIFECYCLE_STATE_NOT_FOUND", "Persisted workflow run lifecycle state was not found."));
-        entity.setTaskInputPortId(existing.getTaskInputPortId());
-        entity.setTaskOutputPortId(existing.getTaskOutputPortId());
-        entity.setRepositoryIds(new java.util.ArrayList<>(existing.getRepositoryIds()));
-        if (run.result() == null && existing.getResult() != null) {
-            entity.setResult(existing.getResult());
+        existing.setStatus(run.status().name());
+        existing.setStartedAt(run.startedAt());
+        existing.setFinishedAt(run.finishedAt());
+        if (run.result() != null) {
+            existing.setResult(run.result().jsonValue());
         }
-        if (run.resultSourceNodeRunId() == null && existing.getResultSourceNodeRunId() != null) {
-            entity.setResultSourceNodeRunId(existing.getResultSourceNodeRunId());
+        if (run.resultSourceNodeRunId() != null) {
+            existing.setResultSourceNodeRunId(run.resultSourceNodeRunId());
         }
-        return this.toLifecycleDomain(this.workflowRunRepository.save(entity));
+        return this.toLifecycleDomain(this.workflowRunRepository.save(existing));
     }
 
     @Override

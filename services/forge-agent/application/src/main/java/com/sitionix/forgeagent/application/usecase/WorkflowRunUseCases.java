@@ -83,9 +83,6 @@ public class WorkflowRunUseCases {
         if (repositorySnapshot.size() > 1 && outputNode.scopeMode() == NodeScopeMode.PER_SCOPE) {
             throw new ValidationException("AMBIGUOUS_PER_SCOPE_TASK_OUTPUT", "Task Output node must be GLOBAL for multi-repository runs.");
         }
-        if (graph.nodes().isEmpty()) {
-            throw new ValidationException("WORKFLOW_ENTRY_NOT_FOUND", "Workflow entry node was not found.");
-        }
         final Instant now = Instant.now(this.clock);
         final WorkflowRun run = this.workflowRunRepository.save(new WorkflowRun(
                 runId,
@@ -172,9 +169,6 @@ public class WorkflowRunUseCases {
     }
 
     private RunPort requireTaskOutputPort(final WorkflowRunGraph graph) {
-        if (graph.nodes().isEmpty()) {
-            throw new ValidationException("WORKFLOW_ENTRY_NOT_FOUND", "Workflow entry node was not found.");
-        }
         if (graph.taskOutputPortId() == null) {
             throw new ValidationException("WORKFLOW_TASK_OUTPUT_REQUIRED", "Workflow task output port is required.");
         }
