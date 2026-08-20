@@ -152,7 +152,7 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                     .orElseThrow(() -> new ConflictException("RUN_NODE_NOT_FOUND", "Runtime node was not found."));
             DefaultInputActivationPlanner.this.budgetPolicy.assertNodeRunCanBeCreated(this.workflowRun);
             final ExecutionFrame executionFrame = DefaultInputActivationPlanner.this.frameTransitionPolicy.frameForActivation(
-                    this.workflowRun, activationFrame, targetNode, decision.targetInputPortId(), decision.repositoryId());
+                    this.workflowRun, activationFrame, targetNode, decision.targetInputPortId());
             final com.sitionix.forgeagent.domain.model.NodeRun nodeRun = DefaultInputActivationPlanner.this.nodeRunRepository.saveAndFlush(
                     DefaultInputActivationPlanner.this.nodeRunFactory.activated(
                             this.workflowRun,

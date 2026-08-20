@@ -3,8 +3,6 @@ package com.sitionix.forgeagent.application.runtime;
 import com.sitionix.forgeagent.domain.model.ExecutionFrame;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
-import com.sitionix.forgeagent.domain.model.NodeScopeMode;
-import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.RunNode;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import java.time.Clock;
@@ -18,6 +16,7 @@ import org.springframework.stereotype.Component;
 public class NodeRunFactory {
 
     private final Clock clock;
+    private final ScopeProjectionPolicy scopeProjectionPolicy;
 
     public NodeRun root(final WorkflowRun workflowRun,
                         final ExecutionFrame executionFrame,
@@ -39,7 +38,8 @@ public class NodeRunFactory {
                            final RunNode runNode,
                            final UUID activationFrameId,
                            final UUID enteredViaInputPortId, final UUID repositoryId) {
-        this.validateScope(workflowRun, runNode, repositoryId);
+        this.scopeProjectionPolicy.assertValidSourceInvocation(
+                runNode.scopeMode(), repositoryId, workflowRun.repositoryIds());
         return new NodeRun(
                 UUID.randomUUID(),
                 workflowRun.id(),
@@ -66,16 +66,4 @@ public class NodeRunFactory {
         );
     }
 
-    private void validateScope(final WorkflowRun workflowRun, final RunNode runNode, final UUID repositoryId) {
-        if (runNode.scopeMode() == NodeScopeMode.GLOBAL && repositoryId != null) {
-            throw new ValidationException("INVALID_GLOBAL_NODE_RUN_SCOPE", "GLOBAL node run cannot have repositoryId.");
-        }
-        if (runNode.scopeMode() == NodeScopeMode.PER_SCOPE && repositoryId == null) {
-            throw new ValidationException("MISSING_NODE_RUN_REPOSITORY", "PER_SCOPE node run requires repositoryId.");
-        }
-        if (runNode.scopeMode() == NodeScopeMode.PER_SCOPE && !workflowRun.repositoryIds().contains(repositoryId)) {
-            throw new ValidationException("NODE_RUN_REPOSITORY_OUTSIDE_SNAPSHOT",
-                    "PER_SCOPE node run repositoryId must belong to the workflow run repository snapshot.");
-        }
-    }
 }

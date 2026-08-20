@@ -8,8 +8,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.sitionix.forgeagent.application.runtime.NodeRunFactory;
 import com.sitionix.forgeagent.application.runtime.ExecutionBudgetPolicy;
+import com.sitionix.forgeagent.application.runtime.NodeRunFactory;
+import com.sitionix.forgeagent.application.runtime.ScopeProjectionPolicy;
 import com.sitionix.forgeagent.application.runtime.WorkflowRunSnapshotBuilder;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
@@ -94,7 +95,7 @@ class WorkflowRunUseCasesTest {
                 this.executionFrameRepository,
                 this.nodeRunRepository,
                 new WorkflowRunSnapshotBuilder(this.agentDefinitionRepository),
-                new NodeRunFactory(CLOCK),
+                new NodeRunFactory(CLOCK, new ScopeProjectionPolicy()),
                 this.executionBudgetPolicy,
                 CLOCK
         );
@@ -306,6 +307,19 @@ class WorkflowRunUseCasesTest {
 
         assertThatThrownBy(() -> this.useCases.createWorkflowRunForTask(
                 this.workflowId, new CreateWorkflowRunCommand("Run it"), this.taskId, List.of()))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code").isEqualTo("TASK_RUN_REQUIRES_REPOSITORIES");
+        verify(this.workflowRunRepository, never()).save(any());
+    }
+
+    @Test
+    void rejectsTaskRunWithNullRepositorySnapshotThroughControlledValidation() {
+        final Workflow workflow = this.workflow();
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
+
+        assertThatThrownBy(() -> this.useCases.createWorkflowRunForTask(
+                this.workflowId, new CreateWorkflowRunCommand("Run it"), this.taskId, null))
                 .isInstanceOf(ValidationException.class)
                 .extracting("code").isEqualTo("TASK_RUN_REQUIRES_REPOSITORIES");
         verify(this.workflowRunRepository, never()).save(any());

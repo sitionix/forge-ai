@@ -64,7 +64,7 @@ class ReentryFrameTransitionPolicyTest {
         when(this.frameRepository.save(org.mockito.ArgumentMatchers.any())).thenReturn(frameB);
 
         assertThat(this.policy.frameForActivation(
-                this.workflowRun(), frameA, this.targetNode(), INPUT_ID, REPOSITORY_A)).isEqualTo(frameB);
+                this.workflowRun(), frameA, this.targetNode(), INPUT_ID)).isEqualTo(frameB);
     }
 
     @Test
@@ -76,7 +76,7 @@ class ReentryFrameTransitionPolicyTest {
                 .thenReturn(List.of(activatedA));
 
         assertThat(this.policy.frameForActivation(
-                this.workflowRun(), frameA, this.targetNode(), INPUT_ID, REPOSITORY_B)).isEqualTo(frameA);
+                this.workflowRun(), frameA, this.targetNode(), INPUT_ID)).isEqualTo(frameA);
     }
 
     @Test
@@ -89,7 +89,7 @@ class ReentryFrameTransitionPolicyTest {
         when(this.frameRepository.findById(FRAME_B_ID)).thenReturn(Optional.of(frameB));
 
         assertThat(this.policy.frameForActivation(
-                this.workflowRun(), frameA, this.targetNode(), INPUT_ID, REPOSITORY_B)).isEqualTo(frameB);
+                this.workflowRun(), frameA, this.targetNode(), INPUT_ID)).isEqualTo(frameB);
     }
 
     @Test
@@ -103,7 +103,7 @@ class ReentryFrameTransitionPolicyTest {
         when(this.frameRepository.save(org.mockito.ArgumentMatchers.any())).thenReturn(frameC);
 
         assertThat(this.policy.frameForActivation(
-                this.workflowRun(), frameB, this.targetNode(), INPUT_ID, REPOSITORY_A)).isEqualTo(frameC);
+                this.workflowRun(), frameB, this.targetNode(), INPUT_ID)).isEqualTo(frameC);
     }
 
     private ExecutionFrame frame(final UUID id, final UUID parentId) {

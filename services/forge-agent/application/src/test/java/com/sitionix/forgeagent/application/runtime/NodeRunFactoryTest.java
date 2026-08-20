@@ -26,7 +26,8 @@ class NodeRunFactoryTest {
     private static final UUID RUN_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
     private static final UUID REPOSITORY_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
     private static final UUID OUTSIDE_REPOSITORY_ID = UUID.fromString("20000000-0000-4000-8000-000000000002");
-    private final NodeRunFactory factory = new NodeRunFactory(Clock.fixed(NOW, ZoneOffset.UTC));
+    private final NodeRunFactory factory = new NodeRunFactory(
+            Clock.fixed(NOW, ZoneOffset.UTC), new ScopeProjectionPolicy());
     private final ExecutionFrame frame = new ExecutionFrame(UUID.randomUUID(), RUN_ID, null, NOW);
 
     @Test

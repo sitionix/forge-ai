@@ -25,8 +25,7 @@ public class ReentryFrameTransitionPolicy implements FrameTransitionPolicy {
     public ExecutionFrame frameForActivation(final WorkflowRun workflowRun,
                                              final ExecutionFrame activationFrame,
                                              final RunNode targetNode,
-                                             final UUID targetInputPortId,
-                                             final UUID repositoryId) {
+                                             final UUID targetInputPortId) {
         final java.util.Optional<ExecutionFrame> existingChild = this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
                 .filter(run -> activationFrame.id().equals(run.activationFrameId()))
                 .filter(run -> !activationFrame.id().equals(run.executionFrameId()))

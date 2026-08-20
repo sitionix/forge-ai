@@ -66,8 +66,11 @@ public class WorkflowRunUseCases {
         final WorkflowRunGraph graph = this.snapshotBuilder.build(runId, workflow);
         final RunPort taskInputPort = this.requireTaskInputPort(graph);
         final RunNode entry = this.requireTaskInputNode(graph, taskInputPort);
-        final List<UUID> repositorySnapshot = List.copyOf(java.util.Objects.requireNonNull(
-                repositoryIds, "repositoryIds must not be null"));
+        if (repositoryIds == null) {
+            throw new ValidationException("TASK_RUN_REQUIRES_REPOSITORIES",
+                    "Task-owned workflow run requires an explicit repository snapshot.");
+        }
+        final List<UUID> repositorySnapshot = List.copyOf(repositoryIds);
         if (taskId != null && repositorySnapshot.isEmpty()) {
             throw new ValidationException("TASK_RUN_REQUIRES_REPOSITORIES",
                     "Task-owned workflow run requires an explicit repository snapshot.");

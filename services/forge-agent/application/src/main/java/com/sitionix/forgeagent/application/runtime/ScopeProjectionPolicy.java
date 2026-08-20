@@ -11,6 +11,15 @@ import org.springframework.stereotype.Component;
 public class ScopeProjectionPolicy {
     public List<UUID> project(final NodeScopeMode sourceMode, final NodeScopeMode targetMode,
                               final UUID sourceRepositoryId, final List<UUID> repositoryIds) {
+        this.assertValidSourceInvocation(sourceMode, sourceRepositoryId, repositoryIds);
+        if (targetMode == NodeScopeMode.GLOBAL) {
+            return Collections.singletonList(null);
+        }
+        return sourceMode == NodeScopeMode.PER_SCOPE ? List.of(sourceRepositoryId) : List.copyOf(repositoryIds);
+    }
+
+    void assertValidSourceInvocation(final NodeScopeMode sourceMode, final UUID sourceRepositoryId,
+                                     final List<UUID> repositoryIds) {
         if (sourceMode == NodeScopeMode.GLOBAL && sourceRepositoryId != null) {
             throw new ValidationException("INVALID_GLOBAL_NODE_RUN_SCOPE", "GLOBAL node run cannot have repositoryId.");
         }
@@ -21,9 +30,5 @@ public class ScopeProjectionPolicy {
             throw new ValidationException("NODE_RUN_REPOSITORY_OUTSIDE_SNAPSHOT",
                     "PER_SCOPE source repositoryId must belong to the workflow run repository snapshot.");
         }
-        if (targetMode == NodeScopeMode.GLOBAL) {
-            return Collections.singletonList(null);
-        }
-        return sourceMode == NodeScopeMode.PER_SCOPE ? List.of(sourceRepositoryId) : List.copyOf(repositoryIds);
     }
 }
