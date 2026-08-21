@@ -3,11 +3,11 @@ package com.sitionix.forgeagent.application.usecase;
 import com.sitionix.forgeagent.application.runtime.NodeRunFactory;
 import com.sitionix.forgeagent.application.runtime.ExecutionBudgetPolicy;
 import com.sitionix.forgeagent.application.runtime.WorkflowRunSnapshotBuilder;
+import com.sitionix.forgeagent.application.runtime.ScopeProjectionPolicy;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.ExecutionFrame;
 import com.sitionix.forgeagent.domain.model.NodeRun;
-import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunNode;
 import com.sitionix.forgeagent.domain.model.RunPort;
@@ -41,6 +41,7 @@ public class WorkflowRunUseCases {
     private final WorkflowRunSnapshotBuilder snapshotBuilder;
     private final NodeRunFactory nodeRunFactory;
     private final ExecutionBudgetPolicy executionBudgetPolicy;
+    private final ScopeProjectionPolicy scopeProjectionPolicy;
     private final Clock clock;
 
     @Transactional
@@ -75,15 +76,15 @@ public class WorkflowRunUseCases {
             throw new ValidationException("TASK_RUN_REQUIRES_REPOSITORIES",
                     "Task-owned workflow run requires an explicit repository snapshot.");
         }
-        if (repositorySnapshot.isEmpty()
-                && graph.nodes().stream().anyMatch(node -> node.scopeMode() == NodeScopeMode.PER_SCOPE)) {
+        if (repositorySnapshot.isEmpty() && graph.nodes().stream().anyMatch(node ->
+                this.scopeProjectionPolicy.invocationRepositories(node.scopeMode(), repositorySnapshot).isEmpty())) {
             throw new ValidationException("PER_SCOPE_RUN_REQUIRES_REPOSITORIES",
                     "A workflow containing any PER_SCOPE node requires selected repositories.");
         }
         final RunPort outputPort = this.requireTaskOutputPort(graph);
         final RunNode outputNode = graph.nodes().stream().filter(node -> node.sourceNodeId().equals(outputPort.sourceNodeId()))
                 .findFirst().orElseThrow(() -> new ValidationException("WORKFLOW_OUTPUT_NOT_FOUND", "Workflow output node was not found."));
-        if (repositorySnapshot.size() > 1 && outputNode.scopeMode() == NodeScopeMode.PER_SCOPE) {
+        if (this.scopeProjectionPolicy.invocationRepositories(outputNode.scopeMode(), repositorySnapshot).size() > 1) {
             throw new ValidationException("AMBIGUOUS_PER_SCOPE_TASK_OUTPUT", "Task Output node must be GLOBAL for multi-repository runs.");
         }
         final Instant now = Instant.now(this.clock);
@@ -108,8 +109,7 @@ public class WorkflowRunUseCases {
         ));
         this.graphRepository.saveSnapshot(graph);
         final ExecutionFrame rootFrame = this.executionFrameRepository.save(new ExecutionFrame(UUID.randomUUID(), run.id(), null, now));
-        final List<UUID> rootRepositories = entry.scopeMode() == NodeScopeMode.GLOBAL
-                ? java.util.Collections.singletonList(null) : repositorySnapshot;
+        final List<UUID> rootRepositories = this.scopeProjectionPolicy.invocationRepositories(entry.scopeMode(), repositorySnapshot);
         final List<NodeRun> rootNodeRuns = rootRepositories.stream()
                 .map(repositoryId -> this.createRootNodeRun(run, rootFrame, entry, taskInputPort.sourcePortId(), repositoryId))
                 .toList();

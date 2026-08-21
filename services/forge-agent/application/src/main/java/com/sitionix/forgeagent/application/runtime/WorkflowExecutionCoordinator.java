@@ -95,6 +95,25 @@ public class WorkflowExecutionCoordinator {
         );
     }
 
+    private void cancelActiveNodeRuns(final WorkflowRun workflowRun) {
+        final Instant now = Instant.now(this.clock);
+        this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
+                .filter(nodeRun -> nodeRun.status() == NodeRunStatus.PENDING || nodeRun.status() == NodeRunStatus.RUNNING)
+                .map(nodeRun -> this.withCancelled(nodeRun, now))
+                .forEach(this.nodeRunRepository::save);
+    }
+
+    private NodeRun withCancelled(final NodeRun nodeRun, final Instant now) {
+        return new NodeRun(
+                nodeRun.id(), nodeRun.workflowRunId(), nodeRun.sourceNodeId(), nodeRun.sourceAgentId(),
+                nodeRun.agentName(), nodeRun.agentInstructions(), nodeRun.agentOutputSchema(), nodeRun.inputMode(),
+                nodeRun.position(), nodeRun.executionFrameId(), nodeRun.enteredViaInputPortId(), nodeRun.activationFrameId(),
+                nodeRun.selectedOutputPortId(), nodeRun.routingCompletedAt(), NodeRunStatus.CANCELLED, nodeRun.output(),
+                nodeRun.failure(), nodeRun.executionModel(), nodeRun.createdAt(), nodeRun.startedAt(),
+                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(), nodeRun.repositoryId()
+        );
+    }
+
     private final class CompletionDecisionHandler implements WorkflowCompletionDecisionHandler {
         private final WorkflowRun workflowRun;
 
@@ -115,6 +134,7 @@ public class WorkflowExecutionCoordinator {
 
         @Override
         public void handle(final FailedWorkflowDecision decision) {
+            WorkflowExecutionCoordinator.this.cancelActiveNodeRuns(this.workflowRun);
             WorkflowExecutionCoordinator.this.workflowRunRepository.saveLifecycle(
                     WorkflowExecutionCoordinator.this.withStatus(this.workflowRun, WorkflowRunStatus.FAILED)
             );

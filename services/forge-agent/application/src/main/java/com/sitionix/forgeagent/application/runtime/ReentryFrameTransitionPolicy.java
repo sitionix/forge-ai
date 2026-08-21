@@ -9,6 +9,7 @@ import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -26,15 +27,15 @@ public class ReentryFrameTransitionPolicy implements FrameTransitionPolicy {
                                              final ExecutionFrame activationFrame,
                                              final RunNode targetNode,
                                              final UUID targetInputPortId) {
-        final java.util.Optional<ExecutionFrame> existingChild = this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
+        final Optional<ExecutionFrame> existingChild = this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
                 .filter(run -> activationFrame.id().equals(run.activationFrameId()))
                 .filter(run -> !activationFrame.id().equals(run.executionFrameId()))
                 .filter(run -> run.sourceNodeId().equals(targetNode.sourceNodeId()))
                 .filter(run -> targetInputPortId.equals(run.enteredViaInputPortId()))
-                .map(com.sitionix.forgeagent.domain.model.NodeRun::executionFrameId)
+                .map(NodeRun::executionFrameId)
                 .distinct()
                 .map(this.frameRepository::findById)
-                .flatMap(java.util.Optional::stream)
+                .flatMap(Optional::stream)
                 .findFirst();
         if (existingChild.isPresent()) {
             return existingChild.get();

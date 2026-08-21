@@ -440,6 +440,51 @@ class ForgeAgentScopedExecutionIT {
         assertThat(this.active(runId)).isEmpty();
     }
 
+    @ParameterizedTest(name = "failure-first with pending sibling, failing repository index {0}")
+    @ValueSource(ints = {0, 1})
+    void scopedFailureCancelsPendingSibling(final int failingRepositoryIndex) {
+        this.seed();
+        this.saveChain(List.of(NodeScopeMode.GLOBAL, NodeScopeMode.PER_SCOPE, NodeScopeMode.GLOBAL));
+        final List<UUID> repositories = this.repositories(2);
+        final UUID runId = this.createTask(repositories);
+        this.complete(this.onlyPending(runId, A), "{\"stage\":\"a\"}");
+        final NodeRun failed = this.start(this.onlyPending(runId, B, repositories.get(failingRepositoryIndex)));
+
+        this.lifecycle.fail(failed.id(), new NodeRunFailure("DETERMINISTIC_FAILURE", "Scoped failure."));
+
+        final WorkflowRun finished = this.terminal(runId, WorkflowRunStatus.FAILED);
+        assertThat(this.nodeRuns(runId, B)).filteredOn(run -> run.id().equals(failed.id()))
+                .extracting(NodeRun::status).containsExactly(NodeRunStatus.FAILED);
+        assertThat(this.nodeRuns(runId, B)).filteredOn(run -> !run.id().equals(failed.id()))
+                .extracting(NodeRun::status).containsExactly(NodeRunStatus.CANCELLED);
+        assertThat(this.nodeRuns(runId, C)).isEmpty();
+        assertThat(finished.result()).isNull();
+    }
+
+    @ParameterizedTest(name = "failure-first with running sibling, failing repository index {0}")
+    @ValueSource(ints = {0, 1})
+    void scopedFailureCancelsRunningSiblingAndIgnoresLateCallbacks(final int failingRepositoryIndex) {
+        this.seed();
+        this.saveChain(List.of(NodeScopeMode.GLOBAL, NodeScopeMode.PER_SCOPE, NodeScopeMode.GLOBAL));
+        final List<UUID> repositories = this.repositories(2);
+        final UUID runId = this.createTask(repositories);
+        this.complete(this.onlyPending(runId, A), "{\"stage\":\"a\"}");
+        final NodeRun failed = this.start(this.onlyPending(runId, B, repositories.get(failingRepositoryIndex)));
+        final NodeRun sibling = this.start(this.onlyPending(runId, B, repositories.get(1 - failingRepositoryIndex)));
+
+        this.lifecycle.fail(failed.id(), new NodeRunFailure("DETERMINISTIC_FAILURE", "Scoped failure."));
+        this.lifecycle.succeed(sibling.id(), new NodeRunOutput("{\"late\":true}"));
+        this.lifecycle.fail(sibling.id(), new NodeRunFailure("LATE_FAILURE", "Late failure."));
+
+        final WorkflowRun finished = this.terminal(runId, WorkflowRunStatus.FAILED);
+        assertThat(this.nodeRunRepository.findById(failed.id()).orElseThrow().status()).isEqualTo(NodeRunStatus.FAILED);
+        assertThat(this.nodeRunRepository.findById(sibling.id()).orElseThrow().status()).isEqualTo(NodeRunStatus.CANCELLED);
+        assertThat(this.resolutionRepository.findByWorkflowRunAndFrame(runId, sibling.executionFrameId())).noneMatch(
+                resolution -> resolution.sourceNodeRunId().equals(sibling.id()));
+        assertThat(this.nodeRuns(runId, C)).isEmpty();
+        assertThat(finished.result()).isNull();
+    }
+
     @Test
     void concurrentMultiScopeFailureIsIdempotentAndCreatesNoGlobalSuccessor() throws Exception {
         this.seed();
@@ -456,7 +501,8 @@ class ForgeAgentScopedExecutionIT {
         }
 
         this.terminal(runId, WorkflowRunStatus.FAILED);
-        assertThat(this.nodeRuns(runId, B)).extracting(NodeRun::status).containsOnly(NodeRunStatus.FAILED);
+        assertThat(this.nodeRuns(runId, B)).extracting(NodeRun::status)
+                .containsExactlyInAnyOrder(NodeRunStatus.FAILED, NodeRunStatus.CANCELLED);
         assertThat(this.nodeRuns(runId, C)).isEmpty();
         assertThat(this.active(runId)).isEmpty();
     }

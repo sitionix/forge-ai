@@ -35,6 +35,9 @@ public class NodeRunCompletionPersistence {
             return false;
         }
         final NodeRun nodeRun = target.nodeRun();
+        if (nodeRun.status() == NodeRunStatus.CANCELLED) {
+            return false;
+        }
         if (nodeRun.status() == NodeRunStatus.SUCCEEDED && output.equals(nodeRun.output())) {
             return false;
         }

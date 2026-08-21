@@ -4,7 +4,7 @@ import com.sitionix.forgeagent.domain.model.ExecutionFrame;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunConnection;
 import com.sitionix.forgeagent.domain.model.RunPort;
-import com.sitionix.forgeagent.domain.model.NodeScopeMode;
+import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.port.ExecutionFrameRepository;
@@ -26,10 +26,11 @@ public class QuiescenceWorkflowCompletionPolicy implements WorkflowCompletionPol
     private final InputActivationResolutionRepository activationResolutionRepository;
     private final InputParticipationResolver inputParticipationResolver;
     private final WorkflowCompletionRuleRegistry ruleRegistry;
+    private final ScopeProjectionPolicy scopeProjectionPolicy;
 
     @Override
     public WorkflowCompletionDecision evaluate(final WorkflowRun workflowRun) {
-        final List<com.sitionix.forgeagent.domain.model.NodeRun> nodeRuns = this.nodeRunRepository.findByWorkflowRunId(workflowRun.id());
+        final List<NodeRun> nodeRuns = this.nodeRunRepository.findByWorkflowRunId(workflowRun.id());
         return this.ruleRegistry.evaluate(new WorkflowCompletionContext(workflowRun, nodeRuns, this.hasOpenActivation(workflowRun)));
     }
 
@@ -49,10 +50,9 @@ public class QuiescenceWorkflowCompletionPolicy implements WorkflowCompletionPol
                 if (incoming.isEmpty()) {
                     continue;
                 }
-                final NodeScopeMode scopeMode = graph.nodes().stream()
+                final var scopeMode = graph.nodes().stream()
                         .filter(node -> node.sourceNodeId().equals(inputPort.sourceNodeId())).findFirst().orElseThrow().scopeMode();
-                final List<UUID> repositories = scopeMode == NodeScopeMode.GLOBAL
-                        ? java.util.Collections.singletonList(null) : workflowRun.repositoryIds();
+                final List<UUID> repositories = this.scopeProjectionPolicy.invocationRepositories(scopeMode, workflowRun.repositoryIds());
                 for (final UUID repositoryId : repositories) {
                     if (this.activationResolutionRepository.find(workflowRun.id(), frameId, inputPort.sourcePortId(), repositoryId).isPresent()) {
                         continue;

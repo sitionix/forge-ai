@@ -97,6 +97,7 @@ class WorkflowRunUseCasesTest {
                 new WorkflowRunSnapshotBuilder(this.agentDefinitionRepository),
                 new NodeRunFactory(CLOCK, new ScopeProjectionPolicy()),
                 this.executionBudgetPolicy,
+                new ScopeProjectionPolicy(),
                 CLOCK
         );
     }

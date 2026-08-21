@@ -9,7 +9,6 @@ import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunConnection;
 import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.model.RunNode;
-import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.port.ConnectionResolutionRepository;
@@ -120,9 +119,7 @@ public class GraphStateInputParticipationResolver implements InputParticipationR
 
     private List<UUID> expectedSourceRepositories(final RunNode sourceNode, final RunNode targetNode,
                                                   final UUID targetRepositoryId, final List<UUID> repositoryIds) {
-        final List<UUID> candidates = sourceNode.scopeMode() == NodeScopeMode.GLOBAL
-                ? java.util.Collections.singletonList(null)
-                : repositoryIds;
+        final List<UUID> candidates = this.scopeProjectionPolicy.invocationRepositories(sourceNode.scopeMode(), repositoryIds);
         return candidates.stream()
                 .filter(sourceRepositoryId -> this.scopeProjectionPolicy.project(
                         sourceNode.scopeMode(),

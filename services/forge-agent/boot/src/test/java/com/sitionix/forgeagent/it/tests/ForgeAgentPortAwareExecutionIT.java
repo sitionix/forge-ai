@@ -522,14 +522,10 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private ProjectRepositoryEntity projectRepositoryEntity() {
-        return this.projectRepositoryEntity(REPOSITORY_ID, "https://example.com/forge/repository.git");
-    }
-
-    private ProjectRepositoryEntity projectRepositoryEntity(final UUID repositoryId, final String remoteUrl) {
         final ProjectRepositoryEntity entity = new ProjectRepositoryEntity();
-        entity.setId(repositoryId);
+        entity.setId(REPOSITORY_ID);
         entity.setProjectId(PROJECT_ALPHA_ID);
-        entity.setRemoteUrl(remoteUrl);
+        entity.setRemoteUrl("https://example.com/forge/repository.git");
         entity.setCreatedAt(java.time.Instant.parse("2026-08-10T10:00:00Z"));
         return entity;
     }
@@ -638,12 +634,8 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private Node node(final UUID id, final UUID agentId, final List<NodePort> inputs, final List<NodePort> outputs, final int x) {
-        return this.node(id, agentId, inputs, outputs, x, NodeScopeMode.GLOBAL);
-    }
-
-    private Node node(final UUID id, final UUID agentId, final List<NodePort> inputs, final List<NodePort> outputs,
-                      final int x, final NodeScopeMode scopeMode) {
-        return new Node(id, agentId, NodeInputMode.DEPENDENCIES_ONLY, inputs, outputs, new NodePosition(x * 100.0, 0.0), scopeMode);
+        return new Node(id, agentId, NodeInputMode.DEPENDENCIES_ONLY, inputs, outputs,
+                new NodePosition(x * 100.0, 0.0), NodeScopeMode.GLOBAL);
     }
 
     private NodePort port(final UUID id, final String name) {
@@ -686,13 +678,6 @@ class ForgeAgentPortAwareExecutionIT {
 
     private NodeRun onlyPending(final UUID workflowRunId, final UUID sourceNodeId) {
         return this.pendingForSource(workflowRunId, sourceNodeId).stream().findFirst().orElseThrow();
-    }
-
-    private NodeRun onlyPending(final UUID workflowRunId, final UUID sourceNodeId, final UUID repositoryId) {
-        return this.pendingForSource(workflowRunId, sourceNodeId).stream()
-                .filter(nodeRun -> repositoryId.equals(nodeRun.repositoryId()))
-                .findFirst()
-                .orElseThrow();
     }
 
     private List<NodeRun> pendingForSource(final UUID workflowRunId, final UUID sourceNodeId) {
