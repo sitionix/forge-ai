@@ -15,15 +15,13 @@ final class DefaultCodexAppServerProcessStarter implements CodexAppServerProcess
     private final CodexAppServerProperties properties;
 
     @Override
-    public StartedCodexAppServer start() {
+    public StartedCodexAppServer start(final Path workingDirectory) {
         final List<String> command = List.copyOf(this.properties.getCommand());
         try {
             final ProcessBuilder builder = new ProcessBuilder(command);
-            if (this.properties.getRuntimeCwd() != null && !this.properties.getRuntimeCwd().isBlank()) {
-                final Path runtimeCwd = Path.of(this.properties.getRuntimeCwd()).toAbsolutePath().normalize();
-                Files.createDirectories(runtimeCwd);
-                builder.directory(runtimeCwd.toFile());
-            }
+            final Path launchDirectory = workingDirectory.toAbsolutePath().normalize();
+            Files.createDirectories(launchDirectory);
+            builder.directory(launchDirectory.toFile());
             final Process process = builder.start();
             return new StartedCodexAppServer(process, command, Instant.now());
         } catch (final IOException e) {

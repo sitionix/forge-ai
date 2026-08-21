@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +25,9 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
     private final ObjectMapper objectMapper;
     private final CodexAppServerProcessStarter processStarter;
     private final CodexAppServerProperties properties;
-    private final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
+    private final CodexRuntimeWorkspace runtimeWorkspace;
+    private final CodexTurnStateTracker neutralTurnStateTracker = new CodexTurnStateTracker();
+    private final AtomicInteger activeTurnCount = new AtomicInteger();
     private CodexJsonRpcTransport transport;
     private String codexVersion;
 
@@ -47,16 +50,24 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
 
     @Override
     public String execute(final CodexTurnRequest request) {
-        final CodexExecution execution = this.startExecution(request);
+        final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
+        final CodexJsonRpcTransport transport = this.startWorkspaceTransport(
+                request.executionWorkspace().cwd(), turnStateTracker);
+        CodexExecution execution = null;
         try {
+            this.initialize(transport);
+            execution = this.startExecution(transport, turnStateTracker, request);
             return this.awaitExecution(execution);
         } finally {
-            this.releaseExecution(execution);
+            if (execution != null) {
+                this.releaseExecution(execution);
+            }
+            transport.close();
         }
     }
 
     int activeTurnCountForTesting() {
-        return this.turnStateTracker.activeTurnCount();
+        return this.activeTurnCount.get();
     }
 
     private synchronized CodexJsonRpcTransport ensureInitialized() {
@@ -64,24 +75,8 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
             return this.transport;
         }
         this.closeCurrent();
-        final StartedCodexAppServer started = this.processStarter.start();
-        final CodexJsonRpcTransport next = new CodexJsonRpcTransport(
-                this.objectMapper,
-                started,
-                this.properties,
-                this.turnStateTracker::handleServerRequest,
-                new CodexTransportEventHandler() {
-                    @Override
-                    public void handleNotification(final String method, final JsonNode params) {
-                        CodexAppServerClient.this.turnStateTracker.handleNotification(method, params);
-                    }
-
-                    @Override
-                    public void transportFailed(final RuntimeException exception) {
-                        CodexAppServerClient.this.turnStateTracker.failAll(exception);
-                    }
-                }
-        );
+        final CodexJsonRpcTransport next = this.startWorkspaceTransport(
+                this.runtimeWorkspace.routingWorkspace().cwd(), this.neutralTurnStateTracker);
         this.transport = next;
         this.codexVersion = null;
         try {
@@ -100,37 +95,63 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         }
     }
 
-    private CodexExecution startExecution(final CodexTurnRequest request) {
-        final CodexJsonRpcTransport current = this.ensureInitialized();
+    private CodexJsonRpcTransport startWorkspaceTransport(final Path workingDirectory,
+                                                           final CodexTurnStateTracker turnStateTracker) {
+        final StartedCodexAppServer started = this.processStarter.start(workingDirectory);
+        return new CodexJsonRpcTransport(
+                this.objectMapper,
+                started,
+                this.properties,
+                turnStateTracker::handleServerRequest,
+                new CodexTransportEventHandler() {
+                    @Override
+                    public void handleNotification(final String method, final JsonNode params) {
+                        turnStateTracker.handleNotification(method, params);
+                    }
+
+                    @Override
+                    public void transportFailed(final RuntimeException exception) {
+                        turnStateTracker.failAll(exception);
+                    }
+                }
+        );
+    }
+
+    private CodexExecution startExecution(final CodexJsonRpcTransport current,
+                                          final CodexTurnStateTracker turnStateTracker,
+                                          final CodexTurnRequest request) {
         CodexExecutionState state = null;
         try {
-            final String threadId = this.startThread(current, request);
-            state = this.turnStateTracker.register(threadId);
-            final String turnId = this.startTurn(current, threadId, request);
-            this.turnStateTracker.bindTurnId(state, turnId);
+            final String threadId = this.startThread(current, turnStateTracker, request);
+            state = turnStateTracker.register(threadId);
+            final String turnId = this.startTurn(current, turnStateTracker, threadId, request);
+            turnStateTracker.bindTurnId(state, turnId);
             this.verifyTransportStillHealthy(current, state);
-            return new CodexExecution(current, state);
+            this.activeTurnCount.incrementAndGet();
+            return new CodexExecution(current, turnStateTracker, state);
         } catch (final CodexTransportException e) {
             if (state != null) {
-                this.turnStateTracker.remove(state);
+                turnStateTracker.remove(state);
             }
             this.invalidate(current);
             throw this.executionFailed(e);
         } catch (final CodexRemoteException e) {
             if (state != null) {
-                this.turnStateTracker.remove(state);
+                turnStateTracker.remove(state);
             }
             throw this.executionFailed(e);
         } catch (final RuntimeException e) {
             if (state != null) {
-                this.turnStateTracker.remove(state);
+                turnStateTracker.remove(state);
             }
             throw e;
         }
     }
 
-    private String startThread(final CodexJsonRpcTransport transport, final CodexTurnRequest request) {
-        return this.turnStateTracker.requireThreadId(transport.request(
+    private String startThread(final CodexJsonRpcTransport transport,
+                               final CodexTurnStateTracker turnStateTracker,
+                               final CodexTurnRequest request) {
+        return turnStateTracker.requireThreadId(transport.request(
                 CodexProtocol.THREAD_START,
                 this.threadStartParams(request),
                 this.properties.getRequestTimeout()
@@ -139,10 +160,11 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
 
     private String startTurn(
             final CodexJsonRpcTransport transport,
+            final CodexTurnStateTracker turnStateTracker,
             final String threadId,
             final CodexTurnRequest request
     ) {
-        return this.turnStateTracker.requireTurnId(transport.request(
+        return turnStateTracker.requireTurnId(transport.request(
                 CodexProtocol.TURN_START,
                 this.turnStartParams(threadId, request),
                 this.properties.getRequestTimeout()
@@ -205,7 +227,12 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
     }
 
     private void releaseExecution(final CodexExecution execution) {
-        this.turnStateTracker.remove(execution.state());
+        this.remove(execution.turnStateTracker(), execution.state());
+    }
+
+    private void remove(final CodexTurnStateTracker turnStateTracker, final CodexExecutionState state) {
+        turnStateTracker.remove(state);
+        this.activeTurnCount.decrementAndGet();
     }
 
     private ObjectNode threadStartParams(final CodexTurnRequest request) {
@@ -309,7 +336,9 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         this.closeCurrent();
     }
 
-    private record CodexExecution(CodexJsonRpcTransport transport, CodexExecutionState state) {
+    private record CodexExecution(CodexJsonRpcTransport transport,
+                                  CodexTurnStateTracker turnStateTracker,
+                                  CodexExecutionState state) {
 
         private String threadId() {
             return this.state.threadId();
