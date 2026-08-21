@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class NodeRunLifecycle {
 
     public static final String AGENT_MODEL_NOT_CONFIGURED = "AGENT_MODEL_NOT_CONFIGURED";
+    public static final String EXECUTION_WORKSPACE_UNAVAILABLE = "EXECUTION_WORKSPACE_UNAVAILABLE";
     public static final String LIFECYCLE_CONFLICT = "NODE_RUN_LIFECYCLE_CONFLICT";
 
     private final NodeRunRepository nodeRunRepository;
@@ -34,6 +35,7 @@ public class NodeRunLifecycle {
     private final Clock clock;
     private final NodeRunCompletionPersistence completionPersistence;
     private final NodeRunCompletionProcessor completionProcessor;
+    private final ExecutionWorkspaceResolver executionWorkspaceResolver;
 
     public NodeRunLifecycle(final NodeRunRepository nodeRunRepository,
                             final WorkflowRunRepository workflowRunRepository,
@@ -43,7 +45,8 @@ public class NodeRunLifecycle {
                             final WorkflowCompletionPolicy completionPolicy,
                             final Clock clock,
                             final NodeRunCompletionPersistence completionPersistence,
-                            final NodeRunCompletionProcessor completionProcessor) {
+                            final NodeRunCompletionProcessor completionProcessor,
+                            final ExecutionWorkspaceResolver executionWorkspaceResolver) {
         this.nodeRunRepository = nodeRunRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.resolutionRepository = resolutionRepository;
@@ -53,6 +56,7 @@ public class NodeRunLifecycle {
         this.clock = clock;
         this.completionPersistence = completionPersistence;
         this.completionProcessor = completionProcessor;
+        this.executionWorkspaceResolver = executionWorkspaceResolver;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -78,6 +82,23 @@ public class NodeRunLifecycle {
             this.nodeRunRepository.save(this.withFailed(
                     nodeRun,
                     new NodeRunFailure(AGENT_MODEL_NOT_CONFIGURED, "Snapshotted source agent model is not configured."),
+                    Instant.now(this.clock)
+            ));
+            this.reconcileWorkflowRun(workflowRun);
+            return Optional.empty();
+        }
+
+        final ExecutionWorkspace executionWorkspace;
+        try {
+            executionWorkspace = this.executionWorkspaceResolver.resolve(
+                    workflowRun.projectId(),
+                    nodeRun.repositoryId(),
+                    workflowRun.repositoryIds()
+            );
+        } catch (final ExecutionWorkspaceException exception) {
+            this.nodeRunRepository.save(this.withFailed(
+                    nodeRun,
+                    new NodeRunFailure(EXECUTION_WORKSPACE_UNAVAILABLE, exception.getMessage()),
                     Instant.now(this.clock)
             ));
             this.reconcileWorkflowRun(workflowRun);
@@ -122,7 +143,8 @@ public class NodeRunLifecycle {
                 running.agentInstructions(),
                 running.agentOutputSchema(),
                 running.executionModel(),
-                input.envelope()
+                input.envelope(),
+                executionWorkspace
         ));
     }
 

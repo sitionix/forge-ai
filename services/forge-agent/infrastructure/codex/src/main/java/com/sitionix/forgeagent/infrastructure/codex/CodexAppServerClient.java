@@ -4,10 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -217,9 +214,8 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         params.put("developerInstructions", request.developerInstructions());
         params.put("approvalPolicy", CodexProtocol.APPROVAL_POLICY_NEVER);
         params.put("sandbox", CodexProtocol.SANDBOX_WORKSPACE_WRITE);
-        final String runtimeCwd = this.effectiveRuntimeCwd();
-        params.put("cwd", runtimeCwd);
-        params.set("runtimeWorkspaceRoots", this.runtimeWorkspaceRoots(runtimeCwd));
+        params.put("cwd", request.executionWorkspace().cwd().toString());
+        params.set("runtimeWorkspaceRoots", this.runtimeWorkspaceRoots(request));
         params.put("ephemeral", true);
         params.set("config", this.codexConfig());
         return params;
@@ -250,31 +246,11 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         return config;
     }
 
-    private String effectiveRuntimeCwd() {
-        final String configured = this.properties.getRuntimeCwd();
-        if (configured != null && !configured.isBlank()) {
-            return this.ensureDirectory(Paths.get(configured.trim()).toAbsolutePath().normalize());
-        }
-        final String tempRoot = System.getProperty("java.io.tmpdir");
-        if (tempRoot == null || tempRoot.isBlank()) {
-            throw new CodexTransportException("Codex execution failed.");
-        }
-        final Path runtimeDir = Paths.get(tempRoot, "forge-agent-codex-runtime").toAbsolutePath().normalize();
-        return this.ensureDirectory(runtimeDir);
-    }
-
-    private String ensureDirectory(final Path path) {
-        try {
-            Files.createDirectories(path);
-            return path.toString();
-        } catch (final IOException e) {
-            throw new CodexTransportException("Codex execution failed.", e);
-        }
-    }
-
-    private ArrayNode runtimeWorkspaceRoots(final String runtimeCwd) {
+    private ArrayNode runtimeWorkspaceRoots(final CodexTurnRequest request) {
         final ArrayNode roots = this.objectMapper.createArrayNode();
-        roots.add(runtimeCwd);
+        for (final Path root : request.executionWorkspace().workspaceRoots()) {
+            roots.add(root.toString());
+        }
         return roots;
     }
 

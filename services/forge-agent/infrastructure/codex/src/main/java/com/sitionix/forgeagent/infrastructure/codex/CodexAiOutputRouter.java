@@ -20,6 +20,7 @@ public class CodexAiOutputRouter implements AiOutputRouter {
 
     private final ObjectMapper objectMapper;
     private final CodexTurnClient turnClient;
+    private final CodexRuntimeWorkspace runtimeWorkspace;
 
     @Override
     public UUID selectOutput(final NodeRunOutput output, final List<RunPort> outputs, final NodeRunExecutionModel executionModel) {
@@ -28,7 +29,8 @@ public class CodexAiOutputRouter implements AiOutputRouter {
                 "Select exactly one workflow output port. Respond only with JSON matching the provided schema.",
                 executionModel.modelId(),
                 executionModel.effortId(),
-                this.outputSchema()
+                this.outputSchema(),
+                this.runtimeWorkspace.routingWorkspace()
         ));
         return this.parseSelectedOutputPortId(response);
     }

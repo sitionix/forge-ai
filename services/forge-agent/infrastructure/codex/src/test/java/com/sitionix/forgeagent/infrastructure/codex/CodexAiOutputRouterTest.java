@@ -9,6 +9,8 @@ import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunPort;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -23,7 +25,17 @@ class CodexAiOutputRouterTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RecordingTurnClient turnClient = new RecordingTurnClient();
     private final NodeRunExecutionModel executionModel = new NodeRunExecutionModel("codex", "gpt-5.6-luna", "low");
-    private final CodexAiOutputRouter router = new CodexAiOutputRouter(this.objectMapper, this.turnClient);
+    private final CodexAppServerProperties properties = new CodexAppServerProperties();
+    private final CodexAiOutputRouter router;
+
+    CodexAiOutputRouterTest() throws Exception {
+        this.properties.setRuntimeCwd(Files.createTempDirectory("forge-agent-codex-routing").toString());
+        this.router = new CodexAiOutputRouter(
+                this.objectMapper,
+                this.turnClient,
+                new CodexRuntimeWorkspace(this.properties)
+        );
+    }
 
     @Test
     void sendsBusinessOutputAndStableOutputMetadata() throws Exception {

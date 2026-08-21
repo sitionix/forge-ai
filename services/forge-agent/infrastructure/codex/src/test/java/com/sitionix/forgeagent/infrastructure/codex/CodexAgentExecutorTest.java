@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeagent.application.runtime.ExecutionWorkspace;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputContribution;
@@ -13,6 +14,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunPort;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -25,6 +27,8 @@ class CodexAgentExecutorTest {
     private static final UUID INPUT_PORT_ID = UUID.fromString("40000000-0000-4000-8000-000000000001");
     private static final UUID SOURCE_NODE_RUN_ID = UUID.fromString("50000000-0000-4000-8000-000000000001");
     private static final UUID SOURCE_CONNECTION_ID = UUID.fromString("60000000-0000-4000-8000-000000000001");
+    private static final UUID REPOSITORY_A_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
+    private static final UUID REPOSITORY_B_ID = UUID.fromString("70000000-0000-4000-8000-000000000002");
     private static final AgentOutputSchema OUTPUT_SCHEMA = AgentOutputSchema.ofCanonicalJsonObject("""
             {"type":"object","description":"Technical analysis result.","properties":{"summary":{"type":"string","description":"Concise summary."},"riskLevel":{"type":"string","description":"Technical risk level.","enum":["LOW","MEDIUM","HIGH"]}},"required":["summary","riskLevel"],"additionalProperties":false}
             """);
@@ -47,6 +51,7 @@ class CodexAgentExecutorTest {
         assertThat(this.turnClient.request.outputSchema()).isEqualTo(this.objectMapper.readTree(OUTPUT_SCHEMA.jsonObject()));
         assertThat(this.turnClient.request.outputSchema().path("description").asText()).isEqualTo("Technical analysis result.");
         assertThat(this.turnClient.request.outputSchema().path("properties").path("summary").path("description").asText()).isEqualTo("Concise summary.");
+        assertThat(this.turnClient.request.executionWorkspace()).isEqualTo(this.workspace());
         assertThat(output).isEqualTo(new NodeRunOutput("{\"summary\":\"Done\",\"riskLevel\":\"MEDIUM\"}"));
     }
 
@@ -70,7 +75,8 @@ class CodexAgentExecutorTest {
                                 new NodeRunOutput("{\"risk\":\"LOW\"}"),
                                 null
                         ))
-                )
+                ),
+                this.workspace()
         );
 
         this.executor.execute(claim);
@@ -132,7 +138,8 @@ class CodexAgentExecutorTest {
                                 new NodeRunOutput("{\"risk\":\"LOW\"}"),
                                 null
                         ))
-                )
+                ),
+                this.workspace()
         );
 
         this.executor.execute(claim);
@@ -142,6 +149,39 @@ class CodexAgentExecutorTest {
         assertThat(userInput.path("entryInput").path("id").asText()).isEqualTo(INPUT_PORT_ID.toString());
         assertThat(userInput.path("contributions")).hasSize(1);
         assertThat(userInput.path("contributions").get(0).path("payload")).isEqualTo(this.objectMapper.readTree("{\"risk\":\"LOW\"}"));
+    }
+
+    @Test
+    void contributionRepositoryProvenanceDoesNotOverrideResolvedGlobalWorkspace() {
+        final ExecutionWorkspace globalWorkspace = new ExecutionWorkspace(
+                Path.of("/forge/project"),
+                List.of(Path.of("/forge/project/backend"), Path.of("/forge/project/frontend"))
+        );
+        final NodeExecutionClaim claim = new NodeExecutionClaim(
+                WORKFLOW_RUN_ID,
+                NODE_RUN_ID,
+                AGENT_ID,
+                "Integrate repository outputs.",
+                "Integrator",
+                "Integrate the contributions.",
+                OUTPUT_SCHEMA,
+                new NodeRunExecutionModel("codex", "gpt-5.6-luna", null),
+                new NodeInputEnvelope(
+                        null,
+                        null,
+                        List.of(
+                                new NodeInputContribution(
+                                        UUID.randomUUID(), UUID.randomUUID(), new NodeRunOutput("{}"), REPOSITORY_A_ID),
+                                new NodeInputContribution(
+                                        UUID.randomUUID(), UUID.randomUUID(), new NodeRunOutput("{}"), REPOSITORY_B_ID)
+                        )
+                ),
+                globalWorkspace
+        );
+
+        this.executor.execute(claim);
+
+        assertThat(this.turnClient.request.executionWorkspace()).isEqualTo(globalWorkspace);
     }
 
     @Test
@@ -197,8 +237,13 @@ class CodexAgentExecutorTest {
                 "Analyze the requested change.",
                 outputSchema,
                 executionModel,
-                new NodeInputEnvelope("Review auth changes.", null, List.of())
+                new NodeInputEnvelope("Review auth changes.", null, List.of()),
+                this.workspace()
         );
+    }
+
+    private ExecutionWorkspace workspace() {
+        return new ExecutionWorkspace(Path.of("/forge/project/backend"), List.of(Path.of("/forge/project/backend")));
     }
 
     private static final class RecordingTurnClient implements CodexTurnClient {

@@ -3,11 +3,14 @@ package com.sitionix.forgeagent.domain.port;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceState;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 public interface LocalProjectWorkspacePort {
+
+    Path resolveProjectWorkspace(UUID projectId);
 
     Map<UUID, ProjectRepositoryWorkspaceState> resolveRepositoryWorkspaceStates(UUID projectId, List<ProjectRepositoryWorkspaceReference> repositories);
 

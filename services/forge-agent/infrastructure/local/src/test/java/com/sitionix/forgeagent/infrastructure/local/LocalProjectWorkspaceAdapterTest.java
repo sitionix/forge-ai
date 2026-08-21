@@ -59,6 +59,14 @@ class LocalProjectWorkspaceAdapterTest {
     }
 
     @Test
+    void resolvesAndCreatesExplicitManagedProjectWorkspace() {
+        final Path workspace = this.adapter.resolveProjectWorkspace(PROJECT_ID);
+
+        assertThat(workspace).isEqualTo(this.forgeRoot.resolve("forge-projects").resolve(PROJECT_ID.toString()));
+        assertThat(workspace).isDirectory();
+    }
+
+    @Test
     void resolvesMultipleCloneStatesInBatch() throws Exception {
         Files.createDirectories(this.repositoryPath("service-a").resolve(".git"));
         Files.createDirectories(this.repositoryPath("service-b"));
@@ -99,10 +107,15 @@ class LocalProjectWorkspaceAdapterTest {
     }
 
     @Test
-    void rootResolverFailsClosedWhenNoForgeRoot(@TempDir final Path noRoot) {
-        assertThatThrownBy(() -> new ForgeRootResolver(noRoot.resolve("nested")).resolveForgeRoot())
-                .isInstanceOf(LocalProjectWorkspaceException.class)
-                .hasMessage("Forge root could not be resolved.");
+    void rootResolverFailsClosedWhenNoForgeRoot() throws Exception {
+        final Path noRoot = Files.createTempDirectory(Path.of("/var/tmp"), "forge-no-root");
+        try {
+            assertThatThrownBy(() -> new ForgeRootResolver(noRoot.resolve("nested")).resolveForgeRoot())
+                    .isInstanceOf(LocalProjectWorkspaceException.class)
+                    .hasMessage("Forge root could not be resolved.");
+        } finally {
+            Files.deleteIfExists(noRoot);
+        }
     }
 
     @Test
@@ -125,6 +138,22 @@ class LocalProjectWorkspaceAdapterTest {
         ))
                 .isInstanceOf(LocalProjectWorkspaceException.class)
                 .hasMessage("Repository name resolves outside Forge project workspace.");
+    }
+
+    @Test
+    void clonedRepositorySymlinkOutsideProjectWorkspaceIsRejected() throws Exception {
+        final Path outsideRepository = this.forgeRoot.resolve("outside-repository");
+        Files.createDirectories(outsideRepository.resolve(".git"));
+        final Path projectWorkspace = this.forgeRoot.resolve("forge-projects").resolve(PROJECT_ID.toString());
+        Files.createDirectories(projectWorkspace);
+        Files.createSymbolicLink(projectWorkspace.resolve("service-a"), outsideRepository);
+
+        assertThatThrownBy(() -> this.adapter.resolveRepositoryWorkspaceState(
+                PROJECT_ID,
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "service-a")
+        ))
+                .isInstanceOf(LocalProjectWorkspaceException.class)
+                .hasMessage("Forge repository checkout resolves outside project workspace.");
     }
 
     @Test

@@ -56,6 +56,9 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
@@ -63,6 +66,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -134,6 +138,19 @@ class ForgeAgentScopedExecutionIT {
     @MockBean
     private AiOutputRouter aiOutputRouter;
 
+    @AfterEach
+    void removeRepositoryWorkspaceFixtures() throws IOException {
+        final Path projectWorkspace = this.projectWorkspace();
+        if (!Files.exists(projectWorkspace)) {
+            return;
+        }
+        try (var paths = Files.walk(projectWorkspace)) {
+            for (final Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        }
+    }
+
     @Test
     void globalToGlobalUsesOneRootFrameAndOneConsumedActivation() {
         this.seed();
@@ -173,13 +190,17 @@ class ForgeAgentScopedExecutionIT {
         assertThat(scoped).extracting(NodeRun::executionFrameId).containsOnly(frame);
         assertThat(scoped).extracting(NodeRun::activationFrameId).containsOnly(frame);
 
-        this.complete(scoped.getFirst(), "{\"repository\":\"first\"}");
+        this.completeWithWorkspaceAssertion(scoped.getFirst(), "{\"repository\":\"first\"}");
         if (repositoryCount == 2) {
             assertThat(this.nodeRuns(runId, C)).isEmpty();
-            this.complete(scoped.get(1), "{\"repository\":\"second\"}");
+            this.completeWithWorkspaceAssertion(scoped.get(1), "{\"repository\":\"second\"}");
         }
         final NodeRun global = this.onlyPending(runId, C);
         final NodeExecutionClaim claim = this.lifecycle.tryStart(global.id()).orElseThrow();
+        assertThat(claim.executionWorkspace().cwd()).isEqualTo(this.projectWorkspace());
+        assertThat(claim.executionWorkspace().workspaceRoots())
+                .containsExactlyElementsOf(repositories.stream().map(this::repositoryWorkspace).toList());
+        assertThat(claim.executionWorkspace().cwd()).isNotIn(claim.executionWorkspace().workspaceRoots());
         assertThat(claim.inputEnvelope().contributions()).hasSize(repositoryCount)
                 .extracting(NodeInputContribution::sourceRepositoryId)
                 .containsExactlyInAnyOrderElementsOf(repositories);
@@ -616,6 +637,7 @@ class ForgeAgentScopedExecutionIT {
     }
 
     private void seed() {
+        this.createRepositoryWorkspaceFixtures();
         this.forgeIt.postgresql().create()
                 .to(PROJECT.withJson("project_alpha.json"))
                 .to(PROJECT_REPOSITORY.withEntity(this.repositoryEntity(REPOSITORY_A, "repository-a")))
@@ -626,6 +648,37 @@ class ForgeAgentScopedExecutionIT {
                 .to(AGENT_DEFINITION.withJson("agent_c.json"))
                 .to(WORKFLOW.withJson("workflow_alpha.json"))
                 .build();
+    }
+
+    private void createRepositoryWorkspaceFixtures() {
+        try {
+            Files.createDirectories(this.repositoryWorkspace(REPOSITORY_A).resolve(".git"));
+            Files.createDirectories(this.repositoryWorkspace(REPOSITORY_B).resolve(".git"));
+            Files.createDirectories(this.repositoryWorkspace(REPOSITORY_C).resolve(".git"));
+        } catch (final IOException exception) {
+            throw new IllegalStateException("Failed to create Forge repository workspace fixtures.", exception);
+        }
+    }
+
+    private Path projectWorkspace() {
+        Path current = Path.of("").toAbsolutePath().normalize();
+        while (current != null && !Files.isDirectory(current.resolve(".git"))) {
+            current = current.getParent();
+        }
+        if (current == null) {
+            throw new IllegalStateException("Forge root could not be resolved for integration test.");
+        }
+        return current.resolve("forge-projects").resolve(PROJECT_ALPHA_ID.toString());
+    }
+
+    private Path repositoryWorkspace(final UUID repositoryId) {
+        final String name = switch (this.repositories(3).indexOf(repositoryId)) {
+            case 0 -> "repository-a";
+            case 1 -> "repository-b";
+            case 2 -> "repository-c";
+            default -> throw new IllegalArgumentException("Unknown repository fixture.");
+        };
+        return this.projectWorkspace().resolve(name);
     }
 
     private ProjectRepositoryEntity repositoryEntity(final UUID id, final String name) {
@@ -754,6 +807,14 @@ class ForgeAgentScopedExecutionIT {
     private void complete(final NodeRun nodeRun, final String output) {
         final NodeRun running = this.start(nodeRun);
         this.lifecycle.succeed(running.id(), new NodeRunOutput(output));
+    }
+
+    private void completeWithWorkspaceAssertion(final NodeRun nodeRun, final String output) {
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(nodeRun.id()).orElseThrow();
+        final Path repositoryWorkspace = this.repositoryWorkspace(nodeRun.repositoryId());
+        assertThat(claim.executionWorkspace().cwd()).isEqualTo(repositoryWorkspace);
+        assertThat(claim.executionWorkspace().workspaceRoots()).containsExactly(repositoryWorkspace);
+        this.lifecycle.succeed(nodeRun.id(), new NodeRunOutput(output));
     }
 
     private NodeRun onlyPending(final UUID runId, final UUID sourceNodeId) {

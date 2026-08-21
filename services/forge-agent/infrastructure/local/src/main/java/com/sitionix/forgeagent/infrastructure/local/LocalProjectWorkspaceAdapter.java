@@ -30,6 +30,24 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
     private final ForgeRootResolver forgeRootResolver;
 
     @Override
+    public Path resolveProjectWorkspace(final UUID projectId) {
+        final Path workspace = this.projectWorkspace(projectId).toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(workspace);
+            final Path managedRoot = this.forgeRootResolver.resolveForgeRoot()
+                    .resolve(FORGE_PROJECTS_DIRECTORY)
+                    .toRealPath();
+            final Path resolvedWorkspace = workspace.toRealPath();
+            if (!resolvedWorkspace.startsWith(managedRoot)) {
+                throw new LocalProjectWorkspaceException("Forge project workspace resolves outside managed workspace.");
+            }
+            return resolvedWorkspace;
+        } catch (final IOException exception) {
+            throw new LocalProjectWorkspaceException("Failed to prepare Forge project workspace.", exception);
+        }
+    }
+
+    @Override
     public Map<UUID, ProjectRepositoryWorkspaceState> resolveRepositoryWorkspaceStates(final UUID projectId,
                                                                                        final List<ProjectRepositoryWorkspaceReference> repositories) {
         final Map<UUID, ProjectRepositoryWorkspaceState> workspaceStates = new LinkedHashMap<>();
@@ -43,7 +61,12 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
     public ProjectRepositoryWorkspaceState resolveRepositoryWorkspaceState(final UUID projectId,
                                                                           final ProjectRepositoryWorkspaceReference repository) {
         final Path repositoryPath = this.repositoryPath(projectId, repository);
-        return new ProjectRepositoryWorkspaceState(repository.id(), repositoryPath, this.isCloned(repositoryPath));
+        final boolean cloned = this.isCloned(repositoryPath);
+        return new ProjectRepositoryWorkspaceState(
+                repository.id(),
+                cloned ? this.requireManagedCheckout(projectId, repositoryPath) : repositoryPath,
+                cloned
+        );
     }
 
     @Override
@@ -147,6 +170,19 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
     private boolean isCloned(final Path repositoryPath) {
         return Files.isDirectory(repositoryPath)
                 && (Files.isDirectory(repositoryPath.resolve(".git")) || Files.isRegularFile(repositoryPath.resolve(".git")));
+    }
+
+    private Path requireManagedCheckout(final UUID projectId, final Path repositoryPath) {
+        try {
+            final Path projectWorkspace = this.projectWorkspace(projectId).toRealPath();
+            final Path resolvedRepository = repositoryPath.toRealPath();
+            if (!resolvedRepository.startsWith(projectWorkspace)) {
+                throw new LocalProjectWorkspaceException("Forge repository checkout resolves outside project workspace.");
+            }
+            return resolvedRepository;
+        } catch (final IOException exception) {
+            throw new LocalProjectWorkspaceException("Forge repository checkout could not be resolved.", exception);
+        }
     }
 
     private Path requireManagedFinalTarget(final Path targetPath) {
