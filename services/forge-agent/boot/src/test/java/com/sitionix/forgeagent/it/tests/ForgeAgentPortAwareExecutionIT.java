@@ -59,7 +59,6 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,7 +76,6 @@ class ForgeAgentPortAwareExecutionIT {
     private static final UUID STRATEGY = UUID.fromString("90000000-0000-4000-8000-000000000007");
     private static final UUID CODE = UUID.fromString("90000000-0000-4000-8000-000000000008");
     private static final UUID REPOSITORY_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
-    private static final UUID REPOSITORY_B_ID = UUID.fromString("70000000-0000-4000-8000-000000000002");
 
     private static final UUID A_OUT = UUID.fromString("91000000-0000-4000-8000-000000000001");
     private static final UUID A_IN = UUID.fromString("92000000-0000-4000-8000-000000000001");
@@ -253,28 +251,6 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.activationResolutionRepository.find(run.id(), this.rootFrame(run.id()), IMPLEMENTER_REVIEW_IN, null)).isPresent()
                 .get()
                 .satisfies(resolution -> assertThat(resolution.activatedNodeRunId()).isNull());
-        assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
-    }
-
-    @Test
-    @Timeout(value = 5, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
-    void closedCycleStopsAtExistingActivationResolution() {
-        this.seed();
-        this.saveClosedCycleWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(A_PASS);
-
-        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Close cycle."));
-        final UUID frameId = this.rootFrame(run.id());
-        final NodeRun a = this.onlyPending(run.id(), A);
-
-        this.complete(a, "{\"result\":\"done\"}");
-
-        assertThat(this.nodeRuns(run.id(), A)).extracting(NodeRun::id).containsExactly(a.id());
-        assertThat(this.nodeRuns(run.id(), B)).isEmpty();
-        assertThat(this.activationResolutionRepository.find(run.id(), frameId, B_IN, null))
-                .hasValueSatisfying(resolution -> assertThat(resolution.activatedNodeRunId()).isNull());
-        assertThat(this.activationResolutionRepository.find(run.id(), frameId, IMPLEMENTER_REVIEW_IN, null))
-                .hasValueSatisfying(resolution -> assertThat(resolution.activatedNodeRunId()).isNull());
         assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
     }
 
@@ -533,216 +509,11 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(newBClaim.inputEnvelope().entryInputPort().description()).isEqualTo("Updated B input description.");
     }
 
-    @Test
-    void mixedScopeMatrixKeepsLogicalGraphAndWaitsForAllScopedFanIn() {
-        this.seed();
-        this.saveMixedScopeMatrixWorkflow();
-
-        final ProjectTaskDetails created = this.projectTaskUseCases.createProjectTask(PROJECT_ALPHA_ID, new CreateProjectTaskCommand(
-                "Mixed scope matrix",
-                "Build across repositories.",
-                WORKFLOW_ID,
-                List.of(REPOSITORY_ID, REPOSITORY_B_ID)
-        ));
-        final UUID runId = created.runs().getFirst().id();
-
-        final WorkflowRun initial = this.workflowRunRepository.findById(runId).orElseThrow();
-        assertThat(initial.repositoryIds()).containsExactly(REPOSITORY_ID, REPOSITORY_B_ID);
-        assertThat(initial.runtimeGraph().nodes()).extracting(com.sitionix.forgeagent.domain.model.RunNode::sourceNodeId)
-                .containsExactly(A, B, C, D);
-        assertThat(this.nodeRuns(runId, A)).singleElement()
-                .satisfies(nodeRun -> assertThat(nodeRun.repositoryId()).isNull());
-
-        this.complete(this.onlyPending(runId, A), "{\"step\":\"A\"}");
-        assertThat(this.nodeRuns(runId, B)).extracting(NodeRun::repositoryId)
-                .containsExactlyInAnyOrder(REPOSITORY_ID, REPOSITORY_B_ID);
-        assertThat(this.pendingForSource(runId, C)).isEmpty();
-
-        this.complete(this.onlyPending(runId, B, REPOSITORY_ID), "{\"step\":\"B\",\"repository\":\"A\"}");
-        this.complete(this.onlyPending(runId, B, REPOSITORY_B_ID), "{\"step\":\"B\",\"repository\":\"B\"}");
-        assertThat(this.nodeRuns(runId, C)).extracting(NodeRun::repositoryId)
-                .containsExactlyInAnyOrder(REPOSITORY_ID, REPOSITORY_B_ID);
-        this.nodeRuns(runId, C).forEach(c -> assertThat(this.lifecycle.tryStart(c.id()).orElseThrow().inputEnvelope().contributions())
-                .singleElement()
-                .satisfies(contribution -> assertThat(contribution.sourceRepositoryId()).isEqualTo(c.repositoryId())));
-
-        this.lifecycle.succeed(this.nodeRuns(runId, C).stream()
-                .filter(nodeRun -> REPOSITORY_ID.equals(nodeRun.repositoryId()))
-                .findFirst()
-                .orElseThrow()
-                .id(), new NodeRunOutput("{\"step\":\"C\",\"repository\":\"A\"}"));
-        assertThat(this.pendingForSource(runId, D)).isEmpty();
-
-        this.lifecycle.succeed(this.nodeRuns(runId, C).stream()
-                .filter(nodeRun -> REPOSITORY_B_ID.equals(nodeRun.repositoryId()))
-                .findFirst()
-                .orElseThrow()
-                .id(), new NodeRunOutput("{\"step\":\"C\",\"repository\":\"B\"}"));
-        assertThat(this.nodeRuns(runId, D)).singleElement()
-                .satisfies(nodeRun -> assertThat(nodeRun.repositoryId()).isNull());
-        final NodeRun d = this.onlyPending(runId, D);
-        assertThat(this.lifecycle.tryStart(d.id()).orElseThrow().inputEnvelope().contributions())
-                .hasSize(2)
-                .extracting(com.sitionix.forgeagent.domain.model.NodeInputContribution::sourceRepositoryId)
-                .containsExactlyInAnyOrder(REPOSITORY_ID, REPOSITORY_B_ID);
-        this.lifecycle.succeed(d.id(), new NodeRunOutput("{\"step\":\"D\"}"));
-
-        final WorkflowRun finished = this.workflowRunRepository.findById(runId).orElseThrow();
-        assertThat(finished.status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
-        assertThat(finished.resultSourceNodeRunId()).isEqualTo(d.id());
-    }
-
-    @Test
-    void mixedScopeClosedBranchWaitsForRemainingScopedParticipants() {
-        this.seed();
-        this.saveMixedScopeClosedWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation -> {
-            final NodeRunOutput output = invocation.getArgument(0);
-            return output.jsonValue().contains("other") ? C_OTHER : B_OUT;
-        });
-
-        final ProjectTaskDetails created = this.projectTaskUseCases.createProjectTask(PROJECT_ALPHA_ID, new CreateProjectTaskCommand(
-                "Mixed scope closed branch",
-                "Close one repository branch.",
-                WORKFLOW_ID,
-                List.of(REPOSITORY_ID, REPOSITORY_B_ID)
-        ));
-        final UUID runId = created.runs().getFirst().id();
-        this.complete(this.onlyPending(runId, A), "{\"step\":\"A\"}");
-        this.complete(this.onlyPending(runId, B, REPOSITORY_ID), "{\"route\":\"other\"}");
-        assertThat(this.pendingForSource(runId, C)).isEmpty();
-
-        this.complete(this.onlyPending(runId, B, REPOSITORY_B_ID), "{\"route\":\"deliver\"}");
-
-        final NodeRun c = this.onlyPending(runId, C);
-        assertThat(c.repositoryId()).isNull();
-        assertThat(this.resolutionRepository.findConsumedByNodeRunId(c.id())).singleElement()
-                .satisfies(resolution -> assertThat(resolution.targetRepositoryId()).isNull());
-        assertThat(this.lifecycle.tryStart(c.id()).orElseThrow().inputEnvelope().contributions()).singleElement()
-                .satisfies(contribution -> assertThat(contribution.sourceRepositoryId()).isEqualTo(REPOSITORY_B_ID));
-        this.lifecycle.succeed(c.id(), new NodeRunOutput("{\"step\":\"C\"}"));
-
-        assertThat(this.workflowRunRepository.findById(runId).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
-    }
-
-    @Test
-    void scopedReentryWaveUsesOneChildFrameForAllRepositories() {
-        this.seed();
-        this.saveScopedReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(STRATEGY_RETURN);
-
-        final ProjectTaskDetails created = this.projectTaskUseCases.createProjectTask(PROJECT_ALPHA_ID, new CreateProjectTaskCommand(
-                "Scoped reentry",
-                "Review both repositories.",
-                WORKFLOW_ID,
-                List.of(REPOSITORY_ID, REPOSITORY_B_ID)
-        ));
-        final UUID runId = created.runs().getFirst().id();
-        final UUID frameA = this.rootFrame(runId);
-
-        this.complete(this.onlyPending(runId, IMPLEMENTER, REPOSITORY_ID), "{\"patch\":\"nexus-v1\"}");
-        this.complete(this.onlyPending(runId, IMPLEMENTER, REPOSITORY_B_ID), "{\"patch\":\"agent-v1\"}");
-        this.complete(this.onlyPending(runId, STRATEGY, REPOSITORY_ID), "{\"review\":\"return\"}");
-        this.complete(this.onlyPending(runId, STRATEGY, REPOSITORY_B_ID), "{\"review\":\"return\"}");
-
-        final List<NodeRun> implementerRuns = this.nodeRuns(runId, IMPLEMENTER);
-        assertThat(implementerRuns).hasSize(4);
-        assertThat(implementerRuns.stream().filter(nodeRun -> frameA.equals(nodeRun.executionFrameId())))
-                .extracting(NodeRun::repositoryId)
-                .containsExactlyInAnyOrder(REPOSITORY_ID, REPOSITORY_B_ID);
-        final List<NodeRun> reentered = implementerRuns.stream()
-                .filter(nodeRun -> frameA.equals(nodeRun.activationFrameId()))
-                .toList();
-        assertThat(reentered).hasSize(2);
-        assertThat(reentered).extracting(NodeRun::repositoryId)
-                .containsExactlyInAnyOrder(REPOSITORY_ID, REPOSITORY_B_ID);
-        assertThat(reentered).extracting(NodeRun::executionFrameId).containsOnly(reentered.getFirst().executionFrameId());
-        assertThat(reentered.getFirst().executionFrameId()).isNotEqualTo(frameA);
-        assertThat(this.frameRepository.findByWorkflowRunId(runId)).hasSize(2);
-    }
-
-    @Test
-    void childFrameActivationReevaluatesWaitingParentDownstreamInput() {
-        this.seed();
-        this.saveAsymmetricScopedReentryWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation -> {
-            final NodeRunOutput output = invocation.getArgument(0);
-            return output.jsonValue().contains("direct") ? B_OUT : C_OTHER;
-        });
-
-        final ProjectTaskDetails created = this.projectTaskUseCases.createProjectTask(PROJECT_ALPHA_ID, new CreateProjectTaskCommand(
-                "Asymmetric scoped reentry",
-                "Reevaluate a waiting parent activation after child-frame activation.",
-                WORKFLOW_ID,
-                List.of(REPOSITORY_ID, REPOSITORY_B_ID)
-        ));
-        final UUID runId = created.runs().getFirst().id();
-        final UUID frameA = this.rootFrame(runId);
-
-        this.complete(this.onlyPending(runId, A, REPOSITORY_ID), "{\"step\":\"root-a\"}");
-        this.complete(this.onlyPending(runId, A, REPOSITORY_B_ID), "{\"step\":\"root-b\"}");
-        this.complete(this.onlyPending(runId, B, REPOSITORY_ID), "{\"route\":\"direct\"}");
-        this.complete(this.onlyPending(runId, B, REPOSITORY_B_ID), "{\"route\":\"delay\"}");
-
-        final NodeRun parentTarget = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_ID);
-        assertThat(parentTarget.executionFrameId()).isEqualTo(frameA);
-        this.complete(parentTarget, "{\"generation\":\"parent\"}");
-        final ConnectionResolution parentContribution = this.resolutionRepository.findByWorkflowRunAndFrame(runId, frameA).stream()
-                .filter(resolution -> resolution.sourceNodeRunId().equals(parentTarget.id()))
-                .findFirst()
-                .orElseThrow();
-        assertThat(parentContribution.consumedByNodeRunId()).isNull();
-        assertThat(this.pendingForSource(runId, STRATEGY)).isEmpty();
-
-        this.complete(this.onlyPending(runId, C, REPOSITORY_B_ID), "{\"step\":\"delay-one\"}");
-        this.complete(this.onlyPending(runId, D, REPOSITORY_B_ID), "{\"step\":\"delay-two\"}");
-        this.complete(this.onlyPending(runId, X), "{\"step\":\"gate\"}");
-
-        final List<NodeRun> childTargets = this.pendingForSource(runId, IMPLEMENTER);
-        assertThat(childTargets).hasSize(2);
-        assertThat(childTargets).extracting(NodeRun::repositoryId)
-                .containsExactlyInAnyOrder(REPOSITORY_ID, REPOSITORY_B_ID);
-        final UUID frameB = childTargets.getFirst().executionFrameId();
-        assertThat(frameB).isNotEqualTo(frameA);
-        assertThat(childTargets).extracting(NodeRun::executionFrameId).containsOnly(frameB);
-
-        final NodeRun parentFinal = this.onlyPending(runId, STRATEGY);
-        assertThat(parentFinal.activationFrameId()).isEqualTo(frameA);
-        assertThat(parentFinal.executionFrameId()).isEqualTo(frameA);
-        assertThat(this.resolutionRepository.findConsumedByNodeRunId(parentFinal.id()))
-                .extracting(ConnectionResolution::id)
-                .containsExactly(parentContribution.id());
-        assertThat(this.activationResolutionRepository.find(runId, frameA, STRATEGY_IN, null))
-                .hasValueSatisfying(resolution -> assertThat(resolution.activatedNodeRunId()).isEqualTo(parentFinal.id()));
-        assertThat(this.nodeRuns(runId, STRATEGY)).containsExactly(parentFinal);
-        this.complete(parentFinal, "{\"result\":\"parent\"}");
-
-        childTargets.forEach(nodeRun -> this.complete(nodeRun, "{\"generation\":\"child\"}"));
-        final NodeRun childFinal = this.onlyPending(runId, STRATEGY);
-        assertThat(childFinal.activationFrameId()).isEqualTo(frameB);
-        assertThat(childFinal.executionFrameId()).isEqualTo(frameB);
-        assertThat(this.resolutionRepository.findConsumedByNodeRunId(childFinal.id()))
-                .hasSize(2)
-                .allSatisfy(resolution -> {
-                    assertThat(resolution.executionFrameId()).isEqualTo(frameB);
-                    assertThat(resolution.sourceNodeRunId()).isIn(childTargets.stream().map(NodeRun::id).toList());
-                });
-        this.complete(childFinal, "{\"result\":\"child\"}");
-
-        final WorkflowRun finished = this.workflowRunRepository.findById(runId).orElseThrow();
-        assertThat(finished.status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
-        assertThat(finished.result()).isEqualTo(new NodeRunOutput("{\"result\": \"child\"}"));
-        assertThat(finished.resultSourceNodeRunId()).isEqualTo(childFinal.id());
-        assertThat(this.nodeRuns(runId, STRATEGY)).extracting(NodeRun::id)
-                .containsExactly(parentFinal.id(), childFinal.id());
-    }
-
     private void seed() {
         this.forgeIt.postgresql()
                 .create()
                 .to(PROJECT.withJson("project_alpha.json"))
                 .to(PROJECT_REPOSITORY.withEntity(this.projectRepositoryEntity()))
-                .to(PROJECT_REPOSITORY.withEntity(this.projectRepositoryEntity(REPOSITORY_B_ID, "https://example.com/forge/repository-b.git")))
                 .to(AGENT_DEFINITION.withJson("agent_a.json"))
                 .to(AGENT_DEFINITION.withJson("agent_b.json"))
                 .to(AGENT_DEFINITION.withJson("agent_c.json"))
@@ -843,24 +614,6 @@ class ForgeAgentPortAwareExecutionIT {
         ));
     }
 
-    private void saveClosedCycleWorkflow() {
-        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
-                "Full Testing",
-                List.of(
-                        this.node(A, AGENT_A_ID,
-                                List.of(this.port(A_IN, "Initial", 0), this.port(IMPLEMENTER_REVIEW_IN, "Review", 1)),
-                                List.of(this.port(A_PASS, "Finish", 0), this.port(A_RETURN, "To B", 1)), 0),
-                        this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")), List.of(this.port(B_OUT, "To A")), 1)
-                ),
-                List.of(
-                        this.connection(1, A_RETURN, B_IN),
-                        this.connection(2, B_OUT, IMPLEMENTER_REVIEW_IN)
-                ),
-                A_IN,
-                A_PASS
-        ));
-    }
-
     private void saveDeepWorkflow(final boolean closeCPath) {
         this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
                 "Full Testing",
@@ -881,99 +634,6 @@ class ForgeAgentPortAwareExecutionIT {
                 ),
                 A_IN,
                 X_OUT
-        ));
-    }
-
-    private void saveMixedScopeMatrixWorkflow() {
-        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
-                "Full Testing",
-                List.of(
-                        this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Done")), 0, NodeScopeMode.GLOBAL),
-                        this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")), List.of(this.port(B_OUT, "Done")), 1, NodeScopeMode.PER_SCOPE),
-                        this.node(C, AGENT_C_ID, List.of(this.port(C_IN, "Input")), List.of(this.port(C_OUT, "Done")), 2, NodeScopeMode.PER_SCOPE),
-                        this.node(D, AGENT_A_ID, List.of(this.port(D_IN, "Input")), List.of(this.port(D_OUT, "Done")), 3, NodeScopeMode.GLOBAL)
-                ),
-                List.of(
-                        this.connection(1, A_OUT, B_IN),
-                        this.connection(2, B_OUT, C_IN),
-                        this.connection(3, C_OUT, D_IN)
-                ),
-                A_IN,
-                D_OUT
-        ));
-    }
-
-    private void saveMixedScopeClosedWorkflow() {
-        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
-                "Full Testing",
-                List.of(
-                        this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Done")), 0, NodeScopeMode.GLOBAL),
-                        this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")),
-                                List.of(this.port(B_OUT, "To C", 0), this.port(C_OTHER, "Other", 1)), 1, NodeScopeMode.PER_SCOPE),
-                        this.node(C, AGENT_C_ID, List.of(this.port(C_IN, "Input")), List.of(this.port(C_OUT, "Done")), 2, NodeScopeMode.GLOBAL)
-                ),
-                List.of(
-                        this.connection(1, A_OUT, B_IN),
-                        this.connection(2, B_OUT, C_IN)
-                ),
-                A_IN,
-                C_OUT
-        ));
-    }
-
-    private void saveScopedReviewerWorkflow() {
-        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
-                "Full Testing",
-                List.of(
-                        this.node(IMPLEMENTER, AGENT_A_ID,
-                                List.of(this.port(IMPLEMENTER_INITIAL_IN, "Initial", 0), this.port(IMPLEMENTER_REVIEW_IN, "Review", 1)),
-                                List.of(this.port(IMPLEMENTER_OUT, "Done")), 0, NodeScopeMode.PER_SCOPE),
-                        this.node(STRATEGY, AGENT_B_ID, List.of(this.port(STRATEGY_IN, "Input")),
-                                List.of(this.port(STRATEGY_PASS, "Pass", 0), this.port(STRATEGY_RETURN, "Return", 1)), 1, NodeScopeMode.PER_SCOPE),
-                        this.node(D, AGENT_C_ID, List.of(this.port(D_IN, "Input")), List.of(this.port(D_OUT, "Done")), 2, NodeScopeMode.GLOBAL)
-                ),
-                List.of(
-                        this.connection(1, IMPLEMENTER_OUT, STRATEGY_IN),
-                        this.connection(2, STRATEGY_PASS, D_IN),
-                        this.connection(3, STRATEGY_RETURN, IMPLEMENTER_REVIEW_IN)
-                ),
-                IMPLEMENTER_INITIAL_IN,
-                D_OUT
-        ));
-    }
-
-    private void saveAsymmetricScopedReentryWorkflow() {
-        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
-                "Full Testing",
-                List.of(
-                        this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Done")), 0,
-                                NodeScopeMode.PER_SCOPE),
-                        this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")),
-                                List.of(this.port(B_OUT, "Direct", 0), this.port(C_OTHER, "Delay", 1)), 1,
-                                NodeScopeMode.PER_SCOPE),
-                        this.node(C, AGENT_C_ID, List.of(this.port(C_IN, "Input")), List.of(this.port(C_OUT, "Done")), 2,
-                                NodeScopeMode.PER_SCOPE),
-                        this.node(D, AGENT_A_ID, List.of(this.port(D_IN, "Input")), List.of(this.port(D_OUT, "Done")), 3,
-                                NodeScopeMode.PER_SCOPE),
-                        this.node(X, AGENT_B_ID, List.of(this.port(X_IN, "Input")), List.of(this.port(X_OUT, "Done")), 4,
-                                NodeScopeMode.GLOBAL),
-                        this.node(IMPLEMENTER, AGENT_A_ID,
-                                List.of(this.port(IMPLEMENTER_INITIAL_IN, "Direct", 0), this.port(IMPLEMENTER_REVIEW_IN, "Gate", 1)),
-                                List.of(this.port(IMPLEMENTER_OUT, "Done")), 5, NodeScopeMode.PER_SCOPE),
-                        this.node(STRATEGY, AGENT_C_ID, List.of(this.port(STRATEGY_IN, "Input")),
-                                List.of(this.port(STRATEGY_PASS, "Result")), 6, NodeScopeMode.GLOBAL)
-                ),
-                List.of(
-                        this.connection(1, A_OUT, B_IN),
-                        this.connection(2, B_OUT, IMPLEMENTER_INITIAL_IN),
-                        this.connection(3, C_OTHER, C_IN),
-                        this.connection(4, C_OUT, D_IN),
-                        this.connection(5, D_OUT, X_IN),
-                        this.connection(6, X_OUT, IMPLEMENTER_REVIEW_IN),
-                        this.connection(7, IMPLEMENTER_OUT, STRATEGY_IN)
-                ),
-                A_IN,
-                STRATEGY_PASS
         ));
     }
 

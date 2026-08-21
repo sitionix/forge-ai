@@ -341,6 +341,8 @@ class ForgeAgentClientMapperTest {
                 null
         ));
 
+        final UUID executionFrameId = UUID.fromString("99999999-0000-4000-8000-000000000001");
+        final UUID activationFrameId = UUID.fromString("99999999-0000-4000-8000-000000000002");
         final var nodeRunResponse = new NodeRunResponse(
                 NODE_RUN_ID,
                 NODE_ID,
@@ -350,17 +352,17 @@ class ForgeAgentClientMapperTest {
                 this.objectMapper.readTree("{\"type\":\"object\"}"),
                 null,
                 new NodePositionResponse(1.0, 2.0),
-                UUID.fromString("99999999-0000-4000-8000-000000000001"),
-                null,
-                null,
-                null,
+                executionFrameId,
+                INPUT_ID,
+                activationFrameId,
+                OUTPUT_ID,
                 AgentNodeRunStatus.PENDING,
                 this.objectMapper.readTree("{\"summary\":\"done\"}"),
                 new NodeRunFailureResponse("ERR", "Failed"),
                 CREATED,
                 null,
                 null,
-                null
+                REPOSITORY_ID
         );
         final UUID resolutionId = UUID.fromString("77777777-0000-4000-8000-000000000001");
         final UUID frameId = UUID.fromString("99999999-0000-4000-8000-000000000001");
@@ -393,7 +395,7 @@ class ForgeAgentClientMapperTest {
                 CREATED,
                 null,
                 null,
-                java.util.List.of()
+                java.util.List.of(REPOSITORY_ID)
         ))).isEqualTo(new AgentWorkflowRun(
                 RUN_ID,
                 PROJECT_ID,
@@ -411,17 +413,17 @@ class ForgeAgentClientMapperTest {
                         new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
                         NodeInputMode.TASK_AND_DEPENDENCIES,
                         new NodePosition(1.0, 2.0),
-                        UUID.fromString("99999999-0000-4000-8000-000000000001"),
-                        null,
-                        null,
-                        null,
+                        executionFrameId,
+                        INPUT_ID,
+                        activationFrameId,
+                        OUTPUT_ID,
                         AgentNodeRunStatus.PENDING,
                         new AgentNodeRunOutputDocument("{\"summary\":\"done\"}"),
                         new AgentNodeRunFailure("ERR", "Failed"),
                         CREATED,
                         null,
                         null,
-                        null
+                        REPOSITORY_ID
                 )),
                 List.of(new AgentConnectionResolution(
                         resolutionId,
@@ -442,7 +444,7 @@ class ForgeAgentClientMapperTest {
                 CREATED,
                 null,
                 null,
-                java.util.List.of()
+                java.util.List.of(REPOSITORY_ID)
         ));
     }
 
