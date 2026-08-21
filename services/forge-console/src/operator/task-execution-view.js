@@ -5,15 +5,418 @@ const NODE_WIDTH = 204;
 const NODE_HEIGHT = 110;
 const MODERN_NODE_WIDTH = 232;
 const MODERN_NODE_FALLBACK_HEIGHT = 118;
+const MODERN_SCOPED_NODE_FALLBACK_HEIGHT = 136;
 const MODERN_PORT_ROW_HEIGHT = 24;
 const NODE_MID_Y = 58;
 const MIN_CANVAS_WIDTH = 1600;
 const MIN_CANVAS_HEIGHT = 1000;
 const CANVAS_PADDING = 240;
-const REVERSE_EDGE_CANVAS_MARGIN = 8;
 const MIN_CANVAS_SCALE = 0.45;
 const MAX_CANVAS_SCALE = 1.8;
 const HISTORY_MARKER_LIMIT = 6;
+const LAYOUT_X_GAP = 148;
+const LAYOUT_Y_GAP = 56;
+const LAYOUT_START_X = 80;
+const LAYOUT_START_Y = 80;
+const GLOBAL_REPOSITORY_KEY = '__global__';
+const EDGE_NODE_CLEARANCE = 16;
+const EDGE_BEND_COST = 12;
+const UNAVAILABLE_REPOSITORY_LABEL = 'Repository unavailable';
+
+export function visualUnitKey(sourceNodeId, repositoryId) {
+  return `${sourceNodeId}::${normalizedRepositoryId(repositoryId) || GLOBAL_REPOSITORY_KEY}`;
+}
+
+function normalizedRepositoryId(repositoryId) {
+  return repositoryId || null;
+}
+
+function portAnchorKey(unitKey, portId) {
+  return unitKey.endsWith(`::${GLOBAL_REPOSITORY_KEY}`) ? portId : `${unitKey}::${portId}`;
+}
+
+export function buildExecutionProjection(runtimeGraph, repositoryIds = [], repositories = []) {
+  const logicalNodes = runtimeGraph?.nodes || [];
+  const ports = runtimeGraph?.ports || [];
+  const logicalConnections = runtimeGraph?.connections || [];
+  const repositoryNameById = new Map(repositories.map((repository) => [repository.id, repository.name]));
+  const repositoryOrder = new Map(repositoryIds.map((repositoryId, index) => [repositoryId, index]));
+  const unitsBySource = new Map();
+  const units = [];
+
+  for (const [logicalIndex, logicalNode] of logicalNodes.entries()) {
+    const scopeMode = logicalNode.scopeMode || 'GLOBAL';
+    const invocationRepositories = visualUnitRepositories(scopeMode, repositoryIds);
+    const sourceUnits = invocationRepositories.map((repositoryId) => {
+      const unit = {
+        ...logicalNode,
+        scopeMode,
+        repositoryId,
+        repositoryName: repositoryId ? repositoryNameById.get(repositoryId) || UNAVAILABLE_REPOSITORY_LABEL : null,
+        visualUnitKey: visualUnitKey(logicalNode.sourceNodeId, repositoryId),
+        logicalIndex
+      };
+      units.push(unit);
+      return unit;
+    });
+    unitsBySource.set(logicalNode.sourceNodeId, sourceUnits);
+  }
+
+  const portById = new Map(ports.map((port) => [port.sourcePortId, port]));
+  const projectedConnections = [];
+  for (const connection of logicalConnections) {
+    const sourcePort = portById.get(connection.sourceOutputPortId);
+    const targetPort = portById.get(connection.targetInputPortId);
+    const sourceUnits = unitsBySource.get(sourcePort?.sourceNodeId) || [];
+    const targetUnits = unitsBySource.get(targetPort?.sourceNodeId) || [];
+    if (!sourceUnits.length || !targetUnits.length) {
+      continue;
+    }
+    for (const [sourceUnit, targetUnit] of projectedUnitPairs(sourceUnits, targetUnits)) {
+      projectedConnections.push({
+        ...connection,
+        sourceVisualUnitKey: sourceUnit.visualUnitKey,
+        targetVisualUnitKey: targetUnit.visualUnitKey
+      });
+    }
+  }
+
+  const taskInputNodeId = portById.get(runtimeGraph?.taskInputPortId)?.sourceNodeId || null;
+  const rootUnitKeys = new Set((unitsBySource.get(taskInputNodeId) || []).map((unit) => unit.visualUnitKey));
+  layoutExecutionProjection(units, projectedConnections, ports, repositoryOrder, rootUnitKeys);
+  return { nodes: units, ports, connections: projectedConnections };
+}
+
+function visualUnitRepositories(scopeMode, repositoryIds) {
+  if (scopeMode === 'GLOBAL') {
+    return [null];
+  }
+  if (scopeMode === 'PER_SCOPE') {
+    return repositoryIds;
+  }
+  throw new Error(`Unsupported execution scope mode: ${scopeMode}`);
+}
+
+function projectedUnitPairs(sourceUnits, targetUnits) {
+  const sourceMode = sourceUnits[0].scopeMode;
+  const targetMode = targetUnits[0].scopeMode;
+  if (sourceMode === 'GLOBAL' && targetMode === 'GLOBAL') {
+    return [[sourceUnits[0], targetUnits[0]]];
+  }
+  if (sourceMode === 'GLOBAL' && targetMode === 'PER_SCOPE') {
+    return targetUnits.map((targetUnit) => [sourceUnits[0], targetUnit]);
+  }
+  if (sourceMode === 'PER_SCOPE' && targetMode === 'GLOBAL') {
+    return sourceUnits.map((sourceUnit) => [sourceUnit, targetUnits[0]]);
+  }
+  if (sourceMode === 'PER_SCOPE' && targetMode === 'PER_SCOPE') {
+    const targetByRepository = new Map(targetUnits.map((unit) => [unit.repositoryId, unit]));
+    return sourceUnits
+      .filter((sourceUnit) => targetByRepository.has(sourceUnit.repositoryId))
+      .map((sourceUnit) => [sourceUnit, targetByRepository.get(sourceUnit.repositoryId)]);
+  }
+  throw new Error(`Unsupported execution scope projection: ${sourceMode} -> ${targetMode}`);
+}
+
+function layoutExecutionProjection(units, connections, ports, repositoryOrder, rootUnitKeys) {
+  const depths = projectionDepths(units, connections, rootUnitKeys);
+  const portCountBySource = new Map();
+  for (const port of ports) {
+    const counts = portCountBySource.get(port.sourceNodeId) || { input: 0, output: 0 };
+    counts[port.direction === 'OUTPUT' ? 'output' : 'input'] += 1;
+    portCountBySource.set(port.sourceNodeId, counts);
+  }
+  const columns = new Map();
+  for (const unit of units) {
+    const depth = depths.get(unit.visualUnitKey) || 0;
+    if (!columns.has(depth)) {
+      columns.set(depth, []);
+    }
+    const counts = portCountBySource.get(unit.sourceNodeId) || { input: 0, output: 0 };
+    const scopeLabelHeight = unit.repositoryId ? 18 : 0;
+    const fallbackHeight = unit.repositoryId ? MODERN_SCOPED_NODE_FALLBACK_HEIGHT : MODERN_NODE_FALLBACK_HEIGHT;
+    unit.layoutHeight = Math.max(fallbackHeight, 58 + scopeLabelHeight + (Math.max(counts.input, counts.output) * MODERN_PORT_ROW_HEIGHT));
+    columns.get(depth).push(unit);
+  }
+  for (const column of columns.values()) {
+    column.sort((left, right) => {
+      const leftRepository = left.repositoryId == null ? -1 : repositoryOrder.get(left.repositoryId) ?? Number.MAX_SAFE_INTEGER;
+      const rightRepository = right.repositoryId == null ? -1 : repositoryOrder.get(right.repositoryId) ?? Number.MAX_SAFE_INTEGER;
+      return leftRepository - rightRepository || left.logicalIndex - right.logicalIndex;
+    });
+  }
+  const columnHeights = [...columns.values()].map((column) => column.reduce((height, unit, index) => (
+    height + unit.layoutHeight + (index ? LAYOUT_Y_GAP : 0)
+  ), 0));
+  const maxHeight = Math.max(0, ...columnHeights);
+  for (const [depth, column] of columns) {
+    const columnHeight = column.reduce((height, unit, index) => height + unit.layoutHeight + (index ? LAYOUT_Y_GAP : 0), 0);
+    let y = LAYOUT_START_Y + ((maxHeight - columnHeight) / 2);
+    for (const unit of column) {
+      unit.position = {
+        x: LAYOUT_START_X + (depth * (MODERN_NODE_WIDTH + LAYOUT_X_GAP)),
+        y
+      };
+      y += unit.layoutHeight + LAYOUT_Y_GAP;
+    }
+  }
+}
+
+function projectionDepths(units, connections, rootUnitKeys) {
+  const depth = new Map(units.map((unit) => [unit.visualUnitKey, 0]));
+  const outgoing = new Map(units.map((unit) => [unit.visualUnitKey, []]));
+  const unitOrder = new Map(units.map((unit, index) => [unit.visualUnitKey, index]));
+  const candidatesBySource = new Map(units.map((unit) => [unit.visualUnitKey, []]));
+  for (const connection of connections) {
+    candidatesBySource.get(connection.sourceVisualUnitKey)?.push(connection);
+  }
+  for (const candidates of candidatesBySource.values()) {
+    candidates.sort((left, right) => compareProjectionConnections(left, right, unitOrder));
+  }
+  const forwardConnections = rootedForwardConnections(
+    units,
+    candidatesBySource,
+    outgoing,
+    rootUnitKeys,
+    unitOrder
+  );
+  for (let pass = 0; pass < units.length; pass += 1) {
+    let changed = false;
+    for (const connection of forwardConnections) {
+      const nextDepth = (depth.get(connection.sourceVisualUnitKey) || 0) + 1;
+      if (nextDepth > (depth.get(connection.targetVisualUnitKey) || 0)) {
+        depth.set(connection.targetVisualUnitKey, nextDepth);
+        changed = true;
+      }
+    }
+    if (!changed) {
+      break;
+    }
+  }
+  return depth;
+}
+
+function rootedForwardConnections(units, candidatesBySource, outgoing, rootUnitKeys, unitOrder) {
+  const forwardConnections = [];
+  const visiting = new Set();
+  const visited = new Set();
+  const traverse = (unitKey) => {
+    if (visited.has(unitKey)) {
+      return;
+    }
+    visiting.add(unitKey);
+    for (const connection of candidatesBySource.get(unitKey) || []) {
+      const targetKey = connection.targetVisualUnitKey;
+      if ((rootUnitKeys.has(targetKey) && targetKey !== unitKey)
+        || visiting.has(targetKey)
+        || hasProjectionPath(outgoing, targetKey, unitKey)) {
+        continue;
+      }
+      outgoing.get(unitKey)?.push(targetKey);
+      forwardConnections.push(connection);
+      traverse(targetKey);
+    }
+    visiting.delete(unitKey);
+    visited.add(unitKey);
+  };
+  const orderedRoots = [...rootUnitKeys].sort((left, right) => compareUnitKeys(left, right, unitOrder));
+  for (const rootKey of orderedRoots) {
+    traverse(rootKey);
+  }
+  const remaining = units.map((unit) => unit.visualUnitKey)
+    .sort((left, right) => compareUnitKeys(left, right, unitOrder));
+  for (const unitKey of remaining) {
+    traverse(unitKey);
+  }
+  return forwardConnections;
+}
+
+function compareProjectionConnections(left, right, unitOrder) {
+  return compareUnitKeys(left.targetVisualUnitKey, right.targetVisualUnitKey, unitOrder)
+    || compareUnitKeys(left.sourceVisualUnitKey, right.sourceVisualUnitKey, unitOrder)
+    || String(left.sourceOutputPortId || '').localeCompare(String(right.sourceOutputPortId || ''))
+    || String(left.targetInputPortId || '').localeCompare(String(right.targetInputPortId || ''));
+}
+
+function compareUnitKeys(left, right, unitOrder) {
+  return (unitOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (unitOrder.get(right) ?? Number.MAX_SAFE_INTEGER)
+    || String(left).localeCompare(String(right));
+}
+
+function hasProjectionPath(outgoing, start, target) {
+  const pending = [start];
+  const visited = new Set();
+  while (pending.length) {
+    const current = pending.pop();
+    if (current === target) {
+      return true;
+    }
+    if (visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+    pending.push(...(outgoing.get(current) || []));
+  }
+  return false;
+}
+
+export function routeExecutionEdge(start, end, nodeBounds) {
+  const sourceBounds = nodeBounds.find((bounds) => pointInsideOrOnRectangle(start, bounds));
+  const targetBounds = nodeBounds.find((bounds) => pointInsideOrOnRectangle(end, bounds));
+  const obstacles = nodeBounds.map((bounds) => ({
+    left: bounds.left - EDGE_NODE_CLEARANCE,
+    top: bounds.top - EDGE_NODE_CLEARANCE,
+    right: bounds.right + EDGE_NODE_CLEARANCE,
+    bottom: bounds.bottom + EDGE_NODE_CLEARANCE
+  }));
+  const sourceExit = {
+    x: sourceBounds ? sourceBounds.right + EDGE_NODE_CLEARANCE : start.x + EDGE_NODE_CLEARANCE,
+    y: start.y
+  };
+  const targetEntry = {
+    x: targetBounds ? targetBounds.left - EDGE_NODE_CLEARANCE : end.x - EDGE_NODE_CLEARANCE,
+    y: end.y
+  };
+  const routed = shortestOrthogonalRoute(sourceExit, targetEntry, obstacles);
+  return compactOrthogonalPoints([start, ...routed, end]);
+}
+
+function shortestOrthogonalRoute(start, end, obstacles) {
+  const xCoordinates = new Set([start.x, end.x]);
+  const yCoordinates = new Set([start.y, end.y]);
+  for (const obstacle of obstacles) {
+    xCoordinates.add(obstacle.left);
+    xCoordinates.add(obstacle.right);
+    yCoordinates.add(obstacle.top);
+    yCoordinates.add(obstacle.bottom);
+  }
+  const xs = [...xCoordinates].sort((left, right) => left - right);
+  const ys = [...yCoordinates].sort((left, right) => left - right);
+  const pointByKey = new Map();
+  for (const y of ys) {
+    for (const x of xs) {
+      const point = { x, y };
+      if (obstacles.some((obstacle) => pointInsideObstacle(point, obstacle))) {
+        continue;
+      }
+      pointByKey.set(pointKey(point), point);
+    }
+  }
+  pointByKey.set(pointKey(start), start);
+  pointByKey.set(pointKey(end), end);
+  const adjacency = new Map([...pointByKey.keys()].map((key) => [key, []]));
+  connectVisibleNeighbors([...pointByKey.values()], 'x', 'y', obstacles, adjacency);
+  connectVisibleNeighbors([...pointByKey.values()], 'y', 'x', obstacles, adjacency);
+  const route = findShortestRoute(start, end, pointByKey, adjacency);
+  if (!route) {
+    throw new Error('Execution edge could not be routed without intersecting a node.');
+  }
+  return route;
+}
+
+function connectVisibleNeighbors(points, groupAxis, sortAxis, obstacles, adjacency) {
+  const groups = new Map();
+  for (const point of points) {
+    if (!groups.has(point[groupAxis])) {
+      groups.set(point[groupAxis], []);
+    }
+    groups.get(point[groupAxis]).push(point);
+  }
+  for (const group of groups.values()) {
+    group.sort((left, right) => left[sortAxis] - right[sortAxis]);
+    for (let index = 1; index < group.length; index += 1) {
+      const first = group[index - 1];
+      const second = group[index];
+      if (obstacles.some((obstacle) => segmentIntersectsObstacle(first, second, obstacle))) {
+        continue;
+      }
+      adjacency.get(pointKey(first)).push(second);
+      adjacency.get(pointKey(second)).push(first);
+    }
+  }
+}
+
+function findShortestRoute(start, end, pointByKey, adjacency) {
+  const startKey = pointKey(start);
+  const endKey = pointKey(end);
+  const queue = [{ key: startKey, direction: 'START', cost: 0 }];
+  const costByState = new Map([[`${startKey}|START`, 0]]);
+  const previousByState = new Map();
+  let finalState = null;
+  while (queue.length) {
+    queue.sort((left, right) => left.cost - right.cost || left.key.localeCompare(right.key));
+    const current = queue.shift();
+    const stateKey = `${current.key}|${current.direction}`;
+    if (current.cost !== costByState.get(stateKey)) {
+      continue;
+    }
+    if (current.key === endKey) {
+      finalState = stateKey;
+      break;
+    }
+    const currentPoint = pointByKey.get(current.key);
+    for (const neighbor of adjacency.get(current.key) || []) {
+      const neighborKey = pointKey(neighbor);
+      const direction = currentPoint.x === neighbor.x ? 'VERTICAL' : 'HORIZONTAL';
+      const distance = Math.abs(currentPoint.x - neighbor.x) + Math.abs(currentPoint.y - neighbor.y);
+      const bend = current.direction === 'START' || current.direction === direction ? 0 : EDGE_BEND_COST;
+      const nextCost = current.cost + distance + bend;
+      const nextState = `${neighborKey}|${direction}`;
+      if (nextCost >= (costByState.get(nextState) ?? Number.POSITIVE_INFINITY)) {
+        continue;
+      }
+      costByState.set(nextState, nextCost);
+      previousByState.set(nextState, stateKey);
+      queue.push({ key: neighborKey, direction, cost: nextCost });
+    }
+  }
+  if (!finalState) {
+    return null;
+  }
+  const route = [];
+  for (let state = finalState; state; state = previousByState.get(state)) {
+    route.push(pointByKey.get(state.slice(0, state.lastIndexOf('|'))));
+  }
+  return route.reverse();
+}
+
+function compactOrthogonalPoints(points) {
+  const unique = points.filter((point, index) => {
+    const previous = points[index - 1];
+    return !previous || previous.x !== point.x || previous.y !== point.y;
+  });
+  return unique.filter((point, index) => {
+    const previous = unique[index - 1];
+    const next = unique[index + 1];
+    return !previous || !next
+      || !((previous.x === point.x && point.x === next.x) || (previous.y === point.y && point.y === next.y));
+  });
+}
+
+function pointInsideObstacle(point, obstacle) {
+  return point.x > obstacle.left && point.x < obstacle.right
+    && point.y > obstacle.top && point.y < obstacle.bottom;
+}
+
+function pointInsideOrOnRectangle(point, rectangle) {
+  return point.x >= rectangle.left && point.x <= rectangle.right
+    && point.y >= rectangle.top && point.y <= rectangle.bottom;
+}
+
+function segmentIntersectsObstacle(start, end, obstacle) {
+  if (start.x === end.x) {
+    return start.x > obstacle.left && start.x < obstacle.right
+      && Math.max(start.y, end.y) > obstacle.top
+      && Math.min(start.y, end.y) < obstacle.bottom;
+  }
+  return start.y > obstacle.top && start.y < obstacle.bottom
+    && Math.max(start.x, end.x) > obstacle.left
+    && Math.min(start.x, end.x) < obstacle.right;
+}
+
+function pointKey(point) {
+  return `${point.x},${point.y}`;
+}
 
 export class TaskExecutionView {
   constructor(options) {
@@ -70,7 +473,7 @@ export class TaskExecutionView {
     this.byId('agentsV2ExecutionCanvas')?.classList.remove('panning');
   }
 
-  async open(taskId, project) {
+  async open(taskId, project, repositories = []) {
     const taskSequence = this.taskLoadSequence + 1;
     this.taskLoadSequence = taskSequence;
     this.runLoadSequence += 1;
@@ -82,6 +485,7 @@ export class TaskExecutionView {
       ...this.emptyState(),
       taskId,
       project,
+      repositories,
       loadingTask: true
     };
     this.render();
@@ -121,6 +525,7 @@ export class TaskExecutionView {
     this.state.selectedRunId = runId;
     this.state.selectedNodeRunId = null;
     this.state.selectedSourceNodeId = null;
+    this.state.selectedVisualUnitKey = null;
     this.state.workflowRun = null;
     this.state.loadingRun = true;
     this.state.executionError = '';
@@ -151,13 +556,18 @@ export class TaskExecutionView {
     this.mergeRunSummary(workflowRun);
     this.mergeTaskResult(workflowRun);
     if (this.hasRuntimeGraph(workflowRun)) {
-      const graphNodes = workflowRun.runtimeGraph.nodes || [];
-      if (!graphNodes.some((node) => node.sourceNodeId === this.state.selectedSourceNodeId)) {
-        this.state.selectedSourceNodeId = graphNodes[0]?.sourceNodeId || null;
+      const projection = this.modernProjection();
+      if (!projection.nodeByUnit.has(this.state.selectedVisualUnitKey)) {
+        const firstUnit = projection.graph.nodes[0] || null;
+        this.state.selectedVisualUnitKey = firstUnit?.visualUnitKey || null;
+        this.state.selectedSourceNodeId = firstUnit?.sourceNodeId || null;
       }
       const nodeRuns = workflowRun?.nodeRuns || [];
       if (!nodeRuns.some((nodeRun) => nodeRun.id === this.state.selectedNodeRunId)) {
-        this.state.selectedNodeRunId = this.latestNodeRunForSource(this.state.selectedSourceNodeId, nodeRuns)?.id || null;
+        const selectedUnit = projection.nodeByUnit.get(this.state.selectedVisualUnitKey);
+        this.state.selectedNodeRunId = selectedUnit
+          ? this.latestNodeRunForUnit(selectedUnit.sourceNodeId, selectedUnit.repositoryId, nodeRuns)?.id || null
+          : null;
       }
       return;
     }
@@ -166,6 +576,7 @@ export class TaskExecutionView {
       this.state.selectedNodeRunId = nodeRuns[0]?.id || null;
     }
     this.state.selectedSourceNodeId = null;
+    this.state.selectedVisualUnitKey = null;
   }
 
   mergeRunSummary(workflowRun) {
@@ -401,8 +812,8 @@ export class TaskExecutionView {
     }
     const projection = this.modernProjection();
     nodesLayer.innerHTML = projection.graph.nodes.map((node) => this.renderModernNode(node, projection)).join('');
-    nodesLayer.querySelectorAll('[data-execution-source-node-id]').forEach((element) => {
-      element.addEventListener('click', () => this.selectSourceNode(element.dataset.executionSourceNodeId));
+    nodesLayer.querySelectorAll('[data-execution-visual-unit-key]').forEach((element) => {
+      element.addEventListener('click', () => this.selectVisualUnit(element.dataset.executionVisualUnitKey));
     });
     nodesLayer.querySelectorAll('[data-execution-run-chip-id]').forEach((element) => {
       element.addEventListener('click', (event) => {
@@ -416,12 +827,12 @@ export class TaskExecutionView {
   }
 
   renderModernNode(node, projection) {
-    const nodeRuns = projection.nodeRunsBySource.get(node.sourceNodeId) || [];
+    const nodeRuns = projection.nodeRunsByUnit.get(node.visualUnitKey) || [];
     const latest = nodeRuns.at(-1) || null;
     const latestNumber = latest ? projection.invocationNumberById.get(latest.id) : null;
     const inputPorts = projection.inputPortsByNode.get(node.sourceNodeId) || [];
     const outputPorts = projection.outputPortsByNode.get(node.sourceNodeId) || [];
-    const selected = node.sourceNodeId === this.state.selectedSourceNodeId;
+    const selected = node.visualUnitKey === this.state.selectedVisualUnitKey;
     const running = nodeRuns.some((nodeRun) => nodeRun.status === 'RUNNING');
     const failed = nodeRuns.some((nodeRun) => nodeRun.status === 'FAILED');
     const latestSelectedOutputId = latest?.selectedOutputPortId || null;
@@ -437,15 +848,18 @@ export class TaskExecutionView {
       <article
         class="${classes}"
         data-execution-source-node-id="${escapeHtml(node.sourceNodeId)}"
-        data-execution-node-id="${escapeHtml(node.sourceNodeId)}"
+        data-execution-visual-unit-key="${escapeHtml(node.visualUnitKey)}"
+        data-execution-repository-id="${escapeHtml(node.repositoryId || '')}"
+        data-execution-node-id="${escapeHtml(node.visualUnitKey)}"
         style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px; width:${MODERN_NODE_WIDTH}px;"
       >
         <div class="execution-board-card-grid">
           <div class="execution-board-port-column execution-board-port-column-input">
-            ${this.renderCompactPorts(inputPorts, 'input', null)}
+            ${this.renderCompactPorts(inputPorts, 'input', null, node.visualUnitKey)}
           </div>
           <div class="execution-board-card-main">
             <strong>${escapeHtml(node.agentName || 'Unknown agent')}</strong>
+            ${node.repositoryName ? `<small class="execution-board-repository">${escapeHtml(node.repositoryName)}</small>` : ''}
             ${latest ? `<span>#${latestNumber} ${escapeHtml(latest.status)}</span>` : ''}
             <div class="execution-board-runline">
               <small>${nodeRuns.length} ${nodeRuns.length === 1 ? 'run' : 'runs'}</small>
@@ -453,21 +867,21 @@ export class TaskExecutionView {
             </div>
           </div>
           <div class="execution-board-port-column execution-board-port-column-output">
-            ${this.renderCompactPorts(outputPorts, 'output', latestSelectedOutputId)}
+            ${this.renderCompactPorts(outputPorts, 'output', latestSelectedOutputId, node.visualUnitKey)}
           </div>
         </div>
       </article>
     `;
   }
 
-  renderCompactPorts(ports, side, selectedPortId) {
+  renderCompactPorts(ports, side, selectedPortId, visualUnitKey) {
     return ports.map((port) => `
       <div
         class="execution-board-port-row execution-board-port-row-${escapeHtml(side)} ${selectedPortId === port.sourcePortId ? 'selected' : ''}"
         data-runtime-port-id="${escapeHtml(port.sourcePortId)}"
         title="${escapeHtml(port.name || 'Port')}"
       >
-        <i class="execution-port-anchor" aria-hidden="true" data-runtime-port-anchor-id="${escapeHtml(port.sourcePortId)}"></i>
+        <i class="execution-port-anchor" aria-hidden="true" data-runtime-port-anchor-id="${escapeHtml(portAnchorKey(visualUnitKey, port.sourcePortId))}"></i>
         <span>${escapeHtml(port.name || 'Port')}</span>
       </div>
     `).join('');
@@ -495,17 +909,17 @@ export class TaskExecutionView {
     const edges = projection.graph.connections.map((connection) => {
       const sourcePort = projection.portById.get(connection.sourceOutputPortId);
       const targetPort = projection.portById.get(connection.targetInputPortId);
-      const sourceNode = sourcePort ? projection.nodeBySource.get(sourcePort.sourceNodeId) : null;
-      const targetNode = targetPort ? projection.nodeBySource.get(targetPort.sourceNodeId) : null;
+      const sourceNode = projection.nodeByUnit.get(connection.sourceVisualUnitKey);
+      const targetNode = projection.nodeByUnit.get(connection.targetVisualUnitKey);
       if (!sourcePort || !targetPort || !sourceNode || !targetNode) {
         return '';
       }
-      const start = this.modernPortPoint(sourcePort, projection);
-      const end = this.modernPortPoint(targetPort, projection);
+      const start = this.modernPortPoint(sourcePort, sourceNode, projection);
+      const end = this.modernPortPoint(targetPort, targetNode, projection);
       const path = this.modernPathD(start, end, sourceNode, targetNode, projection);
       const title = `${sourceNode.agentName}.${sourcePort.name} -> ${targetNode.agentName}.${targetPort.name}`;
       return `
-        <g class="workflow-edge execution-edge execution-topology-edge" data-runtime-connection-id="${escapeHtml(connection.sourceConnectionId)}">
+        <g class="workflow-edge execution-edge execution-topology-edge" data-runtime-connection-id="${escapeHtml(connection.sourceConnectionId)}" data-source-visual-unit-key="${escapeHtml(connection.sourceVisualUnitKey)}" data-target-visual-unit-key="${escapeHtml(connection.targetVisualUnitKey)}">
           <title>${escapeHtml(title)}</title>
           <path class="edge-visible" d="${path}" marker-end="url(#agentsV2ExecutionArrow)" />
         </g>
@@ -613,30 +1027,36 @@ export class TaskExecutionView {
   }
 
   modernProjection() {
-    const graph = this.state.workflowRun?.runtimeGraph || { nodes: [], ports: [], connections: [] };
+    const runtimeGraph = this.state.workflowRun?.runtimeGraph || { nodes: [], ports: [], connections: [] };
+    const graph = buildExecutionProjection(
+      runtimeGraph,
+      this.state.workflowRun?.repositoryIds || [],
+      this.state.repositories || []
+    );
     const nodeRuns = this.sortedNodeRuns(this.state.workflowRun?.nodeRuns || []);
-    const nodeBySource = new Map((graph.nodes || []).map((node) => [node.sourceNodeId, node]));
+    const nodeByUnit = new Map((graph.nodes || []).map((node) => [node.visualUnitKey, node]));
     const portById = new Map((graph.ports || []).map((port) => [port.sourcePortId, port]));
     const inputPortsByNode = this.groupPorts(graph.ports || [], 'INPUT');
     const outputPortsByNode = this.groupPorts(graph.ports || [], 'OUTPUT');
-    const nodeRunsBySource = new Map();
+    const nodeRunsByUnit = new Map();
     const invocationNumberById = new Map();
     for (const nodeRun of nodeRuns) {
-      if (!nodeRunsBySource.has(nodeRun.sourceNodeId)) {
-        nodeRunsBySource.set(nodeRun.sourceNodeId, []);
+      const key = visualUnitKey(nodeRun.sourceNodeId, nodeRun.repositoryId);
+      if (!nodeRunsByUnit.has(key)) {
+        nodeRunsByUnit.set(key, []);
       }
-      const runs = nodeRunsBySource.get(nodeRun.sourceNodeId);
+      const runs = nodeRunsByUnit.get(key);
       runs.push(nodeRun);
       invocationNumberById.set(nodeRun.id, runs.length);
     }
     return {
       graph,
       nodeRuns,
-      nodeBySource,
+      nodeByUnit,
       portById,
       inputPortsByNode,
       outputPortsByNode,
-      nodeRunsBySource,
+      nodeRunsByUnit,
       invocationNumberById
     };
   }
@@ -695,9 +1115,18 @@ export class TaskExecutionView {
     return (this.state.workflowRun?.nodeRuns || []).find((nodeRun) => nodeRun.id === this.state.selectedNodeRunId) || null;
   }
 
-  selectSourceNode(sourceNodeId) {
-    this.state.selectedSourceNodeId = sourceNodeId;
-    this.state.selectedNodeRunId = this.latestNodeRunForSource(sourceNodeId, this.state.workflowRun?.nodeRuns || [])?.id || null;
+  selectVisualUnit(unitKey) {
+    const unit = this.modernProjection().nodeByUnit.get(unitKey);
+    if (!unit) {
+      return;
+    }
+    this.state.selectedVisualUnitKey = unit.visualUnitKey;
+    this.state.selectedSourceNodeId = unit.sourceNodeId;
+    this.state.selectedNodeRunId = this.latestNodeRunForUnit(
+      unit.sourceNodeId,
+      unit.repositoryId,
+      this.state.workflowRun?.nodeRuns || []
+    )?.id || null;
     this.renderGraph();
     this.renderNodeDetails();
   }
@@ -706,6 +1135,7 @@ export class TaskExecutionView {
     const nodeRun = (this.state.workflowRun?.nodeRuns || []).find((item) => item.id === nodeRunId);
     if (nodeRun) {
       this.state.selectedSourceNodeId = nodeRun.sourceNodeId;
+      this.state.selectedVisualUnitKey = visualUnitKey(nodeRun.sourceNodeId, nodeRun.repositoryId);
     }
     this.state.selectedNodeRunId = nodeRunId;
     this.renderGraph();
@@ -747,8 +1177,9 @@ export class TaskExecutionView {
     });
   }
 
-  latestNodeRunForSource(sourceNodeId, nodeRuns) {
-    return this.sortedNodeRuns(nodeRuns.filter((nodeRun) => nodeRun.sourceNodeId === sourceNodeId)).at(-1) || null;
+  latestNodeRunForUnit(sourceNodeId, repositoryId, nodeRuns) {
+    return this.sortedNodeRuns(nodeRuns.filter((nodeRun) => nodeRun.sourceNodeId === sourceNodeId
+      && normalizedRepositoryId(nodeRun.repositoryId) === normalizedRepositoryId(repositoryId))).at(-1) || null;
   }
 
   hasRuntimeGraph(workflowRun) {
@@ -793,12 +1224,14 @@ export class TaskExecutionView {
     };
   }
 
-  modernPortPoint(port, projection) {
-    const measured = this.elementCanvasCenter(this.elementByData('data-runtime-port-anchor-id', port.sourcePortId));
+  modernPortPoint(port, node, projection) {
+    const measured = this.elementCanvasCenter(this.elementByData(
+      'data-runtime-port-anchor-id',
+      portAnchorKey(node.visualUnitKey, port.sourcePortId)
+    ));
     if (measured) {
       return measured;
     }
-    const node = projection.nodeBySource.get(port.sourceNodeId);
     if (!node) {
       return { x: 0, y: 0 };
     }
@@ -818,44 +1251,9 @@ export class TaskExecutionView {
   }
 
   modernPathD(start, end, sourceNode, targetNode, projection = null) {
-    const sourceX = Number(sourceNode.position?.x || 0);
-    const targetX = Number(targetNode.position?.x || 0);
-    if (targetX <= sourceX) {
-      const sourceBounds = this.modernNodeBounds(sourceNode, projection);
-      const targetBounds = this.modernNodeBounds(targetNode, projection);
-      const clearance = 32;
-      const right = Math.max(sourceBounds.right, targetBounds.right, start.x, end.x) + clearance;
-      const left = Math.min(sourceBounds.left, targetBounds.left, start.x, end.x) - clearance;
-      const top = Math.min(sourceBounds.top, targetBounds.top, start.y, end.y) - clearance;
-      if (left < REVERSE_EDGE_CANVAS_MARGIN) {
-        const verticalOutside = top >= REVERSE_EDGE_CANVAS_MARGIN
-          ? top
-          : Math.max(sourceBounds.bottom, targetBounds.bottom, start.y, end.y) + clearance;
-        return this.orthogonalRoundedPath([
-          start,
-          { x: right, y: start.y },
-          { x: right, y: verticalOutside },
-          { x: end.x, y: verticalOutside },
-          end
-        ]);
-      }
-      const safeTop = Math.max(REVERSE_EDGE_CANVAS_MARGIN, top);
-      return this.orthogonalRoundedPath([
-        start,
-        { x: right, y: start.y },
-        { x: right, y: safeTop },
-        { x: left, y: safeTop },
-        { x: left, y: end.y },
-        end
-      ]);
-    }
-    const midX = (start.x + end.x) / 2;
-    return this.orthogonalRoundedPath([
-      start,
-      { x: midX, y: start.y },
-      { x: midX, y: end.y },
-      end
-    ]);
+    const bounds = (projection?.graph.nodes || [sourceNode, targetNode])
+      .map((node) => this.modernNodeBounds(node, projection));
+    return this.orthogonalRoundedPath(routeExecutionEdge(start, end, bounds));
   }
 
   orthogonalRoundedPath(points) {
@@ -968,7 +1366,7 @@ export class TaskExecutionView {
   }
 
   modernNodeBounds(node, projection = null) {
-    const measured = this.elementCanvasBounds(this.elementByData('data-execution-source-node-id', node.sourceNodeId));
+    const measured = this.elementCanvasBounds(this.elementByData('data-execution-visual-unit-key', node.visualUnitKey));
     if (measured) {
       return measured;
     }
@@ -1060,7 +1458,7 @@ export class TaskExecutionView {
         height = Math.max(height, Number(node.position?.y || 0) + NODE_HEIGHT + CANVAS_PADDING);
         continue;
       }
-      const measured = this.elementCanvasBounds(this.elementByData('data-execution-source-node-id', node.sourceNodeId));
+      const measured = this.elementCanvasBounds(this.elementByData('data-execution-visual-unit-key', node.visualUnitKey));
       const nodeHeight = measured?.height || this.modernNodeHeight(node, projection);
       width = Math.max(width, Number(node.position?.x || 0) + MODERN_NODE_WIDTH + CANVAS_PADDING);
       height = Math.max(height, Number(node.position?.y || 0) + nodeHeight + CANVAS_PADDING);
@@ -1076,6 +1474,9 @@ export class TaskExecutionView {
   }
 
   modernNodeHeight(node, projection) {
+    if (node.layoutHeight) {
+      return node.layoutHeight;
+    }
     const inputCount = (projection?.inputPortsByNode.get(node.sourceNodeId) || []).length;
     const outputCount = (projection?.outputPortsByNode.get(node.sourceNodeId) || []).length;
     const portRows = Math.max(inputCount, outputCount);
@@ -1132,6 +1533,8 @@ export class TaskExecutionView {
       selectedRunId: null,
       selectedNodeRunId: null,
       selectedSourceNodeId: null,
+      selectedVisualUnitKey: null,
+      repositories: [],
       loadingTask: false,
       loadingRun: false,
       taskError: '',

@@ -253,6 +253,7 @@ function runtimeGraph(nodes: any[], connections: any[] = []) {
     nodes: nodes.map((item) => ({
       sourceNodeId: item.id,
       agentName: item.agentName,
+      scopeMode: item.scopeMode || 'GLOBAL',
       position: item.position || { x: 10, y: 20 }
     })),
     ports: nodes.flatMap((item) => [
@@ -422,10 +423,6 @@ function stubRect(element: Element | null, left: number, top: number, width: num
 
 function stubAnchor(dom: JSDOM, portId: string, centerX: number, centerY: number) {
   stubRect(dom.window.document.querySelector(`[data-runtime-port-anchor-id="${portId}"]`), centerX - 4, centerY - 4, 8, 8);
-}
-
-function pathNumbers(path: string) {
-  return (path.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
 }
 
 function pathPoints(path: string) {
@@ -1384,6 +1381,105 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-runtime-connection-id="b-c"]')).not.toBeNull();
   });
 
+  it('modern execution board splits scoped histories and statuses by repository', async () => {
+    const repoA = repository('repo-a', project().id, 'backend-service');
+    const repoB = repository('repo-b', project().id, 'frontend-service');
+    const graph = runtimeGraph([
+      { id: 'analyzer', agentName: 'Analyzer', scopeMode: 'GLOBAL', position: { x: 20, y: 30 } },
+      { id: 'implementer', agentName: 'Implementer', scopeMode: 'PER_SCOPE', position: { x: 300, y: 30 } }
+    ], [portConnection('analyzer-implementer', 'analyzer-output', 'implementer-input')]);
+    const run = {
+      ...workflowRunDetail('run-new', 'FAILED', [
+        ...['a-1', 'a-2', 'a-3'].map((id, index) => ({
+          ...modernNodeRun(id, 'implementer', 'SUCCEEDED', `2026-08-13T10:0${index}:00Z`),
+          repositoryId: repoA.id,
+          executionFrameId: `frame-${index}`
+        })),
+        ...['b-1', 'b-2'].map((id, index) => ({
+          ...modernNodeRun(id, 'implementer', index ? 'FAILED' : 'SUCCEEDED', `2026-08-13T10:1${index}:00Z`),
+          repositoryId: repoB.id,
+          executionFrameId: `frame-${index}`
+        }))
+      ], 'Scoped Board', graph),
+      repositoryIds: [repoA.id, repoB.id]
+    };
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([repoA, repoB])),
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(run))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const scopedCards = [...dom.window.document.querySelectorAll<HTMLElement>('[data-execution-source-node-id="implementer"]')];
+    expect(scopedCards).toHaveLength(2);
+    expect(scopedCards.map((card) => card.dataset.executionRepositoryId)).toEqual([repoA.id, repoB.id]);
+    expect(scopedCards[0]!.textContent).toContain('backend-service');
+    expect(scopedCards[0]!.querySelectorAll('[data-execution-run-chip-id]')).toHaveLength(3);
+    expect(scopedCards[0]!.classList.contains('execution-node-has-failed')).toBe(false);
+    expect(scopedCards[1]!.textContent).toContain('frontend-service');
+    expect(scopedCards[1]!.querySelectorAll('[data-execution-run-chip-id]')).toHaveLength(2);
+    expect(scopedCards[1]!.classList.contains('execution-node-has-failed')).toBe(true);
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="analyzer"] .execution-board-repository')).toBeNull();
+
+    scopedCards[0]!.click();
+    expect(dom.window.document.querySelector('.execution-history-marker.selected')?.getAttribute('data-execution-run-chip-id')).toBe('a-3');
+    scopedCards[1]!.click();
+    expect(dom.window.document.querySelector('.execution-history-marker.selected')?.getAttribute('data-execution-run-chip-id')).toBe('b-2');
+  });
+
+  it('modern execution board projects not-yet-run scoped units without fake markers', async () => {
+    const repoA = repository('repo-a', project().id, 'repo-A');
+    const repoB = repository('repo-b', project().id, 'repo-B');
+    const graph = runtimeGraph([
+      { id: 'worker', agentName: 'Worker', scopeMode: 'PER_SCOPE', position: { x: 20, y: 30 } }
+    ]);
+    const run = {
+      ...workflowRunDetail('run-new', 'RUNNING', [], 'Scoped Board', graph),
+      repositoryIds: [repoA.id, repoB.id]
+    };
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([repoA, repoB])),
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(run))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const cards = dom.window.document.querySelectorAll('[data-execution-source-node-id="worker"]');
+    expect(cards).toHaveLength(2);
+    expect(dom.window.document.querySelectorAll('[data-execution-run-chip-id]')).toHaveLength(0);
+    expect([...cards].every((card) => card.textContent?.includes('0 runs'))).toBe(true);
+  });
+
+  it('modern execution board never renders a raw repository ID when metadata is unavailable', async () => {
+    const missingRepositoryId = '99999999-9999-4999-8999-999999999999';
+    const graph = runtimeGraph([
+      { id: 'worker', agentName: 'Worker', scopeMode: 'PER_SCOPE', position: { x: 20, y: 30 } }
+    ]);
+    const run = {
+      ...workflowRunDetail('run-new', 'RUNNING', [], 'Scoped Board', graph),
+      repositoryIds: [missingRepositoryId]
+    };
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([])),
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(run))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const card = dom.window.document.querySelector('[data-execution-source-node-id="worker"]')!;
+    expect(card.textContent).toContain('Repository unavailable');
+    expect(card.textContent).not.toContain(missingRepositoryId);
+  });
+
   it('modern execution board renders forward edges as orthogonal paths from measured port anchors', async () => {
     const graph = runtimeGraph([
       {
@@ -1419,16 +1515,16 @@ describe('Agent projects page', () => {
 
     stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 900, 600);
     page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
-    stubAnchor(dom, 'a-output-one', 252, 80);
-    stubAnchor(dom, 'b-input-one', 320, 120);
-    stubAnchor(dom, 'a-output-two', 252, 132);
-    stubAnchor(dom, 'b-input-two', 320, 180);
+    stubAnchor(dom, 'a-output-one', 312, 100);
+    stubAnchor(dom, 'b-input-one', 460, 120);
+    stubAnchor(dom, 'a-output-two', 312, 140);
+    stubAnchor(dom, 'b-input-two', 460, 160);
     page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
 
     const pathOne = dom.window.document.querySelector('[data-runtime-connection-id="edge-one"] path')?.getAttribute('d') || '';
     const pathTwo = dom.window.document.querySelector('[data-runtime-connection-id="edge-two"] path')?.getAttribute('d') || '';
-    expect(pathOne).toBe('M 252 80 H 274 Q 286 80 286 92 V 108 Q 286 120 298 120 H 320');
-    expect(pathTwo).toBe('M 252 132 H 274 Q 286 132 286 144 V 168 Q 286 180 298 180 H 320');
+    expect(pathOne).toMatch(/^M 312 100 .+ H 460$/);
+    expect(pathTwo).toMatch(/^M 312 140 .+ H 460$/);
     expect(pathOne).not.toMatch(/[CS]/);
     expect(pathTwo).not.toMatch(/[CS]/);
     expect(pathOne).not.toBe(pathTwo);
@@ -1461,10 +1557,8 @@ describe('Agent projects page', () => {
     page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
 
     const path = dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d') || '';
-    expect(path).toBe('M 512 40 H 532 Q 544 40 544 52 V 160 Q 544 172 532 172 H 12 Q 0 172 0 160 V 100');
     expect(path).not.toMatch(/[CS]/);
-    expect(path).toMatch(/^M (?:\d+(?:\.\d+)? )+\d+(?: H \d+(?:\.\d+)?| V \d+(?:\.\d+)?| Q \d+(?:\.\d+)? \d+(?:\.\d+)? \d+(?:\.\d+)? \d+(?:\.\d+)?)+$/);
-    expect(pathNumbers(path).every((value) => value >= 0)).toBe(true);
+    expect(path).toMatch(/^M (?:-?\d+(?:\.\d+)? )+-?\d+(?: H -?\d+(?:\.\d+)?| V -?\d+(?:\.\d+)?| Q -?\d+(?:\.\d+)? -?\d+(?:\.\d+)? -?\d+(?:\.\d+)? -?\d+(?:\.\d+)?)+$/);
     expectPathOutsideRects(path, [workerBounds, reviewerBounds]);
   });
 

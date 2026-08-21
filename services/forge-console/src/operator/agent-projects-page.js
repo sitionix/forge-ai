@@ -857,7 +857,7 @@ export class AgentProjectsPage {
     this.byId('agentsV2Workspace').classList.add('hidden');
     this.byId('agentsV2Builder').classList.add('hidden');
     this.byId('agentsV2TaskExecution').classList.remove('hidden');
-    await this.taskExecutionView.open(taskId, this.currentProject());
+    await this.taskExecutionView.open(taskId, this.currentProject(), this.state.repositories);
   }
 
   async closeTaskExecution() {
