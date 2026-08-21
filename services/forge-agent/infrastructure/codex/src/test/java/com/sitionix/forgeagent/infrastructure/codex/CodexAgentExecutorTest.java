@@ -64,7 +64,12 @@ class CodexAgentExecutorTest {
                 new NodeInputEnvelope(
                         "Review auth changes.",
                         new RunPort(WORKFLOW_RUN_ID, INPUT_PORT_ID, UUID.randomUUID(), PortDirection.INPUT, "Review feedback", "Reviewer feedback.", 0),
-                        List.of(new NodeInputContribution(SOURCE_NODE_RUN_ID, SOURCE_CONNECTION_ID, new NodeRunOutput("{\"risk\":\"LOW\"}")))
+                        List.of(new NodeInputContribution(
+                                SOURCE_NODE_RUN_ID,
+                                SOURCE_CONNECTION_ID,
+                                new NodeRunOutput("{\"risk\":\"LOW\"}"),
+                                null
+                        ))
                 )
         );
 
@@ -121,7 +126,12 @@ class CodexAgentExecutorTest {
                 new NodeInputEnvelope(
                         null,
                         new RunPort(WORKFLOW_RUN_ID, INPUT_PORT_ID, UUID.randomUUID(), PortDirection.INPUT, "Review feedback", "Reviewer feedback.", 0),
-                        List.of(new NodeInputContribution(SOURCE_NODE_RUN_ID, SOURCE_CONNECTION_ID, new NodeRunOutput("{\"risk\":\"LOW\"}")))
+                        List.of(new NodeInputContribution(
+                                SOURCE_NODE_RUN_ID,
+                                SOURCE_CONNECTION_ID,
+                                new NodeRunOutput("{\"risk\":\"LOW\"}"),
+                                null
+                        ))
                 )
         );
 

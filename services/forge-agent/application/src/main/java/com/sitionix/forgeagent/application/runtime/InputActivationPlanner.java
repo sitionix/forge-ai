@@ -8,6 +8,4 @@ import java.util.UUID;
 public interface InputActivationPlanner {
 
     void planFromResolutions(WorkflowRun workflowRun, Collection<ConnectionResolution> resolutions);
-
-    void planFromClosedActivation(WorkflowRun workflowRun, UUID activationFrameId, UUID targetInputPortId);
 }

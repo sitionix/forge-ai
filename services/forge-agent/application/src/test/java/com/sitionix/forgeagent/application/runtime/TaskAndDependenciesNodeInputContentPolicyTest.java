@@ -16,6 +16,7 @@ import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
+import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import java.time.Instant;
 import java.util.List;
@@ -41,14 +42,17 @@ class TaskAndDependenciesNodeInputContentPolicyTest {
     private static final UUID ACTIVATION_FRAME_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
     private static final UUID CONNECTION_ID = UUID.fromString("80000000-0000-4000-8000-000000000001");
     private static final UUID RESOLUTION_ID = UUID.fromString("90000000-0000-4000-8000-000000000001");
+    private static final UUID SOURCE_REPOSITORY_ID = UUID.fromString("a0000000-0000-4000-8000-000000000001");
     private static final Instant NOW = Instant.parse("2026-08-16T10:00:00Z");
 
     @Mock
     private WorkflowRunGraphRepository graphRepository;
+    @Mock
+    private NodeRunRepository nodeRunRepository;
 
     @Test
     void taskAndDependenciesReceivesOriginalTaskEntryInputAndDeliveredPayloads() {
-        final TaskAndDependenciesNodeInputContentPolicy policy = new TaskAndDependenciesNodeInputContentPolicy(this.graphRepository);
+        final TaskAndDependenciesNodeInputContentPolicy policy = new TaskAndDependenciesNodeInputContentPolicy(this.graphRepository, this.nodeRunRepository);
         final RunPort inputPort = new RunPort(WORKFLOW_RUN_ID, INPUT_PORT_ID, NODE_ID, PortDirection.INPUT, "Review input", "Review context.", 0);
         final NodeRunOutput payload = new NodeRunOutput("{\"review\":\"retry\"}");
         final ConnectionResolution resolution = new ConnectionResolution(
@@ -61,9 +65,12 @@ class TaskAndDependenciesNodeInputContentPolicyTest {
                 ConnectionResolutionType.DELIVERED,
                 payload,
                 NODE_RUN_ID,
-                NOW
+                NOW,
+                null
         );
         when(this.graphRepository.findPort(WORKFLOW_RUN_ID, INPUT_PORT_ID)).thenReturn(Optional.of(inputPort));
+        when(this.nodeRunRepository.findByIds(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(this.sourceNodeRun(SOURCE_REPOSITORY_ID)));
 
         final NodeExecutionInputContent content = policy.assemble(new NodeInputContentContext(this.workflowRun(), this.nodeRun(), List.of(resolution)));
 
@@ -73,6 +80,7 @@ class TaskAndDependenciesNodeInputContentPolicyTest {
             assertThat(contribution.sourceNodeRunId()).isEqualTo(SOURCE_NODE_RUN_ID);
             assertThat(contribution.sourceConnectionId()).isEqualTo(CONNECTION_ID);
             assertThat(contribution.payload()).isEqualTo(payload);
+            assertThat(contribution.sourceRepositoryId()).isEqualTo(SOURCE_REPOSITORY_ID);
         });
     }
 
@@ -86,9 +94,15 @@ class TaskAndDependenciesNodeInputContentPolicyTest {
                 "Original task.",
                 WorkflowRunStatus.RUNNING,
                 List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
                 NOW,
                 NOW,
-                null
+                null,
+                java.util.List.of()
         );
     }
 
@@ -107,13 +121,42 @@ class TaskAndDependenciesNodeInputContentPolicyTest {
                 INPUT_PORT_ID,
                 ACTIVATION_FRAME_ID,
                 null,
+                null,
                 NodeRunStatus.PENDING,
                 null,
                 null,
                 new NodeRunExecutionModel("codex", "gpt-5", null),
                 NOW,
                 null,
+                null,
                 null
+        );
+    }
+
+    private NodeRun sourceNodeRun(final UUID repositoryId) {
+        return new NodeRun(
+                SOURCE_NODE_RUN_ID,
+                WORKFLOW_RUN_ID,
+                UUID.fromString("30000000-0000-4000-8000-000000000002"),
+                AGENT_ID,
+                "Source",
+                "Source work.",
+                AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
+                NodeInputMode.DEPENDENCIES_ONLY,
+                new NodePosition(3.0, 4.0),
+                FRAME_ID,
+                null,
+                null,
+                null,
+                null,
+                NodeRunStatus.SUCCEEDED,
+                null,
+                null,
+                new NodeRunExecutionModel("codex", "gpt-5", null),
+                NOW,
+                NOW,
+                NOW,
+                repositoryId
         );
     }
 }

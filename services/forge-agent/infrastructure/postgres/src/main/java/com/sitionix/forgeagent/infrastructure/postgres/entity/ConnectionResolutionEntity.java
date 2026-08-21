@@ -35,6 +35,9 @@ public class ConnectionResolutionEntity {
     @Column(name = "target_input_port_id", nullable = false)
     private UUID targetInputPortId;
 
+    @Column(name = "target_repository_id")
+    private UUID targetRepositoryId;
+
     @Column(name = "resolution_type", nullable = false, length = 32)
     private String resolutionType;
 

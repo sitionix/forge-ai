@@ -21,8 +21,12 @@ public class PostgresInputActivationResolutionRepository implements InputActivat
     }
 
     @Override
-    public Optional<InputActivationResolution> find(final UUID workflowRunId, final UUID activationFrameId, final UUID targetInputPortId) {
-        return this.repository.findByWorkflowRunIdAndActivationFrameIdAndTargetInputPortId(workflowRunId, activationFrameId, targetInputPortId)
+    public Optional<InputActivationResolution> find(final UUID workflowRunId, final UUID activationFrameId,
+                                                    final UUID targetInputPortId, final UUID repositoryId) {
+        final Optional<InputActivationResolutionEntity> found = repositoryId == null
+                ? this.repository.findByWorkflowRunIdAndActivationFrameIdAndTargetInputPortIdAndRepositoryIdIsNull(workflowRunId, activationFrameId, targetInputPortId)
+                : this.repository.findByWorkflowRunIdAndActivationFrameIdAndTargetInputPortIdAndRepositoryId(workflowRunId, activationFrameId, targetInputPortId, repositoryId);
+        return found
                 .map(this::toDomain);
     }
 
@@ -33,7 +37,8 @@ public class PostgresInputActivationResolutionRepository implements InputActivat
                 entity.getActivationFrameId(),
                 entity.getTargetInputPortId(),
                 entity.getActivatedNodeRunId(),
-                entity.getCreatedAt()
+                entity.getCreatedAt(),
+                entity.getRepositoryId()
         );
     }
 
@@ -43,6 +48,7 @@ public class PostgresInputActivationResolutionRepository implements InputActivat
         entity.setWorkflowRunId(resolution.workflowRunId());
         entity.setActivationFrameId(resolution.activationFrameId());
         entity.setTargetInputPortId(resolution.targetInputPortId());
+        entity.setRepositoryId(resolution.repositoryId());
         entity.setActivatedNodeRunId(resolution.activatedNodeRunId());
         entity.setCreatedAt(resolution.createdAt());
         return entity;

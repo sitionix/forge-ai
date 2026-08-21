@@ -227,17 +227,27 @@ class PostgresWorkflowRepositoryTest {
     }
 
     private Node nodeA() {
-        return new Node(NODE_A, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY,
+        return new Node(
+                NODE_A,
+                AGENT_ID,
+                NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(new NodePort(INPUT_A, "Input", "Input.", 0)),
                 List.of(new NodePort(OUTPUT_A, "Output", "Output.", 0)),
-                new NodePosition(1.0, 2.0));
+                new NodePosition(1.0, 2.0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+        );
     }
 
     private Node nodeB() {
-        return new Node(NODE_B, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY,
+        return new Node(
+                NODE_B,
+                AGENT_ID,
+                NodeInputMode.DEPENDENCIES_ONLY,
                 List.of(new NodePort(INPUT_B, "Input", "Input.", 0)),
                 List.of(new NodePort(OUTPUT_B, "Output", "Output.", 0)),
-                new NodePosition(3.0, 4.0));
+                new NodePosition(3.0, 4.0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+        );
     }
 
     private WorkflowNodeEntity nodeEntity(final UUID id) {
@@ -246,6 +256,7 @@ class PostgresWorkflowRepositoryTest {
         entity.setId(id);
         entity.setTargetId(AGENT_ID);
         entity.setInputMode(NodeInputMode.DEPENDENCIES_ONLY.name());
+        entity.setScopeMode("GLOBAL");
         entity.setPositionX(1.0);
         entity.setPositionY(2.0);
         return entity;

@@ -29,12 +29,41 @@
       "failure": null,
       "createdAt": "2026-08-04T00:00:00Z",
       "startedAt": null,
-      "finishedAt": null
+      "finishedAt": null,
+      "repositoryId": "88888888-8888-4888-8888-888888888888"
     }
   ],
-  "connectionResolutions": [],
+  "connectionResolutions": [
+    {
+      "id": "99999999-9999-4999-8999-999999999991",
+      "executionFrameId": "77777777-7777-4777-8777-777777777777",
+      "sourceNodeRunId": "55555555-5555-4555-8555-555555555555",
+      "sourceConnectionId": "99999999-9999-4999-8999-999999999992",
+      "targetInputPortId": "99999999-9999-4999-8999-999999999993",
+      "resolutionType": "DELIVERED",
+      "payload": {"result": "scoped"},
+      "consumedByNodeRunId": null,
+      "createdAt": "2026-08-04T00:00:01Z",
+      "targetRepositoryId": "88888888-8888-4888-8888-888888888888"
+    }
+  ],
   "executionEdges": [],
+  "runtimeGraph": {
+    "taskInputPortId": "99999999-9999-4999-8999-999999999993",
+    "taskOutputPortId": "99999999-9999-4999-8999-999999999994",
+    "nodes": [
+      {
+        "sourceNodeId": "66666666-6666-4666-8666-666666666666",
+        "agentName": "Analyzer",
+        "position": {"x": 1, "y": 2},
+        "scopeMode": "PER_SCOPE"
+      }
+    ],
+    "ports": [],
+    "connections": []
+  },
   "createdAt": "2026-08-04T00:00:00Z",
   "startedAt": null,
-  "finishedAt": null
+  "finishedAt": null,
+  "repositoryIds": ["88888888-8888-4888-8888-888888888888"]
 }

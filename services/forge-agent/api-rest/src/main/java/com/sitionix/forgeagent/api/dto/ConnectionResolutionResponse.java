@@ -14,6 +14,7 @@ public record ConnectionResolutionResponse(
         ConnectionResolutionType resolutionType,
         JsonNode payload,
         UUID consumedByNodeRunId,
-        Instant createdAt
+        Instant createdAt,
+        UUID targetRepositoryId
 ) {
 }

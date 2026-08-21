@@ -24,6 +24,8 @@ const MIN_CANVAS_SCALE = 0.45;
 const MAX_CANVAS_SCALE = 1.8;
 const DEFAULT_INPUT_MODE = 'DEPENDENCIES_ONLY';
 const TASK_AND_DEPENDENCIES_INPUT_MODE = 'TASK_AND_DEPENDENCIES';
+const GLOBAL_SCOPE_MODE = 'GLOBAL';
+const PER_SCOPE_MODE = 'PER_SCOPE';
 const NODE_DRAG_THRESHOLD = 3;
 const EDGE_CORNER_RADIUS = 12;
 const EDGE_ROUTE_CLEARANCE = 32;
@@ -158,6 +160,7 @@ export class WorkflowBuilder {
       id: nodeId,
       targetId: agentId,
       inputMode: DEFAULT_INPUT_MODE,
+      scopeMode: GLOBAL_SCOPE_MODE,
       inputs: [{ id: inputPortId, ...DEFAULT_INPUT_PORT }],
       outputs: [{ id: outputPortId, ...DEFAULT_OUTPUT_PORT }],
       position: {
@@ -699,6 +702,13 @@ export class WorkflowBuilder {
         <label class="field-label" for="agentsV2NodeEditorInputMode">Input content</label>
         ${this.renderNodeEditorInputMode(node)}
       </div>
+      <div class="node-editor-input-mode">
+        <label class="field-label" for="agentsV2NodeEditorScopeMode">Execution</label>
+        <select id="agentsV2NodeEditorScopeMode" class="text-input" data-node-editor-scope-mode>
+          <option value="${GLOBAL_SCOPE_MODE}" ${this.nodeScopeMode(node) === GLOBAL_SCOPE_MODE ? 'selected' : ''}>Once</option>
+          <option value="${PER_SCOPE_MODE}" ${this.nodeScopeMode(node) === PER_SCOPE_MODE ? 'selected' : ''}>Per repository</option>
+        </select>
+      </div>
     `;
   }
 
@@ -855,6 +865,10 @@ export class WorkflowBuilder {
     if (inputMode) {
       this.nodeEditorDraft.inputMode = this.normalizeInputMode(inputMode);
     }
+    const scopeMode = this.byId('agentsV2NodeEditorBody').querySelector('[data-node-editor-scope-mode]')?.value;
+    if (scopeMode) {
+      this.nodeEditorDraft.scopeMode = this.normalizeScopeMode(scopeMode);
+    }
   }
 
   saveNodeEditor() {
@@ -870,6 +884,7 @@ export class WorkflowBuilder {
     const savedNode = {
       ...this.nodeEditorDraft,
       inputMode: this.nodeInputMode(this.nodeEditorDraft),
+      scopeMode: this.nodeScopeMode(this.nodeEditorDraft),
       inputs: this.reindexPorts(this.nodeEditorDraft.inputs).map((port) => this.normalizedPort(port)),
       outputs: this.reindexPorts(this.nodeEditorDraft.outputs).map((port) => this.normalizedPort(port))
     };
@@ -1262,6 +1277,7 @@ export class WorkflowBuilder {
         id: node.id,
         targetId: node.targetId,
         inputMode: this.nodeInputMode(node),
+        scopeMode: this.nodeScopeMode(node),
         inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
         outputs: this.reindexPorts(node.outputs).map((port) => this.normalizedPort(port)),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1322,6 +1338,7 @@ export class WorkflowBuilder {
         id: node.id,
         targetId: node.targetId,
         inputMode: this.nodeInputMode(node),
+        scopeMode: this.nodeScopeMode(node),
         inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
         outputs: this.reindexPorts(node.outputs).map((port) => this.normalizedPort(port)),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1341,6 +1358,7 @@ export class WorkflowBuilder {
       id: node.id,
       targetId: node.targetId,
       inputMode: this.nodeInputMode(node),
+      scopeMode: this.nodeScopeMode(node),
       inputs: this.reindexPorts(node.inputs).map((port) => ({ ...port })),
       outputs: this.reindexPorts(node.outputs).map((port) => ({ ...port })),
       position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1353,6 +1371,17 @@ export class WorkflowBuilder {
 
   normalizeInputMode(inputMode) {
     return inputMode === TASK_AND_DEPENDENCIES_INPUT_MODE ? TASK_AND_DEPENDENCIES_INPUT_MODE : DEFAULT_INPUT_MODE;
+  }
+
+  nodeScopeMode(node) {
+    return this.normalizeScopeMode(node?.scopeMode);
+  }
+
+  normalizeScopeMode(scopeMode) {
+    if (scopeMode === GLOBAL_SCOPE_MODE || scopeMode === PER_SCOPE_MODE) {
+      return scopeMode;
+    }
+    throw new Error('Workflow node scope mode is invalid.');
   }
 
   nodePorts(ports) {

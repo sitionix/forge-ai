@@ -9,18 +9,7 @@ public record NodeResponse(
         String inputMode,
         List<NodePortResponse> inputs,
         List<NodePortResponse> outputs,
-        NodePositionResponse position
+        NodePositionResponse position,
+        String scopeMode
 ) {
-    public NodeResponse(final UUID id,
-                        final UUID targetId,
-                        final String inputMode,
-                        final NodePositionResponse position) {
-        this(id, targetId, inputMode, List.of(), List.of(), position);
-    }
-
-    public NodeResponse(final UUID id,
-                        final UUID targetId,
-                        final NodePositionResponse position) {
-        this(id, targetId, null, List.of(), List.of(), position);
-    }
 }

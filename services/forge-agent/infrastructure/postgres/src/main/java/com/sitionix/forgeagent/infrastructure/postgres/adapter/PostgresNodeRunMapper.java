@@ -39,7 +39,8 @@ final class PostgresNodeRunMapper {
                 toExecutionModel(entity),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
-                entity.getFinishedAt()
+                entity.getFinishedAt(),
+                entity.getRepositoryId()
         );
     }
 
@@ -56,6 +57,7 @@ final class PostgresNodeRunMapper {
         entity.setPositionX(nodeRun.position().x());
         entity.setPositionY(nodeRun.position().y());
         entity.setExecutionFrameId(nodeRun.executionFrameId());
+        entity.setRepositoryId(nodeRun.repositoryId());
         entity.setEnteredViaInputPortId(nodeRun.enteredViaInputPortId());
         entity.setActivationFrameId(nodeRun.activationFrameId());
         entity.setSelectedOutputPortId(nodeRun.selectedOutputPortId());

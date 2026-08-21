@@ -201,7 +201,8 @@ class WorkflowExecutionCoordinatorTest {
                 null,
                 NOW.minusSeconds(60),
                 NOW.minusSeconds(30),
-                null
+                null,
+                java.util.List.of()
         );
     }
 
@@ -236,7 +237,8 @@ class WorkflowExecutionCoordinatorTest {
                 MODEL,
                 createdAt,
                 createdAt,
-                status == NodeRunStatus.SUCCEEDED ? createdAt.plusSeconds(1) : null
+                status == NodeRunStatus.SUCCEEDED ? createdAt.plusSeconds(1) : null,
+                null
         );
     }
 }

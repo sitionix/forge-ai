@@ -36,7 +36,8 @@
       "position": {
         "x": 120,
         "y": 100
-      }
+      },
+      "scopeMode": "GLOBAL"
     }
   ],
   "connections": [],

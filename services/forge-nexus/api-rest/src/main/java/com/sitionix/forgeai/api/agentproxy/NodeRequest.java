@@ -9,18 +9,7 @@ public record NodeRequest(
         String inputMode,
         List<NodePortRequest> inputs,
         List<NodePortRequest> outputs,
-        NodePositionRequest position
+        NodePositionRequest position,
+        String scopeMode
 ) {
-    public NodeRequest(final UUID id,
-                       final UUID targetId,
-                       final String inputMode,
-                       final NodePositionRequest position) {
-        this(id, targetId, inputMode, null, null, position);
-    }
-
-    public NodeRequest(final UUID id,
-                       final UUID targetId,
-                       final NodePositionRequest position) {
-        this(id, targetId, null, null, null, position);
-    }
 }

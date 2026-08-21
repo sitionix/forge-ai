@@ -64,6 +64,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
+import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
@@ -344,16 +345,48 @@ class ForgeAgentApiMapperTest {
 
         final SaveWorkflowRequest saveRequest = new SaveWorkflowRequest(
                 "Full Testing",
-                List.of(new NodeRequest(NODE_A, AGENT_ID, new NodePositionRequest(1.0, 2.0)),
-                        new NodeRequest(NODE_B, AGENT_ID, new NodePositionRequest(3.0, 4.0))),
+                List.of(new NodeRequest(
+                        NODE_A,
+                        AGENT_ID,
+                        null,
+                        null,
+                        null,
+                        new NodePositionRequest(1.0, 2.0),
+                        "GLOBAL"
+                ),
+                        new NodeRequest(
+                                NODE_B,
+                                AGENT_ID,
+                                null,
+                                null,
+                                null,
+                                new NodePositionRequest(3.0, 4.0),
+                                "GLOBAL"
+                        )),
                 List.of(new WorkflowConnectionRequest(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
                 NODE_A,
                 NODE_B
         );
         assertThat(this.mapper.toCommand(saveRequest)).isEqualTo(new SaveWorkflowCommand(
                 "Full Testing",
-                List.of(new Node(NODE_A, AGENT_ID, new NodePosition(1.0, 2.0)),
-                        new Node(NODE_B, AGENT_ID, new NodePosition(3.0, 4.0))),
+                List.of(new Node(
+                        NODE_A,
+                        AGENT_ID,
+                        com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                        java.util.List.of(),
+                        java.util.List.of(),
+                        new NodePosition(1.0, 2.0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                ),
+                        new Node(
+                                NODE_B,
+                                AGENT_ID,
+                                com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                                java.util.List.of(),
+                                java.util.List.of(),
+                                new NodePosition(3.0, 4.0),
+                                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                        )),
                 List.of(new WorkflowConnection(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
                 NODE_A,
                 NODE_B
@@ -364,7 +397,15 @@ class ForgeAgentApiMapperTest {
                 PROJECT_ID,
                 "Full Testing",
                 "full testing",
-                List.of(new Node(NODE_B, AGENT_ID, new NodePosition(3.0, 4.0))),
+                List.of(new Node(
+                        NODE_B,
+                        AGENT_ID,
+                        com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                        java.util.List.of(),
+                        java.util.List.of(),
+                        new NodePosition(3.0, 4.0),
+                        com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
+                )),
                 List.of(new WorkflowConnection(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
                 NODE_A,
                 NODE_B,
@@ -375,13 +416,59 @@ class ForgeAgentApiMapperTest {
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new NodeResponse(NODE_B, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(), new NodePositionResponse(3.0, 4.0))),
+                List.of(new NodeResponse(
+                        NODE_B,
+                        AGENT_ID,
+                        NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        java.util.List.of(),
+                        java.util.List.of(),
+                        new NodePositionResponse(3.0, 4.0),
+                        "GLOBAL"
+                )),
                 List.of(new WorkflowConnectionResponse(UUID.fromString("90000000-0000-4000-8000-000000000001"), NODE_A, NODE_B)),
                 NODE_A,
                 NODE_B,
                 CREATED,
                 UPDATED
         ));
+    }
+
+    @Test
+    void workflowNodeRequestRequiresValidScopeMode() {
+        assertThatThrownBy(() -> this.mapper.toCommand(new SaveWorkflowRequest(
+                "Full Testing",
+                List.of(new NodeRequest(NODE_A, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        List.of(), List.of(), new NodePositionRequest(1.0, 2.0), null)),
+                List.of(),
+                NODE_A,
+                NODE_A
+        )))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("INVALID_NODE_SCOPE_MODE");
+
+        assertThatThrownBy(() -> this.mapper.toCommand(new SaveWorkflowRequest(
+                "Full Testing",
+                List.of(new NodeRequest(NODE_A, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        List.of(), List.of(), new NodePositionRequest(1.0, 2.0), "repository")),
+                List.of(),
+                NODE_A,
+                NODE_A
+        )))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code")
+                .isEqualTo("INVALID_NODE_SCOPE_MODE");
+
+        assertThat(this.mapper.toCommand(new SaveWorkflowRequest(
+                "Full Testing",
+                List.of(new NodeRequest(NODE_A, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        List.of(), List.of(), new NodePositionRequest(1.0, 2.0), "PER_SCOPE")),
+                List.of(),
+                NODE_A,
+                NODE_A
+        )).nodes()).singleElement()
+                .extracting(Node::scopeMode)
+                .isEqualTo(NodeScopeMode.PER_SCOPE);
     }
 
     @Test
@@ -411,11 +498,13 @@ class ForgeAgentApiMapperTest {
                         null,
                         null,
                         null,
+                        null,
                         NodeRunStatus.PENDING,
                         new NodeRunOutput("{\"summary\":\"done\"}"),
                         new NodeRunFailure("ERR", "Failed"),
                         null,
                         CREATED,
+                        null,
                         null,
                         null
                 )),
@@ -426,7 +515,8 @@ class ForgeAgentApiMapperTest {
                 NODE_RUN_ID,
                 CREATED,
                 null,
-                null
+                null,
+                java.util.List.of()
         );
 
         assertThat(this.mapper.toSummaryResponse(new WorkflowRunSummary(
@@ -474,6 +564,7 @@ class ForgeAgentApiMapperTest {
                         new com.sitionix.forgeagent.api.dto.NodeRunFailureResponse("ERR", "Failed"),
                         CREATED,
                         null,
+                        null,
                         null
                 )),
                 List.of(),
@@ -483,7 +574,8 @@ class ForgeAgentApiMapperTest {
                 NODE_RUN_ID,
                 CREATED,
                 null,
-                null
+                null,
+                java.util.List.of()
         ));
     }
 
@@ -522,7 +614,8 @@ class ForgeAgentApiMapperTest {
                         null,
                         CREATED,
                         CREATED,
-                        routingCompletedAt
+                        routingCompletedAt,
+                        null
                 )),
                 List.of(),
                 List.of(),
@@ -539,7 +632,8 @@ class ForgeAgentApiMapperTest {
                                 AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
                                 null,
                                 NodeInputMode.DEPENDENCIES_ONLY,
-                                new NodePosition(1.0, 2.0)
+                                new NodePosition(1.0, 2.0),
+                                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
                         )),
                         List.of(
                                 new RunPort(RUN_ID, inputPortId, NODE_A, PortDirection.INPUT, "Initial", "Initial input.", 0),
@@ -547,9 +641,12 @@ class ForgeAgentApiMapperTest {
                         ),
                         List.of(new RunConnection(RUN_ID, connectionId, outputPortId, inputPortId))
                 ),
+                null,
+                null,
                 CREATED,
                 CREATED,
-                null
+                null,
+                java.util.List.of()
         );
 
         final WorkflowRunResponse response = this.mapper.toResponse(run);
@@ -560,7 +657,8 @@ class ForgeAgentApiMapperTest {
                 List.of(new RunNodeResponse(
                         NODE_A,
                         "Analyzer",
-                        new NodePositionResponse(1.0, 2.0)
+                        new NodePositionResponse(1.0, 2.0),
+                        "GLOBAL"
                 )),
                 List.of(
                         new RunPortResponse(inputPortId, NODE_A, PortDirection.INPUT, "Initial", 0),

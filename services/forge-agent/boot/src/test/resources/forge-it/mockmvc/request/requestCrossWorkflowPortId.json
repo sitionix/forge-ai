@@ -24,7 +24,8 @@
           "description": "Default workflow output.",
           "order": 0
         }
-      ]
+      ],
+      "scopeMode": "GLOBAL"
     }
   ],
   "connections": [],

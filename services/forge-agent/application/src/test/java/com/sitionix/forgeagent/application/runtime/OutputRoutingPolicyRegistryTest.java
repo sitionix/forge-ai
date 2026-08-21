@@ -219,7 +219,8 @@ class OutputRoutingPolicyRegistryTest {
                 executionModel,
                 Instant.parse("2026-08-15T00:00:00Z"),
                 Instant.parse("2026-08-15T00:00:01Z"),
-                Instant.parse("2026-08-15T00:00:02Z")
+                Instant.parse("2026-08-15T00:00:02Z"),
+                null
         );
     }
 

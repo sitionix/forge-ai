@@ -39,6 +39,7 @@ import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
+import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
@@ -247,7 +248,7 @@ class ForgeAgentPortAwareExecutionIT {
         this.complete(this.onlyPending(run.id(), CODE), "{\"code\":\"pass\"}");
 
         assertThat(this.nodeRuns(run.id(), IMPLEMENTER)).hasSize(1);
-        assertThat(this.activationResolutionRepository.find(run.id(), this.rootFrame(run.id()), IMPLEMENTER_REVIEW_IN)).isPresent()
+        assertThat(this.activationResolutionRepository.find(run.id(), this.rootFrame(run.id()), IMPLEMENTER_REVIEW_IN, null)).isPresent()
                 .get()
                 .satisfies(resolution -> assertThat(resolution.activatedNodeRunId()).isNull());
         assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
@@ -418,7 +419,7 @@ class ForgeAgentPortAwareExecutionIT {
                 .satisfies(resolution -> assertThat(resolution.sourceNodeRunId()).isEqualTo(runningA.id()));
         assertThat(this.pendingForSource(run.id(), B)).hasSize(1);
         final NodeRun b = this.onlyPending(run.id(), B);
-        assertThat(this.activationResolutionRepository.find(run.id(), runningA.executionFrameId(), B_IN)).isPresent()
+        assertThat(this.activationResolutionRepository.find(run.id(), runningA.executionFrameId(), B_IN, null)).isPresent()
                 .get()
                 .satisfies(resolution -> assertThat(resolution.activatedNodeRunId()).isEqualTo(b.id()));
         assertThat(this.frameRepository.findByWorkflowRunId(run.id())).hasSize(1);
@@ -633,7 +634,8 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private Node node(final UUID id, final UUID agentId, final List<NodePort> inputs, final List<NodePort> outputs, final int x) {
-        return new Node(id, agentId, NodeInputMode.DEPENDENCIES_ONLY, inputs, outputs, new NodePosition(x * 100.0, 0.0));
+        return new Node(id, agentId, NodeInputMode.DEPENDENCIES_ONLY, inputs, outputs,
+                new NodePosition(x * 100.0, 0.0), NodeScopeMode.GLOBAL);
     }
 
     private NodePort port(final UUID id, final String name) {

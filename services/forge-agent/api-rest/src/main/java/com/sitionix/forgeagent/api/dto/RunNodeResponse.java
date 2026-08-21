@@ -5,6 +5,7 @@ import java.util.UUID;
 public record RunNodeResponse(
         UUID sourceNodeId,
         String agentName,
-        NodePositionResponse position
+        NodePositionResponse position,
+        String scopeMode
 ) {
 }

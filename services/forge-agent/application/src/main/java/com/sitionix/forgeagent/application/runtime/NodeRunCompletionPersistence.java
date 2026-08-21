@@ -35,6 +35,9 @@ public class NodeRunCompletionPersistence {
             return false;
         }
         final NodeRun nodeRun = target.nodeRun();
+        if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
+            return false;
+        }
         if (nodeRun.status() == NodeRunStatus.SUCCEEDED && output.equals(nodeRun.output())) {
             return false;
         }
@@ -111,13 +114,15 @@ public class NodeRunCompletionPersistence {
                 nodeRun.enteredViaInputPortId(),
                 nodeRun.activationFrameId(),
                 nodeRun.selectedOutputPortId(),
+                nodeRun.routingCompletedAt(),
                 NodeRunStatus.SUCCEEDED,
                 output,
                 nodeRun.failure(),
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
-                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt()
+                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
+                nodeRun.repositoryId()
         );
     }
 
@@ -136,13 +141,15 @@ public class NodeRunCompletionPersistence {
                 nodeRun.enteredViaInputPortId(),
                 nodeRun.activationFrameId(),
                 nodeRun.selectedOutputPortId(),
+                nodeRun.routingCompletedAt(),
                 NodeRunStatus.FAILED,
                 nodeRun.output(),
                 failure,
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
-                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt()
+                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
+                nodeRun.repositoryId()
         );
     }
 

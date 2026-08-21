@@ -37,6 +37,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
+import com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
@@ -278,7 +279,8 @@ public class AgentProxyApiMapper {
                 run.resultSourceNodeRunId(),
                 run.createdAt(),
                 run.startedAt(),
-                run.finishedAt()
+                run.finishedAt(),
+                run.repositoryIds()
         );
     }
 
@@ -299,7 +301,8 @@ public class AgentProxyApiMapper {
         return new AgentRunNodeResponse(
                 node.sourceNodeId(),
                 node.agentName(),
-                new NodePositionResponse(node.position().x(), node.position().y())
+                new NodePositionResponse(node.position().x(), node.position().y()),
+                node.scopeMode().name()
         );
     }
 
@@ -347,7 +350,8 @@ public class AgentProxyApiMapper {
                 inputMode(request.inputMode()),
                 request.inputs() == null ? List.of() : request.inputs().stream().map(this::toDomain).toList(),
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toDomain).toList(),
-                request.position() == null ? new NodePosition(0.0, 0.0) : new NodePosition(request.position().x(), request.position().y())
+                request.position() == null ? new NodePosition(0.0, 0.0) : new NodePosition(request.position().x(), request.position().y()),
+                scopeMode(request.scopeMode())
         );
     }
 
@@ -358,7 +362,8 @@ public class AgentProxyApiMapper {
                 inputMode(node.inputMode()).name(),
                 node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
-                new NodePositionResponse(node.position().x(), node.position().y())
+                new NodePositionResponse(node.position().x(), node.position().y()),
+                node.scopeMode().name()
         );
     }
 
@@ -404,7 +409,8 @@ public class AgentProxyApiMapper {
                     nodeRun.failure() == null ? null : this.toResponse(nodeRun.failure()),
                     nodeRun.createdAt(),
                     nodeRun.startedAt(),
-                    nodeRun.finishedAt()
+                    nodeRun.finishedAt(),
+                    nodeRun.repositoryId()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Agent workflow run JSON is not valid JSON.", exception);
@@ -426,7 +432,8 @@ public class AgentProxyApiMapper {
                     resolution.resolutionType(),
                     resolution.payload() == null ? null : this.objectMapper.readTree(resolution.payload().jsonValue()),
                     resolution.consumedByNodeRunId(),
-                    resolution.createdAt()
+                    resolution.createdAt(),
+                    resolution.targetRepositoryId()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Agent connection resolution payload is not valid JSON.", exception);
@@ -449,6 +456,17 @@ public class AgentProxyApiMapper {
             return NodeInputMode.valueOf(inputMode);
         } catch (final IllegalArgumentException exception) {
             throw new IllegalArgumentException("Workflow node input mode is invalid.", exception);
+        }
+    }
+
+    private static WorkflowNodeScopeMode scopeMode(final String scopeMode) {
+        if (scopeMode == null || scopeMode.isBlank()) {
+            throw new IllegalArgumentException("Workflow node scope mode is required.");
+        }
+        try {
+            return WorkflowNodeScopeMode.valueOf(scopeMode);
+        } catch (final IllegalArgumentException exception) {
+            throw new IllegalArgumentException("Workflow node scope mode is invalid.", exception);
         }
     }
 }

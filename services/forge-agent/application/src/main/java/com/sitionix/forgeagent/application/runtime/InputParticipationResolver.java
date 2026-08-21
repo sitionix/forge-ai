@@ -4,5 +4,5 @@ import java.util.UUID;
 
 public interface InputParticipationResolver {
 
-    InputParticipation resolve(UUID workflowRunId, UUID activationFrameId, UUID targetInputPortId);
+    InputParticipation resolve(UUID workflowRunId, UUID activationFrameId, UUID targetInputPortId, UUID repositoryId);
 }

@@ -86,7 +86,7 @@ class ProjectTaskUseCasesTest {
         when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(this.workflow(PROJECT_ID)));
         when(this.projectRepositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(this.repository(REPOSITORY_ID, PROJECT_ID)));
         when(this.projectTaskRepository.save(any())).thenReturn(this.task("Simple analysis", "Find X and explain Y"));
-        when(this.workflowRunUseCases.createWorkflowRunForTask(any(), any(), any())).thenReturn(this.run(TASK_ID, "Find X and explain Y"));
+        when(this.workflowRunUseCases.createWorkflowRunForTask(any(), any(), any(), any())).thenReturn(this.run(TASK_ID, "Find X and explain Y"));
 
         final ProjectTaskDetails created = this.useCases.createProjectTask(PROJECT_ID, new CreateProjectTaskCommand(
                 "  Simple analysis  ",
@@ -118,7 +118,7 @@ class ProjectTaskUseCasesTest {
         assertThat(taskCaptor.getValue().updatedAt()).isEqualTo(NOW);
 
         final ArgumentCaptor<CreateWorkflowRunCommand> runCommand = ArgumentCaptor.forClass(CreateWorkflowRunCommand.class);
-        verify(this.workflowRunUseCases).createWorkflowRunForTask(org.mockito.Mockito.eq(WORKFLOW_ID), runCommand.capture(), org.mockito.Mockito.eq(TASK_ID));
+        verify(this.workflowRunUseCases).createWorkflowRunForTask(org.mockito.Mockito.eq(WORKFLOW_ID), runCommand.capture(), org.mockito.Mockito.eq(TASK_ID), org.mockito.Mockito.eq(List.of(REPOSITORY_ID)));
         assertThat(runCommand.getValue().input()).isEqualTo("Find X and explain Y");
     }
 
@@ -132,7 +132,7 @@ class ProjectTaskUseCasesTest {
                 .extracting("code")
                 .isEqualTo("WORKFLOW_PROJECT_MISMATCH");
         verify(this.projectTaskRepository, never()).save(any());
-        verify(this.workflowRunUseCases, never()).createWorkflowRunForTask(any(), any(), any());
+        verify(this.workflowRunUseCases, never()).createWorkflowRunForTask(any(), any(), any(), any());
     }
 
     @Test
@@ -186,7 +186,7 @@ class ProjectTaskUseCasesTest {
         when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(this.workflow(PROJECT_ID)));
         when(this.projectRepositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(this.repository(REPOSITORY_ID, PROJECT_ID)));
         when(this.projectTaskRepository.save(any())).thenReturn(this.task("Title", "Input"));
-        when(this.workflowRunUseCases.createWorkflowRunForTask(WORKFLOW_ID, new CreateWorkflowRunCommand("Input"), TASK_ID))
+        when(this.workflowRunUseCases.createWorkflowRunForTask(WORKFLOW_ID, new CreateWorkflowRunCommand("Input"), TASK_ID, List.of(REPOSITORY_ID)))
                 .thenThrow(new ConflictException("EMPTY_WORKFLOW", "Workflow must contain at least one node before a run can be created."));
 
         assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("Title", "Input", WORKFLOW_ID)))
@@ -202,7 +202,7 @@ class ProjectTaskUseCasesTest {
         when(this.projectRepositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(this.repository(REPOSITORY_ID, PROJECT_ID)));
         when(this.projectRepositoryLinkRepository.findById(OTHER_REPOSITORY_ID)).thenReturn(Optional.of(this.repository(OTHER_REPOSITORY_ID, PROJECT_ID)));
         when(this.projectTaskRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(this.workflowRunUseCases.createWorkflowRunForTask(any(), any(), any())).thenReturn(this.run(TASK_ID, "Input"));
+        when(this.workflowRunUseCases.createWorkflowRunForTask(any(), any(), any(), any())).thenReturn(this.run(TASK_ID, "Input"));
 
         this.useCases.createProjectTask(PROJECT_ID,
                 new CreateProjectTaskCommand("Title", "Input", WORKFLOW_ID, List.of(OTHER_REPOSITORY_ID, REPOSITORY_ID)));
@@ -210,7 +210,7 @@ class ProjectTaskUseCasesTest {
         final ArgumentCaptor<ProjectTask> task = ArgumentCaptor.forClass(ProjectTask.class);
         verify(this.projectTaskRepository).save(task.capture());
         assertThat(task.getValue().repositoryIds()).containsExactly(OTHER_REPOSITORY_ID, REPOSITORY_ID);
-        verify(this.workflowRunUseCases).createWorkflowRunForTask(any(), any(), any());
+        verify(this.workflowRunUseCases).createWorkflowRunForTask(any(), any(), any(), org.mockito.Mockito.eq(List.of(OTHER_REPOSITORY_ID, REPOSITORY_ID)));
     }
 
     @Test
@@ -225,7 +225,7 @@ class ProjectTaskUseCasesTest {
                     .extracting("code").isEqualTo("INVALID_PROJECT_TASK_REPOSITORIES");
         }
         verify(this.projectTaskRepository, never()).save(any());
-        verify(this.workflowRunUseCases, never()).createWorkflowRunForTask(any(), any(), any());
+        verify(this.workflowRunUseCases, never()).createWorkflowRunForTask(any(), any(), any(), any());
     }
 
     @Test
@@ -240,7 +240,7 @@ class ProjectTaskUseCasesTest {
         assertThatThrownBy(() -> this.useCases.createProjectTask(PROJECT_ID, this.command("Title", "Input", WORKFLOW_ID)))
                 .isInstanceOf(ValidationException.class).extracting("code").isEqualTo("PROJECT_REPOSITORY_PROJECT_MISMATCH");
         verify(this.projectTaskRepository, never()).save(any());
-        verify(this.workflowRunUseCases, never()).createWorkflowRunForTask(any(), any(), any());
+        verify(this.workflowRunUseCases, never()).createWorkflowRunForTask(any(), any(), any(), any());
     }
 
     @Test
@@ -333,7 +333,25 @@ class ProjectTaskUseCasesTest {
     }
 
     private WorkflowRun run(final UUID taskId, final String input) {
-        return new WorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, taskId, "Full Testing", input, WorkflowRunStatus.QUEUED, List.of(), NOW, null, null);
+        return new WorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                taskId,
+                "Full Testing",
+                input,
+                WorkflowRunStatus.QUEUED,
+                List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
+                NOW,
+                null,
+                null,
+                java.util.List.of()
+        );
     }
 
     private WorkflowRun run(final UUID runId, final WorkflowRunStatus status, final NodeRunOutput result) {
@@ -353,7 +371,8 @@ class ProjectTaskUseCasesTest {
                 result == null ? null : UUID.fromString("55555555-5555-4555-8555-555555555555"),
                 NOW,
                 status == WorkflowRunStatus.QUEUED ? null : NOW,
-                status == WorkflowRunStatus.SUCCEEDED ? NOW.plusSeconds(1) : null
+                status == WorkflowRunStatus.SUCCEEDED ? NOW.plusSeconds(1) : null,
+                java.util.List.of()
         );
     }
 

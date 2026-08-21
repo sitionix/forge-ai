@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
+import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.WorkflowRunExecutionEdge;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
@@ -77,19 +78,19 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
 
     @Override
     public WorkflowRun saveLifecycle(final WorkflowRun run) {
-        final WorkflowRunEntity entity = this.toEntity(run);
-        this.workflowRunRepository.findById(run.id())
-                .ifPresent(existing -> {
-                    entity.setTaskInputPortId(existing.getTaskInputPortId());
-                    entity.setTaskOutputPortId(existing.getTaskOutputPortId());
-                    if (run.result() == null && existing.getResult() != null) {
-                        entity.setResult(existing.getResult());
-                    }
-                    if (run.resultSourceNodeRunId() == null && existing.getResultSourceNodeRunId() != null) {
-                        entity.setResultSourceNodeRunId(existing.getResultSourceNodeRunId());
-                    }
-                });
-        return this.toLifecycleDomain(this.workflowRunRepository.save(entity));
+        final WorkflowRunEntity existing = this.workflowRunRepository.findById(run.id())
+                .orElseThrow(() -> new ConflictException(
+                        "WORKFLOW_RUN_LIFECYCLE_STATE_NOT_FOUND", "Persisted workflow run lifecycle state was not found."));
+        existing.setStatus(run.status().name());
+        existing.setStartedAt(run.startedAt());
+        existing.setFinishedAt(run.finishedAt());
+        if (run.result() != null) {
+            existing.setResult(run.result().jsonValue());
+        }
+        if (run.resultSourceNodeRunId() != null) {
+            existing.setResultSourceNodeRunId(run.resultSourceNodeRunId());
+        }
+        return this.toLifecycleDomain(this.workflowRunRepository.save(existing));
     }
 
     @Override
@@ -143,7 +144,8 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getResultSourceNodeRunId(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
-                entity.getFinishedAt()
+                entity.getFinishedAt(),
+                entity.getRepositoryIds()
         );
     }
 
@@ -164,7 +166,8 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 source.resultSourceNodeRunId(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
-                entity.getFinishedAt()
+                entity.getFinishedAt(),
+                entity.getRepositoryIds()
         );
     }
 
@@ -185,7 +188,8 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getResultSourceNodeRunId(),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
-                entity.getFinishedAt()
+                entity.getFinishedAt(),
+                entity.getRepositoryIds()
         );
     }
 
@@ -213,6 +217,7 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         entity.setFinishedAt(run.finishedAt());
         entity.setResult(run.result() == null ? null : run.result().jsonValue());
         entity.setResultSourceNodeRunId(run.resultSourceNodeRunId());
+        entity.setRepositoryIds(new java.util.ArrayList<>(run.repositoryIds()));
         return entity;
     }
 

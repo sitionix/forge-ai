@@ -8,5 +8,6 @@ public interface InputActivationResolutionRepository {
 
     InputActivationResolution save(InputActivationResolution resolution);
 
-    Optional<InputActivationResolution> find(UUID workflowRunId, UUID activationFrameId, UUID targetInputPortId);
+    Optional<InputActivationResolution> find(UUID workflowRunId, UUID activationFrameId, UUID targetInputPortId, UUID repositoryId);
+
 }

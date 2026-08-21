@@ -9,6 +9,7 @@ public record InputParticipation(
         UUID activationFrameId,
         UUID targetInputPortId,
         boolean open,
-        List<ConnectionResolution> delivered
+        List<ConnectionResolution> delivered,
+        UUID repositoryId
 ) {
 }

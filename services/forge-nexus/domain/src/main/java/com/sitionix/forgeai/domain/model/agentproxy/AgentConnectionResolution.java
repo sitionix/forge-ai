@@ -12,6 +12,7 @@ public record AgentConnectionResolution(
         ConnectionResolutionType resolutionType,
         AgentNodeRunOutputDocument payload,
         UUID consumedByNodeRunId,
-        Instant createdAt
+        Instant createdAt,
+        UUID targetRepositoryId
 ) {
 }

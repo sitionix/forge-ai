@@ -87,7 +87,8 @@ class ForgeAgentRootBudgetIT {
                         ? List.of(new NodePort(A_IN, "Input", "Input description.", 0))
                         : List.of(new NodePort(B_IN, "Input", "Input description.", 0)),
                 List.of(new NodePort(outputPortId, "Done", "Done description.", 0)),
-                new NodePosition(x * 100.0, 0.0)
+                new NodePosition(x * 100.0, 0.0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL
         );
     }
 }

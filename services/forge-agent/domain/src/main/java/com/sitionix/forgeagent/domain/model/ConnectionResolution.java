@@ -13,6 +13,7 @@ public record ConnectionResolution(
         ConnectionResolutionType type,
         NodeRunOutput payload,
         UUID consumedByNodeRunId,
-        Instant createdAt
+        Instant createdAt,
+        UUID targetRepositoryId
 ) {
 }

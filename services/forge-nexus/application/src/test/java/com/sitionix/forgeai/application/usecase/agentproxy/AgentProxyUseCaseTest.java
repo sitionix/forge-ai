@@ -134,7 +134,15 @@ class AgentProxyUseCaseTest {
 
     @Test
     void workflowUseCasesDelegateToClient() {
-        final var node = new Node(NODE_ID, AGENT_ID, new NodePosition(1.0, 2.0));
+        final var node = new Node(
+                NODE_ID,
+                AGENT_ID,
+                com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode.DEPENDENCIES_ONLY,
+                java.util.List.of(),
+                java.util.List.of(),
+                new NodePosition(1.0, 2.0),
+                com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
+        );
         final var createCommand = new CreateAgentWorkflowCommand("Full Testing");
         final var saveCommand = new SaveAgentWorkflowCommand("Full Testing", List.of(node), List.of(), null);
         final var workflow = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(node), List.of(), null, NOW, NOW);

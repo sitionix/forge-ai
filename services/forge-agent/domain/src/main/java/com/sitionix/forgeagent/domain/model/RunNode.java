@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.domain.model;
 
 import java.util.UUID;
+import java.util.Objects;
 
 public record RunNode(
         UUID workflowRunId,
@@ -11,6 +12,11 @@ public record RunNode(
         AgentOutputSchema agentOutputSchema,
         NodeRunExecutionModel executionModel,
         NodeInputMode inputMode,
-        NodePosition position
+        NodePosition position,
+        NodeScopeMode scopeMode
 ) {
+    public RunNode {
+        Objects.requireNonNull(scopeMode, "scopeMode must not be null");
+    }
+
 }

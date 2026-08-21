@@ -5,6 +5,7 @@ import java.util.UUID;
 public record NodeInputContribution(
         UUID sourceNodeRunId,
         UUID sourceConnectionId,
-        NodeRunOutput payload
+        NodeRunOutput payload,
+        UUID sourceRepositoryId
 ) {
 }

@@ -18,7 +18,8 @@ public class ResolvedDeliveredActivateRule implements InputResolutionRule {
                 participation.workflowRunId(),
                 participation.activationFrameId(),
                 participation.targetInputPortId(),
-                participation.delivered()
+                participation.delivered(),
+                participation.repositoryId()
         );
     }
 }

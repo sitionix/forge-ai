@@ -9,6 +9,7 @@ public record InputActivationResolution(
         UUID activationFrameId,
         UUID targetInputPortId,
         UUID activatedNodeRunId,
-        Instant createdAt
+        Instant createdAt,
+        UUID repositoryId
 ) {
 }

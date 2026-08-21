@@ -7,7 +7,14 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface SpringDataInputActivationResolutionRepository extends JpaRepository<InputActivationResolutionEntity, UUID> {
 
-    Optional<InputActivationResolutionEntity> findByWorkflowRunIdAndActivationFrameIdAndTargetInputPortId(
+    Optional<InputActivationResolutionEntity> findByWorkflowRunIdAndActivationFrameIdAndTargetInputPortIdAndRepositoryId(
+            UUID workflowRunId,
+            UUID activationFrameId,
+            UUID targetInputPortId,
+            UUID repositoryId
+    );
+
+    Optional<InputActivationResolutionEntity> findByWorkflowRunIdAndActivationFrameIdAndTargetInputPortIdAndRepositoryIdIsNull(
             UUID workflowRunId,
             UUID activationFrameId,
             UUID targetInputPortId

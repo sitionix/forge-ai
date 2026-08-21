@@ -23,40 +23,7 @@ public record NodeRunResponse(
         NodeRunFailureResponse failure,
         Instant createdAt,
         Instant startedAt,
-        Instant finishedAt
+        Instant finishedAt,
+        UUID repositoryId
 ) {
-    public NodeRunResponse(final UUID id,
-                           final UUID sourceNodeId,
-                           final UUID sourceAgentId,
-                           final String agentName,
-                           final String agentInstructions,
-                           final JsonNode agentOutputSchema,
-                           final NodePositionResponse position,
-                           final AgentNodeRunStatus status,
-                           final JsonNode output,
-                           final NodeRunFailureResponse failure,
-                           final Instant createdAt,
-                           final Instant startedAt,
-                           final Instant finishedAt) {
-        this(
-                id,
-                sourceNodeId,
-                sourceAgentId,
-                agentName,
-                agentInstructions,
-                agentOutputSchema,
-                null,
-                position,
-                null,
-                null,
-                null,
-                null,
-                status,
-                output,
-                failure,
-                createdAt,
-                startedAt,
-                finishedAt
-        );
-    }
 }

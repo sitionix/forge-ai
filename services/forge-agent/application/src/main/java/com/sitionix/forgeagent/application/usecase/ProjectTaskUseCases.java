@@ -68,7 +68,8 @@ public class ProjectTaskUseCases {
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRunForTask(
                 workflowId,
                 new CreateWorkflowRunCommand(input),
-                task.id()
+                task.id(),
+                task.repositoryIds()
         );
         return this.toDetails(task, List.of(this.toSummary(run)), null);
     }

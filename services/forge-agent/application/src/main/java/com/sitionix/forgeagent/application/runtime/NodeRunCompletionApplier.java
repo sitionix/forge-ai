@@ -76,7 +76,8 @@ public class NodeRunCompletionApplier {
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
-                nodeRun.finishedAt()
+                nodeRun.finishedAt(),
+                nodeRun.repositoryId()
         );
     }
 
@@ -102,7 +103,8 @@ public class NodeRunCompletionApplier {
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
-                nodeRun.finishedAt()
+                nodeRun.finishedAt(),
+                nodeRun.repositoryId()
         );
     }
 
@@ -131,6 +133,7 @@ public class NodeRunCompletionApplier {
                     NodeRunCompletionApplier.this.withSelectedOutput(this.nodeRun, decision.selectedOutputPortId())
             );
             final List<ConnectionResolution> resolutions = NodeRunCompletionApplier.this.resolutionProjector.selected(
+                    this.workflowRun,
                     selected,
                     selected.output(),
                     decision.selectedOutputPortId(),

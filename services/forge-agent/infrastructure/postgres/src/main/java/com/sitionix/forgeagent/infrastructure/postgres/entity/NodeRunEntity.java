@@ -4,7 +4,6 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.Getter;
@@ -13,13 +12,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 @Entity
-@Table(
-        name = "node_runs",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uk_node_runs_workflow_run_frame_source_node",
-                columnNames = {"workflow_run_id", "execution_frame_id", "source_node_id"}
-        )
-)
+@Table(name = "node_runs")
 @Getter
 @Setter
 public class NodeRunEntity {
@@ -57,6 +50,9 @@ public class NodeRunEntity {
 
     @Column(name = "execution_frame_id", nullable = false)
     private UUID executionFrameId;
+
+    @Column(name = "repository_id")
+    private UUID repositoryId;
 
     @Column(name = "entered_via_input_port_id")
     private UUID enteredViaInputPortId;

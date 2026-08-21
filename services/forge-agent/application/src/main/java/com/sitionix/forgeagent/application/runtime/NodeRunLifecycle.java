@@ -96,9 +96,15 @@ public class NodeRunLifecycle {
                     workflowRun.input(),
                     WorkflowRunStatus.RUNNING,
                     workflowRun.nodeRuns(),
+                    workflowRun.connectionResolutions(),
+                    workflowRun.executionEdges(),
+                    workflowRun.runtimeGraph(),
+                    workflowRun.result(),
+                    workflowRun.resultSourceNodeRunId(),
                     workflowRun.createdAt(),
                     workflowRun.startedAt() == null ? now : workflowRun.startedAt(),
-                    workflowRun.finishedAt()
+                    workflowRun.finishedAt(),
+                    workflowRun.repositoryIds()
             ));
         }
 
@@ -138,6 +144,9 @@ public class NodeRunLifecycle {
             return;
         }
         final NodeRun nodeRun = target.nodeRun();
+        if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
+            return;
+        }
         if (nodeRun.status() == NodeRunStatus.FAILED && normalized.equals(nodeRun.failure())) {
             return;
         }
@@ -216,13 +225,15 @@ public class NodeRunLifecycle {
                 nodeRun.enteredViaInputPortId(),
                 nodeRun.activationFrameId(),
                 nodeRun.selectedOutputPortId(),
+                nodeRun.routingCompletedAt(),
                 NodeRunStatus.RUNNING,
                 nodeRun.output(),
                 nodeRun.failure(),
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt() == null ? now : nodeRun.startedAt(),
-                nodeRun.finishedAt()
+                nodeRun.finishedAt(),
+                nodeRun.repositoryId()
         );
     }
 
@@ -241,13 +252,15 @@ public class NodeRunLifecycle {
                 nodeRun.enteredViaInputPortId(),
                 nodeRun.activationFrameId(),
                 nodeRun.selectedOutputPortId(),
+                nodeRun.routingCompletedAt(),
                 NodeRunStatus.FAILED,
                 nodeRun.output(),
                 failure,
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
-                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt()
+                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
+                nodeRun.repositoryId()
         );
     }
 

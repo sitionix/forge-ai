@@ -475,8 +475,44 @@ class ForgeAgentClientAdapterTest {
     void createWorkflowRunMapsRequestExecutesTypedClientCallAndMapsResponse() {
         final var command = new CreateAgentWorkflowRunCommand("Review auth changes.");
         final var request = new CreateWorkflowRunRequest("Review auth changes.");
-        final var upstreamResponse = new WorkflowRunResponse(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
-        final var expected = new AgentWorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
+        final var upstreamResponse = new WorkflowRunResponse(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                null,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.QUEUED,
+                List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
+                CREATED,
+                null,
+                null,
+                java.util.List.of()
+        );
+        final var expected = new AgentWorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                null,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.QUEUED,
+                List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
+                CREATED,
+                null,
+                null,
+                java.util.List.of()
+        );
         when(this.mapper.toRequest(command)).thenReturn(request);
         when(this.httpClient.createWorkflowRun(WORKFLOW_ID, request)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
@@ -507,8 +543,44 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void getWorkflowRunExecutesTypedClientCallAndMapsResponse() {
-        final var upstreamResponse = new WorkflowRunResponse(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
-        final var expected = new AgentWorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID, null, "Full Testing", "Review auth changes.", AgentWorkflowRunStatus.QUEUED, List.of(), CREATED, null, null);
+        final var upstreamResponse = new WorkflowRunResponse(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                null,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.QUEUED,
+                List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
+                CREATED,
+                null,
+                null,
+                java.util.List.of()
+        );
+        final var expected = new AgentWorkflowRun(
+                RUN_ID,
+                PROJECT_ID,
+                WORKFLOW_ID,
+                null,
+                "Full Testing",
+                "Review auth changes.",
+                AgentWorkflowRunStatus.QUEUED,
+                List.of(),
+                java.util.List.of(),
+                java.util.List.of(),
+                null,
+                null,
+                null,
+                CREATED,
+                null,
+                null,
+                java.util.List.of()
+        );
         when(this.httpClient.getWorkflowRun(RUN_ID)).thenReturn(upstreamResponse);
         when(this.mapper.toDomain(upstreamResponse)).thenReturn(expected);
 

@@ -21,40 +21,7 @@ public record AgentNodeRun(
         AgentNodeRunFailure failure,
         Instant createdAt,
         Instant startedAt,
-        Instant finishedAt
+        Instant finishedAt,
+        UUID repositoryId
 ) {
-    public AgentNodeRun(final UUID id,
-                        final UUID sourceNodeId,
-                        final UUID sourceAgentId,
-                        final String agentName,
-                        final String agentInstructions,
-                        final AgentOutputSchemaDocument agentOutputSchema,
-                        final NodePosition position,
-                        final AgentNodeRunStatus status,
-                        final AgentNodeRunOutputDocument output,
-                        final AgentNodeRunFailure failure,
-                        final Instant createdAt,
-                        final Instant startedAt,
-                        final Instant finishedAt) {
-        this(
-                id,
-                sourceNodeId,
-                sourceAgentId,
-                agentName,
-                agentInstructions,
-                agentOutputSchema,
-                NodeInputMode.DEPENDENCIES_ONLY,
-                position,
-                null,
-                null,
-                null,
-                null,
-                status,
-                output,
-                failure,
-                createdAt,
-                startedAt,
-                finishedAt
-        );
-    }
 }

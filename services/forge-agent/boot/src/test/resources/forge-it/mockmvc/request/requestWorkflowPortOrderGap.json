@@ -23,7 +23,8 @@
         "x": 120,
         "y": 100
       },
-      "inputMode": "DEPENDENCIES_ONLY"
+      "inputMode": "DEPENDENCIES_ONLY",
+      "scopeMode": "GLOBAL"
     }
   ],
   "connections": []
