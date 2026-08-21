@@ -2,7 +2,9 @@ package com.sitionix.forgeagent.infrastructure.codex;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
-interface CodexRpcClient extends AutoCloseable {
+interface CodexClient extends AutoCloseable {
+
+    String execute(CodexTurnRequest request);
 
     String version();
 

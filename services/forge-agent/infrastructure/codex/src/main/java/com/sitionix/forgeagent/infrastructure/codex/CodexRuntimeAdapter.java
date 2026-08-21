@@ -26,7 +26,7 @@ public class CodexRuntimeAdapter implements CodexRuntimePort {
     private static final String DISPLAY_NAME = "Codex";
 
     private final ObjectMapper objectMapper;
-    private final CodexRpcClient client;
+    private final CodexClient client;
     private final CodexAppServerProperties properties;
 
     @Override

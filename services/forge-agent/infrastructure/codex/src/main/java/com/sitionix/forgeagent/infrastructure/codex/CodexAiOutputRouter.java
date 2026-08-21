@@ -19,12 +19,12 @@ import org.springframework.stereotype.Component;
 public class CodexAiOutputRouter implements AiOutputRouter {
 
     private final ObjectMapper objectMapper;
-    private final CodexTurnClient turnClient;
+    private final CodexClient client;
     private final CodexRuntimeWorkspace runtimeWorkspace;
 
     @Override
     public UUID selectOutput(final NodeRunOutput output, final List<RunPort> outputs, final NodeRunExecutionModel executionModel) {
-        final String response = this.turnClient.execute(new CodexTurnRequest(
+        final String response = this.client.execute(new CodexTurnRequest(
                 this.userInput(output, outputs),
                 "Select exactly one workflow output port. Respond only with JSON matching the provided schema.",
                 executionModel.modelId(),

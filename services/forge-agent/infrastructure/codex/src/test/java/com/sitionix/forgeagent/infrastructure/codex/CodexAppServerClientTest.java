@@ -193,17 +193,31 @@ class CodexAppServerClientTest {
     }
 
     @Test
-    void defaultStarterCreatesConfiguredRuntimeCwdBeforeStartingProcess() throws Exception {
+    void defaultStarterLaunchesProcessInResolvedWorkingDirectory() throws Exception {
         final CodexAppServerProperties properties = this.properties();
-        final Path runtimeCwd = Files.createTempDirectory("forge-agent-codex-starter").resolve("runtime");
-        properties.setRuntimeCwd(runtimeCwd.toString());
-        properties.setCommand(List.of("true"));
+        final Path runtimeCwd = Files.createDirectories(
+                Files.createTempDirectory("forge-agent-codex-starter").resolve("runtime"));
+        properties.setCommand(List.of("pwd"));
         final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties);
 
-        final StartedCodexAppServer started = starter.start();
+        final StartedCodexAppServer started = starter.start(runtimeCwd);
 
         assertThat(Files.isDirectory(runtimeCwd)).isTrue();
         assertThat(started.process().waitFor(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(started.process().inputReader().readLine()).isEqualTo(runtimeCwd.toString());
+    }
+
+    @Test
+    void defaultStarterRejectsMissingWorkingDirectoryWithoutCreatingIt() throws Exception {
+        final CodexAppServerProperties properties = this.properties();
+        properties.setCommand(List.of("pwd"));
+        final Path missing = Files.createTempDirectory("forge-agent-codex-missing").resolve("absent");
+        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties);
+
+        assertThatThrownBy(() -> starter.start(missing))
+                .isInstanceOf(CodexTransportException.class)
+                .hasMessage("Codex app-server working directory is unavailable");
+        assertThat(missing).doesNotExist();
     }
 
     @Test
@@ -267,7 +281,7 @@ class CodexAppServerClientTest {
     }
 
     private CodexAppServerClient client(final FakeStarter starter, final CodexAppServerProperties properties) {
-        return new CodexAppServerClient(this.objectMapper, starter, properties);
+        return new CodexAppServerClient(this.objectMapper, starter, properties, new CodexRuntimeWorkspace(properties));
     }
 
     private CodexAppServerProperties properties() {
@@ -291,7 +305,7 @@ class CodexAppServerClientTest {
         }
 
         @Override
-        public StartedCodexAppServer start() {
+        public StartedCodexAppServer start(final Path workingDirectory) {
             this.starts++;
             return new StartedCodexAppServer(this.processes.remove(), List.of("codex", "app-server", "--stdio"), Instant.now());
         }

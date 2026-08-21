@@ -169,7 +169,7 @@ class CodexRuntimeAdapterTest {
         return new CodexRuntimeAdapter(this.objectMapper, client, new CodexAppServerProperties());
     }
 
-    private final class FakeClient implements CodexRpcClient {
+    private final class FakeClient implements CodexClient {
         private final String version;
         private final List<JsonNode> responses = new ArrayList<>();
         private final List<Request> requests = new ArrayList<>();
@@ -198,6 +198,11 @@ class CodexRuntimeAdapterTest {
                 throw new CodexTransportException("startup failed");
             }
             return this.version;
+        }
+
+        @Override
+        public String execute(final CodexTurnRequest request) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
