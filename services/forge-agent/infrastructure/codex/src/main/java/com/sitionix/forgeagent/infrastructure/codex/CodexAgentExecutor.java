@@ -33,7 +33,8 @@ public final class CodexAgentExecutor implements AgentExecutor {
                 WorkflowExecutionDeveloperInstructions.compose(claim.agentInstructions()),
                 claim.executionModel().modelId(),
                 claim.executionModel().effortId(),
-                outputSchema
+                outputSchema,
+                claim.executionWorkspace()
         ));
         return new NodeRunOutput(this.canonicalizeOutput(outputText));
     }

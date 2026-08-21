@@ -14,6 +14,7 @@ public record NodeExecutionClaim(
         String agentInstructions,
         AgentOutputSchema outputSchema,
         NodeRunExecutionModel executionModel,
-        NodeInputEnvelope inputEnvelope
+        NodeInputEnvelope inputEnvelope,
+        ExecutionWorkspace executionWorkspace
 ) {
 }

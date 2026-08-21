@@ -9,6 +9,8 @@ import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunPort;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -23,7 +25,13 @@ class CodexAiOutputRouterTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RecordingTurnClient turnClient = new RecordingTurnClient();
     private final NodeRunExecutionModel executionModel = new NodeRunExecutionModel("codex", "gpt-5.6-luna", "low");
-    private final CodexAiOutputRouter router = new CodexAiOutputRouter(this.objectMapper, this.turnClient);
+    private final CodexAiOutputRouter router;
+
+    CodexAiOutputRouterTest() throws Exception {
+        final CodexAppServerProperties properties = new CodexAppServerProperties();
+        properties.setRuntimeCwd(Files.createTempDirectory("forge-agent-codex-routing").toString());
+        this.router = this.router(properties);
+    }
 
     @Test
     void sendsBusinessOutputAndStableOutputMetadata() throws Exception {
@@ -50,6 +58,50 @@ class CodexAiOutputRouterTest {
         assertThatThrownBy(() -> this.router.selectOutput(new NodeRunOutput("{\"decision\":\"pass\"}"), this.outputs(), this.executionModel))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("AI output routing response was invalid.");
+    }
+
+    @Test
+    void configuredRuntimeCwdProvidesNeutralRoutingWorkspace() throws Exception {
+        final Path configuredCwd = Files.createTempDirectory("forge-agent-codex-configured-routing");
+        final CodexAppServerProperties properties = new CodexAppServerProperties();
+        properties.setRuntimeCwd(configuredCwd.toString());
+        final RecordingTurnClient recordingClient = new RecordingTurnClient();
+        recordingClient.outputText = "{\"selectedOutputPortId\":\"" + PASS_ID + "\"}";
+
+        this.router(properties, recordingClient).selectOutput(
+                new NodeRunOutput("{\"decision\":\"pass\"}"), this.outputs(), this.executionModel);
+
+        assertThat(recordingClient.request.executionWorkspace().cwd()).isEqualTo(configuredCwd);
+        assertThat(recordingClient.request.executionWorkspace().workspaceRoots()).containsExactly(configuredCwd);
+    }
+
+    @Test
+    void unsetRuntimeCwdProvidesNeutralDefaultRoutingWorkspace() {
+        final CodexAppServerProperties properties = new CodexAppServerProperties();
+        final RecordingTurnClient recordingClient = new RecordingTurnClient();
+        recordingClient.outputText = "{\"selectedOutputPortId\":\"" + PASS_ID + "\"}";
+        final Path expected = Path.of(System.getProperty("java.io.tmpdir"), "forge-agent-codex-runtime")
+                .toAbsolutePath()
+                .normalize();
+
+        this.router(properties, recordingClient).selectOutput(
+                new NodeRunOutput("{\"decision\":\"pass\"}"), this.outputs(), this.executionModel);
+
+        assertThat(recordingClient.request.executionWorkspace().cwd()).isEqualTo(expected);
+        assertThat(recordingClient.request.executionWorkspace().workspaceRoots()).containsExactly(expected);
+    }
+
+    private CodexAiOutputRouter router(final CodexAppServerProperties properties) {
+        return this.router(properties, this.turnClient);
+    }
+
+    private CodexAiOutputRouter router(final CodexAppServerProperties properties,
+                                       final RecordingTurnClient recordingClient) {
+        return new CodexAiOutputRouter(
+                this.objectMapper,
+                recordingClient,
+                new CodexRuntimeWorkspace(properties)
+        );
     }
 
     private List<RunPort> outputs() {

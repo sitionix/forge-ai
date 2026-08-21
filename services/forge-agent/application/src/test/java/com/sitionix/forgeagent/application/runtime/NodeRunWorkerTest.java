@@ -169,7 +169,8 @@ class NodeRunWorkerTest {
                 "Instructions",
                 OUTPUT_SCHEMA,
                 EXECUTION_MODEL,
-                new NodeInputEnvelope("Review auth changes.", null, List.of())
+                new NodeInputEnvelope("Review auth changes.", null, List.of()),
+                new ExecutionWorkspace(java.nio.file.Path.of("/forge/project"), List.of())
         );
     }
 }

@@ -53,11 +53,15 @@ import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import jakarta.persistence.EntityManager;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -137,6 +141,19 @@ class ForgeAgentPortAwareExecutionIT {
 
     @MockBean
     private AiOutputRouter aiOutputRouter;
+
+    @AfterEach
+    void removeRepositoryWorkspaceFixture() throws IOException {
+        final Path projectWorkspace = this.projectWorkspace();
+        if (!Files.exists(projectWorkspace)) {
+            return;
+        }
+        try (var paths = Files.walk(projectWorkspace)) {
+            for (final Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        }
+    }
 
     @Test
     void executesLinearWorkflowEndToEnd() {
@@ -510,6 +527,11 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private void seed() {
+        try {
+            Files.createDirectories(this.projectWorkspace().resolve("repository").resolve(".git"));
+        } catch (final IOException exception) {
+            throw new IllegalStateException("Failed to create Forge repository workspace fixture.", exception);
+        }
         this.forgeIt.postgresql()
                 .create()
                 .to(PROJECT.withJson("project_alpha.json"))
@@ -519,6 +541,17 @@ class ForgeAgentPortAwareExecutionIT {
                 .to(AGENT_DEFINITION.withJson("agent_c.json"))
                 .to(WORKFLOW.withJson("workflow_alpha.json"))
                 .build();
+    }
+
+    private Path projectWorkspace() {
+        Path current = Path.of("").toAbsolutePath().normalize();
+        while (current != null && !Files.isDirectory(current.resolve(".git"))) {
+            current = current.getParent();
+        }
+        if (current == null) {
+            throw new IllegalStateException("Forge root could not be resolved for integration test.");
+        }
+        return current.resolve("forge-projects").resolve(PROJECT_ALPHA_ID.toString());
     }
 
     private ProjectRepositoryEntity projectRepositoryEntity() {
