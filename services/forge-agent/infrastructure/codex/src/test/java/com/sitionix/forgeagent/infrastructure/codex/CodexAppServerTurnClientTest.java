@@ -86,19 +86,23 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
-    void configuredRuntimeCwdOverridesNeutralDefault() throws Exception {
+    void requestExecutionWorkspaceControlsThreadCwdRegardlessOfAppServerProperties() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerProperties properties = this.properties();
-        final Path configuredCwd = Files.createTempDirectory("forge-agent-codex-configured-cwd");
+        final Path configuredCwd = Files.createTempDirectory("forge-agent-codex-process-cwd");
+        final Path requestCwd = Files.createTempDirectory("forge-agent-codex-request-cwd");
         properties.setRuntimeCwd(configuredCwd.toString());
         final CodexAppServerClient client = this.client(new FakeStarter(process), properties);
         final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.execute(
-                new CodexTurnRequest("Analyze auth.", "Instructions.", "gpt-5.6-luna", null, this.schemaUnchecked(), this.workspace(configuredCwd))
+                new CodexTurnRequest("Analyze auth.", "Instructions.", "gpt-5.6-luna", null,
+                        this.schemaUnchecked(), this.workspace(requestCwd))
         ));
 
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
-        assertThat(threadStart.path("params").path("cwd").asText()).isEqualTo(configuredCwd.toAbsolutePath().normalize().toString());
+        assertThat(threadStart.path("params").path("cwd").asText())
+                .isEqualTo(requestCwd.toAbsolutePath().normalize().toString())
+                .isNotEqualTo(configuredCwd.toAbsolutePath().normalize().toString());
         this.replyThread(process, threadStart, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         this.replyTurn(process, turnStart, "turn-1");
@@ -109,22 +113,30 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
-    void configuredRuntimeCwdScopesWorkspaceWriteRoot() throws Exception {
+    void requestWorkspaceRootsControlThreadRuntimeWorkspaceRoots() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerProperties properties = this.properties();
-        final Path configuredCwd = Files.createTempDirectory("forge-agent-codex-file-work");
+        final Path configuredCwd = Files.createTempDirectory("forge-agent-codex-process-cwd");
+        final Path requestCwd = Files.createTempDirectory("forge-agent-codex-project-cwd");
+        final Path repositoryA = Files.createDirectories(requestCwd.resolve("backend"));
+        final Path repositoryB = Files.createDirectories(requestCwd.resolve("frontend"));
         properties.setRuntimeCwd(configuredCwd.toString());
         final CodexAppServerClient client = this.client(new FakeStarter(process), properties);
+        final ExecutionWorkspace requestWorkspace = new ExecutionWorkspace(
+                requestCwd,
+                List.of(repositoryA, repositoryB)
+        );
         final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.execute(
-                new CodexTurnRequest("Create a file.", "Instructions.", "gpt-5.6-spark", null, this.schemaUnchecked(), this.workspace(configuredCwd))
+                new CodexTurnRequest("Create a file.", "Instructions.", "gpt-5.6-spark", null,
+                        this.schemaUnchecked(), requestWorkspace)
         ));
 
         this.initialize(process);
         final JsonNode threadStart = this.readRequest(process);
         assertThat(threadStart.path("params").path("sandbox").asText()).isEqualTo("workspace-write");
-        assertThat(threadStart.path("params").path("cwd").asText()).isEqualTo(configuredCwd.toAbsolutePath().normalize().toString());
+        assertThat(threadStart.path("params").path("cwd").asText()).isEqualTo(requestWorkspace.cwd().toString());
         assertThat(threadStart.path("params").path("runtimeWorkspaceRoots"))
-                .isEqualTo(this.objectMapper.readTree("[\"" + configuredCwd.toAbsolutePath().normalize() + "\"]"));
+                .isEqualTo(this.objectMapper.valueToTree(List.of(repositoryA.toString(), repositoryB.toString())));
         assertThat(threadStart.path("params").path("config").path("features").path("shell_tool").asBoolean()).isTrue();
         this.replyThread(process, threadStart, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
