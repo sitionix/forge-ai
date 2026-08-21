@@ -131,12 +131,11 @@ class AgentProxyApiMapperTest {
     }
 
     @Test
-    void rejectsNonObjectOutputSchemaAsLocalInvalidRequest() throws Exception {
+    void forwardsNonObjectOutputSchemaWithoutLocalSemanticValidation() throws Exception {
         final var request = new AgentDefinitionRequest("Backend", "Do work.", this.objectMapper.readTree("[]"), null);
 
-        assertThatThrownBy(() -> this.mapper.toCommand(request))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("JSON object");
+        assertThat(this.mapper.toCommand(request).outputSchema())
+                .isEqualTo(new AgentOutputSchemaDocument("[]"));
     }
 
     @Test
@@ -503,5 +502,15 @@ class AgentProxyApiMapperTest {
         assertThat(command.nodes().getFirst().inputMode()).isNull();
         assertThat(command.nodes().getFirst().position()).isNull();
         assertThat(command.nodes().getFirst().scopeMode()).isEqualTo("repository");
+    }
+
+    @Test
+    void workflowRequestPreservesNullCollections() {
+        final var command = this.mapper.toCommand(new SaveAgentWorkflowRequest(
+                "Opaque workflow", null, null, null, null
+        ));
+
+        assertThat(command.nodes()).isNull();
+        assertThat(command.connections()).isNull();
     }
 }

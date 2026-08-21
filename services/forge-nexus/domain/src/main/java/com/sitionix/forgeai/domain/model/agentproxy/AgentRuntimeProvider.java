@@ -10,6 +10,6 @@ public record AgentRuntimeProvider(
         List<AgentRuntimeModel> models
 ) {
     public AgentRuntimeProvider {
-        models = models == null ? List.of() : List.copyOf(models);
+        models = List.copyOf(models);
     }
 }

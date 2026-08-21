@@ -6,6 +6,6 @@ public record AgentRuntimeCatalog(
         List<AgentRuntimeProvider> providers
 ) {
     public AgentRuntimeCatalog {
-        providers = providers == null ? List.of() : List.copyOf(providers);
+        providers = List.copyOf(providers);
     }
 }

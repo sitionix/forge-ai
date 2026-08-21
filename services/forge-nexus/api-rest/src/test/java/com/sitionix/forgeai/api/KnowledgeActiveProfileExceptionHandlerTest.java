@@ -1,22 +1,16 @@
 package com.sitionix.forgeai.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileUpdateRequest;
 import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
 import com.sitionix.forgeai.domain.exception.KnowledgeClientException;
-import java.lang.reflect.Method;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
-import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.validation.BeanPropertyBindingResult;
-import org.springframework.validation.FieldError;
-import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.client.ResourceAccessException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -92,30 +86,6 @@ class KnowledgeActiveProfileExceptionHandlerTest {
     }
 
     @Test
-    void validationBecomesBadRequest() throws NoSuchMethodException {
-        // given
-        final ActiveLlmProfileUpdateRequest request = new ActiveLlmProfileUpdateRequest(null, "", "", null);
-        final BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(request, "request");
-        bindingResult.addError(new FieldError("request", "providerId", "must not be blank"));
-        final MethodArgumentNotValidException exception = new MethodArgumentNotValidException(
-                this.validationMethodParameter(),
-                bindingResult
-        );
-
-        // when
-        final ResponseEntity<InfrastructureErrorResponse> response =
-                this.handler.handleMethodArgumentNotValidException(exception);
-
-        // then
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(response.getBody()).isEqualTo(new InfrastructureErrorResponse(
-                "VALIDATION_FAILED",
-                "Active LLM profile request is invalid.",
-                null
-        ));
-    }
-
-    @Test
     void unreadableBodyBecomesBadRequest() {
         // given
         final HttpMessageNotReadableException exception = new HttpMessageNotReadableException("bad body");
@@ -145,15 +115,4 @@ class KnowledgeActiveProfileExceptionHandlerTest {
         assertThat(value).isEqualTo(Ordered.HIGHEST_PRECEDENCE);
     }
 
-    private MethodParameter validationMethodParameter() throws NoSuchMethodException {
-        final Method method = KnowledgeActiveProfileExceptionHandlerTest.class.getDeclaredMethod(
-                "validationTarget",
-                ActiveLlmProfileUpdateRequest.class
-        );
-        return new MethodParameter(method, 0);
-    }
-
-    @SuppressWarnings("unused")
-    private void validationTarget(final ActiveLlmProfileUpdateRequest request) {
-    }
 }

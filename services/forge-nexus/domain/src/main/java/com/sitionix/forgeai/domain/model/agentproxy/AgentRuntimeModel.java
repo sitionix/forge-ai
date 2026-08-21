@@ -9,6 +9,6 @@ public record AgentRuntimeModel(
         List<AgentRuntimeEffort> efforts
 ) {
     public AgentRuntimeModel {
-        efforts = efforts == null ? List.of() : List.copyOf(efforts);
+        efforts = List.copyOf(efforts);
     }
 }

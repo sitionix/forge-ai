@@ -6,7 +6,6 @@ import com.sitionix.forgeai.api.activeprofile.ActiveProfileResponse;
 import com.sitionix.forgeai.domain.usecase.GetActiveProfile;
 import com.sitionix.forgeai.domain.usecase.UpdateActiveLlmProfile;
 import com.sitionix.forgeai.mapper.ActiveProfileApiMapper;
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,7 +28,7 @@ public class KnowledgeActiveProfileController {
 
     @PutMapping("/api/v1/infrastructure/knowledge/active-profile/llm-profile")
     public ResponseEntity<ActiveLlmProfileResponse> updateActiveLlmProfile(
-            @Valid @RequestBody final ActiveLlmProfileUpdateRequest request
+            @RequestBody final ActiveLlmProfileUpdateRequest request
     ) {
         return ResponseEntity.ok(this.activeProfileApiMapper.toResponse(
                 this.updateActiveLlmProfile.execute(this.activeProfileApiMapper.toCommand(request))

@@ -12,8 +12,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.validation.BindException;
-import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.ResourceAccessException;
@@ -52,8 +50,8 @@ public class ForgeAiInfrastructureAgentsExceptionHandler {
         return this.response(HttpStatus.BAD_GATEWAY, "UPSTREAM_INVALID_RESPONSE", "Forge Agent service returned an invalid response.", null);
     }
 
-    @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class, HttpMessageNotReadableException.class, IllegalArgumentException.class})
-    public ResponseEntity<InfrastructureErrorResponse> handleBadRequest(final Exception exception) {
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<InfrastructureErrorResponse> handleBadRequest(final HttpMessageNotReadableException exception) {
         return this.response(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Agent request is invalid.", null);
     }
 

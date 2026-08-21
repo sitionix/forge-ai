@@ -283,6 +283,11 @@ class ForgeAgentClientMapperTest {
         )).nodes().getFirst()).isEqualTo(new NodeRequest(
                 NODE_ID, AGENT_ID, null, List.of(), List.of(), null, null
         ));
+        final var nullCollections = this.mapper.toRequest(new SaveAgentWorkflowCommand(
+                "Opaque workflow", null, null, null, null
+        ));
+        assertThat(nullCollections.nodes()).isNull();
+        assertThat(nullCollections.connections()).isNull();
         assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand("Full Testing", List.of(node), List.of(connection), INPUT_ID, OUTPUT_ID)))
                 .isEqualTo(new SaveAgentWorkflowRequest(
                         "Full Testing",

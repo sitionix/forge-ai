@@ -262,10 +262,10 @@ public class ForgeAgentClientMapper {
     SaveAgentWorkflowRequest toRequest(final SaveAgentWorkflowCommand command) {
         return new SaveAgentWorkflowRequest(
                 command.name(),
-                command.nodes() == null ? List.of() : command.nodes().stream()
+                command.nodes() == null ? null : command.nodes().stream()
                         .map(this::toRequest)
                         .toList(),
-                command.connections() == null ? List.of() : command.connections().stream()
+                command.connections() == null ? null : command.connections().stream()
                         .map(this::toRequest)
                         .toList(),
                 command.taskInputPortId(),
@@ -343,7 +343,7 @@ public class ForgeAgentClientMapper {
                 this.requireList(response.connectionResolutions(), "workflowRun.connectionResolutions").stream()
                         .map(this::toDomain)
                         .toList(),
-                this.optionalList(response.executionEdges()).stream()
+                this.requireList(response.executionEdges(), "workflowRun.executionEdges").stream()
                         .map(this::toDomain)
                         .toList(),
                 this.toDomain(response.runtimeGraph()),
@@ -502,8 +502,8 @@ public class ForgeAgentClientMapper {
                 node.id(),
                 node.targetId(),
                 node.inputMode(),
-                node.inputs() == null ? List.of() : node.inputs().stream().map(this::toRequest).toList(),
-                node.outputs() == null ? List.of() : node.outputs().stream().map(this::toRequest).toList(),
+                node.inputs() == null ? null : node.inputs().stream().map(this::toRequest).toList(),
+                node.outputs() == null ? null : node.outputs().stream().map(this::toRequest).toList(),
                 node.position() == null ? null : new NodePositionRequest(node.position().x(), node.position().y()),
                 node.scopeMode()
         );
@@ -523,8 +523,8 @@ public class ForgeAgentClientMapper {
                 response.id(),
                 response.targetId(),
                 response.inputMode(),
-                response.inputs() == null ? List.of() : response.inputs().stream().map(this::toDomain).toList(),
-                response.outputs() == null ? List.of() : response.outputs().stream().map(this::toDomain).toList(),
+                this.requireList(response.inputs(), "node.inputs").stream().map(this::toDomain).toList(),
+                this.requireList(response.outputs(), "node.outputs").stream().map(this::toDomain).toList(),
                 new NodePosition(position.x(), position.y()),
                 response.scopeMode()
         );
@@ -647,10 +647,6 @@ public class ForgeAgentClientMapper {
             throw this.invalid(field + " must not be null");
         }
         return responses;
-    }
-
-    private <T> List<T> optionalList(final List<T> responses) {
-        return responses == null ? List.of() : responses;
     }
 
     private void requireResponse(final Object response, final String label) {

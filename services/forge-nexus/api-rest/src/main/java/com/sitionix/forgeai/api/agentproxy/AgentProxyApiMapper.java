@@ -62,9 +62,6 @@ public class AgentProxyApiMapper {
     }
 
     public SaveAgentDefinitionCommand toCommand(final AgentDefinitionRequest request) {
-        if (request.outputSchema() == null || !request.outputSchema().isObject()) {
-            throw new IllegalArgumentException("Output schema must be a JSON object.");
-        }
         try {
             return new SaveAgentDefinitionCommand(
                     request.name(),
@@ -84,10 +81,10 @@ public class AgentProxyApiMapper {
     public SaveAgentWorkflowCommand toCommand(final SaveAgentWorkflowRequest request) {
         return new SaveAgentWorkflowCommand(
                 request.name(),
-                request.nodes() == null ? List.of() : request.nodes().stream()
+                request.nodes() == null ? null : request.nodes().stream()
                         .map(this::toDomain)
                         .toList(),
-                request.connections() == null ? List.of() : request.connections().stream()
+                request.connections() == null ? null : request.connections().stream()
                         .map(this::toDomain)
                         .toList(),
                 request.taskInputPortId(),
@@ -346,8 +343,8 @@ public class AgentProxyApiMapper {
                 request.id(),
                 request.targetId(),
                 request.inputMode(),
-                request.inputs() == null ? List.of() : request.inputs().stream().map(this::toDomain).toList(),
-                request.outputs() == null ? List.of() : request.outputs().stream().map(this::toDomain).toList(),
+                request.inputs() == null ? null : request.inputs().stream().map(this::toDomain).toList(),
+                request.outputs() == null ? null : request.outputs().stream().map(this::toDomain).toList(),
                 request.position() == null ? null : new NodePosition(request.position().x(), request.position().y()),
                 request.scopeMode()
         );
@@ -358,8 +355,8 @@ public class AgentProxyApiMapper {
                 node.id(),
                 node.targetId(),
                 node.inputMode(),
-                node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
-                node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
+                node.inputs() == null ? null : node.inputs().stream().map(this::toResponse).toList(),
+                node.outputs() == null ? null : node.outputs().stream().map(this::toResponse).toList(),
                 node.position() == null ? null : new NodePositionResponse(node.position().x(), node.position().y()),
                 node.scopeMode()
         );

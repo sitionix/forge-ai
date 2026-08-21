@@ -1,12 +1,7 @@
 package com.sitionix.forgeai.api.activeprofile;
 
-import com.fasterxml.jackson.annotation.JsonAnySetter;
-import jakarta.validation.constraints.NotBlank;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
-public record ActiveLlmEffortRequest(@NotBlank String effortId) {
-
-    @JsonAnySetter
-    public void rejectUnknownField(final String fieldName, final Object ignoredValue) {
-        throw new IllegalArgumentException("Unknown active LLM effort field: " + fieldName);
-    }
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record ActiveLlmEffortRequest(String effortId) {
 }

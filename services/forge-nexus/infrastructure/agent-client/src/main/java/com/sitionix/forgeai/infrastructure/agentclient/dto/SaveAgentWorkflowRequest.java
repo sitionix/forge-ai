@@ -10,10 +10,4 @@ public record SaveAgentWorkflowRequest(
         UUID taskInputPortId,
         UUID taskOutputPortId
 ) {
-    public SaveAgentWorkflowRequest(final String name,
-                                    final List<NodeRequest> nodes,
-                                    final List<WorkflowConnectionRequest> connections,
-                                    final UUID taskInputPortId) {
-        this(name, nodes, connections, taskInputPortId, null);
-    }
 }
