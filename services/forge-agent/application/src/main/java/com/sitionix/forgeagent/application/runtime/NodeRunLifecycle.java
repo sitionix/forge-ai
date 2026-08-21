@@ -144,7 +144,7 @@ public class NodeRunLifecycle {
             return;
         }
         final NodeRun nodeRun = target.nodeRun();
-        if (nodeRun.status() == NodeRunStatus.CANCELLED) {
+        if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
             return;
         }
         if (nodeRun.status() == NodeRunStatus.FAILED && normalized.equals(nodeRun.failure())) {

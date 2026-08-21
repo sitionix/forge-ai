@@ -35,7 +35,7 @@ public class NodeRunCompletionPersistence {
             return false;
         }
         final NodeRun nodeRun = target.nodeRun();
-        if (nodeRun.status() == NodeRunStatus.CANCELLED) {
+        if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
             return false;
         }
         if (nodeRun.status() == NodeRunStatus.SUCCEEDED && output.equals(nodeRun.output())) {

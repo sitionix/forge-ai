@@ -26,6 +26,7 @@ import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowUseCases;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
+import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.ConnectionResolution;
 import com.sitionix.forgeagent.domain.model.ConnectionResolutionType;
 import com.sitionix.forgeagent.domain.model.Node;
@@ -58,8 +59,10 @@ import com.sitionix.forgeit.core.test.IntegrationTest;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -494,10 +497,11 @@ class ForgeAgentScopedExecutionIT {
         final NodeRun first = this.start(this.onlyPending(runId, B, REPOSITORY_A));
         final NodeRun second = this.start(this.onlyPending(runId, B, REPOSITORY_B));
         try (var executor = Executors.newFixedThreadPool(2)) {
-            final var one = executor.submit(() -> this.lifecycle.fail(first.id(), new NodeRunFailure("FAIL_A", "A failed.")));
-            final var two = executor.submit(() -> this.lifecycle.fail(second.id(), new NodeRunFailure("FAIL_B", "B failed.")));
-            one.get();
-            two.get();
+            final var one = executor.submit(() -> this.failCapturingConflict(first.id(), new NodeRunFailure("FAIL_A", "A failed.")));
+            final var two = executor.submit(() -> this.failCapturingConflict(second.id(), new NodeRunFailure("FAIL_B", "B failed.")));
+            assertThat(Stream.of(one.get(), two.get()).filter(Objects::nonNull).toList())
+                    .allSatisfy(conflict -> assertThat(conflict.code()).isEqualTo(NodeRunLifecycle.LIFECYCLE_CONFLICT))
+                    .hasSizeLessThanOrEqualTo(1);
         }
 
         this.terminal(runId, WorkflowRunStatus.FAILED);
@@ -736,6 +740,15 @@ class ForgeAgentScopedExecutionIT {
     private NodeRun start(final NodeRun nodeRun) {
         final NodeExecutionClaim claim = this.lifecycle.tryStart(nodeRun.id()).orElseThrow();
         return this.nodeRunRepository.findById(claim.nodeRunId()).orElseThrow();
+    }
+
+    private ConflictException failCapturingConflict(final UUID nodeRunId, final NodeRunFailure failure) {
+        try {
+            this.lifecycle.fail(nodeRunId, failure);
+            return null;
+        } catch (final ConflictException conflict) {
+            return conflict;
+        }
     }
 
     private void complete(final NodeRun nodeRun, final String output) {

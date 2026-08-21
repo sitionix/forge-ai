@@ -161,6 +161,48 @@ class NodeRunLifecycleTest {
         assertThat(this.workflowRun.status()).isEqualTo(WorkflowRunStatus.FAILED);
     }
 
+    @Test
+    void terminalWorkflowMakesLateSuccessForCancelledNodeRunANoOp() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.FAILED, NOW, NOW);
+        this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.CANCELLED, MODEL));
+
+        this.lifecycle.succeed(NODE_RUN_ID, new NodeRunOutput("{\"late\":true}"));
+
+        assertThat(this.nodeRuns.get(NODE_RUN_ID).status()).isEqualTo(NodeRunStatus.CANCELLED);
+        verifyNoInteractions(this.completionProcessor);
+    }
+
+    @Test
+    void terminalWorkflowMakesLateFailureForCancelledNodeRunANoOp() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.FAILED, NOW, NOW);
+        this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.CANCELLED, MODEL));
+
+        this.lifecycle.fail(NODE_RUN_ID, new NodeRunFailure("LATE_FAILURE", "Late failure."));
+
+        assertThat(this.nodeRuns.get(NODE_RUN_ID).status()).isEqualTo(NodeRunStatus.CANCELLED);
+    }
+
+    @Test
+    void activeWorkflowRejectsSuccessForCancelledNodeRun() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.RUNNING, NOW, null);
+        this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.CANCELLED, MODEL));
+
+        assertThatThrownBy(() -> this.lifecycle.succeed(NODE_RUN_ID, new NodeRunOutput("{\"late\":true}")))
+                .isInstanceOf(ConflictException.class)
+                .extracting("code").isEqualTo(NodeRunLifecycle.LIFECYCLE_CONFLICT);
+    }
+
+    @Test
+    void activeWorkflowRejectsFailureForCancelledNodeRun() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.RUNNING, NOW, null);
+        this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.CANCELLED, MODEL));
+
+        assertThatThrownBy(() -> this.lifecycle.fail(
+                NODE_RUN_ID, new NodeRunFailure("LATE_FAILURE", "Late failure.")))
+                .isInstanceOf(ConflictException.class)
+                .extracting("code").isEqualTo(NodeRunLifecycle.LIFECYCLE_CONFLICT);
+    }
+
     private void stubRepositories() {
         lenient().when(this.nodeRunRepository.findWorkflowRunIdById(any())).thenAnswer(invocation -> Optional.ofNullable(this.nodeRuns.get(invocation.getArgument(0)))
                 .map(NodeRun::workflowRunId));
