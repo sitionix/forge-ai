@@ -1,5 +1,7 @@
 # Post-Reorganization Hardening Audit
 
+> Historical audit record. References to Nexus lane or agent configuration describe removed behavior; agent and workflow execution now belongs exclusively to Forge Agent.
+
 Date: 2026-06-18
 
 ## Baseline

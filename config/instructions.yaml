@@ -1,5 +1,0 @@
-forge:
-  ai:
-    instructions:
-      shared:
-        - instructions/shared/common-rules.md

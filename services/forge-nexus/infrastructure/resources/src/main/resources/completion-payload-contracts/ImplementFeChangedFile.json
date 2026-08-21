@@ -1,8 +1,0 @@
-{
-  "payloadType": "ImplementFeChangedFile",
-  "description": "One frontend production file changed by an implementation lane.",
-  "fields": [
-    { "name": "path", "type": "STRING", "required": true, "description": "Repository-relative file path." },
-    { "name": "reason", "type": "STRING", "required": true, "description": "Why the file was changed and what UI behavior it owns." }
-  ]
-}

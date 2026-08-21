@@ -17,9 +17,6 @@ forge:
     query:
       human-query:
         request-timeout-seconds: ${FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS:180}
-    launcher:
-      default-base-url: ${FORGE_NEXUS_BASE_URL:http://127.0.0.1:9099/fgaisox}
-      services-config-resource: ${FORGE_SERVICES_CONFIG_RESOURCE:classpath:services.yaml}
     infrastructure:
       proxy:
         knowledge-human-query-transport-grace: 5s

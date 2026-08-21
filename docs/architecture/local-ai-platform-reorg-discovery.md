@@ -1,5 +1,7 @@
 # Local AI Platform Reorg Discovery
 
+> Historical discovery record. References to Nexus lane or agent configuration describe removed behavior; agent and workflow execution now belongs exclusively to Forge Agent.
+
 Discovery was run before implementation with `git status --short`, Maven/Python baseline checks, `find` over Maven/Python/config/script locations, Operator UI static files, and `rg` over service paths, config names, ports, URLs, and endpoint prefixes.
 
 ## Maven Modules

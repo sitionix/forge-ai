@@ -14,11 +14,6 @@
     <packaging>pom</packaging>
 
     <modules>
-        <module>mongodb</module>
-        <module>codex-cli</module>
-        <module>resources</module>
-        <module>github-cli</module>
-        <module>local-cli</module>
         <module>knowledge-client</module>
         <module>agent-client</module>
     </modules>

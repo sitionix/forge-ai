@@ -40,9 +40,6 @@ require_local_http_url() {
 
 require_file "${FORGE_CONFIG_DIR}/forge-ai.yaml"
 require_file "${FORGE_CONFIG_DIR}/services.yaml"
-require_file "${FORGE_CONFIG_DIR}/agent.yml"
-require_file "${FORGE_CONFIG_DIR}/lane-strategies.yml"
-require_file "${FORGE_CONFIG_DIR}/instructions.yaml"
 require_file "${FORGE_CONFIG_DIR}/knowledge/knowledge.defaults.yaml"
 require_file "${FORGE_CONFIG_DIR}/knowledge/knowledge-sources.yaml"
 require_file "${FORGE_CONFIG_DIR}/knowledge/analysis-policy.yaml"

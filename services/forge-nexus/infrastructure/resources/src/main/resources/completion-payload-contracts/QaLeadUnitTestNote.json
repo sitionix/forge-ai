@@ -1,8 +1,0 @@
-{
-  "payloadType": "QaLeadUnitTestNote",
-  "description": "One QA note for a unit, integration, or UI test target.",
-  "fields": [
-    { "name": "target", "type": "STRING", "required": true, "description": "Component, class, endpoint, route, behavior, or data area the note targets." },
-    { "name": "note", "type": "STRING", "required": true, "description": "Concrete testing guidance for the target." }
-  ]
-}

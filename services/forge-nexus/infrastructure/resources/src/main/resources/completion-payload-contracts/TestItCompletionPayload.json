@@ -1,9 +1,0 @@
-{
-  "payloadType": "TestItCompletionPayload",
-  "description": "Completion report persisted by the integration test lane.",
-  "fields": [
-    { "name": "scope", "type": "STRING", "required": true, "description": "Exact backend service scope covered by integration tests." },
-    { "name": "summary", "type": "STRING", "required": true, "description": "Summary of integration tests added or updated." },
-    { "name": "coveredCases", "type": "ARRAY", "required": true, "description": "Names or titles of QA/IT cases covered by this lane.", "itemType": "STRING" }
-  ]
-}

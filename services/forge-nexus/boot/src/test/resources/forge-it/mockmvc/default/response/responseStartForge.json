@@ -1,8 +1,0 @@
-{
-  "id": "{{id}}",
-  "ticket": "SITIONIX-1",
-  "task": "hi",
-  "scope": "forgeai",
-  "status": "SUBMITTED",
-  "createdAt": "{{createdAt}}"
-}

@@ -27,11 +27,11 @@ export class HttpClient {
     this.contextPath = options.contextPath ?? contextPathFromLocation();
   }
 
-  async get<T>(basePath: keyof Pick<OperatorRuntimeConfig, 'operatorUiApiBasePath' | 'operatorApiBasePath' | 'infrastructureApiBasePath'>, path: string): Promise<T> {
+  async get<T>(basePath: 'infrastructureApiBasePath', path: string): Promise<T> {
     return this.request<T>(basePath, path, { cache: 'no-store' });
   }
 
-  async post<T>(basePath: keyof Pick<OperatorRuntimeConfig, 'operatorUiApiBasePath' | 'operatorApiBasePath' | 'infrastructureApiBasePath'>, path: string, body: unknown): Promise<T> {
+  async post<T>(basePath: 'infrastructureApiBasePath', path: string, body: unknown): Promise<T> {
     return this.request<T>(basePath, path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -40,7 +40,7 @@ export class HttpClient {
   }
 
   private async request<T>(
-    basePath: keyof Pick<OperatorRuntimeConfig, 'operatorUiApiBasePath' | 'operatorApiBasePath' | 'infrastructureApiBasePath'>,
+    basePath: 'infrastructureApiBasePath',
     path: string,
     init: RequestInit
   ): Promise<T> {
