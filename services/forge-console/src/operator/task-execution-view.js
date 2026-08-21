@@ -11,7 +11,6 @@ const NODE_MID_Y = 58;
 const MIN_CANVAS_WIDTH = 1600;
 const MIN_CANVAS_HEIGHT = 1000;
 const CANVAS_PADDING = 240;
-const REVERSE_EDGE_CANVAS_MARGIN = 8;
 const MIN_CANVAS_SCALE = 0.45;
 const MAX_CANVAS_SCALE = 1.8;
 const HISTORY_MARKER_LIMIT = 6;
@@ -20,6 +19,8 @@ const LAYOUT_Y_GAP = 56;
 const LAYOUT_START_X = 80;
 const LAYOUT_START_Y = 80;
 const GLOBAL_REPOSITORY_KEY = '__global__';
+const EDGE_NODE_CLEARANCE = 16;
+const EDGE_BEND_COST = 12;
 
 export function visualUnitKey(sourceNodeId, repositoryId) {
   return `${sourceNodeId}::${normalizedRepositoryId(repositoryId) || GLOBAL_REPOSITORY_KEY}`;
@@ -200,6 +201,164 @@ function hasProjectionPath(outgoing, start, target) {
     pending.push(...(outgoing.get(current) || []));
   }
   return false;
+}
+
+export function routeExecutionEdge(start, end, nodeBounds) {
+  const sourceBounds = nodeBounds.find((bounds) => pointInsideOrOnRectangle(start, bounds));
+  const targetBounds = nodeBounds.find((bounds) => pointInsideOrOnRectangle(end, bounds));
+  const obstacles = nodeBounds.map((bounds) => ({
+    left: bounds.left - EDGE_NODE_CLEARANCE,
+    top: bounds.top - EDGE_NODE_CLEARANCE,
+    right: bounds.right + EDGE_NODE_CLEARANCE,
+    bottom: bounds.bottom + EDGE_NODE_CLEARANCE
+  }));
+  const sourceExit = {
+    x: sourceBounds ? sourceBounds.right + EDGE_NODE_CLEARANCE : start.x + EDGE_NODE_CLEARANCE,
+    y: start.y
+  };
+  const targetEntry = {
+    x: targetBounds ? targetBounds.left - EDGE_NODE_CLEARANCE : end.x - EDGE_NODE_CLEARANCE,
+    y: end.y
+  };
+  const routed = shortestOrthogonalRoute(sourceExit, targetEntry, obstacles);
+  return compactOrthogonalPoints([start, ...routed, end]);
+}
+
+function shortestOrthogonalRoute(start, end, obstacles) {
+  const xCoordinates = new Set([start.x, end.x]);
+  const yCoordinates = new Set([start.y, end.y]);
+  for (const obstacle of obstacles) {
+    xCoordinates.add(obstacle.left);
+    xCoordinates.add(obstacle.right);
+    yCoordinates.add(obstacle.top);
+    yCoordinates.add(obstacle.bottom);
+  }
+  const xs = [...xCoordinates].sort((left, right) => left - right);
+  const ys = [...yCoordinates].sort((left, right) => left - right);
+  const pointByKey = new Map();
+  for (const y of ys) {
+    for (const x of xs) {
+      const point = { x, y };
+      if (obstacles.some((obstacle) => pointInsideObstacle(point, obstacle))) {
+        continue;
+      }
+      pointByKey.set(pointKey(point), point);
+    }
+  }
+  pointByKey.set(pointKey(start), start);
+  pointByKey.set(pointKey(end), end);
+  const adjacency = new Map([...pointByKey.keys()].map((key) => [key, []]));
+  connectVisibleNeighbors([...pointByKey.values()], 'x', 'y', obstacles, adjacency);
+  connectVisibleNeighbors([...pointByKey.values()], 'y', 'x', obstacles, adjacency);
+  const route = findShortestRoute(start, end, pointByKey, adjacency);
+  if (!route) {
+    throw new Error('Execution edge could not be routed without intersecting a node.');
+  }
+  return route;
+}
+
+function connectVisibleNeighbors(points, groupAxis, sortAxis, obstacles, adjacency) {
+  const groups = new Map();
+  for (const point of points) {
+    if (!groups.has(point[groupAxis])) {
+      groups.set(point[groupAxis], []);
+    }
+    groups.get(point[groupAxis]).push(point);
+  }
+  for (const group of groups.values()) {
+    group.sort((left, right) => left[sortAxis] - right[sortAxis]);
+    for (let index = 1; index < group.length; index += 1) {
+      const first = group[index - 1];
+      const second = group[index];
+      if (obstacles.some((obstacle) => segmentIntersectsObstacle(first, second, obstacle))) {
+        continue;
+      }
+      adjacency.get(pointKey(first)).push(second);
+      adjacency.get(pointKey(second)).push(first);
+    }
+  }
+}
+
+function findShortestRoute(start, end, pointByKey, adjacency) {
+  const startKey = pointKey(start);
+  const endKey = pointKey(end);
+  const queue = [{ key: startKey, direction: 'START', cost: 0 }];
+  const costByState = new Map([[`${startKey}|START`, 0]]);
+  const previousByState = new Map();
+  let finalState = null;
+  while (queue.length) {
+    queue.sort((left, right) => left.cost - right.cost || left.key.localeCompare(right.key));
+    const current = queue.shift();
+    const stateKey = `${current.key}|${current.direction}`;
+    if (current.cost !== costByState.get(stateKey)) {
+      continue;
+    }
+    if (current.key === endKey) {
+      finalState = stateKey;
+      break;
+    }
+    const currentPoint = pointByKey.get(current.key);
+    for (const neighbor of adjacency.get(current.key) || []) {
+      const neighborKey = pointKey(neighbor);
+      const direction = currentPoint.x === neighbor.x ? 'VERTICAL' : 'HORIZONTAL';
+      const distance = Math.abs(currentPoint.x - neighbor.x) + Math.abs(currentPoint.y - neighbor.y);
+      const bend = current.direction === 'START' || current.direction === direction ? 0 : EDGE_BEND_COST;
+      const nextCost = current.cost + distance + bend;
+      const nextState = `${neighborKey}|${direction}`;
+      if (nextCost >= (costByState.get(nextState) ?? Number.POSITIVE_INFINITY)) {
+        continue;
+      }
+      costByState.set(nextState, nextCost);
+      previousByState.set(nextState, stateKey);
+      queue.push({ key: neighborKey, direction, cost: nextCost });
+    }
+  }
+  if (!finalState) {
+    return null;
+  }
+  const route = [];
+  for (let state = finalState; state; state = previousByState.get(state)) {
+    route.push(pointByKey.get(state.slice(0, state.lastIndexOf('|'))));
+  }
+  return route.reverse();
+}
+
+function compactOrthogonalPoints(points) {
+  const unique = points.filter((point, index) => {
+    const previous = points[index - 1];
+    return !previous || previous.x !== point.x || previous.y !== point.y;
+  });
+  return unique.filter((point, index) => {
+    const previous = unique[index - 1];
+    const next = unique[index + 1];
+    return !previous || !next
+      || !((previous.x === point.x && point.x === next.x) || (previous.y === point.y && point.y === next.y));
+  });
+}
+
+function pointInsideObstacle(point, obstacle) {
+  return point.x > obstacle.left && point.x < obstacle.right
+    && point.y > obstacle.top && point.y < obstacle.bottom;
+}
+
+function pointInsideOrOnRectangle(point, rectangle) {
+  return point.x >= rectangle.left && point.x <= rectangle.right
+    && point.y >= rectangle.top && point.y <= rectangle.bottom;
+}
+
+function segmentIntersectsObstacle(start, end, obstacle) {
+  if (start.x === end.x) {
+    return start.x > obstacle.left && start.x < obstacle.right
+      && Math.max(start.y, end.y) > obstacle.top
+      && Math.min(start.y, end.y) < obstacle.bottom;
+  }
+  return start.y > obstacle.top && start.y < obstacle.bottom
+    && Math.max(start.x, end.x) > obstacle.left
+    && Math.min(start.x, end.x) < obstacle.right;
+}
+
+function pointKey(point) {
+  return `${point.x},${point.y}`;
 }
 
 export class TaskExecutionView {
@@ -1035,44 +1194,9 @@ export class TaskExecutionView {
   }
 
   modernPathD(start, end, sourceNode, targetNode, projection = null) {
-    const sourceX = Number(sourceNode.position?.x || 0);
-    const targetX = Number(targetNode.position?.x || 0);
-    if (targetX <= sourceX) {
-      const sourceBounds = this.modernNodeBounds(sourceNode, projection);
-      const targetBounds = this.modernNodeBounds(targetNode, projection);
-      const clearance = 32;
-      const right = Math.max(sourceBounds.right, targetBounds.right, start.x, end.x) + clearance;
-      const left = Math.min(sourceBounds.left, targetBounds.left, start.x, end.x) - clearance;
-      const top = Math.min(sourceBounds.top, targetBounds.top, start.y, end.y) - clearance;
-      if (left < REVERSE_EDGE_CANVAS_MARGIN) {
-        const verticalOutside = top >= REVERSE_EDGE_CANVAS_MARGIN
-          ? top
-          : Math.max(sourceBounds.bottom, targetBounds.bottom, start.y, end.y) + clearance;
-        return this.orthogonalRoundedPath([
-          start,
-          { x: right, y: start.y },
-          { x: right, y: verticalOutside },
-          { x: end.x, y: verticalOutside },
-          end
-        ]);
-      }
-      const safeTop = Math.max(REVERSE_EDGE_CANVAS_MARGIN, top);
-      return this.orthogonalRoundedPath([
-        start,
-        { x: right, y: start.y },
-        { x: right, y: safeTop },
-        { x: left, y: safeTop },
-        { x: left, y: end.y },
-        end
-      ]);
-    }
-    const midX = (start.x + end.x) / 2;
-    return this.orthogonalRoundedPath([
-      start,
-      { x: midX, y: start.y },
-      { x: midX, y: end.y },
-      end
-    ]);
+    const bounds = (projection?.graph.nodes || [sourceNode, targetNode])
+      .map((node) => this.modernNodeBounds(node, projection));
+    return this.orthogonalRoundedPath(routeExecutionEdge(start, end, bounds));
   }
 
   orthogonalRoundedPath(points) {

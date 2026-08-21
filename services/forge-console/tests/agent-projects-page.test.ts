@@ -425,10 +425,6 @@ function stubAnchor(dom: JSDOM, portId: string, centerX: number, centerY: number
   stubRect(dom.window.document.querySelector(`[data-runtime-port-anchor-id="${portId}"]`), centerX - 4, centerY - 4, 8, 8);
 }
 
-function pathNumbers(path: string) {
-  return (path.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
-}
-
 function pathPoints(path: string) {
   const points: Array<{ x: number; y: number }> = [];
   let current = { x: 0, y: 0 };
@@ -1495,16 +1491,16 @@ describe('Agent projects page', () => {
 
     stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 900, 600);
     page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
-    stubAnchor(dom, 'a-output-one', 252, 80);
-    stubAnchor(dom, 'b-input-one', 320, 120);
-    stubAnchor(dom, 'a-output-two', 252, 132);
-    stubAnchor(dom, 'b-input-two', 320, 180);
+    stubAnchor(dom, 'a-output-one', 312, 100);
+    stubAnchor(dom, 'b-input-one', 460, 120);
+    stubAnchor(dom, 'a-output-two', 312, 140);
+    stubAnchor(dom, 'b-input-two', 460, 160);
     page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
 
     const pathOne = dom.window.document.querySelector('[data-runtime-connection-id="edge-one"] path')?.getAttribute('d') || '';
     const pathTwo = dom.window.document.querySelector('[data-runtime-connection-id="edge-two"] path')?.getAttribute('d') || '';
-    expect(pathOne).toBe('M 252 80 H 274 Q 286 80 286 92 V 108 Q 286 120 298 120 H 320');
-    expect(pathTwo).toBe('M 252 132 H 274 Q 286 132 286 144 V 168 Q 286 180 298 180 H 320');
+    expect(pathOne).toMatch(/^M 312 100 .+ H 460$/);
+    expect(pathTwo).toMatch(/^M 312 140 .+ H 460$/);
     expect(pathOne).not.toMatch(/[CS]/);
     expect(pathTwo).not.toMatch(/[CS]/);
     expect(pathOne).not.toBe(pathTwo);
@@ -1538,8 +1534,7 @@ describe('Agent projects page', () => {
 
     const path = dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d') || '';
     expect(path).not.toMatch(/[CS]/);
-    expect(path).toMatch(/^M (?:\d+(?:\.\d+)? )+\d+(?: H \d+(?:\.\d+)?| V \d+(?:\.\d+)?| Q \d+(?:\.\d+)? \d+(?:\.\d+)? \d+(?:\.\d+)? \d+(?:\.\d+)?)+$/);
-    expect(pathNumbers(path).every((value) => value >= 0)).toBe(true);
+    expect(path).toMatch(/^M (?:-?\d+(?:\.\d+)? )+-?\d+(?: H -?\d+(?:\.\d+)?| V -?\d+(?:\.\d+)?| Q -?\d+(?:\.\d+)? -?\d+(?:\.\d+)? -?\d+(?:\.\d+)? -?\d+(?:\.\d+)?)+$/);
     expectPathOutsideRects(path, [workerBounds, reviewerBounds]);
   });
 

@@ -27,3 +27,8 @@ export function buildExecutionProjection(
   repositoryIds?: string[],
   repositories?: Array<{ id: string; name: string }>
 ): ExecutionProjectionGraph;
+export function routeExecutionEdge(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  nodeBounds: Array<{ left: number; top: number; right: number; bottom: number }>
+): Array<{ x: number; y: number }>;

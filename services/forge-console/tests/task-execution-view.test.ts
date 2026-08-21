@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildExecutionProjection, visualUnitKey } from '../src/operator/task-execution-view.js';
+import { buildExecutionProjection, routeExecutionEdge, visualUnitKey } from '../src/operator/task-execution-view.js';
 
 const REPOSITORIES = [
   { id: 'repo-a', name: 'repo-A' },
@@ -40,6 +40,17 @@ function rectanglesOverlap(left: any, right: any) {
     && left.position.x + 232 > right.position.x
     && left.position.y < right.position.y + right.layoutHeight
     && left.position.y + left.layoutHeight > right.position.y;
+}
+
+function segmentIntersectsRectangle(start: any, end: any, rectangle: any) {
+  if (start.x === end.x) {
+    return start.x > rectangle.left && start.x < rectangle.right
+      && Math.max(start.y, end.y) > rectangle.top
+      && Math.min(start.y, end.y) < rectangle.bottom;
+  }
+  return start.y > rectangle.top && start.y < rectangle.bottom
+    && Math.max(start.x, end.x) > rectangle.left
+    && Math.min(start.x, end.x) < rectangle.right;
 }
 
 describe('task execution visual projection', () => {
@@ -116,5 +127,50 @@ describe('task execution visual projection', () => {
     }
     expect(repeated.nodes.map((node) => node.position)).toEqual(projection.nodes.map((node) => node.position));
     expect(projection.connections).toHaveLength(9);
+  });
+
+  it('routes every edge around all unrelated visual units with clearance', () => {
+    const projection = buildExecutionProjection(graph([
+      { id: 'source', scopeMode: 'GLOBAL' },
+      { id: 'obstacle-a', scopeMode: 'GLOBAL' },
+      { id: 'obstacle-b', scopeMode: 'GLOBAL' },
+      { id: 'target', scopeMode: 'GLOBAL' }
+    ], [
+      ['source', 'obstacle-a'],
+      ['obstacle-a', 'obstacle-b'],
+      ['obstacle-b', 'target'],
+      ['source', 'target']
+    ]), [], []);
+    const source = projection.nodes.find((node) => node.sourceNodeId === 'source')!;
+    const target = projection.nodes.find((node) => node.sourceNodeId === 'target')!;
+    const bounds = projection.nodes.map((node) => ({
+      key: node.visualUnitKey,
+      left: node.position.x,
+      top: node.position.y,
+      right: node.position.x + 232,
+      bottom: node.position.y + node.layoutHeight
+    }));
+    const route = routeExecutionEdge(
+      { x: source.position.x + 232, y: source.position.y + (source.layoutHeight / 2) },
+      { x: target.position.x, y: target.position.y + (target.layoutHeight / 2) },
+      bounds
+    );
+    const unrelated = bounds
+      .filter((rectangle) => ![source.visualUnitKey, target.visualUnitKey].includes(rectangle.key))
+      .map((rectangle) => ({
+        ...rectangle,
+        left: rectangle.left - 15,
+        top: rectangle.top - 15,
+        right: rectangle.right + 15,
+        bottom: rectangle.bottom + 15
+      }));
+
+    for (let index = 1; index < route.length; index += 1) {
+      for (const rectangle of unrelated) {
+        expect(segmentIntersectsRectangle(route[index - 1], route[index], rectangle)).toBe(false);
+      }
+    }
+    expect(route.some((point) => point.y <= Math.min(...unrelated.map((rectangle) => rectangle.top))
+      || point.y >= Math.max(...unrelated.map((rectangle) => rectangle.bottom)))).toBe(true);
   });
 });
