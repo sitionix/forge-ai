@@ -17,10 +17,12 @@ final class DefaultCodexAppServerProcessStarter implements CodexAppServerProcess
     @Override
     public StartedCodexAppServer start(final Path workingDirectory) {
         final List<String> command = List.copyOf(this.properties.getCommand());
+        final Path launchDirectory = workingDirectory.toAbsolutePath().normalize();
+        if (!Files.isDirectory(launchDirectory)) {
+            throw new CodexTransportException("Codex app-server working directory is unavailable");
+        }
         try {
             final ProcessBuilder builder = new ProcessBuilder(command);
-            final Path launchDirectory = workingDirectory.toAbsolutePath().normalize();
-            Files.createDirectories(launchDirectory);
             builder.directory(launchDirectory.toFile());
             final Process process = builder.start();
             return new StartedCodexAppServer(process, command, Instant.now());

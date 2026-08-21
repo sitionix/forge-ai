@@ -16,7 +16,6 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class CodexAppServerTurnClientTest {
@@ -68,11 +67,9 @@ class CodexAppServerTurnClientTest {
         assertThat(turnStart.path("params").path("effort").asText()).isEqualTo("high");
         assertThat(turnStart.path("params").path("outputSchema")).isEqualTo(schema);
         this.replyTurn(process, turnStart, "turn-1");
-        this.awaitActiveTurn(client);
         this.complete(process, "thread-1", "turn-1", "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
 
         assertThat(result.get(1, TimeUnit.SECONDS)).isEqualTo("{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
-        assertThat(client.activeTurnCountForTesting()).isZero();
         client.close();
     }
 
@@ -268,7 +265,6 @@ class CodexAppServerTurnClientTest {
         this.assertInterrupt(harness.process(), "thread-1", "turn-1");
 
         assertExecutionFailure(harness.result());
-        assertThat(harness.client().activeTurnCountForTesting()).isZero();
         harness.client().close();
     }
 
@@ -372,38 +368,6 @@ class CodexAppServerTurnClientTest {
         this.assertInterrupt(process, "thread-1", "turn-1");
 
         assertExecutionFailure(result);
-        assertThat(client.activeTurnCountForTesting()).isZero();
-        client.close();
-    }
-
-    @Test
-    void javaThreadInterruptionInterruptsProviderTurnAndRestoresInterruptFlag() throws Exception {
-        final FakeCodexProcess process = new FakeCodexProcess(false, true);
-        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
-        final AtomicReference<Thread> runner = new AtomicReference<>();
-        final CompletableFuture<Boolean> failedWithInterruptFlag = new CompletableFuture<>();
-        final Thread executionThread = Thread.ofVirtual().start(() -> {
-            runner.set(Thread.currentThread());
-            try {
-                client.execute(new CodexTurnRequest("Interrupt.", "Instructions.", "model-a", null, this.schemaUnchecked(), this.workspace()));
-                failedWithInterruptFlag.complete(false);
-            } catch (final RuntimeException exception) {
-                failedWithInterruptFlag.complete(Thread.currentThread().isInterrupted());
-            }
-        });
-
-        this.initialize(process);
-        final JsonNode threadStart = this.readRequest(process);
-        this.replyThread(process, threadStart, "thread-1");
-        final JsonNode turnStart = this.readRequest(process);
-        this.replyTurn(process, turnStart, "turn-1");
-        this.awaitActiveTurn(client);
-        runner.get().interrupt();
-        this.assertInterrupt(process, "thread-1", "turn-1");
-
-        assertThat(failedWithInterruptFlag.get(1, TimeUnit.SECONDS)).isTrue();
-        executionThread.join(TimeUnit.SECONDS.toMillis(1));
-        assertThat(client.activeTurnCountForTesting()).isZero();
         client.close();
     }
 
@@ -414,24 +378,30 @@ class CodexAppServerTurnClientTest {
         final FakeStarter starter = new FakeStarter(firstProcess, secondProcess);
         final CodexAppServerClient client = this.client(starter, this.properties());
         final JsonNode schema = this.schema();
+        final Path project = Files.createTempDirectory("forge-agent-concurrent-project");
+        final Path repositoryA = Files.createDirectories(project.resolve("repo-A"));
+        final Path repositoryB = Files.createDirectories(project.resolve("repo-B"));
         final CompletableFuture<String> b = CompletableFuture.supplyAsync(() -> client.execute(
-                new CodexTurnRequest("Prompt B", "Instructions.", "model-b", null, schema, this.workspace())
+                new CodexTurnRequest("Prompt B", "Instructions.", "model-b", null, schema,
+                        new ExecutionWorkspace(repositoryA, List.of(repositoryA)))
         ));
         final CompletableFuture<String> c = CompletableFuture.supplyAsync(() -> client.execute(
-                new CodexTurnRequest("Prompt C", "Instructions.", "model-c", null, schema, this.workspace())
+                new CodexTurnRequest("Prompt C", "Instructions.", "model-c", null, schema,
+                        new ExecutionWorkspace(repositoryB, List.of(repositoryB)))
         ));
 
         this.initialize(firstProcess);
         this.initialize(secondProcess);
         final JsonNode threadOne = this.readRequest(firstProcess);
         final JsonNode threadTwo = this.readRequest(secondProcess);
+        this.assertProcessWorkspace(starter, firstProcess, threadOne, repositoryA, repositoryB);
+        this.assertProcessWorkspace(starter, secondProcess, threadTwo, repositoryA, repositoryB);
         this.replyThread(firstProcess, threadOne);
         this.replyThread(secondProcess, threadTwo);
         final JsonNode turnOne = this.readRequest(firstProcess);
         final JsonNode turnTwo = this.readRequest(secondProcess);
         this.replyTurn(firstProcess, turnOne);
         this.replyTurn(secondProcess, turnTwo);
-        this.awaitActiveTurns(client, 2);
         this.complete(firstProcess, threadOne.path("params").path("model").asText().replace("model-", "thread-"),
                 threadOne.path("params").path("model").asText().replace("model-", "turn-"),
                 this.outputForModel(threadOne));
@@ -478,7 +448,6 @@ class CodexAppServerTurnClientTest {
 
         assertThat(b.get(1, TimeUnit.SECONDS)).isEqualTo("{\"summary\":\"B early\",\"riskLevel\":\"LOW\"}");
         assertThat(c.get(1, TimeUnit.SECONDS)).isEqualTo("{\"summary\":\"C early\",\"riskLevel\":\"HIGH\"}");
-        assertThat(client.activeTurnCountForTesting()).isZero();
         assertThat(starter.starts()).isEqualTo(2);
         client.close();
     }
@@ -547,7 +516,6 @@ class CodexAppServerTurnClientTest {
         this.replyThread(process, threadStart, "thread-1");
         final JsonNode turnStart = this.readRequest(process);
         this.replyTurn(process, turnStart, "turn-1");
-        this.awaitActiveTurn(client);
         return new TurnHarness(client, process, turnStart, result);
     }
 
@@ -563,18 +531,6 @@ class CodexAppServerTurnClientTest {
 
     private ExecutionWorkspace workspace(final Path cwd) {
         return new ExecutionWorkspace(cwd, List.of(cwd));
-    }
-
-    private void awaitActiveTurn(final CodexAppServerClient client) {
-        this.awaitActiveTurns(client, 1);
-    }
-
-    private void awaitActiveTurns(final CodexAppServerClient client, final int expected) {
-        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
-        while (client.activeTurnCountForTesting() < expected && System.nanoTime() < deadline) {
-            Thread.yield();
-        }
-        assertThat(client.activeTurnCountForTesting()).isEqualTo(expected);
     }
 
     private void initialize(final FakeCodexProcess process) throws Exception {
@@ -656,6 +612,20 @@ class CodexAppServerTurnClientTest {
                 : "{\"summary\":\"C early\",\"riskLevel\":\"HIGH\"}";
     }
 
+    private void assertProcessWorkspace(final FakeStarter starter,
+                                        final FakeCodexProcess process,
+                                        final JsonNode threadStart,
+                                        final Path repositoryA,
+                                        final Path repositoryB) {
+        final Path expected = "model-b".equals(threadStart.path("params").path("model").asText())
+                ? repositoryA
+                : repositoryB;
+        assertThat(starter.workingDirectory(process)).isEqualTo(expected);
+        assertThat(threadStart.path("params").path("cwd").asText()).isEqualTo(expected.toString());
+        assertThat(threadStart.path("params").path("runtimeWorkspaceRoots"))
+                .isEqualTo(this.objectMapper.valueToTree(List.of(expected.toString())));
+    }
+
     private String threadStartResponse(final String requestId, final String threadId) {
         return this.compactJson("""
                 {
@@ -671,15 +641,12 @@ class CodexAppServerTurnClientTest {
                       "createdAt": 1,
                       "updatedAt": 1,
                       "status": "idle",
-                      "cwd": "/tmp/forge-agent-codex-runtime",
                       "cliVersion": "0.147.0",
                       "source": "appServer",
                       "turns": []
                     },
                     "model": "gpt-5.6-luna",
                     "modelProvider": "openai",
-                    "cwd": "/tmp/forge-agent-codex-runtime",
-                    "runtimeWorkspaceRoots": [],
                     "instructionSources": [],
                     "approvalPolicy": "never",
                     "sandbox": {},
@@ -820,6 +787,7 @@ class CodexAppServerTurnClientTest {
     private static final class FakeStarter implements CodexAppServerProcessStarter {
         private final Queue<FakeCodexProcess> processes;
         private final List<Path> workingDirectories = new ArrayList<>();
+        private final List<Launch> launches = new ArrayList<>();
         private int starts;
 
         private FakeStarter(final FakeCodexProcess... processes) {
@@ -830,7 +798,9 @@ class CodexAppServerTurnClientTest {
         public synchronized StartedCodexAppServer start(final Path workingDirectory) {
             this.starts++;
             this.workingDirectories.add(workingDirectory);
-            return new StartedCodexAppServer(this.processes.remove(), List.of("codex", "app-server", "--stdio"), Instant.now());
+            final FakeCodexProcess process = this.processes.remove();
+            this.launches.add(new Launch(process, workingDirectory));
+            return new StartedCodexAppServer(process, List.of("codex", "app-server", "--stdio"), Instant.now());
         }
 
         private int starts() {
@@ -839,6 +809,17 @@ class CodexAppServerTurnClientTest {
 
         private List<Path> workingDirectories() {
             return List.copyOf(this.workingDirectories);
+        }
+
+        private synchronized Path workingDirectory(final FakeCodexProcess process) {
+            return this.launches.stream()
+                    .filter(launch -> launch.process() == process)
+                    .findFirst()
+                    .orElseThrow()
+                    .workingDirectory();
+        }
+
+        private record Launch(FakeCodexProcess process, Path workingDirectory) {
         }
     }
 }

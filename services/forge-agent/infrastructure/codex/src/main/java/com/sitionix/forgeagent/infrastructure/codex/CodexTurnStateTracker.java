@@ -34,12 +34,6 @@ final class CodexTurnStateTracker {
         this.executionsByThreadId.clear();
     }
 
-    synchronized int activeTurnCount() {
-        return (int) this.executionsByThreadId.values().stream()
-                .filter(execution -> execution.hasTurnId() && !execution.done())
-                .count();
-    }
-
     synchronized void handleNotification(final String method, final JsonNode params) {
         if (CodexProtocol.ITEM_STARTED.equals(method)) {
             this.handleGenerationItem(params, method, false);

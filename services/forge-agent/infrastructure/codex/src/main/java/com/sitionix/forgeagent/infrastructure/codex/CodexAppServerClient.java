@@ -8,7 +8,6 @@ import java.nio.file.Path;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +17,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
+final class CodexAppServerClient implements CodexClient {
 
     private static final Pattern USER_AGENT_VERSION = Pattern.compile("^[^/]+/([^\\s]+).*");
 
@@ -26,8 +25,6 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
     private final CodexAppServerProcessStarter processStarter;
     private final CodexAppServerProperties properties;
     private final CodexRuntimeWorkspace runtimeWorkspace;
-    private final CodexTurnStateTracker neutralTurnStateTracker = new CodexTurnStateTracker();
-    private final AtomicInteger activeTurnCount = new AtomicInteger();
     private CodexJsonRpcTransport transport;
     private String codexVersion;
 
@@ -66,17 +63,13 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         }
     }
 
-    int activeTurnCountForTesting() {
-        return this.activeTurnCount.get();
-    }
-
     private synchronized CodexJsonRpcTransport ensureInitialized() {
         if (this.transport != null && this.transport.healthy()) {
             return this.transport;
         }
         this.closeCurrent();
-        final CodexJsonRpcTransport next = this.startWorkspaceTransport(
-                this.runtimeWorkspace.routingWorkspace().cwd(), this.neutralTurnStateTracker);
+        final CodexJsonRpcTransport next = this.startNeutralTransport(
+                this.runtimeWorkspace.routingWorkspace().cwd());
         this.transport = next;
         this.codexVersion = null;
         try {
@@ -117,6 +110,14 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
         );
     }
 
+    private CodexJsonRpcTransport startNeutralTransport(final Path workingDirectory) {
+        return new CodexJsonRpcTransport(
+                this.objectMapper,
+                this.processStarter.start(workingDirectory),
+                this.properties
+        );
+    }
+
     private CodexExecution startExecution(final CodexJsonRpcTransport current,
                                           final CodexTurnStateTracker turnStateTracker,
                                           final CodexTurnRequest request) {
@@ -127,7 +128,6 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
             final String turnId = this.startTurn(current, turnStateTracker, threadId, request);
             turnStateTracker.bindTurnId(state, turnId);
             this.verifyTransportStillHealthy(current, state);
-            this.activeTurnCount.incrementAndGet();
             return new CodexExecution(current, turnStateTracker, state);
         } catch (final CodexTransportException e) {
             if (state != null) {
@@ -227,12 +227,7 @@ final class CodexAppServerClient implements CodexRpcClient, CodexTurnClient {
     }
 
     private void releaseExecution(final CodexExecution execution) {
-        this.remove(execution.turnStateTracker(), execution.state());
-    }
-
-    private void remove(final CodexTurnStateTracker turnStateTracker, final CodexExecutionState state) {
-        turnStateTracker.remove(state);
-        this.activeTurnCount.decrementAndGet();
+        execution.turnStateTracker().remove(execution.state());
     }
 
     private ObjectNode threadStartParams(final CodexTurnRequest request) {

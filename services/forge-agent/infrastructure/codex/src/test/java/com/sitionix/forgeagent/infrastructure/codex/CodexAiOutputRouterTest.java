@@ -23,7 +23,7 @@ class CodexAiOutputRouterTest {
     private static final UUID RETURN_ID = UUID.fromString("30000000-0000-4000-8000-000000000002");
 
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final RecordingTurnClient turnClient = new RecordingTurnClient();
+    private final RecordingCodexClient client = new RecordingCodexClient();
     private final NodeRunExecutionModel executionModel = new NodeRunExecutionModel("codex", "gpt-5.6-luna", "low");
     private final CodexAiOutputRouter router;
 
@@ -35,25 +35,25 @@ class CodexAiOutputRouterTest {
 
     @Test
     void sendsBusinessOutputAndStableOutputMetadata() throws Exception {
-        this.turnClient.outputText = "{\"selectedOutputPortId\":\"" + RETURN_ID + "\"}";
+        this.client.outputText = "{\"selectedOutputPortId\":\"" + RETURN_ID + "\"}";
 
         final UUID selected = this.router.selectOutput(new NodeRunOutput("{\"decision\":\"needs changes\"}"), this.outputs(), this.executionModel);
 
         assertThat(selected).isEqualTo(RETURN_ID);
-        assertThat(this.turnClient.request.modelId()).isEqualTo("gpt-5.6-luna");
-        assertThat(this.turnClient.request.effortId()).isEqualTo("low");
-        final JsonNode input = this.objectMapper.readTree(this.turnClient.request.userInput());
+        assertThat(this.client.request.modelId()).isEqualTo("gpt-5.6-luna");
+        assertThat(this.client.request.effortId()).isEqualTo("low");
+        final JsonNode input = this.objectMapper.readTree(this.client.request.userInput());
         assertThat(input.path("businessOutput")).isEqualTo(this.objectMapper.readTree("{\"decision\":\"needs changes\"}"));
         assertThat(input.path("availableOutputs")).hasSize(2);
         assertThat(input.path("availableOutputs").get(0).path("id").asText()).isEqualTo(PASS_ID.toString());
         assertThat(input.path("availableOutputs").get(0).path("name").asText()).isEqualTo("PASS");
         assertThat(input.path("availableOutputs").get(0).path("description").asText()).isEqualTo("Review passed.");
-        assertThat(this.turnClient.request.outputSchema().path("required").get(0).asText()).isEqualTo("selectedOutputPortId");
+        assertThat(this.client.request.outputSchema().path("required").get(0).asText()).isEqualTo("selectedOutputPortId");
     }
 
     @Test
     void malformedResponseIsRejected() {
-        this.turnClient.outputText = "{\"selectedOutputPortId\":42}";
+        this.client.outputText = "{\"selectedOutputPortId\":42}";
 
         assertThatThrownBy(() -> this.router.selectOutput(new NodeRunOutput("{\"decision\":\"pass\"}"), this.outputs(), this.executionModel))
                 .isInstanceOf(IllegalStateException.class)
@@ -65,7 +65,7 @@ class CodexAiOutputRouterTest {
         final Path configuredCwd = Files.createTempDirectory("forge-agent-codex-configured-routing");
         final CodexAppServerProperties properties = new CodexAppServerProperties();
         properties.setRuntimeCwd(configuredCwd.toString());
-        final RecordingTurnClient recordingClient = new RecordingTurnClient();
+        final RecordingCodexClient recordingClient = new RecordingCodexClient();
         recordingClient.outputText = "{\"selectedOutputPortId\":\"" + PASS_ID + "\"}";
 
         this.router(properties, recordingClient).selectOutput(
@@ -78,7 +78,7 @@ class CodexAiOutputRouterTest {
     @Test
     void unsetRuntimeCwdProvidesNeutralDefaultRoutingWorkspace() {
         final CodexAppServerProperties properties = new CodexAppServerProperties();
-        final RecordingTurnClient recordingClient = new RecordingTurnClient();
+        final RecordingCodexClient recordingClient = new RecordingCodexClient();
         recordingClient.outputText = "{\"selectedOutputPortId\":\"" + PASS_ID + "\"}";
         final Path expected = Path.of(System.getProperty("java.io.tmpdir"), "forge-agent-codex-runtime")
                 .toAbsolutePath()
@@ -92,11 +92,11 @@ class CodexAiOutputRouterTest {
     }
 
     private CodexAiOutputRouter router(final CodexAppServerProperties properties) {
-        return this.router(properties, this.turnClient);
+        return this.router(properties, this.client);
     }
 
     private CodexAiOutputRouter router(final CodexAppServerProperties properties,
-                                       final RecordingTurnClient recordingClient) {
+                                       final RecordingCodexClient recordingClient) {
         return new CodexAiOutputRouter(
                 this.objectMapper,
                 recordingClient,
@@ -111,7 +111,7 @@ class CodexAiOutputRouterTest {
         );
     }
 
-    private static final class RecordingTurnClient implements CodexTurnClient {
+    private static final class RecordingCodexClient implements CodexClient {
         private CodexTurnRequest request;
         private String outputText;
 
@@ -119,6 +119,20 @@ class CodexAiOutputRouterTest {
         public String execute(final CodexTurnRequest request) {
             this.request = request;
             return this.outputText;
+        }
+
+        @Override
+        public String version() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public JsonNode request(final String method, final JsonNode params) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
         }
     }
 }

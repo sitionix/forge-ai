@@ -20,7 +20,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
     private static final String PROVIDER_ID = "codex";
 
     private final ObjectMapper objectMapper;
-    private final CodexTurnClient turnClient;
+    private final CodexClient client;
 
     @Override
     public NodeRunOutput execute(final NodeExecutionClaim claim) {
@@ -28,7 +28,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
             throw new IllegalStateException("Agent provider is not supported.");
         }
         final JsonNode outputSchema = this.parseOutputSchema(claim);
-        final String outputText = this.turnClient.execute(new CodexTurnRequest(
+        final String outputText = this.client.execute(new CodexTurnRequest(
                 this.userInput(claim),
                 WorkflowExecutionDeveloperInstructions.compose(claim.agentInstructions()),
                 claim.executionModel().modelId(),

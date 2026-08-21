@@ -195,7 +195,8 @@ class CodexAppServerClientTest {
     @Test
     void defaultStarterLaunchesProcessInResolvedWorkingDirectory() throws Exception {
         final CodexAppServerProperties properties = this.properties();
-        final Path runtimeCwd = Files.createTempDirectory("forge-agent-codex-starter").resolve("runtime");
+        final Path runtimeCwd = Files.createDirectories(
+                Files.createTempDirectory("forge-agent-codex-starter").resolve("runtime"));
         properties.setCommand(List.of("pwd"));
         final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties);
 
@@ -204,6 +205,19 @@ class CodexAppServerClientTest {
         assertThat(Files.isDirectory(runtimeCwd)).isTrue();
         assertThat(started.process().waitFor(1, TimeUnit.SECONDS)).isTrue();
         assertThat(started.process().inputReader().readLine()).isEqualTo(runtimeCwd.toString());
+    }
+
+    @Test
+    void defaultStarterRejectsMissingWorkingDirectoryWithoutCreatingIt() throws Exception {
+        final CodexAppServerProperties properties = this.properties();
+        properties.setCommand(List.of("pwd"));
+        final Path missing = Files.createTempDirectory("forge-agent-codex-missing").resolve("absent");
+        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties);
+
+        assertThatThrownBy(() -> starter.start(missing))
+                .isInstanceOf(CodexTransportException.class)
+                .hasMessage("Codex app-server working directory is unavailable");
+        assertThat(missing).doesNotExist();
     }
 
     @Test

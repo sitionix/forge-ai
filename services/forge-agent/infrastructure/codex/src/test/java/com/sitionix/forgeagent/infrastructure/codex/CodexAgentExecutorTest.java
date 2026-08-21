@@ -34,24 +34,24 @@ class CodexAgentExecutorTest {
             """);
 
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final RecordingTurnClient turnClient = new RecordingTurnClient();
+    private final RecordingCodexClient client = new RecordingCodexClient();
     private final CodexAgentExecutor executor = new CodexAgentExecutor(
             this.objectMapper,
-            this.turnClient
+            this.client
     );
 
     @Test
     void usesClaimModelEffortAndExactParsedOutputSchema() throws Exception {
-        this.turnClient.outputText = "{\n  \"summary\": \"Done\",\n  \"riskLevel\": \"MEDIUM\"\n}";
+        this.client.outputText = "{\n  \"summary\": \"Done\",\n  \"riskLevel\": \"MEDIUM\"\n}";
 
         final NodeRunOutput output = this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", "high"), OUTPUT_SCHEMA));
 
-        assertThat(this.turnClient.request.modelId()).isEqualTo("gpt-5.6-luna");
-        assertThat(this.turnClient.request.effortId()).isEqualTo("high");
-        assertThat(this.turnClient.request.outputSchema()).isEqualTo(this.objectMapper.readTree(OUTPUT_SCHEMA.jsonObject()));
-        assertThat(this.turnClient.request.outputSchema().path("description").asText()).isEqualTo("Technical analysis result.");
-        assertThat(this.turnClient.request.outputSchema().path("properties").path("summary").path("description").asText()).isEqualTo("Concise summary.");
-        assertThat(this.turnClient.request.executionWorkspace()).isEqualTo(this.workspace());
+        assertThat(this.client.request.modelId()).isEqualTo("gpt-5.6-luna");
+        assertThat(this.client.request.effortId()).isEqualTo("high");
+        assertThat(this.client.request.outputSchema()).isEqualTo(this.objectMapper.readTree(OUTPUT_SCHEMA.jsonObject()));
+        assertThat(this.client.request.outputSchema().path("description").asText()).isEqualTo("Technical analysis result.");
+        assertThat(this.client.request.outputSchema().path("properties").path("summary").path("description").asText()).isEqualTo("Concise summary.");
+        assertThat(this.client.request.executionWorkspace()).isEqualTo(this.workspace());
         assertThat(output).isEqualTo(new NodeRunOutput("{\"summary\":\"Done\",\"riskLevel\":\"MEDIUM\"}"));
     }
 
@@ -81,13 +81,13 @@ class CodexAgentExecutorTest {
 
         this.executor.execute(claim);
 
-        assertThat(this.turnClient.request.developerInstructions())
+        assertThat(this.client.request.developerInstructions())
                 .startsWith(WorkflowExecutionDeveloperInstructions.CONTRACT)
                 .endsWith("\nAnalyze the requested change.");
-        assertThat(this.turnClient.request.developerInstructions().substring(
+        assertThat(this.client.request.developerInstructions().substring(
                 WorkflowExecutionDeveloperInstructions.CONTRACT.length() + 1
         )).isEqualTo("Analyze the requested change.");
-        final JsonNode userInput = this.objectMapper.readTree(this.turnClient.request.userInput());
+        final JsonNode userInput = this.objectMapper.readTree(this.client.request.userInput());
         assertThat(userInput.path("task").asText()).isEqualTo("Review auth changes.");
         assertThat(userInput.path("entryInput").path("id").asText()).isEqualTo(INPUT_PORT_ID.toString());
         assertThat(userInput.path("entryInput").path("name").asText()).isEqualTo("Review feedback");
@@ -96,7 +96,7 @@ class CodexAgentExecutorTest {
         assertThat(userInput.path("contributions").get(0).path("sourceNodeRunId").asText()).isEqualTo(SOURCE_NODE_RUN_ID.toString());
         assertThat(userInput.path("contributions").get(0).path("sourceConnectionId").asText()).isEqualTo(SOURCE_CONNECTION_ID.toString());
         assertThat(userInput.path("contributions").get(0).path("payload")).isEqualTo(this.objectMapper.readTree("{\"risk\":\"LOW\"}"));
-        assertThat(this.turnClient.request.userInput()).doesNotContain(
+        assertThat(this.client.request.userInput()).doesNotContain(
                 "Analyze the requested change.",
                 "outputSchema",
                 "nodeRunId",
@@ -144,7 +144,7 @@ class CodexAgentExecutorTest {
 
         this.executor.execute(claim);
 
-        final JsonNode userInput = this.objectMapper.readTree(this.turnClient.request.userInput());
+        final JsonNode userInput = this.objectMapper.readTree(this.client.request.userInput());
         assertThat(userInput.has("task")).isFalse();
         assertThat(userInput.path("entryInput").path("id").asText()).isEqualTo(INPUT_PORT_ID.toString());
         assertThat(userInput.path("contributions")).hasSize(1);
@@ -181,14 +181,14 @@ class CodexAgentExecutorTest {
 
         this.executor.execute(claim);
 
-        assertThat(this.turnClient.request.executionWorkspace()).isEqualTo(globalWorkspace);
+        assertThat(this.client.request.executionWorkspace()).isEqualTo(globalWorkspace);
     }
 
     @Test
     void noDependenciesAreSerializedAsEmptyArray() throws Exception {
         this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", null), OUTPUT_SCHEMA));
 
-        final JsonNode userInput = this.objectMapper.readTree(this.turnClient.request.userInput());
+        final JsonNode userInput = this.objectMapper.readTree(this.client.request.userInput());
         assertThat(userInput.path("task").asText()).isEqualTo("Review auth changes.");
         assertThat(userInput.path("contributions")).isEmpty();
     }
@@ -197,12 +197,12 @@ class CodexAgentExecutorTest {
     void nullEffortRemainsNull() {
         this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", null), OUTPUT_SCHEMA));
 
-        assertThat(this.turnClient.request.effortId()).isNull();
+        assertThat(this.client.request.effortId()).isNull();
     }
 
     @Test
     void invalidReturnedJsonFailsSafely() {
-        this.turnClient.outputText = "not-json";
+        this.client.outputText = "not-json";
 
         assertThatThrownBy(() -> this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "m", null), OUTPUT_SCHEMA)))
                 .isInstanceOf(IllegalStateException.class)
@@ -214,7 +214,7 @@ class CodexAgentExecutorTest {
         assertThatThrownBy(() -> this.executor.execute(this.claim(new NodeRunExecutionModel("other", "m", null), OUTPUT_SCHEMA)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Agent provider is not supported.");
-        assertThat(this.turnClient.request).isNull();
+        assertThat(this.client.request).isNull();
     }
 
     @Test
@@ -224,7 +224,7 @@ class CodexAgentExecutorTest {
         assertThatThrownBy(() -> this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "m", null), malformed)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Agent output schema is invalid.");
-        assertThat(this.turnClient.request).isNull();
+        assertThat(this.client.request).isNull();
     }
 
     private NodeExecutionClaim claim(final NodeRunExecutionModel executionModel, final AgentOutputSchema outputSchema) {
@@ -246,7 +246,7 @@ class CodexAgentExecutorTest {
         return new ExecutionWorkspace(Path.of("/forge/project/backend"), List.of(Path.of("/forge/project/backend")));
     }
 
-    private static final class RecordingTurnClient implements CodexTurnClient {
+    private static final class RecordingCodexClient implements CodexClient {
         private CodexTurnRequest request;
         private String outputText = "{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}";
 
@@ -254,6 +254,20 @@ class CodexAgentExecutorTest {
         public String execute(final CodexTurnRequest request) {
             this.request = request;
             return this.outputText;
+        }
+
+        @Override
+        public String version() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public JsonNode request(final String method, final JsonNode params) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
         }
     }
 }
