@@ -11,17 +11,16 @@ knowledge_url := "http://127.0.0.1:7081"
 jarvis_url := "http://127.0.0.1:7071"
 sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 
-start: _start-preflight _app-stop _jarvis-stop _knowledge-stop _ollama-stop _mongo-start _sqlite-start _ollama-start _console-build _knowledge-start _jarvis-start _app-start _console-live-check
+start: _start-preflight _app-stop _jarvis-stop _knowledge-stop _ollama-stop _postgres-start _sqlite-start _ollama-start _console-build _knowledge-start _jarvis-start _app-start _console-live-check
     @echo "Forge AI stack is up:"
     @echo "  app:       {{app_url}}"
     @echo "  agent:     {{agent_url}}"
     @echo "  knowledge: {{knowledge_url}}"
     @echo "  jarvis:    {{jarvis_url}}"
-    @echo "  mongo:     mongodb://localhost:27019/forge_ai"
     @echo "  postgres:  postgresql://localhost:54329/forge_agent"
     @echo "  sqlite:    {{sqlite_path}}"
 
-stop: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _mongo-stop
+stop: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _postgres-stop
     @echo "Forge AI stack stopped."
 
 status:
@@ -45,11 +44,11 @@ _start-preflight:
         exit 1
     fi
 
-_mongo-start:
-    @docker compose up -d forge-ai-mongo forge-agent-postgres
+_postgres-start:
+    @docker compose up -d forge-agent-postgres
 
-_mongo-stop:
-    @docker compose stop forge-ai-mongo forge-agent-postgres >/dev/null || true
+_postgres-stop:
+    @docker compose stop forge-agent-postgres >/dev/null || true
 
 _sqlite-start:
     @mkdir -p "{{root}}/var/knowledge"
@@ -190,7 +189,6 @@ _app-start:
         "{{root}}" \
         env \
         WORKSPACE_ROOT="{{root}}/.." \
-        MONGODB_URI="mongodb://localhost:27019/forge_ai" \
         java -jar services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar \
         --spring.docker.compose.enabled=false
     sleep 1
