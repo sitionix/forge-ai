@@ -1456,6 +1456,30 @@ describe('Agent projects page', () => {
     expect([...cards].every((card) => card.textContent?.includes('0 runs'))).toBe(true);
   });
 
+  it('modern execution board never renders a raw repository ID when metadata is unavailable', async () => {
+    const missingRepositoryId = '99999999-9999-4999-8999-999999999999';
+    const graph = runtimeGraph([
+      { id: 'worker', agentName: 'Worker', scopeMode: 'PER_SCOPE', position: { x: 20, y: 30 } }
+    ]);
+    const run = {
+      ...workflowRunDetail('run-new', 'RUNNING', [], 'Scoped Board', graph),
+      repositoryIds: [missingRepositoryId]
+    };
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([])),
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(run))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const card = dom.window.document.querySelector('[data-execution-source-node-id="worker"]')!;
+    expect(card.textContent).toContain('Repository unavailable');
+    expect(card.textContent).not.toContain(missingRepositoryId);
+  });
+
   it('modern execution board renders forward edges as orthogonal paths from measured port anchors', async () => {
     const graph = runtimeGraph([
       {

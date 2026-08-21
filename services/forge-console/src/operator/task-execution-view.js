@@ -21,6 +21,7 @@ const LAYOUT_START_Y = 80;
 const GLOBAL_REPOSITORY_KEY = '__global__';
 const EDGE_NODE_CLEARANCE = 16;
 const EDGE_BEND_COST = 12;
+const UNAVAILABLE_REPOSITORY_LABEL = 'Repository unavailable';
 
 export function visualUnitKey(sourceNodeId, repositoryId) {
   return `${sourceNodeId}::${normalizedRepositoryId(repositoryId) || GLOBAL_REPOSITORY_KEY}`;
@@ -51,7 +52,7 @@ export function buildExecutionProjection(runtimeGraph, repositoryIds = [], repos
         ...logicalNode,
         scopeMode,
         repositoryId,
-        repositoryName: repositoryId ? repositoryNameById.get(repositoryId) || repositoryId : null,
+        repositoryName: repositoryId ? repositoryNameById.get(repositoryId) || UNAVAILABLE_REPOSITORY_LABEL : null,
         visualUnitKey: visualUnitKey(logicalNode.sourceNodeId, repositoryId),
         logicalIndex
       };
@@ -80,7 +81,9 @@ export function buildExecutionProjection(runtimeGraph, repositoryIds = [], repos
     }
   }
 
-  layoutExecutionProjection(units, projectedConnections, ports, repositoryOrder);
+  const taskInputNodeId = portById.get(runtimeGraph?.taskInputPortId)?.sourceNodeId || null;
+  const rootUnitKeys = new Set((unitsBySource.get(taskInputNodeId) || []).map((unit) => unit.visualUnitKey));
+  layoutExecutionProjection(units, projectedConnections, ports, repositoryOrder, rootUnitKeys);
   return { nodes: units, ports, connections: projectedConnections };
 }
 
@@ -115,8 +118,8 @@ function projectedUnitPairs(sourceUnits, targetUnits) {
   throw new Error(`Unsupported execution scope projection: ${sourceMode} -> ${targetMode}`);
 }
 
-function layoutExecutionProjection(units, connections, ports, repositoryOrder) {
-  const depths = projectionDepths(units, connections);
+function layoutExecutionProjection(units, connections, ports, repositoryOrder, rootUnitKeys) {
+  const depths = projectionDepths(units, connections, rootUnitKeys);
   const portCountBySource = new Map();
   for (const port of ports) {
     const counts = portCountBySource.get(port.sourceNodeId) || { input: 0, output: 0 };
@@ -159,17 +162,24 @@ function layoutExecutionProjection(units, connections, ports, repositoryOrder) {
   }
 }
 
-function projectionDepths(units, connections) {
+function projectionDepths(units, connections, rootUnitKeys) {
   const depth = new Map(units.map((unit) => [unit.visualUnitKey, 0]));
   const outgoing = new Map(units.map((unit) => [unit.visualUnitKey, []]));
-  const forwardConnections = [];
+  const unitOrder = new Map(units.map((unit, index) => [unit.visualUnitKey, index]));
+  const candidatesBySource = new Map(units.map((unit) => [unit.visualUnitKey, []]));
   for (const connection of connections) {
-    if (hasProjectionPath(outgoing, connection.targetVisualUnitKey, connection.sourceVisualUnitKey)) {
-      continue;
-    }
-    outgoing.get(connection.sourceVisualUnitKey)?.push(connection.targetVisualUnitKey);
-    forwardConnections.push(connection);
+    candidatesBySource.get(connection.sourceVisualUnitKey)?.push(connection);
   }
+  for (const candidates of candidatesBySource.values()) {
+    candidates.sort((left, right) => compareProjectionConnections(left, right, unitOrder));
+  }
+  const forwardConnections = rootedForwardConnections(
+    units,
+    candidatesBySource,
+    outgoing,
+    rootUnitKeys,
+    unitOrder
+  );
   for (let pass = 0; pass < units.length; pass += 1) {
     let changed = false;
     for (const connection of forwardConnections) {
@@ -184,6 +194,53 @@ function projectionDepths(units, connections) {
     }
   }
   return depth;
+}
+
+function rootedForwardConnections(units, candidatesBySource, outgoing, rootUnitKeys, unitOrder) {
+  const forwardConnections = [];
+  const visiting = new Set();
+  const visited = new Set();
+  const traverse = (unitKey) => {
+    if (visited.has(unitKey)) {
+      return;
+    }
+    visiting.add(unitKey);
+    for (const connection of candidatesBySource.get(unitKey) || []) {
+      const targetKey = connection.targetVisualUnitKey;
+      if ((rootUnitKeys.has(targetKey) && targetKey !== unitKey)
+        || visiting.has(targetKey)
+        || hasProjectionPath(outgoing, targetKey, unitKey)) {
+        continue;
+      }
+      outgoing.get(unitKey)?.push(targetKey);
+      forwardConnections.push(connection);
+      traverse(targetKey);
+    }
+    visiting.delete(unitKey);
+    visited.add(unitKey);
+  };
+  const orderedRoots = [...rootUnitKeys].sort((left, right) => compareUnitKeys(left, right, unitOrder));
+  for (const rootKey of orderedRoots) {
+    traverse(rootKey);
+  }
+  const remaining = units.map((unit) => unit.visualUnitKey)
+    .sort((left, right) => compareUnitKeys(left, right, unitOrder));
+  for (const unitKey of remaining) {
+    traverse(unitKey);
+  }
+  return forwardConnections;
+}
+
+function compareProjectionConnections(left, right, unitOrder) {
+  return compareUnitKeys(left.targetVisualUnitKey, right.targetVisualUnitKey, unitOrder)
+    || compareUnitKeys(left.sourceVisualUnitKey, right.sourceVisualUnitKey, unitOrder)
+    || String(left.sourceOutputPortId || '').localeCompare(String(right.sourceOutputPortId || ''))
+    || String(left.targetInputPortId || '').localeCompare(String(right.targetInputPortId || ''));
+}
+
+function compareUnitKeys(left, right, unitOrder) {
+  return (unitOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (unitOrder.get(right) ?? Number.MAX_SAFE_INTEGER)
+    || String(left).localeCompare(String(right));
 }
 
 function hasProjectionPath(outgoing, start, target) {

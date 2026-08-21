@@ -8,8 +8,13 @@ const REPOSITORIES = [
   { id: 'repo-c', name: 'repo-C' }
 ];
 
-function graph(nodes: Array<{ id: string; scopeMode: string }>, connections: Array<[string, string]> = []) {
+function graph(
+  nodes: Array<{ id: string; scopeMode: string }>,
+  connections: Array<[string, string]> = [],
+  taskInputNodeId: string | null = nodes[0]?.id || null
+) {
   return {
+    taskInputPortId: taskInputNodeId ? `${taskInputNodeId}-input` : null,
     nodes: nodes.map((node, index) => ({
       sourceNodeId: node.id,
       agentName: node.id,
@@ -127,6 +132,44 @@ describe('task execution visual projection', () => {
     }
     expect(repeated.nodes.map((node) => node.position)).toEqual(projection.nodes.map((node) => node.position));
     expect(projection.connections).toHaveLength(9);
+  });
+
+  it('keeps task-input re-entry layering stable when connection IDs and order change', () => {
+    const nodes = [
+      { id: 'implementer', scopeMode: 'PER_SCOPE' },
+      { id: 'reviewer', scopeMode: 'PER_SCOPE' }
+    ];
+    const forwardFirst = graph(nodes, [['implementer', 'reviewer'], ['reviewer', 'implementer']], 'implementer');
+    forwardFirst.connections = [
+      { ...forwardFirst.connections[0]!, sourceConnectionId: 'zzz-forward' },
+      { ...forwardFirst.connections[1]!, sourceConnectionId: 'aaa-feedback' }
+    ];
+    const feedbackFirst = graph(nodes, [['reviewer', 'implementer'], ['implementer', 'reviewer']], 'implementer');
+    feedbackFirst.connections = [
+      { ...feedbackFirst.connections[0]!, sourceConnectionId: '000-feedback' },
+      { ...feedbackFirst.connections[1]!, sourceConnectionId: '999-forward' }
+    ];
+
+    const first = buildExecutionProjection(forwardFirst, ['repo-a', 'repo-b'], REPOSITORIES);
+    const second = buildExecutionProjection(feedbackFirst, ['repo-a', 'repo-b'], REPOSITORIES);
+    const positions = (projection: ReturnType<typeof buildExecutionProjection>) => new Map(
+      projection.nodes.map((node) => [node.visualUnitKey, node.position.x])
+    );
+
+    expect(positions(second)).toEqual(positions(first));
+    expect(first.nodes.filter((node) => node.sourceNodeId === 'implementer').map((node) => node.position.x)).toEqual([80, 80]);
+    expect(first.nodes.filter((node) => node.sourceNodeId === 'reviewer').map((node) => node.position.x)).toEqual([460, 460]);
+  });
+
+  it('uses an unavailable label instead of a repository ID when metadata is missing', () => {
+    const projection = buildExecutionProjection(
+      graph([{ id: 'worker', scopeMode: 'PER_SCOPE' }]),
+      ['missing-repository-id'],
+      []
+    );
+
+    expect(projection.nodes[0]!.repositoryName).toBe('Repository unavailable');
+    expect(projection.nodes[0]!.repositoryName).not.toContain('missing-repository-id');
   });
 
   it('routes every edge around all unrelated visual units with clearance', () => {
