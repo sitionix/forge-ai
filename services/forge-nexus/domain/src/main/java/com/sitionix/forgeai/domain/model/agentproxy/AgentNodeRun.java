@@ -10,7 +10,7 @@ public record AgentNodeRun(
         String agentName,
         String agentInstructions,
         AgentOutputSchemaDocument agentOutputSchema,
-        NodeInputMode inputMode,
+        String inputMode,
         NodePosition position,
         UUID executionFrameId,
         UUID enteredViaInputPortId,

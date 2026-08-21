@@ -36,10 +36,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
-import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
-import com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
@@ -384,11 +382,12 @@ public class ForgeAgentClientMapper {
         if (response.position() == null) {
             throw this.invalid("workflowRun.runtimeGraph.nodes.position must not be null");
         }
+        this.requireText(response.scopeMode(), "workflowRun.runtimeGraph.nodes.scopeMode");
         return new AgentRunNode(
                 response.sourceNodeId(),
                 response.agentName(),
                 new NodePosition(response.position().x(), response.position().y()),
-                nodeScopeMode(response.scopeMode(), "workflowRun.runtimeGraph.nodes.scopeMode")
+                response.scopeMode()
         );
     }
 
@@ -502,11 +501,11 @@ public class ForgeAgentClientMapper {
         return new NodeRequest(
                 node.id(),
                 node.targetId(),
-                inputMode(node.inputMode()).name(),
+                node.inputMode(),
                 node.inputs() == null ? List.of() : node.inputs().stream().map(this::toRequest).toList(),
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toRequest).toList(),
-                node.position() == null ? new NodePositionRequest(0.0, 0.0) : new NodePositionRequest(node.position().x(), node.position().y()),
-                node.scopeMode().name()
+                node.position() == null ? null : new NodePositionRequest(node.position().x(), node.position().y()),
+                node.scopeMode()
         );
     }
 
@@ -518,14 +517,16 @@ public class ForgeAgentClientMapper {
         if (position == null) {
             throw this.invalid("node.position must not be null");
         }
+        this.requireText(response.inputMode(), "node.inputMode");
+        this.requireText(response.scopeMode(), "node.scopeMode");
         return new Node(
                 response.id(),
                 response.targetId(),
-                inputMode(response.inputMode(), "node.inputMode"),
+                response.inputMode(),
                 response.inputs() == null ? List.of() : response.inputs().stream().map(this::toDomain).toList(),
                 response.outputs() == null ? List.of() : response.outputs().stream().map(this::toDomain).toList(),
                 new NodePosition(position.x(), position.y()),
-                nodeScopeMode(response.scopeMode(), "node.scopeMode")
+                response.scopeMode()
         );
     }
 
@@ -575,6 +576,7 @@ public class ForgeAgentClientMapper {
         if (response.position() == null) {
             throw this.invalid("nodeRun.position must not be null");
         }
+        this.requireText(response.inputMode(), "nodeRun.inputMode");
         if (response.status() == null) {
             throw this.invalid("nodeRun.status must not be null");
         }
@@ -586,7 +588,7 @@ public class ForgeAgentClientMapper {
                     response.agentName(),
                     response.agentInstructions(),
                     new AgentOutputSchemaDocument(this.objectMapper.writeValueAsString(response.agentOutputSchema())),
-                    nodeRunInputMode(response.inputMode()),
+                    response.inputMode(),
                     new NodePosition(response.position().x(), response.position().y()),
                     response.executionFrameId(),
                     response.enteredViaInputPortId(),
@@ -673,40 +675,4 @@ public class ForgeAgentClientMapper {
         return new HttpMessageConversionException("Forge Agent response contract violation: " + message);
     }
 
-    private static NodeInputMode inputMode(final NodeInputMode inputMode) {
-        return inputMode == null ? NodeInputMode.DEPENDENCIES_ONLY : inputMode;
-    }
-
-    private static NodeInputMode nodeRunInputMode(final String inputMode) {
-        if (inputMode == null || inputMode.isBlank()) {
-            return NodeInputMode.TASK_AND_DEPENDENCIES;
-        }
-        try {
-            return NodeInputMode.valueOf(inputMode);
-        } catch (final IllegalArgumentException exception) {
-            throw new HttpMessageConversionException("Forge Agent response contract violation: nodeRun.inputMode is invalid", exception);
-        }
-    }
-
-    private static NodeInputMode inputMode(final String inputMode, final String field) {
-        if (inputMode == null || inputMode.isBlank()) {
-            return NodeInputMode.DEPENDENCIES_ONLY;
-        }
-        try {
-            return NodeInputMode.valueOf(inputMode);
-        } catch (final IllegalArgumentException exception) {
-            throw new HttpMessageConversionException("Forge Agent response contract violation: " + field + " is invalid", exception);
-        }
-    }
-
-    private static WorkflowNodeScopeMode nodeScopeMode(final String scopeMode, final String field) {
-        if (scopeMode == null || scopeMode.isBlank()) {
-            throw new HttpMessageConversionException("Forge Agent response contract violation: " + field + " must not be blank");
-        }
-        try {
-            return WorkflowNodeScopeMode.valueOf(scopeMode);
-        } catch (final IllegalArgumentException exception) {
-            throw new HttpMessageConversionException("Forge Agent response contract violation: " + field + " is invalid", exception);
-        }
-    }
 }

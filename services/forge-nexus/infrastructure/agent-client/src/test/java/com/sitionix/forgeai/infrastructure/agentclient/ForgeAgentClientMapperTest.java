@@ -34,7 +34,6 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskComman
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
-import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
@@ -270,21 +269,27 @@ class ForgeAgentClientMapperTest {
         final var node = new Node(
                 NODE_ID,
                 AGENT_ID,
-                NodeInputMode.DEPENDENCIES_ONLY,
+                "opaque-input-mode",
                 List.of(input),
                 List.of(output),
                 new NodePosition(1.0, 2.0),
-                com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
+                "GLOBAL"
         );
         assertThat(this.mapper.toRequest(new CreateAgentWorkflowCommand("Full Testing")))
                 .isEqualTo(new AgentWorkflowRequest("Full Testing"));
+        final var nodeWithoutAgentDefaults = new Node(NODE_ID, AGENT_ID, null, List.of(), List.of(), null, null);
+        assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand(
+                "Opaque workflow", List.of(nodeWithoutAgentDefaults), List.of(), null, null
+        )).nodes().getFirst()).isEqualTo(new NodeRequest(
+                NODE_ID, AGENT_ID, null, List.of(), List.of(), null, null
+        ));
         assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand("Full Testing", List.of(node), List.of(connection), INPUT_ID, OUTPUT_ID)))
                 .isEqualTo(new SaveAgentWorkflowRequest(
                         "Full Testing",
                         List.of(new NodeRequest(
                                 NODE_ID,
                                 AGENT_ID,
-                                NodeInputMode.DEPENDENCIES_ONLY.name(),
+                                "opaque-input-mode",
                                 List.of(new NodePortRequest(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                                 List.of(new NodePortRequest(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
                                 new NodePositionRequest(1.0, 2.0),
@@ -302,7 +307,7 @@ class ForgeAgentClientMapperTest {
                 List.of(new NodeResponse(
                         NODE_ID,
                         AGENT_ID,
-                        NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        "opaque-input-mode",
                         List.of(new NodePortResponse(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                         List.of(new NodePortResponse(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
                         new NodePositionResponse(1.0, 2.0),
@@ -350,7 +355,7 @@ class ForgeAgentClientMapperTest {
                 "Analyzer",
                 "Analyze changes.",
                 this.objectMapper.readTree("{\"type\":\"object\"}"),
-                null,
+                "opaque-input-mode",
                 new NodePositionResponse(1.0, 2.0),
                 executionFrameId,
                 INPUT_ID,
@@ -411,7 +416,7 @@ class ForgeAgentClientMapperTest {
                         "Analyzer",
                         "Analyze changes.",
                         new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
-                        NodeInputMode.TASK_AND_DEPENDENCIES,
+                        "opaque-input-mode",
                         new NodePosition(1.0, 2.0),
                         executionFrameId,
                         INPUT_ID,
@@ -462,7 +467,7 @@ class ForgeAgentClientMapperTest {
                 "Analyzer",
                 "Analyze changes.",
                 this.objectMapper.readTree("{\"type\":\"object\"}"),
-                NodeInputMode.DEPENDENCIES_ONLY.name(),
+                "opaque-input-mode",
                 new NodePositionResponse(1.0, 2.0),
                 frameId,
                 inputPortId,
@@ -525,7 +530,7 @@ class ForgeAgentClientMapperTest {
                         "Analyzer",
                         "Analyze changes.",
                         new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
-                        NodeInputMode.DEPENDENCIES_ONLY,
+                        "opaque-input-mode",
                         new NodePosition(1.0, 2.0),
                         frameId,
                         inputPortId,
@@ -548,7 +553,7 @@ class ForgeAgentClientMapperTest {
                                 NODE_ID,
                                 "Analyzer",
                                 new NodePosition(1.0, 2.0),
-                                com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
+                                "GLOBAL"
                         )),
                         List.of(
                                 new AgentRunPort(inputPortId, NODE_ID, "INPUT", "Initial", 0),
@@ -650,7 +655,7 @@ class ForgeAgentClientMapperTest {
                 WORKFLOW_ID,
                 PROJECT_ID,
                 "Full Testing",
-                List.of(new NodeResponse(NODE_ID, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
+                List.of(new NodeResponse(NODE_ID, AGENT_ID, null,
                         List.of(), List.of(), new NodePositionResponse(1.0, 2.0), null)),
                 List.of(),
                 null,
@@ -658,7 +663,7 @@ class ForgeAgentClientMapperTest {
                 UPDATED
         )))
                 .isInstanceOf(HttpMessageConversionException.class)
-                .hasMessageContaining("node.scopeMode");
+                .hasMessageContaining("node.inputMode");
         assertThatThrownBy(() -> this.mapper.toDomain(new WorkflowRunResponse(
                 RUN_ID,
                 PROJECT_ID,
@@ -673,7 +678,7 @@ class ForgeAgentClientMapperTest {
                 new WorkflowRunGraphResponse(
                         INPUT_ID,
                         OUTPUT_ID,
-                        List.of(new RunNodeResponse(NODE_ID, "Analyzer", new NodePositionResponse(1.0, 2.0), "unknown")),
+                        List.of(new RunNodeResponse(NODE_ID, "Analyzer", new NodePositionResponse(1.0, 2.0), null)),
                         List.of(),
                         List.of()
                 ),

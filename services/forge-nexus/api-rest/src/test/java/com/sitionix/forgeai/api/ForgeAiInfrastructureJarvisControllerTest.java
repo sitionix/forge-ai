@@ -1,21 +1,13 @@
 package com.sitionix.forgeai.api;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.api.proxy.InfrastructureProxyTransport;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
@@ -24,29 +16,22 @@ import org.springframework.http.ResponseEntity;
 
 class ForgeAiInfrastructureJarvisControllerTest {
 
-    private static final String HUMAN_GRAPH_RESPONSE = "{\"answerLanguage\":\"uk\",\"answers\":[{\"graphId\":\"graph-1\",\"sources\":[\"source-a\"],\"queryEntries\":[{\"unitId\":\"source-a:unit:JarvisGateway\",\"sourceId\":\"source-a\",\"root\":{\"qualifiedName\":\"JarvisGateway\",\"label\":\"JarvisGateway\"}}],\"text\":\"ok\",\"complete\":true,\"diagnostics\":[]}],\"diagnostics\":[]}";
-
     private final InfrastructureProxyTransport transport = mock(InfrastructureProxyTransport.class);
-    private final ObjectMapper objectMapper = new ObjectMapper();
-    private final ForgeAiInfrastructureJarvisController controller = new ForgeAiInfrastructureJarvisController(this.transport, this.objectMapper);
+    private final ForgeAiInfrastructureJarvisController controller = new ForgeAiInfrastructureJarvisController(this.transport);
     private final HttpHeaders headers = new HttpHeaders();
     private final HttpServletRequest request = mock(HttpServletRequest.class);
 
     @Test
     void statusDelegatesToGenericProxyRoute() {
         this.stub();
-
         this.controller.status(this.headers, this.request);
-
         verify(this.transport).forward("jarvis.status", Map.of(), null, this.headers, this.request);
     }
 
     @Test
     void actionsDelegatesToGenericProxyRoute() {
         this.stub();
-
         this.controller.actions(this.headers, this.request);
-
         verify(this.transport).forward("jarvis.actions", Map.of(), null, this.headers, this.request);
     }
 
@@ -54,185 +39,28 @@ class ForgeAiInfrastructureJarvisControllerTest {
     void commandDelegatesRawBodyToGenericProxyRoute() {
         this.stub();
         final byte[] body = "{\"text\":\"status\"}".getBytes(StandardCharsets.UTF_8);
-
         this.controller.command(body, this.headers, this.request);
-
         verify(this.transport).forward("jarvis.command", Map.of(), body, this.headers, this.request);
     }
 
     @Test
-    void querySerializesMinimalRequestAndDelegatesToGenericProxyRoute() {
-        this.stub(HUMAN_GRAPH_RESPONSE);
-        final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
-                "JarvisGateway",
-                null,
-                null,
-                null,
-                null
-        );
-
+    void queryForwardsArbitraryBytesWithoutRebuildingPayload() {
+        this.stub();
+        final byte[] body = "{ \"z\":3,\"unknown\":true,\"queryText\":\"  \" }\n".getBytes(StandardCharsets.UTF_8);
         this.controller.query(body, this.headers, this.request);
-
-        final byte[] expectedBody = "{\"queryText\":\"JarvisGateway\"}".getBytes(StandardCharsets.UTF_8);
-        verify(this.transport).forward(
-                eq("jarvis.query"),
-                eq(Map.of()),
-                argThat(actual -> Arrays.equals(actual, expectedBody)),
-                same(this.headers),
-                same(this.request)
-        );
+        verify(this.transport).forward("jarvis.query", Map.of(), body, this.headers, this.request);
     }
 
     @Test
-    void querySerializesFullFlowExplanationRequestAndDelegatesToGenericProxyRoute() {
-        this.stub(HUMAN_GRAPH_RESPONSE);
-        final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
-                "JarvisGateway",
-                JarvisKnowledgeQueryIntent.FLOW_EXPLANATION,
-                "uk",
-                false,
-                null
-        );
-
+    void queryForwardsSemanticallyInvalidPayloadInsteadOfRejectingLocally() {
+        this.stub();
+        final byte[] body = "{\"maxFlows\":999,\"answerLanguage\":42,\"inventedField\":{}}".getBytes(StandardCharsets.UTF_8);
         this.controller.query(body, this.headers, this.request);
-
-        final byte[] expectedBody = ("{\"queryText\":\"JarvisGateway\",\"intent\":\"FLOW_EXPLANATION\","
-                + "\"answerLanguage\":\"uk\",\"includeTests\":false}").getBytes(StandardCharsets.UTF_8);
-        verify(this.transport).forward(
-                eq("jarvis.query"),
-                eq(Map.of()),
-                argThat(actual -> Arrays.equals(actual, expectedBody)),
-                same(this.headers),
-                same(this.request)
-        );
-    }
-
-    @Test
-    void queryAcceptsDynamicExplicitLanguagesAndDelegatesToJarvis() {
-        for (final String answerLanguage : List.of("de", "fr", "ru")) {
-            this.stub(HUMAN_GRAPH_RESPONSE.replace("\"answerLanguage\":\"uk\"", "\"answerLanguage\":\"" + answerLanguage + "\""));
-            final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
-                    "JarvisGateway",
-                    JarvisKnowledgeQueryIntent.FLOW_EXPLANATION,
-                    answerLanguage,
-                    false,
-                    null
-            );
-
-            this.controller.query(body, this.headers, this.request);
-
-            final byte[] expectedBody = ("{\"queryText\":\"JarvisGateway\",\"intent\":\"FLOW_EXPLANATION\","
-                    + "\"answerLanguage\":\"" + answerLanguage + "\",\"includeTests\":false}").getBytes(StandardCharsets.UTF_8);
-            verify(this.transport).forward(
-                    eq("jarvis.query"),
-                    eq(Map.of()),
-                    argThat(actual -> Arrays.equals(actual, expectedBody)),
-                    same(this.headers),
-                    same(this.request)
-            );
-        }
-    }
-
-    @Test
-    void queryPreservesCanonicalForbiddenLanguageResponseFromJarvisAndKnowledge() throws Exception {
-        final String response = "{\"code\":\"RESPONSE_LANGUAGE_NOT_ALLOWED\",\"message\":\"The requested response language is not allowed.\"}";
-        this.stub(422, response);
-
-        final ResponseEntity<byte[]> result = this.controller.query(
-                new JarvisKnowledgeQueryRequest("JarvisGateway", JarvisKnowledgeQueryIntent.FLOW_EXPLANATION, "ru", false, null),
-                this.headers,
-                this.request
-        ).join();
-
-        assertThat(result.getStatusCode().value()).isEqualTo(422);
-        assertThat(this.objectMapper.readValue(result.getBody(), Map.class)).containsEntry("code", "RESPONSE_LANGUAGE_NOT_ALLOWED")
-                .containsEntry("message", "The requested response language is not allowed.");
-    }
-
-    @Test
-    void querySerializesAutoIntentAndDelegatesToGenericProxyRoute() {
-        this.stub(HUMAN_GRAPH_RESPONSE);
-        final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
-                "як створити сайт",
-                JarvisKnowledgeQueryIntent.AUTO,
-                null,
-                false,
-                null
-        );
-
-        this.controller.query(body, this.headers, this.request);
-
-        final byte[] expectedBody = ("{\"queryText\":\"як створити сайт\",\"intent\":\"AUTO\","
-                + "\"includeTests\":false}").getBytes(StandardCharsets.UTF_8);
-        verify(this.transport).forward(
-                eq("jarvis.query"),
-                eq(Map.of()),
-                argThat(actual -> Arrays.equals(actual, expectedBody)),
-                same(this.headers),
-                same(this.request)
-        );
-    }
-
-    @Test
-    void queryPreservesSuccessfulHumanAnswerBytes() throws Exception {
-        final String response = HUMAN_GRAPH_RESPONSE;
-        this.stub(response);
-
-        final ResponseEntity<byte[]> result = this.controller.query(
-                new JarvisKnowledgeQueryRequest("App.tsx", null, null, null, null),
-                this.headers,
-                this.request
-        ).join();
-        final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
-
-        assertThat(body.get("answerLanguage")).isEqualTo("uk");
-        assertThat(body.containsKey("queryId")).isFalse();
-        assertThat(body.containsKey("status")).isFalse();
-        assertThat(body.containsKey("matchedNodes")).isFalse();
-        assertThat(body.containsKey("flows")).isFalse();
-        assertThat((List<?>) body.get("answers")).hasSize(1);
-    }
-
-    @Test
-    void queryValidationErrorDoesNotProxyBlankQuery() throws Exception {
-        final ResponseEntity<byte[]> result = this.controller.query(
-                new JarvisKnowledgeQueryRequest("   ", null, null, null, null),
-                this.headers,
-                this.request
-        ).join();
-
-        assertThat(result.getStatusCode().value()).isEqualTo(422);
-        final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
-        assertThat(body.get("title")).isEqualTo("VALIDATION_FAILED");
-        assertThat(body.get("details")).asString().contains("queryText");
-        verifyNoInteractions(this.transport);
-    }
-
-    @Test
-    void queryValidationErrorDoesNotProxyOutOfRangeMaxFlows() throws Exception {
-        final ResponseEntity<byte[]> result = this.controller.query(
-                new JarvisKnowledgeQueryRequest("JarvisGateway", JarvisKnowledgeQueryIntent.FLOW_EXPLANATION, "uk", false, 11),
-                this.headers,
-                this.request
-        ).join();
-
-        assertThat(result.getStatusCode().value()).isEqualTo(422);
-        final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
-        assertThat(body.get("title")).isEqualTo("VALIDATION_FAILED");
-        assertThat(body.get("details")).asString().contains("maxFlows");
-        verifyNoInteractions(this.transport);
+        verify(this.transport).forward("jarvis.query", Map.of(), body, this.headers, this.request);
     }
 
     private void stub() {
-        this.stub("{}");
-    }
-
-    private void stub(final String body) {
-        this.stub(200, body);
-    }
-
-    private void stub(final int status, final String body) {
         when(this.transport.forward(any(), any(), any(), any(), any()))
-                .thenReturn(CompletableFuture.completedFuture(ResponseEntity.status(status).body(body.getBytes(StandardCharsets.UTF_8))));
+                .thenReturn(CompletableFuture.completedFuture(ResponseEntity.ok(new byte[0])));
     }
 }

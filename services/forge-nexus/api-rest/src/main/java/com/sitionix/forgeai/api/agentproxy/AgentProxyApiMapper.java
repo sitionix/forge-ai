@@ -34,10 +34,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
-import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
-import com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
@@ -302,7 +300,7 @@ public class AgentProxyApiMapper {
                 node.sourceNodeId(),
                 node.agentName(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
-                node.scopeMode().name()
+                node.scopeMode()
         );
     }
 
@@ -347,11 +345,11 @@ public class AgentProxyApiMapper {
         return new Node(
                 request.id(),
                 request.targetId(),
-                inputMode(request.inputMode()),
+                request.inputMode(),
                 request.inputs() == null ? List.of() : request.inputs().stream().map(this::toDomain).toList(),
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toDomain).toList(),
-                request.position() == null ? new NodePosition(0.0, 0.0) : new NodePosition(request.position().x(), request.position().y()),
-                scopeMode(request.scopeMode())
+                request.position() == null ? null : new NodePosition(request.position().x(), request.position().y()),
+                request.scopeMode()
         );
     }
 
@@ -359,11 +357,11 @@ public class AgentProxyApiMapper {
         return new NodeResponse(
                 node.id(),
                 node.targetId(),
-                inputMode(node.inputMode()).name(),
+                node.inputMode(),
                 node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
-                new NodePositionResponse(node.position().x(), node.position().y()),
-                node.scopeMode().name()
+                node.position() == null ? null : new NodePositionResponse(node.position().x(), node.position().y()),
+                node.scopeMode()
         );
     }
 
@@ -398,7 +396,7 @@ public class AgentProxyApiMapper {
                     nodeRun.agentName(),
                     nodeRun.agentInstructions(),
                     this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
-                    nodeRunInputMode(nodeRun.inputMode()).name(),
+                    nodeRun.inputMode(),
                     new NodePositionResponse(nodeRun.position().x(), nodeRun.position().y()),
                     nodeRun.executionFrameId(),
                     nodeRun.enteredViaInputPortId(),
@@ -440,33 +438,4 @@ public class AgentProxyApiMapper {
         }
     }
 
-    private static NodeInputMode inputMode(final NodeInputMode inputMode) {
-        return inputMode == null ? NodeInputMode.DEPENDENCIES_ONLY : inputMode;
-    }
-
-    private static NodeInputMode nodeRunInputMode(final NodeInputMode inputMode) {
-        return inputMode == null ? NodeInputMode.TASK_AND_DEPENDENCIES : inputMode;
-    }
-
-    private static NodeInputMode inputMode(final String inputMode) {
-        if (inputMode == null || inputMode.isBlank()) {
-            return NodeInputMode.DEPENDENCIES_ONLY;
-        }
-        try {
-            return NodeInputMode.valueOf(inputMode);
-        } catch (final IllegalArgumentException exception) {
-            throw new IllegalArgumentException("Workflow node input mode is invalid.", exception);
-        }
-    }
-
-    private static WorkflowNodeScopeMode scopeMode(final String scopeMode) {
-        if (scopeMode == null || scopeMode.isBlank()) {
-            throw new IllegalArgumentException("Workflow node scope mode is required.");
-        }
-        try {
-            return WorkflowNodeScopeMode.valueOf(scopeMode);
-        } catch (final IllegalArgumentException exception) {
-            throw new IllegalArgumentException("Workflow node scope mode is invalid.", exception);
-        }
-    }
 }

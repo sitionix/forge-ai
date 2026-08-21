@@ -37,7 +37,6 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskComman
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
-import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
@@ -276,7 +275,7 @@ class AgentProxyApiMapperTest {
         final var nodeRequest = new NodeRequest(
                 NODE_ID,
                 AGENT_ID,
-                NodeInputMode.TASK_AND_DEPENDENCIES.name(),
+                "opaque-node-run-mode",
                 List.of(inputRequest),
                 List.of(outputRequest),
                 new NodePositionRequest(1.0, 2.0),
@@ -288,11 +287,11 @@ class AgentProxyApiMapperTest {
                         List.of(new Node(
                                 NODE_ID,
                                 AGENT_ID,
-                                NodeInputMode.TASK_AND_DEPENDENCIES,
+                                "opaque-node-run-mode",
                                 List.of(input),
                                 List.of(output),
                                 new NodePosition(1.0, 2.0),
-                                com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
+                                "GLOBAL"
                         )),
                         List.of(connection),
                         INPUT_ID,
@@ -306,11 +305,11 @@ class AgentProxyApiMapperTest {
                 List.of(new Node(
                         NODE_ID,
                         AGENT_ID,
-                        NodeInputMode.DEPENDENCIES_ONLY,
+                        "opaque-input-mode",
                         List.of(input),
                         List.of(output),
                         new NodePosition(1.0, 2.0),
-                        com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
+                        "GLOBAL"
                 )),
                 List.of(connection),
                 INPUT_ID,
@@ -325,7 +324,7 @@ class AgentProxyApiMapperTest {
                 List.of(new NodeResponse(
                         NODE_ID,
                         AGENT_ID,
-                        NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        "opaque-input-mode",
                         List.of(new NodePortResponse(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                         List.of(new NodePortResponse(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
                         new NodePositionResponse(1.0, 2.0),
@@ -379,7 +378,7 @@ class AgentProxyApiMapperTest {
                         "Analyzer",
                         "Analyze changes.",
                         new AgentOutputSchemaDocument("{\"type\":\"object\"}"),
-                        NodeInputMode.DEPENDENCIES_ONLY,
+                        "opaque-input-mode",
                         new NodePosition(1.0, 2.0),
                         UUID.fromString("99999999-0000-4000-8000-000000000001"),
                         null,
@@ -413,7 +412,7 @@ class AgentProxyApiMapperTest {
                                 NODE_ID,
                                 "Analyzer",
                                 new NodePosition(1.0, 2.0),
-                                com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode.GLOBAL
+                                "GLOBAL"
                         )),
                         List.of(new AgentRunPort(INPUT_ID, NODE_ID, "INPUT", "Initial", 0),
                                 new AgentRunPort(OUTPUT_ID, NODE_ID, "OUTPUT", "Done", 0)),
@@ -441,7 +440,7 @@ class AgentProxyApiMapperTest {
                         "Analyzer",
                         "Analyze changes.",
                         this.objectMapper.readTree("{\"type\":\"object\"}"),
-                        NodeInputMode.DEPENDENCIES_ONLY.name(),
+                        "opaque-input-mode",
                         new NodePositionResponse(1.0, 2.0),
                         UUID.fromString("99999999-0000-4000-8000-000000000001"),
                         null,
@@ -491,27 +490,18 @@ class AgentProxyApiMapperTest {
     }
 
     @Test
-    void workflowNodeRequestRequiresValidScopeMode() {
-        assertThatThrownBy(() -> this.mapper.toCommand(new SaveAgentWorkflowRequest(
+    void workflowNodeRequestPreservesOpaqueSemanticFieldsAndNullPosition() {
+        final var command = this.mapper.toCommand(new SaveAgentWorkflowRequest(
                 "Full Testing",
-                List.of(new NodeRequest(NODE_ID, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
-                        List.of(), List.of(), new NodePositionRequest(1.0, 2.0), null)),
+                List.of(new NodeRequest(NODE_ID, AGENT_ID, null,
+                        List.of(), List.of(), null, "repository")),
                 List.of(),
                 INPUT_ID,
                 OUTPUT_ID
-        )))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("scope mode");
+        ));
 
-        assertThatThrownBy(() -> this.mapper.toCommand(new SaveAgentWorkflowRequest(
-                "Full Testing",
-                List.of(new NodeRequest(NODE_ID, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY.name(),
-                        List.of(), List.of(), new NodePositionRequest(1.0, 2.0), "repository")),
-                List.of(),
-                INPUT_ID,
-                OUTPUT_ID
-        )))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("scope mode");
+        assertThat(command.nodes().getFirst().inputMode()).isNull();
+        assertThat(command.nodes().getFirst().position()).isNull();
+        assertThat(command.nodes().getFirst().scopeMode()).isEqualTo("repository");
     }
 }

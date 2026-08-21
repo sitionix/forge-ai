@@ -148,7 +148,7 @@ public class InfrastructureProxyRouteRegistry {
                         final String upstreamPath,
                         final boolean requestBodyAllowed,
                         final Duration readTimeout,
-                        final boolean preserveControlledUpstreamErrors) {
+                        final boolean preserveUpstreamServerErrors) {
         registered.put(key, new InfrastructureProxyRoute(
                 key,
                 InfrastructureProxyService.JARVIS,
@@ -157,7 +157,7 @@ public class InfrastructureProxyRouteRegistry {
                 requestBodyAllowed,
                 true,
                 readTimeout,
-                preserveControlledUpstreamErrors
+                preserveUpstreamServerErrors
         ));
     }
 

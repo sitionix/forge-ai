@@ -1,6 +1,5 @@
 package com.sitionix.forgeai.api.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.ByteArrayOutputStream;
@@ -192,7 +191,7 @@ public class InfrastructureProxyTransport {
             );
         }
         if (response.statusCode() >= 500) {
-            if (route.preserveControlledUpstreamErrors() && this.isControlledHumanQueryError(body)) {
+            if (route.preserveUpstreamServerErrors()) {
                 return new ResponseEntity<>(body, this.safeResponseHeaders(response.headers(), correlationId), HttpStatus.valueOf(response.statusCode()));
             }
             return this.responseMapper.error(
@@ -239,18 +238,6 @@ public class InfrastructureProxyTransport {
             );
         }
         if (cause instanceof ConnectException || cause instanceof IOException || cause instanceof SSLException) {
-            if (route.preserveControlledUpstreamErrors()) {
-                return this.responseMapper.error(
-                        InfrastructureProxyErrorCode.UPSTREAM_ERROR,
-                        this.serviceLabel(route) + " proxy request failed.",
-                        correlationId,
-                        null,
-                        route.key(),
-                        HttpStatus.BAD_GATEWAY,
-                        this.elapsedMs(startedNanos),
-                        "nexus"
-                );
-            }
             return this.responseMapper.error(
                     InfrastructureProxyErrorCode.UPSTREAM_UNAVAILABLE,
                     this.serviceLabel(route) + " service is unavailable.",
@@ -316,35 +303,6 @@ public class InfrastructureProxyTransport {
         } catch (final IOException exception) {
             return false;
         }
-    }
-
-    private boolean isControlledHumanQueryError(final byte[] body) {
-        try {
-            final JsonNode root = this.objectMapper.readTree(body);
-            if (!root.isObject()) {
-                return false;
-            }
-        final String code = root.path("code").asText("");
-        final String message = root.path("message").asText("");
-        return !message.isBlank() && this.isControlledHumanQueryErrorCode(code);
-        } catch (final IOException exception) {
-            return false;
-        }
-    }
-
-    private boolean isControlledHumanQueryErrorCode(final String code) {
-        return switch (code) {
-            case "HUMAN_QUERY_TIMEOUT",
-                    "QUERY_INTERPRETATION_FAILED",
-                    "QUERY_INTERPRETATION_DEADLINE_EXCEEDED",
-                    "QUERY_PLANNING_TIMEOUT",
-                    "NO_GROUNDED_GRAPH_CANDIDATES",
-                    "RESPONSE_LANGUAGE_NOT_ALLOWED",
-                    "KNOWLEDGE_QUERY_FAILED",
-                    "KNOWLEDGE_UNAVAILABLE",
-                    "KNOWLEDGE_BAD_RESPONSE" -> true;
-            default -> false;
-        };
     }
 
     private org.springframework.http.HttpHeaders safeResponseHeaders(final HttpHeaders upstreamHeaders,

@@ -13,6 +13,6 @@ record InfrastructureProxyRoute(
         boolean requestBodyAllowed,
         boolean jsonExpected,
         Duration readTimeout,
-        boolean preserveControlledUpstreamErrors
+        boolean preserveUpstreamServerErrors
 ) {
 }

@@ -32,7 +32,6 @@
         <junit.version>4.13.2</junit.version>
         <mapstruct.version>1.6.2</mapstruct.version>
         <spring.version>3.3.4</spring.version>
-        <forge.security.version>0.0.7</forge.security.version>
     </properties>
 
     <dependencyManagement>
@@ -52,10 +51,6 @@
             <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>domain</artifactId>
-            </dependency>
-            <dependency>
-                <groupId>${project.groupId}</groupId>
-                <artifactId>jarvis-client</artifactId>
             </dependency>
             <dependency>
                 <groupId>${project.groupId}</groupId>
@@ -136,18 +131,4 @@
         </pluginManagement>
     </build>
 
-    <repositories>
-        <repository>
-            <id>github-app-afesox</id>
-            <url>https://maven.pkg.github.com/sitionix/app-afesox</url>
-            <releases><enabled>true</enabled></releases>
-            <snapshots><enabled>true</enabled></snapshots>
-        </repository>
-        <repository>
-            <id>github-forge-security</id>
-            <url>https://maven.pkg.github.com/sitionix/forge-security</url>
-            <releases><enabled>true</enabled></releases>
-            <snapshots><enabled>true</enabled></snapshots>
-        </repository>
-    </repositories>
 </project>

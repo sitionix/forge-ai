@@ -196,12 +196,11 @@ class InfrastructureProxyTransportTest {
     }
 
     @Test
-    void jarvisQueryPreservesControlledHumanQueryServerErrorStatusesAndBodies() throws Exception {
-        final ObjectMapper objectMapper = new ObjectMapper();
+    void jarvisQueryPreservesEveryUpstreamServerErrorUsingTransportStatusOnly() throws Exception {
         final Map<Integer, String> cases = Map.of(
-                503, "{\"code\":\"KNOWLEDGE_QUERY_FAILED\",\"message\":\"Knowledge query failed before a factual answer could be built.\",\"correlationId\":\"corr-failed\"}",
-                504, "{\"code\":\"HUMAN_QUERY_TIMEOUT\",\"message\":\"Knowledge human query timed out.\",\"correlationId\":\"corr-timeout\"}",
-                502, "{\"code\":\"QUERY_INTERPRETATION_FAILED\",\"message\":\"The local model could not interpret the query.\",\"correlationId\":\"corr-query\"}"
+                500, "{\"arbitrary\":\"one\"}",
+                502, "{\"unknown\":true}",
+                503, "[\"opaque\",\"payload\"]"
         );
 
         for (final Map.Entry<Integer, String> entry : cases.entrySet()) {
@@ -222,12 +221,12 @@ class InfrastructureProxyTransportTest {
             ).get(1, TimeUnit.SECONDS);
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.valueOf(entry.getKey()));
-            assertThat(objectMapper.readTree(response.getBody())).isEqualTo(objectMapper.readTree(entry.getValue()));
+            assertThat(response.getBody()).isEqualTo(entry.getValue().getBytes(UTF_8));
         }
     }
 
     @Test
-    void jarvisQueryTransportFailureRemainsGenericBadGateway() throws Exception {
+    void jarvisQueryTransportFailureUsesGenericUnavailableResponse() throws Exception {
         final HttpClient httpClient = mock(HttpClient.class);
         when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
                 .thenReturn(CompletableFuture.failedFuture(new java.net.ConnectException("refused")));
@@ -243,9 +242,9 @@ class InfrastructureProxyTransportTest {
         ).get(1, TimeUnit.SECONDS);
 
         final Map<?, ?> body = new ObjectMapper().readValue(response.getBody(), Map.class);
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
-        assertThat(body.get("code")).isEqualTo("UPSTREAM_ERROR");
-        assertThat(body.get("message")).isEqualTo("Jarvis proxy request failed.");
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        assertThat(body.get("code")).isEqualTo("UPSTREAM_UNAVAILABLE");
+        assertThat(body.get("message")).isEqualTo("Jarvis service is unavailable.");
         assertThat(body.get("correlationId")).isEqualTo("corr-no-response");
         assertThat(body.get("route")).isEqualTo("jarvis.query");
     }
