@@ -22,7 +22,7 @@
         <module>api-rest</module>
         <module>application</module>
         <module>domain</module>
-        <module>infrastructure</module>
+        <module>clients</module>
     </modules>
 
     <properties>
@@ -32,6 +32,7 @@
         <junit.version>4.13.2</junit.version>
         <mapstruct.version>1.6.2</mapstruct.version>
         <spring.version>3.3.4</spring.version>
+        <forgeit.version>0.0.38</forgeit.version>
     </properties>
 
     <dependencyManagement>
@@ -118,6 +119,21 @@
                                 </annotationProcessorPaths>
                             </configuration>
                         </execution>
+                        <execution>
+                            <id>default-testCompile</id>
+                            <goals>
+                                <goal>testCompile</goal>
+                            </goals>
+                            <configuration>
+                                <annotationProcessorPaths>
+                                    <path>
+                                        <groupId>com.sitionix.forgeit</groupId>
+                                        <artifactId>forge-it-annotation-processor</artifactId>
+                                        <version>${forgeit.version}</version>
+                                    </path>
+                                </annotationProcessorPaths>
+                            </configuration>
+                        </execution>
                     </executions>
                 </plugin>
                 <plugin>
@@ -130,5 +146,14 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <repositories>
+        <repository>
+            <id>github-forge-it</id>
+            <url>https://maven.pkg.github.com/sitionix/forge-it</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+    </repositories>
 
 </project>

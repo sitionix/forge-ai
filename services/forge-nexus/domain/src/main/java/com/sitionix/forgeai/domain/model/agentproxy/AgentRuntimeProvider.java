@@ -9,7 +9,4 @@ public record AgentRuntimeProvider(
         String version,
         List<AgentRuntimeModel> models
 ) {
-    public AgentRuntimeProvider {
-        models = List.copyOf(models);
-    }
 }

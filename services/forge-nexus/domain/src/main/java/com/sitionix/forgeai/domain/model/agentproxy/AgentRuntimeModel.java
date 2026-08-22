@@ -8,7 +8,4 @@ public record AgentRuntimeModel(
         String description,
         List<AgentRuntimeEffort> efforts
 ) {
-    public AgentRuntimeModel {
-        efforts = List.copyOf(efforts);
-    }
 }

@@ -117,7 +117,7 @@ public class AgentProxyApiMapper {
         }
         return new AgentProjectRepositoryGitStateResponse(
                 gitState.branch(),
-                gitState.workingTree() == null ? null : gitState.workingTree().name(),
+                gitState.workingTree(),
                 gitState.pullAvailable()
         );
     }
@@ -138,7 +138,7 @@ public class AgentProxyApiMapper {
 
     public AgentProjectTaskPageResponse toResponse(final AgentProjectTaskPage page) {
         return new AgentProjectTaskPageResponse(
-                page.items().stream().map(this::toResponse).toList(),
+                page.items() == null ? null : page.items().stream().map(this::toResponse).toList(),
                 page.page(),
                 page.size(),
                 page.totalItems(),
@@ -154,7 +154,7 @@ public class AgentProxyApiMapper {
                 task.input(),
                 task.workflowId(),
                 task.repositoryIds(),
-                task.runs().stream().map(this::toResponse).toList(),
+                task.runs() == null ? null : task.runs().stream().map(this::toResponse).toList(),
                 this.toJsonNode(task.result()),
                 task.createdAt(),
                 task.updatedAt()
@@ -190,7 +190,8 @@ public class AgentProxyApiMapper {
     }
 
     public AgentRuntimeResponse toResponse(final AgentRuntimeCatalog runtime) {
-        return new AgentRuntimeResponse(runtime.providers().stream().map(this::toResponse).toList());
+        return new AgentRuntimeResponse(runtime.providers() == null ? null
+                : runtime.providers().stream().map(this::toResponse).toList());
     }
 
     private AgentRuntimeProviderResponse toResponse(final AgentRuntimeProvider provider) {
@@ -199,7 +200,7 @@ public class AgentProxyApiMapper {
                 provider.displayName(),
                 provider.status(),
                 provider.version(),
-                provider.models().stream().map(this::toResponse).toList()
+                provider.models() == null ? null : provider.models().stream().map(this::toResponse).toList()
         );
     }
 
@@ -208,7 +209,7 @@ public class AgentProxyApiMapper {
                 model.modelId(),
                 model.displayName(),
                 model.description(),
-                model.efforts().stream().map(this::toResponse).toList()
+                model.efforts() == null ? null : model.efforts().stream().map(this::toResponse).toList()
         );
     }
 
@@ -235,8 +236,8 @@ public class AgentProxyApiMapper {
                 workflow.id(),
                 workflow.projectId(),
                 workflow.name(),
-                workflow.nodes().stream().map(this::toResponse).toList(),
-                workflow.connections().stream().map(this::toResponse).toList(),
+                workflow.nodes() == null ? null : workflow.nodes().stream().map(this::toResponse).toList(),
+                workflow.connections() == null ? null : workflow.connections().stream().map(this::toResponse).toList(),
                 workflow.taskInputPortId(),
                 workflow.taskOutputPortId(),
                 workflow.createdAt(),
@@ -266,9 +267,9 @@ public class AgentProxyApiMapper {
                 run.workflowName(),
                 run.input(),
                 run.status(),
-                run.nodeRuns().stream().map(this::toResponse).toList(),
-                run.connectionResolutions().stream().map(this::toResponse).toList(),
-                run.executionEdges().stream().map(this::toResponse).toList(),
+                run.nodeRuns() == null ? null : run.nodeRuns().stream().map(this::toResponse).toList(),
+                run.connectionResolutions() == null ? null : run.connectionResolutions().stream().map(this::toResponse).toList(),
+                run.executionEdges() == null ? null : run.executionEdges().stream().map(this::toResponse).toList(),
                 this.toResponse(run.runtimeGraph()),
                 this.toJsonNode(run.result()),
                 run.resultSourceNodeRunId(),
@@ -286,9 +287,9 @@ public class AgentProxyApiMapper {
         return new AgentWorkflowRunGraphResponse(
                 graph.taskInputPortId(),
                 graph.taskOutputPortId(),
-                graph.nodes().stream().map(this::toResponse).toList(),
-                graph.ports().stream().map(this::toResponse).toList(),
-                graph.connections().stream().map(this::toResponse).toList()
+                graph.nodes() == null ? null : graph.nodes().stream().map(this::toResponse).toList(),
+                graph.ports() == null ? null : graph.ports().stream().map(this::toResponse).toList(),
+                graph.connections() == null ? null : graph.connections().stream().map(this::toResponse).toList()
         );
     }
 

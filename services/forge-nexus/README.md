@@ -8,8 +8,8 @@ Physical Maven modules:
 - `services/forge-nexus/api-rest`
 - `services/forge-nexus/application`
 - `services/forge-nexus/domain`
-- `services/forge-nexus/infrastructure/knowledge-client`
-- `services/forge-nexus/infrastructure/agent-client`
+- `services/forge-nexus/clients/knowledge-client`
+- `services/forge-nexus/clients/agent-client`
 
 `services/forge-nexus/pom.xml` is the Java Nexus Maven aggregator. The repository root `pom.xml` is only the lightweight platform aggregator and points at `services/forge-nexus`.
 

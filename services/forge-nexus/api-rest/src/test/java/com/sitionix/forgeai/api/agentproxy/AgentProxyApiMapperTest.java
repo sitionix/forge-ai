@@ -15,7 +15,6 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryWorkingTreeState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
@@ -155,7 +154,7 @@ class AgentProxyApiMapperTest {
                 true,
                 new AgentProjectRepositoryGitState(
                         null,
-                        AgentProjectRepositoryWorkingTreeState.CLEAN,
+                        "CLEAN",
                         false
                 ),
                 CREATED

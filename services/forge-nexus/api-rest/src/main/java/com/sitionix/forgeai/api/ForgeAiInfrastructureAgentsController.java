@@ -90,7 +90,8 @@ public class ForgeAiInfrastructureAgentsController {
 
     @GetMapping("/api/v1/infrastructure/agents/projects")
     public ResponseEntity<List<AgentProjectResponse>> listProjects() {
-        return ResponseEntity.ok(this.listAgentProjects.execute().stream()
+        final var projects = this.listAgentProjects.execute();
+        return ResponseEntity.ok(projects == null ? null : projects.stream()
                 .map(this.mapper::toResponse)
                 .toList());
     }
@@ -119,7 +120,8 @@ public class ForgeAiInfrastructureAgentsController {
 
     @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/repositories")
     public ResponseEntity<List<AgentProjectRepositoryResponse>> listProjectRepositories(@PathVariable final UUID projectId) {
-        return ResponseEntity.ok(this.listAgentProjectRepositories.execute(projectId).stream()
+        final var repositories = this.listAgentProjectRepositories.execute(projectId);
+        return ResponseEntity.ok(repositories == null ? null : repositories.stream()
                 .map(this.mapper::toResponse)
                 .toList());
     }
@@ -170,7 +172,8 @@ public class ForgeAiInfrastructureAgentsController {
 
     @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/agents")
     public ResponseEntity<List<AgentDefinitionListResponse>> listProjectAgents(@PathVariable final UUID projectId) {
-        return ResponseEntity.ok(this.listProjectAgentDefinitions.execute(projectId).stream()
+        final var agents = this.listProjectAgentDefinitions.execute(projectId);
+        return ResponseEntity.ok(agents == null ? null : agents.stream()
                 .map(this.mapper::toResponse)
                 .toList());
     }
@@ -203,7 +206,8 @@ public class ForgeAiInfrastructureAgentsController {
 
     @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/workflows")
     public ResponseEntity<List<AgentWorkflowResponse>> listProjectWorkflows(@PathVariable final UUID projectId) {
-        return ResponseEntity.ok(this.listAgentWorkflows.execute(projectId).stream()
+        final var workflows = this.listAgentWorkflows.execute(projectId);
+        return ResponseEntity.ok(workflows == null ? null : workflows.stream()
                 .map(this.mapper::toResponse)
                 .toList());
     }
@@ -245,7 +249,8 @@ public class ForgeAiInfrastructureAgentsController {
 
     @GetMapping("/api/v1/infrastructure/agents/workflows/{workflowId}/runs")
     public ResponseEntity<List<AgentWorkflowRunSummaryResponse>> listWorkflowRuns(@PathVariable final UUID workflowId) {
-        return ResponseEntity.ok(this.listAgentWorkflowRuns.execute(workflowId).stream()
+        final var runs = this.listAgentWorkflowRuns.execute(workflowId);
+        return ResponseEntity.ok(runs == null ? null : runs.stream()
                 .map(this.mapper::toResponse)
                 .toList());
     }

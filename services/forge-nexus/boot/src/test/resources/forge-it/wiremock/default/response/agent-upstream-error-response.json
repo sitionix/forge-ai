@@ -1,0 +1,5 @@
+{
+  "code": "PROJECT_ALREADY_EXISTS",
+  "message": "Project already exists.",
+  "correlationId": "corr-upstream"
+}
