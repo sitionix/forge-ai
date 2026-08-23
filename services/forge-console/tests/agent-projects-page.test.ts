@@ -1447,21 +1447,23 @@ describe('Agent projects page', () => {
     page.taskExecutionView.render();
     expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-2');
     expect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')?.classList.contains('selected')).toBe(true);
-    expect(dom.window.document.querySelector('[data-execution-run-chip-id="reviewer-2"]')?.classList.contains('selected')).toBe(true);
+    expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('reviewer-2');
     expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('SUCCEEDED');
 
-    dom.window.document.querySelector<HTMLElement>('[data-execution-run-chip-id="reviewer-1"]')!.click();
+    const invocationSelect = dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')!;
+    invocationSelect.value = 'reviewer-1';
+    invocationSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     page.taskExecutionView.applyWorkflowRun(workflowRunDetail('run-new', 'RUNNING', [first, second, third], 'Selection Board', graph));
     page.taskExecutionView.render();
     expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-1');
     expect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')?.classList.contains('selected')).toBe(true);
-    expect(dom.window.document.querySelector('[data-execution-run-chip-id="reviewer-1"]')?.classList.contains('selected')).toBe(true);
+    expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('reviewer-1');
     expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('RUNNING');
 
     page.taskExecutionView.applyWorkflowRun(workflowRunDetail('run-new', 'RUNNING', [second, third], 'Selection Board', graph));
     page.taskExecutionView.render();
     expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-3');
-    expect(dom.window.document.querySelector('[data-execution-run-chip-id="reviewer-3"]')?.classList.contains('selected')).toBe(true);
+    expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('reviewer-3');
   });
 
   it('an unexecuted card follows its first invocation when it appears', async () => {
@@ -1557,6 +1559,83 @@ describe('Agent projects page', () => {
     expect(styles).toMatch(/\.execution-board-port-row span\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s);
     expect(styles).toMatch(/\.execution-board-port-row-input \.execution-port-anchor\s*\{[^}]*left:\s*0;/s);
     expect(styles).toMatch(/\.execution-board-port-row-output \.execution-port-anchor\s*\{[^}]*right:\s*0;/s);
+    expect(styles).toMatch(/\.execution-board-card-grid\s*\{[^}]*grid-template-columns:\s*82px minmax\(0, 1fr\) 82px;/s);
+    expect(styles).toMatch(/\.execution-board-port-column\s*\{[^}]*width:\s*82px;[^}]*overflow:\s*hidden;/s);
+  });
+
+  it('keeps graph cards constant-size as invocation history grows and selects history in Node Details', async () => {
+    const graph = runtimeGraph([{ id: 'reviewer', agentName: 'Reviewer' }]);
+    const runs = Array.from({ length: 300 }, (_, index) => modernNodeRun(
+      `reviewer-${index + 1}`,
+      'reviewer',
+      'SUCCEEDED',
+      `2026-08-13T10:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}Z`
+    ));
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Scaling Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    for (const count of [0, 1, 10, 300]) {
+      page.taskExecutionView.applyWorkflowRun(workflowRunDetail('run-new', 'RUNNING', runs.slice(0, count), 'Scaling Board', graph));
+      page.taskExecutionView.render();
+      const card = dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="reviewer"]')!;
+      expect(card.querySelector('.execution-board-card-grid')?.children).toHaveLength(3);
+      expect(card.querySelectorAll('button, [data-execution-run-chip-id]')).toHaveLength(0);
+      expect(card.textContent).toContain(`${count} ${count === 1 ? 'run' : 'runs'}`);
+    }
+
+    dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="reviewer"]')!.click();
+    const selector = dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')!;
+    expect(selector.options).toHaveLength(300);
+    expect(selector.value).toBe('reviewer-300');
+    selector.value = 'reviewer-1';
+    selector.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-1');
+  });
+
+  it('measures short and long port anchors on the physical card boundaries', async () => {
+    const graph = runtimeGraph([
+      {
+        id: 'short',
+        agentName: 'Short',
+        inputs: [{ id: 'short-input', name: 'IN', order: 0 }],
+        outputs: [{ id: 'short-output', name: 'OUT', order: 0 }]
+      },
+      {
+        id: 'long',
+        agentName: 'Long',
+        inputs: [{ id: 'long-input', name: 'IMPLEMENTATION_TASK_WITH_LONG_SUFFIX', order: 0 }],
+        outputs: [{ id: 'long-output', name: 'IMPLEMENTATION_COMPLETE_WITH_LONG_SUFFIX', order: 0 }]
+      }
+    ]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Port Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 1000, 600);
+    const projection = page.taskExecutionView.modernProjection();
+    const shortNode = projection.nodeByUnit.get('short::__global__');
+    const longNode = projection.nodeByUnit.get('long::__global__');
+    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="short"]'), 100, 60, MODERN_EXECUTION_CARD_WIDTH, 118);
+    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="long"]'), 520, 60, MODERN_EXECUTION_CARD_WIDTH, 118);
+    stubAnchor(dom, 'short-input', 100, 100);
+    stubAnchor(dom, 'short-output', 100 + MODERN_EXECUTION_CARD_WIDTH, 100);
+    stubAnchor(dom, 'long-input', 520, 100);
+    stubAnchor(dom, 'long-output', 520 + MODERN_EXECUTION_CARD_WIDTH, 100);
+
+    expect(page.taskExecutionView.modernPortPoint(projection.portById.get('short-input'), shortNode, projection).x).toBe(100);
+    expect(page.taskExecutionView.modernPortPoint(projection.portById.get('short-output'), shortNode, projection).x).toBe(388);
+    expect(page.taskExecutionView.modernPortPoint(projection.portById.get('long-input'), longNode, projection).x).toBe(520);
+    expect(page.taskExecutionView.modernPortPoint(projection.portById.get('long-output'), longNode, projection).x).toBe(808);
+    expect(dom.window.document.querySelector('[data-runtime-port-id="long-input"]')?.getAttribute('title')).toBe('IMPLEMENTATION_TASK_WITH_LONG_SUFFIX');
   });
 
   it('modern execution board splits scoped histories and statuses by repository', async () => {
@@ -1595,17 +1674,17 @@ describe('Agent projects page', () => {
     expect(scopedCards).toHaveLength(2);
     expect(scopedCards.map((card) => card.dataset.executionRepositoryId)).toEqual([repoA.id, repoB.id]);
     expect(scopedCards[0]!.textContent).toContain('backend-service');
-    expect(scopedCards[0]!.querySelectorAll('[data-execution-run-chip-id]')).toHaveLength(3);
+    expect(scopedCards[0]!.querySelectorAll('button, [data-execution-run-chip-id]')).toHaveLength(0);
     expect(scopedCards[0]!.classList.contains('execution-node-has-failed')).toBe(false);
     expect(scopedCards[1]!.textContent).toContain('frontend-service');
-    expect(scopedCards[1]!.querySelectorAll('[data-execution-run-chip-id]')).toHaveLength(2);
+    expect(scopedCards[1]!.querySelectorAll('button, [data-execution-run-chip-id]')).toHaveLength(0);
     expect(scopedCards[1]!.classList.contains('execution-node-has-failed')).toBe(true);
     expect(dom.window.document.querySelector('[data-execution-source-node-id="analyzer"] .execution-board-repository')).toBeNull();
 
     scopedCards[0]!.click();
-    expect(dom.window.document.querySelector('.execution-history-marker.selected')?.getAttribute('data-execution-run-chip-id')).toBe('a-3');
+    expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('a-3');
     scopedCards[1]!.click();
-    expect(dom.window.document.querySelector('.execution-history-marker.selected')?.getAttribute('data-execution-run-chip-id')).toBe('b-2');
+    expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('b-2');
   });
 
   it('modern execution board projects not-yet-run scoped units without fake markers', async () => {
@@ -1735,9 +1814,39 @@ describe('Agent projects page', () => {
     page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
 
     const path = dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d') || '';
+    expect(dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"]')?.classList.contains('execution-edge-feedback-reentry')).toBe(true);
     expect(path).not.toMatch(/[CS]/);
     expect(path).toMatch(/^M (?:-?\d+(?:\.\d+)? )+-?\d+(?: H -?\d+(?:\.\d+)?| V -?\d+(?:\.\d+)?| Q -?\d+(?:\.\d+)? -?\d+(?:\.\d+)? -?\d+(?:\.\d+)? -?\d+(?:\.\d+)?)+$/);
     expectPathOutsideRects(path, [workerBounds, reviewerBounds]);
+    expect(Math.min(...pathPoints(path).map((point) => point.y))).toBeLessThan(workerBounds.top);
+  });
+
+  it('renders a direct self-loop locally around its execution card', async () => {
+    const graph = runtimeGraph([
+      { id: 'reviewer', agentName: 'Reviewer' }
+    ], [portConnection('reviewer-self', 'reviewer-output', 'reviewer-input')]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Self Loop Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const card = dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')!;
+    stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 900, 600);
+    stubRect(card, 200, 100, MODERN_EXECUTION_CARD_WIDTH, 118);
+    stubAnchor(dom, 'reviewer-input', 200, 140);
+    stubAnchor(dom, 'reviewer-output', 488, 140);
+    page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
+
+    const edge = dom.window.document.querySelector('[data-runtime-connection-id="reviewer-self"]')!;
+    const path = edge.querySelector('path')?.getAttribute('d') || '';
+    const points = pathPoints(path);
+    expect(edge.classList.contains('execution-edge-self-loop')).toBe(true);
+    expect(Math.min(...points.map((point) => point.x))).toBeGreaterThanOrEqual(178);
+    expect(Math.max(...points.map((point) => point.x))).toBeLessThanOrEqual(510);
+    expect(Math.min(...points.map((point) => point.y))).toBeLessThan(100);
   });
 
   it('modern execution board keeps one card per source node for cycles and marks the latest selected output', async () => {
@@ -1771,7 +1880,10 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-runtime-port-id="reviewer-fail"]')?.classList.contains('selected')).toBe(false);
     expect(dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d')).not.toMatch(/[CS]/);
 
-    dom.window.document.querySelector<HTMLElement>('[data-execution-run-chip-id="reviewer-1"]')?.click();
+    dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="reviewer"]')?.click();
+    const reviewerInvocation = dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')!;
+    reviewerInvocation.value = 'reviewer-1';
+    reviewerInvocation.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     await flushAsync();
     expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('SUCCEEDED');
   });

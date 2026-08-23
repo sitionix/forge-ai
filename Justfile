@@ -11,7 +11,24 @@ knowledge_url := "http://127.0.0.1:7081"
 jarvis_url := "http://127.0.0.1:7071"
 sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 
-start: _start-preflight _app-stop _jarvis-stop _knowledge-stop _ollama-stop _postgres-start _sqlite-start _ollama-start _console-build _knowledge-start _jarvis-start _app-start _console-live-check
+# Start all services, or one independently managed service: console, knowledge, jarvis, postgres, ollama.
+start service="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{service}}" in
+        all) just --justfile "{{root}}/Justfile" _start-all ;;
+        console) just --justfile "{{root}}/Justfile" _console-restart ;;
+        knowledge) just --justfile "{{root}}/Justfile" _knowledge-restart ;;
+        jarvis) just --justfile "{{root}}/Justfile" _jarvis-restart ;;
+        postgres) just --justfile "{{root}}/Justfile" _postgres-restart ;;
+        ollama) just --justfile "{{root}}/Justfile" _ollama-restart ;;
+        *)
+            echo "Unknown service '{{service}}'. Allowed: all, console, knowledge, jarvis, postgres, ollama." >&2
+            exit 2
+            ;;
+    esac
+
+_start-all: _start-preflight _app-stop _jarvis-stop _knowledge-stop _ollama-stop _postgres-start _sqlite-start _ollama-start _console-build _knowledge-start _jarvis-start _app-start _console-live-check
     @echo "Forge AI stack is up:"
     @echo "  app:       {{app_url}}"
     @echo "  agent:     {{agent_url}}"
@@ -50,6 +67,9 @@ _postgres-start:
 _postgres-stop:
     @docker compose stop forge-agent-postgres >/dev/null || true
 
+_postgres-restart: _postgres-stop _postgres-start
+    @echo "Postgres restarted."
+
 _sqlite-start:
     @mkdir -p "{{root}}/var/knowledge"
     @if [[ -f "{{sqlite_path}}" ]]; then \
@@ -67,6 +87,9 @@ _knowledge-start: _sqlite-start
 _knowledge-stop:
     @scripts/knowledge/stop.sh
 
+_knowledge-restart: _knowledge-stop _knowledge-start
+    @echo "Knowledge restarted."
+
 _jarvis-start:
     @if [[ ! -x "{{root}}/services/forge-jarvis/.venv/bin/uvicorn" ]]; then \
         scripts/jarvis/bootstrap.sh; \
@@ -76,14 +99,23 @@ _jarvis-start:
 _jarvis-stop:
     @scripts/jarvis/stop.sh
 
+_jarvis-restart: _jarvis-stop _jarvis-start
+    @echo "Jarvis restarted."
+
 _ollama-start:
     @scripts/ollama/start-optional.sh
 
 _ollama-stop:
     @scripts/ollama/stop-owned.sh
 
+_ollama-restart: _ollama-stop _ollama-start
+    @echo "Ollama restart completed."
+
 _console-build:
     @scripts/console/build.sh
+
+_console-restart: _console-build
+    @echo "Console assets rebuilt. No backend service was restarted."
 
 _app-start:
     #!/usr/bin/env bash

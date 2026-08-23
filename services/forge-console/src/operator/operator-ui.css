@@ -1497,8 +1497,8 @@ body.sidebar-collapsed .sidebar-link {
 
 .execution-board-card-grid {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 72px;
-  gap: 10px;
+  grid-template-columns: 82px minmax(0, 1fr) 82px;
+  gap: 8px;
   align-items: stretch;
 }
 
@@ -1540,50 +1540,10 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .execution-board-runline small,
-.execution-history-overflow {
+.node-run-invocation-picker span {
   color: var(--muted);
   font: 800 10px/1 var(--mono);
   white-space: nowrap;
-}
-
-.execution-board-markers {
-  display: flex;
-  gap: 3px;
-  align-items: center;
-  min-width: 0;
-}
-
-.execution-history-marker {
-  display: inline-grid;
-  place-items: center;
-  width: 17px;
-  height: 17px;
-  border: 1px solid rgba(27, 36, 31, 0.18);
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--ink);
-  cursor: pointer;
-  font: 900 10px/1 var(--mono);
-}
-
-.execution-history-marker.selected {
-  border-color: #2b6f62;
-  box-shadow: 0 0 0 2px rgba(43, 111, 98, 0.14);
-}
-
-.execution-history-marker-running {
-  border-color: rgba(36, 99, 235, 0.42);
-  color: #2463eb;
-}
-
-.execution-history-marker-succeeded {
-  border-color: rgba(47, 143, 91, 0.42);
-  color: #2f8f5b;
-}
-
-.execution-history-marker-failed {
-  border-color: rgba(201, 61, 61, 0.48);
-  color: #b12f2f;
 }
 
 .execution-node-unreached {
@@ -1603,11 +1563,16 @@ body.sidebar-collapsed .sidebar-link {
   display: grid;
   gap: 4px;
   align-content: center;
+  width: 82px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .execution-board-port-row {
   position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   min-height: 20px;
   color: var(--muted);
   font: 800 10px/1.2 var(--mono);
@@ -1683,6 +1648,34 @@ body.sidebar-collapsed .sidebar-link {
 
 .execution-task-boundary .execution-board-port-row span {
   display: none;
+}
+
+.node-run-invocation-picker {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.node-run-invocation-picker select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(27, 36, 31, 0.18);
+  border-radius: 6px;
+  background: #fffaf0;
+  color: var(--ink);
+  font: 700 12px/1.2 var(--mono);
+  padding: 7px 9px;
+}
+
+.execution-edge-secondary-fan-in .edge-visible {
+  stroke-dasharray: 5 4;
+  opacity: 0.72;
+}
+
+.execution-edge-feedback-reentry .edge-visible,
+.execution-edge-self-loop .edge-visible {
+  stroke: #8a5a2b;
 }
 
 .task-execution-graph-empty {

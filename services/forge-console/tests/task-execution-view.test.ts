@@ -208,6 +208,90 @@ describe('task execution visual projection', () => {
     expect(projectedPairs(projection)).toEqual([
       [visualUnitKey('reviewer', null), visualUnitKey('reviewer', null)]
     ]);
+    expect(projection.connections[0]!.visualType).toBe('SELF_LOOP');
+  });
+
+  it('builds a deterministic primary tree and classifies fan-in and feedback edges', () => {
+    const nodes = [
+      { id: 'root', scopeMode: 'GLOBAL' },
+      { id: 'left', scopeMode: 'GLOBAL' },
+      { id: 'right', scopeMode: 'GLOBAL' },
+      { id: 'merge', scopeMode: 'GLOBAL' },
+      { id: 'finish', scopeMode: 'GLOBAL' }
+    ];
+    const connections: Array<[string, string]> = [
+      ['root', 'left'],
+      ['root', 'right'],
+      ['left', 'merge'],
+      ['right', 'merge'],
+      ['merge', 'finish'],
+      ['finish', 'left'],
+      ['merge', 'merge']
+    ];
+    const original = graph(nodes, connections, 'root', 'finish');
+    const shuffled = graph(nodes, connections.slice().reverse(), 'root', 'finish');
+    shuffled.connections.forEach((connection, index) => {
+      connection.sourceConnectionId = `shuffled-${index}`;
+    });
+
+    const first = buildExecutionProjection(original, [], []);
+    const second = buildExecutionProjection(shuffled, [], []);
+    const positions = (projection: ReturnType<typeof buildExecutionProjection>) => Object.fromEntries(
+      projection.nodes.map((node) => [node.visualUnitKey, node.position])
+    );
+    const edgeLayout = (projection: ReturnType<typeof buildExecutionProjection>) => Object.fromEntries(
+      projection.connections.map((edge) => [
+        `${edge.sourceVisualUnitKey}->${edge.targetVisualUnitKey}`,
+        [edge.visualType, edge.visualLane ?? null]
+      ])
+    );
+    const byPair = new Map(first.connections.map((edge) => [
+      `${edge.sourceVisualUnitKey}->${edge.targetVisualUnitKey}`,
+      edge.visualType
+    ]));
+
+    expect(positions(second)).toEqual(positions(first));
+    expect(edgeLayout(second)).toEqual(edgeLayout(first));
+    expect(first.nodes.find((node) => node.taskBoundary === 'INPUT')!.position.x)
+      .toBeLessThan(first.nodes.find((node) => node.sourceNodeId === 'root')!.position.x);
+    expect(first.nodes.find((node) => node.taskBoundary === 'OUTPUT')!.position.x)
+      .toBeGreaterThan(first.nodes.find((node) => node.sourceNodeId === 'finish')!.position.x);
+    expect(first.nodes.find((node) => node.sourceNodeId === 'left')!.position.x)
+      .toBeGreaterThan(first.nodes.find((node) => node.sourceNodeId === 'root')!.position.x);
+    expect(byPair.get(`${visualUnitKey('right', null)}->${visualUnitKey('merge', null)}`)).toBe('SECONDARY_FAN_IN');
+    expect(byPair.get(`${visualUnitKey('finish', null)}->${visualUnitKey('left', null)}`)).toBe('FEEDBACK_REENTRY');
+    expect(byPair.get(`${visualUnitKey('merge', null)}->${visualUnitKey('merge', null)}`)).toBe('SELF_LOOP');
+    for (let left = 0; left < first.nodes.length; left += 1) {
+      for (let right = left + 1; right < first.nodes.length; right += 1) {
+        expect(rectanglesOverlap(first.nodes[left]!, first.nodes[right]!)).toBe(false);
+      }
+    }
+  });
+
+  it('lays out a selector/reviewer/implementation cycle as stable left-to-right branches', () => {
+    const runtimeGraph = graph([
+      { id: 'selector', scopeMode: 'GLOBAL' },
+      { id: 'reviewer', scopeMode: 'GLOBAL' },
+      { id: 'implementation', scopeMode: 'GLOBAL' },
+      { id: 'planner', scopeMode: 'GLOBAL' },
+      { id: 'implementer', scopeMode: 'GLOBAL' }
+    ], [
+      ['selector', 'reviewer'],
+      ['selector', 'implementation'],
+      ['reviewer', 'planner'],
+      ['planner', 'implementer'],
+      ['implementer', 'reviewer'],
+      ['reviewer', 'selector']
+    ], 'selector', 'selector');
+
+    const projection = buildExecutionProjection(runtimeGraph, [], []);
+    const x = (id: string) => projection.nodes.find((node) => node.sourceNodeId === id)!.position.x;
+
+    expect(x('reviewer')).toBeGreaterThan(x('selector'));
+    expect(x('implementation')).toBeGreaterThan(x('selector'));
+    expect(x('planner')).toBeGreaterThan(x('reviewer'));
+    expect(x('implementer')).toBeGreaterThan(x('planner'));
+    expect(projection.connections.filter((edge) => edge.visualType === 'FEEDBACK_REENTRY')).toHaveLength(2);
   });
 
   it('uses an unavailable label instead of a repository ID when metadata is missing', () => {
