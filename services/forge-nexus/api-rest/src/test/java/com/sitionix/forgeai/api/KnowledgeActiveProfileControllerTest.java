@@ -94,4 +94,18 @@ class KnowledgeActiveProfileControllerTest {
         verify(this.updateActiveLlmProfile).execute(command);
         verify(this.mapper).toResponse(update);
     }
+
+    @Test
+    void semanticallyInvalidRequestStillReachesKnowledgeUseCase() {
+        final var request = new ActiveLlmProfileUpdateRequest(-1L, "", " ", null);
+        final var command = new UpdateActiveLlmProfileCommand(-1, "", " ", null);
+        final var update = new ActiveLlmProfileUpdateResult(-1, new ActiveLlmSelection("", " ", null));
+        final var response = new ActiveLlmProfileResponse(-1, new ActiveLlmSelectionResponse("", " ", null));
+        when(this.mapper.toCommand(request)).thenReturn(command);
+        when(this.updateActiveLlmProfile.execute(command)).thenReturn(update);
+        when(this.mapper.toResponse(update)).thenReturn(response);
+
+        assertThat(this.controller.updateActiveLlmProfile(request).getBody()).isSameAs(response);
+        verify(this.updateActiveLlmProfile).execute(command);
+    }
 }

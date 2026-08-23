@@ -2,6 +2,7 @@ package com.sitionix.forgeai.mapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmEffortRequest;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmEffortResponse;
 import com.sitionix.forgeai.api.activeprofile.ActiveLlmProfileDetailsResponse;
@@ -105,6 +106,16 @@ class ActiveProfileApiMapperTest {
 
         // then
         assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void forwardsSemanticallyInvalidValuesAndIgnoresUnknownFields() throws Exception {
+        final var request = new ObjectMapper().readValue("""
+                {"expectedRevision":-1,"providerId":"","modelId":" ","unknownKnowledgeField":true}
+                """, ActiveLlmProfileUpdateRequest.class);
+
+        assertThat(this.mapper.toCommand(request))
+                .isEqualTo(new UpdateActiveLlmProfileCommand(-1, "", " ", null));
     }
 
     @Test

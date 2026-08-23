@@ -100,24 +100,11 @@ services:
   forge-ai:
     label: Forge AI Service SOX
     path: forge-ai
-    tags: [java, spring-boot, backend, forge-it, http, mongodb]
-    domain_keywords: [forge ai, ai, ping, mongodb]
-    owns_business_areas: [Forge AI API, Forge AI Mongo persistence]
+    tags: [java, spring-boot, backend, http, proxy]
+    domain_keywords: [forge ai, nexus, proxy, gateway]
+    owns_business_areas: [Forge Nexus proxy gateway]
     architecture_refs: []
-    contract_refs:
-      api:
-        source_repo: app-afesox
-        api_family: fgaisox
-        service_code: fgaisox
-        root: app-afesox/apis/fgaisox/rest/openapi.yml
-        schemas:
-          - app-afesox/apis/fgaisox/rest/schemas
-        operations:
-          - app-afesox/apis/fgaisox/rest/paths
-        generated_artifacts:
-          - app-afesox-fgaisox-api-first-stable
-        consumer_artifacts: []
-        frontend_packages: []
+    contract_refs: {}
     group: backend
     deploy:
       type: service
@@ -128,11 +115,9 @@ services:
         workflow_name: Service Deploy On Command
         workflow_event: repository_dispatch
     db:
-      required: true
-      type: mongodb
-      mode: service
-      key: forge_ai
-    tests: [unit, it, e2e]
+      required: false
+      type: none
+    tests: [unit]
   bffssox:
     label: Backend for Frontend Service SOX
     path: backendforfrontendservice-sox

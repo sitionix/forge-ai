@@ -12,8 +12,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.validation.BindException;
-import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.ResourceAccessException;
@@ -74,16 +72,6 @@ public class KnowledgeActiveProfileExceptionHandler {
                 HttpStatus.BAD_GATEWAY.value(),
                 UPSTREAM_INVALID_RESPONSE,
                 "Knowledge service returned an invalid response.",
-                null
-        );
-    }
-
-    @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class})
-    public ResponseEntity<InfrastructureErrorResponse> handleMethodArgumentNotValidException(final Exception exception) {
-        return this.response(
-                HttpStatus.BAD_REQUEST.value(),
-                VALIDATION_FAILED,
-                "Active LLM profile request is invalid.",
                 null
         );
     }

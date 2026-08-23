@@ -1,7 +1,0 @@
-{
-  "payloadType": "ApiPayloadShape",
-  "description": "Object payload shape for API request or response bodies.",
-  "fields": [
-    { "name": "fields", "type": "ARRAY", "required": true, "description": "Fields in this payload shape. Use [] when the shape is empty or not applicable.", "itemType": "OBJECT", "itemObjectType": "ApiPayloadField" }
-  ]
-}

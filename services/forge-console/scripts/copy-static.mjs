@@ -7,8 +7,6 @@ const repoRoot = resolve(root, '..', '..');
 const dist = resolve(root, 'dist');
 const defaults = {
   apiMode: 'same-origin',
-  operatorUiApiBasePath: '/api/v1/forge-ai/operator/ui',
-  operatorApiBasePath: '/api/v1/forge-ai/operator',
   infrastructureApiBasePath: '/api/v1/infrastructure',
   statusPollIntervalMs: 15000,
   activeJobPollIntervalMs: 1500,

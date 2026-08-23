@@ -2,8 +2,6 @@ export type ApiMode = 'same-origin';
 
 export interface OperatorRuntimeConfig {
   apiMode: ApiMode;
-  operatorUiApiBasePath: string;
-  operatorApiBasePath: string;
   infrastructureApiBasePath: string;
   statusPollIntervalMs: number;
   activeJobPollIntervalMs: number;
@@ -20,8 +18,6 @@ declare global {
 
 export const defaultRuntimeConfig: OperatorRuntimeConfig = {
   apiMode: 'same-origin',
-  operatorUiApiBasePath: '/api/v1/forge-ai/operator/ui',
-  operatorApiBasePath: '/api/v1/forge-ai/operator',
   infrastructureApiBasePath: '/api/v1/infrastructure',
   statusPollIntervalMs: 15000,
   activeJobPollIntervalMs: 1500,
@@ -55,8 +51,6 @@ export async function loadRuntimeConfig(fetcher: typeof fetch = fetch): Promise<
 function normalizeRuntimeConfig(config: OperatorRuntimeConfig): OperatorRuntimeConfig {
   return {
     apiMode: 'same-origin',
-    operatorUiApiBasePath: normalizeBasePath(config.operatorUiApiBasePath),
-    operatorApiBasePath: normalizeBasePath(config.operatorApiBasePath),
     infrastructureApiBasePath: normalizeBasePath(config.infrastructureApiBasePath),
     statusPollIntervalMs: positiveInteger(config.statusPollIntervalMs, defaultRuntimeConfig.statusPollIntervalMs),
     activeJobPollIntervalMs: positiveInteger(config.activeJobPollIntervalMs, defaultRuntimeConfig.activeJobPollIntervalMs),

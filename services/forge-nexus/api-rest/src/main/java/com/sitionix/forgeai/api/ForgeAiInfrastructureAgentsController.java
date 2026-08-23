@@ -43,7 +43,6 @@ import com.sitionix.forgeai.domain.usecase.ListProjectAgentDefinitions;
 import com.sitionix.forgeai.domain.usecase.PullAgentProjectRepository;
 import com.sitionix.forgeai.domain.usecase.UpdateAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.UpdateAgentWorkflow;
-import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
@@ -91,13 +90,14 @@ public class ForgeAiInfrastructureAgentsController {
 
     @GetMapping("/api/v1/infrastructure/agents/projects")
     public ResponseEntity<List<AgentProjectResponse>> listProjects() {
-        return ResponseEntity.ok(this.listAgentProjects.execute().stream()
+        final var projects = this.listAgentProjects.execute();
+        return ResponseEntity.ok(projects == null ? null : projects.stream()
                 .map(this.mapper::toResponse)
                 .toList());
     }
 
     @PostMapping("/api/v1/infrastructure/agents/projects")
-    public ResponseEntity<AgentProjectResponse> createProject(@Valid @RequestBody final AgentProjectRequest request) {
+    public ResponseEntity<AgentProjectResponse> createProject(@RequestBody final AgentProjectRequest request) {
         final AgentProjectResponse response = this.mapper.toResponse(this.createAgentProject.execute(this.mapper.toCommand(request)));
         return ResponseEntity.created(URI.create("/api/v1/infrastructure/agents/projects/" + response.id())).body(response);
     }
@@ -110,7 +110,7 @@ public class ForgeAiInfrastructureAgentsController {
 
     @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/repositories")
     public ResponseEntity<AgentProjectRepositoryResponse> importProjectRepository(@PathVariable final UUID projectId,
-                                                                                  @Valid @RequestBody final ImportAgentProjectRepositoryRequest request) {
+                                                                                  @RequestBody final ImportAgentProjectRepositoryRequest request) {
         final AgentProjectRepositoryResponse response = this.mapper.toResponse(
                 this.importAgentProjectRepository.execute(projectId, this.mapper.toCommand(request))
         );
@@ -120,7 +120,8 @@ public class ForgeAiInfrastructureAgentsController {
 
     @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/repositories")
     public ResponseEntity<List<AgentProjectRepositoryResponse>> listProjectRepositories(@PathVariable final UUID projectId) {
-        return ResponseEntity.ok(this.listAgentProjectRepositories.execute(projectId).stream()
+        final var repositories = this.listAgentProjectRepositories.execute(projectId);
+        return ResponseEntity.ok(repositories == null ? null : repositories.stream()
                 .map(this.mapper::toResponse)
                 .toList());
     }
@@ -139,7 +140,7 @@ public class ForgeAiInfrastructureAgentsController {
 
     @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/tasks")
     public ResponseEntity<AgentProjectTaskResponse> createProjectTask(@PathVariable final UUID projectId,
-                                                                      @Valid @RequestBody final CreateAgentProjectTaskRequest request) {
+                                                                      @RequestBody final CreateAgentProjectTaskRequest request) {
         final AgentProjectTaskResponse response = this.mapper.toResponse(
                 this.createAgentProjectTask.execute(projectId, this.mapper.toCommand(request))
         );
@@ -171,14 +172,15 @@ public class ForgeAiInfrastructureAgentsController {
 
     @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/agents")
     public ResponseEntity<List<AgentDefinitionListResponse>> listProjectAgents(@PathVariable final UUID projectId) {
-        return ResponseEntity.ok(this.listProjectAgentDefinitions.execute(projectId).stream()
+        final var agents = this.listProjectAgentDefinitions.execute(projectId);
+        return ResponseEntity.ok(agents == null ? null : agents.stream()
                 .map(this.mapper::toResponse)
                 .toList());
     }
 
     @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/agents")
     public ResponseEntity<AgentDefinitionResponse> createAgent(@PathVariable final UUID projectId,
-                                                               @Valid @RequestBody final AgentDefinitionRequest request) {
+                                                               @RequestBody final AgentDefinitionRequest request) {
         final AgentDefinitionResponse response = this.mapper.toResponse(
                 this.createAgentDefinition.execute(projectId, this.mapper.toCommand(request))
         );
@@ -198,20 +200,21 @@ public class ForgeAiInfrastructureAgentsController {
 
     @PutMapping("/api/v1/infrastructure/agents/definitions/{agentId}")
     public ResponseEntity<AgentDefinitionResponse> updateAgent(@PathVariable final UUID agentId,
-                                                               @Valid @RequestBody final AgentDefinitionRequest request) {
+                                                               @RequestBody final AgentDefinitionRequest request) {
         return ResponseEntity.ok(this.mapper.toResponse(this.updateAgentDefinition.execute(agentId, this.mapper.toCommand(request))));
     }
 
     @GetMapping("/api/v1/infrastructure/agents/projects/{projectId}/workflows")
     public ResponseEntity<List<AgentWorkflowResponse>> listProjectWorkflows(@PathVariable final UUID projectId) {
-        return ResponseEntity.ok(this.listAgentWorkflows.execute(projectId).stream()
+        final var workflows = this.listAgentWorkflows.execute(projectId);
+        return ResponseEntity.ok(workflows == null ? null : workflows.stream()
                 .map(this.mapper::toResponse)
                 .toList());
     }
 
     @PostMapping("/api/v1/infrastructure/agents/projects/{projectId}/workflows")
     public ResponseEntity<AgentWorkflowResponse> createWorkflow(@PathVariable final UUID projectId,
-                                                                @Valid @RequestBody final AgentWorkflowRequest request) {
+                                                                @RequestBody final AgentWorkflowRequest request) {
         final AgentWorkflowResponse response = this.mapper.toResponse(
                 this.createAgentWorkflow.execute(projectId, this.mapper.toCommand(request))
         );
@@ -231,13 +234,13 @@ public class ForgeAiInfrastructureAgentsController {
 
     @PutMapping("/api/v1/infrastructure/agents/workflows/{workflowId}")
     public ResponseEntity<AgentWorkflowResponse> updateWorkflow(@PathVariable final UUID workflowId,
-                                                                @Valid @RequestBody final SaveAgentWorkflowRequest request) {
+                                                                @RequestBody final SaveAgentWorkflowRequest request) {
         return ResponseEntity.ok(this.mapper.toResponse(this.updateAgentWorkflow.execute(workflowId, this.mapper.toCommand(request))));
     }
 
     @PostMapping("/api/v1/infrastructure/agents/workflows/{workflowId}/runs")
     public ResponseEntity<AgentWorkflowRunResponse> createWorkflowRun(@PathVariable final UUID workflowId,
-                                                                      @Valid @RequestBody final CreateAgentWorkflowRunRequest request) {
+                                                                      @RequestBody final CreateAgentWorkflowRunRequest request) {
         final AgentWorkflowRunResponse response = this.mapper.toResponse(
                 this.createAgentWorkflowRun.execute(workflowId, this.mapper.toCommand(request))
         );
@@ -246,7 +249,8 @@ public class ForgeAiInfrastructureAgentsController {
 
     @GetMapping("/api/v1/infrastructure/agents/workflows/{workflowId}/runs")
     public ResponseEntity<List<AgentWorkflowRunSummaryResponse>> listWorkflowRuns(@PathVariable final UUID workflowId) {
-        return ResponseEntity.ok(this.listAgentWorkflowRuns.execute(workflowId).stream()
+        final var runs = this.listAgentWorkflowRuns.execute(workflowId);
+        return ResponseEntity.ok(runs == null ? null : runs.stream()
                 .map(this.mapper::toResponse)
                 .toList());
     }

@@ -1,8 +1,0 @@
-{
-  "payloadType": "UnitTestSonar",
-  "description": "Static analysis or coverage signal passed to downstream test lanes.",
-  "fields": [
-    { "name": "coveragePercent", "type": "NUMBER", "required": false, "description": "Coverage percentage when available." },
-    { "name": "issues", "type": "INTEGER", "required": true, "description": "Number of relevant static analysis issues when available, otherwise 0." }
-  ]
-}

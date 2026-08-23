@@ -1,9 +1,7 @@
 package com.sitionix.forgeai.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionListResponse;
@@ -421,18 +419,6 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     @Test
-    void locallyInvalidAgentRequestDoesNotCallUseCase() {
-        final AgentDefinitionRequest request = this.agentRequest();
-        when(this.mapper.toCommand(request)).thenThrow(new IllegalArgumentException("Output schema must be a JSON object."));
-
-        assertThatThrownBy(() -> this.controller.createAgent(PROJECT_ID, request))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("JSON object");
-
-        verifyNoInteractions(this.createAgentDefinition);
-    }
-
-    @Test
     void listProjectWorkflows() {
         final AgentWorkflow workflow = this.workflow();
         final AgentWorkflowResponse response = this.workflowResponse();
@@ -484,7 +470,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
 
     @Test
     void updateWorkflow() {
-        final SaveAgentWorkflowRequest request = new SaveAgentWorkflowRequest("Full Testing", List.of(), List.of(), null);
+        final SaveAgentWorkflowRequest request = new SaveAgentWorkflowRequest("Full Testing", List.of(), List.of(), null, null);
         final SaveAgentWorkflowCommand command = new SaveAgentWorkflowCommand("Full Testing", List.of(), List.of(), null);
         final AgentWorkflow workflow = this.workflow();
         final AgentWorkflowResponse response = this.workflowResponse();

@@ -15,4 +15,4 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=tests:src "${PYTHON}" -m pytest \
   -q
 
 cd "${ROOT}"
-mvn -pl services/forge-nexus/application,services/forge-nexus/infrastructure/knowledge-client,services/forge-nexus/api-rest -am test
+mvn -pl services/forge-nexus/application,services/forge-nexus/clients/knowledge-client,services/forge-nexus/api-rest -am test

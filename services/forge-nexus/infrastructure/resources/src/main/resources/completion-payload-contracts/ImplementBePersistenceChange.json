@@ -1,9 +1,0 @@
-{
-  "payloadType": "ImplementBePersistenceChange",
-  "description": "One persistence change made or affected by backend implementation.",
-  "fields": [
-    { "name": "type", "type": "STRING", "required": true, "description": "Persistence artifact type such as collection, table, field, index, or query." },
-    { "name": "name", "type": "STRING", "required": true, "description": "Persistence artifact name." },
-    { "name": "summary", "type": "STRING", "required": true, "description": "What changed and what tests should verify." }
-  ]
-}

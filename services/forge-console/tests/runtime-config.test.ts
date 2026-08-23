@@ -9,12 +9,12 @@ describe('runtime config', () => {
 
   it('normalizes poll intervals and base paths', () => {
     const config = runtimeConfigFromWindow({
-      operatorUiApiBasePath: 'api/ui/',
+      infrastructureApiBasePath: 'api/infrastructure/',
       activeJobPollIntervalMs: 0,
       statusPollIntervalMs: 25000
     });
 
-    expect(config.operatorUiApiBasePath).toBe('/api/ui');
+    expect(config.infrastructureApiBasePath).toBe('/api/infrastructure');
     expect(config.activeJobPollIntervalMs).toBe(1500);
     expect(config.statusPollIntervalMs).toBe(25000);
     expect(config.apiMode).toBe('same-origin');

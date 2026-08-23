@@ -1,5 +1,0 @@
-{
-  "code": "UPSTREAM_INVALID_RESPONSE",
-  "message": "Forge Agent service returned an invalid response.",
-  "correlationId": null
-}

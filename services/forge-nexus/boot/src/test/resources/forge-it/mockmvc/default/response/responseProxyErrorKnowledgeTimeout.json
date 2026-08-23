@@ -1,1 +1,0 @@
-{"code":"UPSTREAM_TIMEOUT","message":"Knowledge service did not respond within the configured timeout.","correlationId":"corr-timeout","upstreamStatus":504,"route":"knowledge.status"}

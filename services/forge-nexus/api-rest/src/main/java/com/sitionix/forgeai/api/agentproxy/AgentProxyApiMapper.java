@@ -34,10 +34,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.Node;
-import com.sitionix.forgeai.domain.model.agentproxy.NodeInputMode;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
-import com.sitionix.forgeai.domain.model.agentproxy.WorkflowNodeScopeMode;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
@@ -64,9 +62,6 @@ public class AgentProxyApiMapper {
     }
 
     public SaveAgentDefinitionCommand toCommand(final AgentDefinitionRequest request) {
-        if (request.outputSchema() == null || !request.outputSchema().isObject()) {
-            throw new IllegalArgumentException("Output schema must be a JSON object.");
-        }
         try {
             return new SaveAgentDefinitionCommand(
                     request.name(),
@@ -86,10 +81,10 @@ public class AgentProxyApiMapper {
     public SaveAgentWorkflowCommand toCommand(final SaveAgentWorkflowRequest request) {
         return new SaveAgentWorkflowCommand(
                 request.name(),
-                request.nodes() == null ? List.of() : request.nodes().stream()
+                request.nodes() == null ? null : request.nodes().stream()
                         .map(this::toDomain)
                         .toList(),
-                request.connections() == null ? List.of() : request.connections().stream()
+                request.connections() == null ? null : request.connections().stream()
                         .map(this::toDomain)
                         .toList(),
                 request.taskInputPortId(),
@@ -122,7 +117,7 @@ public class AgentProxyApiMapper {
         }
         return new AgentProjectRepositoryGitStateResponse(
                 gitState.branch(),
-                gitState.workingTree() == null ? null : gitState.workingTree().name(),
+                gitState.workingTree(),
                 gitState.pullAvailable()
         );
     }
@@ -143,7 +138,7 @@ public class AgentProxyApiMapper {
 
     public AgentProjectTaskPageResponse toResponse(final AgentProjectTaskPage page) {
         return new AgentProjectTaskPageResponse(
-                page.items().stream().map(this::toResponse).toList(),
+                page.items() == null ? null : page.items().stream().map(this::toResponse).toList(),
                 page.page(),
                 page.size(),
                 page.totalItems(),
@@ -159,7 +154,7 @@ public class AgentProxyApiMapper {
                 task.input(),
                 task.workflowId(),
                 task.repositoryIds(),
-                task.runs().stream().map(this::toResponse).toList(),
+                task.runs() == null ? null : task.runs().stream().map(this::toResponse).toList(),
                 this.toJsonNode(task.result()),
                 task.createdAt(),
                 task.updatedAt()
@@ -195,7 +190,8 @@ public class AgentProxyApiMapper {
     }
 
     public AgentRuntimeResponse toResponse(final AgentRuntimeCatalog runtime) {
-        return new AgentRuntimeResponse(runtime.providers().stream().map(this::toResponse).toList());
+        return new AgentRuntimeResponse(runtime.providers() == null ? null
+                : runtime.providers().stream().map(this::toResponse).toList());
     }
 
     private AgentRuntimeProviderResponse toResponse(final AgentRuntimeProvider provider) {
@@ -204,7 +200,7 @@ public class AgentProxyApiMapper {
                 provider.displayName(),
                 provider.status(),
                 provider.version(),
-                provider.models().stream().map(this::toResponse).toList()
+                provider.models() == null ? null : provider.models().stream().map(this::toResponse).toList()
         );
     }
 
@@ -213,7 +209,7 @@ public class AgentProxyApiMapper {
                 model.modelId(),
                 model.displayName(),
                 model.description(),
-                model.efforts().stream().map(this::toResponse).toList()
+                model.efforts() == null ? null : model.efforts().stream().map(this::toResponse).toList()
         );
     }
 
@@ -240,8 +236,8 @@ public class AgentProxyApiMapper {
                 workflow.id(),
                 workflow.projectId(),
                 workflow.name(),
-                workflow.nodes().stream().map(this::toResponse).toList(),
-                workflow.connections().stream().map(this::toResponse).toList(),
+                workflow.nodes() == null ? null : workflow.nodes().stream().map(this::toResponse).toList(),
+                workflow.connections() == null ? null : workflow.connections().stream().map(this::toResponse).toList(),
                 workflow.taskInputPortId(),
                 workflow.taskOutputPortId(),
                 workflow.createdAt(),
@@ -271,9 +267,9 @@ public class AgentProxyApiMapper {
                 run.workflowName(),
                 run.input(),
                 run.status(),
-                run.nodeRuns().stream().map(this::toResponse).toList(),
-                run.connectionResolutions().stream().map(this::toResponse).toList(),
-                run.executionEdges().stream().map(this::toResponse).toList(),
+                run.nodeRuns() == null ? null : run.nodeRuns().stream().map(this::toResponse).toList(),
+                run.connectionResolutions() == null ? null : run.connectionResolutions().stream().map(this::toResponse).toList(),
+                run.executionEdges() == null ? null : run.executionEdges().stream().map(this::toResponse).toList(),
                 this.toResponse(run.runtimeGraph()),
                 this.toJsonNode(run.result()),
                 run.resultSourceNodeRunId(),
@@ -291,9 +287,9 @@ public class AgentProxyApiMapper {
         return new AgentWorkflowRunGraphResponse(
                 graph.taskInputPortId(),
                 graph.taskOutputPortId(),
-                graph.nodes().stream().map(this::toResponse).toList(),
-                graph.ports().stream().map(this::toResponse).toList(),
-                graph.connections().stream().map(this::toResponse).toList()
+                graph.nodes() == null ? null : graph.nodes().stream().map(this::toResponse).toList(),
+                graph.ports() == null ? null : graph.ports().stream().map(this::toResponse).toList(),
+                graph.connections() == null ? null : graph.connections().stream().map(this::toResponse).toList()
         );
     }
 
@@ -302,7 +298,7 @@ public class AgentProxyApiMapper {
                 node.sourceNodeId(),
                 node.agentName(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
-                node.scopeMode().name()
+                node.scopeMode()
         );
     }
 
@@ -347,11 +343,11 @@ public class AgentProxyApiMapper {
         return new Node(
                 request.id(),
                 request.targetId(),
-                inputMode(request.inputMode()),
-                request.inputs() == null ? List.of() : request.inputs().stream().map(this::toDomain).toList(),
-                request.outputs() == null ? List.of() : request.outputs().stream().map(this::toDomain).toList(),
-                request.position() == null ? new NodePosition(0.0, 0.0) : new NodePosition(request.position().x(), request.position().y()),
-                scopeMode(request.scopeMode())
+                request.inputMode(),
+                request.inputs() == null ? null : request.inputs().stream().map(this::toDomain).toList(),
+                request.outputs() == null ? null : request.outputs().stream().map(this::toDomain).toList(),
+                request.position() == null ? null : new NodePosition(request.position().x(), request.position().y()),
+                request.scopeMode()
         );
     }
 
@@ -359,11 +355,11 @@ public class AgentProxyApiMapper {
         return new NodeResponse(
                 node.id(),
                 node.targetId(),
-                inputMode(node.inputMode()).name(),
-                node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
-                node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
-                new NodePositionResponse(node.position().x(), node.position().y()),
-                node.scopeMode().name()
+                node.inputMode(),
+                node.inputs() == null ? null : node.inputs().stream().map(this::toResponse).toList(),
+                node.outputs() == null ? null : node.outputs().stream().map(this::toResponse).toList(),
+                node.position() == null ? null : new NodePositionResponse(node.position().x(), node.position().y()),
+                node.scopeMode()
         );
     }
 
@@ -398,7 +394,7 @@ public class AgentProxyApiMapper {
                     nodeRun.agentName(),
                     nodeRun.agentInstructions(),
                     this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
-                    nodeRunInputMode(nodeRun.inputMode()).name(),
+                    nodeRun.inputMode(),
                     new NodePositionResponse(nodeRun.position().x(), nodeRun.position().y()),
                     nodeRun.executionFrameId(),
                     nodeRun.enteredViaInputPortId(),
@@ -440,33 +436,4 @@ public class AgentProxyApiMapper {
         }
     }
 
-    private static NodeInputMode inputMode(final NodeInputMode inputMode) {
-        return inputMode == null ? NodeInputMode.DEPENDENCIES_ONLY : inputMode;
-    }
-
-    private static NodeInputMode nodeRunInputMode(final NodeInputMode inputMode) {
-        return inputMode == null ? NodeInputMode.TASK_AND_DEPENDENCIES : inputMode;
-    }
-
-    private static NodeInputMode inputMode(final String inputMode) {
-        if (inputMode == null || inputMode.isBlank()) {
-            return NodeInputMode.DEPENDENCIES_ONLY;
-        }
-        try {
-            return NodeInputMode.valueOf(inputMode);
-        } catch (final IllegalArgumentException exception) {
-            throw new IllegalArgumentException("Workflow node input mode is invalid.", exception);
-        }
-    }
-
-    private static WorkflowNodeScopeMode scopeMode(final String scopeMode) {
-        if (scopeMode == null || scopeMode.isBlank()) {
-            throw new IllegalArgumentException("Workflow node scope mode is required.");
-        }
-        try {
-            return WorkflowNodeScopeMode.valueOf(scopeMode);
-        } catch (final IllegalArgumentException exception) {
-            throw new IllegalArgumentException("Workflow node scope mode is invalid.", exception);
-        }
-    }
 }

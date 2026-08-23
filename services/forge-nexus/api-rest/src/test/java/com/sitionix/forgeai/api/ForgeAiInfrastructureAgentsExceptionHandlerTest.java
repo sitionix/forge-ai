@@ -12,6 +12,7 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.converter.HttpMessageConversionException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 
@@ -96,8 +97,8 @@ class ForgeAiInfrastructureAgentsExceptionHandlerTest {
     }
 
     @Test
-    void localInvalidRequestBecomesBadRequest() {
-        final var response = this.handler.handleBadRequest(new IllegalArgumentException("Output schema must be a JSON object."));
+    void malformedRequestBodyBecomesBadRequest() {
+        final var response = this.handler.handleBadRequest(new HttpMessageNotReadableException("malformed JSON"));
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody()).isEqualTo(new InfrastructureErrorResponse(

@@ -11,8 +11,6 @@ export function bootstrapOperatorConsole(options = {}) {
   const documentRef = options.document || document;
   const pageName = options.page || documentRef.body.dataset.page;
   const runtimeConfig = {
-    operatorUiApiBasePath: '/api/v1/forge-ai/operator/ui',
-    operatorApiBasePath: '/api/v1/forge-ai/operator',
     infrastructureApiBasePath: '/api/v1/infrastructure',
     statusPollIntervalMs: 15000,
     activeJobPollIntervalMs: 2000,
@@ -69,11 +67,7 @@ export function initSidebar(documentRef = document, windowRef = window, page = d
     // Local storage is optional in isolated test documents.
   }
   const links = [
-    ['tickets', './index.html', 'T', 'Tickets'],
-    ['new-task', './new-task.html', '+', 'New Task'],
-    ['services', './services.html', 'S', 'Services'],
     ['agent-projects', './agent-projects.html', 'P', 'Projects'],
-    ['agents', './agents.html', 'RT', 'Agent Runtime'],
     ['jarvis', './jarvis.html', 'J', 'Jarvis'],
     ['knowledge', './knowledge.html', 'K', 'Knowledge']
   ];

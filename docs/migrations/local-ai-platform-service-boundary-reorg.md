@@ -1,5 +1,7 @@
 # Local AI Platform Service Boundary Reorg
 
+> Historical migration record. References to Nexus lane or agent configuration describe removed behavior; agent and workflow execution now belongs exclusively to Forge Agent.
+
 ## Before
 
 - Java app and Operator UI were served from existing Maven modules.

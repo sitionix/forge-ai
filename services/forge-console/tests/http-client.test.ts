@@ -19,6 +19,6 @@ describe('HttpClient', () => {
     const fetcher = async (): Promise<Response> => new Response(JSON.stringify({ code: 'BAD' }), { status: 400 });
     const client = new HttpClient(defaultRuntimeConfig, { fetcher, contextPath: '' });
 
-    await expect(client.get('operatorUiApiBasePath', '/tickets')).rejects.toBeInstanceOf(HttpError);
+    await expect(client.get('infrastructureApiBasePath', '/knowledge/status')).rejects.toBeInstanceOf(HttpError);
   });
 });

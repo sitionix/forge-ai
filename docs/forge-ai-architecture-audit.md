@@ -1,5 +1,7 @@
 # Forge AI Architecture Audit
 
+> Historical audit: this document records the former Nexus-owned runtime that has since been removed. Agent and workflow execution now belongs exclusively to Forge Agent.
+
 ## Scope
 
 This audit documents the local Forge AI implementation in the repository checkout used for the audit.

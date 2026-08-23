@@ -1,9 +1,0 @@
-{
-  "payloadType": "ImplementFeAffectedSurface",
-  "description": "One frontend user-facing or integration surface affected by implementation.",
-  "fields": [
-    { "name": "type", "type": "STRING", "required": true, "description": "Surface type such as route, page, component, hook, state, or API client." },
-    { "name": "name", "type": "STRING", "required": true, "description": "Surface name." },
-    { "name": "summary", "type": "STRING", "required": true, "description": "Behavior or responsibility affected on this surface." }
-  ]
-}

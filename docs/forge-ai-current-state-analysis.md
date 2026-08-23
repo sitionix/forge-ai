@@ -1,5 +1,7 @@
 # Forge AI Current State Analysis
 
+> Historical snapshot: the Nexus-owned agent/lane runtime described below has been removed. Current agent and workflow execution belongs exclusively to Forge Agent.
+
 ## Repository
 
 - Path: current repository checkout

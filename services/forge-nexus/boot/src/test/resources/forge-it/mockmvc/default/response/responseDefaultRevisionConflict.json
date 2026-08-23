@@ -1,5 +1,0 @@
-{
-  "code": "ACTIVE_PROFILE_REVISION_CONFLICT",
-  "message": "The active profile was changed by another request",
-  "correlationId": "corr-409"
-}
