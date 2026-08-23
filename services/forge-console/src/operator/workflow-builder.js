@@ -186,9 +186,15 @@ export class WorkflowBuilder {
     }
     const node = this.workflow.nodes.find((candidate) => candidate.id === nodeId);
     const portIds = new Set([...this.nodePorts(node?.inputs), ...this.nodePorts(node?.outputs)].map((port) => port.id));
-    this.workflow.nodes = this.workflow.nodes.filter((candidate) => candidate.id !== nodeId);
-    this.workflow.connections = this.workflowConnections()
+    const remainingConnections = this.workflowConnections()
       .filter((connection) => !portIds.has(connection.sourceOutputPortId) && !portIds.has(connection.targetInputPortId));
+    if (this.hasUnguardedSelfLoop(remainingConnections)) {
+      this.showError('Remove the dependent self-loop before removing its last external source node.');
+      return;
+    }
+    this.showError('');
+    this.workflow.nodes = this.workflow.nodes.filter((candidate) => candidate.id !== nodeId);
+    this.workflow.connections = remainingConnections;
     if (portIds.has(this.workflow.taskInputPortId)) {
       this.workflow.taskInputPortId = null;
     }
@@ -662,6 +668,16 @@ export class WorkflowBuilder {
       this.isSelfPortPair(candidate.sourceOutputPortId, candidate.targetInputPortId)
     );
     return hasSelfLoop && !this.hasExternalDependency(connection.targetInputPortId, connection.id);
+  }
+
+  hasUnguardedSelfLoop(connections) {
+    return connections.some((connection) =>
+      this.isSelfPortPair(connection.sourceOutputPortId, connection.targetInputPortId) &&
+      !connections.some((candidate) =>
+        candidate.targetInputPortId === connection.targetInputPortId &&
+        !this.isSelfPortPair(candidate.sourceOutputPortId, candidate.targetInputPortId)
+      )
+    );
   }
 
   canConnectTaskInput(targetInputPortId) {

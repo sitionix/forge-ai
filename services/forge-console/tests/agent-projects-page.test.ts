@@ -3675,6 +3675,31 @@ describe('Agent projects page', () => {
     expect(page.workflowBuilder.workflow.connections).toEqual([connection('implementer', 'reviewer')]);
   });
 
+  it('does not remove the source node of the last external dependency guarding a self-loop', async () => {
+    const graph = workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('implementer', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    ], project().id, [
+      connection('implementer', 'reviewer'),
+      connection('reviewer', 'reviewer', 'reviewer-self-connection')
+    ]);
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const originalGraph = structuredClone(page.workflowBuilder.workflow);
+
+    page.workflowBuilder.removeNode('implementer');
+
+    expect(page.workflowBuilder.workflow).toEqual(originalGraph);
+    expect(dom.window.document.getElementById('agentsV2WorkflowBuilderError')?.textContent)
+      .toContain('Remove the dependent self-loop');
+
+    page.workflowBuilder.removeConnection('reviewer-self-connection');
+    page.workflowBuilder.removeNode('implementer');
+
+    expect(page.workflowBuilder.workflow.nodes.map((candidate: any) => candidate.id)).toEqual(['reviewer']);
+    expect(page.workflowBuilder.workflow.connections).toEqual([]);
+  });
+
   it('rejects an unguarded self-loop before showing a warning', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')

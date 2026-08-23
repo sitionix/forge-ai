@@ -391,6 +391,74 @@ class ForgeAgentScopedExecutionIT {
     }
 
     @Test
+    void guardedSelfLoopWaitsForExternalContributionAndConsumesEachGenerationExactlyOnce() {
+        this.seed();
+        this.saveGuardedSelfLoopWorkflow();
+        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation ->
+                invocation.<NodeRunOutput>getArgument(0).jsonValue().contains("exit") ? REVIEWER_PASS : REVIEWER_RETURN);
+        final UUID runId = this.createTask(this.repositories(1));
+        final UUID rootFrame = this.rootFrame(runId);
+
+        final NodeRun reviewerOne = this.onlyPending(runId, REVIEWER, REPOSITORY_A);
+        final NodeExecutionClaim reviewerOneClaim = this.lifecycle.tryStart(reviewerOne.id()).orElseThrow();
+        assertThat(reviewerOneClaim.inputEnvelope().contributions()).isEmpty();
+        assertThat(reviewerOne.repositoryId()).isEqualTo(REPOSITORY_A);
+        this.lifecycle.succeed(reviewerOne.id(), new NodeRunOutput("{\"reviewer\":\"one-repeat\"}"));
+
+        assertThat(this.nodeRuns(runId, REVIEWER)).extracting(NodeRun::id).containsExactly(reviewerOne.id());
+        final InputParticipation waitingForImplementer = this.participationResolver.resolve(
+                runId, rootFrame, REVIEWER_IN, REPOSITORY_A);
+        assertThat(waitingForImplementer.open()).isTrue();
+        assertThat(waitingForImplementer.delivered()).singleElement()
+                .satisfies(resolution -> assertThat(resolution.sourceNodeRunId()).isEqualTo(reviewerOne.id()));
+        final NodeRun implementerOne = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_A);
+        this.complete(implementerOne, "{\"implementer\":\"one\"}");
+
+        final NodeRun reviewerTwo = this.onlyPending(runId, REVIEWER, REPOSITORY_A);
+        assertThat(this.nodeRuns(runId, REVIEWER)).hasSize(2);
+        assertThat(reviewerTwo.activationFrameId()).isEqualTo(rootFrame);
+        assertThat(reviewerTwo.executionFrameId()).isNotEqualTo(rootFrame);
+        assertThat(reviewerTwo.repositoryId()).isEqualTo(REPOSITORY_A);
+        final NodeExecutionClaim reviewerTwoClaim = this.lifecycle.tryStart(reviewerTwo.id()).orElseThrow();
+        assertThat(reviewerTwoClaim.executionWorkspace().cwd()).isEqualTo(this.repositoryWorkspace(REPOSITORY_A));
+        assertThat(reviewerTwoClaim.inputEnvelope().contributions())
+                .hasSize(2)
+                .extracting(NodeInputContribution::sourceNodeRunId, NodeInputContribution::payload,
+                        NodeInputContribution::sourceRepositoryId)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(reviewerOne.id(), new NodeRunOutput("{\"reviewer\": \"one-repeat\"}"), REPOSITORY_A),
+                        org.assertj.core.groups.Tuple.tuple(implementerOne.id(), new NodeRunOutput("{\"implementer\": \"one\"}"), REPOSITORY_A)
+                );
+        final List<ConnectionResolution> generationOne = this.resolutionRepository.findConsumedByNodeRunId(reviewerTwo.id());
+        assertThat(generationOne).hasSize(2)
+                .extracting(ConnectionResolution::sourceNodeRunId)
+                .containsExactlyInAnyOrder(reviewerOne.id(), implementerOne.id());
+        this.lifecycle.succeed(reviewerTwo.id(), new NodeRunOutput("{\"reviewer\":\"two-repeat\"}"));
+
+        assertThat(this.nodeRuns(runId, REVIEWER)).hasSize(2);
+        final NodeRun implementerTwo = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_A);
+        this.complete(implementerTwo, "{\"implementer\":\"two\"}");
+
+        final NodeRun reviewerThree = this.onlyPending(runId, REVIEWER, REPOSITORY_A);
+        assertThat(reviewerThree.activationFrameId()).isEqualTo(reviewerTwo.executionFrameId());
+        assertThat(reviewerThree.executionFrameId()).isNotEqualTo(reviewerTwo.executionFrameId());
+        final NodeExecutionClaim reviewerThreeClaim = this.lifecycle.tryStart(reviewerThree.id()).orElseThrow();
+        assertThat(reviewerThreeClaim.inputEnvelope().contributions())
+                .hasSize(2)
+                .extracting(NodeInputContribution::sourceNodeRunId)
+                .containsExactlyInAnyOrder(reviewerTwo.id(), implementerTwo.id());
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(reviewerThree.id()))
+                .hasSize(2)
+                .allSatisfy(resolution -> assertThat(resolution.executionFrameId()).isEqualTo(reviewerTwo.executionFrameId()));
+        assertThat(generationOne).noneMatch(resolution -> reviewerThree.id().equals(resolution.consumedByNodeRunId()));
+
+        this.lifecycle.succeed(reviewerThree.id(), new NodeRunOutput("{\"reviewer\":\"exit\"}"));
+        final WorkflowRun finished = this.terminal(runId, WorkflowRunStatus.SUCCEEDED);
+        assertThat(finished.resultSourceNodeRunId()).isEqualTo(reviewerThree.id());
+        this.assertTerminalQuiescence(runId);
+    }
+
+    @Test
     void childFrameActivationReevaluatesWaitingParentFanIn() {
         this.seed();
         this.saveAsymmetricScopedReentryWorkflow();
@@ -737,6 +805,18 @@ class ForgeAgentScopedExecutionIT {
                         this.node(FINAL, AGENT_C_ID, FINAL_IN, FINAL_OUT, 2, NodeScopeMode.GLOBAL)),
                 List.of(this.connection(1, IMPLEMENTER_OUT, REVIEWER_IN), this.connection(2, REVIEWER_PASS, FINAL_IN),
                         this.connection(3, REVIEWER_RETURN, IMPLEMENTER_REVIEW_IN)), IMPLEMENTER_INITIAL_IN, FINAL_OUT);
+    }
+
+    private void saveGuardedSelfLoopWorkflow() {
+        this.save(List.of(
+                        this.node(REVIEWER, AGENT_B_ID, List.of(this.port(REVIEWER_IN, "Input")),
+                                List.of(this.port(REVIEWER_PASS, "Pass", 0), this.port(REVIEWER_RETURN, "Return", 1)), 0,
+                                NodeScopeMode.PER_SCOPE),
+                        this.node(IMPLEMENTER, AGENT_A_ID, List.of(this.port(IMPLEMENTER_INITIAL_IN, "Input")),
+                                List.of(this.port(IMPLEMENTER_OUT, "Done")), 1, NodeScopeMode.PER_SCOPE)),
+                List.of(this.connection(40, REVIEWER_RETURN, REVIEWER_IN),
+                        this.connection(41, REVIEWER_RETURN, IMPLEMENTER_INITIAL_IN),
+                        this.connection(42, IMPLEMENTER_OUT, REVIEWER_IN)), REVIEWER_IN, REVIEWER_PASS);
     }
 
     private void saveAsymmetricScopedReentryWorkflow() {
