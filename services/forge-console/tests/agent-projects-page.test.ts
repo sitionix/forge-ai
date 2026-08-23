@@ -3770,6 +3770,9 @@ describe('Agent projects page', () => {
 
     expect(source).toMatch(/\.workflow-nodes\s*\{[^}]*pointer-events: none;/);
     expect(source).toMatch(/\.workflow-node,[\s\S]*\.workflow-task-input,[\s\S]*\.workflow-task-output\s*\{[^}]*pointer-events: auto;/);
+    expect(source).toMatch(/\.agents-v2-builder\s*\{[^}]*height: calc\(100dvh - 80px\);/);
+    expect(source).toMatch(/\.workflow-builder-body\s*\{[^}]*min-height: 0;/);
+    expect(source).toMatch(/\.workflow-canvas\s*\{[^}]*min-height: 0;/);
 
     dom.window.document.querySelector<SVGElement>('[data-remove-connection="a-b-connection"]')!
       .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));

@@ -898,7 +898,10 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .agents-v2-builder {
-  min-height: 680px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  height: calc(100dvh - 80px);
+  min-height: 0;
 }
 
 .workflow-builder-top-actions {
@@ -910,11 +913,13 @@ body.sidebar-collapsed .sidebar-link {
 .workflow-builder-body {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
-  min-height: 520px;
+  min-height: 0;
   border-top: 1px solid rgba(27, 36, 31, 0.12);
 }
 
 .workflow-agent-palette {
+  min-height: 0;
+  overflow-y: auto;
   border-right: 1px solid rgba(27, 36, 31, 0.12);
   padding: 18px;
 }
@@ -941,7 +946,7 @@ body.sidebar-collapsed .sidebar-link {
 
 .workflow-canvas {
   position: relative;
-  min-height: 520px;
+  min-height: 0;
   overflow: hidden;
   background:
     linear-gradient(rgba(27, 36, 31, 0.06) 1px, transparent 1px),
@@ -5273,6 +5278,10 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   .shell,
   .graph-shell {
     padding-top: 18px;
+  }
+
+  .agents-v2-builder {
+    height: calc(100dvh - 130px);
   }
 
   .hero {
