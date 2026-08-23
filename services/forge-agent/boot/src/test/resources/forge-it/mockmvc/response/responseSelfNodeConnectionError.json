@@ -1,5 +1,5 @@
 {
-  "code": "SELF_NODE_CONNECTION",
-  "message": "A workflow node cannot connect to itself.",
+  "code": "UNGUARDED_SELF_NODE_CONNECTION",
+  "message": "A self-loop requires at least one incoming connection from another node on the same input port.",
   "correlationId": null
 }

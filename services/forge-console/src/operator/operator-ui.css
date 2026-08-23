@@ -1033,6 +1033,13 @@ body.sidebar-collapsed .sidebar-link {
   transition: opacity 120ms ease;
 }
 
+.edge-remove.disabled,
+.edge-remove-label.disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
 .edge-remove {
   fill: var(--ink);
   stroke: var(--panel-strong);
@@ -1051,6 +1058,13 @@ body.sidebar-collapsed .sidebar-link {
 .workflow-edge.selected .edge-remove,
 .workflow-edge.selected .edge-remove-label {
   opacity: 1;
+}
+
+.workflow-edge:hover .edge-remove.disabled,
+.workflow-edge:hover .edge-remove-label.disabled,
+.workflow-edge.selected .edge-remove.disabled,
+.workflow-edge.selected .edge-remove-label.disabled {
+  opacity: 0.35;
 }
 
 .workflow-node {

@@ -3629,6 +3629,63 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2WorkflowEdges')?.innerHTML).toContain('workflow-edge');
   });
 
+  it('allows a warned self-loop only when the same input has an external dependency', async () => {
+    const graph = workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('implementer', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    ], project().id, [connection('implementer', 'reviewer')]);
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const confirm = vi.spyOn(dom.window, 'confirm').mockReturnValue(true);
+    setRandomUuids(dom, ['reviewer-self-connection']);
+
+    expect(page.workflowBuilder.canConnect('reviewer-output', 'reviewer-input')).toBe(true);
+    dom.window.document.querySelector<HTMLElement>('[data-node-output-port="reviewer-output"]')!
+      .dispatchEvent(pointer(dom, 'pointerdown', 214, 72));
+    dom.window.document.querySelector<HTMLElement>('[data-node-input-port="reviewer-input"]')!
+      .dispatchEvent(pointer(dom, 'pointerup', 10, 72));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('non-terminating workflow'));
+    expect(page.workflowBuilder.workflow.connections).toContainEqual({
+      id: 'reviewer-self-connection',
+      sourceOutputPortId: 'reviewer-output',
+      targetInputPortId: 'reviewer-input'
+    });
+  });
+
+  it('disables removal of the last external dependency guarding a self-loop', async () => {
+    const graph = workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('implementer', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    ], project().id, [
+      connection('implementer', 'reviewer'),
+      connection('reviewer', 'reviewer', 'reviewer-self-connection')
+    ]);
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const protectedControl = dom.window.document.querySelector<SVGCircleElement>('[data-edge-id="implementer-reviewer-connection"] .edge-remove')!;
+
+    expect(protectedControl.classList.contains('disabled')).toBe(true);
+    expect(protectedControl.getAttribute('aria-disabled')).toBe('true');
+    expect(protectedControl.hasAttribute('data-remove-connection')).toBe(false);
+    page.workflowBuilder.removeConnection('implementer-reviewer-connection');
+    expect(page.workflowBuilder.workflow.connections).toHaveLength(2);
+
+    page.workflowBuilder.removeConnection('reviewer-self-connection');
+    expect(page.workflowBuilder.workflow.connections).toEqual([connection('implementer', 'reviewer')]);
+  });
+
+  it('rejects an unguarded self-loop before showing a warning', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+    ]))) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const confirm = vi.spyOn(dom.window, 'confirm');
+
+    expect(page.workflowBuilder.canConnect('reviewer-output', 'reviewer-input')).toBe(false);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
   it('routes Workflow Builder feedback edges through the shortest path outside Node bounds', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 70, 95),

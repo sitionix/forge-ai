@@ -202,6 +202,10 @@ export class WorkflowBuilder {
   }
 
   removeConnection(connectionId) {
+    const connection = this.workflowConnections().find((candidate) => candidate.id === connectionId);
+    if (!connection || this.isProtectedExternalDependency(connection)) {
+      return;
+    }
     this.workflow.connections = this.workflowConnections().filter((connection) => connection.id !== connectionId);
     this.render();
   }
@@ -306,12 +310,20 @@ export class WorkflowBuilder {
         continue;
       }
       const { path, controlPoint } = this.edgePresentation(this.edgeRoute(sourcePort, targetPort));
+      const removalProtected = this.isProtectedExternalDependency(connection);
+      const removeAttributes = removalProtected
+        ? 'class="edge-remove disabled" aria-disabled="true"'
+        : `class="edge-remove" data-remove-connection="${escapeHtml(connection.id)}"`;
+      const removeLabelAttributes = removalProtected
+        ? 'class="edge-remove-label disabled" aria-disabled="true"'
+        : `class="edge-remove-label" data-remove-connection="${escapeHtml(connection.id)}"`;
       groups.push(`
         <g class="workflow-edge" data-edge-id="${escapeHtml(connection.id)}" data-edge-source-port="${escapeHtml(connection.sourceOutputPortId)}" data-edge-target-port="${escapeHtml(connection.targetInputPortId)}">
+          ${removalProtected ? '<title>Remove the self-loop before removing its last external dependency.</title>' : ''}
           <path class="edge-visible" d="${path}" marker-end="url(#agentsV2Arrow)" />
           <path class="edge-hit" d="${path}" />
-          <circle class="edge-remove" data-remove-connection="${escapeHtml(connection.id)}" cx="${controlPoint.x}" cy="${controlPoint.y}" r="10" />
-          <text class="edge-remove-label" data-remove-connection="${escapeHtml(connection.id)}" x="${controlPoint.x}" y="${controlPoint.y + 4}">×</text>
+          <circle ${removeAttributes} cx="${controlPoint.x}" cy="${controlPoint.y}" r="10" />
+          <text ${removeLabelAttributes} x="${controlPoint.x}" y="${controlPoint.y + 4}">×</text>
         </g>
       `);
     }
@@ -467,6 +479,11 @@ export class WorkflowBuilder {
       return;
     }
     if (targetInputPortId && this.canConnect(this.connectionDrag.sourceOutputPortId, targetInputPortId)) {
+      if (this.isSelfPortPair(this.connectionDrag.sourceOutputPortId, targetInputPortId) &&
+          !this.window.confirm('Create a self-loop? This can cause repeated execution or a non-terminating workflow. Continue only if the loop has a deliberate exit condition.')) {
+        this.cancelConnectionDrag();
+        return;
+      }
       let connectionId;
       try {
         connectionId = this.randomUuid();
@@ -615,11 +632,36 @@ export class WorkflowBuilder {
     return Boolean(
       source &&
       target &&
-      source.node.id !== target.node.id &&
+      (source.node.id !== target.node.id || this.hasExternalDependency(targetInputPortId)) &&
       !this.workflowConnections().some((connection) =>
         connection.sourceOutputPortId === sourceOutputPortId && connection.targetInputPortId === targetInputPortId
       )
     );
+  }
+
+  isSelfPortPair(sourceOutputPortId, targetInputPortId) {
+    const source = this.portById(sourceOutputPortId, 'outputs');
+    const target = this.portById(targetInputPortId, 'inputs');
+    return Boolean(source && target && source.node.id === target.node.id);
+  }
+
+  hasExternalDependency(targetInputPortId, excludedConnectionId = null) {
+    return this.workflowConnections().some((connection) =>
+      connection.id !== excludedConnectionId &&
+      connection.targetInputPortId === targetInputPortId &&
+      !this.isSelfPortPair(connection.sourceOutputPortId, connection.targetInputPortId)
+    );
+  }
+
+  isProtectedExternalDependency(connection) {
+    if (this.isSelfPortPair(connection.sourceOutputPortId, connection.targetInputPortId)) {
+      return false;
+    }
+    const hasSelfLoop = this.workflowConnections().some((candidate) =>
+      candidate.targetInputPortId === connection.targetInputPortId &&
+      this.isSelfPortPair(candidate.sourceOutputPortId, candidate.targetInputPortId)
+    );
+    return hasSelfLoop && !this.hasExternalDependency(connection.targetInputPortId, connection.id);
   }
 
   canConnectTaskInput(targetInputPortId) {
