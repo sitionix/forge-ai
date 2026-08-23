@@ -71,6 +71,7 @@ export class WorkflowBuilder {
     };
     this.handleCanvasPointerDown = (event) => this.onCanvasPointerDown(event);
     this.handleCanvasWheel = (event) => this.onCanvasWheel(event);
+    this.handleCanvasResize = () => this.syncCanvasBounds();
     this.handleKeyDown = (event) => {
       if (event.key === 'Escape') {
         this.cancelConnectionDrag();
@@ -82,6 +83,11 @@ export class WorkflowBuilder {
     this.document.addEventListener('keydown', this.handleKeyDown);
     this.byId('agentsV2WorkflowCanvas')?.addEventListener('pointerdown', this.handleCanvasPointerDown);
     this.byId('agentsV2WorkflowCanvas')?.addEventListener('wheel', this.handleCanvasWheel, { passive: false });
+    this.window.addEventListener('resize', this.handleCanvasResize);
+    if (typeof this.window.ResizeObserver === 'function') {
+      this.canvasResizeObserver = new this.window.ResizeObserver(this.handleCanvasResize);
+      this.canvasResizeObserver.observe(this.byId('agentsV2WorkflowCanvas'));
+    }
     this.byId('agentsV2BuilderBack')?.addEventListener('click', () => this.onBack());
     this.byId('agentsV2WorkflowSave')?.addEventListener('click', () => this.save());
     this.byId('agentsV2NodeEditorCancel')?.addEventListener('click', () => this.closeNodeEditor());
@@ -97,6 +103,9 @@ export class WorkflowBuilder {
     this.document.removeEventListener('keydown', this.handleKeyDown);
     this.byId('agentsV2WorkflowCanvas')?.removeEventListener('pointerdown', this.handleCanvasPointerDown);
     this.byId('agentsV2WorkflowCanvas')?.removeEventListener('wheel', this.handleCanvasWheel);
+    this.window.removeEventListener('resize', this.handleCanvasResize);
+    this.canvasResizeObserver?.disconnect();
+    this.canvasResizeObserver = null;
   }
 
   open(workflow, project, agents) {

@@ -3187,6 +3187,23 @@ describe('Agent projects page', () => {
     expect(Number(svg.getAttribute('height'))).toBeGreaterThanOrEqual(900 + (40 * 26 + 58) + 240);
   });
 
+  it('Workflow drawing layers resize with the visible Canvas', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf'))) });
+    const { dom } = await openedBuilder(fakeApi);
+    const canvas = dom.window.document.getElementById('agentsV2WorkflowCanvas')!;
+    const svg = dom.window.document.getElementById('agentsV2WorkflowEdges')!;
+    const nodesLayer = dom.window.document.getElementById('agentsV2WorkflowNodes')!;
+    Object.defineProperty(canvas, 'clientWidth', { configurable: true, value: 1900 });
+    Object.defineProperty(canvas, 'clientHeight', { configurable: true, value: 1200 });
+
+    dom.window.dispatchEvent(new dom.window.Event('resize'));
+
+    expect(svg.getAttribute('width')).toBe('1900');
+    expect(svg.getAttribute('height')).toBe('1200');
+    expect(nodesLayer.style.width).toBe('1900px');
+    expect(nodesLayer.style.height).toBe('1200px');
+  });
+
   it('clicking compact Node opens Node Editor and Cancel leaves draft unchanged', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20, 'DEPENDENCIES_ONLY', [], [
