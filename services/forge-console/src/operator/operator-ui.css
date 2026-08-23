@@ -971,6 +971,16 @@ body.sidebar-collapsed .sidebar-link {
   pointer-events: auto;
 }
 
+.workflow-nodes {
+  pointer-events: none;
+}
+
+.workflow-node,
+.workflow-task-input,
+.workflow-task-output {
+  pointer-events: auto;
+}
+
 .workflow-edges .edge-visible,
 .workflow-edges .workflow-edge-preview {
   fill: none;

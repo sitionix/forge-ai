@@ -3558,11 +3558,14 @@ describe('Agent projects page', () => {
     const { dom } = await openedBuilder(fakeApi);
 
     const path = dom.window.document.querySelector<SVGPathElement>('[data-edge-id="reviewer-plus-connection"] .edge-visible')?.getAttribute('d') || '';
+    const remove = dom.window.document.querySelector<SVGCircleElement>('[data-edge-id="reviewer-plus-connection"] .edge-remove')!;
 
     expect(path).not.toContain(' C ');
     expect(path).toContain(' Q ');
     expect(path).toContain('V 424');
     expect(path).toContain('Q 50 436');
+    expect(remove.getAttribute('cy')).toBe('436');
+    expect(remove.getAttribute('cx')).not.toBe(String((322 + 82) / 2));
   });
 
   it('Task Input loads, targets the same input as feedback, reconnects, saves, and disconnects', async () => {
@@ -3747,16 +3750,32 @@ describe('Agent projects page', () => {
     ]);
   });
 
-  it('existing edge can be removed directly and Node removal cleans references', async () => {
-    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+  it('existing edge can be removed directly, saved, and Node removal cleans references', async () => {
+    const fakeApi = api({
+      getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       portedNode('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
       portedNode('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
-    ], project().id, [connection('a', 'b')]))) });
+      ], project().id, [connection('a', 'b')], 'a-input', 'b-output'))),
+      updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(
+        _workflowId,
+        request.nodes,
+        project().id,
+        request.connections,
+        request.taskInputPortId,
+        request.taskOutputPortId
+      )))
+    });
     const { dom, page } = await openedBuilder(fakeApi);
+    const source = consoleSourceText();
+
+    expect(source).toMatch(/\.workflow-nodes\s*\{[^}]*pointer-events: none;/);
+    expect(source).toMatch(/\.workflow-node,[\s\S]*\.workflow-task-input,[\s\S]*\.workflow-task-output\s*\{[^}]*pointer-events: auto;/);
 
     dom.window.document.querySelector<SVGElement>('[data-remove-connection="a-b-connection"]')!
       .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     expect(page.workflowBuilder.workflow.connections).toEqual([]);
+    await page.workflowBuilder.save();
+    expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', expect.objectContaining({ connections: [] }));
     setRandomUuids(dom, ['a-b-new-connection']);
     dragConnect(dom, 'a', 'b');
     page.workflowBuilder.removeNode('a');

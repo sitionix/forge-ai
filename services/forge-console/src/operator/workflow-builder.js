@@ -296,10 +296,9 @@ export class WorkflowBuilder {
       if (!sourcePort || !targetPort) {
         continue;
       }
-      const start = this.connectorPoint(sourcePort.port.id, 'output');
-      const end = this.connectorPoint(targetPort.port.id, 'input');
-      const path = this.edgePath(sourcePort, targetPort);
-      const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+      const route = this.edgeRoute(sourcePort, targetPort);
+      const path = this.orthogonalRoundedPath(route);
+      const midpoint = this.routeMidpoint(route);
       groups.push(`
         <g class="workflow-edge" data-edge-id="${escapeHtml(connection.id)}" data-edge-source-port="${escapeHtml(connection.sourceOutputPortId)}" data-edge-target-port="${escapeHtml(connection.targetInputPortId)}">
           <path class="edge-visible" d="${path}" marker-end="url(#agentsV2Arrow)" />
@@ -313,10 +312,9 @@ export class WorkflowBuilder {
       ? this.portById(this.workflow.taskInputPortId, 'inputs')
       : null;
     if (taskInputTargetPort) {
-      const start = this.taskInputConnectorPoint();
-      const end = this.connectorPoint(taskInputTargetPort.port.id, 'input');
-      const path = this.taskInputPath(taskInputTargetPort);
-      const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+      const route = this.taskInputRoute(taskInputTargetPort);
+      const path = this.orthogonalRoundedPath(route);
+      const midpoint = this.routeMidpoint(route);
       groups.push(`
         <g class="workflow-edge task-input-edge" data-task-input-edge data-edge-target-port="${escapeHtml(this.workflow.taskInputPortId)}">
           <path class="edge-visible" d="${path}" marker-end="url(#agentsV2Arrow)" />
@@ -330,10 +328,9 @@ export class WorkflowBuilder {
       ? this.portById(this.workflow.taskOutputPortId, 'outputs')
       : null;
     if (taskOutputSourcePort) {
-      const start = this.connectorPoint(taskOutputSourcePort.port.id, 'output');
-      const end = this.taskOutputConnectorPoint();
-      const path = this.taskOutputPath(taskOutputSourcePort);
-      const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+      const route = this.taskOutputRoute(taskOutputSourcePort);
+      const path = this.orthogonalRoundedPath(route);
+      const midpoint = this.routeMidpoint(route);
       groups.push(`
         <g class="workflow-edge task-output-edge" data-task-output-edge data-edge-source-port="${escapeHtml(this.workflow.taskOutputPortId)}">
           <path class="edge-visible" d="${path}" marker-end="url(#agentsV2Arrow)" />
@@ -355,6 +352,7 @@ export class WorkflowBuilder {
       ${groups.join('')}
       ${preview}
     `;
+    this.positionEdgeRemoveControls(svg);
     svg.querySelectorAll('[data-remove-connection]').forEach((element) => {
       element.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -372,6 +370,22 @@ export class WorkflowBuilder {
         event.stopPropagation();
         this.removeTaskOutput();
       });
+    });
+  }
+
+  positionEdgeRemoveControls(svg) {
+    svg.querySelectorAll('.workflow-edge').forEach((edge) => {
+      const path = edge.querySelector('.edge-visible');
+      if (typeof path?.getTotalLength !== 'function' || typeof path?.getPointAtLength !== 'function') {
+        return;
+      }
+      const point = path.getPointAtLength(path.getTotalLength() / 2);
+      const circle = edge.querySelector('.edge-remove');
+      const label = edge.querySelector('.edge-remove-label');
+      circle?.setAttribute('cx', String(point.x));
+      circle?.setAttribute('cy', String(point.y));
+      label?.setAttribute('x', String(point.x));
+      label?.setAttribute('y', String(point.y + 4));
     });
   }
 
@@ -1007,7 +1021,11 @@ export class WorkflowBuilder {
   }
 
   edgePath(sourcePort, targetPort) {
-    return this.pathD(
+    return this.orthogonalRoundedPath(this.edgeRoute(sourcePort, targetPort));
+  }
+
+  edgeRoute(sourcePort, targetPort) {
+    return this.routePoints(
       this.connectorPoint(sourcePort.port.id, 'output'),
       this.connectorPoint(targetPort.port.id, 'input'),
       this.nodeBounds(sourcePort.node),
@@ -1017,7 +1035,11 @@ export class WorkflowBuilder {
   }
 
   taskInputPath(targetPort) {
-    return this.pathD(
+    return this.orthogonalRoundedPath(this.taskInputRoute(targetPort));
+  }
+
+  taskInputRoute(targetPort) {
+    return this.routePoints(
       this.taskInputConnectorPoint(),
       this.connectorPoint(targetPort.port.id, 'input'),
       this.taskInputBounds(),
@@ -1027,7 +1049,11 @@ export class WorkflowBuilder {
   }
 
   taskOutputPath(sourcePort) {
-    return this.pathD(
+    return this.orthogonalRoundedPath(this.taskOutputRoute(sourcePort));
+  }
+
+  taskOutputRoute(sourcePort) {
+    return this.routePoints(
       this.connectorPoint(sourcePort.port.id, 'output'),
       this.taskOutputConnectorPoint(),
       this.nodeBounds(sourcePort.node),
@@ -1046,12 +1072,34 @@ export class WorkflowBuilder {
   }
 
   pathD(start, end, sourceBounds = null, targetBounds = null, obstacles = []) {
+    return this.orthogonalRoundedPath(this.routePoints(start, end, sourceBounds, targetBounds, obstacles));
+  }
+
+  routePoints(start, end, sourceBounds = null, targetBounds = null, obstacles = []) {
     const candidates = this.edgeRouteCandidates(start, end, sourceBounds, targetBounds, obstacles);
     const bounds = [sourceBounds, targetBounds, ...obstacles].filter(Boolean);
     const valid = candidates.filter((points) => !this.routeIntersectsBounds(points, bounds));
-    const route = (valid.length ? valid : candidates)
+    return (valid.length ? valid : candidates)
       .sort((left, right) => this.routeLength(left) - this.routeLength(right))[0];
-    return this.orthogonalRoundedPath(route);
+  }
+
+  routeMidpoint(points) {
+    const midpointDistance = this.routeLength(points) / 2;
+    let traversed = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      const start = points[index - 1];
+      const end = points[index];
+      const segmentLength = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+      if (traversed + segmentLength >= midpointDistance) {
+        const ratio = segmentLength ? (midpointDistance - traversed) / segmentLength : 0;
+        return {
+          x: start.x + ((end.x - start.x) * ratio),
+          y: start.y + ((end.y - start.y) * ratio)
+        };
+      }
+      traversed += segmentLength;
+    }
+    return points.at(-1) || { x: 0, y: 0 };
   }
 
   edgeRouteCandidates(start, end, sourceBounds = null, targetBounds = null, obstacles = []) {
