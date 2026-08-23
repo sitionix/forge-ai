@@ -11,19 +11,18 @@ knowledge_url := "http://127.0.0.1:7081"
 jarvis_url := "http://127.0.0.1:7071"
 sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 
-# Rebuild and start all services, or one deployable service: console, agent, nexus, knowledge, jarvis.
+# Rebuild and start all services, or one deployable service: agent, nexus, knowledge, jarvis.
 start service="all":
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{service}}" in
         all) just --justfile "{{root}}/Justfile" _start-all ;;
-        console) just --justfile "{{root}}/Justfile" _console-restart ;;
         agent) just --justfile "{{root}}/Justfile" _agent-restart ;;
         nexus) just --justfile "{{root}}/Justfile" _nexus-restart ;;
         knowledge) just --justfile "{{root}}/Justfile" _knowledge-rebuild-restart ;;
         jarvis) just --justfile "{{root}}/Justfile" _jarvis-rebuild-restart ;;
         *)
-            echo "Unknown service '{{service}}'. Allowed: all, console, agent, nexus, knowledge, jarvis." >&2
+            echo "Unknown service '{{service}}'. Allowed: all, agent, nexus, knowledge, jarvis." >&2
             exit 2
             ;;
     esac
@@ -112,14 +111,12 @@ _ollama-stop:
 _console-build:
     @scripts/console/build.sh
 
-_console-restart: _console-build
-    @echo "Console assets rebuilt. No backend process was restarted."
-
 _agent-restart: _start-preflight _postgres-start
     @just --justfile "{{root}}/Justfile" _java-service-rebuild-restart agent
 
-_nexus-restart: _start-preflight
+_nexus-restart: _start-preflight _console-build
     @just --justfile "{{root}}/Justfile" _java-service-rebuild-restart nexus
+    @just --justfile "{{root}}/Justfile" _console-live-check
 
 _java-service-rebuild-restart service:
     #!/usr/bin/env bash
