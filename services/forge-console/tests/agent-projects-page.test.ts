@@ -675,6 +675,10 @@ describe('Agent projects page', () => {
     expect(text).toContain('main · Clean');
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
+    expect(dom.window.document.querySelector('[data-refresh-repository-id="repo-1"]')?.closest('.repository-actions')).not.toBeNull();
+    const source = consoleSourceText();
+    expect(source).toMatch(/\.repository-list\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+    expect(source).toMatch(/@media \(max-width: 1000px\)[\s\S]*\.repository-list\s*\{[^}]*grid-template-columns: 1fr;/);
   });
 
   it('refreshes remote state only after an explicit repository action', async () => {
@@ -3612,6 +3616,45 @@ describe('Agent projects page', () => {
     expect(path).toContain('Q 50 436');
     expect(remove.getAttribute('cy')).toBe('436');
     expect(remove.getAttribute('cx')).not.toBe(String((322 + 82) / 2));
+  });
+
+  it('keeps all edge delete controls on route midpoints while connected nodes move', async () => {
+    const graph = workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 70, 95),
+      portedNode('plus', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 82, 272)
+    ], project().id, [connection('reviewer', 'plus')], 'plus-input', 'reviewer-output');
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const builder: any = page.workflowBuilder;
+
+    const expectControlAtRouteMidpoint = (selector: string, route: any[]) => {
+      const expected = builder.routeMidpoint(route);
+      const control = dom.window.document.querySelector<SVGCircleElement>(`${selector} .edge-remove`)!;
+      expect(Number(control.getAttribute('cx'))).toBeCloseTo(expected.x);
+      expect(Number(control.getAttribute('cy'))).toBeCloseTo(expected.y);
+    };
+
+    dom.window.document.querySelector<HTMLElement>('[data-node-id="reviewer"]')!
+      .dispatchEvent(pointer(dom, 'pointerdown', 80, 105));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 420, 180));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointerup', 420, 180));
+
+    let source = builder.portById('reviewer-output', 'outputs');
+    let target = builder.portById('plus-input', 'inputs');
+    expectControlAtRouteMidpoint('[data-edge-id="reviewer-plus-connection"]', builder.edgeRoute(source, target));
+    expectControlAtRouteMidpoint('[data-task-output-edge]', builder.taskOutputRoute(source));
+
+    dom.window.document.querySelector<HTMLElement>('[data-node-id="plus"]')!
+      .dispatchEvent(pointer(dom, 'pointerdown', 90, 282));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 140, 520));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointerup', 140, 520));
+
+    source = builder.portById('reviewer-output', 'outputs');
+    target = builder.portById('plus-input', 'inputs');
+    const bentRoute = builder.edgeRoute(source, target);
+    expect(bentRoute.length).toBeGreaterThan(2);
+    expectControlAtRouteMidpoint('[data-edge-id="reviewer-plus-connection"]', bentRoute);
+    expectControlAtRouteMidpoint('[data-task-input-edge]', builder.taskInputRoute(target));
   });
 
   it('Task Input loads, targets the same input as feedback, reconnects, saves, and disconnects', async () => {

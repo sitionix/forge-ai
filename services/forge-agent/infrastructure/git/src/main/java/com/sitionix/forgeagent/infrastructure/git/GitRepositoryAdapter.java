@@ -70,7 +70,19 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
     @Override
     public GitLocalRepositoryState refreshRemoteState(final Path repositoryPath) {
         final GitLocalRepositoryState localState = this.inspectLocalRepositoryOnly(repositoryPath);
-        return this.refreshPullAvailability(repositoryPath, localState);
+        this.requireRefreshableCheckout(localState);
+        final GitUpstreamFetchTarget fetchTarget = this.resolveFetchTarget(repositoryPath, localState);
+        if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
+            return this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget);
+        }
+        final GitCommandResult fetchResult = this.fetchUpstream(repositoryPath, fetchTarget);
+        if (fetchResult.exitCode() != 0) {
+            if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
+                return this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget);
+            }
+            throw new GitExecutionException("Git upstream refresh failed.");
+        }
+        return this.inspectLocalRepositoryOnly(repositoryPath);
     }
 
     private GitLocalRepositoryState inspectLocalRepositoryOnly(final Path repositoryPath) {
@@ -154,33 +166,6 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
             throw new GitExecutionException("Git fast-forward pull failed.");
         }
         return this.inspectLocalRepositoryOnly(repositoryPath);
-    }
-
-    private GitLocalRepositoryState refreshPullAvailability(final Path repositoryPath, final GitLocalRepositoryState localState) {
-        if (!isLocallyPullCandidate(localState)) {
-            return localState.withoutPullAvailable();
-        }
-        final GitUpstreamFetchTarget fetchTarget;
-        try {
-            fetchTarget = this.resolveFetchTarget(repositoryPath, localState);
-        } catch (final GitUnsafeRepositoryStateException exception) {
-            return localState.withoutPullAvailable();
-        }
-        try {
-            if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
-                return this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget).withoutPullAvailable();
-            }
-            final GitCommandResult fetchResult = this.fetchUpstream(repositoryPath, fetchTarget);
-            if (fetchResult.exitCode() != 0) {
-                if (this.probeRemoteRef(repositoryPath, fetchTarget) == GitRemoteRefState.MISSING) {
-                    return this.deleteRemoteTrackingRefAndInspect(repositoryPath, fetchTarget).withoutPullAvailable();
-                }
-                return localState.withoutPullAvailable();
-            }
-            return this.inspectLocalRepositoryOnly(repositoryPath);
-        } catch (final GitOperationException exception) {
-            return localState.withoutPullAvailable();
-        }
     }
 
     private GitLocalRepositoryState parseStatus(final String output, final GitOperationState operationState) {
@@ -381,6 +366,16 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
     private void requirePullSafeCheckout(final GitLocalRepositoryState state) {
         if (!this.isLocallyPullCandidate(state)) {
             throw new GitUnsafeRepositoryStateException("Git repository is not safe to pull.", state);
+        }
+    }
+
+    private void requireRefreshableCheckout(final GitLocalRepositoryState state) {
+        if (!state.valid()
+                || state.head() == null
+                || state.head().type() != GitHeadType.BRANCH
+                || state.head().ref() == null
+                || state.upstream() == null) {
+            throw new GitExecutionException("Git repository upstream cannot be refreshed.");
         }
     }
 

@@ -1,0 +1,12 @@
+{
+  "id": "22222222-2222-4222-8222-222222222222",
+  "projectId": "11111111-1111-4111-8111-111111111111",
+  "name": "service-a",
+  "cloned": true,
+  "git": {
+    "branch": "main",
+    "workingTree": "CLEAN",
+    "pullAvailable": true
+  },
+  "createdAt": "2026-08-04T00:00:00Z"
+}

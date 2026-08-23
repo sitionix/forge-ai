@@ -589,6 +589,7 @@ body.sidebar-collapsed .sidebar-link {
 
 .repository-list {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -616,6 +617,17 @@ body.sidebar-collapsed .sidebar-link {
   display: grid;
   min-width: 0;
   gap: 2px;
+}
+
+.repository-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.repository-actions:empty {
+  display: none;
 }
 
 .repository-git-state {
@@ -5246,6 +5258,10 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 }
 
 @media (max-width: 1000px) {
+  .repository-list {
+    grid-template-columns: 1fr;
+  }
+
   body.has-sidebar,
   body.has-sidebar.sidebar-collapsed {
     padding-left: 0;

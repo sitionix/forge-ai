@@ -33,6 +33,7 @@ import org.springframework.test.context.ContextConfiguration;
 class NexusAgentProxyIT {
 
     private static final UUID PROJECT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
+    private static final UUID REPOSITORY_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
 
     @Autowired
     private NexusProxyTestManager testManager;
@@ -65,6 +66,25 @@ class NexusAgentProxyIT {
                 .ping(NexusAgentMockMvcEndpoints.listTasks())
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID))
                 .withQueryParameters(QueryParams.create().add("page", "2").add("size", "10"))
+                .assertDefault();
+
+        upstream.verify();
+    }
+
+    @Test
+    void refreshRepositoryFlowsThroughTypedAgentProxy() {
+        final var upstream = this.testManager.wiremock()
+                .createMapping(ForgeAgentWireMockEndpoints.refreshRepository())
+                .pathPattern(WireMockPathParams.create()
+                        .add("projectId", equalTo(PROJECT_ID.toString()))
+                        .add("repositoryId", equalTo(REPOSITORY_ID.toString())))
+                .createDefault();
+
+        this.testManager.mockMvc()
+                .ping(NexusAgentMockMvcEndpoints.refreshRepository())
+                .withPathParameters(PathParams.create()
+                        .add("projectId", PROJECT_ID)
+                        .add("repositoryId", REPOSITORY_ID))
                 .assertDefault();
 
         upstream.verify();

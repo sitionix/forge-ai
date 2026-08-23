@@ -78,13 +78,15 @@ export class ProjectWorkspace {
           <code>${escapeHtml(repository.name || '')}</code>
           ${this.renderRepositoryGitState(repository)}
         </span>
-        ${repository.cloned === false ? `
-          <button class="button tiny secondary" type="button" data-clone-repository-id="${escapeHtml(repository.id)}"${cloningRepositoryIds.has(repository.id) ? ' disabled' : ''}>Clone</button>
-        ` : ''}
-        ${repository.cloned ? `
-          <button class="button tiny secondary" type="button" data-refresh-repository-id="${escapeHtml(repository.id)}"${refreshingRepositoryIds.has(repository.id) ? ' disabled' : ''}>Refresh</button>
-        ` : ''}
-        ${this.renderRepositoryAction(repository, pullingRepositoryIds)}
+        <span class="repository-actions">
+          ${repository.cloned === false ? `
+            <button class="button tiny secondary" type="button" data-clone-repository-id="${escapeHtml(repository.id)}"${cloningRepositoryIds.has(repository.id) ? ' disabled' : ''}>Clone</button>
+          ` : ''}
+          ${repository.cloned ? `
+            <button class="button tiny secondary" type="button" data-refresh-repository-id="${escapeHtml(repository.id)}"${refreshingRepositoryIds.has(repository.id) ? ' disabled' : ''}>Refresh</button>
+          ` : ''}
+          ${this.renderRepositoryAction(repository, pullingRepositoryIds)}
+        </span>
       </article>
     `).join('');
     list.querySelectorAll('[data-clone-repository-id]').forEach((element) => {

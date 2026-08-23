@@ -305,6 +305,20 @@ class GitRepositoryAdapterTest {
     }
 
     @Test
+    void explicitRefreshFetchesDirtyCheckoutButKeepsPullUnavailable() throws Exception {
+        final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
+        Files.writeString(repositories.local().resolve("README.md"), "dirty\n");
+        this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+
+        final var refreshedState = adapter.refreshRemoteState(repositories.local());
+
+        assertThat(refreshedState.workingTree()).isEqualTo(GitWorkingTreeState.DIRTY);
+        assertThat(refreshedState.upstream().relation()).isEqualTo(GitUpstreamRelation.BEHIND);
+        assertThat(refreshedState.pullAvailable()).isFalse();
+    }
+
+    @Test
     void configuredUpstreamWithMissingLocalTrackingRefIsRefreshedInternally() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         this.runGit(repositories.local(), "git", "update-ref", "-d", "refs/remotes/origin/main");
@@ -392,17 +406,14 @@ class GitRepositoryAdapterTest {
     }
 
     @Test
-    void inspectLocalRepositoryFailsClosedWhenRemoteInspectionFails() throws Exception {
+    void explicitRefreshFailsWhenRemoteInspectionFails() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         this.runGit(repositories.local(), "git", "remote", "set-url", "origin", this.tempDir.resolve("missing.git").toString());
         final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
 
-        final var state = adapter.refreshRemoteState(repositories.local());
-
-        assertThat(state.valid()).isTrue();
-        assertThat(state.head().ref()).isEqualTo("main");
-        assertThat(state.workingTree()).isEqualTo(GitWorkingTreeState.CLEAN);
-        assertThat(state.pullAvailable()).isFalse();
+        assertThatThrownBy(() -> adapter.refreshRemoteState(repositories.local()))
+                .isInstanceOf(GitExecutionException.class)
+                .hasMessage("Git upstream remote ref inspection failed.");
     }
 
     @Test

@@ -305,15 +305,13 @@ export class WorkflowBuilder {
       if (!sourcePort || !targetPort) {
         continue;
       }
-      const route = this.edgeRoute(sourcePort, targetPort);
-      const path = this.orthogonalRoundedPath(route);
-      const midpoint = this.routeMidpoint(route);
+      const { path, controlPoint } = this.edgePresentation(this.edgeRoute(sourcePort, targetPort));
       groups.push(`
         <g class="workflow-edge" data-edge-id="${escapeHtml(connection.id)}" data-edge-source-port="${escapeHtml(connection.sourceOutputPortId)}" data-edge-target-port="${escapeHtml(connection.targetInputPortId)}">
           <path class="edge-visible" d="${path}" marker-end="url(#agentsV2Arrow)" />
           <path class="edge-hit" d="${path}" />
-          <circle class="edge-remove" data-remove-connection="${escapeHtml(connection.id)}" cx="${midpoint.x}" cy="${midpoint.y}" r="10" />
-          <text class="edge-remove-label" data-remove-connection="${escapeHtml(connection.id)}" x="${midpoint.x}" y="${midpoint.y + 4}">×</text>
+          <circle class="edge-remove" data-remove-connection="${escapeHtml(connection.id)}" cx="${controlPoint.x}" cy="${controlPoint.y}" r="10" />
+          <text class="edge-remove-label" data-remove-connection="${escapeHtml(connection.id)}" x="${controlPoint.x}" y="${controlPoint.y + 4}">×</text>
         </g>
       `);
     }
@@ -321,15 +319,13 @@ export class WorkflowBuilder {
       ? this.portById(this.workflow.taskInputPortId, 'inputs')
       : null;
     if (taskInputTargetPort) {
-      const route = this.taskInputRoute(taskInputTargetPort);
-      const path = this.orthogonalRoundedPath(route);
-      const midpoint = this.routeMidpoint(route);
+      const { path, controlPoint } = this.edgePresentation(this.taskInputRoute(taskInputTargetPort));
       groups.push(`
         <g class="workflow-edge task-input-edge" data-task-input-edge data-edge-target-port="${escapeHtml(this.workflow.taskInputPortId)}">
           <path class="edge-visible" d="${path}" marker-end="url(#agentsV2Arrow)" />
           <path class="edge-hit" d="${path}" />
-          <circle class="edge-remove" data-remove-task-input cx="${midpoint.x}" cy="${midpoint.y}" r="10" />
-          <text class="edge-remove-label" data-remove-task-input x="${midpoint.x}" y="${midpoint.y + 4}">×</text>
+          <circle class="edge-remove" data-remove-task-input cx="${controlPoint.x}" cy="${controlPoint.y}" r="10" />
+          <text class="edge-remove-label" data-remove-task-input x="${controlPoint.x}" y="${controlPoint.y + 4}">×</text>
         </g>
       `);
     }
@@ -337,15 +333,13 @@ export class WorkflowBuilder {
       ? this.portById(this.workflow.taskOutputPortId, 'outputs')
       : null;
     if (taskOutputSourcePort) {
-      const route = this.taskOutputRoute(taskOutputSourcePort);
-      const path = this.orthogonalRoundedPath(route);
-      const midpoint = this.routeMidpoint(route);
+      const { path, controlPoint } = this.edgePresentation(this.taskOutputRoute(taskOutputSourcePort));
       groups.push(`
         <g class="workflow-edge task-output-edge" data-task-output-edge data-edge-source-port="${escapeHtml(this.workflow.taskOutputPortId)}">
           <path class="edge-visible" d="${path}" marker-end="url(#agentsV2Arrow)" />
           <path class="edge-hit" d="${path}" />
-          <circle class="edge-remove" data-remove-task-output cx="${midpoint.x}" cy="${midpoint.y}" r="10" />
-          <text class="edge-remove-label" data-remove-task-output x="${midpoint.x}" y="${midpoint.y + 4}">×</text>
+          <circle class="edge-remove" data-remove-task-output cx="${controlPoint.x}" cy="${controlPoint.y}" r="10" />
+          <text class="edge-remove-label" data-remove-task-output x="${controlPoint.x}" y="${controlPoint.y + 4}">×</text>
         </g>
       `);
     }
@@ -361,7 +355,6 @@ export class WorkflowBuilder {
       ${groups.join('')}
       ${preview}
     `;
-    this.positionEdgeRemoveControls(svg);
     svg.querySelectorAll('[data-remove-connection]').forEach((element) => {
       element.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -379,22 +372,6 @@ export class WorkflowBuilder {
         event.stopPropagation();
         this.removeTaskOutput();
       });
-    });
-  }
-
-  positionEdgeRemoveControls(svg) {
-    svg.querySelectorAll('.workflow-edge').forEach((edge) => {
-      const path = edge.querySelector('.edge-visible');
-      if (typeof path?.getTotalLength !== 'function' || typeof path?.getPointAtLength !== 'function') {
-        return;
-      }
-      const point = path.getPointAtLength(path.getTotalLength() / 2);
-      const circle = edge.querySelector('.edge-remove');
-      const label = edge.querySelector('.edge-remove-label');
-      circle?.setAttribute('cx', String(point.x));
-      circle?.setAttribute('cy', String(point.y));
-      label?.setAttribute('x', String(point.x));
-      label?.setAttribute('y', String(point.y + 4));
     });
   }
 
@@ -599,33 +576,25 @@ export class WorkflowBuilder {
     const sourcePort = this.portById(group.dataset.edgeSourcePort, 'outputs');
     const targetPort = this.portById(group.dataset.edgeTargetPort, 'inputs');
     if (group.dataset.taskOutputEdge !== undefined && sourcePort) {
-      const start = this.connectorPoint(sourcePort.port.id, 'output');
-      const end = this.taskOutputConnectorPoint();
-      const path = this.taskOutputPath(sourcePort);
-      group.querySelectorAll('.edge-visible, .edge-hit').forEach((element) => {
-        element.setAttribute('d', path);
-      });
-      const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-      group.querySelector('.edge-remove')?.setAttribute('cx', midpoint.x);
-      group.querySelector('.edge-remove')?.setAttribute('cy', midpoint.y);
-      group.querySelector('.edge-remove-label')?.setAttribute('x', midpoint.x);
-      group.querySelector('.edge-remove-label')?.setAttribute('y', midpoint.y + 4);
+      this.applyEdgePresentation(group, this.edgePresentation(this.taskOutputRoute(sourcePort)));
       return;
     }
     if (!targetPort) {
       return;
     }
-    const start = sourcePort ? this.connectorPoint(sourcePort.port.id, 'output') : this.taskInputConnectorPoint();
-    const end = this.connectorPoint(targetPort.port.id, 'input');
-    const path = sourcePort ? this.edgePath(sourcePort, targetPort) : this.taskInputPath(targetPort);
+    const route = sourcePort ? this.edgeRoute(sourcePort, targetPort) : this.taskInputRoute(targetPort);
+    this.applyEdgePresentation(group, this.edgePresentation(route));
+  }
+
+  applyEdgePresentation(group, presentation) {
+    const { path, controlPoint } = presentation;
     group.querySelectorAll('.edge-visible, .edge-hit').forEach((element) => {
       element.setAttribute('d', path);
     });
-    const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-    group.querySelector('.edge-remove')?.setAttribute('cx', midpoint.x);
-    group.querySelector('.edge-remove')?.setAttribute('cy', midpoint.y);
-    group.querySelector('.edge-remove-label')?.setAttribute('x', midpoint.x);
-    group.querySelector('.edge-remove-label')?.setAttribute('y', midpoint.y + 4);
+    group.querySelector('.edge-remove')?.setAttribute('cx', controlPoint.x);
+    group.querySelector('.edge-remove')?.setAttribute('cy', controlPoint.y);
+    group.querySelector('.edge-remove-label')?.setAttribute('x', controlPoint.x);
+    group.querySelector('.edge-remove-label')?.setAttribute('y', controlPoint.y + 4);
   }
 
   cancelConnectionDrag() {
@@ -1069,6 +1038,13 @@ export class WorkflowBuilder {
       this.taskOutputBounds(),
       this.edgeObstacles(new Set([sourcePort.node.id, 'task-output']))
     );
+  }
+
+  edgePresentation(route) {
+    return {
+      path: this.orthogonalRoundedPath(route),
+      controlPoint: this.routeMidpoint(route)
+    };
   }
 
   canvasPoint(event) {
