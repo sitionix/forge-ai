@@ -197,7 +197,7 @@ class ForgeAgentProjectRepositoryIT {
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
                 .expectStatus(HttpStatus.OK)
-                .expectResponse("responsePullProjectRepository.json", "id", "createdAt")
+                .expectResponse("responseRefreshProjectRepository.json", "id", "createdAt")
                 .assertAndCreate();
 
         assertThat(this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll())
