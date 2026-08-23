@@ -248,8 +248,10 @@ function workflowRunDetail(id: string, status: string, nodeRuns: any[] = [], wor
   };
 }
 
-function runtimeGraph(nodes: any[], connections: any[] = []) {
+function runtimeGraph(nodes: any[], connections: any[] = [], taskInputPortId: string | null = null, taskOutputPortId: string | null = null) {
   return {
+    taskInputPortId,
+    taskOutputPortId,
     nodes: nodes.map((item) => ({
       sourceNodeId: item.id,
       agentName: item.agentName,
@@ -1413,6 +1415,55 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-execution-source-node-id="b"]')?.textContent?.match(/0 runs/g)).toHaveLength(1);
     expect(dom.window.document.querySelector('[data-runtime-connection-id="a-b"]')).not.toBeNull();
     expect(dom.window.document.querySelector('[data-runtime-connection-id="b-c"]')).not.toBeNull();
+
+    const details = dom.window.document.getElementById('agentsV2NodeRunDetails')!;
+    expect(details.textContent).toContain('Select a node');
+    const unexecuted = dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="b"]')!;
+    unexecuted.click();
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="b"]')?.classList.contains('selected')).toBe(true);
+    expect(details.textContent).toContain('B');
+    expect(details.textContent).toContain('Not executed yet');
+  });
+
+  it('modern execution board renders canonical task boundaries as read-only topology', async () => {
+    const graph = runtimeGraph([
+      { id: 'root', agentName: 'Scoped Root', scopeMode: 'PER_SCOPE', inputs: [{ id: 'canonical-start', name: 'CHANGED_SKILL_WITH_A_VERY_LONG_NAME', order: 0 }] },
+      { id: 'finish', agentName: 'Finish', outputs: [{ id: 'canonical-result', name: 'IMPLEMENTATION_COMPLETE_WITH_A_VERY_LONG_NAME', order: 0 }] }
+    ], [portConnection('root-finish', 'root-output', 'finish-input')], 'canonical-start', 'canonical-result');
+    const repoA = repository('repo-a', project().id, 'repo-A');
+    const repoB = repository('repo-b', project().id, 'repo-B');
+    const run = {
+      ...workflowRunDetail('run-new', 'RUNNING', [], 'Boundary Board', graph),
+      repositoryIds: [repoA.id, repoB.id]
+    };
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([repoA, repoB])),
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(run))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('[data-execution-task-boundary="INPUT"]')?.textContent).toContain('TASK INPUT');
+    expect(dom.window.document.querySelector('[data-execution-task-boundary="OUTPUT"]')?.textContent).toContain('TASK OUTPUT');
+    expect(dom.window.document.querySelectorAll('[data-runtime-connection-id^="task-input:"]')).toHaveLength(2);
+    expect(dom.window.document.querySelectorAll('[data-runtime-connection-id^="task-output:"]')).toHaveLength(1);
+    expect(dom.window.document.querySelectorAll('[data-execution-run-chip-id]')).toHaveLength(0);
+    expect(dom.window.document.querySelector('[data-runtime-port-id="canonical-start"]')?.getAttribute('title')).toBe('CHANGED_SKILL_WITH_A_VERY_LONG_NAME');
+    expect(dom.window.document.querySelector('[data-runtime-port-id="canonical-result"]')?.getAttribute('title')).toBe('IMPLEMENTATION_COMPLETE_WITH_A_VERY_LONG_NAME');
+    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('Select a node');
+  });
+
+  it('isolates Runner pointer behavior and keeps long port labels bounded', () => {
+    const styles = readFileSync(join(process.cwd(), 'src', 'operator', 'operator-ui.css'), 'utf8');
+
+    expect(styles).toMatch(/\.execution-node\s*\{[^}]*pointer-events:\s*auto;/s);
+    expect(styles).toMatch(/\.execution-board-node\s*\{[^}]*width:\s*288px;/s);
+    expect(styles).toMatch(/\.execution-board-port-row span\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s);
+    expect(styles).toMatch(/\.execution-board-port-row-input \.execution-port-anchor\s*\{[^}]*left:\s*0;/s);
+    expect(styles).toMatch(/\.execution-board-port-row-output \.execution-port-anchor\s*\{[^}]*right:\s*0;/s);
   });
 
   it('modern execution board splits scoped histories and statuses by repository', async () => {

@@ -3,7 +3,9 @@ import { escapeHtml } from './dom-render-helpers.js';
 const ACTIVE_RUN_STATUSES = new Set(['QUEUED', 'RUNNING']);
 const NODE_WIDTH = 204;
 const NODE_HEIGHT = 110;
-const MODERN_NODE_WIDTH = 232;
+const MODERN_NODE_WIDTH = 288;
+const TASK_BOUNDARY_WIDTH = 132;
+const TASK_BOUNDARY_HEIGHT = 58;
 const MODERN_NODE_FALLBACK_HEIGHT = 118;
 const MODERN_SCOPED_NODE_FALLBACK_HEIGHT = 136;
 const MODERN_PORT_ROW_HEIGHT = 24;
@@ -22,6 +24,12 @@ const GLOBAL_REPOSITORY_KEY = '__global__';
 const EDGE_NODE_CLEARANCE = 16;
 const EDGE_BEND_COST = 12;
 const UNAVAILABLE_REPOSITORY_LABEL = 'Repository unavailable';
+const TASK_INPUT_UNIT_KEY = '__task_input__';
+const TASK_OUTPUT_UNIT_KEY = '__task_output__';
+const TASK_INPUT_NODE_ID = '__task_input_node__';
+const TASK_OUTPUT_NODE_ID = '__task_output_node__';
+const TASK_INPUT_OUTPUT_PORT_ID = '__task_input_output__';
+const TASK_OUTPUT_INPUT_PORT_ID = '__task_output_input__';
 
 export function visualUnitKey(sourceNodeId, repositoryId) {
   return `${sourceNodeId}::${normalizedRepositoryId(repositoryId) || GLOBAL_REPOSITORY_KEY}`;
@@ -37,7 +45,7 @@ function portAnchorKey(unitKey, portId) {
 
 export function buildExecutionProjection(runtimeGraph, repositoryIds = [], repositories = []) {
   const logicalNodes = runtimeGraph?.nodes || [];
-  const ports = runtimeGraph?.ports || [];
+  const ports = [...(runtimeGraph?.ports || [])];
   const logicalConnections = runtimeGraph?.connections || [];
   const repositoryNameById = new Map(repositories.map((repository) => [repository.id, repository.name]));
   const repositoryOrder = new Map(repositoryIds.map((repositoryId, index) => [repositoryId, index]));
@@ -82,9 +90,75 @@ export function buildExecutionProjection(runtimeGraph, repositoryIds = [], repos
   }
 
   const taskInputNodeId = portById.get(runtimeGraph?.taskInputPortId)?.sourceNodeId || null;
-  const rootUnitKeys = new Set((unitsBySource.get(taskInputNodeId) || []).map((unit) => unit.visualUnitKey));
+  const taskOutputNodeId = portById.get(runtimeGraph?.taskOutputPortId)?.sourceNodeId || null;
+  const rootUnits = unitsBySource.get(taskInputNodeId) || [];
+  if (runtimeGraph?.taskInputPortId && rootUnits.length) {
+    const boundary = taskBoundaryUnit('INPUT');
+    const boundaryPort = taskBoundaryPort('OUTPUT');
+    units.unshift(boundary);
+    ports.push(boundaryPort);
+    portById.set(boundaryPort.sourcePortId, boundaryPort);
+    for (const targetUnit of rootUnits) {
+      projectedConnections.push({
+        sourceConnectionId: `task-input:${targetUnit.visualUnitKey}`,
+        sourceOutputPortId: TASK_INPUT_OUTPUT_PORT_ID,
+        targetInputPortId: runtimeGraph.taskInputPortId,
+        sourceVisualUnitKey: TASK_INPUT_UNIT_KEY,
+        targetVisualUnitKey: targetUnit.visualUnitKey,
+        taskBoundary: true
+      });
+    }
+  }
+  const outputUnits = unitsBySource.get(taskOutputNodeId) || [];
+  if (runtimeGraph?.taskOutputPortId && outputUnits.length) {
+    const boundary = taskBoundaryUnit('OUTPUT');
+    const boundaryPort = taskBoundaryPort('INPUT');
+    units.push(boundary);
+    ports.push(boundaryPort);
+    portById.set(boundaryPort.sourcePortId, boundaryPort);
+    for (const sourceUnit of outputUnits) {
+      projectedConnections.push({
+        sourceConnectionId: `task-output:${sourceUnit.visualUnitKey}`,
+        sourceOutputPortId: runtimeGraph.taskOutputPortId,
+        targetInputPortId: TASK_OUTPUT_INPUT_PORT_ID,
+        sourceVisualUnitKey: sourceUnit.visualUnitKey,
+        targetVisualUnitKey: TASK_OUTPUT_UNIT_KEY,
+        taskBoundary: true
+      });
+    }
+  }
+  const rootUnitKeys = new Set(runtimeGraph?.taskInputPortId && rootUnits.length
+    ? [TASK_INPUT_UNIT_KEY]
+    : rootUnits.map((unit) => unit.visualUnitKey));
   layoutExecutionProjection(units, projectedConnections, ports, repositoryOrder, rootUnitKeys);
   return { nodes: units, ports, connections: projectedConnections };
+}
+
+function taskBoundaryUnit(kind) {
+  const input = kind === 'INPUT';
+  return {
+    sourceNodeId: input ? TASK_INPUT_NODE_ID : TASK_OUTPUT_NODE_ID,
+    visualUnitKey: input ? TASK_INPUT_UNIT_KEY : TASK_OUTPUT_UNIT_KEY,
+    agentName: `TASK ${kind}`,
+    taskBoundary: kind,
+    scopeMode: 'GLOBAL',
+    repositoryId: null,
+    logicalIndex: input ? -1 : Number.MAX_SAFE_INTEGER,
+    layoutWidth: TASK_BOUNDARY_WIDTH,
+    layoutHeight: TASK_BOUNDARY_HEIGHT
+  };
+}
+
+function taskBoundaryPort(direction) {
+  const output = direction === 'OUTPUT';
+  return {
+    sourcePortId: output ? TASK_INPUT_OUTPUT_PORT_ID : TASK_OUTPUT_INPUT_PORT_ID,
+    sourceNodeId: output ? TASK_INPUT_NODE_ID : TASK_OUTPUT_NODE_ID,
+    direction,
+    name: output ? 'Task' : 'Result',
+    order: 0,
+    taskBoundary: true
+  };
 }
 
 function visualUnitRepositories(scopeMode, repositoryIds) {
@@ -132,6 +206,10 @@ function layoutExecutionProjection(units, connections, ports, repositoryOrder, r
     if (!columns.has(depth)) {
       columns.set(depth, []);
     }
+    if (unit.taskBoundary) {
+      columns.get(depth).push(unit);
+      continue;
+    }
     const counts = portCountBySource.get(unit.sourceNodeId) || { input: 0, output: 0 };
     const scopeLabelHeight = unit.repositoryId ? 18 : 0;
     const fallbackHeight = unit.repositoryId ? MODERN_SCOPED_NODE_FALLBACK_HEIGHT : MODERN_NODE_FALLBACK_HEIGHT;
@@ -149,12 +227,19 @@ function layoutExecutionProjection(units, connections, ports, repositoryOrder, r
     height + unit.layoutHeight + (index ? LAYOUT_Y_GAP : 0)
   ), 0));
   const maxHeight = Math.max(0, ...columnHeights);
+  const sortedDepths = [...columns.keys()].sort((left, right) => left - right);
+  const xByDepth = new Map();
+  let x = LAYOUT_START_X;
+  for (const depth of sortedDepths) {
+    xByDepth.set(depth, x);
+    x += Math.max(...columns.get(depth).map((unit) => unit.layoutWidth || MODERN_NODE_WIDTH)) + LAYOUT_X_GAP;
+  }
   for (const [depth, column] of columns) {
     const columnHeight = column.reduce((height, unit, index) => height + unit.layoutHeight + (index ? LAYOUT_Y_GAP : 0), 0);
     let y = LAYOUT_START_Y + ((maxHeight - columnHeight) / 2);
     for (const unit of column) {
       unit.position = {
-        x: LAYOUT_START_X + (depth * (MODERN_NODE_WIDTH + LAYOUT_X_GAP)),
+        x: xByDepth.get(depth),
         y
       };
       y += unit.layoutHeight + LAYOUT_Y_GAP;
@@ -558,9 +643,8 @@ export class TaskExecutionView {
     if (this.hasRuntimeGraph(workflowRun)) {
       const projection = this.modernProjection();
       if (!projection.nodeByUnit.has(this.state.selectedVisualUnitKey)) {
-        const firstUnit = projection.graph.nodes[0] || null;
-        this.state.selectedVisualUnitKey = firstUnit?.visualUnitKey || null;
-        this.state.selectedSourceNodeId = firstUnit?.sourceNodeId || null;
+        this.state.selectedVisualUnitKey = null;
+        this.state.selectedSourceNodeId = null;
       }
       const nodeRuns = workflowRun?.nodeRuns || [];
       if (!nodeRuns.some((nodeRun) => nodeRun.id === this.state.selectedNodeRunId)) {
@@ -827,6 +911,9 @@ export class TaskExecutionView {
   }
 
   renderModernNode(node, projection) {
+    if (node.taskBoundary) {
+      return this.renderTaskBoundary(node, projection);
+    }
     const nodeRuns = projection.nodeRunsByUnit.get(node.visualUnitKey) || [];
     const latest = nodeRuns.at(-1) || null;
     const latestNumber = latest ? projection.invocationNumberById.get(latest.id) : null;
@@ -851,7 +938,7 @@ export class TaskExecutionView {
         data-execution-visual-unit-key="${escapeHtml(node.visualUnitKey)}"
         data-execution-repository-id="${escapeHtml(node.repositoryId || '')}"
         data-execution-node-id="${escapeHtml(node.visualUnitKey)}"
-        style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px; width:${MODERN_NODE_WIDTH}px;"
+        style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px; width:${node.layoutWidth || MODERN_NODE_WIDTH}px;"
       >
         <div class="execution-board-card-grid">
           <div class="execution-board-port-column execution-board-port-column-input">
@@ -871,6 +958,24 @@ export class TaskExecutionView {
           </div>
         </div>
       </article>
+    `;
+  }
+
+  renderTaskBoundary(node, projection) {
+    const input = node.taskBoundary === 'INPUT';
+    const ports = input
+      ? projection.outputPortsByNode.get(node.sourceNodeId) || []
+      : projection.inputPortsByNode.get(node.sourceNodeId) || [];
+    return `
+      <div
+        class="execution-task-boundary execution-task-boundary-${input ? 'input' : 'output'}"
+        data-execution-task-boundary="${escapeHtml(node.taskBoundary)}"
+        style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px; width:${node.layoutWidth}px; height:${node.layoutHeight}px;"
+      >
+        ${input ? '' : this.renderCompactPorts(ports, 'input', null, node.visualUnitKey)}
+        <strong>TASK ${escapeHtml(node.taskBoundary)}</strong>
+        ${input ? this.renderCompactPorts(ports, 'output', null, node.visualUnitKey) : ''}
+      </div>
     `;
   }
 
@@ -919,7 +1024,7 @@ export class TaskExecutionView {
       const path = this.modernPathD(start, end, sourceNode, targetNode, projection);
       const title = `${sourceNode.agentName}.${sourcePort.name} -> ${targetNode.agentName}.${targetPort.name}`;
       return `
-        <g class="workflow-edge execution-edge execution-topology-edge" data-runtime-connection-id="${escapeHtml(connection.sourceConnectionId)}" data-source-visual-unit-key="${escapeHtml(connection.sourceVisualUnitKey)}" data-target-visual-unit-key="${escapeHtml(connection.targetVisualUnitKey)}">
+        <g class="workflow-edge execution-edge execution-topology-edge ${connection.taskBoundary ? 'execution-task-boundary-edge' : ''}" data-runtime-connection-id="${escapeHtml(connection.sourceConnectionId)}" data-source-visual-unit-key="${escapeHtml(connection.sourceVisualUnitKey)}" data-target-visual-unit-key="${escapeHtml(connection.targetVisualUnitKey)}">
           <title>${escapeHtml(title)}</title>
           <path class="edge-visible" d="${path}" marker-end="url(#agentsV2ExecutionArrow)" />
         </g>
@@ -990,6 +1095,19 @@ export class TaskExecutionView {
     const panel = this.byId('agentsV2NodeRunDetails');
     const nodeRun = this.selectedNodeRun();
     if (!nodeRun) {
+      const unit = this.state.selectedVisualUnitKey
+        ? this.modernProjection().nodeByUnit.get(this.state.selectedVisualUnitKey)
+        : null;
+      if (unit && !unit.taskBoundary) {
+        panel.innerHTML = `
+          <div class="node-run-details-grid">
+            ${this.detailRow('Agent', unit.agentName || 'Unknown agent')}
+            ${this.detailRow('Repository', unit.repositoryName || (unit.scopeMode === 'GLOBAL' ? 'Global' : UNAVAILABLE_REPOSITORY_LABEL))}
+            ${this.detailRow('Status', 'Not executed yet')}
+          </div>
+        `;
+        return;
+      }
       panel.innerHTML = '<div class="muted-state">Select a node to inspect its execution.</div>';
       return;
     }
@@ -1117,7 +1235,7 @@ export class TaskExecutionView {
 
   selectVisualUnit(unitKey) {
     const unit = this.modernProjection().nodeByUnit.get(unitKey);
-    if (!unit) {
+    if (!unit || unit.taskBoundary) {
       return;
     }
     this.state.selectedVisualUnitKey = unit.visualUnitKey;
@@ -1240,7 +1358,7 @@ export class TaskExecutionView {
       : projection.inputPortsByNode.get(port.sourceNodeId) || [];
     const index = Math.max(0, ports.findIndex((item) => item.sourcePortId === port.sourcePortId));
     return {
-      x: Number(node.position?.x || 0) + (port.direction === 'OUTPUT' ? MODERN_NODE_WIDTH : 0),
+      x: Number(node.position?.x || 0) + (port.direction === 'OUTPUT' ? (node.layoutWidth || MODERN_NODE_WIDTH) : 0),
       y: Number(node.position?.y || 0) + 42 + (index * MODERN_PORT_ROW_HEIGHT)
     };
   }
@@ -1366,19 +1484,22 @@ export class TaskExecutionView {
   }
 
   modernNodeBounds(node, projection = null) {
-    const measured = this.elementCanvasBounds(this.elementByData('data-execution-visual-unit-key', node.visualUnitKey));
+    const measured = this.elementCanvasBounds(node.taskBoundary
+      ? this.elementByData('data-execution-task-boundary', node.taskBoundary)
+      : this.elementByData('data-execution-visual-unit-key', node.visualUnitKey));
     if (measured) {
       return measured;
     }
     const left = Number(node.position?.x || 0);
     const top = Number(node.position?.y || 0);
     const height = this.modernNodeHeight(node, projection);
+    const width = node.layoutWidth || MODERN_NODE_WIDTH;
     return {
       left,
       top,
-      right: left + MODERN_NODE_WIDTH,
+      right: left + width,
       bottom: top + height,
-      width: MODERN_NODE_WIDTH,
+      width,
       height
     };
   }
@@ -1458,9 +1579,11 @@ export class TaskExecutionView {
         height = Math.max(height, Number(node.position?.y || 0) + NODE_HEIGHT + CANVAS_PADDING);
         continue;
       }
-      const measured = this.elementCanvasBounds(this.elementByData('data-execution-visual-unit-key', node.visualUnitKey));
+      const measured = this.elementCanvasBounds(node.taskBoundary
+        ? this.elementByData('data-execution-task-boundary', node.taskBoundary)
+        : this.elementByData('data-execution-visual-unit-key', node.visualUnitKey));
       const nodeHeight = measured?.height || this.modernNodeHeight(node, projection);
-      width = Math.max(width, Number(node.position?.x || 0) + MODERN_NODE_WIDTH + CANVAS_PADDING);
+      width = Math.max(width, Number(node.position?.x || 0) + (node.layoutWidth || MODERN_NODE_WIDTH) + CANVAS_PADDING);
       height = Math.max(height, Number(node.position?.y || 0) + nodeHeight + CANVAS_PADDING);
     }
     const widthValue = `${Math.ceil(width)}px`;

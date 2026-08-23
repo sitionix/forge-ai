@@ -1442,6 +1442,7 @@ body.sidebar-collapsed .sidebar-link {
   background: #fffaf0;
   box-shadow: 0 12px 24px rgba(27, 36, 31, 0.1);
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .execution-node.selected {
@@ -1488,16 +1489,16 @@ body.sidebar-collapsed .sidebar-link {
 
 .execution-board-node {
   box-sizing: border-box;
-  width: 232px;
+  width: 288px;
   min-height: 118px;
-  padding: 10px;
+  padding: 10px 0;
   overflow: visible;
 }
 
 .execution-board-card-grid {
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr) 54px;
-  gap: 8px;
+  grid-template-columns: 72px minmax(0, 1fr) 72px;
+  gap: 10px;
   align-items: stretch;
 }
 
@@ -1506,6 +1507,7 @@ body.sidebar-collapsed .sidebar-link {
   gap: 6px;
   align-content: center;
   min-width: 0;
+  padding: 0 2px;
 }
 
 .execution-board-card-main strong {
@@ -1651,6 +1653,36 @@ body.sidebar-collapsed .sidebar-link {
   right: 0;
   background: #2b6f62;
   transform: translate(50%, -50%);
+}
+
+.execution-task-boundary {
+  position: absolute;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  border: 1px dashed rgba(43, 111, 98, 0.58);
+  border-radius: 8px;
+  background: rgba(239, 247, 241, 0.92);
+  color: #2b6f62;
+  pointer-events: none;
+}
+
+.execution-task-boundary-output {
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.execution-task-boundary strong {
+  overflow: hidden;
+  font: 900 11px/1.2 var(--mono);
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-task-boundary .execution-board-port-row span {
+  display: none;
 }
 
 .task-execution-graph-empty {

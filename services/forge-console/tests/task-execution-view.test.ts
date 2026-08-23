@@ -11,10 +11,12 @@ const REPOSITORIES = [
 function graph(
   nodes: Array<{ id: string; scopeMode: string }>,
   connections: Array<[string, string]> = [],
-  taskInputNodeId: string | null = nodes[0]?.id || null
+  taskInputNodeId: string | null = null,
+  taskOutputNodeId: string | null = null
 ) {
   return {
     taskInputPortId: taskInputNodeId ? `${taskInputNodeId}-input` : null,
+    taskOutputPortId: taskOutputNodeId ? `${taskOutputNodeId}-output` : null,
     nodes: nodes.map((node, index) => ({
       sourceNodeId: node.id,
       agentName: node.id,
@@ -41,8 +43,10 @@ function projectedPairs(projection: ReturnType<typeof buildExecutionProjection>)
 }
 
 function rectanglesOverlap(left: any, right: any) {
-  return left.position.x < right.position.x + 232
-    && left.position.x + 232 > right.position.x
+  const leftWidth = left.layoutWidth || 288;
+  const rightWidth = right.layoutWidth || 288;
+  return left.position.x < right.position.x + rightWidth
+    && left.position.x + leftWidth > right.position.x
     && left.position.y < right.position.y + right.layoutHeight
     && left.position.y + left.layoutHeight > right.position.y;
 }
@@ -157,8 +161,52 @@ describe('task execution visual projection', () => {
     );
 
     expect(positions(second)).toEqual(positions(first));
-    expect(first.nodes.filter((node) => node.sourceNodeId === 'implementer').map((node) => node.position.x)).toEqual([80, 80]);
-    expect(first.nodes.filter((node) => node.sourceNodeId === 'reviewer').map((node) => node.position.x)).toEqual([460, 460]);
+    expect(first.nodes.filter((node) => node.sourceNodeId === 'implementer').map((node) => node.position.x)).toEqual([360, 360]);
+    expect(first.nodes.filter((node) => node.sourceNodeId === 'reviewer').map((node) => node.position.x)).toEqual([796, 796]);
+  });
+
+  it('projects canonical task boundaries without inventing execution units', () => {
+    const projection = buildExecutionProjection(
+      graph(
+        [{ id: 'root', scopeMode: 'PER_SCOPE' }, { id: 'finish', scopeMode: 'GLOBAL' }],
+        [['root', 'finish']],
+        'root',
+        'finish'
+      ),
+      ['repo-a', 'repo-b'],
+      REPOSITORIES
+    );
+
+    const taskInput = projection.nodes.find((node) => node.taskBoundary === 'INPUT')!;
+    const taskOutput = projection.nodes.find((node) => node.taskBoundary === 'OUTPUT')!;
+    const inputEdges = projection.connections.filter((connection) => connection.sourceVisualUnitKey === taskInput.visualUnitKey);
+    const outputEdges = projection.connections.filter((connection) => connection.targetVisualUnitKey === taskOutput.visualUnitKey);
+
+    expect(inputEdges.map((edge) => edge.targetVisualUnitKey)).toEqual([
+      visualUnitKey('root', 'repo-a'),
+      visualUnitKey('root', 'repo-b')
+    ]);
+    expect(inputEdges.every((edge) => edge.targetInputPortId === 'root-input')).toBe(true);
+    expect(outputEdges).toHaveLength(1);
+    expect(outputEdges[0]!.sourceOutputPortId).toBe('finish-output');
+    expect(taskInput.position.x).toBeLessThan(projection.nodes.find((node) => node.sourceNodeId === 'root')!.position.x);
+    expect(taskOutput.position.x).toBeGreaterThan(projection.nodes.find((node) => node.sourceNodeId === 'finish')!.position.x);
+    expect(projection.nodes.filter((node) => !node.taskBoundary)).toHaveLength(3);
+  });
+
+  it('preserves a direct self-loop as feedback topology', () => {
+    const runtimeGraph = graph([{ id: 'reviewer', scopeMode: 'GLOBAL' }]);
+    runtimeGraph.connections = [{
+      sourceConnectionId: 'reviewer-self',
+      sourceOutputPortId: 'reviewer-output',
+      targetInputPortId: 'reviewer-input'
+    }];
+
+    const projection = buildExecutionProjection(runtimeGraph, [], []);
+
+    expect(projectedPairs(projection)).toEqual([
+      [visualUnitKey('reviewer', null), visualUnitKey('reviewer', null)]
+    ]);
   });
 
   it('uses an unavailable label instead of a repository ID when metadata is missing', () => {
