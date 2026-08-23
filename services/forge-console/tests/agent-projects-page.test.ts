@@ -6,6 +6,7 @@ import { AgentProjectsPage } from '../src/operator/agent-projects-page.js';
 import { createAgentProjectsApi } from '../src/operator/agent-projects-api.js';
 import { bootstrapOperatorConsole } from '../src/operator/operator-bootstrap.js';
 import { effortTone } from '../src/operator/project-workspace.js';
+import { executionConnectionsMayBundle, routesSharePositiveLengthSegment } from '../src/operator/task-execution-view.js';
 
 const MODERN_EXECUTION_CARD_WIDTH = 288;
 
@@ -1563,6 +1564,20 @@ describe('Agent projects page', () => {
     expect(styles).toMatch(/\.execution-board-port-column\s*\{[^}]*width:\s*82px;[^}]*overflow:\s*hidden;/s);
   });
 
+  it('gives Task Execution the same bounded viewport-fill contract as Workflow Builder', () => {
+    const styles = readFileSync(join(process.cwd(), 'src', 'operator', 'operator-ui.css'), 'utf8');
+
+    expect(styles).toMatch(/\.task-execution-view\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\);[^}]*height:\s*calc\(100dvh - 80px\);[^}]*min-height:\s*0;/s);
+    expect(styles).toMatch(/\.task-execution-layout\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
+    expect(styles).toMatch(/\.task-execution-content\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
+    expect(styles).toMatch(/\.execution-canvas\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;/s);
+    expect(styles).toMatch(/\.execution-history\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;/s);
+    expect(styles).toMatch(/\.node-run-details-panel\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*auto;/s);
+    expect(styles).not.toMatch(/\.task-execution-layout\s*\{[^}]*min-height:\s*580px;/s);
+    expect(styles).not.toMatch(/\.execution-canvas\s*\{[^}]*min-height:\s*520px;/s);
+    expect(styles).toMatch(/\.agents-v2-builder\s*\{[^}]*height:\s*calc\(100dvh - 80px\);[^}]*min-height:\s*0;/s);
+  });
+
   it('keeps graph cards constant-size as invocation history grows and selects history in Node Details', async () => {
     const graph = runtimeGraph([{ id: 'reviewer', agentName: 'Reviewer' }]);
     const runs = Array.from({ length: 300 }, (_, index) => modernNodeRun(
@@ -1785,6 +1800,62 @@ describe('Agent projects page', () => {
     expect(pathOne).not.toMatch(/[CS]/);
     expect(pathTwo).not.toMatch(/[CS]/);
     expect(pathOne).not.toBe(pathTwo);
+    expect(routesSharePositiveLengthSegment(pathPoints(pathOne), pathPoints(pathTwo))).toBe(false);
+  });
+
+  it('bundles only exact shared-pin fan-out and fan-in routes', async () => {
+    const graph = runtimeGraph([
+      {
+        id: 'source',
+        agentName: 'Source',
+        outputs: [
+          { id: 'source-shared', name: 'Shared', order: 0 },
+          { id: 'source-other', name: 'Other', order: 1 }
+        ]
+      },
+      { id: 'left', agentName: 'Left' },
+      { id: 'right', agentName: 'Right' },
+      { id: 'third', agentName: 'Third' },
+      { id: 'merge', agentName: 'Merge', inputs: [{ id: 'merge-shared', name: 'Shared', order: 0 }] }
+    ], [
+      portConnection('fanout-left', 'source-shared', 'left-input'),
+      portConnection('fanout-right', 'source-shared', 'right-input'),
+      portConnection('unrelated-third', 'source-other', 'third-input'),
+      portConnection('fanin-left', 'left-output', 'merge-shared'),
+      portConnection('fanin-right', 'right-output', 'merge-shared')
+    ]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Bundled Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const route = (id: string) => pathPoints(dom.window.document
+      .querySelector(`[data-runtime-connection-id="${id}"] path`)?.getAttribute('d') || '');
+    const fanoutLeft = route('fanout-left');
+    const fanoutRight = route('fanout-right');
+    const unrelated = route('unrelated-third');
+    const faninLeft = route('fanin-left');
+    const faninRight = route('fanin-right');
+
+    expect(routesSharePositiveLengthSegment(fanoutLeft, fanoutRight)).toBe(true);
+    expect(routesSharePositiveLengthSegment(faninLeft, faninRight)).toBe(true);
+    expect(routesSharePositiveLengthSegment(fanoutLeft, unrelated)).toBe(false);
+    expect(routesSharePositiveLengthSegment(fanoutRight, unrelated)).toBe(false);
+    const projection = page.taskExecutionView.modernProjection();
+    const projectedById = new Map<string, any>(projection.graph.connections.map((connection: any) => [connection.sourceConnectionId, connection]));
+    const ids = ['fanout-left', 'fanout-right', 'unrelated-third', 'fanin-left', 'fanin-right'];
+    for (let left = 0; left < ids.length; left += 1) {
+      for (let right = left + 1; right < ids.length; right += 1) {
+        const leftEdge = projectedById.get(ids[left]!)!;
+        const rightEdge = projectedById.get(ids[right]!)!;
+        if (!executionConnectionsMayBundle(leftEdge, rightEdge)) {
+          expect(routesSharePositiveLengthSegment(route(ids[left]!), route(ids[right]!))).toBe(false);
+        }
+      }
+    }
   });
 
   it('modern execution board routes reverse edges near the canvas origin outside node bounds without cubic curves', async () => {

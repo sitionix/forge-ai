@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildExecutionProjection, routeExecutionEdge, visualUnitKey } from '../src/operator/task-execution-view.js';
+import {
+  buildExecutionProjection,
+  executionConnectionsMayBundle,
+  positiveLengthSegmentOverlap,
+  routeExecutionEdge,
+  routesSharePositiveLengthSegment,
+  visualUnitKey
+} from '../src/operator/task-execution-view.js';
 
 const REPOSITORIES = [
   { id: 'repo-a', name: 'repo-A' },
@@ -291,7 +298,39 @@ describe('task execution visual projection', () => {
     expect(x('implementation')).toBeGreaterThan(x('selector'));
     expect(x('planner')).toBeGreaterThan(x('reviewer'));
     expect(x('implementer')).toBeGreaterThan(x('planner'));
+    expect(projection.nodes.find((node) => node.taskBoundary === 'OUTPUT')!.position.x).toBeGreaterThan(x('implementer'));
     expect(projection.connections.filter((edge) => edge.visualType === 'FEEDBACK_REENTRY')).toHaveLength(2);
+  });
+
+  it('distinguishes valid point crossings from positive-length segment overlap', () => {
+    expect(positiveLengthSegmentOverlap(
+      { x: 0, y: 20 }, { x: 100, y: 20 },
+      { x: 50, y: 0 }, { x: 50, y: 40 }
+    )).toBe(false);
+    expect(positiveLengthSegmentOverlap(
+      { x: 0, y: 20 }, { x: 100, y: 20 },
+      { x: 40, y: 20 }, { x: 140, y: 20 }
+    )).toBe(true);
+    expect(routesSharePositiveLengthSegment(
+      [{ x: 0, y: 20 }, { x: 100, y: 20 }],
+      [{ x: 50, y: 0 }, { x: 50, y: 40 }]
+    )).toBe(false);
+  });
+
+  it('allows bundling only for the exact same projected source or target pin', () => {
+    const edge = (overrides: Record<string, string>) => ({
+      sourceVisualUnitKey: 'source-a',
+      sourceOutputPortId: 'source-output-a',
+      targetVisualUnitKey: 'target-a',
+      targetInputPortId: 'target-input-a',
+      ...overrides
+    });
+    const base = edge({});
+
+    expect(executionConnectionsMayBundle(base, edge({ targetVisualUnitKey: 'target-b', targetInputPortId: 'target-input-b' }))).toBe(true);
+    expect(executionConnectionsMayBundle(base, edge({ sourceVisualUnitKey: 'source-b', sourceOutputPortId: 'source-output-b' }))).toBe(true);
+    expect(executionConnectionsMayBundle(base, edge({ sourceOutputPortId: 'source-output-b', targetInputPortId: 'target-input-b' }))).toBe(false);
+    expect(executionConnectionsMayBundle(base, edge({ sourceVisualUnitKey: 'source-b', targetVisualUnitKey: 'target-b' }))).toBe(false);
   });
 
   it('uses an unavailable label instead of a repository ID when metadata is missing', () => {

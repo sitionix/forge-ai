@@ -10,9 +10,19 @@ export interface ExecutionVisualUnit {
 }
 
 export interface ProjectedExecutionConnection {
+  sourceConnectionId: string;
+  sourceOutputPortId: string;
+  targetInputPortId: string;
   sourceVisualUnitKey: string;
   targetVisualUnitKey: string;
+  visualType?: string;
+  visualLane?: number;
   [key: string]: unknown;
+}
+
+export interface ExecutionPoint {
+  x: number;
+  y: number;
 }
 
 export interface ExecutionProjectionGraph {
@@ -28,7 +38,19 @@ export function buildExecutionProjection(
   repositories?: Array<{ id: string; name: string }>
 ): ExecutionProjectionGraph;
 export function routeExecutionEdge(
-  start: { x: number; y: number },
-  end: { x: number; y: number },
-  nodeBounds: Array<{ left: number; top: number; right: number; bottom: number }>
-): Array<{ x: number; y: number }>;
+  start: ExecutionPoint,
+  end: ExecutionPoint,
+  nodeBounds: Array<{ left: number; top: number; right: number; bottom: number }>,
+  occupiedSegments?: Array<{ start: ExecutionPoint; end: ExecutionPoint }>
+): ExecutionPoint[];
+export function positiveLengthSegmentOverlap(
+  leftStart: ExecutionPoint,
+  leftEnd: ExecutionPoint,
+  rightStart: ExecutionPoint,
+  rightEnd: ExecutionPoint
+): boolean;
+export function routesSharePositiveLengthSegment(leftPoints: ExecutionPoint[], rightPoints: ExecutionPoint[]): boolean;
+export function executionConnectionsMayBundle(
+  left: Pick<ProjectedExecutionConnection, 'sourceVisualUnitKey' | 'sourceOutputPortId' | 'targetVisualUnitKey' | 'targetInputPortId'>,
+  right: Pick<ProjectedExecutionConnection, 'sourceVisualUnitKey' | 'sourceOutputPortId' | 'targetVisualUnitKey' | 'targetInputPortId'>
+): boolean;

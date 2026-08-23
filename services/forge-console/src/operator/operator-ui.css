@@ -1255,7 +1255,10 @@ body.sidebar-collapsed .sidebar-link {
 
 .task-execution-view {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 18px;
+  height: calc(100dvh - 80px);
+  min-height: 0;
 }
 
 .task-execution-summary-panel {
@@ -1326,17 +1329,33 @@ body.sidebar-collapsed .sidebar-link {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
   gap: 18px;
-  min-height: 580px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .task-execution-sidebar,
 .task-execution-main {
+  min-height: 0;
   padding: 18px;
+  overflow: hidden;
+}
+
+.task-execution-sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.task-execution-main {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
 .execution-history {
   display: grid;
+  align-content: start;
   gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .execution-history-row {
@@ -1369,11 +1388,14 @@ body.sidebar-collapsed .sidebar-link {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: 18px;
-  min-height: 520px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .execution-canvas {
-  min-height: 520px;
+  height: 100%;
+  min-height: 0;
   border: 1px solid rgba(27, 36, 31, 0.12);
   border-radius: 8px;
 }
@@ -1683,7 +1705,9 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .node-run-details-panel {
+  height: 100%;
   min-width: 0;
+  min-height: 0;
   padding: 16px;
   border: 1px solid rgba(27, 36, 31, 0.12);
   border-radius: 8px;
@@ -5312,9 +5336,7 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
     grid-template-columns: 1fr;
   }
 
-  .task-execution-summary-grid,
-  .task-execution-layout,
-  .task-execution-content {
+  .task-execution-summary-grid {
     grid-template-columns: 1fr;
   }
 
@@ -5375,6 +5397,10 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   }
 
   .agents-v2-builder {
+    height: calc(100dvh - 130px);
+  }
+
+  .task-execution-view {
     height: calc(100dvh - 130px);
   }
 

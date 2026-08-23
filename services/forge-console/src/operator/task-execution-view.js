@@ -356,10 +356,10 @@ function primaryLayoutDepths(units, connections, rootUnitKeys) {
   }
   const taskOutput = units.find((unit) => unit.taskBoundary === 'OUTPUT');
   if (taskOutput) {
-    const incoming = connections.filter((connection) => connection.targetVisualUnitKey === taskOutput.visualUnitKey);
-    depth.set(taskOutput.visualUnitKey, Math.max(0, ...incoming.map((connection) => (
-      (depth.get(connection.sourceVisualUnitKey) || 0) + 1
-    ))));
+    const rightmostWorkflowDepth = Math.max(0, ...units
+      .filter((unit) => !unit.taskBoundary)
+      .map((unit) => depth.get(unit.visualUnitKey) || 0));
+    depth.set(taskOutput.visualUnitKey, rightmostWorkflowDepth + 1);
   }
   return depth;
 }
@@ -412,12 +412,53 @@ function compareProjectionConnections(left, right, unitOrder) {
     || String(left.targetInputPortId || '').localeCompare(String(right.targetInputPortId || ''));
 }
 
+function compareRenderedConnections(left, right) {
+  const typeOrder = new Map([
+    ['PRIMARY_FORWARD', 1],
+    ['SECONDARY_FAN_IN', 2],
+    ['FEEDBACK_REENTRY', 3],
+    ['SELF_LOOP', 4]
+  ]);
+  const order = (connection) => connection.visualType === 'TASK_BOUNDARY'
+    ? connection.sourceVisualUnitKey === TASK_INPUT_UNIT_KEY ? 0 : 5
+    : typeOrder.get(connection.visualType) ?? 9;
+  return order(left) - order(right)
+    || String(left.sourceVisualUnitKey).localeCompare(String(right.sourceVisualUnitKey))
+    || String(left.sourceOutputPortId).localeCompare(String(right.sourceOutputPortId))
+    || String(left.targetVisualUnitKey).localeCompare(String(right.targetVisualUnitKey))
+    || String(left.targetInputPortId).localeCompare(String(right.targetInputPortId));
+}
+
+export function executionConnectionsMayBundle(left, right) {
+  return (left.sourceVisualUnitKey === right.sourceVisualUnitKey
+      && left.sourceOutputPortId === right.sourceOutputPortId)
+    || (left.targetVisualUnitKey === right.targetVisualUnitKey
+      && left.targetInputPortId === right.targetInputPortId);
+}
+
+function orthogonalSegments(points) {
+  const segments = [];
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    if ((start.x === end.x || start.y === end.y) && (start.x !== end.x || start.y !== end.y)) {
+      segments.push({ start, end });
+    }
+  }
+  return segments;
+}
+
+export function routesSharePositiveLengthSegment(leftPoints, rightPoints) {
+  return orthogonalSegments(leftPoints).some((left) => orthogonalSegments(rightPoints)
+    .some((right) => positiveLengthSegmentOverlap(left.start, left.end, right.start, right.end)));
+}
+
 function compareUnitKeys(left, right, unitOrder) {
   return (unitOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (unitOrder.get(right) ?? Number.MAX_SAFE_INTEGER)
     || String(left).localeCompare(String(right));
 }
 
-export function routeExecutionEdge(start, end, nodeBounds) {
+export function routeExecutionEdge(start, end, nodeBounds, occupiedSegments = []) {
   const sourceBounds = nodeBounds.find((bounds) => pointInsideOrOnRectangle(start, bounds));
   const targetBounds = nodeBounds.find((bounds) => pointInsideOrOnRectangle(end, bounds));
   const obstacles = nodeBounds.map((bounds) => ({
@@ -425,7 +466,7 @@ export function routeExecutionEdge(start, end, nodeBounds) {
     top: bounds.top - EDGE_NODE_CLEARANCE,
     right: bounds.right + EDGE_NODE_CLEARANCE,
     bottom: bounds.bottom + EDGE_NODE_CLEARANCE
-  }));
+  })).concat(occupiedSegments.map(segmentObstacle));
   const sourceExit = {
     x: sourceBounds ? sourceBounds.right + EDGE_NODE_CLEARANCE : start.x + EDGE_NODE_CLEARANCE,
     y: start.y
@@ -436,6 +477,40 @@ export function routeExecutionEdge(start, end, nodeBounds) {
   };
   const routed = shortestOrthogonalRoute(sourceExit, targetEntry, obstacles);
   return compactOrthogonalPoints([start, ...routed, end]);
+}
+
+function segmentObstacle(segment) {
+  const clearance = 2;
+  return segment.start.y === segment.end.y
+    ? {
+        left: Math.min(segment.start.x, segment.end.x),
+        right: Math.max(segment.start.x, segment.end.x),
+        top: segment.start.y - clearance,
+        bottom: segment.start.y + clearance
+      }
+    : {
+        left: segment.start.x - clearance,
+        right: segment.start.x + clearance,
+        top: Math.min(segment.start.y, segment.end.y),
+        bottom: Math.max(segment.start.y, segment.end.y)
+      };
+}
+
+export function positiveLengthSegmentOverlap(leftStart, leftEnd, rightStart, rightEnd) {
+  const leftHorizontal = leftStart.y === leftEnd.y;
+  const rightHorizontal = rightStart.y === rightEnd.y;
+  if (leftHorizontal !== rightHorizontal) {
+    return false;
+  }
+  if (leftHorizontal) {
+    return leftStart.y === rightStart.y && intervalOverlapLength(leftStart.x, leftEnd.x, rightStart.x, rightEnd.x) > 0;
+  }
+  return leftStart.x === rightStart.x && intervalOverlapLength(leftStart.y, leftEnd.y, rightStart.y, rightEnd.y) > 0;
+}
+
+function intervalOverlapLength(firstStart, firstEnd, secondStart, secondEnd) {
+  return Math.min(Math.max(firstStart, firstEnd), Math.max(secondStart, secondEnd))
+    - Math.max(Math.min(firstStart, firstEnd), Math.min(secondStart, secondEnd));
 }
 
 function shortestOrthogonalRoute(start, end, obstacles) {
@@ -1067,7 +1142,9 @@ export class TaskExecutionView {
   }
 
   renderModernEdges(projection) {
-    const edges = projection.graph.connections.map((connection) => {
+    const occupiedRoutes = [];
+    const orderedConnections = projection.graph.connections.slice().sort(compareRenderedConnections);
+    const edges = orderedConnections.map((connection) => {
       const sourcePort = projection.portById.get(connection.sourceOutputPortId);
       const targetPort = projection.portById.get(connection.targetInputPortId);
       const sourceNode = projection.nodeByUnit.get(connection.sourceVisualUnitKey);
@@ -1077,7 +1154,9 @@ export class TaskExecutionView {
       }
       const start = this.modernPortPoint(sourcePort, sourceNode, projection);
       const end = this.modernPortPoint(targetPort, targetNode, projection);
-      const path = this.modernPathD(start, end, sourceNode, targetNode, projection, connection);
+      const points = this.modernRoutePoints(start, end, sourceNode, targetNode, projection, connection, occupiedRoutes);
+      occupiedRoutes.push({ connection, points });
+      const path = this.orthogonalRoundedPath(points);
       const title = `${sourceNode.agentName}.${sourcePort.name} -> ${targetNode.agentName}.${targetPort.name}`;
       return `
         <g class="workflow-edge execution-edge execution-topology-edge execution-edge-${escapeHtml(String(connection.visualType || 'PRIMARY_FORWARD').toLowerCase().replaceAll('_', '-'))}" data-runtime-connection-id="${escapeHtml(connection.sourceConnectionId)}" data-source-visual-unit-key="${escapeHtml(connection.sourceVisualUnitKey)}" data-target-visual-unit-key="${escapeHtml(connection.targetVisualUnitKey)}">
@@ -1455,45 +1534,80 @@ export class TaskExecutionView {
   }
 
   modernPathD(start, end, sourceNode, targetNode, projection = null, connection = null) {
+    return this.orthogonalRoundedPath(this.modernRoutePoints(
+      start,
+      end,
+      sourceNode,
+      targetNode,
+      projection,
+      connection,
+      []
+    ));
+  }
+
+  modernRoutePoints(start, end, sourceNode, targetNode, projection = null, connection = null, occupiedRoutes = []) {
     const bounds = (projection?.graph.nodes || [sourceNode, targetNode])
       .map((node) => this.modernNodeBounds(node, projection));
     if (connection?.visualType === 'SELF_LOOP') {
       const boundsForNode = this.modernNodeBounds(sourceNode, projection);
-      const laneOffset = 22 + ((connection.visualLane || 0) * 10);
-      return this.orthogonalRoundedPath([
-        start,
-        { x: boundsForNode.right + laneOffset, y: start.y },
-        { x: boundsForNode.right + laneOffset, y: boundsForNode.top - laneOffset },
-        { x: boundsForNode.left - laneOffset, y: boundsForNode.top - laneOffset },
-        { x: boundsForNode.left - laneOffset, y: end.y },
-        end
-      ]);
+      return this.firstUnoccupiedSpecialRoute(connection, occupiedRoutes, (attempt) => {
+        const laneOffset = 22 + (((connection.visualLane || 0) + attempt) * 10);
+        return [
+          start,
+          { x: boundsForNode.right + laneOffset, y: start.y },
+          { x: boundsForNode.right + laneOffset, y: boundsForNode.top - laneOffset },
+          { x: boundsForNode.left - laneOffset, y: boundsForNode.top - laneOffset },
+          { x: boundsForNode.left - laneOffset, y: end.y },
+          end
+        ];
+      });
     }
     if (connection?.visualType === 'FEEDBACK_REENTRY') {
       const top = Math.min(...bounds.map((item) => item.top));
-      const gutterY = top - 30 - ((connection.visualLane || 0) * 22);
-      return this.orthogonalRoundedPath([
-        start,
-        { x: start.x + EDGE_NODE_CLEARANCE, y: start.y },
-        { x: start.x + EDGE_NODE_CLEARANCE, y: gutterY },
-        { x: end.x - EDGE_NODE_CLEARANCE, y: gutterY },
-        { x: end.x - EDGE_NODE_CLEARANCE, y: end.y },
-        end
-      ]);
+      return this.firstUnoccupiedSpecialRoute(connection, occupiedRoutes, (attempt) => {
+        const lane = (connection.visualLane || 0) + attempt;
+        const gutterY = top - 30 - (lane * 22);
+        return [
+          start,
+          { x: start.x + EDGE_NODE_CLEARANCE + (lane * 2), y: start.y },
+          { x: start.x + EDGE_NODE_CLEARANCE + (lane * 2), y: gutterY },
+          { x: end.x - EDGE_NODE_CLEARANCE - (lane * 2), y: gutterY },
+          { x: end.x - EDGE_NODE_CLEARANCE - (lane * 2), y: end.y },
+          end
+        ];
+      });
     }
     if (connection?.visualType === 'SECONDARY_FAN_IN') {
       const bottom = Math.max(...bounds.map((item) => item.bottom));
-      const gutterY = bottom + 30 + ((connection.visualLane || 0) * 22);
-      return this.orthogonalRoundedPath([
-        start,
-        { x: start.x + EDGE_NODE_CLEARANCE, y: start.y },
-        { x: start.x + EDGE_NODE_CLEARANCE, y: gutterY },
-        { x: end.x - EDGE_NODE_CLEARANCE, y: gutterY },
-        { x: end.x - EDGE_NODE_CLEARANCE, y: end.y },
-        end
-      ]);
+      return this.firstUnoccupiedSpecialRoute(connection, occupiedRoutes, (attempt) => {
+        const lane = (connection.visualLane || 0) + attempt;
+        const gutterY = bottom + 30 + (lane * 22);
+        return [
+          start,
+          { x: start.x + EDGE_NODE_CLEARANCE + (lane * 2), y: start.y },
+          { x: start.x + EDGE_NODE_CLEARANCE + (lane * 2), y: gutterY },
+          { x: end.x - EDGE_NODE_CLEARANCE - (lane * 2), y: gutterY },
+          { x: end.x - EDGE_NODE_CLEARANCE - (lane * 2), y: end.y },
+          end
+        ];
+      });
     }
-    return this.orthogonalRoundedPath(routeExecutionEdge(start, end, bounds));
+    const blockedSegments = occupiedRoutes
+      .filter((route) => !executionConnectionsMayBundle(connection, route.connection))
+      .flatMap((route) => orthogonalSegments(route.points));
+    return routeExecutionEdge(start, end, bounds, blockedSegments);
+  }
+
+  firstUnoccupiedSpecialRoute(connection, occupiedRoutes, candidate) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const points = compactOrthogonalPoints(candidate(attempt));
+      const conflict = occupiedRoutes.some((route) => !executionConnectionsMayBundle(connection, route.connection)
+        && routesSharePositiveLengthSegment(points, route.points));
+      if (!conflict) {
+        return points;
+      }
+    }
+    throw new Error('Execution edge could not be assigned a distinct routing lane.');
   }
 
   orthogonalRoundedPath(points) {
