@@ -388,4 +388,63 @@ describe('task execution visual projection', () => {
     expect(route.some((point) => point.y <= Math.min(...unrelated.map((rectangle) => rectangle.top))
       || point.y >= Math.max(...unrelated.map((rectangle) => rectangle.bottom)))).toBe(true);
   });
+
+  it('falls back to a distinct outer lane when occupied segments isolate the compact route', async () => {
+    const taskExecutionModule = await import('../src/operator/task-execution-view.js') as any;
+    const view = Object.create(taskExecutionModule.TaskExecutionView.prototype);
+    view.modernNodeBounds = (node: any) => ({
+      key: node.visualUnitKey,
+      left: node.position.x,
+      top: node.position.y,
+      right: node.position.x + node.layoutWidth,
+      bottom: node.position.y + node.layoutHeight
+    });
+    const source = {
+      visualUnitKey: 'source',
+      position: { x: 0, y: 0 },
+      layoutWidth: MODERN_EXECUTION_CARD_WIDTH,
+      layoutHeight: 120
+    };
+    const target = {
+      visualUnitKey: 'target',
+      position: { x: 500, y: 0 },
+      layoutWidth: MODERN_EXECUTION_CARD_WIDTH,
+      layoutHeight: 120
+    };
+    const connection = {
+      sourceVisualUnitKey: 'source',
+      sourceOutputPortId: 'source-output',
+      targetVisualUnitKey: 'target',
+      targetInputPortId: 'target-input',
+      visualType: 'PRIMARY_FORWARD'
+    };
+    const occupiedRoute = {
+      connection: {
+        sourceVisualUnitKey: 'unrelated-source',
+        sourceOutputPortId: 'unrelated-output',
+        targetVisualUnitKey: 'unrelated-target',
+        targetInputPortId: 'unrelated-input'
+      },
+      points: [
+        { x: 296, y: 52 },
+        { x: 312, y: 52 },
+        { x: 312, y: 68 },
+        { x: 296, y: 68 },
+        { x: 296, y: 52 }
+      ]
+    };
+
+    const route = view.modernRoutePoints(
+      { x: MODERN_EXECUTION_CARD_WIDTH, y: 60 },
+      { x: 500, y: 60 },
+      source,
+      target,
+      { graph: { nodes: [source, target] } },
+      connection,
+      [occupiedRoute]
+    );
+
+    expect(route.some((point: any) => point.y > 120)).toBe(true);
+    expect(routesSharePositiveLengthSegment(route, occupiedRoute.points)).toBe(false);
+  });
 });

@@ -1595,7 +1595,23 @@ export class TaskExecutionView {
     const blockedSegments = occupiedRoutes
       .filter((route) => !executionConnectionsMayBundle(connection, route.connection))
       .flatMap((route) => orthogonalSegments(route.points));
-    return routeExecutionEdge(start, end, bounds, blockedSegments);
+    try {
+      return routeExecutionEdge(start, end, bounds, blockedSegments);
+    } catch (_) {
+      const bottom = Math.max(...bounds.map((item) => item.bottom));
+      return this.firstUnoccupiedSpecialRoute(connection, occupiedRoutes, (attempt) => {
+        const lane = attempt;
+        const gutterY = bottom + 30 + (lane * 22);
+        return [
+          start,
+          { x: start.x + EDGE_NODE_CLEARANCE + (lane * 2), y: start.y },
+          { x: start.x + EDGE_NODE_CLEARANCE + (lane * 2), y: gutterY },
+          { x: end.x - EDGE_NODE_CLEARANCE - (lane * 2), y: gutterY },
+          { x: end.x - EDGE_NODE_CLEARANCE - (lane * 2), y: end.y },
+          end
+        ];
+      });
+    }
   }
 
   firstUnoccupiedSpecialRoute(connection, occupiedRoutes, candidate) {
