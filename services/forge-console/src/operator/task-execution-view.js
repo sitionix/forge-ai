@@ -24,6 +24,8 @@ const GLOBAL_REPOSITORY_KEY = '__global__';
 const EDGE_NODE_CLEARANCE = 16;
 const EDGE_BEND_COST = 12;
 const UNAVAILABLE_REPOSITORY_LABEL = 'Repository unavailable';
+const SELECTION_FOLLOW_LATEST = 'FOLLOW_LATEST';
+const SELECTION_PINNED_INVOCATION = 'PINNED_INVOCATION';
 const TASK_INPUT_UNIT_KEY = '__task_input__';
 const TASK_OUTPUT_UNIT_KEY = '__task_output__';
 const TASK_INPUT_NODE_ID = '__task_input_node__';
@@ -611,6 +613,7 @@ export class TaskExecutionView {
     this.state.selectedNodeRunId = null;
     this.state.selectedSourceNodeId = null;
     this.state.selectedVisualUnitKey = null;
+    this.state.nodeRunSelectionMode = null;
     this.state.workflowRun = null;
     this.state.loadingRun = true;
     this.state.executionError = '';
@@ -645,14 +648,22 @@ export class TaskExecutionView {
       if (!projection.nodeByUnit.has(this.state.selectedVisualUnitKey)) {
         this.state.selectedVisualUnitKey = null;
         this.state.selectedSourceNodeId = null;
+        this.state.selectedNodeRunId = null;
+        this.state.nodeRunSelectionMode = null;
+        return;
       }
       const nodeRuns = workflowRun?.nodeRuns || [];
-      if (!nodeRuns.some((nodeRun) => nodeRun.id === this.state.selectedNodeRunId)) {
-        const selectedUnit = projection.nodeByUnit.get(this.state.selectedVisualUnitKey);
-        this.state.selectedNodeRunId = selectedUnit
-          ? this.latestNodeRunForUnit(selectedUnit.sourceNodeId, selectedUnit.repositoryId, nodeRuns)?.id || null
-          : null;
+      const selectedUnit = projection.nodeByUnit.get(this.state.selectedVisualUnitKey);
+      const pinnedRunExists = nodeRuns.some((nodeRun) => nodeRun.id === this.state.selectedNodeRunId);
+      if (this.state.nodeRunSelectionMode === SELECTION_PINNED_INVOCATION && pinnedRunExists) {
+        return;
       }
+      this.state.nodeRunSelectionMode = SELECTION_FOLLOW_LATEST;
+      this.state.selectedNodeRunId = this.latestNodeRunForUnit(
+        selectedUnit.sourceNodeId,
+        selectedUnit.repositoryId,
+        nodeRuns
+      )?.id || null;
       return;
     }
     const nodeRuns = workflowRun?.nodeRuns || [];
@@ -1240,6 +1251,7 @@ export class TaskExecutionView {
     }
     this.state.selectedVisualUnitKey = unit.visualUnitKey;
     this.state.selectedSourceNodeId = unit.sourceNodeId;
+    this.state.nodeRunSelectionMode = SELECTION_FOLLOW_LATEST;
     this.state.selectedNodeRunId = this.latestNodeRunForUnit(
       unit.sourceNodeId,
       unit.repositoryId,
@@ -1254,6 +1266,7 @@ export class TaskExecutionView {
     if (nodeRun) {
       this.state.selectedSourceNodeId = nodeRun.sourceNodeId;
       this.state.selectedVisualUnitKey = visualUnitKey(nodeRun.sourceNodeId, nodeRun.repositoryId);
+      this.state.nodeRunSelectionMode = SELECTION_PINNED_INVOCATION;
     }
     this.state.selectedNodeRunId = nodeRunId;
     this.renderGraph();
@@ -1657,6 +1670,7 @@ export class TaskExecutionView {
       selectedNodeRunId: null,
       selectedSourceNodeId: null,
       selectedVisualUnitKey: null,
+      nodeRunSelectionMode: null,
       repositories: [],
       loadingTask: false,
       loadingRun: false,

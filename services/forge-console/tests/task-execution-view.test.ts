@@ -7,6 +7,7 @@ const REPOSITORIES = [
   { id: 'repo-b', name: 'repo-B' },
   { id: 'repo-c', name: 'repo-C' }
 ];
+const MODERN_EXECUTION_CARD_WIDTH = 288;
 
 function graph(
   nodes: Array<{ id: string; scopeMode: string }>,
@@ -238,11 +239,11 @@ describe('task execution visual projection', () => {
       key: node.visualUnitKey,
       left: node.position.x,
       top: node.position.y,
-      right: node.position.x + 232,
+      right: node.position.x + Number(node.layoutWidth || MODERN_EXECUTION_CARD_WIDTH),
       bottom: node.position.y + node.layoutHeight
     }));
     const route = routeExecutionEdge(
-      { x: source.position.x + 232, y: source.position.y + (source.layoutHeight / 2) },
+      { x: source.position.x + Number(source.layoutWidth || MODERN_EXECUTION_CARD_WIDTH), y: source.position.y + (source.layoutHeight / 2) },
       { x: target.position.x, y: target.position.y + (target.layoutHeight / 2) },
       bounds
     );
