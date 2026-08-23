@@ -2121,6 +2121,35 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Deploy Review');
   });
 
+  it('renders task repositories alphabetically in one scrollable overflow-safe column', async () => {
+    const longName = 'platform_graph_repository_with_a_name_that_must_wrap_inside_the_existing_modal_width';
+    const repositories = [
+      repository('cccccccc-cccc-4ccc-8ccc-cccccccccccc', project().id, 'zeta_service'),
+      repository('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', project().id, longName),
+      repository('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', project().id, 'ancestor_msgs')
+    ];
+    const fakeApi = api({ listProjectRepositories: vi.fn(() => Promise.resolve(repositories)) });
+    const { dom } = await openedProject(fakeApi);
+    dom.window.document.getElementById('agentsV2CreateTask')?.click();
+
+    const selector = dom.window.document.getElementById('agentsV2TaskRepositories') as HTMLElement;
+    const options = [...selector.querySelectorAll<HTMLInputElement>('input[name="repositoryIds"]')];
+    expect(options.map((option) => option.parentElement?.textContent?.trim())).toEqual([
+      'ancestor_msgs',
+      longName,
+      'zeta_service'
+    ]);
+    options.forEach((option) => {
+      option.click();
+      expect(option.checked).toBe(true);
+    });
+
+    const css = readFileSync(join(process.cwd(), 'src', 'operator', 'operator-ui.css'), 'utf8');
+    expect(css).toMatch(/\.agents-v2-checkbox-list\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[^}]*max-height:\s*300px;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s);
+    expect(css).toMatch(/\.agents-v2-checkbox-option\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\);[^}]*min-width:\s*0;/s);
+    expect(css).toMatch(/\.agents-v2-checkbox-option span\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/s);
+  });
+
   it('does not submit a Task without a selected repository', async () => {
     const { dom, fakeApi } = await openedProject();
     dom.window.document.getElementById('agentsV2CreateTask')?.click();
@@ -2144,7 +2173,7 @@ describe('Agent projects page', () => {
 
     const first = taskRepositoryOption(dom.window.document, 0);
     const second = taskRepositoryOption(dom.window.document, 1);
-    expect([first.parentElement?.textContent?.trim(), second.parentElement?.textContent?.trim()]).toEqual(['service-b', 'service-a']);
+    expect([first.parentElement?.textContent?.trim(), second.parentElement?.textContent?.trim()]).toEqual(['service-a', 'service-b']);
     expect(repoA.cloned).toBe(false);
     second.checked = true;
     first.checked = true;

@@ -678,7 +678,8 @@ export class AgentProjectsPage {
   }
 
   renderTaskRepositorySelect() {
-    this.byId('agentsV2TaskRepositories').innerHTML = this.state.repositories
+    this.byId('agentsV2TaskRepositories').innerHTML = [...this.state.repositories]
+      .sort((left, right) => (left.name || '').localeCompare(right.name || ''))
       .map((repository) => `
         <label class="agents-v2-checkbox-option">
           <input type="checkbox" name="repositoryIds" value="${escapeHtml(repository.id)}">

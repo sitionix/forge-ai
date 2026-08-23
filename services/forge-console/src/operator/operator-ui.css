@@ -1730,6 +1730,42 @@ body.sidebar-collapsed .sidebar-link {
   padding: 20px;
 }
 
+.agents-v2-checkbox-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-height: 300px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid rgba(27, 36, 31, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.agents-v2-checkbox-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  padding: 7px 10px;
+  border-top: 1px solid rgba(27, 36, 31, 0.1);
+  cursor: pointer;
+  font: 12px/1.35 var(--mono);
+}
+
+.agents-v2-checkbox-option:first-child {
+  border-top: 0;
+}
+
+.agents-v2-checkbox-option input {
+  margin: 1px 0 0;
+}
+
+.agents-v2-checkbox-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .modal-head h2 {
   margin: 0;
   font-family: var(--display);
