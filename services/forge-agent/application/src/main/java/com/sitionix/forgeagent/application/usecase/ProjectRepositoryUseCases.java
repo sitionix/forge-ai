@@ -119,6 +119,26 @@ public class ProjectRepositoryUseCases {
         }
     }
 
+    public ProjectRepositoryView refreshRepository(final UUID projectId, final UUID repositoryId) {
+        this.requireProject(projectId);
+        final ProjectRepositoryLink repository = this.requireRepository(projectId, repositoryId);
+        try {
+            final ProjectRepositoryWorkspaceReference reference = this.toWorkspaceReference(repository);
+            final ProjectRepositoryWorkspaceState workspaceState =
+                    this.localProjectWorkspacePort.resolveRepositoryWorkspaceState(projectId, reference);
+            if (workspaceState == null || !workspaceState.cloned()) {
+                throw new ConflictException("PROJECT_REPOSITORY_NOT_CLONED", "Project repository is not cloned.");
+            }
+            final GitLocalRepositoryState gitState = this.gitRepositoryPort.refreshRemoteState(workspaceState.path());
+            return this.toView(projectId, repository, reference.name(), true, gitState);
+        } catch (final GitOperationException exception) {
+            throw new InfrastructureExecutionException("PROJECT_REPOSITORY_REFRESH_FAILED", "Project repository refresh failed.");
+        } catch (final LocalProjectWorkspaceException exception) {
+            throw new InfrastructureExecutionException("PROJECT_REPOSITORY_WORKSPACE_FAILED",
+                    "Project repository workspace operation failed.");
+        }
+    }
+
     private void requireProject(final UUID projectId) {
         this.projectRepository.findById(projectId)
                 .orElseThrow(() -> new NotFoundException("PROJECT_NOT_FOUND", "Project was not found."));

@@ -7,6 +7,7 @@ export class ProjectWorkspace {
     this.onNewAgent = options.onNewAgent;
     this.onImportRepository = options.onImportRepository;
     this.onCloneRepository = options.onCloneRepository || (() => {});
+    this.onRefreshRepository = options.onRefreshRepository || (() => {});
     this.onPullRepository = options.onPullRepository || (() => {});
     this.onEditAgent = options.onEditAgent;
     this.onNewWorkflow = options.onNewWorkflow;
@@ -27,7 +28,7 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, repositories, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set()) {
+  render(project, repositories, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set(), refreshingRepositoryIds = new Set()) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2ImportRepository').disabled = !project || !repositoriesCurrent;
@@ -40,7 +41,7 @@ export class ProjectWorkspace {
       || !tasksCurrent
       || !workflows.length
       || !repositories.length;
-    this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds, pullingRepositoryIds);
+    this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds, pullingRepositoryIds, refreshingRepositoryIds);
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
     this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed, taskPage);
@@ -57,7 +58,7 @@ export class ProjectWorkspace {
     this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
   }
 
-  renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set()) {
+  renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set(), refreshingRepositoryIds = new Set()) {
     const list = this.byId('agentsV2RepositoriesList');
     if (repositoriesLoadFailed) {
       list.innerHTML = '';
@@ -80,6 +81,9 @@ export class ProjectWorkspace {
         ${repository.cloned === false ? `
           <button class="button tiny secondary" type="button" data-clone-repository-id="${escapeHtml(repository.id)}"${cloningRepositoryIds.has(repository.id) ? ' disabled' : ''}>Clone</button>
         ` : ''}
+        ${repository.cloned ? `
+          <button class="button tiny secondary" type="button" data-refresh-repository-id="${escapeHtml(repository.id)}"${refreshingRepositoryIds.has(repository.id) ? ' disabled' : ''}>Refresh</button>
+        ` : ''}
         ${this.renderRepositoryAction(repository, pullingRepositoryIds)}
       </article>
     `).join('');
@@ -88,6 +92,9 @@ export class ProjectWorkspace {
     });
     list.querySelectorAll('[data-pull-repository-id]').forEach((element) => {
       element.addEventListener('click', () => this.onPullRepository(element.dataset.pullRepositoryId));
+    });
+    list.querySelectorAll('[data-refresh-repository-id]').forEach((element) => {
+      element.addEventListener('click', () => this.onRefreshRepository(element.dataset.refreshRepositoryId));
     });
   }
 

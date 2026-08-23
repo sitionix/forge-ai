@@ -41,6 +41,8 @@ public final class ForgeAgentMockMvcEndpoint {
             Endpoint.createContract("/api/v1/projects/{projectId}/repositories", HttpMethod.GET, Void.class, ProjectRepositoryResponse[].class);
     public static final Endpoint<Void, ProjectRepositoryResponse> CLONE_PROJECT_REPOSITORY =
             Endpoint.createContract("/api/v1/projects/{projectId}/repositories/{repositoryId}/clone", HttpMethod.POST, Void.class, ProjectRepositoryResponse.class);
+    public static final Endpoint<Void, ProjectRepositoryResponse> REFRESH_PROJECT_REPOSITORY =
+            Endpoint.createContract("/api/v1/projects/{projectId}/repositories/{repositoryId}/refresh", HttpMethod.POST, Void.class, ProjectRepositoryResponse.class);
     public static final Endpoint<Void, ProjectRepositoryResponse> PULL_PROJECT_REPOSITORY =
             Endpoint.createContract("/api/v1/projects/{projectId}/repositories/{repositoryId}/pull", HttpMethod.POST, Void.class, ProjectRepositoryResponse.class);
     public static final Endpoint<Void, ForgeAgentErrorResponse> PULL_PROJECT_REPOSITORY_ERROR =

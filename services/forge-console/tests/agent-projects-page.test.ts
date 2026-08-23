@@ -353,6 +353,7 @@ function api(overrides = {}) {
     listProjectRepositories: vi.fn((projectId: string) => Promise.resolve([repository(undefined, projectId)])),
     importProjectRepository: vi.fn(() => Promise.resolve(repository())),
     cloneProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
+    refreshProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
     pullProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
     getRuntime: vi.fn(() => Promise.resolve(runtime())),
     listProjectAgents: vi.fn(() => Promise.resolve(agents)),
@@ -674,6 +675,34 @@ describe('Agent projects page', () => {
     expect(text).toContain('main · Clean');
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
+  });
+
+  it('refreshes remote state only after an explicit repository action', async () => {
+    const refreshRequest = deferred<any>();
+    const fakeApi = api({
+      listProjectRepositories: vi.fn()
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true, branchGitState('CLEAN', 'main'))
+        ])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true, behindGitState())
+        ]),
+      refreshProjectRepository: vi.fn(() => refreshRequest.promise)
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(fakeApi.refreshProjectRepository).not.toHaveBeenCalled();
+    const refresh = dom.window.document.querySelector<HTMLButtonElement>('[data-refresh-repository-id="repo-1"]');
+    expect(refresh?.disabled).toBe(false);
+    refresh?.click();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-refresh-repository-id="repo-1"]')?.disabled).toBe(true);
+
+    refreshRequest.resolve(repository('repo-1', project().id, 'service-a', true, behindGitState()));
+    await flushAsync();
+
+    expect(fakeApi.refreshProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(false);
   });
 
   it('renders enabled Pull action when backend reports pullAvailable', async () => {
@@ -3788,7 +3817,7 @@ describe('Agent projects page', () => {
     expect(source).toMatch(/\.workflow-nodes\s*\{[^}]*pointer-events: none;/);
     expect(source).toMatch(/\.workflow-node,[\s\S]*\.workflow-task-input,[\s\S]*\.workflow-task-output\s*\{[^}]*pointer-events: auto;/);
     expect(source).toMatch(/\.agents-v2-builder\s*\{[^}]*height: calc\(100dvh - 80px\);/);
-    expect(source).toMatch(/\.workflow-builder-body\s*\{[^}]*min-height: 0;/);
+    expect(source).toMatch(/\.workflow-builder-body\s*\{[^}]*grid-row: 3;[^}]*min-height: 0;/);
     expect(source).toMatch(/\.workflow-canvas\s*\{[^}]*min-height: 0;/);
 
     dom.window.document.querySelector<SVGElement>('[data-remove-connection="a-b-connection"]')!
@@ -3943,6 +3972,7 @@ describe('Agent projects page', () => {
     client.listProjectRepositories(project().id);
     client.importProjectRepository(project().id, { remoteUrl: 'git@gitlab.com:company/service-a.git' });
     client.cloneProjectRepository(project().id, '88888888-8888-4888-8888-888888888888');
+    client.refreshProjectRepository(project().id, '88888888-8888-4888-8888-888888888888');
     client.pullProjectRepository(project().id, '88888888-8888-4888-8888-888888888888');
     client.listProjectAgents(project().id);
     client.createAgent(project().id, { name: 'Agent', instructions: 'Do work.', outputSchema: {} });
@@ -3967,6 +3997,7 @@ describe('Agent projects page', () => {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888/clone`);
+    expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888/refresh`);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888/pull`);
     expect(http.get).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks?page=0&size=20`);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks`, {

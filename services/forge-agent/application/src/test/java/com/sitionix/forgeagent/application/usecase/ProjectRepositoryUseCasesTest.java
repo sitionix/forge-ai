@@ -171,6 +171,9 @@ class ProjectRepositoryUseCasesTest {
                 new ProjectRepositoryWorkspaceReference(secondId, "service-b")
         ));
         verify(this.gitRepositoryPort).inspectLocalRepository(firstPath);
+        verify(this.gitRepositoryPort, never()).refreshRemoteState(any());
+        verify(this.gitRepositoryPort, never()).inspectRemote(any());
+        verify(this.gitRepositoryPort, never()).pullFastForward(any());
     }
 
     @Test
@@ -266,6 +269,55 @@ class ProjectRepositoryUseCasesTest {
         assertThatThrownBy(() -> this.useCases.listProjectRepositories(PROJECT_ID))
                 .isInstanceOf(InfrastructureExecutionException.class)
                 .hasMessage("Project repository state could not be resolved.");
+    }
+
+    @Test
+    void explicitRefreshFetchesRemoteStateForOneClonedRepository() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
+        final GitLocalRepositoryState refreshedState = this.branchState(GitWorkingTreeState.CLEAN);
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceState(
+                PROJECT_ID,
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a")
+        )).thenReturn(new ProjectRepositoryWorkspaceState(REPOSITORY_ID, repositoryPath, true));
+        when(this.gitRepositoryPort.refreshRemoteState(repositoryPath)).thenReturn(refreshedState);
+
+        final ProjectRepositoryView result = this.useCases.refreshRepository(PROJECT_ID, REPOSITORY_ID);
+
+        assertThat(result.name()).isEqualTo("service-a");
+        assertThat(result.cloned()).isTrue();
+        assertThat(result.gitState()).isEqualTo(refreshedState);
+        verify(this.gitRepositoryPort).refreshRemoteState(repositoryPath);
+        verify(this.gitRepositoryPort, never()).inspectLocalRepository(any());
+    }
+
+    @Test
+    void remoteRefreshFailureDoesNotAffectOrdinaryListing() {
+        final ProjectRepositoryLink repository = this.repositoryLink(REPOSITORY_ID, "git@gitlab.com:company/service-a.git");
+        final Path repositoryPath = Path.of("/tmp/forge-projects/project/service-a");
+        final ProjectRepositoryWorkspaceReference reference =
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "service-a");
+        final ProjectRepositoryWorkspaceState workspaceState =
+                new ProjectRepositoryWorkspaceState(REPOSITORY_ID, repositoryPath, true);
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project()));
+        when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(repository));
+        when(this.repositoryLinkRepository.findById(REPOSITORY_ID)).thenReturn(Optional.of(repository));
+        when(this.gitRepositoryPort.resolveRepositoryName(repository.remoteUrl())).thenReturn("service-a");
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceStates(PROJECT_ID, List.of(reference)))
+                .thenReturn(Map.of(REPOSITORY_ID, workspaceState));
+        when(this.localProjectWorkspacePort.resolveRepositoryWorkspaceState(PROJECT_ID, reference)).thenReturn(workspaceState);
+        when(this.gitRepositoryPort.inspectLocalRepository(repositoryPath))
+                .thenReturn(this.branchState(GitWorkingTreeState.CLEAN));
+        when(this.gitRepositoryPort.refreshRemoteState(repositoryPath)).thenThrow(new GitExecutionException("remote unavailable"));
+
+        assertThatThrownBy(() -> this.useCases.refreshRepository(PROJECT_ID, REPOSITORY_ID))
+                .isInstanceOf(InfrastructureExecutionException.class)
+                .hasMessage("Project repository refresh failed.");
+        assertThat(this.useCases.listProjectRepositories(PROJECT_ID)).hasSize(1);
+        verify(this.gitRepositoryPort).inspectLocalRepository(repositoryPath);
     }
 
     @Test

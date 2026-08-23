@@ -50,6 +50,7 @@ export class AgentProjectsPage {
       savedAgentModelSelection: null,
       openTaskId: null,
       cloningRepositoryIds: new Set(),
+      refreshingRepositoryIds: new Set(),
       pullingRepositoryIds: new Set(),
       saving: false
     };
@@ -65,6 +66,7 @@ export class AgentProjectsPage {
       onBack: () => this.showProjectsIndex(),
       onImportRepository: () => this.openRepositoryModal(),
       onCloneRepository: (repositoryId) => this.cloneRepository(repositoryId),
+      onRefreshRepository: (repositoryId) => this.refreshRepository(repositoryId),
       onPullRepository: (repositoryId) => this.pullRepository(repositoryId),
       onNewAgent: () => this.openAgentModal(),
       onEditAgent: (agentId) => this.openAgentModal(agentId),
@@ -162,6 +164,7 @@ export class AgentProjectsPage {
     this.state.openWorkflowId = null;
     this.state.openTaskId = null;
     this.state.cloningRepositoryIds.clear();
+    this.state.refreshingRepositoryIds.clear();
     this.state.pullingRepositoryIds.clear();
     this.taskExecutionView.close();
     this.workflowBuilder.close();
@@ -195,6 +198,7 @@ export class AgentProjectsPage {
     this.state.openWorkflowId = null;
     this.state.openTaskId = null;
     this.state.cloningRepositoryIds.clear();
+    this.state.refreshingRepositoryIds.clear();
     this.state.pullingRepositoryIds.clear();
     this.taskExecutionView.close();
     this.workflowBuilder.close();
@@ -416,7 +420,8 @@ export class AgentProjectsPage {
       this.state.runtime,
       this.currentTaskPage(),
       this.state.cloningRepositoryIds,
-      this.state.pullingRepositoryIds
+      this.state.pullingRepositoryIds,
+      this.state.refreshingRepositoryIds
     );
   }
 
@@ -517,6 +522,28 @@ export class AgentProjectsPage {
       this.showError('agentsV2RepositoriesError', error.message || 'Repository could not be pulled.');
     } finally {
       this.state.pullingRepositoryIds.delete(repositoryId);
+      this.renderProjectWorkspace();
+    }
+  }
+
+  async refreshRepository(repositoryId) {
+    if (!this.repositoriesDataCurrent() || this.state.refreshingRepositoryIds.has(repositoryId)) {
+      return;
+    }
+    const repository = this.state.repositories.find((candidate) => candidate.id === repositoryId);
+    if (!repository?.cloned) {
+      return;
+    }
+    this.state.refreshingRepositoryIds.add(repositoryId);
+    this.showError('agentsV2RepositoriesError', '');
+    this.renderProjectWorkspace();
+    try {
+      await this.api.refreshProjectRepository(this.state.selectedProjectId, repositoryId);
+      await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
+    } catch (error) {
+      this.showError('agentsV2RepositoriesError', error.message || 'Repository remote state could not be refreshed.');
+    } finally {
+      this.state.refreshingRepositoryIds.delete(repositoryId);
       this.renderProjectWorkspace();
     }
   }

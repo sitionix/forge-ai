@@ -64,6 +64,11 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
 
     @Override
     public GitLocalRepositoryState inspectLocalRepository(final Path repositoryPath) {
+        return this.inspectLocalRepositoryOnly(repositoryPath);
+    }
+
+    @Override
+    public GitLocalRepositoryState refreshRemoteState(final Path repositoryPath) {
         final GitLocalRepositoryState localState = this.inspectLocalRepositoryOnly(repositoryPath);
         return this.refreshPullAvailability(repositoryPath, localState);
     }
@@ -148,7 +153,7 @@ public class GitRepositoryAdapter implements GitRepositoryPort {
         if (mergeResult.exitCode() != 0) {
             throw new GitExecutionException("Git fast-forward pull failed.");
         }
-        return this.inspectLocalRepository(repositoryPath);
+        return this.inspectLocalRepositoryOnly(repositoryPath);
     }
 
     private GitLocalRepositoryState refreshPullAvailability(final Path repositoryPath, final GitLocalRepositoryState localState) {
