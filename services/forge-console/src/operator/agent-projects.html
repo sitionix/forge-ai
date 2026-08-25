@@ -33,6 +33,17 @@
       </header>
 
       <section class="panel project-section">
+        <div class="agents-v2-pane-head"><div><h2>Logs</h2><p>Live project runtime sources.</p></div><button id="projectLogsAdd" class="button small secondary" type="button">Add Log Source</button></div>
+        <div id="projectLogsSources" class="repository-list"></div>
+        <div class="agents-v2-pane-head">
+          <label>Initial lines <input id="projectLogsLines" class="text-input" type="number" min="1" max="10000" value="100"></label>
+          <input id="projectLogsFilter" class="text-input" placeholder="Filter logs" aria-label="Filter logs">
+          <button id="projectLogsLive" class="button small" type="button">Live</button><button id="projectLogsPause" class="button small secondary" type="button">Pause</button>
+        </div>
+        <pre id="projectLogsOutput" class="project-logs-output" aria-live="polite"></pre>
+      </section>
+
+      <section class="panel project-section">
         <div class="agents-v2-pane-head">
           <div>
             <h2>Repositories</h2>
@@ -169,6 +180,21 @@
           <button id="agentsV2ProjectCancel" class="button secondary" type="button">Cancel</button>
           <button id="agentsV2ProjectSave" class="button" type="submit">Save</button>
         </div>
+      </form>
+    </dialog>
+
+    <dialog id="projectLogsDialog" class="modal-dialog">
+      <form id="projectLogsForm" method="dialog" class="modal-form">
+        <div class="modal-head"><h2>Add Log Source</h2></div><div id="projectLogsError" class="error-box"></div>
+        <label class="field-label">Name</label><input id="projectLogsName" class="text-input" required maxlength="120">
+        <label class="field-label">Connection</label><select id="projectLogsConnection" class="text-input"><option>LOCAL</option><option>SSH</option></select>
+        <label id="projectLogsSshField" class="field-label hidden">SSH profile<select id="projectLogsSsh" class="text-input"></select></label>
+        <label class="field-label">Provider</label><select id="projectLogsProvider" class="text-input"><option>DOCKER</option><option>SYSTEMD</option><option>FILE</option></select>
+        <label id="projectLogsContainerField" class="field-label">Container<input id="projectLogsContainer" class="text-input" list="projectLogsContainers"><datalist id="projectLogsContainers"></datalist></label>
+        <label id="projectLogsUnitField" class="field-label hidden">Unit<input id="projectLogsUnit" class="text-input" list="projectLogsUnits"><datalist id="projectLogsUnits"></datalist></label>
+        <label id="projectLogsPathField" class="field-label hidden">Path<input id="projectLogsPath" class="text-input"></label>
+        <label><input id="projectLogsEnabled" type="checkbox" checked> Enabled</label>
+        <div class="modal-actions"><button id="projectLogsCancel" class="button secondary" type="button">Cancel</button><button class="button" type="submit">Validate & Save</button></div>
       </form>
     </dialog>
 

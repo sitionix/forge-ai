@@ -10,6 +10,32 @@ export function createAgentProjectsApi(http) {
     deleteProject(projectId) {
       return http.delete(`${root}/projects/${encodeURIComponent(projectId)}`);
     },
+    listLogSources(projectId) {
+      return http.get(`${root}/projects/${encodeURIComponent(projectId)}/log-sources`);
+    },
+    createLogSource(projectId, request) {
+      return http.post(`${root}/projects/${encodeURIComponent(projectId)}/log-sources`, request);
+    },
+    updateLogSource(projectId, sourceId, request) {
+      return http.put(`${root}/projects/${encodeURIComponent(projectId)}/log-sources/${encodeURIComponent(sourceId)}`, request);
+    },
+    deleteLogSource(projectId, sourceId) {
+      return http.delete(`${root}/projects/${encodeURIComponent(projectId)}/log-sources/${encodeURIComponent(sourceId)}`);
+    },
+    discoverLogTargets(projectId, request) {
+      return http.post(`${root}/projects/${encodeURIComponent(projectId)}/log-sources/discover`, request);
+    },
+    validateLogSource(projectId, request) {
+      return http.post(`${root}/projects/${encodeURIComponent(projectId)}/log-sources/validate`, request);
+    },
+    listSshConnections(projectId) {
+      return http.get(`${root}/projects/${encodeURIComponent(projectId)}/ssh-connections`);
+    },
+    logStreamUrl(projectId, sourceIds, lines = 100) {
+      const query = new URLSearchParams({ lines: String(lines) });
+      sourceIds.forEach((id) => query.append('sourceId', id));
+      return `${http.basePath}${root}/projects/${encodeURIComponent(projectId)}/logs/stream?${query}`;
+    },
     listProjectRepositories(projectId) {
       return http.get(`${root}/projects/${encodeURIComponent(projectId)}/repositories`);
     },

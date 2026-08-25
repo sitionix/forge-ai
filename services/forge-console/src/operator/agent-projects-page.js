@@ -1,6 +1,7 @@
 import { createAgentProjectsApi } from './agent-projects-api.js';
 import { escapeHtml } from './dom-render-helpers.js';
 import { ProjectWorkspace } from './project-workspace.js';
+import { ProjectLogsView } from './project-logs-view.js';
 import { TaskExecutionView } from './task-execution-view.js';
 import { WorkflowBuilder } from './workflow-builder.js';
 
@@ -93,6 +94,7 @@ export class AgentProjectsPage {
       onBack: () => this.closeWorkflowBuilder(),
       onSaved: async () => this.loadWorkflows()
     });
+    this.logsView = new ProjectLogsView({ document: this.document, window: this.window, api: this.api });
   }
 
   mount() {
@@ -101,6 +103,7 @@ export class AgentProjectsPage {
     this.workspace.bind();
     this.taskExecutionView.bind();
     this.workflowBuilder.bind();
+    this.logsView.bind();
     this.showProjectsIndex({ preserveProjects: true });
     this.loadProjects();
   }
@@ -110,6 +113,7 @@ export class AgentProjectsPage {
     this.stopTaskPolling();
     this.taskExecutionView.dispose();
     this.workflowBuilder.dispose();
+    this.logsView.close();
   }
 
   bind() {
@@ -168,6 +172,7 @@ export class AgentProjectsPage {
     this.state.pullingRepositoryIds.clear();
     this.taskExecutionView.close();
     this.workflowBuilder.close();
+    this.logsView.close();
     this.byId('agentsV2ProjectsView').classList.remove('hidden');
     this.byId('agentsV2Workspace').classList.add('hidden');
     this.byId('agentsV2Builder').classList.add('hidden');
@@ -213,7 +218,8 @@ export class AgentProjectsPage {
       this.loadAgents(projectId, loadSequence),
       this.loadWorkflows(projectId, loadSequence),
       this.loadTasks(projectId, loadSequence, { page: 0 }),
-      this.loadRuntimeCatalog(projectId, loadSequence)
+      this.loadRuntimeCatalog(projectId, loadSequence),
+      this.logsView.load(projectId)
     ]);
     if (!this.disposed && this.isCurrentProjectLoad(projectId, loadSequence)) {
       this.renderProjectWorkspace();
