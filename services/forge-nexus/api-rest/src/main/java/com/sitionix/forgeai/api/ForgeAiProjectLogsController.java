@@ -1,9 +1,10 @@
 package com.sitionix.forgeai.api;
 
 import com.sitionix.forgeai.api.agentproxy.*;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetCandidate;
+import com.sitionix.forgeai.domain.port.AgentLogStream;
 import com.sitionix.forgeai.domain.usecase.ManageAgentProjectLogs;
 import jakarta.validation.Valid;
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -45,9 +46,11 @@ public class ForgeAiProjectLogsController {
   }
 
   @PostMapping("/log-sources/discover")
-  public List<AgentLogTargetCandidate> discover(
+  public List<AgentLogTargetCandidateResponse> discover(
       @PathVariable UUID projectId, @Valid @RequestBody AgentLogDiscoveryRequest request) {
-    return logs.discover(projectId, mapper.toCommand(request));
+    return logs.discover(projectId, mapper.toCommand(request)).stream()
+        .map(mapper::toResponse)
+        .toList();
   }
 
   @PostMapping("/log-sources/validate")
@@ -74,7 +77,19 @@ public class ForgeAiProjectLogsController {
       @PathVariable UUID projectId,
       @RequestParam List<UUID> sourceId,
       @RequestParam(defaultValue = "100") int lines) {
-    final StreamingResponseBody body = output -> logs.stream(projectId, sourceId, lines, output);
+    final AgentLogStream upstream = logs.openStream(projectId, sourceId, lines);
+    final StreamingResponseBody body =
+        output -> {
+          try (upstream) {
+            final ByteBuffer buffer = ByteBuffer.allocate(8192);
+            int read;
+            while ((read = upstream.read(buffer)) >= 0) {
+              output.write(buffer.array(), 0, read);
+              output.flush();
+              buffer.clear();
+            }
+          }
+        };
     return ResponseEntity.ok()
         .contentType(MediaType.TEXT_EVENT_STREAM)
         .header(HttpHeaders.CACHE_CONTROL, "no-cache")

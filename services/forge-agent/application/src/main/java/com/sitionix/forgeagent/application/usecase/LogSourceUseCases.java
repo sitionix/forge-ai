@@ -102,6 +102,8 @@ public class LogSourceUseCases {
       throw new ValidationException("Connection and provider are required");
     if (connection == LogConnectionType.LOCAL && provider != LogProviderType.DOCKER)
       throw new ValidationException("Only Docker supports a local connection");
+    if (connection == LogConnectionType.SSH && repositoryId != null)
+      throw new ValidationException("Compose repository discovery is available only locally");
     SshConnection ssh = resolve(projectId, connection, sshId);
     if (provider != LogProviderType.DOCKER) return remote.discover(ssh, provider);
     var candidates = new ArrayList<>(docker.discover(ssh));

@@ -1,7 +1,7 @@
 package com.sitionix.forgeai.domain.usecase;
 
 import com.sitionix.forgeai.domain.model.agentproxy.*;
-import java.io.OutputStream;
+import com.sitionix.forgeai.domain.port.AgentLogStream;
 import java.util.List;
 import java.util.UUID;
 
@@ -22,5 +22,5 @@ public interface ManageAgentProjectLogs {
 
   AgentSshConnection createSshConnection(UUID projectId, CreateAgentSshConnectionCommand command);
 
-  void stream(UUID projectId, List<UUID> sourceIds, int lines, OutputStream output);
+  AgentLogStream openStream(UUID projectId, List<UUID> sourceIds, int lines);
 }

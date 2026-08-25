@@ -17,7 +17,7 @@ class LocalCliDockerLogAdapterTest {
     assertThat(result)
         .containsExactly(
             new LogTargetCandidate(
-                "abc",
+                "mission",
                 "mission",
                 LogTargetStatus.RUNNING,
                 "image:1",
@@ -25,6 +25,21 @@ class LocalCliDockerLogAdapterTest {
                 "mission",
                 null,
                 false));
+  }
+
+  @Test
+  void discoveryUsesContainerNameInsteadOfEphemeralContainerId() {
+    var first =
+        new LocalCliDockerLogAdapter(
+                new FakeExecutor(List.of("old-id\tmission\tUp 1 minute\timage:1\t\t")))
+            .discover(null);
+    var recreated =
+        new LocalCliDockerLogAdapter(
+                new FakeExecutor(List.of("new-id\tmission\tUp 1 second\timage:1\t\t")))
+            .discover(null);
+
+    assertThat(first.getFirst().id()).isEqualTo("mission");
+    assertThat(recreated.getFirst().id()).isEqualTo("mission");
   }
 
   @Test

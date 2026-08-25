@@ -1,0 +1,13 @@
+{
+  "name": "mission",
+  "serviceId": null,
+  "connection": "LOCAL",
+  "sshConnectionId": null,
+  "provider": "DOCKER",
+  "container": "mission",
+  "composeService": null,
+  "composeFile": null,
+  "unit": null,
+  "path": null,
+  "enabled": true
+}

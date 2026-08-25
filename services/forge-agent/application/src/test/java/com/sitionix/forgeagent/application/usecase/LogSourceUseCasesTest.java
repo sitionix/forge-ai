@@ -181,6 +181,20 @@ class LogSourceUseCasesTest {
         .containsExactly(candidate);
   }
 
+  @Test
+  void sshDiscoveryRejectsLocalRepositoryContext() {
+    assertThatThrownBy(
+            () ->
+                useCases.discover(
+                    projectId,
+                    LogConnectionType.SSH,
+                    UUID.randomUUID(),
+                    LogProviderType.DOCKER,
+                    UUID.randomUUID()))
+        .isInstanceOf(ValidationException.class)
+        .hasMessageContaining("only locally");
+  }
+
   private SaveLogSourceCommand command(String name, UUID service) {
     return new SaveLogSourceCommand(
         name,

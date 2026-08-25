@@ -4,11 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 import com.sitionix.forgeai.domain.model.agentproxy.*;
+import com.sitionix.forgeai.domain.port.AgentLogStream;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.*;
-import java.io.ByteArrayOutputStream;
 import java.time.Instant;
 import java.util.*;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.*;
 
 class ForgeAgentLogsClientArchitectureTest {
@@ -20,7 +19,6 @@ class ForgeAgentLogsClientArchitectureTest {
 
   @BeforeEach
   void setup() {
-    when(executor.execute(any())).thenAnswer(i -> i.<Supplier<?>>getArgument(0).get());
     adapter = new ForgeAgentClientAdapter(http, mapper, executor, streaming);
   }
 
@@ -80,20 +78,22 @@ class ForgeAgentLogsClientArchitectureTest {
             Instant.EPOCH,
             Instant.EPOCH);
     when(mapper.toRequest(command)).thenReturn(request);
-    when(http.createProjectLogSource(p, request)).thenReturn(response);
+    when(executor.execute(any())).thenReturn(response);
     when(mapper.toDomain(response)).thenReturn(domain);
     assertThat(adapter.createProjectLogSource(p, command)).isEqualTo(domain);
-    verify(http).createProjectLogSource(p, request);
     verify(executor).execute(any());
   }
 
   @Test
   void sseTransferStaysBehindAgentClientBoundary() {
     UUID p = UUID.randomUUID(), s = UUID.randomUUID();
-    var output = new ByteArrayOutputStream();
-    adapter.streamProjectLogs(p, List.of(s), 100, output);
-    verify(streaming).stream(p, List.of(s), 100, output);
+    AgentLogStream expected = mock(AgentLogStream.class);
+    when(executor.execute(any())).thenReturn(expected);
+
+    assertThat(adapter.openProjectLogsStream(p, List.of(s), 100)).isSameAs(expected);
+
     verify(executor).execute(any());
+    verifyNoInteractions(streaming);
   }
 
   @Test
@@ -101,26 +101,36 @@ class ForgeAgentLogsClientArchitectureTest {
     UUID p = UUID.randomUUID(), sourceId = UUID.randomUUID();
     var command =
         new AgentLogDiscoveryCommand(
-            AgentLogConnectionType.LOCAL,
-            null,
-            AgentLogProviderType.DOCKER,
-            null,
-            UUID.randomUUID());
+            AgentLogConnectionType.LOCAL, null, AgentLogProviderType.DOCKER, UUID.randomUUID());
     var request =
         new AgentLogDiscoveryRequest(
-            command.connection(), null, command.provider(), null, command.repositoryId());
+            command.connection(), null, command.provider(), command.repositoryId());
     var response =
         new AgentLogTargetCandidateResponse(
-            "web", "web", AgentLogTargetStatus.AVAILABLE, "/repo/compose.yaml", false);
+            "web",
+            "web",
+            AgentLogTargetStatus.AVAILABLE,
+            "web:latest",
+            "demo",
+            "web",
+            "/repo/compose.yaml",
+            false);
     var target =
         new AgentLogTargetCandidate(
-            "web", "web", AgentLogTargetStatus.AVAILABLE, "/repo/compose.yaml", false);
+            "web",
+            "web",
+            AgentLogTargetStatus.AVAILABLE,
+            "web:latest",
+            "demo",
+            "web",
+            "/repo/compose.yaml",
+            false);
     when(mapper.toRequest(command)).thenReturn(request);
-    when(http.discoverProjectLogTargets(p, request)).thenReturn(List.of(response));
+    when(executor.execute(any())).thenReturn(List.of(response)).thenReturn(null);
     when(mapper.toDomain(response)).thenReturn(target);
     assertThat(adapter.discoverProjectLogTargets(p, command)).containsExactly(target);
     adapter.deleteProjectLogSource(p, sourceId);
-    verify(http).discoverProjectLogTargets(p, request);
-    verify(http).deleteProjectLogSource(p, sourceId);
+    verify(executor, times(2)).execute(any());
+    verifyNoInteractions(http);
   }
 }

@@ -8,5 +8,4 @@ public record LogDiscoveryRequest(
     @NotNull LogConnectionType connection,
     UUID sshConnectionId,
     @NotNull LogProviderType provider,
-    UUID serviceId,
     UUID repositoryId) {}

@@ -5,8 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentDockerLogConfiguration;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentFileLogConfiguration;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentLogDiscoveryCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderConfiguration;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetCandidate;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentModelSelection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
@@ -26,6 +30,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentSshConnection;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdLogConfiguration;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunExecutionEdge;
@@ -73,7 +78,6 @@ public class AgentProxyApiMapper {
         request.connection(),
         request.sshConnectionId(),
         request.provider(),
-        request.serviceId(),
         request.repositoryId());
   }
 
@@ -95,10 +99,35 @@ public class AgentProxyApiMapper {
         source.connection(),
         source.sshConnectionId(),
         source.provider(),
-        source.configuration(),
+        this.toResponse(source.configuration()),
         source.enabled(),
         source.createdAt(),
         source.updatedAt());
+  }
+
+  public AgentLogTargetCandidateResponse toResponse(final AgentLogTargetCandidate candidate) {
+    return new AgentLogTargetCandidateResponse(
+        candidate.id(),
+        candidate.label(),
+        candidate.status(),
+        candidate.image(),
+        candidate.composeProject(),
+        candidate.composeService(),
+        candidate.composeFile(),
+        candidate.suggested());
+  }
+
+  private AgentLogConfigurationResponse toResponse(
+      final AgentLogProviderConfiguration configuration) {
+    return switch (configuration) {
+      case AgentDockerLogConfiguration docker ->
+          new AgentLogConfigurationResponse(
+              docker.container(), docker.composeService(), docker.composeFile(), null, null);
+      case AgentSystemdLogConfiguration systemd ->
+          new AgentLogConfigurationResponse(null, null, null, systemd.unit(), null);
+      case AgentFileLogConfiguration file ->
+          new AgentLogConfigurationResponse(null, null, null, null, file.path());
+    };
   }
 
   public AgentSshConnectionResponse toResponse(final AgentSshConnection connection) {

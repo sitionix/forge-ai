@@ -18,6 +18,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunComman
 import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.port.AgentLogStream;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogDiscoveryRequest;
@@ -29,7 +30,6 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequ
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ImportProjectRepositoryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
-import java.io.OutputStream;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -315,15 +315,9 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
   }
 
   @Override
-  public void streamProjectLogs(
-      final UUID projectId,
-      final List<UUID> sourceIds,
-      final int lines,
-      final OutputStream output) {
-    clientCallExecutor.execute(
-        () -> {
-          logStreamingHttpClient.stream(projectId, sourceIds, lines, output);
-          return null;
-        });
+  public AgentLogStream openProjectLogsStream(
+      final UUID projectId, final List<UUID> sourceIds, final int lines) {
+    return clientCallExecutor.execute(
+        () -> logStreamingHttpClient.open(projectId, sourceIds, lines));
   }
 }

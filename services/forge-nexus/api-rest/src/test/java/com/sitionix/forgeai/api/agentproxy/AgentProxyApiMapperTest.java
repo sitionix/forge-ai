@@ -512,4 +512,23 @@ class AgentProxyApiMapperTest {
         assertThat(command.nodes()).isNull();
         assertThat(command.connections()).isNull();
     }
+
+    @Test
+    void mapsLogsConfigurationAndCompleteDiscoveryMetadataAtApiBoundary() {
+        final var source = new com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource(
+                AGENT_ID, PROJECT_ID, "web", null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogConnectionType.LOCAL, null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderType.DOCKER,
+                new com.sitionix.forgeai.domain.model.agentproxy.AgentDockerLogConfiguration(
+                        null, "web", "/repo/compose.yaml"), true, CREATED, UPDATED);
+        assertThat(this.mapper.toResponse(source).configuration()).isEqualTo(
+                new AgentLogConfigurationResponse(null, "web", "/repo/compose.yaml", null, null));
+
+        final var candidate = new com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetCandidate(
+                "web", "Web", com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetStatus.RUNNING,
+                "web:latest", "demo", "web", "/repo/compose.yaml", true);
+        assertThat(this.mapper.toResponse(candidate)).isEqualTo(new AgentLogTargetCandidateResponse(
+                "web", "Web", com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetStatus.RUNNING,
+                "web:latest", "demo", "web", "/repo/compose.yaml", true));
+    }
 }

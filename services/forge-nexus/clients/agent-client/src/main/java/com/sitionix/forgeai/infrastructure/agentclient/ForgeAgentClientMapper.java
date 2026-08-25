@@ -111,7 +111,6 @@ public class ForgeAgentClientMapper {
         command.connection(),
         command.sshConnectionId(),
         command.provider(),
-        command.serviceId(),
         command.repositoryId());
   }
 
@@ -154,6 +153,9 @@ public class ForgeAgentClientMapper {
         response.id(),
         response.label(),
         response.status(),
+        response.image(),
+        response.composeProject(),
+        response.composeService(),
         response.composeFile(),
         response.suggested());
   }

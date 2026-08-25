@@ -222,4 +222,50 @@ describe("ProjectLogsView", () => {
     view.close();
     expect(streams[1].closed).toBe(true);
   });
+
+  it("closes an intentionally completed stream and surfaces connection errors", async () => {
+    const source = {
+      id: "a",
+      name: "App",
+      enabled: true,
+      serviceId: null,
+      connection: "LOCAL",
+      provider: "DOCKER",
+    };
+    const { view, dom, streams } = setup({
+      listLogSources: vi.fn().mockResolvedValue([source]),
+    });
+    await view.load("p");
+    view.start();
+
+    streams[0].emit("stream-complete", { terminal: true });
+    expect(streams[0].closed).toBe(true);
+
+    view.start();
+    streams[1].onerror();
+    expect(
+      dom.window.document.getElementById("projectLogsOutput")!.textContent,
+    ).toContain("Live log connection was interrupted");
+  });
+
+  it("disables local-repository Compose mode for SSH", async () => {
+    const { view, dom } = setup();
+    await view.load("p");
+    view.openAdd();
+    (
+      dom.window.document.getElementById(
+        "projectLogsConnection",
+      ) as HTMLSelectElement
+    ).value = "SSH";
+    view.renderFields();
+
+    const compose = [
+      ...(
+        dom.window.document.getElementById(
+          "projectLogsDockerMode",
+        ) as HTMLSelectElement
+      ).options,
+    ].find((option) => option.value === "COMPOSE");
+    expect(compose?.disabled).toBe(true);
+  });
 });

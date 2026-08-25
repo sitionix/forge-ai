@@ -9,5 +9,4 @@ public record AgentLogDiscoveryRequest(
     @NotNull AgentLogConnectionType connection,
     UUID sshConnectionId,
     @NotNull AgentLogProviderType provider,
-    UUID serviceId,
     UUID repositoryId) {}

@@ -3,6 +3,10 @@ package com.sitionix.forgeproxyit.infra;
 import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogDiscoveryRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogTargetCandidateResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
@@ -48,6 +52,45 @@ public final class ForgeAgentWireMockEndpoints {
     public static Endpoint<AgentProjectRequest, InfrastructureErrorResponse> createProjectConflict() {
         return upstreamPost(InfrastructureErrorResponse.class, HttpStatus.CONFLICT,
                 "agent-upstream-error-response.json");
+    }
+
+    public static Endpoint<AgentLogSourceRequest, AgentLogSourceResponse> createLogSource() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/log-sources", HttpMethod.POST,
+                AgentLogSourceRequest.class, AgentLogSourceResponse.class,
+                (WiremockDefault) context -> context
+                        .matchesJson("agent-create-log-source-request.json")
+                        .responseStatus(HttpStatus.CREATED.value())
+                        .responseBody("agent-create-log-source-response.json"));
+    }
+
+    public static Endpoint<Void, AgentLogSourceResponse[]> listLogSources() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/log-sources", HttpMethod.GET,
+                Void.class, AgentLogSourceResponse[].class,
+                (WiremockDefault) context -> context.plainUrl()
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("agent-list-log-sources-response.json"));
+    }
+
+    public static Endpoint<AgentLogDiscoveryRequest, AgentLogTargetCandidateResponse[]> discoverLogs() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/log-sources/discover", HttpMethod.POST,
+                AgentLogDiscoveryRequest.class, AgentLogTargetCandidateResponse[].class,
+                (WiremockDefault) context -> context
+                        .matchesJson("agent-discover-logs-request.json")
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("agent-discover-logs-response.json"));
+    }
+
+    public static Endpoint<AgentLogSourceRequest, InfrastructureErrorResponse> createLogSourceConflict() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/log-sources", HttpMethod.POST,
+                AgentLogSourceRequest.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context
+                        .matchesJson("agent-create-log-source-request.json")
+                        .responseStatus(HttpStatus.CONFLICT.value())
+                        .responseBody("agent-upstream-error-response.json"));
     }
 
     private static <Response> Endpoint<AgentProjectRequest, Response> upstreamPost(

@@ -594,6 +594,18 @@ class ForgeAgentClientMapperTest {
         assertThat(run.repositoryIds()).isNull();
     }
 
+    @Test
+    void mapsCompleteLogDiscoveryCandidateMetadata() {
+        final var response = new com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogTargetCandidateResponse(
+                "web", "Web", com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetStatus.RUNNING,
+                "web:latest", "demo", "web", "/repo/compose.yaml", true);
+
+        assertThat(this.mapper.toDomain(response)).isEqualTo(
+                new com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetCandidate(
+                        "web", "Web", com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetStatus.RUNNING,
+                        "web:latest", "demo", "web", "/repo/compose.yaml", true));
+    }
+
     private AgentDefinitionResponse responseWithOutputSchema(final com.fasterxml.jackson.databind.JsonNode outputSchema) {
         return new AgentDefinitionResponse(
                 AGENT_ID,

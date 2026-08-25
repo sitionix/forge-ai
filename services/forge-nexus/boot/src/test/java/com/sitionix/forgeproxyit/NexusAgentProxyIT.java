@@ -103,4 +103,54 @@ class NexusAgentProxyIT {
 
         upstream.verify();
     }
+
+    @Test
+    void logsCreateFlowsThroughTypedAgentProxy() {
+        final var upstream = this.testManager.wiremock()
+                .createMapping(ForgeAgentWireMockEndpoints.createLogSource())
+                .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.createLogSource())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+        upstream.verify();
+    }
+
+    @Test
+    void logsListFlowsThroughTypedAgentProxy() {
+        final var upstream = this.testManager.wiremock()
+                .createMapping(ForgeAgentWireMockEndpoints.listLogSources())
+                .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.listLogSources())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+        upstream.verify();
+    }
+
+    @Test
+    void logsDiscoveryPreservesCompleteCandidateMetadata() {
+        final var upstream = this.testManager.wiremock()
+                .createMapping(ForgeAgentWireMockEndpoints.discoverLogs())
+                .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.discoverLogs())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+        upstream.verify();
+    }
+
+    @Test
+    void logsUpstreamErrorStatusAndBodyArePropagated() {
+        final var upstream = this.testManager.wiremock()
+                .createMapping(ForgeAgentWireMockEndpoints.createLogSourceConflict())
+                .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.createLogSourceConflict())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+        upstream.verify();
+    }
+
+    @Test
+    void invalidLogsRequestIsRejectedBeforeAnyUpstreamCall() {
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.invalidLogSource())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+    }
 }

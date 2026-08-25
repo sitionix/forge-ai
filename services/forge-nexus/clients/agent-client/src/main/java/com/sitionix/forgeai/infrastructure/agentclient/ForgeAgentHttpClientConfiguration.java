@@ -14,34 +14,29 @@ import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 class ForgeAgentHttpClientConfiguration {
 
   @Bean
-  RestClient forgeAgentRestClient(
+  ForgeAgentHttpClient forgeAgentHttpClient(
       final ForgeAgentClientProperties properties, final RestClient.Builder restClientBuilder) {
-    return restClientBuilder
-        .baseUrl(properties.getBaseUrl().toString())
-        .requestFactory(this.requestFactory(properties))
-        .build();
+    final RestClient restClient =
+        restClientBuilder
+            .baseUrl(properties.getBaseUrl().toString())
+            .requestFactory(this.requestFactory(properties))
+            .build();
+    return HttpServiceProxyFactory.builderFor(RestClientAdapter.create(restClient))
+        .build()
+        .createClient(ForgeAgentHttpClient.class);
   }
 
-  @Bean("forgeAgentLogStreamingRestClient")
-  RestClient forgeAgentLogStreamingRestClient(
-      final ForgeAgentClientProperties properties, final RestClient.Builder restClientBuilder) {
+  @Bean
+  ForgeAgentLogStreamingHttpClient forgeAgentLogStreamingHttpClient(
+      final ForgeAgentClientProperties properties,
+      final ForgeAgentClientCallExecutor callExecutor) {
     final HttpClient httpClient =
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(properties.getConnectTimeout())
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
-    return restClientBuilder
-        .baseUrl(properties.getBaseUrl().toString())
-        .requestFactory(new JdkClientHttpRequestFactory(httpClient))
-        .build();
-  }
-
-  @Bean
-  ForgeAgentHttpClient forgeAgentHttpClient(final RestClient forgeAgentRestClient) {
-    return HttpServiceProxyFactory.builderFor(RestClientAdapter.create(forgeAgentRestClient))
-        .build()
-        .createClient(ForgeAgentHttpClient.class);
+    return new ForgeAgentLogStreamingHttpClient(httpClient, properties, callExecutor);
   }
 
   private JdkClientHttpRequestFactory requestFactory(final ForgeAgentClientProperties properties) {

@@ -1,0 +1,6 @@
+{
+  "connection": "LOCAL",
+  "sshConnectionId": null,
+  "provider": "DOCKER",
+  "repositoryId": null
+}

@@ -1,10 +1,12 @@
 package com.sitionix.forgeagent.it.infra.db;
 
 import com.sitionix.forgeagent.infrastructure.postgres.entity.AgentDefinitionEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.LogSourceEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.SshConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowNodeEntity;
@@ -62,6 +64,16 @@ public final class ForgeAgentDbContracts {
 
     public static final DbContract<ProjectEntity> PROJECT =
             DbContractsDsl.entity(ProjectEntity.class)
+                    .cleanupPolicy(CleanupPolicy.DELETE_ALL)
+                    .build();
+
+    public static final DbContract<LogSourceEntity> LOG_SOURCE =
+            DbContractsDsl.entity(LogSourceEntity.class)
+                    .cleanupPolicy(CleanupPolicy.DELETE_ALL)
+                    .build();
+
+    public static final DbContract<SshConnectionEntity> SSH_CONNECTION =
+            DbContractsDsl.entity(SshConnectionEntity.class)
                     .cleanupPolicy(CleanupPolicy.DELETE_ALL)
                     .build();
 }

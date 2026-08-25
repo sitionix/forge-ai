@@ -7,9 +7,9 @@ import com.sitionix.forgeagent.application.usecase.LogSourceUseCases;
 import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.LogStream;
 import java.io.*;
-import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
@@ -27,11 +27,12 @@ class ProjectLogSseServiceTest {
     when(logs.requireEnabled(project, List.of(one.id(), two.id()))).thenReturn(List.of(one, two));
     when(logs.stream(project, one, 10)).thenReturn(failed);
     when(logs.stream(project, two, 10)).thenReturn(healthy);
-    SseEmitter emitter =
-        new ProjectLogSseService(logs).stream(project, List.of(one.id(), two.id()), 10);
+    var emitter = new RecordingSseEmitter();
+    new ProjectLogSseService(logs, ignored -> emitter)
+        .stream(project, List.of(one.id(), two.id()), 10);
     awaitClosed(failed, healthy);
-    assertThat(completed(emitter)).isTrue();
-    assertThat(earlyEvents(emitter)).hasSize(9);
+    assertThat(emitter.completed).isTrue();
+    assertThat(emitter.events).hasSize(4);
   }
 
   @Test
@@ -45,7 +46,9 @@ class ProjectLogSseServiceTest {
     when(logs.stream(project, one, 10)).thenReturn(opened);
     when(logs.stream(project, two, 10)).thenThrow(new IllegalStateException("unavailable"));
     assertThatThrownBy(
-            () -> new ProjectLogSseService(logs).stream(project, List.of(one.id(), two.id()), 10))
+            () ->
+                new ProjectLogSseService(logs, ignored -> new RecordingSseEmitter())
+                    .stream(project, List.of(one.id(), two.id()), 10))
         .isInstanceOf(IllegalStateException.class);
     assertThat(opened.closed).isTrue();
   }
@@ -71,16 +74,19 @@ class ProjectLogSseServiceTest {
     assertThat(streams).allMatch(s -> s.closed.get());
   }
 
-  private boolean completed(SseEmitter emitter) throws Exception {
-    Field f = emitter.getClass().getSuperclass().getDeclaredField("complete");
-    f.setAccessible(true);
-    return f.getBoolean(emitter);
-  }
+  private static final class RecordingSseEmitter extends SseEmitter {
+    final List<SseEventBuilder> events = new CopyOnWriteArrayList<>();
+    volatile boolean completed;
 
-  private Set<?> earlyEvents(SseEmitter emitter) throws Exception {
-    Field f = emitter.getClass().getSuperclass().getDeclaredField("earlySendAttempts");
-    f.setAccessible(true);
-    return (Set<?>) f.get(emitter);
+    @Override
+    public void send(SseEventBuilder builder) {
+      events.add(builder);
+    }
+
+    @Override
+    public void complete() {
+      completed = true;
+    }
   }
 
   private static final class FakeStream implements LogStream {

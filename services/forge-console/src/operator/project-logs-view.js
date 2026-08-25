@@ -114,9 +114,15 @@ export class ProjectLogsView {
     if (!ssh && providerSelect.value !== "DOCKER")
       providerSelect.value = "DOCKER";
     const provider = providerSelect.value;
+    const dockerMode = this.byId("projectLogsDockerMode");
+    const composeOption = [...dockerMode.options].find(
+      (option) => option.value === "COMPOSE",
+    );
+    if (composeOption) composeOption.disabled = ssh;
+    if (ssh && dockerMode.value === "COMPOSE") dockerMode.value = "CONTAINER";
     const compose =
       provider === "DOCKER" &&
-      this.byId("projectLogsDockerMode").value === "COMPOSE";
+      dockerMode.value === "COMPOSE";
     this.byId("projectLogsSshField").classList.toggle("hidden", !ssh);
     this.byId("projectLogsContainerField").classList.toggle(
       "hidden",
@@ -262,17 +268,18 @@ export class ProjectLogsView {
     this.events = [];
     this.paused = false;
     this.byId("projectLogsPause").textContent = "Pause";
-    this.stream = new this.window.EventSource(
+    const stream = new this.window.EventSource(
       this.api.logStreamUrl(
         this.projectId,
         ids,
         Number(this.byId("projectLogsLines").value) || 100,
       ),
     );
-    this.stream.addEventListener("log", (e) =>
+    this.stream = stream;
+    stream.addEventListener("log", (e) =>
       this.pushEvent(JSON.parse(e.data)),
     );
-    this.stream.addEventListener("source-error", (e) => {
+    stream.addEventListener("source-error", (e) => {
       const error = JSON.parse(e.data);
       this.pushEvent({
         ...error,
@@ -280,6 +287,18 @@ export class ProjectLogsView {
         error: true,
       });
     });
+    stream.addEventListener("stream-complete", () => {
+      stream.close();
+      if (this.stream === stream) this.stream = null;
+    });
+    stream.onerror = () => {
+      if (this.stream !== stream) return;
+      this.pushEvent({
+        sourceName: "Logs",
+        message: "ERROR: Live log connection was interrupted.",
+        error: true,
+      });
+    };
   }
   pushEvent(event) {
     this.events.push(event);

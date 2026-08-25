@@ -16,20 +16,34 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import lombok.RequiredArgsConstructor;
+import java.util.function.LongFunction;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Service
-@RequiredArgsConstructor
 public class ProjectLogSseService {
   private final LogSourceUseCases logs;
+  private final LongFunction<SseEmitter> emitterFactory;
+
+  @Autowired
+  public ProjectLogSseService(final LogSourceUseCases logs) {
+    this(logs, SseEmitter::new);
+  }
+
+  ProjectLogSseService(
+      final LogSourceUseCases logs, final LongFunction<SseEmitter> emitterFactory) {
+    this.logs = logs;
+    this.emitterFactory = emitterFactory;
+  }
 
   public SseEmitter stream(final UUID projectId, final List<UUID> sourceIds, final int lines) {
     final List<LogSource> sources = this.logs.requireEnabled(projectId, sourceIds);
     final var session =
         new Session(
-            new SseEmitter(0L), Executors.newVirtualThreadPerTaskExecutor(), sources.size());
+            this.emitterFactory.apply(0L),
+            Executors.newVirtualThreadPerTaskExecutor(),
+            sources.size());
     session.bindCleanup();
     try {
       for (final LogSource source : sources) {
@@ -88,10 +102,7 @@ public class ProjectLogSseService {
         }
       }
     } finally {
-      if (session.remaining.decrementAndGet() == 0 && session.closed.compareAndSet(false, true)) {
-        session.emitter.complete();
-        session.closeResources();
-      }
+      if (session.remaining.decrementAndGet() == 0) session.finish();
     }
   }
 
@@ -122,6 +133,19 @@ public class ProjectLogSseService {
 
     private void cleanup() {
       if (this.closed.compareAndSet(false, true)) this.closeResources();
+    }
+
+    private synchronized void finish() {
+      if (this.closed.get()) return;
+      try {
+        this.emitter.send(
+            SseEmitter.event().name("stream-complete").data(Map.of("terminal", true)));
+        this.closed.set(true);
+        this.emitter.complete();
+        this.closeResources();
+      } catch (final IOException exception) {
+        this.cleanup();
+      }
     }
 
     private void closeResources() {

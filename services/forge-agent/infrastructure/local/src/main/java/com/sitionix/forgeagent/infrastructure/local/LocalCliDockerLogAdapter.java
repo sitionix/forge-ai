@@ -89,9 +89,10 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
 
   private LogTargetCandidate candidate(String row) {
     String[] p = row.split("\\t", -1);
+    String name = p.length > 1 && !p[1].isBlank() ? p[1] : p[0];
     return new LogTargetCandidate(
-        p[0],
-        p.length > 1 ? p[1] : p[0],
+        name,
+        name,
         p.length > 2 && p[2].startsWith("Up") ? LogTargetStatus.RUNNING : LogTargetStatus.STOPPED,
         p.length > 3 ? p[3] : null,
         p.length > 4 ? p[4] : null,

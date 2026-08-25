@@ -1,9 +1,9 @@
 package com.sitionix.forgeai.application.agentproxy;
 
 import com.sitionix.forgeai.domain.model.agentproxy.*;
+import com.sitionix.forgeai.domain.port.AgentLogStream;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
 import com.sitionix.forgeai.domain.usecase.ManageAgentProjectLogs;
-import java.io.OutputStream;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -47,7 +47,7 @@ public class AgentProjectLogsUseCase implements ManageAgentProjectLogs {
     return client.createProjectSshConnection(projectId, command);
   }
 
-  public void stream(UUID projectId, List<UUID> sourceIds, int lines, OutputStream output) {
-    client.streamProjectLogs(projectId, sourceIds, lines, output);
+  public AgentLogStream openStream(UUID projectId, List<UUID> sourceIds, int lines) {
+    return client.openProjectLogsStream(projectId, sourceIds, lines);
   }
 }

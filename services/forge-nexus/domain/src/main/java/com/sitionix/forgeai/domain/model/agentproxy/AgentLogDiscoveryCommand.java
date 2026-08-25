@@ -6,5 +6,4 @@ public record AgentLogDiscoveryCommand(
     AgentLogConnectionType connection,
     UUID sshConnectionId,
     AgentLogProviderType provider,
-    UUID serviceId,
     UUID repositoryId) {}

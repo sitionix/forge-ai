@@ -23,7 +23,6 @@ import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepository
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentLogSourceCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
-import java.io.OutputStream;
 import java.util.List;
 import java.util.UUID;
 
@@ -101,5 +100,5 @@ public interface ForgeAgentClient {
   AgentSshConnection createProjectSshConnection(
       UUID projectId, CreateAgentSshConnectionCommand command);
 
-  void streamProjectLogs(UUID projectId, List<UUID> sourceIds, int lines, OutputStream output);
+  AgentLogStream openProjectLogsStream(UUID projectId, List<UUID> sourceIds, int lines);
 }

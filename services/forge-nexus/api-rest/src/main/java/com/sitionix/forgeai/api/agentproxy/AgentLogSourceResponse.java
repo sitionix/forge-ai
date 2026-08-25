@@ -12,7 +12,7 @@ public record AgentLogSourceResponse(
     AgentLogConnectionType connection,
     UUID sshConnectionId,
     AgentLogProviderType provider,
-    AgentLogProviderConfiguration configuration,
+    AgentLogConfigurationResponse configuration,
     boolean enabled,
     Instant createdAt,
     Instant updatedAt) {}

@@ -1,0 +1,21 @@
+[
+  {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "name": "mission",
+    "serviceId": null,
+    "connection": "LOCAL",
+    "sshConnectionId": null,
+    "provider": "DOCKER",
+    "configuration": {
+      "container": "mission",
+      "composeService": null,
+      "composeFile": null,
+      "unit": null,
+      "path": null
+    },
+    "enabled": true,
+    "createdAt": "2026-08-25T10:00:00Z",
+    "updatedAt": "2026-08-25T10:00:00Z"
+  }
+]
