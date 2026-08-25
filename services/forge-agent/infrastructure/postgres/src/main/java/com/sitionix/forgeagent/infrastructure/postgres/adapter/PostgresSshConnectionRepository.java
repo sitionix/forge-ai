@@ -4,17 +4,60 @@ import com.sitionix.forgeagent.domain.model.SshConnection;
 import com.sitionix.forgeagent.domain.port.SshConnectionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.SshConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataSshConnectionRepository;
-import java.util.*;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
-@Repository @RequiredArgsConstructor
+@Repository
+@RequiredArgsConstructor
 public class PostgresSshConnectionRepository implements SshConnectionRepository {
+
     private final SpringDataSshConnectionRepository repository;
-    public List<SshConnection> findByProjectId(UUID id){return repository.findAllByProjectIdOrderByNameAscIdAsc(id).stream().map(this::domain).toList();}
-    public Optional<SshConnection> findById(UUID id){return repository.findById(id).map(this::domain);}
-    public SshConnection save(SshConnection c){return domain(repository.save(entity(c)));}
-    public void delete(SshConnection c){repository.deleteById(c.id());}
-    private SshConnection domain(SshConnectionEntity e){return new SshConnection(e.getId(),e.getProjectId(),e.getName(),e.getHost(),e.getPort(),e.getUsername(),e.getPrivateKeyPath(),e.getCreatedAt(),e.getUpdatedAt());}
-    private SshConnectionEntity entity(SshConnection c){var e=new SshConnectionEntity();e.setId(c.id());e.setProjectId(c.projectId());e.setName(c.name());e.setHost(c.host());e.setPort(c.port());e.setUsername(c.username());e.setPrivateKeyPath(c.privateKeyPath());e.setCreatedAt(c.createdAt());e.setUpdatedAt(c.updatedAt());return e;}
+
+    public List<SshConnection> findByProjectId(final UUID projectId) {
+        return this.repository.findAllByProjectIdOrderByNameAscIdAsc(projectId).stream()
+                .map(this::domain)
+                .toList();
+    }
+
+    public Optional<SshConnection> findById(final UUID id) {
+        return this.repository.findById(id).map(this::domain);
+    }
+
+    public SshConnection save(final SshConnection connection) {
+        return this.domain(this.repository.save(this.entity(connection)));
+    }
+
+    public void delete(final SshConnection connection) {
+        this.repository.deleteById(connection.id());
+    }
+
+    private SshConnection domain(final SshConnectionEntity entity) {
+        return new SshConnection(
+                entity.getId(),
+                entity.getProjectId(),
+                entity.getName(),
+                entity.getHost(),
+                entity.getPort(),
+                entity.getUsername(),
+                entity.getPrivateKeyPath(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt());
+    }
+
+    private SshConnectionEntity entity(final SshConnection connection) {
+        final var entity = new SshConnectionEntity();
+        entity.setId(connection.id());
+        entity.setProjectId(connection.projectId());
+        entity.setName(connection.name());
+        entity.setHost(connection.host());
+        entity.setPort(connection.port());
+        entity.setUsername(connection.username());
+        entity.setPrivateKeyPath(connection.privateKeyPath());
+        entity.setCreatedAt(connection.createdAt());
+        entity.setUpdatedAt(connection.updatedAt());
+        return entity;
+    }
 }

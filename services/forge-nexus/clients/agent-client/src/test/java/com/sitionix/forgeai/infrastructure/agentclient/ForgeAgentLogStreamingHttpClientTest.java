@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeai.domain.exception.AgentClientException;
@@ -23,7 +24,9 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 
 class ForgeAgentLogStreamingHttpClientTest {
   private HttpClient httpClient;
@@ -95,13 +98,37 @@ class ForgeAgentLogStreamingHttpClientTest {
         .isInstanceOf(ResourceAccessException.class);
   }
 
+  @Test
+  void rejectsSuccessfulResponseWithoutEventStreamContentType() throws Exception {
+    final java.io.InputStream input = mock(java.io.InputStream.class);
+    final HttpResponse<java.io.InputStream> upstream =
+        response(200, input, MediaType.APPLICATION_JSON_VALUE);
+    when(this.httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+        .thenReturn(upstream);
+
+    assertThatThrownBy(() -> this.client.open(UUID.randomUUID(), List.of(UUID.randomUUID()), 100))
+        .isInstanceOf(RestClientException.class)
+        .hasMessageContaining("text/event-stream");
+    verify(input).close();
+  }
+
   @SuppressWarnings("unchecked")
   private static HttpResponse<java.io.InputStream> response(
       final int status, final java.io.InputStream body) {
+    return response(status, body, MediaType.TEXT_EVENT_STREAM_VALUE);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static HttpResponse<java.io.InputStream> response(
+      final int status, final java.io.InputStream body, final String contentType) {
     final HttpResponse<java.io.InputStream> response = mock(HttpResponse.class);
     when(response.statusCode()).thenReturn(status);
     when(response.body()).thenReturn(body);
-    when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (name, value) -> true));
+    when(response.headers())
+        .thenReturn(
+            HttpHeaders.of(
+                Map.of(org.springframework.http.HttpHeaders.CONTENT_TYPE, List.of(contentType)),
+                (name, value) -> true));
     return response;
   }
 }

@@ -60,49 +60,54 @@ public class ProjectLogSseService {
 
   private void pump(final Session session, final LogSource source, final LogStream stream) {
     try (stream) {
-      String line;
-      while ((line = stream.reader().readLine()) != null) {
-        session.send(
-            SseEmitter.event()
-                .name("log")
-                .data(new LogEvent(source.id(), source.name(), Instant.now(), line)));
-      }
-      final var result = stream.awaitCompletion();
-      if (!result.successful() && !session.closed.get()) {
-        session.send(
-            SseEmitter.event()
-                .name("source-error")
-                .data(
-                    Map.of(
-                        "sourceId",
-                        source.id(),
-                        "sourceName",
-                        source.name(),
-                        "message",
-                        "Log provider exited with code " + result.exitCode())));
-      }
-    } catch (final IOException exception) {
-      session.cleanup();
-    } catch (final RuntimeException exception) {
-      if (!session.closed.get()) {
+      while (!session.closed.get()) {
+        final String line;
+        try {
+          line = stream.reader().readLine();
+        } catch (final IOException exception) {
+          this.sourceError(session, source, "Log source failed");
+          return;
+        }
+        if (line == null) {
+          break;
+        }
         try {
           session.send(
               SseEmitter.event()
-                  .name("source-error")
-                  .data(
-                      Map.of(
-                          "sourceId",
-                          source.id(),
-                          "sourceName",
-                          source.name(),
-                          "message",
-                          "Log source failed")));
-        } catch (final IOException ignored) {
+                  .name("log")
+                  .data(new LogEvent(source.id(), source.name(), Instant.now(), line)));
+        } catch (final IOException exception) {
           session.cleanup();
+          return;
         }
+      }
+      final var result = stream.awaitCompletion();
+      if (!result.successful() && !session.closed.get()) {
+        this.sourceError(
+            session, source, "Log provider exited with code " + result.exitCode());
+      }
+    } catch (final RuntimeException exception) {
+      if (!session.closed.get()) {
+        this.sourceError(session, source, "Log source failed");
       }
     } finally {
       if (session.remaining.decrementAndGet() == 0) session.finish();
+    }
+  }
+
+  private void sourceError(
+      final Session session, final LogSource source, final String message) {
+    try {
+      session.send(
+          SseEmitter.event()
+              .name("source-error")
+              .data(
+                  Map.of(
+                      "sourceId", source.id(),
+                      "sourceName", source.name(),
+                      "message", message)));
+    } catch (final IOException exception) {
+      session.cleanup();
     }
   }
 

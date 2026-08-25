@@ -15,6 +15,10 @@ import com.sitionix.forgeagent.api.dto.ConnectionResolutionResponse;
 import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.ImportProjectRepositoryRequest;
+import com.sitionix.forgeagent.api.dto.LogProviderConfigurationResponse;
+import com.sitionix.forgeagent.api.dto.LogSourceRequest;
+import com.sitionix.forgeagent.api.dto.LogSourceResponse;
+import com.sitionix.forgeagent.api.dto.LogTargetCandidateResponse;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.NodeRunFailureResponse;
@@ -35,6 +39,8 @@ import com.sitionix.forgeagent.api.dto.RunNodeResponse;
 import com.sitionix.forgeagent.api.dto.RunPortResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.SshConnectionRequest;
+import com.sitionix.forgeagent.api.dto.SshConnectionResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunExecutionEdgeResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunGraphResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
@@ -48,6 +54,8 @@ import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.ImportProjectRepositoryCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
+import com.sitionix.forgeagent.application.usecase.SaveLogSourceCommand;
+import com.sitionix.forgeagent.application.usecase.SaveSshConnectionCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
@@ -59,6 +67,11 @@ import com.sitionix.forgeagent.domain.model.CodexRuntimeEffort;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeModel;
 import com.sitionix.forgeagent.domain.model.CodexRuntimeProvider;
 import com.sitionix.forgeagent.domain.model.ConnectionResolution;
+import com.sitionix.forgeagent.domain.model.DockerLogConfiguration;
+import com.sitionix.forgeagent.domain.model.FileLogConfiguration;
+import com.sitionix.forgeagent.domain.model.LogProviderConfiguration;
+import com.sitionix.forgeagent.domain.model.LogSource;
+import com.sitionix.forgeagent.domain.model.LogTargetCandidate;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
@@ -73,6 +86,8 @@ import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.RunConnection;
 import com.sitionix.forgeagent.domain.model.RunNode;
 import com.sitionix.forgeagent.domain.model.RunPort;
+import com.sitionix.forgeagent.domain.model.SshConnection;
+import com.sitionix.forgeagent.domain.model.SystemdLogConfiguration;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
@@ -139,8 +154,85 @@ class ForgeAgentApiMapper {
         return new CreateProjectTaskCommand(request.title(), request.input(), request.workflowId(), request.repositoryIds());
     }
 
+    SaveLogSourceCommand toCommand(final LogSourceRequest request) {
+        final LogProviderConfiguration configuration = switch (request.provider()) {
+            case DOCKER -> new DockerLogConfiguration(
+                    request.container(), request.composeService(), request.composeFile());
+            case SYSTEMD -> new SystemdLogConfiguration(request.unit());
+            case FILE -> new FileLogConfiguration(request.path());
+        };
+        return new SaveLogSourceCommand(
+                request.name(),
+                request.serviceId(),
+                request.connection(),
+                request.sshConnectionId(),
+                request.provider(),
+                configuration,
+                request.enabled());
+    }
+
+    SaveSshConnectionCommand toCommand(final SshConnectionRequest request) {
+        return new SaveSshConnectionCommand(
+                request.name(),
+                request.host(),
+                request.port(),
+                request.username(),
+                request.privateKeyPath());
+    }
+
     ProjectResponse toResponse(final Project project) {
         return new ProjectResponse(project.id(), project.name(), project.createdAt(), project.updatedAt());
+    }
+
+    LogSourceResponse toResponse(final LogSource source) {
+        return new LogSourceResponse(
+                source.id(),
+                source.projectId(),
+                source.name(),
+                source.serviceId(),
+                source.connectionType(),
+                source.sshConnectionId(),
+                source.provider(),
+                this.toResponse(source.configuration()),
+                source.enabled(),
+                source.createdAt(),
+                source.updatedAt());
+    }
+
+    LogTargetCandidateResponse toResponse(final LogTargetCandidate candidate) {
+        return new LogTargetCandidateResponse(
+                candidate.id(),
+                candidate.label(),
+                candidate.status(),
+                candidate.image(),
+                candidate.composeProject(),
+                candidate.composeService(),
+                candidate.composeFile(),
+                candidate.suggested());
+    }
+
+    SshConnectionResponse toResponse(final SshConnection connection) {
+        return new SshConnectionResponse(
+                connection.id(),
+                connection.projectId(),
+                connection.name(),
+                connection.host(),
+                connection.port(),
+                connection.username(),
+                connection.createdAt(),
+                connection.updatedAt());
+    }
+
+    private LogProviderConfigurationResponse toResponse(
+            final LogProviderConfiguration configuration) {
+        return switch (configuration) {
+            case DockerLogConfiguration docker -> new LogProviderConfigurationResponse(
+                    docker.container(), docker.composeService(), docker.composeFile(), null, null);
+            case SystemdLogConfiguration systemd -> new LogProviderConfigurationResponse(
+                    null, null, null, systemd.unit(), null);
+            case FileLogConfiguration file -> new LogProviderConfigurationResponse(
+                    null, null, null, null, file.path());
+        };
     }
 
     ProjectRepositoryResponse toResponse(final ProjectRepositoryView repository) {

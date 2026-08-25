@@ -14,6 +14,9 @@ import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.LogProviderConfigurationResponse;
+import com.sitionix.forgeagent.api.dto.LogSourceRequest;
+import com.sitionix.forgeagent.api.dto.LogTargetCandidateResponse;
 import com.sitionix.forgeagent.api.dto.NodeRunResponse;
 import com.sitionix.forgeagent.api.dto.NodePositionRequest;
 import com.sitionix.forgeagent.api.dto.NodePositionResponse;
@@ -40,6 +43,7 @@ import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
+import com.sitionix.forgeagent.application.usecase.SaveLogSourceCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
@@ -57,6 +61,12 @@ import com.sitionix.forgeagent.domain.model.GitOperationState;
 import com.sitionix.forgeagent.domain.model.GitUpstreamRelation;
 import com.sitionix.forgeagent.domain.model.GitUpstreamState;
 import com.sitionix.forgeagent.domain.model.GitWorkingTreeState;
+import com.sitionix.forgeagent.domain.model.DockerLogConfiguration;
+import com.sitionix.forgeagent.domain.model.LogConnectionType;
+import com.sitionix.forgeagent.domain.model.LogProviderType;
+import com.sitionix.forgeagent.domain.model.LogSource;
+import com.sitionix.forgeagent.domain.model.LogTargetCandidate;
+import com.sitionix.forgeagent.domain.model.LogTargetStatus;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeRun;
@@ -107,6 +117,65 @@ class ForgeAgentApiMapperTest {
     void mapsProjectRequestToCommand() {
         assertThat(this.mapper.toCommand(new CreateProjectRequest("Sitionix")))
                 .isEqualTo(new CreateProjectCommand("Sitionix"));
+    }
+
+    @Test
+    void mapsLogsApiWithoutExposingDomainConfigurationOrCandidate() {
+        final LogSourceRequest request = new LogSourceRequest(
+                "mission",
+                null,
+                LogConnectionType.LOCAL,
+                null,
+                LogProviderType.DOCKER,
+                "mission",
+                null,
+                null,
+                null,
+                null,
+                true);
+        assertThat(this.mapper.toCommand(request)).isEqualTo(new SaveLogSourceCommand(
+                "mission",
+                null,
+                LogConnectionType.LOCAL,
+                null,
+                LogProviderType.DOCKER,
+                new DockerLogConfiguration("mission", null, null),
+                true));
+
+        final LogSource source = new LogSource(
+                AGENT_ID,
+                PROJECT_ID,
+                "mission",
+                null,
+                LogConnectionType.LOCAL,
+                null,
+                LogProviderType.DOCKER,
+                new DockerLogConfiguration("mission", null, null),
+                true,
+                CREATED,
+                UPDATED);
+        assertThat(this.mapper.toResponse(source).configuration())
+                .isEqualTo(new LogProviderConfigurationResponse(
+                        "mission", null, null, null, null));
+
+        final LogTargetCandidate candidate = new LogTargetCandidate(
+                "mission",
+                "mission",
+                LogTargetStatus.RUNNING,
+                "mission:latest",
+                "forge",
+                "mission",
+                "compose.yaml",
+                false);
+        assertThat(this.mapper.toResponse(candidate)).isEqualTo(new LogTargetCandidateResponse(
+                "mission",
+                "mission",
+                LogTargetStatus.RUNNING,
+                "mission:latest",
+                "forge",
+                "mission",
+                "compose.yaml",
+                false));
     }
 
     @Test

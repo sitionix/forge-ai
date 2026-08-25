@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.api.dto.LogDiscoveryRequest;
 import com.sitionix.forgeagent.api.dto.LogSourceRequest;
 import com.sitionix.forgeagent.api.dto.SshConnectionRequest;
@@ -35,7 +36,9 @@ class ProjectLogsControllerTest {
     this.logs = mock(LogSourceUseCases.class);
     this.ssh = mock(SshConnectionUseCases.class);
     this.streaming = mock(ProjectLogSseService.class);
-    this.controller = new ProjectLogsController(this.logs, this.ssh, this.streaming);
+    this.controller =
+        new ProjectLogsController(
+            this.logs, this.ssh, this.streaming, new ForgeAgentApiMapper(new ObjectMapper()));
   }
 
   @Test

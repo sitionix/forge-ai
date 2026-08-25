@@ -18,6 +18,7 @@ import java.util.UUID;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriComponentsBuilder;
 
 class ForgeAgentLogStreamingHttpClient {
@@ -57,6 +58,11 @@ class ForgeAgentLogStreamingHttpClient {
               response.statusCode(), readText(body), response.headers().map(), null);
         }
       }
+      if (!isEventStream(response)) {
+        close(response.body());
+        throw new RestClientException(
+            "Forge Agent log stream response is not text/event-stream");
+      }
       return new InputAgentLogStream(response.body());
     } catch (final InterruptedException exception) {
       Thread.currentThread().interrupt();
@@ -64,6 +70,30 @@ class ForgeAgentLogStreamingHttpClient {
           "Forge Agent log stream startup was interrupted", new IOException(exception));
     } catch (final IOException exception) {
       throw new ResourceAccessException("Forge Agent log stream is unavailable", exception);
+    }
+  }
+
+  private static boolean isEventStream(final HttpResponse<?> response) {
+    return response
+        .headers()
+        .firstValue(HttpHeaders.CONTENT_TYPE)
+        .map(ForgeAgentLogStreamingHttpClient::isEventStream)
+        .orElse(false);
+  }
+
+  private static boolean isEventStream(final String contentType) {
+    try {
+      return MediaType.parseMediaType(contentType).isCompatibleWith(MediaType.TEXT_EVENT_STREAM);
+    } catch (final IllegalArgumentException exception) {
+      return false;
+    }
+  }
+
+  private static void close(final InputStream body) {
+    try {
+      body.close();
+    } catch (final IOException ignored) {
+      // Invalid upstream responses must remain invalid-response failures.
     }
   }
 

@@ -53,6 +53,36 @@ class ProjectLogSseServiceTest {
     assertThat(opened.closed).isTrue();
   }
 
+  @Test
+  void readerFailureIsIsolatedFromAnotherHealthySource() throws Exception {
+    var logs = mock(LogSourceUseCases.class);
+    UUID project = UUID.randomUUID();
+    var failedSource = source(project, "failed");
+    var healthySource = source(project, "healthy");
+    var failed =
+        new FakeStream(
+            new BufferedReader(new StringReader("")) {
+              @Override
+              public String readLine() throws IOException {
+                throw new IOException("provider read failed");
+              }
+            },
+            new LogStreamResult(0, ""));
+    var healthy = new FakeStream("healthy line\n", new LogStreamResult(0, ""));
+    when(logs.requireEnabled(project, List.of(failedSource.id(), healthySource.id())))
+        .thenReturn(List.of(failedSource, healthySource));
+    when(logs.stream(project, failedSource, 10)).thenReturn(failed);
+    when(logs.stream(project, healthySource, 10)).thenReturn(healthy);
+    var emitter = new RecordingSseEmitter();
+
+    new ProjectLogSseService(logs, ignored -> emitter)
+        .stream(project, List.of(failedSource.id(), healthySource.id()), 10);
+
+    awaitClosed(failed, healthy);
+    assertThat(emitter.completed).isTrue();
+    assertThat(emitter.events).hasSize(3);
+  }
+
   private LogSource source(UUID project, String name) {
     return new LogSource(
         UUID.randomUUID(),
@@ -95,7 +125,11 @@ class ProjectLogSseServiceTest {
     final AtomicBoolean closed = new AtomicBoolean();
 
     FakeStream(String lines, LogStreamResult result) {
-      reader = new BufferedReader(new StringReader(lines));
+      this(new BufferedReader(new StringReader(lines)), result);
+    }
+
+    FakeStream(BufferedReader reader, LogStreamResult result) {
+      this.reader = reader;
       this.result = result;
     }
 
