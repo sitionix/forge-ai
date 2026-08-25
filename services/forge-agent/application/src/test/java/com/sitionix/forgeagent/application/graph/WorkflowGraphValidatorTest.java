@@ -262,11 +262,33 @@ class WorkflowGraphValidatorTest {
         this.expectConnectionError(List.of(this.connection(this.connectionAB, this.outputA, UUID.fromString("99999999-9999-4999-8999-999999999999"))), "UNKNOWN_TARGET_INPUT_PORT");
         this.expectConnectionError(List.of(this.connection(this.connectionAB, this.inputA, this.inputB)), "INVALID_SOURCE_OUTPUT_PORT");
         this.expectConnectionError(List.of(this.connection(this.connectionAB, this.outputA, this.outputB)), "INVALID_TARGET_INPUT_PORT");
-        this.expectConnectionError(List.of(this.connection(this.connectionAB, this.outputA, this.inputA)), "SELF_NODE_CONNECTION");
+        this.expectConnectionError(List.of(this.connection(this.connectionAB, this.outputA, this.inputA)), "UNGUARDED_SELF_NODE_CONNECTION");
         this.expectConnectionError(List.of(this.connection(this.connectionAB, this.outputA, this.inputB),
                 this.connection(this.connectionAB, this.outputA, this.inputC)), "DUPLICATE_WORKFLOW_CONNECTION_ID");
         this.expectConnectionError(List.of(this.connection(this.connectionAB, this.outputA, this.inputB),
                 this.connection(this.connectionAC, this.outputA, this.inputB)), "DUPLICATE_WORKFLOW_CONNECTION");
+    }
+
+    @Test
+    void acceptsSelfLoopWhenItsInputAlsoHasAnExternalDependency() {
+        final WorkflowGraphValidator.ValidatedGraph graph = this.validate(
+                List.of(this.node(this.nodeA, this.agentA, List.of(this.inputA), List.of(this.outputA)),
+                        this.node(this.nodeB, this.agentB, List.of(this.inputB), List.of(this.outputB, this.outputC))),
+                List.of(this.connection(this.connectionAB, this.outputB, this.inputA),
+                        this.connection(this.connectionAC, this.outputA, this.inputA)),
+                this.inputB,
+                this.outputC
+        );
+
+        assertThat(graph.connections()).hasSize(2);
+    }
+
+    @Test
+    void rejectsGraphAfterLastExternalDependencyOfSelfLoopIsRemoved() {
+        this.expectConnectionError(
+                List.of(this.connection(this.connectionAC, this.outputA, this.inputA)),
+                "UNGUARDED_SELF_NODE_CONNECTION"
+        );
     }
 
     @Test

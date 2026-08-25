@@ -6,6 +6,9 @@ import { AgentProjectsPage } from '../src/operator/agent-projects-page.js';
 import { createAgentProjectsApi } from '../src/operator/agent-projects-api.js';
 import { bootstrapOperatorConsole } from '../src/operator/operator-bootstrap.js';
 import { effortTone } from '../src/operator/project-workspace.js';
+import { executionConnectionsMayBundle, routesSharePositiveLengthSegment } from '../src/operator/task-execution-view.js';
+
+const MODERN_EXECUTION_CARD_WIDTH = 288;
 
 function agentProjectsDom() {
   return new JSDOM(readFileSync(join(process.cwd(), 'src', 'operator', 'agent-projects.html'), 'utf8'), {
@@ -248,8 +251,10 @@ function workflowRunDetail(id: string, status: string, nodeRuns: any[] = [], wor
   };
 }
 
-function runtimeGraph(nodes: any[], connections: any[] = []) {
+function runtimeGraph(nodes: any[], connections: any[] = [], taskInputPortId: string | null = null, taskOutputPortId: string | null = null) {
   return {
+    taskInputPortId,
+    taskOutputPortId,
     nodes: nodes.map((item) => ({
       sourceNodeId: item.id,
       agentName: item.agentName,
@@ -353,6 +358,7 @@ function api(overrides = {}) {
     listProjectRepositories: vi.fn((projectId: string) => Promise.resolve([repository(undefined, projectId)])),
     importProjectRepository: vi.fn(() => Promise.resolve(repository())),
     cloneProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
+    refreshProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
     pullProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
     getRuntime: vi.fn(() => Promise.resolve(runtime())),
     listProjectAgents: vi.fn(() => Promise.resolve(agents)),
@@ -674,6 +680,38 @@ describe('Agent projects page', () => {
     expect(text).toContain('main · Clean');
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
+    expect(dom.window.document.querySelector('[data-refresh-repository-id="repo-1"]')?.closest('.repository-actions')).not.toBeNull();
+    const source = consoleSourceText();
+    expect(source).toMatch(/\.repository-list\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+    expect(source).toMatch(/@media \(max-width: 1000px\)[\s\S]*\.repository-list\s*\{[^}]*grid-template-columns: 1fr;/);
+  });
+
+  it('refreshes remote state only after an explicit repository action', async () => {
+    const refreshRequest = deferred<any>();
+    const fakeApi = api({
+      listProjectRepositories: vi.fn()
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true, branchGitState('CLEAN', 'main'))
+        ])
+        .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true, behindGitState())
+        ]),
+      refreshProjectRepository: vi.fn(() => refreshRequest.promise)
+    });
+    const { dom } = await openedProject(fakeApi);
+
+    expect(fakeApi.refreshProjectRepository).not.toHaveBeenCalled();
+    const refresh = dom.window.document.querySelector<HTMLButtonElement>('[data-refresh-repository-id="repo-1"]');
+    expect(refresh?.disabled).toBe(false);
+    refresh?.click();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-refresh-repository-id="repo-1"]')?.disabled).toBe(true);
+
+    refreshRequest.resolve(repository('repo-1', project().id, 'service-a', true, behindGitState()));
+    await flushAsync();
+
+    expect(fakeApi.refreshProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(false);
   });
 
   it('renders enabled Pull action when backend reports pullAvailable', async () => {
@@ -1196,6 +1234,15 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2TaskExecutionTitle')?.textContent).toContain('Check calculation');
     expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Count the letters in Sitionix.');
     expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Snapshot Workflow');
+    const summary = dom.window.document.getElementById('agentsV2TaskExecutionSummary');
+    const summaryToggle = dom.window.document.getElementById('agentsV2TaskExecutionSummaryToggle');
+    expect(summary?.classList.contains('hidden')).toBe(true);
+    expect(summaryToggle?.getAttribute('aria-expanded')).toBe('false');
+
+    summaryToggle?.click();
+
+    expect(summary?.classList.contains('hidden')).toBe(false);
+    expect(summaryToggle?.getAttribute('aria-expanded')).toBe('true');
 
     await vi.advanceTimersByTimeAsync(4999);
     await flushAsync();
@@ -1332,7 +1379,8 @@ describe('Agent projects page', () => {
     expect(details.textContent).toContain('Backend Implementer instructions');
     expect(details.textContent).toContain('SUCCEEDED');
     expect(details.textContent).toContain('Original task + previous outputs');
-    expect(details.querySelector('pre')?.textContent).toContain('"count": 8');
+    expect(details.querySelector('.node-run-output pre')?.textContent).toContain('"count": 8');
+    expect(details.querySelector<HTMLDetailsElement>('.node-run-prompt-details')?.open).toBe(false);
 
     dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="pending-node"]')?.click();
     await flushAsync();
@@ -1380,6 +1428,239 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-execution-source-node-id="b"]')?.textContent?.match(/0 runs/g)).toHaveLength(1);
     expect(dom.window.document.querySelector('[data-runtime-connection-id="a-b"]')).not.toBeNull();
     expect(dom.window.document.querySelector('[data-runtime-connection-id="b-c"]')).not.toBeNull();
+
+    const details = dom.window.document.getElementById('agentsV2NodeRunDetails')!;
+    expect(details.textContent).toContain('Select a node');
+    const unexecuted = dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="b"]')!;
+    unexecuted.click();
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="b"]')?.classList.contains('selected')).toBe(true);
+    expect(details.textContent).toContain('B');
+    expect(details.textContent).toContain('Not executed yet');
+  });
+
+  it('card selection follows the latest invocation while marker selection stays pinned', async () => {
+    const graph = runtimeGraph([{ id: 'reviewer', agentName: 'Reviewer' }]);
+    const first = modernNodeRun('reviewer-1', 'reviewer', 'RUNNING', '2026-08-13T10:00:00Z');
+    const second = modernNodeRun('reviewer-2', 'reviewer', 'SUCCEEDED', '2026-08-13T10:01:00Z');
+    const third = modernNodeRun('reviewer-3', 'reviewer', 'FAILED', '2026-08-13T10:02:00Z');
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [first], 'Selection Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="reviewer"]')!.click();
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-1');
+
+    page.taskExecutionView.applyWorkflowRun(workflowRunDetail('run-new', 'RUNNING', [first, second], 'Selection Board', graph));
+    page.taskExecutionView.render();
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-2');
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')?.classList.contains('selected')).toBe(true);
+    expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('reviewer-2');
+    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('SUCCEEDED');
+
+    const invocationSelect = dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')!;
+    invocationSelect.value = 'reviewer-1';
+    invocationSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    page.taskExecutionView.applyWorkflowRun(workflowRunDetail('run-new', 'RUNNING', [first, second, third], 'Selection Board', graph));
+    page.taskExecutionView.render();
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-1');
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')?.classList.contains('selected')).toBe(true);
+    expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('reviewer-1');
+    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('RUNNING');
+
+    page.taskExecutionView.applyWorkflowRun(workflowRunDetail('run-new', 'RUNNING', [second, third], 'Selection Board', graph));
+    page.taskExecutionView.render();
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-3');
+    expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('reviewer-3');
+  });
+
+  it('an unexecuted card follows its first invocation when it appears', async () => {
+    const graph = runtimeGraph([{ id: 'reviewer', agentName: 'Reviewer' }]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Selection Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="reviewer"]')!.click();
+    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('Not executed yet');
+
+    const first = modernNodeRun('reviewer-1', 'reviewer', 'RUNNING', '2026-08-13T10:00:00Z');
+    page.taskExecutionView.applyWorkflowRun(workflowRunDetail('run-new', 'RUNNING', [first], 'Selection Board', graph));
+    page.taskExecutionView.render();
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-1');
+    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('RUNNING');
+  });
+
+  it('FOLLOW_LATEST remains isolated to the selected repository', async () => {
+    const repoA = repository('repo-a', project().id, 'repo-A');
+    const repoB = repository('repo-b', project().id, 'repo-B');
+    const graph = runtimeGraph([{ id: 'reviewer', agentName: 'Reviewer', scopeMode: 'PER_SCOPE' }]);
+    const runFor = (id: string, repositoryId: string, createdAt: string) => ({
+      ...modernNodeRun(id, 'reviewer', 'SUCCEEDED', createdAt),
+      repositoryId
+    });
+    const a1 = runFor('a-1', repoA.id, '2026-08-13T10:00:00Z');
+    const b1 = runFor('b-1', repoB.id, '2026-08-13T10:00:00Z');
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([repoA, repoB])),
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve({
+        ...workflowRunDetail('run-new', 'RUNNING', [a1, b1], 'Scoped Selection', graph),
+        repositoryIds: [repoA.id, repoB.id]
+      }))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    dom.window.document.querySelector<HTMLElement>(`[data-execution-repository-id="${repoA.id}"]`)!.click();
+    const b2 = runFor('b-2', repoB.id, '2026-08-13T10:01:00Z');
+    page.taskExecutionView.applyWorkflowRun({
+      ...workflowRunDetail('run-new', 'RUNNING', [a1, b1, b2], 'Scoped Selection', graph),
+      repositoryIds: [repoA.id, repoB.id]
+    });
+    page.taskExecutionView.render();
+
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('a-1');
+    expect(dom.window.document.querySelector(`[data-execution-repository-id="${repoA.id}"]`)?.classList.contains('selected')).toBe(true);
+  });
+
+  it('modern execution board renders canonical task boundaries as read-only topology', async () => {
+    const graph = runtimeGraph([
+      { id: 'root', agentName: 'Scoped Root', scopeMode: 'PER_SCOPE', inputs: [{ id: 'canonical-start', name: 'CHANGED_SKILL_WITH_A_VERY_LONG_NAME', order: 0 }] },
+      { id: 'finish', agentName: 'Finish', outputs: [{ id: 'canonical-result', name: 'IMPLEMENTATION_COMPLETE_WITH_A_VERY_LONG_NAME', order: 0 }] }
+    ], [portConnection('root-finish', 'root-output', 'finish-input')], 'canonical-start', 'canonical-result');
+    const repoA = repository('repo-a', project().id, 'repo-A');
+    const repoB = repository('repo-b', project().id, 'repo-B');
+    const run = {
+      ...workflowRunDetail('run-new', 'RUNNING', [], 'Boundary Board', graph),
+      repositoryIds: [repoA.id, repoB.id]
+    };
+    const fakeApi = api({
+      listProjectRepositories: vi.fn(() => Promise.resolve([repoA, repoB])),
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(run))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('[data-execution-task-boundary="INPUT"]')?.textContent).toContain('TASK INPUT');
+    expect(dom.window.document.querySelector('[data-execution-task-boundary="OUTPUT"]')?.textContent).toContain('TASK OUTPUT');
+    expect(dom.window.document.querySelectorAll('[data-runtime-connection-id^="task-input:"]')).toHaveLength(2);
+    expect(dom.window.document.querySelectorAll('[data-runtime-connection-id^="task-output:"]')).toHaveLength(1);
+    expect(dom.window.document.querySelectorAll('[data-execution-run-chip-id]')).toHaveLength(0);
+    expect(dom.window.document.querySelector('[data-runtime-port-id="canonical-start"]')?.getAttribute('title')).toBe('CHANGED_SKILL_WITH_A_VERY_LONG_NAME');
+    expect(dom.window.document.querySelector('[data-runtime-port-id="canonical-result"]')?.getAttribute('title')).toBe('IMPLEMENTATION_COMPLETE_WITH_A_VERY_LONG_NAME');
+    expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('Select a node');
+  });
+
+  it('isolates Runner pointer behavior and keeps long port labels bounded', () => {
+    const styles = readFileSync(join(process.cwd(), 'src', 'operator', 'operator-ui.css'), 'utf8');
+
+    expect(styles).toMatch(/\.execution-node\s*\{[^}]*pointer-events:\s*auto;/s);
+    expect(styles).toMatch(/\.execution-board-node\s*\{[^}]*width:\s*288px;/s);
+    expect(styles).toMatch(/\.execution-board-port-row span\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s);
+    expect(styles).toMatch(/\.execution-board-port-row-input \.execution-port-anchor\s*\{[^}]*left:\s*0;/s);
+    expect(styles).toMatch(/\.execution-board-port-row-output \.execution-port-anchor\s*\{[^}]*right:\s*0;/s);
+    expect(styles).toMatch(/\.execution-board-card-grid\s*\{[^}]*grid-template-columns:\s*82px minmax\(0, 1fr\) 82px;/s);
+    expect(styles).toMatch(/\.execution-board-port-column\s*\{[^}]*width:\s*82px;[^}]*overflow:\s*hidden;/s);
+  });
+
+  it('gives Task Execution the same bounded viewport-fill contract as Workflow Builder', () => {
+    const styles = readFileSync(join(process.cwd(), 'src', 'operator', 'operator-ui.css'), 'utf8');
+
+    expect(styles).toMatch(/\.task-execution-view\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\);[^}]*height:\s*calc\(100dvh - 80px\);[^}]*min-height:\s*0;/s);
+    expect(styles).toMatch(/\.task-execution-layout\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
+    expect(styles).toMatch(/\.task-execution-content\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
+    expect(styles).toMatch(/\.execution-canvas\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;/s);
+    expect(styles).toMatch(/\.execution-history\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;/s);
+    expect(styles).toMatch(/\.node-run-details-panel\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*auto;/s);
+    expect(styles).not.toMatch(/\.task-execution-layout\s*\{[^}]*min-height:\s*580px;/s);
+    expect(styles).not.toMatch(/\.execution-canvas\s*\{[^}]*min-height:\s*520px;/s);
+    expect(styles).toMatch(/\.agents-v2-builder\s*\{[^}]*height:\s*calc\(100dvh - 80px\);[^}]*min-height:\s*0;/s);
+  });
+
+  it('keeps graph cards constant-size as invocation history grows and selects history in Node Details', async () => {
+    const graph = runtimeGraph([{ id: 'reviewer', agentName: 'Reviewer' }]);
+    const runs = Array.from({ length: 300 }, (_, index) => modernNodeRun(
+      `reviewer-${index + 1}`,
+      'reviewer',
+      'SUCCEEDED',
+      `2026-08-13T10:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}Z`
+    ));
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Scaling Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    for (const count of [0, 1, 10, 300]) {
+      page.taskExecutionView.applyWorkflowRun(workflowRunDetail('run-new', 'RUNNING', runs.slice(0, count), 'Scaling Board', graph));
+      page.taskExecutionView.render();
+      const card = dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="reviewer"]')!;
+      expect(card.querySelector('.execution-board-card-grid')?.children).toHaveLength(3);
+      expect(card.querySelectorAll('button, [data-execution-run-chip-id]')).toHaveLength(0);
+      expect(card.textContent).toContain(`${count} ${count === 1 ? 'run' : 'runs'}`);
+    }
+
+    dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="reviewer"]')!.click();
+    const selector = dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')!;
+    expect(selector.options).toHaveLength(300);
+    expect(selector.value).toBe('reviewer-300');
+    selector.value = 'reviewer-1';
+    selector.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-1');
+  });
+
+  it('measures short and long port anchors on the physical card boundaries', async () => {
+    const graph = runtimeGraph([
+      {
+        id: 'short',
+        agentName: 'Short',
+        inputs: [{ id: 'short-input', name: 'IN', order: 0 }],
+        outputs: [{ id: 'short-output', name: 'OUT', order: 0 }]
+      },
+      {
+        id: 'long',
+        agentName: 'Long',
+        inputs: [{ id: 'long-input', name: 'IMPLEMENTATION_TASK_WITH_LONG_SUFFIX', order: 0 }],
+        outputs: [{ id: 'long-output', name: 'IMPLEMENTATION_COMPLETE_WITH_LONG_SUFFIX', order: 0 }]
+      }
+    ]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Port Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 1000, 600);
+    const projection = page.taskExecutionView.modernProjection();
+    const shortNode = projection.nodeByUnit.get('short::__global__');
+    const longNode = projection.nodeByUnit.get('long::__global__');
+    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="short"]'), 100, 60, MODERN_EXECUTION_CARD_WIDTH, 118);
+    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="long"]'), 520, 60, MODERN_EXECUTION_CARD_WIDTH, 118);
+    stubAnchor(dom, 'short-input', 100, 100);
+    stubAnchor(dom, 'short-output', 100 + MODERN_EXECUTION_CARD_WIDTH, 100);
+    stubAnchor(dom, 'long-input', 520, 100);
+    stubAnchor(dom, 'long-output', 520 + MODERN_EXECUTION_CARD_WIDTH, 100);
+
+    expect(page.taskExecutionView.modernPortPoint(projection.portById.get('short-input'), shortNode, projection).x).toBe(100);
+    expect(page.taskExecutionView.modernPortPoint(projection.portById.get('short-output'), shortNode, projection).x).toBe(388);
+    expect(page.taskExecutionView.modernPortPoint(projection.portById.get('long-input'), longNode, projection).x).toBe(520);
+    expect(page.taskExecutionView.modernPortPoint(projection.portById.get('long-output'), longNode, projection).x).toBe(808);
+    expect(dom.window.document.querySelector('[data-runtime-port-id="long-input"]')?.getAttribute('title')).toBe('IMPLEMENTATION_TASK_WITH_LONG_SUFFIX');
   });
 
   it('modern execution board splits scoped histories and statuses by repository', async () => {
@@ -1418,17 +1699,17 @@ describe('Agent projects page', () => {
     expect(scopedCards).toHaveLength(2);
     expect(scopedCards.map((card) => card.dataset.executionRepositoryId)).toEqual([repoA.id, repoB.id]);
     expect(scopedCards[0]!.textContent).toContain('backend-service');
-    expect(scopedCards[0]!.querySelectorAll('[data-execution-run-chip-id]')).toHaveLength(3);
+    expect(scopedCards[0]!.querySelectorAll('button, [data-execution-run-chip-id]')).toHaveLength(0);
     expect(scopedCards[0]!.classList.contains('execution-node-has-failed')).toBe(false);
     expect(scopedCards[1]!.textContent).toContain('frontend-service');
-    expect(scopedCards[1]!.querySelectorAll('[data-execution-run-chip-id]')).toHaveLength(2);
+    expect(scopedCards[1]!.querySelectorAll('button, [data-execution-run-chip-id]')).toHaveLength(0);
     expect(scopedCards[1]!.classList.contains('execution-node-has-failed')).toBe(true);
     expect(dom.window.document.querySelector('[data-execution-source-node-id="analyzer"] .execution-board-repository')).toBeNull();
 
     scopedCards[0]!.click();
-    expect(dom.window.document.querySelector('.execution-history-marker.selected')?.getAttribute('data-execution-run-chip-id')).toBe('a-3');
+    expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('a-3');
     scopedCards[1]!.click();
-    expect(dom.window.document.querySelector('.execution-history-marker.selected')?.getAttribute('data-execution-run-chip-id')).toBe('b-2');
+    expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('b-2');
   });
 
   it('modern execution board projects not-yet-run scoped units without fake markers', async () => {
@@ -1516,19 +1797,75 @@ describe('Agent projects page', () => {
 
     stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 900, 600);
     page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
-    stubAnchor(dom, 'a-output-one', 312, 100);
-    stubAnchor(dom, 'b-input-one', 460, 120);
-    stubAnchor(dom, 'a-output-two', 312, 140);
-    stubAnchor(dom, 'b-input-two', 460, 160);
+    stubAnchor(dom, 'a-output-one', 368, 100);
+    stubAnchor(dom, 'b-input-one', 516, 120);
+    stubAnchor(dom, 'a-output-two', 368, 140);
+    stubAnchor(dom, 'b-input-two', 516, 160);
     page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
 
     const pathOne = dom.window.document.querySelector('[data-runtime-connection-id="edge-one"] path')?.getAttribute('d') || '';
     const pathTwo = dom.window.document.querySelector('[data-runtime-connection-id="edge-two"] path')?.getAttribute('d') || '';
-    expect(pathOne).toMatch(/^M 312 100 .+ H 460$/);
-    expect(pathTwo).toMatch(/^M 312 140 .+ H 460$/);
+    expect(pathOne).toMatch(/^M 368 100 .+ H 516$/);
+    expect(pathTwo).toMatch(/^M 368 140 .+ H 516$/);
     expect(pathOne).not.toMatch(/[CS]/);
     expect(pathTwo).not.toMatch(/[CS]/);
     expect(pathOne).not.toBe(pathTwo);
+    expect(routesSharePositiveLengthSegment(pathPoints(pathOne), pathPoints(pathTwo))).toBe(false);
+  });
+
+  it('bundles only exact shared-pin fan-out and fan-in routes', async () => {
+    const graph = runtimeGraph([
+      {
+        id: 'source',
+        agentName: 'Source',
+        outputs: [
+          { id: 'source-shared', name: 'Shared', order: 0 },
+          { id: 'source-other', name: 'Other', order: 1 }
+        ]
+      },
+      { id: 'left', agentName: 'Left' },
+      { id: 'right', agentName: 'Right' },
+      { id: 'third', agentName: 'Third' },
+      { id: 'merge', agentName: 'Merge', inputs: [{ id: 'merge-shared', name: 'Shared', order: 0 }] }
+    ], [
+      portConnection('fanout-left', 'source-shared', 'left-input'),
+      portConnection('fanout-right', 'source-shared', 'right-input'),
+      portConnection('unrelated-third', 'source-other', 'third-input'),
+      portConnection('fanin-left', 'left-output', 'merge-shared'),
+      portConnection('fanin-right', 'right-output', 'merge-shared')
+    ]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Bundled Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const route = (id: string) => pathPoints(dom.window.document
+      .querySelector(`[data-runtime-connection-id="${id}"] path`)?.getAttribute('d') || '');
+    const fanoutLeft = route('fanout-left');
+    const fanoutRight = route('fanout-right');
+    const unrelated = route('unrelated-third');
+    const faninLeft = route('fanin-left');
+    const faninRight = route('fanin-right');
+
+    expect(routesSharePositiveLengthSegment(fanoutLeft, fanoutRight)).toBe(true);
+    expect(routesSharePositiveLengthSegment(faninLeft, faninRight)).toBe(true);
+    expect(routesSharePositiveLengthSegment(fanoutLeft, unrelated)).toBe(false);
+    expect(routesSharePositiveLengthSegment(fanoutRight, unrelated)).toBe(false);
+    const projection = page.taskExecutionView.modernProjection();
+    const projectedById = new Map<string, any>(projection.graph.connections.map((connection: any) => [connection.sourceConnectionId, connection]));
+    const ids = ['fanout-left', 'fanout-right', 'unrelated-third', 'fanin-left', 'fanin-right'];
+    for (let left = 0; left < ids.length; left += 1) {
+      for (let right = left + 1; right < ids.length; right += 1) {
+        const leftEdge = projectedById.get(ids[left]!)!;
+        const rightEdge = projectedById.get(ids[right]!)!;
+        if (!executionConnectionsMayBundle(leftEdge, rightEdge)) {
+          expect(routesSharePositiveLengthSegment(route(ids[left]!), route(ids[right]!))).toBe(false);
+        }
+      }
+    }
   });
 
   it('modern execution board routes reverse edges near the canvas origin outside node bounds without cubic curves', async () => {
@@ -1549,18 +1886,48 @@ describe('Agent projects page', () => {
 
     stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 900, 600);
     page.taskExecutionView.viewport = { x: 0, y: 0, scale: 1 };
-    const workerBounds = { left: 0, top: 0, right: 232, bottom: 140 };
-    const reviewerBounds = { left: 280, top: 0, right: 512, bottom: 120 };
-    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="worker"]'), workerBounds.left, workerBounds.top, 232, 140);
-    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]'), reviewerBounds.left, reviewerBounds.top, 232, 120);
-    stubAnchor(dom, 'reviewer-fail', 512, 40);
+    const workerBounds = { left: 0, top: 0, right: MODERN_EXECUTION_CARD_WIDTH, bottom: 140 };
+    const reviewerBounds = { left: 336, top: 0, right: 336 + MODERN_EXECUTION_CARD_WIDTH, bottom: 120 };
+    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="worker"]'), workerBounds.left, workerBounds.top, MODERN_EXECUTION_CARD_WIDTH, 140);
+    stubRect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]'), reviewerBounds.left, reviewerBounds.top, MODERN_EXECUTION_CARD_WIDTH, 120);
+    stubAnchor(dom, 'reviewer-fail', reviewerBounds.right, 40);
     stubAnchor(dom, 'worker-feedback', 0, 100);
     page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
 
     const path = dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d') || '';
+    expect(dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"]')?.classList.contains('execution-edge-feedback-reentry')).toBe(true);
     expect(path).not.toMatch(/[CS]/);
     expect(path).toMatch(/^M (?:-?\d+(?:\.\d+)? )+-?\d+(?: H -?\d+(?:\.\d+)?| V -?\d+(?:\.\d+)?| Q -?\d+(?:\.\d+)? -?\d+(?:\.\d+)? -?\d+(?:\.\d+)? -?\d+(?:\.\d+)?)+$/);
     expectPathOutsideRects(path, [workerBounds, reviewerBounds]);
+    expect(Math.min(...pathPoints(path).map((point) => point.y))).toBeLessThan(workerBounds.top);
+  });
+
+  it('renders a direct self-loop locally around its execution card', async () => {
+    const graph = runtimeGraph([
+      { id: 'reviewer', agentName: 'Reviewer' }
+    ], [portConnection('reviewer-self', 'reviewer-output', 'reviewer-input')]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [], 'Self Loop Board', graph)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const card = dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')!;
+    stubRect(dom.window.document.getElementById('agentsV2ExecutionCanvas'), 0, 0, 900, 600);
+    stubRect(card, 200, 100, MODERN_EXECUTION_CARD_WIDTH, 118);
+    stubAnchor(dom, 'reviewer-input', 200, 140);
+    stubAnchor(dom, 'reviewer-output', 488, 140);
+    page.taskExecutionView.renderModernEdges(page.taskExecutionView.modernProjection());
+
+    const edge = dom.window.document.querySelector('[data-runtime-connection-id="reviewer-self"]')!;
+    const path = edge.querySelector('path')?.getAttribute('d') || '';
+    const points = pathPoints(path);
+    expect(edge.classList.contains('execution-edge-self-loop')).toBe(true);
+    expect(Math.min(...points.map((point) => point.x))).toBeGreaterThanOrEqual(178);
+    expect(Math.max(...points.map((point) => point.x))).toBeLessThanOrEqual(510);
+    expect(Math.min(...points.map((point) => point.y))).toBeLessThan(100);
   });
 
   it('modern execution board keeps one card per source node for cycles and marks the latest selected output', async () => {
@@ -1594,7 +1961,10 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-runtime-port-id="reviewer-fail"]')?.classList.contains('selected')).toBe(false);
     expect(dom.window.document.querySelector('[data-runtime-connection-id="reviewer-worker"] path')?.getAttribute('d')).not.toMatch(/[CS]/);
 
-    dom.window.document.querySelector<HTMLElement>('[data-execution-run-chip-id="reviewer-1"]')?.click();
+    dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="reviewer"]')?.click();
+    const reviewerInvocation = dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')!;
+    reviewerInvocation.value = 'reviewer-1';
+    reviewerInvocation.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     await flushAsync();
     expect(dom.window.document.getElementById('agentsV2NodeRunDetails')?.textContent).toContain('SUCCEEDED');
   });
@@ -2088,6 +2458,35 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Deploy Review');
   });
 
+  it('renders task repositories alphabetically in one scrollable overflow-safe column', async () => {
+    const longName = 'platform_graph_repository_with_a_name_that_must_wrap_inside_the_existing_modal_width';
+    const repositories = [
+      repository('cccccccc-cccc-4ccc-8ccc-cccccccccccc', project().id, 'zeta_service'),
+      repository('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', project().id, longName),
+      repository('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', project().id, 'ancestor_msgs')
+    ];
+    const fakeApi = api({ listProjectRepositories: vi.fn(() => Promise.resolve(repositories)) });
+    const { dom } = await openedProject(fakeApi);
+    dom.window.document.getElementById('agentsV2CreateTask')?.click();
+
+    const selector = dom.window.document.getElementById('agentsV2TaskRepositories') as HTMLElement;
+    const options = [...selector.querySelectorAll<HTMLInputElement>('input[name="repositoryIds"]')];
+    expect(options.map((option) => option.parentElement?.textContent?.trim())).toEqual([
+      'ancestor_msgs',
+      longName,
+      'zeta_service'
+    ]);
+    options.forEach((option) => {
+      option.click();
+      expect(option.checked).toBe(true);
+    });
+
+    const css = readFileSync(join(process.cwd(), 'src', 'operator', 'operator-ui.css'), 'utf8');
+    expect(css).toMatch(/\.agents-v2-checkbox-list\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[^}]*max-height:\s*300px;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s);
+    expect(css).toMatch(/\.agents-v2-checkbox-option\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\);[^}]*min-width:\s*0;/s);
+    expect(css).toMatch(/\.agents-v2-checkbox-option span\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/s);
+  });
+
   it('does not submit a Task without a selected repository', async () => {
     const { dom, fakeApi } = await openedProject();
     dom.window.document.getElementById('agentsV2CreateTask')?.click();
@@ -2111,7 +2510,7 @@ describe('Agent projects page', () => {
 
     const first = taskRepositoryOption(dom.window.document, 0);
     const second = taskRepositoryOption(dom.window.document, 1);
-    expect([first.parentElement?.textContent?.trim(), second.parentElement?.textContent?.trim()]).toEqual(['service-b', 'service-a']);
+    expect([first.parentElement?.textContent?.trim(), second.parentElement?.textContent?.trim()]).toEqual(['service-a', 'service-b']);
     expect(repoA.cloned).toBe(false);
     second.checked = true;
     first.checked = true;
@@ -3187,6 +3586,23 @@ describe('Agent projects page', () => {
     expect(Number(svg.getAttribute('height'))).toBeGreaterThanOrEqual(900 + (40 * 26 + 58) + 240);
   });
 
+  it('Workflow drawing layers resize with the visible Canvas', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf'))) });
+    const { dom } = await openedBuilder(fakeApi);
+    const canvas = dom.window.document.getElementById('agentsV2WorkflowCanvas')!;
+    const svg = dom.window.document.getElementById('agentsV2WorkflowEdges')!;
+    const nodesLayer = dom.window.document.getElementById('agentsV2WorkflowNodes')!;
+    Object.defineProperty(canvas, 'clientWidth', { configurable: true, value: 1900 });
+    Object.defineProperty(canvas, 'clientHeight', { configurable: true, value: 1200 });
+
+    dom.window.dispatchEvent(new dom.window.Event('resize'));
+
+    expect(svg.getAttribute('width')).toBe('1900');
+    expect(svg.getAttribute('height')).toBe('1200');
+    expect(nodesLayer.style.width).toBe('1900px');
+    expect(nodesLayer.style.height).toBe('1200px');
+  });
+
   it('clicking compact Node opens Node Editor and Cancel leaves draft unchanged', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       node('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 10, 20, 'DEPENDENCIES_ONLY', [], [
@@ -3550,6 +3966,88 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2WorkflowEdges')?.innerHTML).toContain('workflow-edge');
   });
 
+  it('allows a warned self-loop only when the same input has an external dependency', async () => {
+    const graph = workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('implementer', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    ], project().id, [connection('implementer', 'reviewer')]);
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const confirm = vi.spyOn(dom.window, 'confirm').mockReturnValue(true);
+    setRandomUuids(dom, ['reviewer-self-connection']);
+
+    expect(page.workflowBuilder.canConnect('reviewer-output', 'reviewer-input')).toBe(true);
+    dom.window.document.querySelector<HTMLElement>('[data-node-output-port="reviewer-output"]')!
+      .dispatchEvent(pointer(dom, 'pointerdown', 214, 72));
+    dom.window.document.querySelector<HTMLElement>('[data-node-input-port="reviewer-input"]')!
+      .dispatchEvent(pointer(dom, 'pointerup', 10, 72));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('non-terminating workflow'));
+    expect(page.workflowBuilder.workflow.connections).toContainEqual({
+      id: 'reviewer-self-connection',
+      sourceOutputPortId: 'reviewer-output',
+      targetInputPortId: 'reviewer-input'
+    });
+  });
+
+  it('disables removal of the last external dependency guarding a self-loop', async () => {
+    const graph = workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('implementer', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    ], project().id, [
+      connection('implementer', 'reviewer'),
+      connection('reviewer', 'reviewer', 'reviewer-self-connection')
+    ]);
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const protectedControl = dom.window.document.querySelector<SVGCircleElement>('[data-edge-id="implementer-reviewer-connection"] .edge-remove')!;
+
+    expect(protectedControl.classList.contains('disabled')).toBe(true);
+    expect(protectedControl.getAttribute('aria-disabled')).toBe('true');
+    expect(protectedControl.hasAttribute('data-remove-connection')).toBe(false);
+    page.workflowBuilder.removeConnection('implementer-reviewer-connection');
+    expect(page.workflowBuilder.workflow.connections).toHaveLength(2);
+
+    page.workflowBuilder.removeConnection('reviewer-self-connection');
+    expect(page.workflowBuilder.workflow.connections).toEqual([connection('implementer', 'reviewer')]);
+  });
+
+  it('does not remove the source node of the last external dependency guarding a self-loop', async () => {
+    const graph = workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('implementer', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    ], project().id, [
+      connection('implementer', 'reviewer'),
+      connection('reviewer', 'reviewer', 'reviewer-self-connection')
+    ]);
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const originalGraph = structuredClone(page.workflowBuilder.workflow);
+
+    page.workflowBuilder.removeNode('implementer');
+
+    expect(page.workflowBuilder.workflow).toEqual(originalGraph);
+    expect(dom.window.document.getElementById('agentsV2WorkflowBuilderError')?.textContent)
+      .toContain('Remove the dependent self-loop');
+
+    page.workflowBuilder.removeConnection('reviewer-self-connection');
+    page.workflowBuilder.removeNode('implementer');
+
+    expect(page.workflowBuilder.workflow.nodes.map((candidate: any) => candidate.id)).toEqual(['reviewer']);
+    expect(page.workflowBuilder.workflow.connections).toEqual([]);
+  });
+
+  it('rejects an unguarded self-loop before showing a warning', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+    ]))) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const confirm = vi.spyOn(dom.window, 'confirm');
+
+    expect(page.workflowBuilder.canConnect('reviewer-output', 'reviewer-input')).toBe(false);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
   it('routes Workflow Builder feedback edges through the shortest path outside Node bounds', async () => {
     const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 70, 95),
@@ -3558,11 +4056,53 @@ describe('Agent projects page', () => {
     const { dom } = await openedBuilder(fakeApi);
 
     const path = dom.window.document.querySelector<SVGPathElement>('[data-edge-id="reviewer-plus-connection"] .edge-visible')?.getAttribute('d') || '';
+    const remove = dom.window.document.querySelector<SVGCircleElement>('[data-edge-id="reviewer-plus-connection"] .edge-remove')!;
 
     expect(path).not.toContain(' C ');
     expect(path).toContain(' Q ');
     expect(path).toContain('V 424');
     expect(path).toContain('Q 50 436');
+    expect(remove.getAttribute('cy')).toBe('436');
+    expect(remove.getAttribute('cx')).not.toBe(String((322 + 82) / 2));
+  });
+
+  it('keeps all edge delete controls on route midpoints while connected nodes move', async () => {
+    const graph = workflow('wf', [
+      portedNode('reviewer', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 70, 95),
+      portedNode('plus', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 82, 272)
+    ], project().id, [connection('reviewer', 'plus')], 'plus-input', 'reviewer-output');
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(graph)) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    const builder: any = page.workflowBuilder;
+
+    const expectControlAtRouteMidpoint = (selector: string, route: any[]) => {
+      const expected = builder.routeMidpoint(route);
+      const control = dom.window.document.querySelector<SVGCircleElement>(`${selector} .edge-remove`)!;
+      expect(Number(control.getAttribute('cx'))).toBeCloseTo(expected.x);
+      expect(Number(control.getAttribute('cy'))).toBeCloseTo(expected.y);
+    };
+
+    dom.window.document.querySelector<HTMLElement>('[data-node-id="reviewer"]')!
+      .dispatchEvent(pointer(dom, 'pointerdown', 80, 105));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 420, 180));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointerup', 420, 180));
+
+    let source = builder.portById('reviewer-output', 'outputs');
+    let target = builder.portById('plus-input', 'inputs');
+    expectControlAtRouteMidpoint('[data-edge-id="reviewer-plus-connection"]', builder.edgeRoute(source, target));
+    expectControlAtRouteMidpoint('[data-task-output-edge]', builder.taskOutputRoute(source));
+
+    dom.window.document.querySelector<HTMLElement>('[data-node-id="plus"]')!
+      .dispatchEvent(pointer(dom, 'pointerdown', 90, 282));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 140, 520));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointerup', 140, 520));
+
+    source = builder.portById('reviewer-output', 'outputs');
+    target = builder.portById('plus-input', 'inputs');
+    const bentRoute = builder.edgeRoute(source, target);
+    expect(bentRoute.length).toBeGreaterThan(2);
+    expectControlAtRouteMidpoint('[data-edge-id="reviewer-plus-connection"]', bentRoute);
+    expectControlAtRouteMidpoint('[data-task-input-edge]', builder.taskInputRoute(target));
   });
 
   it('Task Input loads, targets the same input as feedback, reconnects, saves, and disconnects', async () => {
@@ -3747,16 +4287,35 @@ describe('Agent projects page', () => {
     ]);
   });
 
-  it('existing edge can be removed directly and Node removal cleans references', async () => {
-    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+  it('existing edge can be removed directly, saved, and Node removal cleans references', async () => {
+    const fakeApi = api({
+      getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
       portedNode('a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
       portedNode('b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
-    ], project().id, [connection('a', 'b')]))) });
+      ], project().id, [connection('a', 'b')], 'a-input', 'b-output'))),
+      updateWorkflow: vi.fn((_workflowId: string, request: any) => Promise.resolve(workflow(
+        _workflowId,
+        request.nodes,
+        project().id,
+        request.connections,
+        request.taskInputPortId,
+        request.taskOutputPortId
+      )))
+    });
     const { dom, page } = await openedBuilder(fakeApi);
+    const source = consoleSourceText();
+
+    expect(source).toMatch(/\.workflow-nodes\s*\{[^}]*pointer-events: none;/);
+    expect(source).toMatch(/\.workflow-node,[\s\S]*\.workflow-task-input,[\s\S]*\.workflow-task-output\s*\{[^}]*pointer-events: auto;/);
+    expect(source).toMatch(/\.agents-v2-builder\s*\{[^}]*height: calc\(100dvh - 80px\);/);
+    expect(source).toMatch(/\.workflow-builder-body\s*\{[^}]*grid-row: 3;[^}]*min-height: 0;/);
+    expect(source).toMatch(/\.workflow-canvas\s*\{[^}]*min-height: 0;/);
 
     dom.window.document.querySelector<SVGElement>('[data-remove-connection="a-b-connection"]')!
       .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     expect(page.workflowBuilder.workflow.connections).toEqual([]);
+    await page.workflowBuilder.save();
+    expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', expect.objectContaining({ connections: [] }));
     setRandomUuids(dom, ['a-b-new-connection']);
     dragConnect(dom, 'a', 'b');
     page.workflowBuilder.removeNode('a');
@@ -3904,6 +4463,7 @@ describe('Agent projects page', () => {
     client.listProjectRepositories(project().id);
     client.importProjectRepository(project().id, { remoteUrl: 'git@gitlab.com:company/service-a.git' });
     client.cloneProjectRepository(project().id, '88888888-8888-4888-8888-888888888888');
+    client.refreshProjectRepository(project().id, '88888888-8888-4888-8888-888888888888');
     client.pullProjectRepository(project().id, '88888888-8888-4888-8888-888888888888');
     client.listProjectAgents(project().id);
     client.createAgent(project().id, { name: 'Agent', instructions: 'Do work.', outputSchema: {} });
@@ -3928,6 +4488,7 @@ describe('Agent projects page', () => {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888/clone`);
+    expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888/refresh`);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888/pull`);
     expect(http.get).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks?page=0&size=20`);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/tasks`, {

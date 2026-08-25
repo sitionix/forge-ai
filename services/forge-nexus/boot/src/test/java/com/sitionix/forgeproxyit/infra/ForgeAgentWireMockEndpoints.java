@@ -4,6 +4,7 @@ import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
@@ -28,6 +29,19 @@ public final class ForgeAgentWireMockEndpoints {
                         .plainUrl()
                         .responseStatus(HttpStatus.OK.value())
                         .responseBody("agent-task-page-response.json")
+        );
+    }
+
+    public static Endpoint<Void, ProjectRepositoryResponse> refreshRepository() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/repositories/{repositoryId}/refresh",
+                HttpMethod.POST,
+                Void.class,
+                ProjectRepositoryResponse.class,
+                (WiremockDefault) context -> context
+                        .plainUrl()
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("agent-refresh-repository-response.json")
         );
     }
 

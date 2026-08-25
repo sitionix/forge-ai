@@ -1,20 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildExecutionProjection, routeExecutionEdge, visualUnitKey } from '../src/operator/task-execution-view.js';
+import {
+  buildExecutionProjection,
+  executionConnectionsMayBundle,
+  positiveLengthSegmentOverlap,
+  routeExecutionEdge,
+  routesSharePositiveLengthSegment,
+  visualUnitKey
+} from '../src/operator/task-execution-view.js';
 
 const REPOSITORIES = [
   { id: 'repo-a', name: 'repo-A' },
   { id: 'repo-b', name: 'repo-B' },
   { id: 'repo-c', name: 'repo-C' }
 ];
+const MODERN_EXECUTION_CARD_WIDTH = 288;
 
 function graph(
   nodes: Array<{ id: string; scopeMode: string }>,
   connections: Array<[string, string]> = [],
-  taskInputNodeId: string | null = nodes[0]?.id || null
+  taskInputNodeId: string | null = null,
+  taskOutputNodeId: string | null = null
 ) {
   return {
     taskInputPortId: taskInputNodeId ? `${taskInputNodeId}-input` : null,
+    taskOutputPortId: taskOutputNodeId ? `${taskOutputNodeId}-output` : null,
     nodes: nodes.map((node, index) => ({
       sourceNodeId: node.id,
       agentName: node.id,
@@ -41,8 +51,10 @@ function projectedPairs(projection: ReturnType<typeof buildExecutionProjection>)
 }
 
 function rectanglesOverlap(left: any, right: any) {
-  return left.position.x < right.position.x + 232
-    && left.position.x + 232 > right.position.x
+  const leftWidth = left.layoutWidth || 288;
+  const rightWidth = right.layoutWidth || 288;
+  return left.position.x < right.position.x + rightWidth
+    && left.position.x + leftWidth > right.position.x
     && left.position.y < right.position.y + right.layoutHeight
     && left.position.y + left.layoutHeight > right.position.y;
 }
@@ -157,8 +169,168 @@ describe('task execution visual projection', () => {
     );
 
     expect(positions(second)).toEqual(positions(first));
-    expect(first.nodes.filter((node) => node.sourceNodeId === 'implementer').map((node) => node.position.x)).toEqual([80, 80]);
-    expect(first.nodes.filter((node) => node.sourceNodeId === 'reviewer').map((node) => node.position.x)).toEqual([460, 460]);
+    expect(first.nodes.filter((node) => node.sourceNodeId === 'implementer').map((node) => node.position.x)).toEqual([360, 360]);
+    expect(first.nodes.filter((node) => node.sourceNodeId === 'reviewer').map((node) => node.position.x)).toEqual([796, 796]);
+  });
+
+  it('projects canonical task boundaries without inventing execution units', () => {
+    const projection = buildExecutionProjection(
+      graph(
+        [{ id: 'root', scopeMode: 'PER_SCOPE' }, { id: 'finish', scopeMode: 'GLOBAL' }],
+        [['root', 'finish']],
+        'root',
+        'finish'
+      ),
+      ['repo-a', 'repo-b'],
+      REPOSITORIES
+    );
+
+    const taskInput = projection.nodes.find((node) => node.taskBoundary === 'INPUT')!;
+    const taskOutput = projection.nodes.find((node) => node.taskBoundary === 'OUTPUT')!;
+    const inputEdges = projection.connections.filter((connection) => connection.sourceVisualUnitKey === taskInput.visualUnitKey);
+    const outputEdges = projection.connections.filter((connection) => connection.targetVisualUnitKey === taskOutput.visualUnitKey);
+
+    expect(inputEdges.map((edge) => edge.targetVisualUnitKey)).toEqual([
+      visualUnitKey('root', 'repo-a'),
+      visualUnitKey('root', 'repo-b')
+    ]);
+    expect(inputEdges.every((edge) => edge.targetInputPortId === 'root-input')).toBe(true);
+    expect(outputEdges).toHaveLength(1);
+    expect(outputEdges[0]!.sourceOutputPortId).toBe('finish-output');
+    expect(taskInput.position.x).toBeLessThan(projection.nodes.find((node) => node.sourceNodeId === 'root')!.position.x);
+    expect(taskOutput.position.x).toBeGreaterThan(projection.nodes.find((node) => node.sourceNodeId === 'finish')!.position.x);
+    expect(projection.nodes.filter((node) => !node.taskBoundary)).toHaveLength(3);
+  });
+
+  it('preserves a direct self-loop as feedback topology', () => {
+    const runtimeGraph = graph([{ id: 'reviewer', scopeMode: 'GLOBAL' }]);
+    runtimeGraph.connections = [{
+      sourceConnectionId: 'reviewer-self',
+      sourceOutputPortId: 'reviewer-output',
+      targetInputPortId: 'reviewer-input'
+    }];
+
+    const projection = buildExecutionProjection(runtimeGraph, [], []);
+
+    expect(projectedPairs(projection)).toEqual([
+      [visualUnitKey('reviewer', null), visualUnitKey('reviewer', null)]
+    ]);
+    expect(projection.connections[0]!.visualType).toBe('SELF_LOOP');
+  });
+
+  it('builds a deterministic primary tree and classifies fan-in and feedback edges', () => {
+    const nodes = [
+      { id: 'root', scopeMode: 'GLOBAL' },
+      { id: 'left', scopeMode: 'GLOBAL' },
+      { id: 'right', scopeMode: 'GLOBAL' },
+      { id: 'merge', scopeMode: 'GLOBAL' },
+      { id: 'finish', scopeMode: 'GLOBAL' }
+    ];
+    const connections: Array<[string, string]> = [
+      ['root', 'left'],
+      ['root', 'right'],
+      ['left', 'merge'],
+      ['right', 'merge'],
+      ['merge', 'finish'],
+      ['finish', 'left'],
+      ['merge', 'merge']
+    ];
+    const original = graph(nodes, connections, 'root', 'finish');
+    const shuffled = graph(nodes, connections.slice().reverse(), 'root', 'finish');
+    shuffled.connections.forEach((connection, index) => {
+      connection.sourceConnectionId = `shuffled-${index}`;
+    });
+
+    const first = buildExecutionProjection(original, [], []);
+    const second = buildExecutionProjection(shuffled, [], []);
+    const positions = (projection: ReturnType<typeof buildExecutionProjection>) => Object.fromEntries(
+      projection.nodes.map((node) => [node.visualUnitKey, node.position])
+    );
+    const edgeLayout = (projection: ReturnType<typeof buildExecutionProjection>) => Object.fromEntries(
+      projection.connections.map((edge) => [
+        `${edge.sourceVisualUnitKey}->${edge.targetVisualUnitKey}`,
+        [edge.visualType, edge.visualLane ?? null]
+      ])
+    );
+    const byPair = new Map(first.connections.map((edge) => [
+      `${edge.sourceVisualUnitKey}->${edge.targetVisualUnitKey}`,
+      edge.visualType
+    ]));
+
+    expect(positions(second)).toEqual(positions(first));
+    expect(edgeLayout(second)).toEqual(edgeLayout(first));
+    expect(first.nodes.find((node) => node.taskBoundary === 'INPUT')!.position.x)
+      .toBeLessThan(first.nodes.find((node) => node.sourceNodeId === 'root')!.position.x);
+    expect(first.nodes.find((node) => node.taskBoundary === 'OUTPUT')!.position.x)
+      .toBeGreaterThan(first.nodes.find((node) => node.sourceNodeId === 'finish')!.position.x);
+    expect(first.nodes.find((node) => node.sourceNodeId === 'left')!.position.x)
+      .toBeGreaterThan(first.nodes.find((node) => node.sourceNodeId === 'root')!.position.x);
+    expect(byPair.get(`${visualUnitKey('right', null)}->${visualUnitKey('merge', null)}`)).toBe('SECONDARY_FAN_IN');
+    expect(byPair.get(`${visualUnitKey('finish', null)}->${visualUnitKey('left', null)}`)).toBe('FEEDBACK_REENTRY');
+    expect(byPair.get(`${visualUnitKey('merge', null)}->${visualUnitKey('merge', null)}`)).toBe('SELF_LOOP');
+    for (let left = 0; left < first.nodes.length; left += 1) {
+      for (let right = left + 1; right < first.nodes.length; right += 1) {
+        expect(rectanglesOverlap(first.nodes[left]!, first.nodes[right]!)).toBe(false);
+      }
+    }
+  });
+
+  it('lays out a selector/reviewer/implementation cycle as stable left-to-right branches', () => {
+    const runtimeGraph = graph([
+      { id: 'selector', scopeMode: 'GLOBAL' },
+      { id: 'reviewer', scopeMode: 'GLOBAL' },
+      { id: 'implementation', scopeMode: 'GLOBAL' },
+      { id: 'planner', scopeMode: 'GLOBAL' },
+      { id: 'implementer', scopeMode: 'GLOBAL' }
+    ], [
+      ['selector', 'reviewer'],
+      ['selector', 'implementation'],
+      ['reviewer', 'planner'],
+      ['planner', 'implementer'],
+      ['implementer', 'reviewer'],
+      ['reviewer', 'selector']
+    ], 'selector', 'selector');
+
+    const projection = buildExecutionProjection(runtimeGraph, [], []);
+    const x = (id: string) => projection.nodes.find((node) => node.sourceNodeId === id)!.position.x;
+
+    expect(x('reviewer')).toBeGreaterThan(x('selector'));
+    expect(x('implementation')).toBeGreaterThan(x('selector'));
+    expect(x('planner')).toBeGreaterThan(x('reviewer'));
+    expect(x('implementer')).toBeGreaterThan(x('planner'));
+    expect(projection.nodes.find((node) => node.taskBoundary === 'OUTPUT')!.position.x).toBeGreaterThan(x('implementer'));
+    expect(projection.connections.filter((edge) => edge.visualType === 'FEEDBACK_REENTRY')).toHaveLength(2);
+  });
+
+  it('distinguishes valid point crossings from positive-length segment overlap', () => {
+    expect(positiveLengthSegmentOverlap(
+      { x: 0, y: 20 }, { x: 100, y: 20 },
+      { x: 50, y: 0 }, { x: 50, y: 40 }
+    )).toBe(false);
+    expect(positiveLengthSegmentOverlap(
+      { x: 0, y: 20 }, { x: 100, y: 20 },
+      { x: 40, y: 20 }, { x: 140, y: 20 }
+    )).toBe(true);
+    expect(routesSharePositiveLengthSegment(
+      [{ x: 0, y: 20 }, { x: 100, y: 20 }],
+      [{ x: 50, y: 0 }, { x: 50, y: 40 }]
+    )).toBe(false);
+  });
+
+  it('allows bundling only for the exact same projected source or target pin', () => {
+    const edge = (overrides: Record<string, string>) => ({
+      sourceVisualUnitKey: 'source-a',
+      sourceOutputPortId: 'source-output-a',
+      targetVisualUnitKey: 'target-a',
+      targetInputPortId: 'target-input-a',
+      ...overrides
+    });
+    const base = edge({});
+
+    expect(executionConnectionsMayBundle(base, edge({ targetVisualUnitKey: 'target-b', targetInputPortId: 'target-input-b' }))).toBe(true);
+    expect(executionConnectionsMayBundle(base, edge({ sourceVisualUnitKey: 'source-b', sourceOutputPortId: 'source-output-b' }))).toBe(true);
+    expect(executionConnectionsMayBundle(base, edge({ sourceOutputPortId: 'source-output-b', targetInputPortId: 'target-input-b' }))).toBe(false);
+    expect(executionConnectionsMayBundle(base, edge({ sourceVisualUnitKey: 'source-b', targetVisualUnitKey: 'target-b' }))).toBe(false);
   });
 
   it('uses an unavailable label instead of a repository ID when metadata is missing', () => {
@@ -190,11 +362,11 @@ describe('task execution visual projection', () => {
       key: node.visualUnitKey,
       left: node.position.x,
       top: node.position.y,
-      right: node.position.x + 232,
+      right: node.position.x + Number(node.layoutWidth || MODERN_EXECUTION_CARD_WIDTH),
       bottom: node.position.y + node.layoutHeight
     }));
     const route = routeExecutionEdge(
-      { x: source.position.x + 232, y: source.position.y + (source.layoutHeight / 2) },
+      { x: source.position.x + Number(source.layoutWidth || MODERN_EXECUTION_CARD_WIDTH), y: source.position.y + (source.layoutHeight / 2) },
       { x: target.position.x, y: target.position.y + (target.layoutHeight / 2) },
       bounds
     );
@@ -215,5 +387,64 @@ describe('task execution visual projection', () => {
     }
     expect(route.some((point) => point.y <= Math.min(...unrelated.map((rectangle) => rectangle.top))
       || point.y >= Math.max(...unrelated.map((rectangle) => rectangle.bottom)))).toBe(true);
+  });
+
+  it('falls back to a distinct outer lane when occupied segments isolate the compact route', async () => {
+    const taskExecutionModule = await import('../src/operator/task-execution-view.js') as any;
+    const view = Object.create(taskExecutionModule.TaskExecutionView.prototype);
+    view.modernNodeBounds = (node: any) => ({
+      key: node.visualUnitKey,
+      left: node.position.x,
+      top: node.position.y,
+      right: node.position.x + node.layoutWidth,
+      bottom: node.position.y + node.layoutHeight
+    });
+    const source = {
+      visualUnitKey: 'source',
+      position: { x: 0, y: 0 },
+      layoutWidth: MODERN_EXECUTION_CARD_WIDTH,
+      layoutHeight: 120
+    };
+    const target = {
+      visualUnitKey: 'target',
+      position: { x: 500, y: 0 },
+      layoutWidth: MODERN_EXECUTION_CARD_WIDTH,
+      layoutHeight: 120
+    };
+    const connection = {
+      sourceVisualUnitKey: 'source',
+      sourceOutputPortId: 'source-output',
+      targetVisualUnitKey: 'target',
+      targetInputPortId: 'target-input',
+      visualType: 'PRIMARY_FORWARD'
+    };
+    const occupiedRoute = {
+      connection: {
+        sourceVisualUnitKey: 'unrelated-source',
+        sourceOutputPortId: 'unrelated-output',
+        targetVisualUnitKey: 'unrelated-target',
+        targetInputPortId: 'unrelated-input'
+      },
+      points: [
+        { x: 296, y: 52 },
+        { x: 312, y: 52 },
+        { x: 312, y: 68 },
+        { x: 296, y: 68 },
+        { x: 296, y: 52 }
+      ]
+    };
+
+    const route = view.modernRoutePoints(
+      { x: MODERN_EXECUTION_CARD_WIDTH, y: 60 },
+      { x: 500, y: 60 },
+      source,
+      target,
+      { graph: { nodes: [source, target] } },
+      connection,
+      [occupiedRoute]
+    );
+
+    expect(route.some((point: any) => point.y > 120)).toBe(true);
+    expect(routesSharePositiveLengthSegment(route, occupiedRoute.points)).toBe(false);
   });
 });

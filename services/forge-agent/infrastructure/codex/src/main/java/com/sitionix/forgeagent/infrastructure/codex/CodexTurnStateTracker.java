@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 final class CodexTurnStateTracker {
 
     private final Map<String, CodexExecutionState> executionsByThreadId = new HashMap<>();
@@ -93,6 +95,13 @@ final class CodexTurnStateTracker {
         final String itemType = this.nonBlank(item.path("type"));
         final RuntimeException violation = this.generationPolicy.violationFor(itemType);
         if (violation != null) {
+            log.warn(
+                    "Unsupported Codex generation item threadId={} turnId={} method={} itemType={}",
+                    threadId,
+                    turnId,
+                    method,
+                    this.generationPolicy.diagnosticItemType(itemType)
+            );
             execution.failPolicyViolation(violation);
             return;
         }

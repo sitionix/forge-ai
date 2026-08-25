@@ -81,6 +81,11 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     }
 
     @Override
+    public AgentProjectRepository refreshProjectRepository(final UUID projectId, final UUID repositoryId) {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.refreshProjectRepository(projectId, repositoryId)));
+    }
+
+    @Override
     public AgentProjectRepository pullProjectRepository(final UUID projectId, final UUID repositoryId) {
         return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.pullProjectRepository(projectId, repositoryId)));
     }

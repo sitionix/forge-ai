@@ -3,6 +3,7 @@ package com.sitionix.forgeproxyit.infra;
 import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
@@ -36,6 +37,18 @@ public final class NexusAgentMockMvcEndpoints {
                 (MockmvcDefault) context -> context
                         .expectStatus(HttpStatus.OK.value())
                         .expectResponse("agent-task-page-response.json")
+        );
+    }
+
+    public static Endpoint<Void, AgentProjectRepositoryResponse> refreshRepository() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/projects/{projectId}/repositories/{repositoryId}/refresh",
+                HttpMethod.POST,
+                Void.class,
+                AgentProjectRepositoryResponse.class,
+                (MockmvcDefault) context -> context
+                        .expectStatus(HttpStatus.OK.value())
+                        .expectResponse("agent-refresh-repository-response.json")
         );
     }
 

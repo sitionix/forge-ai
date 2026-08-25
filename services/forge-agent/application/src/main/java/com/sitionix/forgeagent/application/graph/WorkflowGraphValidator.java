@@ -156,6 +156,8 @@ public class WorkflowGraphValidator {
                                      final Map<UUID, UUID> allOwnersByPortId) {
         final Set<UUID> connectionIds = new HashSet<>();
         final Set<PortPair> pairs = new HashSet<>();
+        final Set<UUID> selfLoopTargetPortIds = new HashSet<>();
+        final Set<UUID> externallyConnectedTargetPortIds = new HashSet<>();
         for (final WorkflowConnection connection : connections) {
             if (!connectionIds.add(connection.id())) {
                 throw new ValidationException("DUPLICATE_WORKFLOW_CONNECTION_ID", "Workflow connection IDs must be unique.");
@@ -175,11 +177,19 @@ public class WorkflowGraphValidator {
             final UUID sourceNodeId = outputOwnersByPortId.get(connection.sourceOutputPortId());
             final UUID targetNodeId = inputOwnersByPortId.get(connection.targetInputPortId());
             if (sourceNodeId.equals(targetNodeId)) {
-                throw new ValidationException("SELF_NODE_CONNECTION", "A workflow node cannot connect to itself.");
+                selfLoopTargetPortIds.add(connection.targetInputPortId());
+            } else {
+                externallyConnectedTargetPortIds.add(connection.targetInputPortId());
             }
             if (!pairs.add(new PortPair(connection.sourceOutputPortId(), connection.targetInputPortId()))) {
                 throw new ValidationException("DUPLICATE_WORKFLOW_CONNECTION", "Workflow connections must not duplicate the same source and target ports.");
             }
+        }
+        if (!externallyConnectedTargetPortIds.containsAll(selfLoopTargetPortIds)) {
+            throw new ValidationException(
+                    "UNGUARDED_SELF_NODE_CONNECTION",
+                    "A self-loop requires at least one incoming connection from another node on the same input port."
+            );
         }
     }
 

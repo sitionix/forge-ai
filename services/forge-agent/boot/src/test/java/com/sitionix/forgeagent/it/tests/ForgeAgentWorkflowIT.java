@@ -359,6 +359,40 @@ class ForgeAgentWorkflowIT {
     }
 
     @Test
+    void givenSelfLoopWithExternalDependency_whenUpdateWorkflow_thenGraphIsPersisted() {
+        this.seedProjectAgentsAndWorkflow();
+
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestGuardedSelfNodeConnection.json")
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(WorkflowConnectionEntity.class).getAll())
+                .hasSize(2)
+                .anySatisfy(connection -> {
+                    assertThat(connection.getSourceOutputPortId()).isEqualTo(UUID.fromString("71000000-0000-4000-8000-000000000002"));
+                    assertThat(connection.getTargetInputPortId()).isEqualTo(UUID.fromString("61000000-0000-4000-8000-000000000002"));
+                });
+    }
+
+    @Test
+    void givenGuardedSelfLoop_whenLastExternalDependencyIsRemoved_thenUpdateIsRejectedAndGraphRemainsGuarded() {
+        this.seedProjectAgentsAndWorkflow();
+        this.forgeIt.mockMvc()
+                .ping(UPDATE_WORKFLOW)
+                .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
+                .withRequest("requestGuardedSelfNodeConnection.json")
+                .expectStatus(HttpStatus.OK)
+                .assertAndCreate();
+
+        this.expectWorkflowError("requestSelfNodeConnection.json", HttpStatus.BAD_REQUEST, "responseSelfNodeConnectionError.json");
+
+        assertThat(this.forgeIt.postgresql().get(WorkflowConnectionEntity.class).getAll()).hasSize(2);
+    }
+
+    @Test
     void givenPortIdOwnedByAnotherWorkflow_whenUpdateWorkflow_thenConflictAndTopologiesRemainUnchanged() {
         this.seedProjectAgentsAndWorkflow();
         final UUID secondWorkflowId = UUID.fromString("30000000-0000-4000-8000-000000000002");

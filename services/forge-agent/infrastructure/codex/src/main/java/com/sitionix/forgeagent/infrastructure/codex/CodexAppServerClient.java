@@ -261,6 +261,7 @@ final class CodexAppServerClient implements CodexClient {
 
     private ObjectNode codexConfig() {
         final ObjectNode config = this.objectMapper.createObjectNode();
+        config.put("web_search", "disabled");
         final ObjectNode features = config.putObject("features");
         features.put("shell_tool", true);
         final ObjectNode agents = config.putObject("agents");
