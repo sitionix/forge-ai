@@ -13,27 +13,46 @@ import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 @EnableConfigurationProperties(ForgeAgentClientProperties.class)
 class ForgeAgentHttpClientConfiguration {
 
-    @Bean
-    ForgeAgentHttpClient forgeAgentHttpClient(final ForgeAgentClientProperties properties,
-                                              final RestClient.Builder restClientBuilder) {
-        final RestClient restClient = restClientBuilder
-                .baseUrl(properties.getBaseUrl().toString())
-                .requestFactory(this.requestFactory(properties))
-                .build();
+  @Bean
+  RestClient forgeAgentRestClient(
+      final ForgeAgentClientProperties properties, final RestClient.Builder restClientBuilder) {
+    return restClientBuilder
+        .baseUrl(properties.getBaseUrl().toString())
+        .requestFactory(this.requestFactory(properties))
+        .build();
+  }
 
-        return HttpServiceProxyFactory.builderFor(RestClientAdapter.create(restClient))
-                .build()
-                .createClient(ForgeAgentHttpClient.class);
-    }
+  @Bean("forgeAgentLogStreamingRestClient")
+  RestClient forgeAgentLogStreamingRestClient(
+      final ForgeAgentClientProperties properties, final RestClient.Builder restClientBuilder) {
+    final HttpClient httpClient =
+        HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .connectTimeout(properties.getConnectTimeout())
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
+    return restClientBuilder
+        .baseUrl(properties.getBaseUrl().toString())
+        .requestFactory(new JdkClientHttpRequestFactory(httpClient))
+        .build();
+  }
 
-    private JdkClientHttpRequestFactory requestFactory(final ForgeAgentClientProperties properties) {
-        final HttpClient httpClient = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(properties.getConnectTimeout())
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .build();
-        final JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(properties.getReadTimeout());
-        return requestFactory;
-    }
+  @Bean
+  ForgeAgentHttpClient forgeAgentHttpClient(final RestClient forgeAgentRestClient) {
+    return HttpServiceProxyFactory.builderFor(RestClientAdapter.create(forgeAgentRestClient))
+        .build()
+        .createClient(ForgeAgentHttpClient.class);
+  }
+
+  private JdkClientHttpRequestFactory requestFactory(final ForgeAgentClientProperties properties) {
+    final HttpClient httpClient =
+        HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .connectTimeout(properties.getConnectTimeout())
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
+    final JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+    requestFactory.setReadTimeout(properties.getReadTimeout());
+    return requestFactory;
+  }
 }

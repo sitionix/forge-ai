@@ -1,0 +1,133 @@
+package com.sitionix.forgeagent.api;
+
+import com.sitionix.forgeagent.application.usecase.LogSourceUseCases;
+import com.sitionix.forgeagent.domain.model.LogEvent;
+import com.sitionix.forgeagent.domain.model.LogSource;
+import com.sitionix.forgeagent.domain.port.LogStream;
+import java.io.IOException;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+@Service
+@RequiredArgsConstructor
+public class ProjectLogSseService {
+  private final LogSourceUseCases logs;
+
+  public SseEmitter stream(final UUID projectId, final List<UUID> sourceIds, final int lines) {
+    final List<LogSource> sources = this.logs.requireEnabled(projectId, sourceIds);
+    final var session =
+        new Session(
+            new SseEmitter(0L), Executors.newVirtualThreadPerTaskExecutor(), sources.size());
+    session.bindCleanup();
+    try {
+      for (final LogSource source : sources) {
+        final LogStream stream = this.logs.stream(projectId, source, lines);
+        session.streams.add(stream);
+        session.tasks.add(session.executor.submit(() -> this.pump(session, source, stream)));
+      }
+      return session.emitter;
+    } catch (final RuntimeException exception) {
+      session.cleanup();
+      throw exception;
+    }
+  }
+
+  private void pump(final Session session, final LogSource source, final LogStream stream) {
+    try (stream) {
+      String line;
+      while ((line = stream.reader().readLine()) != null) {
+        session.send(
+            SseEmitter.event()
+                .name("log")
+                .data(new LogEvent(source.id(), source.name(), Instant.now(), line)));
+      }
+      final var result = stream.awaitCompletion();
+      if (!result.successful() && !session.closed.get()) {
+        session.send(
+            SseEmitter.event()
+                .name("source-error")
+                .data(
+                    Map.of(
+                        "sourceId",
+                        source.id(),
+                        "sourceName",
+                        source.name(),
+                        "message",
+                        "Log provider exited with code " + result.exitCode())));
+      }
+    } catch (final IOException exception) {
+      session.cleanup();
+    } catch (final RuntimeException exception) {
+      if (!session.closed.get()) {
+        try {
+          session.send(
+              SseEmitter.event()
+                  .name("source-error")
+                  .data(
+                      Map.of(
+                          "sourceId",
+                          source.id(),
+                          "sourceName",
+                          source.name(),
+                          "message",
+                          "Log source failed")));
+        } catch (final IOException ignored) {
+          session.cleanup();
+        }
+      }
+    } finally {
+      if (session.remaining.decrementAndGet() == 0 && session.closed.compareAndSet(false, true)) {
+        session.emitter.complete();
+        session.closeResources();
+      }
+    }
+  }
+
+  private static final class Session {
+    private final SseEmitter emitter;
+    private final ExecutorService executor;
+    private final AtomicInteger remaining;
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final List<LogStream> streams = new CopyOnWriteArrayList<>();
+    private final List<Future<?>> tasks = new CopyOnWriteArrayList<>();
+
+    private Session(
+        final SseEmitter emitter, final ExecutorService executor, final int sourceCount) {
+      this.emitter = emitter;
+      this.executor = executor;
+      this.remaining = new AtomicInteger(sourceCount);
+    }
+
+    private void bindCleanup() {
+      this.emitter.onCompletion(this::cleanup);
+      this.emitter.onTimeout(this::cleanup);
+      this.emitter.onError(ignored -> this.cleanup());
+    }
+
+    private synchronized void send(final SseEmitter.SseEventBuilder event) throws IOException {
+      if (!this.closed.get()) this.emitter.send(event);
+    }
+
+    private void cleanup() {
+      if (this.closed.compareAndSet(false, true)) this.closeResources();
+    }
+
+    private void closeResources() {
+      new ArrayList<>(this.streams).forEach(LogStream::close);
+      new ArrayList<>(this.tasks).forEach(task -> task.cancel(true));
+      this.executor.shutdownNow();
+    }
+  }
+}
