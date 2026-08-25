@@ -680,6 +680,10 @@ export class TaskExecutionView {
     this.byId('agentsV2ExecutionCanvas')?.addEventListener('pointerdown', this.handleCanvasPointerDown);
     this.byId('agentsV2ExecutionCanvas')?.addEventListener('wheel', this.handleCanvasWheel, { passive: false });
     this.byId('agentsV2TaskExecutionBack')?.addEventListener('click', () => this.onBack());
+    this.byId('agentsV2TaskExecutionSummaryToggle')?.addEventListener('click', () => {
+      const toggle = this.byId('agentsV2TaskExecutionSummaryToggle');
+      this.setTaskSummaryExpanded(toggle?.getAttribute('aria-expanded') !== 'true');
+    });
   }
 
   dispose() {
@@ -703,6 +707,7 @@ export class TaskExecutionView {
     this.viewport = { x: 0, y: 0, scale: 1 };
     this.applyViewportTransform();
     this.byId('agentsV2ExecutionCanvas')?.classList.remove('panning');
+    this.setTaskSummaryExpanded(false);
   }
 
   async open(taskId, project, repositories = []) {
@@ -713,6 +718,7 @@ export class TaskExecutionView {
     this.pollInFlight = null;
     this.opened = true;
     this.disposed = false;
+    this.setTaskSummaryExpanded(false);
     this.state = {
       ...this.emptyState(),
       taskId,
@@ -912,6 +918,13 @@ export class TaskExecutionView {
     const taskTitle = this.state.task?.title || (this.state.loadingTask ? 'Loading task...' : 'Task execution');
     this.byId('agentsV2TaskExecutionCrumbs').textContent = `Projects / ${projectName} / Tasks`;
     this.byId('agentsV2TaskExecutionTitle').textContent = taskTitle;
+  }
+
+  setTaskSummaryExpanded(expanded) {
+    const toggle = this.byId('agentsV2TaskExecutionSummaryToggle');
+    const summary = this.byId('agentsV2TaskExecutionSummary');
+    toggle?.setAttribute('aria-expanded', String(expanded));
+    summary?.classList.toggle('hidden', !expanded);
   }
 
   renderTaskSummary() {
@@ -1254,10 +1267,13 @@ export class TaskExecutionView {
         ${this.detailRow('Agent', nodeRun.agentName || 'Unknown agent')}
         ${this.detailRow('Status', nodeRun.status || 'PENDING')}
         ${this.detailRow('Input mode', this.formatInputMode(nodeRun))}
-        ${this.detailRow('Instructions', nodeRun.agentInstructions || '')}
         ${this.detailRow('Started', this.formatDate(nodeRun.startedAt))}
         ${this.detailRow('Finished', this.formatDate(nodeRun.finishedAt))}
       </div>
+      <details class="node-run-prompt-details">
+        <summary>Prompt</summary>
+        <pre>${escapeHtml(nodeRun.agentInstructions || '-')}</pre>
+      </details>
       <section class="node-run-output">
         <h3>Output</h3>
         ${nodeRun.output == null ? '<div class="muted-state compact">No output yet.</div>' : `<pre>${escapeHtml(this.formatOutput(nodeRun.output))}</pre>`}

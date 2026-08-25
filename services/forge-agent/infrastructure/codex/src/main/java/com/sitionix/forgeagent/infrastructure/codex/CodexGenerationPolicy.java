@@ -5,6 +5,7 @@ import java.util.Set;
 final class CodexGenerationPolicy {
 
     static final String AGENT_MESSAGE = "agentMessage";
+    private static final int ITEM_TYPE_DIAGNOSTIC_LIMIT = 128;
 
     private static final Set<String> ALLOWED_ITEM_TYPES = Set.of(
             "userMessage",
@@ -20,11 +21,19 @@ final class CodexGenerationPolicy {
         if (itemType != null && ALLOWED_ITEM_TYPES.contains(itemType)) {
             return null;
         }
-        return executionFailed();
+        return new CodexTransportException(
+                "Unsupported Codex generation item type: " + this.diagnosticItemType(itemType)
+        );
     }
 
-    private RuntimeException executionFailed() {
-        return new CodexTransportException("Codex execution failed.");
+    String diagnosticItemType(final String itemType) {
+        if (itemType == null || itemType.isBlank()) {
+            return "<missing>";
+        }
+        final String sanitized = itemType.replaceAll("[\\p{Cntrl}]", "?");
+        return sanitized.length() <= ITEM_TYPE_DIAGNOSTIC_LIMIT
+                ? sanitized
+                : sanitized.substring(0, ITEM_TYPE_DIAGNOSTIC_LIMIT) + "...";
     }
 
     static boolean capturesFinalOutput(final String itemType) {

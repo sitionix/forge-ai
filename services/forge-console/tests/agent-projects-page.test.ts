@@ -1234,6 +1234,15 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2TaskExecutionTitle')?.textContent).toContain('Check calculation');
     expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Count the letters in Sitionix.');
     expect(dom.window.document.getElementById('agentsV2TaskExecutionSummary')?.textContent).toContain('Snapshot Workflow');
+    const summary = dom.window.document.getElementById('agentsV2TaskExecutionSummary');
+    const summaryToggle = dom.window.document.getElementById('agentsV2TaskExecutionSummaryToggle');
+    expect(summary?.classList.contains('hidden')).toBe(true);
+    expect(summaryToggle?.getAttribute('aria-expanded')).toBe('false');
+
+    summaryToggle?.click();
+
+    expect(summary?.classList.contains('hidden')).toBe(false);
+    expect(summaryToggle?.getAttribute('aria-expanded')).toBe('true');
 
     await vi.advanceTimersByTimeAsync(4999);
     await flushAsync();
@@ -1370,7 +1379,8 @@ describe('Agent projects page', () => {
     expect(details.textContent).toContain('Backend Implementer instructions');
     expect(details.textContent).toContain('SUCCEEDED');
     expect(details.textContent).toContain('Original task + previous outputs');
-    expect(details.querySelector('pre')?.textContent).toContain('"count": 8');
+    expect(details.querySelector('.node-run-output pre')?.textContent).toContain('"count": 8');
+    expect(details.querySelector<HTMLDetailsElement>('.node-run-prompt-details')?.open).toBe(false);
 
     dom.window.document.querySelector<HTMLElement>('[data-execution-node-id="pending-node"]')?.click();
     await flushAsync();

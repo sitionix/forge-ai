@@ -43,6 +43,7 @@ class CodexAppServerTurnClientTest {
         assertThat(threadStart.path("params").path("config"))
                 .isEqualTo(this.objectMapper.readTree("""
                         {
+                          "web_search": "disabled",
                           "features": {
                             "shell_tool": true
                           },
@@ -264,7 +265,7 @@ class CodexAppServerTurnClientTest {
         harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "mcpToolCall"));
         this.assertInterrupt(harness.process(), "thread-1", "turn-1");
 
-        assertExecutionFailure(harness.result());
+        assertExecutionFailure(harness.result(), "Unsupported Codex generation item type: mcpToolCall");
         harness.client().close();
     }
 
@@ -275,7 +276,7 @@ class CodexAppServerTurnClientTest {
         harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "unknownNewItem"));
         this.assertInterrupt(harness.process(), "thread-1", "turn-1");
 
-        assertExecutionFailure(harness.result());
+        assertExecutionFailure(harness.result(), "Unsupported Codex generation item type: unknownNewItem");
         harness.client().close();
     }
 

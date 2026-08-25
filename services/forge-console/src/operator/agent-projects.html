@@ -118,7 +118,11 @@
 
       <section class="panel task-execution-summary-panel">
         <div id="agentsV2TaskExecutionTaskError" class="error-box hidden"></div>
-        <div id="agentsV2TaskExecutionSummary"></div>
+        <button id="agentsV2TaskExecutionSummaryToggle" class="task-execution-summary-toggle" type="button" aria-expanded="false" aria-controls="agentsV2TaskExecutionSummary">
+          <span>Task details</span>
+          <span class="task-execution-summary-toggle-icon" aria-hidden="true">⌄</span>
+        </button>
+        <div id="agentsV2TaskExecutionSummary" class="hidden"></div>
       </section>
 
       <section class="task-execution-layout">

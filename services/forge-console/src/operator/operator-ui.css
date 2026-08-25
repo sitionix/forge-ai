@@ -1262,7 +1262,35 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .task-execution-summary-panel {
-  padding: 22px;
+  display: grid;
+  gap: 16px;
+  padding: 14px 18px;
+}
+
+.task-execution-summary-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: 800 12px/1.2 var(--mono);
+  letter-spacing: 0.03em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.task-execution-summary-toggle-icon {
+  font-size: 20px;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.task-execution-summary-toggle[aria-expanded="true"] .task-execution-summary-toggle-icon {
+  transform: rotate(180deg);
 }
 
 .task-execution-summary-panel .error-box,
@@ -1329,6 +1357,7 @@ body.sidebar-collapsed .sidebar-link {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
   gap: 18px;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -1348,6 +1377,23 @@ body.sidebar-collapsed .sidebar-link {
 .task-execution-main {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
+  height: 100%;
+}
+
+#agentsV2TaskExecutionError {
+  grid-row: 1;
+}
+
+#agentsV2TaskExecutionRefreshError {
+  grid-row: 2;
+}
+
+#agentsV2ExecutionState {
+  grid-row: 3;
+}
+
+.task-execution-content {
+  grid-row: 4;
 }
 
 .execution-history {
@@ -1706,6 +1752,7 @@ body.sidebar-collapsed .sidebar-link {
 
 .node-run-details-panel {
   height: 100%;
+  max-height: 100%;
   min-width: 0;
   min-height: 0;
   padding: 16px;
@@ -1718,6 +1765,32 @@ body.sidebar-collapsed .sidebar-link {
 .node-run-details-grid {
   display: grid;
   gap: 12px;
+}
+
+.node-run-prompt-details {
+  margin-top: 12px;
+  border-top: 1px solid rgba(27, 36, 31, 0.12);
+}
+
+.node-run-prompt-details summary {
+  padding: 12px 0 0;
+  color: var(--ink);
+  cursor: pointer;
+  font: 800 11px/1.2 var(--mono);
+  text-transform: uppercase;
+}
+
+.node-run-prompt-details pre {
+  max-height: 320px;
+  margin: 12px 0 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--ink);
+  font: 12px/1.5 var(--mono);
+  white-space: pre-wrap;
 }
 
 .node-run-output,
