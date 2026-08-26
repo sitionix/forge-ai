@@ -177,7 +177,9 @@ class ForgeAgentApiMapper {
                 request.host(),
                 request.port(),
                 request.username(),
-                request.privateKeyPath());
+                request.authType(),
+                request.privateKeyPath(),
+                request.password());
     }
 
     ProjectResponse toResponse(final Project project) {
@@ -219,6 +221,7 @@ class ForgeAgentApiMapper {
                 connection.host(),
                 connection.port(),
                 connection.username(),
+                connection.authType(),
                 connection.createdAt(),
                 connection.updatedAt());
     }

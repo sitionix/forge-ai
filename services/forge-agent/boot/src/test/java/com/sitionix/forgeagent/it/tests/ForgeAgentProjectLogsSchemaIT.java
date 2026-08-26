@@ -128,6 +128,39 @@ class ForgeAgentProjectLogsSchemaIT {
     assertInvalidWithoutSsh("logs_source_invalid_docker_empty.json");
   }
 
+  @Test
+  void privateKeyAndPasswordProfilesSatisfyAuthenticationConstraint() {
+    this.forgeIt
+        .postgresql()
+        .create()
+        .to(PROJECT.withJson("logs_project.json"))
+        .to(SSH_CONNECTION.withJson("logs_ssh.json"))
+        .to(SSH_CONNECTION.withJson("logs_ssh_password.json"))
+        .build();
+
+    assertThat(this.forgeIt.postgresql().get(SshConnectionEntity.class).getAll()).hasSize(2);
+  }
+
+  @Test
+  void privateKeyAuthenticationRequiresPrivateKeyPath() {
+    assertInvalidSshProfile("logs_ssh_invalid_key_without_path.json");
+  }
+
+  @Test
+  void privateKeyAuthenticationRejectsPassword() {
+    assertInvalidSshProfile("logs_ssh_invalid_key_with_password.json");
+  }
+
+  @Test
+  void passwordAuthenticationRequiresPassword() {
+    assertInvalidSshProfile("logs_ssh_invalid_password_without_secret.json");
+  }
+
+  @Test
+  void passwordAuthenticationRejectsPrivateKeyPath() {
+    assertInvalidSshProfile("logs_ssh_invalid_password_with_key.json");
+  }
+
   private void assertInvalidWithSsh(final String fixture) {
     assertThatThrownBy(
             () ->
@@ -149,6 +182,18 @@ class ForgeAgentProjectLogsSchemaIT {
                     .create()
                     .to(PROJECT.withJson("logs_project.json"))
                     .to(LOG_SOURCE.withJson(fixture))
+                    .build())
+        .isInstanceOf(RuntimeException.class);
+  }
+
+  private void assertInvalidSshProfile(final String fixture) {
+    assertThatThrownBy(
+            () ->
+                this.forgeIt
+                    .postgresql()
+                    .create()
+                    .to(PROJECT.withJson("logs_project.json"))
+                    .to(SSH_CONNECTION.withJson(fixture))
                     .build())
         .isInstanceOf(RuntimeException.class);
   }

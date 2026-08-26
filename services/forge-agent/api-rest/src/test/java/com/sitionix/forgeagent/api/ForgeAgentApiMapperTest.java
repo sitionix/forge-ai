@@ -32,6 +32,7 @@ import com.sitionix.forgeagent.api.dto.RunNodeResponse;
 import com.sitionix.forgeagent.api.dto.RunPortResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.SshConnectionResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunGraphResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
@@ -78,6 +79,8 @@ import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
+import com.sitionix.forgeagent.domain.model.SshAuthType;
+import com.sitionix.forgeagent.domain.model.SshConnection;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.RunConnection;
@@ -112,6 +115,28 @@ class ForgeAgentApiMapperTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ForgeAgentApiMapper mapper = new ForgeAgentApiMapper(this.objectMapper);
+
+    @Test
+    void sshResponseExposesAuthTypeWithoutAuthenticationMaterial() throws Exception {
+        final SshConnection connection = new SshConnection(
+                UUID.randomUUID(),
+                PROJECT_ID,
+                "ancestor",
+                "192.168.0.108",
+                22,
+                "ancestor",
+                SshAuthType.PASSWORD,
+                null,
+                "secret;$(data)",
+                CREATED,
+                CREATED);
+
+        final SshConnectionResponse response = this.mapper.toResponse(connection);
+        assertThat(response.authType()).isEqualTo(SshAuthType.PASSWORD);
+        assertThat(java.util.Arrays.stream(SshConnectionResponse.class.getRecordComponents())
+                .map(component -> component.getName()))
+                .doesNotContain("password", "privateKeyPath");
+    }
 
     @Test
     void mapsProjectRequestToCommand() {

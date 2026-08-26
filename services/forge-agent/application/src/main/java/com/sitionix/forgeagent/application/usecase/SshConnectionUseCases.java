@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.application.usecase;
 
 import com.sitionix.forgeagent.domain.exception.*;
 import com.sitionix.forgeagent.domain.model.SshConnection;
+import com.sitionix.forgeagent.domain.model.SshAuthType;
 import com.sitionix.forgeagent.domain.port.*;
 import java.time.Clock;
 import java.util.*;
@@ -40,7 +41,9 @@ public class SshConnectionUseCases {
                 c.host().strip(),
                 c.port(),
                 c.username().strip(),
+                c.authType(),
                 c.privateKeyPath(),
+                c.password(),
                 n,
                 n))
         .withoutSecretLocation();
@@ -58,11 +61,22 @@ public class SshConnectionUseCases {
         || !SSH_NAME.matcher(c.host()).matches()
         || c.username() == null
         || !SSH_NAME.matcher(c.username()).matches()
-        || c.privateKeyPath() == null
-        || c.privateKeyPath().isBlank()
-        || c.privateKeyPath().indexOf('\n') >= 0
-        || c.privateKeyPath().indexOf('\r') >= 0)
+        || c.authType() == null)
       throw new ValidationException("SSH profile fields are required or invalid");
     if (c.port() < 1 || c.port() > 65535) throw new ValidationException("SSH port is invalid");
+    if (c.authType() == SshAuthType.PRIVATE_KEY) {
+      if (blank(c.privateKeyPath())
+          || c.password() != null
+          || c.privateKeyPath().indexOf('\n') >= 0
+          || c.privateKeyPath().indexOf('\r') >= 0) {
+        throw new ValidationException("Private-key SSH authentication is invalid");
+      }
+    } else if (blank(c.password()) || c.privateKeyPath() != null) {
+      throw new ValidationException("Password SSH authentication is invalid");
+    }
+  }
+
+  private boolean blank(String value) {
+    return value == null || value.isBlank();
   }
 }

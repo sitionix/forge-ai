@@ -42,7 +42,9 @@ public class PostgresSshConnectionRepository implements SshConnectionRepository 
                 entity.getHost(),
                 entity.getPort(),
                 entity.getUsername(),
+                entity.getAuthType(),
                 entity.getPrivateKeyPath(),
+                entity.getPassword(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt());
     }
@@ -55,7 +57,9 @@ public class PostgresSshConnectionRepository implements SshConnectionRepository 
         entity.setHost(connection.host());
         entity.setPort(connection.port());
         entity.setUsername(connection.username());
+        entity.setAuthType(connection.authType());
         entity.setPrivateKeyPath(connection.privateKeyPath());
+        entity.setPassword(connection.password());
         entity.setCreatedAt(connection.createdAt());
         entity.setUpdatedAt(connection.updatedAt());
         return entity;

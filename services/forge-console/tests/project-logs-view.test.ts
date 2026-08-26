@@ -171,7 +171,14 @@ describe("ProjectLogsView", () => {
       (dom.window.document.getElementById(id) as HTMLInputElement).value =
         value;
     await view.saveSsh(new dom.window.Event("submit"));
-    expect(api.createSshConnection).toHaveBeenCalled();
+    expect(api.createSshConnection).toHaveBeenCalledWith(
+      "p",
+      expect.objectContaining({
+        authType: "PRIVATE_KEY",
+        privateKeyPath: "/keys/id",
+        password: null,
+      }),
+    );
     expect(
       (
         dom.window.document.getElementById(
@@ -180,6 +187,58 @@ describe("ProjectLogsView", () => {
       ).value,
     ).toBe("ssh-1");
     expect(dom.window.document.body.textContent).not.toContain("/keys/id");
+  });
+
+  it("creates a password SSH profile without exposing or mixing credentials", async () => {
+    const created = {
+      id: "ssh-password",
+      name: "Ancestor",
+      username: "ancestor",
+      host: "192.168.0.108",
+      authType: "PASSWORD",
+    };
+    const { view, dom, api } = setup({
+      createSshConnection: vi.fn().mockResolvedValue(created),
+      listSshConnections: vi.fn().mockResolvedValue([created]),
+    });
+    await view.load("p");
+    const auth = dom.window.document.getElementById(
+      "projectLogsSshAuth",
+    ) as HTMLSelectElement;
+    auth.value = "PASSWORD";
+    auth.dispatchEvent(new dom.window.Event("change"));
+
+    expect(
+      dom.window.document.getElementById("projectLogsSshKeyField")!.classList,
+    ).toContain("hidden");
+    expect(
+      dom.window.document.getElementById("projectLogsSshPasswordField")!.classList,
+    ).not.toContain("hidden");
+    expect(
+      (dom.window.document.getElementById("projectLogsSshPassword") as HTMLInputElement).type,
+    ).toBe("password");
+
+    for (const [id, value] of Object.entries({
+      projectLogsSshName: "Ancestor",
+      projectLogsSshHost: "192.168.0.108",
+      projectLogsSshPort: "22",
+      projectLogsSshUsername: "ancestor",
+      projectLogsSshPassword: "secret;$(still-data)",
+    })) {
+      (dom.window.document.getElementById(id) as HTMLInputElement).value = value;
+    }
+    await view.saveSsh(new dom.window.Event("submit"));
+
+    expect(api.createSshConnection).toHaveBeenCalledWith("p", {
+      name: "Ancestor",
+      host: "192.168.0.108",
+      port: 22,
+      username: "ancestor",
+      authType: "PASSWORD",
+      privateKeyPath: null,
+      password: "secret;$(still-data)",
+    });
+    expect(dom.window.document.body.textContent).not.toContain("secret;$(still-data)");
   });
 
   it("buffers while paused, renders source errors, and closes replaced streams", async () => {

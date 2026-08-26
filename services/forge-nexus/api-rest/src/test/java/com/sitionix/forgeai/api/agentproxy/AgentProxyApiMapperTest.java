@@ -531,4 +531,37 @@ class AgentProxyApiMapperTest {
                 "web", "Web", com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetStatus.RUNNING,
                 "web:latest", "demo", "web", "/repo/compose.yaml", true));
     }
+
+    @Test
+    void mapsPasswordSshProfileWithoutResponseSecrets() {
+        final var request = new AgentSshConnectionRequest(
+                "Ancestor",
+                "192.168.0.108",
+                22,
+                "ancestor",
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD,
+                null,
+                "secret;$(data)");
+        final var command = this.mapper.toCommand(request);
+        assertThat(command.authType()).isEqualTo(
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD);
+        assertThat(command.password()).isEqualTo("secret;$(data)");
+
+        final var response = this.mapper.toResponse(
+                new com.sitionix.forgeai.domain.model.agentproxy.AgentSshConnection(
+                        AGENT_ID,
+                        PROJECT_ID,
+                        "Ancestor",
+                        "192.168.0.108",
+                        22,
+                        "ancestor",
+                        com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD,
+                        CREATED,
+                        UPDATED));
+        assertThat(response.authType()).isEqualTo(
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD);
+        assertThat(Arrays.stream(AgentSshConnectionResponse.class.getRecordComponents())
+                .map(component -> component.getName()))
+                .doesNotContain("password", "privateKeyPath");
+    }
 }

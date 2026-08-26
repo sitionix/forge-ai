@@ -22,7 +22,7 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
             "--format",
             "{{.ID}}\\t{{.Names}}\\t{{.Status}}\\t{{.Image}}\\t{{.Label"
                 + " \"com.docker.compose.project\"}}\\t{{.Label \"com.docker.compose.service\"}}");
-    return executor.output(command, null).stream()
+    return output(command, null, ssh).stream()
         .filter(s -> !s.isBlank())
         .map(this::candidate)
         .toList();
@@ -53,13 +53,13 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
     if (nonblank(service)) {
       RuntimeTargetValidator.docker(service, "Compose service");
       RuntimeTargetValidator.path(file, "Compose file");
-      executor.output(compose(ssh, file, "config", "--services"), null).stream()
+      output(compose(ssh, file, "config", "--services"), null, ssh).stream()
           .filter(service::equals)
           .findFirst()
           .orElseThrow(() -> new ValidationException("Compose service is unavailable"));
     } else {
       RuntimeTargetValidator.docker(container, "Docker container");
-      executor.output(docker(ssh, "container", "inspect", "--", container), null);
+      output(docker(ssh, "container", "inspect", "--", container), null, ssh);
     }
   }
 
@@ -69,7 +69,7 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
     if (nonblank(service)) {
       RuntimeTargetValidator.docker(service, "Compose service");
       RuntimeTargetValidator.path(file, "Compose file");
-      return executor.stream(
+      return stream(
           compose(
               ssh,
               file,
@@ -80,11 +80,14 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
               "--no-color",
               "--",
               service),
-          null);
+          null,
+          ssh);
     }
     RuntimeTargetValidator.docker(container, "Docker container");
-    return executor.stream(
-        docker(ssh, "logs", "--tail", String.valueOf(safe), "--follow", "--", container), null);
+    return stream(
+        docker(ssh, "logs", "--tail", String.valueOf(safe), "--follow", "--", container),
+        null,
+        ssh);
   }
 
   private LogTargetCandidate candidate(String row) {
@@ -122,5 +125,13 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
 
   private boolean nonblank(String s) {
     return s != null && !s.isBlank();
+  }
+
+  private List<String> output(List<String> command, Path cwd, SshConnection ssh) {
+    return ssh == null ? executor.output(command, cwd) : executor.output(command, cwd, ssh);
+  }
+
+  private LogStream stream(List<String> command, Path cwd, SshConnection ssh) {
+    return ssh == null ? executor.stream(command, cwd) : executor.stream(command, cwd, ssh);
   }
 }

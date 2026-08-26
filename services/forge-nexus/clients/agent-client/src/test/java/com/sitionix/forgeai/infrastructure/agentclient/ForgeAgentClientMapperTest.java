@@ -606,6 +606,35 @@ class ForgeAgentClientMapperTest {
                         "web:latest", "demo", "web", "/repo/compose.yaml", true));
     }
 
+    @Test
+    void mapsPasswordSshAuthenticationThroughTypedClientDtos() {
+        final var command = new com.sitionix.forgeai.domain.model.agentproxy.CreateAgentSshConnectionCommand(
+                "Ancestor",
+                "192.168.0.108",
+                22,
+                "ancestor",
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD,
+                null,
+                "secret;$(data)");
+        final var request = this.mapper.toRequest(command);
+        assertThat(request.authType()).isEqualTo(
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD);
+        assertThat(request.password()).isEqualTo("secret;$(data)");
+
+        final var response = new com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionResponse(
+                AGENT_ID,
+                PROJECT_ID,
+                "Ancestor",
+                "192.168.0.108",
+                22,
+                "ancestor",
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD,
+                CREATED,
+                UPDATED);
+        assertThat(this.mapper.toDomain(response).authType()).isEqualTo(
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD);
+    }
+
     private AgentDefinitionResponse responseWithOutputSchema(final com.fasterxml.jackson.databind.JsonNode outputSchema) {
         return new AgentDefinitionResponse(
                 AGENT_ID,

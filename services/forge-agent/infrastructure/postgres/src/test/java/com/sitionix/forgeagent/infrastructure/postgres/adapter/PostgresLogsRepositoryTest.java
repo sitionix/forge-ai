@@ -79,6 +79,38 @@ class PostgresLogsRepositoryTest {
                         && e.getProjectId().equals(profile.projectId())));
   }
 
+  @Test
+  void persistsPasswordAuthenticationOnlyInPersistenceEntity() {
+    var spring = mock(SpringDataSshConnectionRepository.class);
+    when(spring.save(any())).thenAnswer(i -> i.getArgument(0));
+    var repository = new PostgresSshConnectionRepository(spring);
+    var profile =
+        new SshConnection(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "ancestor",
+            "192.168.0.108",
+            22,
+            "ancestor",
+            SshAuthType.PASSWORD,
+            null,
+            "secret;$(data)",
+            Instant.EPOCH,
+            Instant.EPOCH);
+
+    SshConnection saved = repository.save(profile);
+
+    assertThat(saved.authType()).isEqualTo(SshAuthType.PASSWORD);
+    assertThat(saved.password()).isEqualTo("secret;$(data)");
+    verify(spring)
+        .save(
+            argThat(
+                entity ->
+                    entity.getAuthType() == SshAuthType.PASSWORD
+                        && entity.getPrivateKeyPath() == null
+                        && entity.getPassword().equals("secret;$(data)")));
+  }
+
   private LogSourceEntity entity(UUID id, UUID project, String name) {
     var e = new LogSourceEntity();
     e.setId(id);

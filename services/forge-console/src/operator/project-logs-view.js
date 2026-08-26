@@ -19,9 +19,14 @@ export class ProjectLogsView {
     this.on("projectLogsAdd", "click", () => this.openAdd());
     this.on("projectLogsForm", "submit", (event) => this.save(event));
     this.on("projectLogsCancel", "click", () => this.byId("projectLogsDialog").close());
-    this.on("projectLogsAddSsh", "click", () => this.byId("projectLogsSshDialog").showModal());
+    this.on("projectLogsAddSsh", "click", () => {
+      this.byId("projectLogsSshForm").reset();
+      this.renderSshAuthentication();
+      this.byId("projectLogsSshDialog").showModal();
+    });
     this.on("projectLogsSshForm", "submit", (event) => this.saveSsh(event));
     this.on("projectLogsSshCancel", "click", () => this.byId("projectLogsSshDialog").close());
+    this.on("projectLogsSshAuth", "change", () => this.renderSshAuthentication());
     this.on("projectLogsLive", "click", () => this.start());
     this.on("projectLogsPause", "click", () => this.togglePause());
     this.on("projectLogsFilter", "input", () => this.renderEvents());
@@ -230,7 +235,15 @@ export class ProjectLogsView {
         host: this.byId("projectLogsSshHost").value,
         port: Number(this.byId("projectLogsSshPort").value),
         username: this.byId("projectLogsSshUsername").value,
-        privateKeyPath: this.byId("projectLogsSshKey").value,
+        authType: this.byId("projectLogsSshAuth").value,
+        privateKeyPath:
+          this.byId("projectLogsSshAuth").value === "PRIVATE_KEY"
+            ? this.byId("projectLogsSshKey").value
+            : null,
+        password:
+          this.byId("projectLogsSshAuth").value === "PASSWORD"
+            ? this.byId("projectLogsSshPassword").value
+            : null,
       });
       this.connections = await this.api.listSshConnections(this.projectId);
       this.renderConnections(created.id);
@@ -241,6 +254,13 @@ export class ProjectLogsView {
       this.byId("projectLogsSshError").textContent =
         e.message || "SSH profile could not be created.";
     }
+  }
+  renderSshAuthentication() {
+    const password = this.byId("projectLogsSshAuth").value === "PASSWORD";
+    this.byId("projectLogsSshKeyField").classList.toggle("hidden", password);
+    this.byId("projectLogsSshPasswordField").classList.toggle("hidden", !password);
+    this.byId("projectLogsSshKey").required = !password;
+    this.byId("projectLogsSshPassword").required = password;
   }
   renderSources() {
     const list = this.byId("projectLogsSources");

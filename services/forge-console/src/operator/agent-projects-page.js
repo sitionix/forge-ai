@@ -253,7 +253,11 @@ export class AgentProjectsPage {
     this.byId('projectLogsCrumbs').textContent = `Projects / ${projectName} / Logs`;
     this.byId('projectLogsBack').onclick = () => this.returnToProject();
     if (options.pushState !== false) {
-      this.window.history.pushState({ projectId, view: 'logs' }, '', `/projects/${encodeURIComponent(projectId)}/logs`);
+      this.window.history.pushState(
+        { projectId, view: 'logs' },
+        '',
+        this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/logs`)
+      );
     }
     this.logsView = new ProjectLogsView({ document: this.document, window: this.window, api: this.api });
     this.logsView.bind();
@@ -265,7 +269,7 @@ export class AgentProjectsPage {
     this.disposeLogsWorkspace();
     this.byId('projectLogsWorkspace').classList.add('hidden');
     if (options.pushState !== false) {
-      this.window.history.pushState({ projectId, view: 'project' }, '', '/operator/agent-projects.html');
+      this.window.history.pushState({ projectId, view: 'project' }, '', this.pageUrl());
     }
     if (projectId) {
       await this.openProject(projectId);
@@ -275,7 +279,7 @@ export class AgentProjectsPage {
   }
 
   async syncRoute() {
-    const match = this.window.location.pathname.match(/^\/projects\/([^/]+)\/logs\/?$/);
+    const match = this.window.location.hash.match(/^#\/projects\/([^/]+)\/logs\/?$/);
     if (match) {
       const projectId = decodeURIComponent(match[1]);
       if (this.state.view !== 'logs' || this.state.selectedProjectId !== projectId) {
@@ -286,6 +290,10 @@ export class AgentProjectsPage {
     if (this.state.view === 'logs') {
       await this.returnToProject({ pushState: false });
     }
+  }
+
+  pageUrl(hash = '') {
+    return `${this.window.location.pathname}${this.window.location.search}${hash}`;
   }
 
   disposeLogsWorkspace() {

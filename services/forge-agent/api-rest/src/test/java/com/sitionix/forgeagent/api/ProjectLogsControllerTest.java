@@ -18,6 +18,7 @@ import com.sitionix.forgeagent.domain.model.LogConnectionType;
 import com.sitionix.forgeagent.domain.model.LogProviderType;
 import com.sitionix.forgeagent.domain.model.LogSource;
 import com.sitionix.forgeagent.domain.model.SshConnection;
+import com.sitionix.forgeagent.domain.model.SshAuthType;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -118,6 +119,51 @@ class ProjectLogsControllerTest {
     assertThat(this.controller.sshList(projectId)).hasSize(1);
     assertThat(this.controller.sshCreate(projectId, request).id()).isEqualTo(sshId);
     assertThat(this.controller.stream(projectId, List.of(sourceId), 100)).isSameAs(emitter);
+  }
+
+  @Test
+  void createsAndListsPasswordProfilesWithoutResponseSecrets() {
+    final UUID projectId = UUID.randomUUID();
+    final UUID sshId = UUID.randomUUID();
+    final SshConnection connection =
+        new SshConnection(
+            sshId,
+            projectId,
+            "Ancestor",
+            "192.168.0.108",
+            22,
+            "ancestor",
+            SshAuthType.PASSWORD,
+            null,
+            null,
+            Instant.EPOCH,
+            Instant.EPOCH);
+    final SshConnectionRequest request =
+        new SshConnectionRequest(
+            "Ancestor",
+            "192.168.0.108",
+            22,
+            "ancestor",
+            SshAuthType.PASSWORD,
+            null,
+            "secret;$(data)");
+    final SaveSshConnectionCommand command =
+        new SaveSshConnectionCommand(
+            "Ancestor",
+            "192.168.0.108",
+            22,
+            "ancestor",
+            SshAuthType.PASSWORD,
+            null,
+            "secret;$(data)");
+    when(this.ssh.list(projectId)).thenReturn(List.of(connection));
+    when(this.ssh.create(projectId, command)).thenReturn(connection);
+
+    assertThat(this.controller.sshCreate(projectId, request).authType())
+        .isEqualTo(SshAuthType.PASSWORD);
+    assertThat(this.controller.sshList(projectId).getFirst().authType())
+        .isEqualTo(SshAuthType.PASSWORD);
+    verify(this.ssh).create(projectId, command);
   }
 
   private static LogSource source(final UUID projectId, final UUID sourceId) {
