@@ -76,7 +76,7 @@ class CodexAgentExecutorTest {
         assertThat(schema.path("properties").path("payload").path("$ref").asText())
                 .isEqualTo("#/$defs/__forge_payload");
         final JsonNode payloadSchema = schema.path("$defs").path("__forge_payload");
-        assertThat(payloadSchema.path("$id").asText()).isEqualTo("urn:forge:agent-output-payload:" + NODE_RUN_ID);
+        assertThat(schema.findValues("$id")).isEmpty();
         assertThat(payloadSchema.path("additionalProperties").asBoolean()).isFalse();
         assertThat(payloadSchema.path("properties").path("summary").path("type").asText()).isEqualTo("string");
         assertThat(schema.path("properties").path("__forge").path("properties").path("outputPortId").path("enum"))
@@ -98,6 +98,7 @@ class CodexAgentExecutorTest {
         final AgentOutputSchema schemaWithDefinitions = AgentOutputSchema.ofCanonicalJsonObject("""
                 {"type":"object","properties":{"steps":{"type":"array","items":{"$ref":"#/$defs/step"}}},"required":["steps"],"additionalProperties":false,"$defs":{"step":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}}}
                 """);
+        final String originalJson = schemaWithDefinitions.jsonObject();
         final JsonNode originalSchema = this.objectMapper.readTree(schemaWithDefinitions.jsonObject());
         this.client.outputText = """
                 {"payload":{"steps":[{"name":"compile"}]},"__forge":{"outputPortId":"%s"}}
@@ -109,11 +110,11 @@ class CodexAgentExecutorTest {
         final JsonNode payloadResource = effective.path("$defs").path("__forge_payload");
         assertThat(effective.path("properties").path("payload").path("$ref").asText())
                 .isEqualTo("#/$defs/__forge_payload");
-        assertThat(payloadResource.path("$id").asText()).isEqualTo("urn:forge:agent-output-payload:" + NODE_RUN_ID);
         assertThat(payloadResource.path("properties").path("steps").path("items").path("$ref").asText())
-                .isEqualTo("#/$defs/step");
+                .isEqualTo("#/$defs/__forge_payload/$defs/step");
         assertThat(payloadResource.path("$defs").path("step").path("properties").path("name").path("type").asText())
                 .isEqualTo("string");
+        assertThat(schemaWithDefinitions.jsonObject()).isEqualTo(originalJson);
         assertThat(this.objectMapper.readTree(schemaWithDefinitions.jsonObject())).isEqualTo(originalSchema);
         assertThat(result.output().jsonValue()).isEqualTo("{\"steps\":[{\"name\":\"compile\"}]}");
         assertThat(result.selectedOutputPortId()).isEqualTo(OUTPUT_A_ID);
@@ -133,9 +134,8 @@ class CodexAgentExecutorTest {
 
         final JsonNode effective = this.client.request.outputSchema();
         final JsonNode payloadResource = effective.path("$defs").path("__forge_payload");
-        assertThat(payloadResource.path("$id").asText()).isEqualTo("urn:forge:agent-output-payload:" + NODE_RUN_ID);
         assertThat(payloadResource.path("properties").path("child").path("anyOf").get(0).path("$ref").asText())
-                .isEqualTo("#");
+                .isEqualTo("#/$defs/__forge_payload");
         assertThat(payloadResource.path("properties").has("__forge")).isFalse();
         assertThat(this.client.executeCount).isEqualTo(1);
     }
@@ -154,9 +154,47 @@ class CodexAgentExecutorTest {
         final JsonNode effective = this.client.request.outputSchema();
         final JsonNode payloadResource = effective.path("$defs").path("__forge_payload");
         assertThat(payloadResource.path("properties").path("value").path("$ref").asText())
-                .isEqualTo("#/$defs/__forge_payload");
+                .isEqualTo("#/$defs/__forge_payload/$defs/__forge_payload");
         assertThat(payloadResource.path("$defs").path("__forge_payload").path("type").asText()).isEqualTo("string");
         assertThat(effective.path("$defs").size()).isEqualTo(1);
+    }
+
+    @Test
+    void multiOutputRewritesNestedLocalReferencesButLeavesExternalReferencesAndOtherStringsUnchanged() {
+        final AgentOutputSchema referencedSchema = AgentOutputSchema.ofCanonicalJsonObject("""
+                {"type":"object","description":"text containing #/$defs/inner","properties":{"nested":{"type":"object","properties":{"local":{"$ref":"#/$defs/inner"},"external":{"$ref":"https://schemas.example.test/common.json#/$defs/value"},"anchor":{"$ref":"#named"}}}},"$defs":{"inner":{"type":"string"}}}
+                """);
+        this.client.outputText = """
+                {"payload":{"nested":{"local":"x","external":"y"}},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_A_ID);
+
+        this.executor.execute(this.multiOutputClaim(referencedSchema));
+
+        final JsonNode payloadResource = this.client.request.outputSchema().path("$defs").path("__forge_payload");
+        final JsonNode nested = payloadResource.path("properties").path("nested").path("properties");
+        assertThat(nested.path("local").path("$ref").asText())
+                .isEqualTo("#/$defs/__forge_payload/$defs/inner");
+        assertThat(nested.path("external").path("$ref").asText())
+                .isEqualTo("https://schemas.example.test/common.json#/$defs/value");
+        assertThat(nested.path("anchor").path("$ref").asText()).isEqualTo("#named");
+        assertThat(payloadResource.path("description").asText()).isEqualTo("text containing #/$defs/inner");
+    }
+
+    @Test
+    void multiOutputPreservesUserSuppliedIdWithoutInjectingAnotherOne() {
+        final AgentOutputSchema schemaWithId = AgentOutputSchema.ofCanonicalJsonObject("""
+                {"$id":"https://schemas.example.test/business.json","type":"object","properties":{"value":{"$ref":"#/$defs/value"}},"$defs":{"value":{"type":"string"}}}
+                """);
+        this.client.outputText = """
+                {"payload":{"value":"x"},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_A_ID);
+
+        this.executor.execute(this.multiOutputClaim(schemaWithId));
+
+        assertThat(this.client.request.outputSchema().findValuesAsText("$id"))
+                .containsExactly("https://schemas.example.test/business.json");
+        assertThat(this.client.request.outputSchema().path("$defs").path("__forge_payload")
+                .path("properties").path("value").path("$ref").asText()).isEqualTo("#/$defs/value");
     }
 
     @Test

@@ -24,7 +24,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
 
     private static final String PROVIDER_ID = "codex";
     private static final String PAYLOAD_SCHEMA_DEFINITION = "__forge_payload";
-    private static final String PAYLOAD_SCHEMA_ID_PREFIX = "urn:forge:agent-output-payload:";
+    private static final String PAYLOAD_SCHEMA_POINTER = "#/$defs/" + PAYLOAD_SCHEMA_DEFINITION;
 
     private final ObjectMapper objectMapper;
     private final CodexClient client;
@@ -37,7 +37,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
         final JsonNode userOutputSchema = this.parseOutputSchema(claim);
         final boolean selectionRequired = claim.availableOutputs().size() > 1;
         final JsonNode effectiveOutputSchema = selectionRequired
-                ? this.effectiveOutputSchema(userOutputSchema, claim.availableOutputs(), claim.nodeRunId())
+                ? this.effectiveOutputSchema(userOutputSchema, claim.availableOutputs())
                 : userOutputSchema;
         final String outputText = this.client.execute(new CodexTurnRequest(
                 this.userInput(claim),
@@ -116,19 +116,16 @@ public final class CodexAgentExecutor implements AgentExecutor {
     }
 
     private ObjectNode effectiveOutputSchema(final JsonNode userOutputSchema,
-                                             final java.util.List<RunPort> outputs,
-                                             final UUID nodeRunId) {
+                                             final java.util.List<RunPort> outputs) {
         final ObjectNode schema = this.objectMapper.createObjectNode();
         schema.put("type", "object");
         schema.put("additionalProperties", false);
         final ObjectNode definitions = schema.putObject("$defs");
         final ObjectNode payloadSchema = userOutputSchema.deepCopy();
-        if (!payloadSchema.has("$id")) {
-            payloadSchema.put("$id", PAYLOAD_SCHEMA_ID_PREFIX + nodeRunId);
-        }
+        this.rewriteLocalReferences(payloadSchema, true);
         definitions.set(PAYLOAD_SCHEMA_DEFINITION, payloadSchema);
         final ObjectNode properties = schema.putObject("properties");
-        properties.putObject("payload").put("$ref", "#/$defs/" + PAYLOAD_SCHEMA_DEFINITION);
+        properties.putObject("payload").put("$ref", PAYLOAD_SCHEMA_POINTER);
         final ObjectNode forgeSchema = properties.putObject("__forge");
         forgeSchema.put("type", "object");
         forgeSchema.put("additionalProperties", false);
@@ -140,6 +137,25 @@ public final class CodexAgentExecutor implements AgentExecutor {
         forgeSchema.set("required", this.objectMapper.createArrayNode().add("outputPortId"));
         schema.set("required", this.objectMapper.createArrayNode().add("payload").add("__forge"));
         return schema;
+    }
+
+    private void rewriteLocalReferences(final JsonNode node, final boolean inheritedForgeRoot) {
+        if (node.isObject()) {
+            final ObjectNode object = (ObjectNode) node;
+            final boolean usesForgeRoot = inheritedForgeRoot && !object.has("$id");
+            final JsonNode reference = object.get("$ref");
+            if (usesForgeRoot && reference != null && reference.isTextual()) {
+                final String value = reference.textValue();
+                if ("#".equals(value)) {
+                    object.put("$ref", PAYLOAD_SCHEMA_POINTER);
+                } else if (value.startsWith("#/")) {
+                    object.put("$ref", PAYLOAD_SCHEMA_POINTER + value.substring(1));
+                }
+            }
+            object.fields().forEachRemaining(entry -> this.rewriteLocalReferences(entry.getValue(), usesForgeRoot));
+        } else if (node.isArray()) {
+            node.forEach(child -> this.rewriteLocalReferences(child, inheritedForgeRoot));
+        }
     }
 
     private AgentExecutionResult parseExecutionResult(final String outputText,
