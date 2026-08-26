@@ -90,6 +90,31 @@ class CodexAgentExecutorTest {
     }
 
     @Test
+    void multiOutputFirstTurnExplainsGenericRoutingContractWithoutDomainSemantics() {
+        this.client.outputText = """
+                {"payload":{"summary":"Done","riskLevel":"LOW"},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_A_ID);
+
+        this.executor.execute(this.multiOutputClaim());
+
+        assertThat(this.client.request.developerInstructions()).contains(
+                "`availableOutputs`, when present, contains the output choices for this invocation.",
+                "`name` and `description` define its business meaning",
+                "choose exactly one according to the actual business result",
+                "`__forge.outputPortId`",
+                "`payload` contains only the configured business output",
+                "`__forge` is workflow control metadata, not business data"
+        ).doesNotContain(
+                "Reviewer",
+                "review approval",
+                "skill",
+                "Pass when",
+                "Return when"
+        );
+        assertThat(this.client.executeCount).isEqualTo(1);
+    }
+
+    @Test
     void multiOutputMissingSelectionFailsClosedAfterExactlyOneTurn() {
         this.client.outputText = "{\"payload\":{\"summary\":\"Done\",\"riskLevel\":\"LOW\"},\"__forge\":{}}";
 

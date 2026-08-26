@@ -4,7 +4,6 @@ import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
-import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
@@ -161,10 +160,6 @@ public class NodeRunLifecycle {
             return;
         }
         this.completionProcessor.process(nodeRunId);
-    }
-
-    public void succeed(final UUID nodeRunId, final NodeRunOutput output) {
-        this.succeed(nodeRunId, new AgentExecutionResult(output, null));
     }
 
     @Transactional

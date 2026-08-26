@@ -3,7 +3,6 @@ package com.sitionix.forgeagent.application.runtime;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
-import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
@@ -51,10 +50,6 @@ public class NodeRunCompletionPersistence {
         }
         this.nodeRunRepository.saveAndFlush(this.withSucceeded(nodeRun, result, Instant.now(this.clock)));
         return true;
-    }
-
-    public boolean markBusinessSucceeded(final UUID nodeRunId, final NodeRunOutput output) {
-        return this.markBusinessSucceeded(nodeRunId, new AgentExecutionResult(output, null));
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

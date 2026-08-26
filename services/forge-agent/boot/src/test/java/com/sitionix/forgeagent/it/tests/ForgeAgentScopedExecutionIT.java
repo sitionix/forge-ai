@@ -48,6 +48,7 @@ import com.sitionix.forgeagent.domain.port.ExecutionFrameRepository;
 import com.sitionix.forgeagent.domain.port.InputActivationResolutionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
+import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.InputActivationResolutionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ExecutionFrameEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
@@ -127,6 +128,8 @@ class ForgeAgentScopedExecutionIT {
     @Autowired
     private WorkflowRunRepository workflowRunRepository;
     @Autowired
+    private WorkflowRunGraphRepository graphRepository;
+    @Autowired
     private ConnectionResolutionRepository resolutionRepository;
     @Autowired
     private ExecutionFrameRepository frameRepository;
@@ -204,7 +207,7 @@ class ForgeAgentScopedExecutionIT {
         assertThat(claim.inputEnvelope().contributions()).hasSize(repositoryCount)
                 .extracting(NodeInputContribution::sourceRepositoryId)
                 .containsExactlyInAnyOrderElementsOf(repositories);
-        this.lifecycle.succeed(global.id(), new NodeRunOutput("{\"stage\":\"c\"}"));
+        this.lifecycle.succeed(global.id(), this.result(global, "{\"stage\":\"c\"}"));
 
         assertThat(this.nodeRuns(runId, A)).hasSize(1);
         assertThat(this.nodeRuns(runId, B)).hasSize(repositoryCount);
@@ -237,14 +240,14 @@ class ForgeAgentScopedExecutionIT {
                     .satisfies(contribution -> assertThat(contribution.sourceRepositoryId()).isEqualTo(c.repositoryId()));
             assertThat(this.resolutionRepository.findConsumedByNodeRunId(c.id())).singleElement()
                     .satisfies(resolution -> assertThat(resolution.targetRepositoryId()).isEqualTo(c.repositoryId()));
-            this.lifecycle.succeed(c.id(), new NodeRunOutput("{\"stage\":\"c\"}"));
+            this.lifecycle.succeed(c.id(), this.result(c, "{\"stage\":\"c\"}"));
         }
         final NodeRun d = this.onlyPending(runId, D);
         final NodeExecutionClaim dClaim = this.lifecycle.tryStart(d.id()).orElseThrow();
         assertThat(dClaim.inputEnvelope().contributions()).hasSize(repositoryCount)
                 .extracting(NodeInputContribution::sourceRepositoryId)
                 .containsExactlyInAnyOrderElementsOf(repositories);
-        this.lifecycle.succeed(d.id(), new NodeRunOutput("{\"stage\":\"d\"}"));
+        this.lifecycle.succeed(d.id(), this.result(d, "{\"stage\":\"d\"}"));
 
         assertThat(this.nodeRunRepository.findByWorkflowRunId(runId)).hasSize(2 * repositoryCount + 2);
         this.terminal(runId, WorkflowRunStatus.SUCCEEDED);
@@ -269,11 +272,11 @@ class ForgeAgentScopedExecutionIT {
             final NodeExecutionClaim claim = this.lifecycle.tryStart(b.id()).orElseThrow();
             assertThat(claim.inputEnvelope().contributions()).singleElement()
                     .satisfies(contribution -> assertThat(contribution.sourceRepositoryId()).isEqualTo(b.repositoryId()));
-            this.lifecycle.succeed(b.id(), new NodeRunOutput("{\"stage\":\"b\"}"));
+            this.lifecycle.succeed(b.id(), this.result(b, "{\"stage\":\"b\"}"));
         }
         final NodeRun c = this.onlyPending(runId, C);
         assertThat(this.lifecycle.tryStart(c.id()).orElseThrow().inputEnvelope().contributions()).hasSize(2);
-        this.lifecycle.succeed(c.id(), new NodeRunOutput("{\"stage\":\"c\"}"));
+        this.lifecycle.succeed(c.id(), this.result(c, "{\"stage\":\"c\"}"));
         this.terminal(runId, WorkflowRunStatus.SUCCEEDED);
         this.assertTerminalQuiescence(runId);
     }
@@ -329,7 +332,7 @@ class ForgeAgentScopedExecutionIT {
         });
         assertThat(this.lifecycle.tryStart(c.id()).orElseThrow().inputEnvelope().contributions()).singleElement()
                 .satisfies(contribution -> assertThat(contribution.sourceRepositoryId()).isEqualTo(deliveredRepository));
-        this.lifecycle.succeed(c.id(), new NodeRunOutput("{\"stage\":\"c\"}"));
+        this.lifecycle.succeed(c.id(), this.result(c, "{\"stage\":\"c\"}"));
         this.terminal(runId, WorkflowRunStatus.SUCCEEDED);
     }
 
@@ -403,7 +406,7 @@ class ForgeAgentScopedExecutionIT {
         final NodeExecutionClaim reviewerOneClaim = this.lifecycle.tryStart(reviewerOne.id()).orElseThrow();
         assertThat(reviewerOneClaim.inputEnvelope().contributions()).isEmpty();
         assertThat(reviewerOne.repositoryId()).isEqualTo(REPOSITORY_A);
-        this.lifecycle.succeed(reviewerOne.id(), new NodeRunOutput("{\"reviewer\":\"one-repeat\"}"));
+        this.lifecycle.succeed(reviewerOne.id(), this.result(reviewerOne, "{\"reviewer\":\"one-repeat\"}"));
 
         assertThat(this.nodeRuns(runId, REVIEWER)).extracting(NodeRun::id).containsExactly(reviewerOne.id());
         final InputParticipation waitingForImplementer = this.participationResolver.resolve(
@@ -433,7 +436,7 @@ class ForgeAgentScopedExecutionIT {
         assertThat(generationOne).hasSize(2)
                 .extracting(ConnectionResolution::sourceNodeRunId)
                 .containsExactlyInAnyOrder(reviewerOne.id(), implementerOne.id());
-        this.lifecycle.succeed(reviewerTwo.id(), new NodeRunOutput("{\"reviewer\":\"two-repeat\"}"));
+        this.lifecycle.succeed(reviewerTwo.id(), this.result(reviewerTwo, "{\"reviewer\":\"two-repeat\"}"));
 
         assertThat(this.nodeRuns(runId, REVIEWER)).hasSize(2);
         final NodeRun implementerTwo = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_A);
@@ -452,7 +455,7 @@ class ForgeAgentScopedExecutionIT {
                 .allSatisfy(resolution -> assertThat(resolution.executionFrameId()).isEqualTo(reviewerTwo.executionFrameId()));
         assertThat(generationOne).noneMatch(resolution -> reviewerThree.id().equals(resolution.consumedByNodeRunId()));
 
-        this.lifecycle.succeed(reviewerThree.id(), new NodeRunOutput("{\"reviewer\":\"exit\"}"));
+        this.lifecycle.succeed(reviewerThree.id(), this.result(reviewerThree, "{\"reviewer\":\"exit\"}"));
         final WorkflowRun finished = this.terminal(runId, WorkflowRunStatus.SUCCEEDED);
         assertThat(finished.resultSourceNodeRunId()).isEqualTo(reviewerThree.id());
         this.assertTerminalQuiescence(runId);
@@ -565,7 +568,7 @@ class ForgeAgentScopedExecutionIT {
         final NodeRun sibling = this.start(this.onlyPending(runId, B, repositories.get(1 - failingRepositoryIndex)));
 
         this.lifecycle.fail(failed.id(), new NodeRunFailure("DETERMINISTIC_FAILURE", "Scoped failure."));
-        this.lifecycle.succeed(sibling.id(), new NodeRunOutput("{\"late\":true}"));
+        this.lifecycle.succeed(sibling.id(), this.result(sibling, "{\"late\":true}"));
         this.lifecycle.fail(sibling.id(), new NodeRunFailure("LATE_FAILURE", "Late failure."));
 
         final WorkflowRun finished = this.terminal(runId, WorkflowRunStatus.FAILED);
@@ -630,8 +633,8 @@ class ForgeAgentScopedExecutionIT {
         final NodeRun first = this.start(this.onlyPending(runId, B, REPOSITORY_A));
         final NodeRun second = this.start(this.onlyPending(runId, B, REPOSITORY_B));
         try (var executor = Executors.newFixedThreadPool(2)) {
-            final var one = executor.submit(() -> this.lifecycle.succeed(first.id(), new NodeRunOutput("{\"repository\":\"a\"}")));
-            final var two = executor.submit(() -> this.lifecycle.succeed(second.id(), new NodeRunOutput("{\"repository\":\"b\"}")));
+            final var one = executor.submit(() -> this.lifecycle.succeed(first.id(), this.result(first, "{\"repository\":\"a\"}")));
+            final var two = executor.submit(() -> this.lifecycle.succeed(second.id(), this.result(second, "{\"repository\":\"b\"}")));
             one.get();
             two.get();
         }
@@ -891,6 +894,16 @@ class ForgeAgentScopedExecutionIT {
                 ? this.outputSelector.selectOutput(businessOutput, claim.availableOutputs(), claim.executionModel())
                 : null;
         this.lifecycle.succeed(claim.nodeRunId(), new AgentExecutionResult(businessOutput, selected));
+    }
+
+    private AgentExecutionResult result(final NodeRun nodeRun, final String output) {
+        final NodeRunOutput businessOutput = new NodeRunOutput(output);
+        final List<com.sitionix.forgeagent.domain.model.RunPort> outputs = this.graphRepository.findOutputPortsByNode(
+                nodeRun.workflowRunId(), nodeRun.sourceNodeId());
+        final UUID selected = outputs.size() > 1
+                ? this.outputSelector.selectOutput(businessOutput, outputs, nodeRun.executionModel())
+                : null;
+        return new AgentExecutionResult(businessOutput, selected);
     }
 
     private void completeWithWorkspaceAssertion(final NodeRun nodeRun, final String output) {

@@ -50,6 +50,7 @@ import com.sitionix.forgeagent.domain.port.ExecutionFrameRepository;
 import com.sitionix.forgeagent.domain.port.InputActivationResolutionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
+import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
 import com.sitionix.forgeit.core.test.IntegrationTest;
@@ -131,6 +132,8 @@ class ForgeAgentPortAwareExecutionIT {
     private NodeRunRepository nodeRunRepository;
     @Autowired
     private WorkflowRunRepository workflowRunRepository;
+    @Autowired
+    private WorkflowRunGraphRepository graphRepository;
     @Autowired
     private ConnectionResolutionRepository resolutionRepository;
     @Autowired
@@ -242,8 +245,8 @@ class ForgeAgentPortAwareExecutionIT {
         final NodeRun code = this.start(this.onlyPending(run.id(), CODE));
 
         try (var executor = Executors.newFixedThreadPool(2)) {
-            final var first = executor.submit(() -> this.lifecycle.succeed(strategy.id(), new NodeRunOutput("{\"strategy\":\"return\"}")));
-            final var second = executor.submit(() -> this.lifecycle.succeed(code.id(), new NodeRunOutput("{\"code\":\"return\"}")));
+            final var first = executor.submit(() -> this.lifecycle.succeed(strategy.id(), this.result(strategy, "{\"strategy\":\"return\"}")));
+            final var second = executor.submit(() -> this.lifecycle.succeed(code.id(), this.result(code, "{\"code\":\"return\"}")));
             first.get();
             second.get();
         }
@@ -372,7 +375,7 @@ class ForgeAgentPortAwareExecutionIT {
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Build feature."));
         final NodeRun runningA = this.start(this.onlyPending(run.id(), A));
-        this.completionPersistence.markBusinessSucceeded(runningA.id(), new NodeRunOutput("{\"step\":\"A\"}"));
+        this.completionPersistence.markBusinessSucceeded(runningA.id(), this.result(runningA, "{\"step\":\"A\"}"));
         this.entityManager.clear();
 
         assertThat(this.nodeRunRepository.findById(runningA.id()).orElseThrow()).satisfies(nodeRun -> {
@@ -404,7 +407,7 @@ class ForgeAgentPortAwareExecutionIT {
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Implement feature."));
         this.complete(this.onlyPending(run.id(), IMPLEMENTER), "{\"patch\":\"v1\"}");
         final NodeRun strategy = this.start(this.onlyPending(run.id(), STRATEGY));
-        this.completionPersistence.markBusinessSucceeded(strategy.id(), new NodeRunOutput("{\"strategy\":\"pass\"}"));
+        this.completionPersistence.markBusinessSucceeded(strategy.id(), this.result(strategy, "{\"strategy\":\"pass\"}"));
 
         this.completionProcessor.process(strategy.id());
 
@@ -451,7 +454,7 @@ class ForgeAgentPortAwareExecutionIT {
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Terminal."));
         final NodeRun runningA = this.start(this.onlyPending(run.id(), A));
-        this.completionPersistence.markBusinessSucceeded(runningA.id(), new NodeRunOutput("{\"done\":true}"));
+        this.completionPersistence.markBusinessSucceeded(runningA.id(), this.result(runningA, "{\"done\":true}"));
         this.coordinator.reconcile(this.workflowRunRepository.findById(run.id()).orElseThrow());
 
         assertThat(this.nodeRunRepository.findById(runningA.id()).orElseThrow().routingCompletedAt()).isNull();
@@ -713,6 +716,16 @@ class ForgeAgentPortAwareExecutionIT {
                 ? this.outputSelector.selectOutput(businessOutput, claim.availableOutputs(), claim.executionModel())
                 : null;
         this.lifecycle.succeed(claim.nodeRunId(), new AgentExecutionResult(businessOutput, selected));
+    }
+
+    private AgentExecutionResult result(final NodeRun nodeRun, final String output) {
+        final NodeRunOutput businessOutput = new NodeRunOutput(output);
+        final List<com.sitionix.forgeagent.domain.model.RunPort> outputs = this.graphRepository.findOutputPortsByNode(
+                nodeRun.workflowRunId(), nodeRun.sourceNodeId());
+        final UUID selected = outputs.size() > 1
+                ? this.outputSelector.selectOutput(businessOutput, outputs, nodeRun.executionModel())
+                : null;
+        return new AgentExecutionResult(businessOutput, selected);
     }
 
     private interface OutputSelector {
