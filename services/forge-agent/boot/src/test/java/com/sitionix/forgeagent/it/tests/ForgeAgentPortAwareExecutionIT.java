@@ -13,12 +13,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
-import com.sitionix.forgeagent.application.runtime.AiOutputRouter;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionPersistence;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionProcessor;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionWorker;
 import com.sitionix.forgeagent.application.runtime.NodeRunLifecycle;
+import com.sitionix.forgeagent.application.runtime.SelectedOutputRoutingPolicy;
 import com.sitionix.forgeagent.application.runtime.WorkflowExecutionCoordinator;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
 import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
@@ -140,7 +141,7 @@ class ForgeAgentPortAwareExecutionIT {
     private EntityManager entityManager;
 
     @MockBean
-    private AiOutputRouter aiOutputRouter;
+    private OutputSelector outputSelector;
 
     @AfterEach
     void removeRepositoryWorkspaceFixture() throws IOException {
@@ -206,7 +207,7 @@ class ForgeAgentPortAwareExecutionIT {
     void passAndReturnCreatesOneReentryWithOnlyReturnedFeedback() {
         this.seed();
         this.saveReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_RETURN);
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_RETURN);
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Implement feature."));
         final NodeRun implementerOne = this.onlyPending(run.id(), IMPLEMENTER);
@@ -229,7 +230,7 @@ class ForgeAgentPortAwareExecutionIT {
     void concurrentReturnAndReturnCreatesOneReentryAndOneChildFrame() throws Exception {
         this.seed();
         this.saveReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation -> invocation.<List<com.sitionix.forgeagent.domain.model.RunPort>>getArgument(1).stream()
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenAnswer(invocation -> invocation.<List<com.sitionix.forgeagent.domain.model.RunPort>>getArgument(1).stream()
                 .filter(port -> port.name().equals("Return"))
                 .findFirst()
                 .orElseThrow()
@@ -257,7 +258,7 @@ class ForgeAgentPortAwareExecutionIT {
     void passAndPassClosesReviewWithoutReentry() {
         this.seed();
         this.saveReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_PASS);
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_PASS);
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Implement feature."));
         this.complete(this.onlyPending(run.id(), IMPLEMENTER), "{\"patch\":\"v1\"}");
@@ -291,7 +292,7 @@ class ForgeAgentPortAwareExecutionIT {
     void closingDeepBranchReevaluatesFanInAndConsumesDeliveredBranchOnly() {
         this.seed();
         this.saveDeepWorkflow(true);
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(C_OTHER);
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(C_OTHER);
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Fan in."));
         this.complete(this.onlyPending(run.id(), A), "{\"step\":\"A\"}");
@@ -309,7 +310,7 @@ class ForgeAgentPortAwareExecutionIT {
     void secondRoundReentryUsesNewFrameWithoutCrossFrameContributionMixing() {
         this.seed();
         this.saveReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation -> {
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenAnswer(invocation -> {
             final NodeRunOutput output = invocation.getArgument(0);
             final String targetName = output.jsonValue().contains("pass") ? "Pass" : "Return";
             return this.outputNamed(invocation.getArgument(1), targetName);
@@ -346,7 +347,7 @@ class ForgeAgentPortAwareExecutionIT {
     void invalidAiRoutingResultFailsNodeRunAndWorkflowWithoutLeavingRunningRows() {
         this.seed();
         this.saveReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(UUID.fromString("aaaaaaaa-0000-4000-8000-000000000000"));
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(UUID.fromString("aaaaaaaa-0000-4000-8000-000000000000"));
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Implement feature."));
         this.complete(this.onlyPending(run.id(), IMPLEMENTER), "{\"patch\":\"v1\"}");
@@ -358,7 +359,7 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.nodeRunRepository.findById(strategy.id()).orElseThrow()).satisfies(nodeRun -> {
             assertThat(nodeRun.status()).isEqualTo(NodeRunStatus.FAILED);
             assertThat(nodeRun.failure()).isNotNull();
-            assertThat(nodeRun.failure().code()).isEqualTo("AI_OUTPUT_ROUTING_INVALID_PORT");
+            assertThat(nodeRun.failure().code()).isEqualTo(SelectedOutputRoutingPolicy.INVALID_SELECTED_OUTPUT_PORT);
         });
         assertThat(this.nodeRunRepository.findByWorkflowRunId(run.id())).noneMatch(nodeRun -> nodeRun.status() == NodeRunStatus.RUNNING);
         assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.FAILED);
@@ -391,11 +392,11 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     @Test
-    void aiRoutingRunsOutsideDatabaseTransactionThroughCompletionProcessor() {
+    void deterministicRoutingRunsOutsideDatabaseTransactionThroughCompletionProcessor() {
         this.seed();
         this.saveReviewerWorkflow();
         final AtomicBoolean observedNoTransaction = new AtomicBoolean(false);
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation -> {
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenAnswer(invocation -> {
             observedNoTransaction.set(!TransactionSynchronizationManager.isActualTransactionActive());
             return STRATEGY_PASS;
         });
@@ -415,11 +416,12 @@ class ForgeAgentPortAwareExecutionIT {
     void concurrentCompletionProcessingAppliesRoutingExactlyOnce() throws Exception {
         this.seed();
         this.saveSingleAiReturnWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(A_RETURN);
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(A_RETURN);
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Route once."));
         final NodeRun runningA = this.start(this.onlyPending(run.id(), A));
-        this.completionPersistence.markBusinessSucceeded(runningA.id(), new NodeRunOutput("{\"route\":\"return\"}"));
+        this.completionPersistence.markBusinessSucceeded(runningA.id(),
+                new AgentExecutionResult(new NodeRunOutput("{\"route\":\"return\"}"), A_RETURN));
 
         try (var executor = Executors.newFixedThreadPool(2)) {
             final var first = executor.submit(() -> this.completionProcessor.process(runningA.id()));
@@ -705,8 +707,17 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private void complete(final NodeRun nodeRun, final String output) {
-        final NodeRun running = this.start(nodeRun);
-        this.lifecycle.succeed(running.id(), new NodeRunOutput(output));
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(nodeRun.id()).orElseThrow();
+        final NodeRunOutput businessOutput = new NodeRunOutput(output);
+        final UUID selected = claim.availableOutputs().size() > 1
+                ? this.outputSelector.selectOutput(businessOutput, claim.availableOutputs(), claim.executionModel())
+                : null;
+        this.lifecycle.succeed(claim.nodeRunId(), new AgentExecutionResult(businessOutput, selected));
+    }
+
+    private interface OutputSelector {
+        UUID selectOutput(NodeRunOutput output, List<com.sitionix.forgeagent.domain.model.RunPort> outputs,
+                          com.sitionix.forgeagent.domain.model.NodeRunExecutionModel executionModel);
     }
 
     private NodeRun onlyPending(final UUID workflowRunId, final UUID sourceNodeId) {

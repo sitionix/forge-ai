@@ -23,6 +23,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.ConnectionResolutionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
+import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -67,6 +68,8 @@ class NodeRunLifecycleTest {
     private NodeRunCompletionProcessor completionProcessor;
     @Mock
     private ExecutionWorkspaceResolver executionWorkspaceResolver;
+    @Mock
+    private WorkflowRunGraphRepository graphRepository;
 
     private final Map<UUID, NodeRun> nodeRuns = new LinkedHashMap<>();
     private WorkflowRun workflowRun;
@@ -90,7 +93,8 @@ class NodeRunLifecycleTest {
                         CLOCK
                 ),
                 this.completionProcessor,
-                this.executionWorkspaceResolver
+                this.executionWorkspaceResolver,
+                this.graphRepository
         );
         this.workflowRun = this.workflowRun(WorkflowRunStatus.QUEUED, null, null);
         this.stubRepositories();
@@ -155,10 +159,12 @@ class NodeRunLifecycleTest {
         this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.RUNNING, MODEL));
         final NodeRunOutput output = new NodeRunOutput("{\"ok\":true}");
 
-        this.lifecycle.succeed(NODE_RUN_ID, output);
+        final UUID selectedOutputPortId = UUID.fromString("90000000-0000-4000-8000-000000000001");
+        this.lifecycle.succeed(NODE_RUN_ID, new AgentExecutionResult(output, selectedOutputPortId));
 
         assertThat(this.nodeRuns.get(NODE_RUN_ID).status()).isEqualTo(NodeRunStatus.SUCCEEDED);
         assertThat(this.nodeRuns.get(NODE_RUN_ID).output()).isEqualTo(output);
+        assertThat(this.nodeRuns.get(NODE_RUN_ID).selectedOutputPortId()).isEqualTo(selectedOutputPortId);
         verify(this.completionProcessor).process(NODE_RUN_ID);
     }
 
@@ -166,7 +172,7 @@ class NodeRunLifecycleTest {
     void nonRunningSuccessIsRejected() {
         this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.PENDING, MODEL));
 
-        assertThatThrownBy(() -> this.lifecycle.succeed(NODE_RUN_ID, new NodeRunOutput("{\"ok\":true}")))
+        assertThatThrownBy(() -> this.lifecycle.succeed(NODE_RUN_ID, new AgentExecutionResult(new NodeRunOutput("{\"ok\":true}"), null)))
                 .isInstanceOf(ConflictException.class)
                 .extracting("code")
                 .isEqualTo(NodeRunLifecycle.LIFECYCLE_CONFLICT);
@@ -189,7 +195,7 @@ class NodeRunLifecycleTest {
         this.workflowRun = this.workflowRun(WorkflowRunStatus.FAILED, NOW, NOW);
         this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.CANCELLED, MODEL));
 
-        this.lifecycle.succeed(NODE_RUN_ID, new NodeRunOutput("{\"late\":true}"));
+        this.lifecycle.succeed(NODE_RUN_ID, new AgentExecutionResult(new NodeRunOutput("{\"late\":true}"), null));
 
         assertThat(this.nodeRuns.get(NODE_RUN_ID).status()).isEqualTo(NodeRunStatus.CANCELLED);
         verifyNoInteractions(this.completionProcessor);
@@ -210,7 +216,7 @@ class NodeRunLifecycleTest {
         this.workflowRun = this.workflowRun(WorkflowRunStatus.RUNNING, NOW, null);
         this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.CANCELLED, MODEL));
 
-        assertThatThrownBy(() -> this.lifecycle.succeed(NODE_RUN_ID, new NodeRunOutput("{\"late\":true}")))
+        assertThatThrownBy(() -> this.lifecycle.succeed(NODE_RUN_ID, new AgentExecutionResult(new NodeRunOutput("{\"late\":true}"), null)))
                 .isInstanceOf(ConflictException.class)
                 .extracting("code").isEqualTo(NodeRunLifecycle.LIFECYCLE_CONFLICT);
     }

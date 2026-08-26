@@ -28,9 +28,9 @@ public class NodeRunWorker {
 
     private void submit(final NodeExecutionClaim claim) {
         this.executorService.submit(() -> {
-            final NodeRunOutput output;
+            final AgentExecutionResult result;
             try {
-                output = this.agentExecutor.execute(claim);
+                result = this.agentExecutor.execute(claim);
             } catch (final RuntimeException exception) {
                 log.error(
                         "Agent executor failed nodeRunId={} workflowRunId={} agentId={} agentName={} providerId={} modelId={}",
@@ -45,11 +45,11 @@ public class NodeRunWorker {
                 this.lifecycle.fail(claim.nodeRunId(), new NodeRunFailure(AGENT_EXECUTOR_FAILED, this.failureMessage(exception)));
                 return;
             }
-            if (output == null) {
+            if (result == null || result.output() == null) {
                 this.lifecycle.fail(claim.nodeRunId(), new NodeRunFailure(AGENT_EXECUTOR_INVALID_OUTPUT, "Agent execution returned no output."));
                 return;
             }
-            this.lifecycle.succeed(claim.nodeRunId(), output);
+            this.lifecycle.succeed(claim.nodeRunId(), result);
         });
     }
 

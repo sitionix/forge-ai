@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
-import com.sitionix.forgeagent.application.runtime.AiOutputRouter;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.InputParticipation;
 import com.sitionix.forgeagent.application.runtime.InputParticipationResolver;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
@@ -136,7 +136,7 @@ class ForgeAgentScopedExecutionIT {
     private InputParticipationResolver participationResolver;
 
     @MockBean
-    private AiOutputRouter aiOutputRouter;
+    private OutputSelector outputSelector;
 
     @AfterEach
     void removeRepositoryWorkspaceFixtures() throws IOException {
@@ -304,7 +304,7 @@ class ForgeAgentScopedExecutionIT {
     void perScopeClosedAndDeliveredActivatesGlobalWithDeliveredSubset(final int closedRepositoryIndex) {
         this.seed();
         this.saveScopedRouteWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation ->
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenAnswer(invocation ->
                 invocation.<NodeRunOutput>getArgument(0).jsonValue().contains("close") ? B_OTHER : B_OUT);
         final List<UUID> repositories = this.repositories(2);
         final UUID runId = this.createTask(repositories);
@@ -338,7 +338,7 @@ class ForgeAgentScopedExecutionIT {
     void globalClosedProjectsOneClosedResolutionPerRepositoryWithoutScopedRuns(final int repositoryCount) {
         this.seed();
         this.saveGlobalClosedToScopedWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(A_OTHER);
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(A_OTHER);
         final List<UUID> repositories = this.repositories(repositoryCount);
         final UUID runId = this.createTask(repositories);
         this.complete(this.onlyPending(runId, A), "{\"route\":\"other\"}");
@@ -359,7 +359,7 @@ class ForgeAgentScopedExecutionIT {
     void scopedReentryUsesOneFramePerLogicalGenerationWithoutFrameOrRepositoryMixing() {
         this.seed();
         this.saveScopedReviewerWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation ->
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenAnswer(invocation ->
                 invocation.<NodeRunOutput>getArgument(0).jsonValue().contains("pass") ? REVIEWER_PASS : REVIEWER_RETURN);
         final UUID runId = this.createTask(this.repositories(2));
         final UUID frameA = this.rootFrame(runId);
@@ -394,7 +394,7 @@ class ForgeAgentScopedExecutionIT {
     void guardedSelfLoopWaitsForExternalContributionAndConsumesEachGenerationExactlyOnce() {
         this.seed();
         this.saveGuardedSelfLoopWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation ->
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenAnswer(invocation ->
                 invocation.<NodeRunOutput>getArgument(0).jsonValue().contains("exit") ? REVIEWER_PASS : REVIEWER_RETURN);
         final UUID runId = this.createTask(this.repositories(1));
         final UUID rootFrame = this.rootFrame(runId);
@@ -462,7 +462,7 @@ class ForgeAgentScopedExecutionIT {
     void childFrameActivationReevaluatesWaitingParentFanIn() {
         this.seed();
         this.saveAsymmetricScopedReentryWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenAnswer(invocation ->
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenAnswer(invocation ->
                 invocation.<NodeRunOutput>getArgument(0).jsonValue().contains("direct") ? B_OUT : B_OTHER);
         final UUID runId = this.createTask(this.repositories(2));
         final UUID frameA = this.rootFrame(runId);
@@ -605,7 +605,7 @@ class ForgeAgentScopedExecutionIT {
     void closedCycleStopsAtExistingActivationResolution() {
         this.seed();
         this.saveClosedCycleWorkflow();
-        when(this.aiOutputRouter.selectOutput(any(), any(), any())).thenReturn(A_OUT);
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(A_OUT);
         final UUID runId = this.createTask(List.of(REPOSITORY_A));
         final UUID frame = this.rootFrame(runId);
         this.complete(this.onlyPending(runId, A), "{\"result\":\"done\"}");
@@ -885,8 +885,12 @@ class ForgeAgentScopedExecutionIT {
     }
 
     private void complete(final NodeRun nodeRun, final String output) {
-        final NodeRun running = this.start(nodeRun);
-        this.lifecycle.succeed(running.id(), new NodeRunOutput(output));
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(nodeRun.id()).orElseThrow();
+        final NodeRunOutput businessOutput = new NodeRunOutput(output);
+        final UUID selected = claim.availableOutputs().size() > 1
+                ? this.outputSelector.selectOutput(businessOutput, claim.availableOutputs(), claim.executionModel())
+                : null;
+        this.lifecycle.succeed(claim.nodeRunId(), new AgentExecutionResult(businessOutput, selected));
     }
 
     private void completeWithWorkspaceAssertion(final NodeRun nodeRun, final String output) {
@@ -894,7 +898,16 @@ class ForgeAgentScopedExecutionIT {
         final Path repositoryWorkspace = this.repositoryWorkspace(nodeRun.repositoryId());
         assertThat(claim.executionWorkspace().cwd()).isEqualTo(repositoryWorkspace);
         assertThat(claim.executionWorkspace().workspaceRoots()).containsExactly(repositoryWorkspace);
-        this.lifecycle.succeed(nodeRun.id(), new NodeRunOutput(output));
+        final NodeRunOutput businessOutput = new NodeRunOutput(output);
+        final UUID selected = claim.availableOutputs().size() > 1
+                ? this.outputSelector.selectOutput(businessOutput, claim.availableOutputs(), claim.executionModel())
+                : null;
+        this.lifecycle.succeed(nodeRun.id(), new AgentExecutionResult(businessOutput, selected));
+    }
+
+    private interface OutputSelector {
+        UUID selectOutput(NodeRunOutput output, List<com.sitionix.forgeagent.domain.model.RunPort> outputs,
+                          com.sitionix.forgeagent.domain.model.NodeRunExecutionModel executionModel);
     }
 
     private NodeRun onlyPending(final UUID runId, final UUID sourceNodeId) {

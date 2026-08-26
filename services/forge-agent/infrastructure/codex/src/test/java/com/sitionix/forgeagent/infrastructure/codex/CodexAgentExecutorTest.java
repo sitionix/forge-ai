@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.runtime.ExecutionWorkspace;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputContribution;
@@ -29,6 +30,8 @@ class CodexAgentExecutorTest {
     private static final UUID SOURCE_CONNECTION_ID = UUID.fromString("60000000-0000-4000-8000-000000000001");
     private static final UUID REPOSITORY_A_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
     private static final UUID REPOSITORY_B_ID = UUID.fromString("70000000-0000-4000-8000-000000000002");
+    private static final UUID OUTPUT_A_ID = UUID.fromString("80000000-0000-4000-8000-000000000001");
+    private static final UUID OUTPUT_B_ID = UUID.fromString("80000000-0000-4000-8000-000000000002");
     private static final AgentOutputSchema OUTPUT_SCHEMA = AgentOutputSchema.ofCanonicalJsonObject("""
             {"type":"object","description":"Technical analysis result.","properties":{"summary":{"type":"string","description":"Concise summary."},"riskLevel":{"type":"string","description":"Technical risk level.","enum":["LOW","MEDIUM","HIGH"]}},"required":["summary","riskLevel"],"additionalProperties":false}
             """);
@@ -44,7 +47,7 @@ class CodexAgentExecutorTest {
     void usesClaimModelEffortAndExactParsedOutputSchema() throws Exception {
         this.client.outputText = "{\n  \"summary\": \"Done\",\n  \"riskLevel\": \"MEDIUM\"\n}";
 
-        final NodeRunOutput output = this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", "high"), OUTPUT_SCHEMA));
+        final AgentExecutionResult output = this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", "high"), OUTPUT_SCHEMA));
 
         assertThat(this.client.request.modelId()).isEqualTo("gpt-5.6-luna");
         assertThat(this.client.request.effortId()).isEqualTo("high");
@@ -52,7 +55,60 @@ class CodexAgentExecutorTest {
         assertThat(this.client.request.outputSchema().path("description").asText()).isEqualTo("Technical analysis result.");
         assertThat(this.client.request.outputSchema().path("properties").path("summary").path("description").asText()).isEqualTo("Concise summary.");
         assertThat(this.client.request.executionWorkspace()).isEqualTo(this.workspace());
-        assertThat(output).isEqualTo(new NodeRunOutput("{\"summary\":\"Done\",\"riskLevel\":\"MEDIUM\"}"));
+        assertThat(output).isEqualTo(new AgentExecutionResult(new NodeRunOutput("{\"summary\":\"Done\",\"riskLevel\":\"MEDIUM\"}"), null));
+    }
+
+    @Test
+    void multiOutputUsesOneTurnWithCollisionSafeEffectiveSchemaAndStripsForgeMetadata() throws Exception {
+        this.client.outputText = """
+                {"payload":{"summary":"Done","riskLevel":"LOW"},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_B_ID);
+
+        final AgentExecutionResult result = this.executor.execute(this.multiOutputClaim());
+
+        assertThat(this.client.executeCount).isEqualTo(1);
+        final JsonNode schema = this.client.request.outputSchema();
+        assertThat(schema.path("required")).containsExactly(
+                this.objectMapper.getNodeFactory().textNode("payload"),
+                this.objectMapper.getNodeFactory().textNode("__forge")
+        );
+        assertThat(schema.path("additionalProperties").asBoolean()).isFalse();
+        assertThat(schema.path("properties").path("payload")).isEqualTo(this.objectMapper.readTree(OUTPUT_SCHEMA.jsonObject()));
+        assertThat(schema.path("properties").path("payload").path("additionalProperties").asBoolean()).isFalse();
+        assertThat(schema.path("properties").path("__forge").path("properties").path("outputPortId").path("enum"))
+                .containsExactly(
+                        this.objectMapper.getNodeFactory().textNode(OUTPUT_A_ID.toString()),
+                        this.objectMapper.getNodeFactory().textNode(OUTPUT_B_ID.toString())
+                );
+        final JsonNode input = this.objectMapper.readTree(this.client.request.userInput());
+        assertThat(input.path("availableOutputs")).hasSize(2);
+        assertThat(input.path("availableOutputs").get(0).path("name").asText()).isEqualTo("Pass");
+        assertThat(input.path("availableOutputs").get(1).path("description").asText()).isEqualTo("Return for changes");
+        assertThat(result.output()).isEqualTo(new NodeRunOutput("{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}"));
+        assertThat(result.output().jsonValue()).doesNotContain("__forge", "outputPortId");
+        assertThat(result.selectedOutputPortId()).isEqualTo(OUTPUT_B_ID);
+    }
+
+    @Test
+    void multiOutputMissingSelectionFailsClosedAfterExactlyOneTurn() {
+        this.client.outputText = "{\"payload\":{\"summary\":\"Done\",\"riskLevel\":\"LOW\"},\"__forge\":{}}";
+
+        assertThatThrownBy(() -> this.executor.execute(this.multiOutputClaim()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Codex output did not select an output port.");
+        assertThat(this.client.executeCount).isEqualTo(1);
+    }
+
+    @Test
+    void multiOutputUnknownSelectionFailsClosedAfterExactlyOneTurn() {
+        this.client.outputText = """
+                {"payload":{"summary":"Done","riskLevel":"LOW"},"__forge":{"outputPortId":"99999999-9999-4999-8999-999999999999"}}
+                """;
+
+        assertThatThrownBy(() -> this.executor.execute(this.multiOutputClaim()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Codex output selected an unknown output port.");
+        assertThat(this.client.executeCount).isEqualTo(1);
     }
 
     @Test
@@ -76,6 +132,7 @@ class CodexAgentExecutorTest {
                                 null
                         ))
                 ),
+                List.of(),
                 this.workspace()
         );
 
@@ -139,6 +196,7 @@ class CodexAgentExecutorTest {
                                 null
                         ))
                 ),
+                List.of(),
                 this.workspace()
         );
 
@@ -176,6 +234,7 @@ class CodexAgentExecutorTest {
                                         UUID.randomUUID(), UUID.randomUUID(), new NodeRunOutput("{}"), REPOSITORY_B_ID)
                         )
                 ),
+                List.of(),
                 globalWorkspace
         );
 
@@ -238,7 +297,23 @@ class CodexAgentExecutorTest {
                 outputSchema,
                 executionModel,
                 new NodeInputEnvelope("Review auth changes.", null, List.of()),
+                List.of(),
                 this.workspace()
+        );
+    }
+
+    private NodeExecutionClaim multiOutputClaim() {
+        final NodeExecutionClaim base = this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", "high"), OUTPUT_SCHEMA);
+        return new NodeExecutionClaim(
+                base.workflowRunId(), base.nodeRunId(), base.sourceAgentId(), base.workflowInput(), base.agentName(),
+                base.agentInstructions(), base.outputSchema(), base.executionModel(), base.inputEnvelope(),
+                List.of(
+                        new RunPort(WORKFLOW_RUN_ID, OUTPUT_A_ID, UUID.randomUUID(), PortDirection.OUTPUT,
+                                "Pass", "Continue the workflow", 0),
+                        new RunPort(WORKFLOW_RUN_ID, OUTPUT_B_ID, UUID.randomUUID(), PortDirection.OUTPUT,
+                                "Return", "Return for changes", 1)
+                ),
+                base.executionWorkspace()
         );
     }
 
@@ -249,9 +324,11 @@ class CodexAgentExecutorTest {
     private static final class RecordingCodexClient implements CodexClient {
         private CodexTurnRequest request;
         private String outputText = "{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}";
+        private int executeCount;
 
         @Override
         public String execute(final CodexTurnRequest request) {
+            this.executeCount++;
             this.request = request;
             return this.outputText;
         }

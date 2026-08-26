@@ -29,7 +29,7 @@ public class NodeRunCompletionPersistence {
     private final Clock clock;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public boolean markBusinessSucceeded(final UUID nodeRunId, final NodeRunOutput output) {
+    public boolean markBusinessSucceeded(final UUID nodeRunId, final AgentExecutionResult result) {
         final CompletionTarget target = this.lockCompletionTarget(nodeRunId);
         if (target == null) {
             return false;
@@ -38,7 +38,9 @@ public class NodeRunCompletionPersistence {
         if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
             return false;
         }
-        if (nodeRun.status() == NodeRunStatus.SUCCEEDED && output.equals(nodeRun.output())) {
+        if (nodeRun.status() == NodeRunStatus.SUCCEEDED
+                && result.output().equals(nodeRun.output())
+                && java.util.Objects.equals(result.selectedOutputPortId(), nodeRun.selectedOutputPortId())) {
             return false;
         }
         if (this.isTerminal(nodeRun.status())) {
@@ -47,8 +49,12 @@ public class NodeRunCompletionPersistence {
         if (nodeRun.status() != NodeRunStatus.RUNNING) {
             throw this.conflict("Only RUNNING node runs can succeed.");
         }
-        this.nodeRunRepository.saveAndFlush(this.withSucceeded(nodeRun, output, Instant.now(this.clock)));
+        this.nodeRunRepository.saveAndFlush(this.withSucceeded(nodeRun, result, Instant.now(this.clock)));
         return true;
+    }
+
+    public boolean markBusinessSucceeded(final UUID nodeRunId, final NodeRunOutput output) {
+        return this.markBusinessSucceeded(nodeRunId, new AgentExecutionResult(output, null));
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -99,7 +105,7 @@ public class NodeRunCompletionPersistence {
                 || status == WorkflowRunStatus.CANCELLED;
     }
 
-    private NodeRun withSucceeded(final NodeRun nodeRun, final NodeRunOutput output, final Instant now) {
+    private NodeRun withSucceeded(final NodeRun nodeRun, final AgentExecutionResult result, final Instant now) {
         return new NodeRun(
                 nodeRun.id(),
                 nodeRun.workflowRunId(),
@@ -113,10 +119,10 @@ public class NodeRunCompletionPersistence {
                 nodeRun.executionFrameId(),
                 nodeRun.enteredViaInputPortId(),
                 nodeRun.activationFrameId(),
-                nodeRun.selectedOutputPortId(),
+                result.selectedOutputPortId(),
                 nodeRun.routingCompletedAt(),
                 NodeRunStatus.SUCCEEDED,
-                output,
+                result.output(),
                 nodeRun.failure(),
                 nodeRun.executionModel(),
                 nodeRun.createdAt(),
