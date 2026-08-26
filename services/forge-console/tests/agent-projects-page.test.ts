@@ -10,9 +10,9 @@ import { executionConnectionsMayBundle, routesSharePositiveLengthSegment } from 
 
 const MODERN_EXECUTION_CARD_WIDTH = 288;
 
-function agentProjectsDom() {
+function agentProjectsDom(url = 'http://127.0.0.1/operator/agent-projects.html') {
   return new JSDOM(readFileSync(join(process.cwd(), 'src', 'operator', 'agent-projects.html'), 'utf8'), {
-    url: 'http://127.0.0.1/operator/agent-projects.html',
+    url,
     pretendToBeVisual: true
   });
 }
@@ -486,6 +486,119 @@ function useFakeWindowTimers(dom: JSDOM) {
 }
 
 describe('Agent projects page', () => {
+  it('keeps Project lightweight and exposes only the dedicated Logs entry point', async () => {
+    const listLogSources = vi.fn().mockResolvedValue([]);
+    const streams: any[] = [];
+    class EventSourceFake {
+      constructor() {
+        streams.push(this);
+      }
+      addEventListener() {}
+      close() {}
+    }
+    const { dom, page } = await openedProject(api({ listLogSources }));
+    Object.defineProperty(dom.window, 'EventSource', { value: EventSourceFake, configurable: true });
+
+    const projectWorkspace = dom.window.document.getElementById('agentsV2Workspace')!;
+    expect(projectWorkspace.querySelector('#projectLogsOpen')?.textContent).toContain('Open Logs');
+    expect(projectWorkspace.querySelector('#projectLogsOutput')).toBeNull();
+    expect(projectWorkspace.querySelector('#projectLogsLive')).toBeNull();
+    expect(listLogSources).not.toHaveBeenCalled();
+    expect(streams).toHaveLength(0);
+    page.dispose();
+  });
+
+  it('navigates to the dedicated Logs route and loads its configured sources', async () => {
+    const source = {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Application',
+      enabled: true,
+      serviceId: null,
+      connection: 'LOCAL',
+      provider: 'DOCKER'
+    };
+    const listLogSources = vi.fn().mockResolvedValue([source]);
+    const { dom, page } = await openedProject(api({
+      listLogSources,
+      listSshConnections: vi.fn().mockResolvedValue([])
+    }));
+
+    dom.window.document.getElementById('projectLogsOpen')!.click();
+    await flushAsync();
+
+    expect(dom.window.location.pathname).toBe(`/projects/${project().id}/logs`);
+    expect(dom.window.document.getElementById('projectLogsWorkspace')!.classList.contains('hidden')).toBe(false);
+    expect(dom.window.document.getElementById('projectLogsTitle')!.textContent).toBe('Sitionix Logs');
+    expect(dom.window.document.getElementById('projectLogsSources')!.textContent).toContain('Application');
+    expect(listLogSources).toHaveBeenCalledWith(project().id);
+    page.dispose();
+  });
+
+  it('mounts the dedicated workspace when the current route is a Project Logs route', async () => {
+    const dom = agentProjectsDom(`http://127.0.0.1/projects/${project().id}/logs`);
+    const listLogSources = vi.fn().mockResolvedValue([]);
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: api({ listLogSources, listSshConnections: vi.fn().mockResolvedValue([]) })
+    });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('projectLogsWorkspace')!.classList.contains('hidden')).toBe(false);
+    expect(dom.window.document.getElementById('agentsV2Workspace')!.classList.contains('hidden')).toBe(true);
+    expect(listLogSources).toHaveBeenCalledWith(project().id);
+    page.dispose();
+  });
+
+  it('closes the dedicated Logs EventSource when returning to Project', async () => {
+    const streams: Array<{ closed: boolean }> = [];
+    class EventSourceFake {
+      listeners = new Map<string, Function>();
+      closed = false;
+      constructor() {
+        streams.push(this);
+      }
+      addEventListener(name: string, listener: Function) {
+        this.listeners.set(name, listener);
+      }
+      close() {
+        this.closed = true;
+      }
+    }
+    const dom = agentProjectsDom();
+    Object.defineProperty(dom.window, 'EventSource', { value: EventSourceFake, configurable: true });
+    const fakeApi = api({
+      listLogSources: vi.fn().mockResolvedValue([{
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        name: 'Application',
+        enabled: true,
+        serviceId: null,
+        connection: 'LOCAL',
+        provider: 'DOCKER'
+      }]),
+      listSshConnections: vi.fn().mockResolvedValue([]),
+      logStreamUrl: vi.fn().mockReturnValue('/stream')
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    dom.window.document.getElementById('projectLogsOpen')!.click();
+    await flushAsync();
+    dom.window.document.getElementById('projectLogsLive')!.click();
+    expect(streams).toHaveLength(1);
+
+    dom.window.document.getElementById('projectLogsBack')!.click();
+    await flushAsync();
+
+    expect(streams[0]!.closed).toBe(true);
+    expect(dom.window.document.getElementById('projectLogsWorkspace')!.classList.contains('hidden')).toBe(true);
+    expect(dom.window.document.getElementById('agentsV2Workspace')!.classList.contains('hidden')).toBe(false);
+    page.dispose();
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });

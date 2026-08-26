@@ -4,6 +4,7 @@ export class ProjectWorkspace {
   constructor(options) {
     this.document = options.document;
     this.onBack = options.onBack;
+    this.onOpenLogs = options.onOpenLogs;
     this.onNewAgent = options.onNewAgent;
     this.onImportRepository = options.onImportRepository;
     this.onCloneRepository = options.onCloneRepository || (() => {});
@@ -22,6 +23,7 @@ export class ProjectWorkspace {
 
   bind() {
     this.byId('agentsV2WorkspaceBack')?.addEventListener('click', () => this.onBack());
+    this.byId('projectLogsOpen')?.addEventListener('click', () => this.onOpenLogs());
     this.byId('agentsV2ImportRepository')?.addEventListener('click', () => this.onImportRepository());
     this.byId('agentsV2CreateAgent')?.addEventListener('click', () => this.onNewAgent());
     this.byId('agentsV2CreateWorkflow')?.addEventListener('click', () => this.onNewWorkflow());

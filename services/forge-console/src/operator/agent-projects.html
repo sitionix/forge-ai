@@ -33,14 +33,10 @@
       </header>
 
       <section class="panel project-section">
-        <div class="agents-v2-pane-head"><div><h2>Logs</h2><p>Live project runtime sources.</p></div><button id="projectLogsAdd" class="button small secondary" type="button">Add Log Source</button></div>
-        <div id="projectLogsSources" class="repository-list"></div>
         <div class="agents-v2-pane-head">
-          <label>Initial lines <input id="projectLogsLines" class="text-input" type="number" min="1" max="10000" value="100"></label>
-          <input id="projectLogsFilter" class="text-input" placeholder="Filter logs" aria-label="Filter logs">
-          <button id="projectLogsLive" class="button small" type="button">Live</button><button id="projectLogsPause" class="button small secondary" type="button">Pause</button>
+          <div><h2>Logs</h2><p>Configure sources and inspect live project runtime output.</p></div>
+          <button id="projectLogsOpen" class="button small secondary" type="button">Open Logs</button>
         </div>
-        <pre id="projectLogsOutput" class="project-logs-output" aria-live="polite"></pre>
       </section>
 
       <section class="panel project-section">
@@ -89,6 +85,34 @@
         </div>
         <div id="agentsV2TasksError" class="error-box hidden"></div>
         <div id="agentsV2TasksList" class="agents-v2-task-list" aria-live="polite"></div>
+      </section>
+    </section>
+
+    <section id="projectLogsWorkspace" class="project-workspace-view hidden" aria-label="Project logs">
+      <header class="panel project-workspace-header">
+        <div class="panel-head compact">
+          <div>
+            <p id="projectLogsCrumbs" class="agents-v2-crumbs">Projects / Project / Logs</p>
+            <h1 id="projectLogsTitle">Project Logs</h1>
+            <p>Live project runtime sources.</p>
+          </div>
+          <button id="projectLogsBack" class="button small secondary" type="button">← Project</button>
+        </div>
+      </header>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head"><div><h2>Sources</h2><p>Choose one or more configured sources.</p></div><button id="projectLogsAdd" class="button small secondary" type="button">Add Log Source</button></div>
+        <div id="projectLogsSources" class="repository-list"></div>
+      </section>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head">
+          <label>Initial lines <input id="projectLogsLines" class="text-input" type="number" min="1" max="10000" value="100"></label>
+          <input id="projectLogsFilter" class="text-input" placeholder="Filter logs" aria-label="Filter logs">
+          <button id="projectLogsLive" class="button small" type="button">Live</button>
+          <button id="projectLogsPause" class="button small secondary" type="button">Pause</button>
+        </div>
+        <pre id="projectLogsOutput" class="project-logs-output" aria-live="polite"></pre>
       </section>
     </section>
 

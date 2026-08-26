@@ -13,45 +13,26 @@ export class ProjectLogsView {
     this.stream = null;
     this.paused = false;
     this.composeCandidates = [];
+    this.listeners = [];
   }
   bind() {
-    this.byId("projectLogsAdd")?.addEventListener("click", () =>
-      this.openAdd(),
-    );
-    this.byId("projectLogsForm")?.addEventListener("submit", (e) =>
-      this.save(e),
-    );
-    this.byId("projectLogsCancel")?.addEventListener("click", () =>
-      this.byId("projectLogsDialog").close(),
-    );
-    this.byId("projectLogsAddSsh")?.addEventListener("click", () =>
-      this.byId("projectLogsSshDialog").showModal(),
-    );
-    this.byId("projectLogsSshForm")?.addEventListener("submit", (e) =>
-      this.saveSsh(e),
-    );
-    this.byId("projectLogsSshCancel")?.addEventListener("click", () =>
-      this.byId("projectLogsSshDialog").close(),
-    );
-    this.byId("projectLogsLive")?.addEventListener("click", () => this.start());
-    this.byId("projectLogsPause")?.addEventListener("click", () =>
-      this.togglePause(),
-    );
-    this.byId("projectLogsFilter")?.addEventListener("input", () =>
-      this.renderEvents(),
-    );
+    this.on("projectLogsAdd", "click", () => this.openAdd());
+    this.on("projectLogsForm", "submit", (event) => this.save(event));
+    this.on("projectLogsCancel", "click", () => this.byId("projectLogsDialog").close());
+    this.on("projectLogsAddSsh", "click", () => this.byId("projectLogsSshDialog").showModal());
+    this.on("projectLogsSshForm", "submit", (event) => this.saveSsh(event));
+    this.on("projectLogsSshCancel", "click", () => this.byId("projectLogsSshDialog").close());
+    this.on("projectLogsLive", "click", () => this.start());
+    this.on("projectLogsPause", "click", () => this.togglePause());
+    this.on("projectLogsFilter", "input", () => this.renderEvents());
     [
       "projectLogsConnection",
       "projectLogsSsh",
       "projectLogsProvider",
       "projectLogsDockerMode",
       "projectLogsRepository",
-    ].forEach((id) =>
-      this.byId(id)?.addEventListener("change", () => this.discover()),
-    );
-    this.byId("projectLogsComposeService")?.addEventListener("change", () =>
-      this.selectComposeCandidate(),
-    );
+    ].forEach((id) => this.on(id, "change", () => this.discover()));
+    this.on("projectLogsComposeService", "change", () => this.selectComposeCandidate());
   }
   async load(projectId) {
     this.close();
@@ -74,6 +55,19 @@ export class ProjectLogsView {
     this.stream?.close();
     this.stream = null;
     this.projectId = null;
+  }
+  dispose() {
+    this.close();
+    this.listeners.forEach(({ element, event, listener }) =>
+      element.removeEventListener(event, listener),
+    );
+    this.listeners = [];
+    this.sources = [];
+    this.connections = [];
+    this.repositories = [];
+    this.composeCandidates = [];
+    this.events = [];
+    this.paused = false;
   }
   openAdd() {
     this.byId("projectLogsForm").reset();
@@ -329,5 +323,11 @@ export class ProjectLogsView {
   }
   byId(id) {
     return this.document.getElementById(id);
+  }
+  on(id, event, listener) {
+    const element = this.byId(id);
+    if (!element) return;
+    element.addEventListener(event, listener);
+    this.listeners.push({ element, event, listener });
   }
 }
