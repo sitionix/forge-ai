@@ -23,6 +23,8 @@ import org.springframework.stereotype.Component;
 public final class CodexAgentExecutor implements AgentExecutor {
 
     private static final String PROVIDER_ID = "codex";
+    private static final String PAYLOAD_SCHEMA_DEFINITION = "__forge_payload";
+    private static final String PAYLOAD_SCHEMA_ID_PREFIX = "urn:forge:agent-output-payload:";
 
     private final ObjectMapper objectMapper;
     private final CodexClient client;
@@ -35,7 +37,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
         final JsonNode userOutputSchema = this.parseOutputSchema(claim);
         final boolean selectionRequired = claim.availableOutputs().size() > 1;
         final JsonNode effectiveOutputSchema = selectionRequired
-                ? this.effectiveOutputSchema(userOutputSchema, claim.availableOutputs())
+                ? this.effectiveOutputSchema(userOutputSchema, claim.availableOutputs(), claim.nodeRunId())
                 : userOutputSchema;
         final String outputText = this.client.execute(new CodexTurnRequest(
                 this.userInput(claim),
@@ -113,12 +115,20 @@ public final class CodexAgentExecutor implements AgentExecutor {
         }
     }
 
-    private ObjectNode effectiveOutputSchema(final JsonNode userOutputSchema, final java.util.List<RunPort> outputs) {
+    private ObjectNode effectiveOutputSchema(final JsonNode userOutputSchema,
+                                             final java.util.List<RunPort> outputs,
+                                             final UUID nodeRunId) {
         final ObjectNode schema = this.objectMapper.createObjectNode();
         schema.put("type", "object");
         schema.put("additionalProperties", false);
+        final ObjectNode definitions = schema.putObject("$defs");
+        final ObjectNode payloadSchema = userOutputSchema.deepCopy();
+        if (!payloadSchema.has("$id")) {
+            payloadSchema.put("$id", PAYLOAD_SCHEMA_ID_PREFIX + nodeRunId);
+        }
+        definitions.set(PAYLOAD_SCHEMA_DEFINITION, payloadSchema);
         final ObjectNode properties = schema.putObject("properties");
-        properties.set("payload", userOutputSchema.deepCopy());
+        properties.putObject("payload").put("$ref", "#/$defs/" + PAYLOAD_SCHEMA_DEFINITION);
         final ObjectNode forgeSchema = properties.putObject("__forge");
         forgeSchema.put("type", "object");
         forgeSchema.put("additionalProperties", false);

@@ -73,8 +73,12 @@ class CodexAgentExecutorTest {
                 this.objectMapper.getNodeFactory().textNode("__forge")
         );
         assertThat(schema.path("additionalProperties").asBoolean()).isFalse();
-        assertThat(schema.path("properties").path("payload")).isEqualTo(this.objectMapper.readTree(OUTPUT_SCHEMA.jsonObject()));
-        assertThat(schema.path("properties").path("payload").path("additionalProperties").asBoolean()).isFalse();
+        assertThat(schema.path("properties").path("payload").path("$ref").asText())
+                .isEqualTo("#/$defs/__forge_payload");
+        final JsonNode payloadSchema = schema.path("$defs").path("__forge_payload");
+        assertThat(payloadSchema.path("$id").asText()).isEqualTo("urn:forge:agent-output-payload:" + NODE_RUN_ID);
+        assertThat(payloadSchema.path("additionalProperties").asBoolean()).isFalse();
+        assertThat(payloadSchema.path("properties").path("summary").path("type").asText()).isEqualTo("string");
         assertThat(schema.path("properties").path("__forge").path("properties").path("outputPortId").path("enum"))
                 .containsExactly(
                         this.objectMapper.getNodeFactory().textNode(OUTPUT_A_ID.toString()),
@@ -87,6 +91,72 @@ class CodexAgentExecutorTest {
         assertThat(result.output()).isEqualTo(new NodeRunOutput("{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}"));
         assertThat(result.output().jsonValue()).doesNotContain("__forge", "outputPortId");
         assertThat(result.selectedOutputPortId()).isEqualTo(OUTPUT_B_ID);
+    }
+
+    @Test
+    void multiOutputPreservesLocalDefinitionReferencesInDedicatedPayloadResource() throws Exception {
+        final AgentOutputSchema schemaWithDefinitions = AgentOutputSchema.ofCanonicalJsonObject("""
+                {"type":"object","properties":{"steps":{"type":"array","items":{"$ref":"#/$defs/step"}}},"required":["steps"],"additionalProperties":false,"$defs":{"step":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}}}
+                """);
+        final JsonNode originalSchema = this.objectMapper.readTree(schemaWithDefinitions.jsonObject());
+        this.client.outputText = """
+                {"payload":{"steps":[{"name":"compile"}]},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_A_ID);
+
+        final AgentExecutionResult result = this.executor.execute(this.multiOutputClaim(schemaWithDefinitions));
+
+        final JsonNode effective = this.client.request.outputSchema();
+        final JsonNode payloadResource = effective.path("$defs").path("__forge_payload");
+        assertThat(effective.path("properties").path("payload").path("$ref").asText())
+                .isEqualTo("#/$defs/__forge_payload");
+        assertThat(payloadResource.path("$id").asText()).isEqualTo("urn:forge:agent-output-payload:" + NODE_RUN_ID);
+        assertThat(payloadResource.path("properties").path("steps").path("items").path("$ref").asText())
+                .isEqualTo("#/$defs/step");
+        assertThat(payloadResource.path("$defs").path("step").path("properties").path("name").path("type").asText())
+                .isEqualTo("string");
+        assertThat(this.objectMapper.readTree(schemaWithDefinitions.jsonObject())).isEqualTo(originalSchema);
+        assertThat(result.output().jsonValue()).isEqualTo("{\"steps\":[{\"name\":\"compile\"}]}");
+        assertThat(result.selectedOutputPortId()).isEqualTo(OUTPUT_A_ID);
+        assertThat(this.client.executeCount).isEqualTo(1);
+    }
+
+    @Test
+    void multiOutputRootReferenceRecursesWithinPayloadResource() {
+        final AgentOutputSchema recursiveSchema = AgentOutputSchema.ofCanonicalJsonObject("""
+                {"type":"object","properties":{"value":{"type":"string"},"child":{"anyOf":[{"$ref":"#"},{"type":"null"}]}},"required":["value","child"],"additionalProperties":false}
+                """);
+        this.client.outputText = """
+                {"payload":{"value":"root","child":null},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_B_ID);
+
+        this.executor.execute(this.multiOutputClaim(recursiveSchema));
+
+        final JsonNode effective = this.client.request.outputSchema();
+        final JsonNode payloadResource = effective.path("$defs").path("__forge_payload");
+        assertThat(payloadResource.path("$id").asText()).isEqualTo("urn:forge:agent-output-payload:" + NODE_RUN_ID);
+        assertThat(payloadResource.path("properties").path("child").path("anyOf").get(0).path("$ref").asText())
+                .isEqualTo("#");
+        assertThat(payloadResource.path("properties").has("__forge")).isFalse();
+        assertThat(this.client.executeCount).isEqualTo(1);
+    }
+
+    @Test
+    void forgeDefinitionCannotCollideWithSameNamedUserDefinition() {
+        final AgentOutputSchema collidingSchema = AgentOutputSchema.ofCanonicalJsonObject("""
+                {"type":"object","properties":{"value":{"$ref":"#/$defs/__forge_payload"}},"required":["value"],"additionalProperties":false,"$defs":{"__forge_payload":{"type":"string"}}}
+                """);
+        this.client.outputText = """
+                {"payload":{"value":"business"},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_A_ID);
+
+        this.executor.execute(this.multiOutputClaim(collidingSchema));
+
+        final JsonNode effective = this.client.request.outputSchema();
+        final JsonNode payloadResource = effective.path("$defs").path("__forge_payload");
+        assertThat(payloadResource.path("properties").path("value").path("$ref").asText())
+                .isEqualTo("#/$defs/__forge_payload");
+        assertThat(payloadResource.path("$defs").path("__forge_payload").path("type").asText()).isEqualTo("string");
+        assertThat(effective.path("$defs").size()).isEqualTo(1);
     }
 
     @Test
@@ -328,7 +398,11 @@ class CodexAgentExecutorTest {
     }
 
     private NodeExecutionClaim multiOutputClaim() {
-        final NodeExecutionClaim base = this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", "high"), OUTPUT_SCHEMA);
+        return this.multiOutputClaim(OUTPUT_SCHEMA);
+    }
+
+    private NodeExecutionClaim multiOutputClaim(final AgentOutputSchema outputSchema) {
+        final NodeExecutionClaim base = this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", "high"), outputSchema);
         return new NodeExecutionClaim(
                 base.workflowRunId(), base.nodeRunId(), base.sourceAgentId(), base.workflowInput(), base.agentName(),
                 base.agentInstructions(), base.outputSchema(), base.executionModel(), base.inputEnvelope(),
