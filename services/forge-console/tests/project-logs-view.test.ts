@@ -43,6 +43,7 @@ function setup(overrides: any = {}) {
     validateLogSource: vi.fn().mockResolvedValue(undefined),
     createLogSource: vi.fn().mockResolvedValue({}),
     createSshConnection: vi.fn(),
+    testSshConnection: vi.fn().mockResolvedValue(undefined),
     logStreamUrl: vi.fn().mockReturnValue("/stream"),
     ...overrides,
   };
@@ -239,6 +240,73 @@ describe("ProjectLogsView", () => {
       password: "secret;$(still-data)",
     });
     expect(dom.window.document.body.textContent).not.toContain("secret;$(still-data)");
+  });
+
+  it("tests current unsaved password values without persisting and clears stale success", async () => {
+    const { view, dom, api } = setup();
+    await view.load("p");
+    dom.window.document.getElementById("projectLogsAddSsh")!.click();
+    const values = {
+      projectLogsSshName: "Ancestor",
+      projectLogsSshHost: "192.168.0.108",
+      projectLogsSshPort: "22",
+      projectLogsSshUsername: "ancestor",
+    };
+    for (const [id, value] of Object.entries(values))
+      (dom.window.document.getElementById(id) as HTMLInputElement).value = value;
+    const auth = dom.window.document.getElementById("projectLogsSshAuth") as HTMLSelectElement;
+    auth.value = "PASSWORD";
+    auth.dispatchEvent(new dom.window.Event("change"));
+    const password = dom.window.document.getElementById("projectLogsSshPassword") as HTMLInputElement;
+    password.value = "secret;$(data)";
+
+    await view.testSsh();
+
+    expect(api.testSshConnection).toHaveBeenCalledWith("p", {
+      name: "Ancestor", host: "192.168.0.108", port: 22, username: "ancestor",
+      authType: "PASSWORD", privateKeyPath: null, password: "secret;$(data)",
+    });
+    expect(api.createSshConnection).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById("projectLogsSshStatus")!.textContent)
+      .toBe("Connection successful");
+    password.dispatchEvent(new dom.window.Event("input"));
+    expect(dom.window.document.getElementById("projectLogsSshStatus")!.classList)
+      .toContain("hidden");
+  });
+
+  it("tests private-key values and displays a safe failure", async () => {
+    const { view, dom, api } = setup({
+      testSshConnection: vi.fn().mockRejectedValue(new Error("SSH authentication failed")),
+    });
+    await view.load("p");
+    for (const [id, value] of Object.entries({
+      projectLogsSshName: "rover", projectLogsSshHost: "rover.local",
+      projectLogsSshPort: "22", projectLogsSshUsername: "operator",
+      projectLogsSshKey: "/keys/id",
+    })) (dom.window.document.getElementById(id) as HTMLInputElement).value = value;
+
+    await view.testSsh();
+
+    expect(api.testSshConnection).toHaveBeenCalledWith("p", expect.objectContaining({
+      authType: "PRIVATE_KEY", privateKeyPath: "/keys/id", password: null,
+    }));
+    const error = dom.window.document.getElementById("projectLogsSshError")!;
+    expect(error.textContent).toBe("SSH authentication failed");
+    expect(error.classList).not.toContain("hidden");
+  });
+
+  it("hides empty SSH errors and clears status whenever the dialog reopens", async () => {
+    const { view, dom } = setup();
+    await view.load("p");
+    const error = dom.window.document.getElementById("projectLogsSshError")!;
+    expect(error.classList).toContain("hidden");
+    error.textContent = "old error";
+    error.classList.remove("hidden");
+
+    dom.window.document.getElementById("projectLogsAddSsh")!.click();
+
+    expect(error.textContent).toBe("");
+    expect(error.classList).toContain("hidden");
   });
 
   it("buffers while paused, renders source errors, and closes replaced streams", async () => {

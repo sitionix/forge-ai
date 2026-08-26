@@ -2938,6 +2938,16 @@ body.sidebar-collapsed .sidebar-link {
   font-size: 13px;
 }
 
+.project-logs-ssh-status {
+  margin: 18px 22px 22px;
+  border: 1px solid rgba(50, 140, 85, 0.45);
+  border-radius: 16px;
+  background: rgba(50, 140, 85, 0.12);
+  color: #236b3d;
+  padding: 14px 16px;
+  font-size: 13px;
+}
+
 .hidden {
   display: none;
 }

@@ -155,4 +155,10 @@ public interface ForgeAgentHttpClient {
         contentType = MediaType.APPLICATION_JSON_VALUE)
     AgentSshConnectionResponse createProjectSshConnection(
         @PathVariable UUID projectId, @RequestBody AgentSshConnectionRequest request);
+
+    @PostExchange(
+        value = "/api/v1/projects/{projectId}/ssh-connections/test",
+        contentType = MediaType.APPLICATION_JSON_VALUE)
+    void testProjectSshConnection(
+        @PathVariable UUID projectId, @RequestBody AgentSshConnectionRequest request);
 }

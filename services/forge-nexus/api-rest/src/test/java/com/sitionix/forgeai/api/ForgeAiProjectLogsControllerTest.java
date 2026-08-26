@@ -239,5 +239,7 @@ class ForgeAiProjectLogsControllerTest {
     when(mapper.toResponse(ssh)).thenReturn(sshResponse);
     assertThat(controller.listSsh(projectId)).containsExactly(sshResponse);
     assertThat(controller.createSsh(projectId, sshRequest)).isEqualTo(sshResponse);
+    controller.testSsh(projectId, sshRequest);
+    verify(logs).testSshConnection(projectId, createSsh);
   }
 }

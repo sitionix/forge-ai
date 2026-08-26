@@ -79,4 +79,11 @@ public class ProjectLogsController {
       @PathVariable UUID projectId, @Valid @RequestBody SshConnectionRequest r) {
     return this.mapper.toResponse(ssh.create(projectId, this.mapper.toCommand(r)));
   }
+
+  @PostMapping("/api/v1/projects/{projectId}/ssh-connections/test")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void sshTest(
+      @PathVariable UUID projectId, @Valid @RequestBody SshConnectionRequest request) {
+    ssh.test(projectId, this.mapper.toCommand(request));
+  }
 }

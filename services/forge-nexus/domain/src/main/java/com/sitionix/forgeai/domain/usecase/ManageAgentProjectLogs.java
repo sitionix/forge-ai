@@ -22,5 +22,7 @@ public interface ManageAgentProjectLogs {
 
   AgentSshConnection createSshConnection(UUID projectId, CreateAgentSshConnectionCommand command);
 
+  void testSshConnection(UUID projectId, CreateAgentSshConnectionCommand command);
+
   AgentLogStream openStream(UUID projectId, List<UUID> sourceIds, int lines);
 }

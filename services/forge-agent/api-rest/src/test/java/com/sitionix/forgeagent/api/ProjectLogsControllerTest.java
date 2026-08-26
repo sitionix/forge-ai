@@ -166,6 +166,19 @@ class ProjectLogsControllerTest {
     verify(this.ssh).create(projectId, command);
   }
 
+  @Test
+  void delegatesUnsavedSshConnectionTest() {
+    final UUID projectId = UUID.randomUUID();
+    final SshConnectionRequest request = new SshConnectionRequest(
+        "Ancestor", "192.168.0.108", 22, "ancestor", SshAuthType.PASSWORD, null, "secret");
+    final SaveSshConnectionCommand command = new SaveSshConnectionCommand(
+        "Ancestor", "192.168.0.108", 22, "ancestor", SshAuthType.PASSWORD, null, "secret");
+
+    this.controller.sshTest(projectId, request);
+
+    verify(this.ssh).test(projectId, command);
+  }
+
   private static LogSource source(final UUID projectId, final UUID sourceId) {
     return new LogSource(
         sourceId,

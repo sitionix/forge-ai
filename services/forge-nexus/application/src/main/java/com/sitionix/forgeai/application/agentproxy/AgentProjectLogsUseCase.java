@@ -47,6 +47,10 @@ public class AgentProjectLogsUseCase implements ManageAgentProjectLogs {
     return client.createProjectSshConnection(projectId, command);
   }
 
+  public void testSshConnection(UUID projectId, CreateAgentSshConnectionCommand command) {
+    client.testProjectSshConnection(projectId, command);
+  }
+
   public AgentLogStream openStream(UUID projectId, List<UUID> sourceIds, int lines) {
     return client.openProjectLogsStream(projectId, sourceIds, lines);
   }

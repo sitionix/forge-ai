@@ -52,6 +52,32 @@ class SshRemoteLogAdapterTest {
     assertThat(executor.command.getLast()).contains("'docker' 'logs'");
   }
 
+  @Test
+  void probeUsesTheSamePasswordTransportWithFixedTrueCommand() {
+    var executor = new CapturingExecutor();
+    var connection = passwordConnection("p@ss;$(safe)");
+
+    new SshRemoteLogAdapter(executor).test(connection);
+
+    assertThat(executor.command)
+        .contains("sshpass", "-e", "PreferredAuthentications=password", "PubkeyAuthentication=no")
+        .doesNotContain(connection.password());
+    assertThat(executor.command.getLast()).isEqualTo("'true'");
+    assertThat(RemoteShellCommand.environment(executor.ssh))
+        .containsEntry("SSHPASS", connection.password());
+  }
+
+  @Test
+  void probePreservesPrivateKeyAuthentication() {
+    var executor = new CapturingExecutor();
+
+    new SshRemoteLogAdapter(executor).test(connection());
+
+    assertThat(executor.command).contains("ssh", "-i", "/key", "BatchMode=yes");
+    assertThat(executor.command).doesNotContain("sshpass", "PreferredAuthentications=password");
+    assertThat(RemoteShellCommand.environment(executor.ssh)).isEmpty();
+  }
+
   private SshConnection connection() {
     return new SshConnection(
         UUID.randomUUID(),

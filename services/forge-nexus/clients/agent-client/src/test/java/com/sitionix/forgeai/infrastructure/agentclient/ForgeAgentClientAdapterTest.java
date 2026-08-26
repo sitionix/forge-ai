@@ -24,6 +24,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentSshConnectionCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
@@ -34,6 +36,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionReques
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeProviderResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
@@ -610,5 +613,22 @@ class ForgeAgentClientAdapterTest {
         verify(this.executor).execute(any());
         verify(this.httpClient).getWorkflowRun(RUN_ID);
         verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void testSshConnectionExecutesTypedClientCallWithoutCreatingAProfile() {
+        final var command = new CreateAgentSshConnectionCommand(
+                "Ancestor", "192.168.0.108", 22, "ancestor",
+                AgentSshAuthType.PASSWORD, null, "secret");
+        final var request = new AgentSshConnectionRequest(
+                "Ancestor", "192.168.0.108", 22, "ancestor",
+                AgentSshAuthType.PASSWORD, null, "secret");
+        when(this.mapper.toRequest(command)).thenReturn(request);
+
+        this.adapter.testProjectSshConnection(PROJECT_ID, command);
+
+        verify(this.mapper).toRequest(command);
+        verify(this.executor).execute(any());
+        verify(this.httpClient).testProjectSshConnection(PROJECT_ID, request);
     }
 }

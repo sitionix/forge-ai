@@ -235,7 +235,8 @@
     <dialog id="projectLogsSshDialog" class="modal-dialog">
       <form id="projectLogsSshForm" method="dialog" class="modal-form">
         <div class="modal-head"><h2>New SSH profile</h2></div>
-        <div id="projectLogsSshError" class="error-box"></div>
+        <div id="projectLogsSshError" class="error-box hidden"></div>
+        <div id="projectLogsSshStatus" class="project-logs-ssh-status hidden"></div>
         <label class="field-label">Name<input id="projectLogsSshName" class="text-input" required></label>
         <label class="field-label">Host<input id="projectLogsSshHost" class="text-input" required></label>
         <label class="field-label">Port<input id="projectLogsSshPort" class="text-input" type="number" min="1" max="65535" value="22" required></label>
@@ -243,7 +244,7 @@
         <label class="field-label">Authentication<select id="projectLogsSshAuth" class="text-input"><option value="PRIVATE_KEY">Private key</option><option value="PASSWORD">Password</option></select></label>
         <label id="projectLogsSshKeyField" class="field-label">Private key path<input id="projectLogsSshKey" class="text-input" required placeholder="/home/user/.ssh/id_ed25519"></label>
         <label id="projectLogsSshPasswordField" class="field-label hidden">Password<input id="projectLogsSshPassword" class="text-input" type="password"></label>
-        <div class="modal-actions"><button id="projectLogsSshCancel" class="button secondary" type="button">Cancel</button><button class="button" type="submit">Create</button></div>
+        <div class="modal-actions"><button id="projectLogsSshCancel" class="button secondary" type="button">Cancel</button><button id="projectLogsSshTest" class="button secondary" type="button">Test Connection</button><button class="button" type="submit">Create</button></div>
       </form>
     </dialog>
 

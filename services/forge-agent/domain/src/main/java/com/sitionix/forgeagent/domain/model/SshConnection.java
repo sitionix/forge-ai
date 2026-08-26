@@ -3,7 +3,7 @@ package com.sitionix.forgeagent.domain.model;
 import java.time.Instant;
 import java.util.UUID;
 
-/** Read-safe connection model. Authentication material is deliberately absent. */
+/** Runtime SSH connection model. Authentication material is redacted from its string form. */
 public record SshConnection(
         UUID id,
         UUID projectId,
@@ -33,5 +33,11 @@ public record SshConnection(
     public SshConnection withoutSecretLocation() {
         return new SshConnection(
                 id, projectId, name, host, port, username, authType, null, null, createdAt, updatedAt);
+    }
+
+    @Override
+    public String toString() {
+        return "SshConnection[id=%s, projectId=%s, name=%s, host=%s, port=%s, username=%s, authType=%s, privateKeyPath=<redacted>, password=<redacted>, createdAt=%s, updatedAt=%s]"
+                .formatted(id, projectId, name, host, port, username, authType, createdAt, updatedAt);
     }
 }

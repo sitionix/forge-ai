@@ -18,6 +18,7 @@ public class SshConnectionUseCases {
   private static final Pattern SSH_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,253}");
   private final ProjectRepository projects;
   private final SshConnectionRepository connections;
+  private final SshConnectionProbePort probe;
   private final Clock clock;
 
   @Transactional(readOnly = true)
@@ -33,20 +34,22 @@ public class SshConnectionUseCases {
     check(c);
     var n = clock.instant();
     return connections
-        .save(
-            new SshConnection(
-                UUID.randomUUID(),
-                p,
-                c.name().strip(),
-                c.host().strip(),
-                c.port(),
-                c.username().strip(),
-                c.authType(),
-                c.privateKeyPath(),
-                c.password(),
-                n,
-                n))
+        .save(connection(p, c, n))
         .withoutSecretLocation();
+  }
+
+  public void test(UUID projectId, SaveSshConnectionCommand command) {
+    project(projectId);
+    check(command);
+    var now = clock.instant();
+    probe.test(connection(projectId, command, now));
+  }
+
+  private SshConnection connection(UUID projectId, SaveSshConnectionCommand command, java.time.Instant now) {
+    return new SshConnection(
+        UUID.randomUUID(), projectId, command.name().strip(), command.host().strip(), command.port(),
+        command.username().strip(), command.authType(), command.privateKeyPath(), command.password(),
+        now, now);
   }
 
   private void project(UUID p) {

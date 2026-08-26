@@ -9,6 +9,7 @@ import com.sitionix.forgeai.application.agentproxy.AgentProjectLogsUseCase;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentLogConnectionType;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentLogDiscoveryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderType;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentSshConnectionCommand;
 import com.sitionix.forgeai.domain.port.AgentLogStream;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
 import java.util.List;
@@ -35,5 +36,18 @@ class AgentProjectLogsUseCaseTest {
 
     verify(client).discoverProjectLogTargets(projectId, discovery);
     verify(client).openProjectLogsStream(projectId, List.of(sourceId), 100);
+  }
+
+  @Test
+  void delegatesUnsavedSshConnectionTest() {
+    final ForgeAgentClient client = mock(ForgeAgentClient.class);
+    final AgentProjectLogsUseCase useCase = new AgentProjectLogsUseCase(client);
+    final UUID projectId = UUID.randomUUID();
+    final CreateAgentSshConnectionCommand command =
+        new CreateAgentSshConnectionCommand("profile", "host", 22, "user", "/key");
+
+    useCase.testSshConnection(projectId, command);
+
+    verify(client).testProjectSshConnection(projectId, command);
   }
 }

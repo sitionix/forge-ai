@@ -3,15 +3,21 @@ package com.sitionix.forgeagent.application.usecase;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.SshConnection;
 import com.sitionix.forgeagent.domain.model.SshAuthType;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import com.sitionix.forgeagent.domain.port.SshConnectionRepository;
+import com.sitionix.forgeagent.domain.port.SshConnectionProbePort;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -25,6 +31,7 @@ class SshConnectionUseCasesTest {
   private final UUID projectId = UUID.randomUUID();
   private final ProjectRepository projects = mock(ProjectRepository.class);
   private final SshConnectionRepository connections = mock(SshConnectionRepository.class);
+  private final SshConnectionProbePort probe = mock(SshConnectionProbePort.class);
   private SshConnectionUseCases useCases;
 
   @BeforeEach
@@ -35,7 +42,7 @@ class SshConnectionUseCasesTest {
     when(connections.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     useCases =
         new SshConnectionUseCases(
-            projects, connections, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+            projects, connections, probe, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
   }
 
   @Test
@@ -83,6 +90,21 @@ class SshConnectionUseCasesTest {
   }
 
   @Test
+  void runtimeConnectionStringRedactsAuthenticationMaterial() {
+    var passwordConnection = new SshConnection(
+        UUID.randomUUID(), projectId, "profile", "host", 22, "user", SshAuthType.PASSWORD,
+        null, "p@ss;secret", Instant.EPOCH, Instant.EPOCH);
+    var keyConnection = new SshConnection(
+        UUID.randomUUID(), projectId, "profile", "host", 22, "user", "/keys/id",
+        Instant.EPOCH, Instant.EPOCH);
+
+    assertThat(passwordConnection.toString())
+        .doesNotContain("p@ss;secret")
+        .contains("password=<redacted>", "privateKeyPath=<redacted>");
+    assertThat(keyConnection.toString()).doesNotContain("/keys/id");
+  }
+
+  @Test
   void rejectsMismatchedAuthenticationMaterial() {
     assertThatThrownBy(
             () ->
@@ -111,5 +133,28 @@ class SshConnectionUseCasesTest {
                           "bad", injected, 22, "operator", "/keys/id")))
           .isInstanceOf(ValidationException.class);
     }
+  }
+
+  @Test
+  void testValidatesAndProbesWithoutPersisting() {
+    var command = new SaveSshConnectionCommand(
+        "ancestor", "192.168.0.108", 22, "ancestor", SshAuthType.PASSWORD, null, "secret");
+
+    useCases.test(projectId, command);
+
+    verify(probe).test(argThat(connection -> connection.projectId().equals(projectId)
+        && connection.password().equals("secret")));
+    verify(connections, never()).save(any());
+  }
+
+  @Test
+  void testRejectsMissingProjectAndInvalidFieldsBeforeProbing() {
+    var command = new SaveSshConnectionCommand("profile", "host", 22, "user", "/key");
+    assertThatThrownBy(() -> useCases.test(UUID.randomUUID(), command))
+        .isInstanceOf(NotFoundException.class);
+    assertThatThrownBy(() -> useCases.test(projectId,
+        new SaveSshConnectionCommand("profile", "bad;host", 22, "user", "/key")))
+        .isInstanceOf(ValidationException.class);
+    verifyNoInteractions(probe);
   }
 }

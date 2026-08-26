@@ -9,8 +9,13 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class SshRemoteLogAdapter implements RemoteLogPort {
+public class SshRemoteLogAdapter implements RemoteLogPort, SshConnectionProbePort {
   private final TypedProcessExecutor executor;
+
+  @Override
+  public void test(SshConnection connection) {
+    executor.output(command(connection, "true"), null, connection);
+  }
 
   public List<LogTargetCandidate> discover(SshConnection c, LogProviderType provider) {
     if (provider != LogProviderType.SYSTEMD) return List.of();

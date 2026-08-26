@@ -289,6 +289,17 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     }
 
     @Override
+    public void testProjectSshConnection(
+        final UUID projectId, final CreateAgentSshConnectionCommand command) {
+      final AgentSshConnectionRequest request = mapper.toRequest(command);
+      clientCallExecutor.execute(
+          () -> {
+            httpClient.testProjectSshConnection(projectId, request);
+            return null;
+          });
+    }
+
+    @Override
     public AgentLogStream openProjectLogsStream(
         final UUID projectId, final List<UUID> sourceIds, final int lines) {
       return clientCallExecutor.execute(

@@ -55,6 +55,12 @@ export function createAgentProjectsApi(http) {
         request,
       );
     },
+    testSshConnection(projectId, request) {
+      return http.post(
+        `${root}/projects/${encodeURIComponent(projectId)}/ssh-connections/test`,
+        request,
+      );
+    },
     logStreamUrl(projectId, sourceIds, lines = 100) {
       const query = new URLSearchParams({ lines: String(lines) });
       sourceIds.forEach((id) => query.append("sourceId", id));

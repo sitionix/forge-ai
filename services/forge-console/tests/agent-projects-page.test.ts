@@ -4663,10 +4663,15 @@ describe('Agent projects page', () => {
     client.getProjectTask('55555555-5555-4555-8555-555555555555');
     client.deleteProjectTask('55555555-5555-4555-8555-555555555555');
     client.getWorkflowRun('66666666-6666-4666-8666-666666666666');
+    const sshRequest = { name: 'Ancestor', host: '192.168.0.108', port: 22,
+      username: 'ancestor', authType: 'PASSWORD', privateKeyPath: null, password: 'secret' };
+    client.testSshConnection(project().id, sshRequest);
 
     const calls = [...http.get.mock.calls, ...http.post.mock.calls, ...http.put.mock.calls, ...http.delete.mock.calls].map(([path]) => path);
     expect(calls.every((path) => path.startsWith('/agents'))).toBe(true);
     expect(http.get).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`);
+    expect(http.post).toHaveBeenCalledWith(
+      `/agents/projects/${project().id}/ssh-connections/test`, sshRequest);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`, {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });
