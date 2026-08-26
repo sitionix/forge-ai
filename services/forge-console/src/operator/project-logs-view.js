@@ -324,8 +324,21 @@ export class ProjectLogsView {
     list.innerHTML = this.sources.length
       ? this.sources
           .map(
-            (s) =>
-              `<label class="repository-row"><input type="checkbox" data-log-source value="${escapeHtml(s.id)}" ${s.enabled ? "checked" : ""}><span><strong>${escapeHtml(s.name)}</strong> <span class="muted">${s.serviceId ? "Service" : "Custom"} · ${escapeHtml(s.connection)} + ${escapeHtml(s.provider)}</span></span></label>`,
+            (source) => {
+              const metadata = [
+                source.serviceId ? "Service" : "Custom",
+                `${source.connection} + ${source.provider}`,
+              ];
+              if (source.provider === "SYSTEMD") {
+                if (source.configuration?.systemdMode === "FULL_JOURNAL") {
+                  metadata.push("Full journal");
+                } else if (source.configuration?.unit) {
+                  metadata.push(source.configuration.unit);
+                }
+              }
+              if (!source.enabled) metadata.push("Disabled");
+              return `<label class="project-log-source-row${source.enabled ? "" : " is-disabled"}"><input type="checkbox" data-log-source value="${escapeHtml(source.id)}" ${source.enabled ? "checked" : "disabled"}><span class="project-log-source-copy"><strong>${escapeHtml(source.name)}</strong><span class="project-log-source-meta">${metadata.map(escapeHtml).join(" · ")}</span></span></label>`;
+            },
           )
           .join("")
       : '<div class="muted-state">No log sources yet.</div>';
@@ -333,7 +346,9 @@ export class ProjectLogsView {
   start() {
     this.stream?.close();
     const ids = [
-      ...this.document.querySelectorAll("[data-log-source]:checked"),
+      ...this.document.querySelectorAll(
+        "[data-log-source]:checked:not(:disabled)",
+      ),
     ].map((e) => e.value);
     if (!ids.length) return;
     this.events = [];

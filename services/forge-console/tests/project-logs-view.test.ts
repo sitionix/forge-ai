@@ -88,11 +88,103 @@ describe("ProjectLogsView", () => {
     });
     await view.load("p");
     expect(
+      dom.window.document.querySelectorAll(".project-log-source-row"),
+    ).toHaveLength(2);
+    expect(
+      dom.window.document.querySelectorAll(
+        ".project-log-source-row.repository-row",
+      ),
+    ).toHaveLength(0);
+    expect(
       dom.window.document.querySelectorAll("[data-log-source]:checked"),
     ).toHaveLength(2);
     expect(
       dom.window.document.getElementById("projectLogsSources")!.textContent,
     ).toContain("Custom");
+  });
+
+  it("keeps disabled sources visible and out of live selection", async () => {
+    const { view, dom } = setup({
+      listLogSources: vi.fn().mockResolvedValue([
+        {
+          id: "enabled",
+          name: "Application",
+          enabled: true,
+          serviceId: null,
+          connection: "LOCAL",
+          provider: "DOCKER",
+        },
+        {
+          id: "disabled",
+          name: "Old worker",
+          enabled: false,
+          serviceId: null,
+          connection: "SSH",
+          provider: "SYSTEMD",
+          configuration: {
+            systemdMode: "UNIT",
+            unit: "worker.service",
+          },
+        },
+      ]),
+    });
+
+    await view.load("p");
+
+    const enabled = dom.window.document.querySelector<HTMLInputElement>(
+      '[data-log-source][value="enabled"]',
+    )!;
+    const disabled = dom.window.document.querySelector<HTMLInputElement>(
+      '[data-log-source][value="disabled"]',
+    )!;
+    expect(enabled.checked).toBe(true);
+    expect(enabled.disabled).toBe(false);
+    expect(disabled.checked).toBe(false);
+    expect(disabled.disabled).toBe(true);
+    expect(
+      disabled
+        .closest(".project-log-source-row")
+        ?.classList.contains("is-disabled"),
+    ).toBe(true);
+    expect(disabled.closest(".project-log-source-row")!.textContent).toContain(
+      "Disabled",
+    );
+  });
+
+  it("renders SYSTEMD target metadata", async () => {
+    const { view, dom } = setup({
+      listLogSources: vi.fn().mockResolvedValue([
+        {
+          id: "journal",
+          name: "Jessie",
+          enabled: true,
+          serviceId: null,
+          connection: "SSH",
+          provider: "SYSTEMD",
+          configuration: { systemdMode: "FULL_JOURNAL" },
+        },
+        {
+          id: "camera",
+          name: "Jessie Camera",
+          enabled: true,
+          serviceId: null,
+          connection: "SSH",
+          provider: "SYSTEMD",
+          configuration: {
+            systemdMode: "UNIT",
+            unit: "ancestor-camera.service",
+          },
+        },
+      ]),
+    });
+
+    await view.load("p");
+
+    const rows = dom.window.document.querySelectorAll(
+      ".project-log-source-row",
+    );
+    expect(rows.item(0).textContent).toContain("Full journal");
+    expect(rows.item(1).textContent).toContain("ancestor-camera.service");
   });
 
   it("reacts to Compose context and persists the selected file", async () => {
