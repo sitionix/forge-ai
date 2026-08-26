@@ -524,6 +524,16 @@ class AgentProxyApiMapperTest {
         assertThat(this.mapper.toResponse(source).configuration()).isEqualTo(
                 new AgentLogConfigurationResponse(null, "web", "/repo/compose.yaml", null, null));
 
+        final var journal = new com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource(
+                AGENT_ID, PROJECT_ID, "journal", null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogConnectionType.SSH, UUID.randomUUID(),
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderType.SYSTEMD,
+                new com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdLogConfiguration(
+                        com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdTargetMode.FULL_JOURNAL,
+                        null), true, CREATED, UPDATED);
+        assertThat(this.mapper.toResponse(journal).configuration().systemdMode()).isEqualTo(
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdTargetMode.FULL_JOURNAL);
+
         final var candidate = new com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetCandidate(
                 "web", "Web", com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetStatus.RUNNING,
                 "web:latest", "demo", "web", "/repo/compose.yaml", true);

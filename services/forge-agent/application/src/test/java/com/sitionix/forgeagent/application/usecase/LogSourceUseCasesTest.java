@@ -121,6 +121,22 @@ class LogSourceUseCasesTest {
   }
 
   @Test
+  void systemdUnitIsRequiredOnlyForUnitMode() {
+    UUID sshId = UUID.randomUUID();
+    when(connections.findById(sshId)).thenReturn(Optional.of(ssh(sshId)));
+
+    assertThatThrownBy(() -> useCases.create(projectId,
+        systemd(sshId, new SystemdLogConfiguration(SystemdTargetMode.UNIT, null))))
+        .isInstanceOf(ValidationException.class)
+        .hasMessageContaining("unit");
+
+    var source = useCases.create(projectId,
+        systemd(sshId, new SystemdLogConfiguration(SystemdTargetMode.FULL_JOURNAL, null)));
+    assertThat(source.configuration()).isEqualTo(
+        new SystemdLogConfiguration(SystemdTargetMode.FULL_JOURNAL, null));
+  }
+
+  @Test
   void sshConnectionFromAnotherProjectIsRejected() {
     UUID id = UUID.randomUUID();
     when(connections.findById(id))
@@ -204,5 +220,16 @@ class LogSourceUseCasesTest {
         LogProviderType.DOCKER,
         new DockerLogConfiguration("container", null, null),
         true);
+  }
+
+  private SaveLogSourceCommand systemd(UUID sshId, SystemdLogConfiguration configuration) {
+    return new SaveLogSourceCommand(
+        "journal", null, LogConnectionType.SSH, sshId, LogProviderType.SYSTEMD,
+        configuration, true);
+  }
+
+  private SshConnection ssh(UUID id) {
+    return new SshConnection(
+        id, projectId, "ssh", "host", 22, "user", "/key", Instant.EPOCH, Instant.EPOCH);
   }
 }

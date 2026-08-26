@@ -110,6 +110,7 @@ public class ForgeAgentClientMapper {
                 command.container(),
                 command.composeService(),
                 command.composeFile(),
+                command.systemdMode(),
                 command.unit(),
                 command.path(),
                 command.enabled());
@@ -142,7 +143,8 @@ public class ForgeAgentClientMapper {
                                     response.configuration().container(),
                                     response.configuration().composeService(),
                                     response.configuration().composeFile());
-                    case SYSTEMD -> new AgentSystemdLogConfiguration(response.configuration().unit());
+                    case SYSTEMD -> new AgentSystemdLogConfiguration(
+                            response.configuration().systemdMode(), response.configuration().unit());
                     case FILE -> new AgentFileLogConfiguration(response.configuration().path());
                 };
         return new AgentLogSource(

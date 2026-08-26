@@ -45,20 +45,14 @@ public class SshRemoteLogAdapter implements RemoteLogPort, SshConnectionProbePor
     int safe = Math.max(1, Math.min(lines, 10000));
     return switch (p) {
       case SYSTEMD -> {
-        String unit = RuntimeTargetValidator.unit(((SystemdLogConfiguration) cfg).unit());
-        yield executor.stream(
-            command(
-                c,
-                "journalctl",
-                "--unit",
-                unit,
-                "--lines",
-                String.valueOf(safe),
-                "--follow",
-                "--output",
-                "short-iso"),
-            null,
-            c);
+        var systemd = (SystemdLogConfiguration) cfg;
+        var arguments = new ArrayList<>(List.of("journalctl"));
+        if (systemd.mode() == SystemdTargetMode.UNIT) {
+          arguments.add("--unit");
+          arguments.add(RuntimeTargetValidator.unit(systemd.unit()));
+        }
+        arguments.addAll(List.of("--lines", String.valueOf(safe), "--follow", "--output", "short-iso"));
+        yield executor.stream(RemoteShellCommand.ssh(c, arguments), null, c);
       }
       case FILE -> {
         String path = RuntimeTargetValidator.path(((FileLogConfiguration) cfg).path(), "File path");
@@ -75,8 +69,11 @@ public class SshRemoteLogAdapter implements RemoteLogPort, SshConnectionProbePor
       SshConnection c, LogProviderType p, LogProviderConfiguration cfg) {
     return switch (p) {
       case SYSTEMD -> {
-        String u = RuntimeTargetValidator.unit(((SystemdLogConfiguration) cfg).unit());
-        yield command(c, "systemctl", "status", "--", u);
+        var systemd = (SystemdLogConfiguration) cfg;
+        if (systemd.mode() == SystemdTargetMode.FULL_JOURNAL)
+          yield command(c, "journalctl", "--no-pager", "--lines", "0");
+        String unit = RuntimeTargetValidator.unit(systemd.unit());
+        yield command(c, "systemctl", "status", "--", unit);
       }
       case FILE -> {
         String f = RuntimeTargetValidator.path(((FileLogConfiguration) cfg).path(), "File path");

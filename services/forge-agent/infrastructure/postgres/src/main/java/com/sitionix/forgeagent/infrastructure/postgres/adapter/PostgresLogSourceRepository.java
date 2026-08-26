@@ -42,7 +42,7 @@ public class PostgresLogSourceRepository implements LogSourceRepository {
         final LogProviderConfiguration configuration = switch (entity.getProvider()) {
             case DOCKER -> new DockerLogConfiguration(
                     entity.getDockerContainer(), entity.getComposeService(), entity.getComposeFile());
-            case SYSTEMD -> new SystemdLogConfiguration(entity.getSystemdUnit());
+            case SYSTEMD -> new SystemdLogConfiguration(entity.getSystemdMode(), entity.getSystemdUnit());
             case FILE -> new FileLogConfiguration(entity.getFilePath());
         };
         return new LogSource(
@@ -77,7 +77,10 @@ public class PostgresLogSourceRepository implements LogSourceRepository {
                 entity.setComposeService(docker.composeService());
                 entity.setComposeFile(docker.composeFile());
             }
-            case SystemdLogConfiguration systemd -> entity.setSystemdUnit(systemd.unit());
+            case SystemdLogConfiguration systemd -> {
+                entity.setSystemdMode(systemd.mode());
+                entity.setSystemdUnit(systemd.unit());
+            }
             case FileLogConfiguration file -> entity.setFilePath(file.path());
         }
         return entity;

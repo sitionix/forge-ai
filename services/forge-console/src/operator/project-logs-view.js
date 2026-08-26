@@ -14,6 +14,7 @@ export class ProjectLogsView {
     this.paused = false;
     this.composeCandidates = [];
     this.listeners = [];
+    this.sshFormRevision = 0;
   }
   bind() {
     this.on("projectLogsAdd", "click", () => this.openAdd());
@@ -42,6 +43,7 @@ export class ProjectLogsView {
       "projectLogsConnection",
       "projectLogsSsh",
       "projectLogsProvider",
+      "projectLogsSystemdMode",
       "projectLogsDockerMode",
       "projectLogsRepository",
     ].forEach((id) => this.on(id, "change", () => this.discover()));
@@ -86,6 +88,7 @@ export class ProjectLogsView {
     this.byId("projectLogsForm").reset();
     this.byId("projectLogsEnabled").checked = true;
     this.byId("projectLogsError").textContent = "";
+    this.byId("projectLogsError").classList.add("hidden");
     this.byId("projectLogsDiscoveryError").textContent = "";
     this.renderFields();
     this.byId("projectLogsDialog").showModal();
@@ -121,6 +124,8 @@ export class ProjectLogsView {
     if (!ssh && providerSelect.value !== "DOCKER")
       providerSelect.value = "DOCKER";
     const provider = providerSelect.value;
+    const systemdUnit =
+      provider === "SYSTEMD" && this.byId("projectLogsSystemdMode").value === "UNIT";
     const dockerMode = this.byId("projectLogsDockerMode");
     const composeOption = [...dockerMode.options].find(
       (option) => option.value === "COMPOSE",
@@ -137,9 +142,13 @@ export class ProjectLogsView {
     );
     this.byId("projectLogsContainerTarget").classList.toggle("hidden", compose);
     this.byId("projectLogsComposeTarget").classList.toggle("hidden", !compose);
-    this.byId("projectLogsUnitField").classList.toggle(
+    this.byId("projectLogsSystemdModeField").classList.toggle(
       "hidden",
       provider !== "SYSTEMD",
+    );
+    this.byId("projectLogsUnitField").classList.toggle(
+      "hidden",
+      !systemdUnit,
     );
     this.byId("projectLogsPathField").classList.toggle(
       "hidden",
@@ -161,6 +170,7 @@ export class ProjectLogsView {
     if (
       !this.projectId ||
       provider === "FILE" ||
+      (provider === "SYSTEMD" && this.byId("projectLogsSystemdMode").value !== "UNIT") ||
       (connection === "SSH" && !sshConnectionId) ||
       (compose && !repositoryId)
     )
@@ -220,7 +230,12 @@ export class ProjectLogsView {
         ? this.byId("projectLogsComposeService").value
         : null,
       composeFile: compose ? this.byId("projectLogsComposeFile").value : null,
-      unit: provider === "SYSTEMD" ? this.byId("projectLogsUnit").value : null,
+      systemdMode:
+        provider === "SYSTEMD" ? this.byId("projectLogsSystemdMode").value : null,
+      unit:
+        provider === "SYSTEMD" && this.byId("projectLogsSystemdMode").value === "UNIT"
+          ? this.byId("projectLogsUnit").value
+          : null,
       path: provider === "FILE" ? this.byId("projectLogsPath").value : null,
       enabled: this.byId("projectLogsEnabled").checked,
     };
@@ -231,8 +246,9 @@ export class ProjectLogsView {
       this.byId("projectLogsDialog").close();
       await this.load(projectId);
     } catch (e) {
-      this.byId("projectLogsError").textContent =
-        e.message || "Log source could not be saved.";
+      const error = this.byId("projectLogsError");
+      error.textContent = e.message || "Log source could not be saved.";
+      error.classList.remove("hidden");
     }
   }
   async saveSsh(event) {
@@ -256,13 +272,16 @@ export class ProjectLogsView {
     if (!form.reportValidity()) return;
     const button = this.byId("projectLogsSshTest");
     this.clearSshStatus();
+    const revision = this.sshFormRevision;
     button.disabled = true;
     try {
       await this.api.testSshConnection(this.projectId, this.sshRequest());
+      if (revision !== this.sshFormRevision) return;
       const status = this.byId("projectLogsSshStatus");
       status.textContent = "Connection successful";
       status.classList.remove("hidden");
     } catch (error) {
+      if (revision !== this.sshFormRevision) return;
       this.showSshError(error.message || "SSH connection could not be established.");
     } finally {
       button.disabled = false;
@@ -281,6 +300,7 @@ export class ProjectLogsView {
     };
   }
   clearSshStatus() {
+    this.sshFormRevision += 1;
     ["projectLogsSshError", "projectLogsSshStatus"].forEach((id) => {
       const element = this.byId(id);
       element.textContent = "";

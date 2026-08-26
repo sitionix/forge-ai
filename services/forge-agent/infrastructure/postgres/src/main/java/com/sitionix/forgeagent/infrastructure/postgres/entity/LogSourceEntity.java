@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.entity;
 
 import com.sitionix.forgeagent.domain.model.LogConnectionType;
 import com.sitionix.forgeagent.domain.model.LogProviderType;
+import com.sitionix.forgeagent.domain.model.SystemdTargetMode;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
@@ -21,6 +22,7 @@ public class LogSourceEntity {
     @Column(name="compose_service") private String composeService;
     @Column(name="compose_file", length=1000) private String composeFile;
     @Column(name="systemd_unit") private String systemdUnit;
+    @Enumerated(EnumType.STRING) @Column(name="systemd_mode") private SystemdTargetMode systemdMode;
     @Column(name="file_path", length=2000) private String filePath;
     @Column(nullable=false) private boolean enabled;
     @Column(name="created_at", nullable=false) private Instant createdAt;

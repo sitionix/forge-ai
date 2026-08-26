@@ -183,6 +183,15 @@ class ForgeAgentApiMapperTest {
                 .isEqualTo(new LogProviderConfigurationResponse(
                         "mission", null, null, null, null));
 
+        final var journalRequest = new LogSourceRequest(
+                "journal", null, LogConnectionType.SSH, UUID.randomUUID(),
+                LogProviderType.SYSTEMD, null, null, null,
+                com.sitionix.forgeagent.domain.model.SystemdTargetMode.FULL_JOURNAL,
+                null, null, true);
+        assertThat(this.mapper.toCommand(journalRequest).configuration()).isEqualTo(
+                new com.sitionix.forgeagent.domain.model.SystemdLogConfiguration(
+                        com.sitionix.forgeagent.domain.model.SystemdTargetMode.FULL_JOURNAL, null));
+
         final LogTargetCandidate candidate = new LogTargetCandidate(
                 "mission",
                 "mission",

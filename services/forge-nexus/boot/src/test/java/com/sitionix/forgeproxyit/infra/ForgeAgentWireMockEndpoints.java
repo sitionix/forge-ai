@@ -7,6 +7,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogDiscoveryRequ
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogTargetCandidateResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
@@ -90,6 +91,26 @@ public final class ForgeAgentWireMockEndpoints {
                 (WiremockDefault) context -> context
                         .matchesJson("agent-create-log-source-request.json")
                         .responseStatus(HttpStatus.CONFLICT.value())
+                        .responseBody("agent-upstream-error-response.json"));
+    }
+
+    public static Endpoint<AgentSshConnectionRequest, Void> testSshConnection() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/ssh-connections/test", HttpMethod.POST,
+                AgentSshConnectionRequest.class, Void.class,
+                (WiremockDefault) context -> context
+                        .matchesJson("agent-test-ssh-connection-request.json")
+                        .responseStatus(HttpStatus.NO_CONTENT.value()));
+    }
+
+    public static Endpoint<AgentSshConnectionRequest, InfrastructureErrorResponse>
+            testSshConnectionFailure() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/ssh-connections/test", HttpMethod.POST,
+                AgentSshConnectionRequest.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context
+                        .matchesJson("agent-test-ssh-connection-request.json")
+                        .responseStatus(HttpStatus.BAD_GATEWAY.value())
                         .responseBody("agent-upstream-error-response.json"));
     }
 

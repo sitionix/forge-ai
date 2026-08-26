@@ -210,7 +210,7 @@
     <dialog id="projectLogsDialog" class="modal-dialog">
       <form id="projectLogsForm" method="dialog" class="modal-form">
         <div class="modal-head"><h2>Add Log Source</h2></div>
-        <div id="projectLogsError" class="error-box"></div>
+        <div id="projectLogsError" class="error-box hidden"></div>
         <label class="field-label">Name</label><input id="projectLogsName" class="text-input" required maxlength="120">
         <label class="field-label">Connection</label><select id="projectLogsConnection" class="text-input"><option>LOCAL</option><option>SSH</option></select>
         <label id="projectLogsSshField" class="field-label hidden">SSH profile<select id="projectLogsSsh" class="text-input"></select><button id="projectLogsAddSsh" class="button small secondary" type="button">New SSH profile</button></label>
@@ -224,6 +224,7 @@
             <label class="field-label">Compose file<input id="projectLogsComposeFile" class="text-input" placeholder="/project/compose.yaml"></label>
           </div>
         </div>
+        <label id="projectLogsSystemdModeField" class="field-label hidden">Target<select id="projectLogsSystemdMode" class="text-input"><option value="UNIT">Unit</option><option value="FULL_JOURNAL">Full journal</option></select></label>
         <label id="projectLogsUnitField" class="field-label hidden">Unit<input id="projectLogsUnit" class="text-input" list="projectLogsUnits"><datalist id="projectLogsUnits"></datalist></label>
         <label id="projectLogsPathField" class="field-label hidden">Path<input id="projectLogsPath" class="text-input"></label>
         <div id="projectLogsDiscoveryError" class="error-box"></div>

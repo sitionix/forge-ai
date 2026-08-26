@@ -69,6 +69,7 @@ public class AgentProxyApiMapper {
                 request.container(),
                 request.composeService(),
                 request.composeFile(),
+                request.systemdMode(),
                 request.unit(),
                 request.path(),
                 request.enabled());
@@ -127,7 +128,8 @@ public class AgentProxyApiMapper {
                     new AgentLogConfigurationResponse(
                             docker.container(), docker.composeService(), docker.composeFile(), null, null);
             case AgentSystemdLogConfiguration systemd ->
-                    new AgentLogConfigurationResponse(null, null, null, systemd.unit(), null);
+                    new AgentLogConfigurationResponse(
+                            null, null, null, systemd.mode(), systemd.unit(), null);
             case AgentFileLogConfiguration file ->
                     new AgentLogConfigurationResponse(null, null, null, null, file.path());
         };

@@ -11,6 +11,7 @@
       "container": "mission",
       "composeService": null,
       "composeFile": null,
+      "systemdMode": null,
       "unit": null,
       "path": null
     },

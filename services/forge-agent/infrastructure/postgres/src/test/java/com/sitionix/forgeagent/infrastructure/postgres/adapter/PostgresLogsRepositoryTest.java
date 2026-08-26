@@ -55,6 +55,22 @@ class PostgresLogsRepositoryTest {
   }
 
   @Test
+  void persistsFullJournalModeWithoutAUnit() {
+    var spring = mock(SpringDataLogSourceRepository.class);
+    when(spring.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    var repository = new PostgresLogSourceRepository(spring);
+    var source = new LogSource(
+        UUID.randomUUID(), UUID.randomUUID(), "journal", null, LogConnectionType.SSH,
+        UUID.randomUUID(), LogProviderType.SYSTEMD,
+        new SystemdLogConfiguration(SystemdTargetMode.FULL_JOURNAL, null), true,
+        Instant.EPOCH, Instant.EPOCH);
+
+    assertThat(repository.save(source).configuration()).isEqualTo(source.configuration());
+    verify(spring).save(argThat(entity -> entity.getSystemdMode() == SystemdTargetMode.FULL_JOURNAL
+        && entity.getSystemdUnit() == null));
+  }
+
+  @Test
   void persistsReusableSshProfileSecretOnlyInPersistenceEntity() {
     var spring = mock(SpringDataSshConnectionRepository.class);
     when(spring.save(any())).thenAnswer(i -> i.getArgument(0));

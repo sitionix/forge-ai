@@ -11,6 +11,15 @@ public record SaveAgentLogSourceCommand(
     String container,
     String composeService,
     String composeFile,
+    AgentSystemdTargetMode systemdMode,
     String unit,
     String path,
-    boolean enabled) {}
+    boolean enabled) {
+  public SaveAgentLogSourceCommand(
+      String name, UUID serviceId, AgentLogConnectionType connection, UUID sshConnectionId,
+      AgentLogProviderType provider, String container, String composeService, String composeFile,
+      String unit, String path, boolean enabled) {
+    this(name, serviceId, connection, sshConnectionId, provider, container, composeService,
+        composeFile, AgentSystemdTargetMode.UNIT, unit, path, enabled);
+  }
+}

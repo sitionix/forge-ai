@@ -180,9 +180,15 @@ public class LogSourceUseCases {
           throw new ValidationException("Compose file is required or invalid");
       }
       case SYSTEMD -> {
-        String unit = ((SystemdLogConfiguration) configuration).unit();
-        if (!nonblank(unit) || !SYSTEMD_UNIT.matcher(unit).matches())
+        var systemd = (SystemdLogConfiguration) configuration;
+        if (systemd.mode() == null)
+          throw new ValidationException("Systemd target mode is required");
+        String unit = systemd.unit();
+        if (systemd.mode() == SystemdTargetMode.UNIT
+            && (!nonblank(unit) || !SYSTEMD_UNIT.matcher(unit).matches()))
           throw new ValidationException("Systemd unit is required or invalid");
+        if (systemd.mode() == SystemdTargetMode.FULL_JOURNAL && nonblank(unit))
+          throw new ValidationException("Full journal cannot specify a systemd unit");
       }
       case FILE -> {
         if (!safePath(((FileLogConfiguration) configuration).path()))

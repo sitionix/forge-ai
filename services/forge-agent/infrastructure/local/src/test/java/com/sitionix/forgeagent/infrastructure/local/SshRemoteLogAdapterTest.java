@@ -21,6 +21,24 @@ class SshRemoteLogAdapterTest {
   }
 
   @Test
+  void fullJournalStreamsWithoutAUnitWhileUnitModeKeepsUnitArgument() {
+    var executor = new CapturingExecutor();
+    var adapter = new SshRemoteLogAdapter(executor);
+    var ssh = connection();
+
+    adapter.stream(ssh, LogProviderType.SYSTEMD,
+        new SystemdLogConfiguration(SystemdTargetMode.UNIT, "rover.service"), 50);
+    assertThat(executor.command.getLast())
+        .contains("'journalctl' '--unit' 'rover.service' '--lines' '50' '--follow'");
+
+    adapter.stream(ssh, LogProviderType.SYSTEMD,
+        new SystemdLogConfiguration(SystemdTargetMode.FULL_JOURNAL, null), 50);
+    assertThat(executor.command.getLast())
+        .contains("'journalctl' '--lines' '50' '--follow'")
+        .doesNotContain("'--unit'");
+  }
+
+  @Test
   void dockerRemoteCommandNeverSplitsUserInputIntoLocalSshArguments() {
     var executor = new CapturingExecutor();
     new LocalCliDockerLogAdapter(executor).validate("mission", null, null, connection());

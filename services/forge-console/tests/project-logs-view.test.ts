@@ -57,6 +57,21 @@ function setup(overrides: any = {}) {
 }
 
 describe("ProjectLogsView", () => {
+  it("keeps the Add Log Source error hidden until an actual failure", async () => {
+    const { view, dom } = setup({
+      validateLogSource: vi.fn().mockRejectedValue(new Error("Invalid target")),
+    });
+    await view.load("p");
+    view.openAdd();
+    const error = dom.window.document.getElementById("projectLogsError")!;
+    expect(error.classList).toContain("hidden");
+
+    await view.save(new dom.window.Event("submit"));
+
+    expect(error.textContent).toBe("Invalid target");
+    expect(error.classList).not.toContain("hidden");
+  });
+
   it("loads custom sources and preserves multiple selection", async () => {
     const source = (id: string, name: string) => ({
       id,
@@ -126,6 +141,32 @@ describe("ProjectLogsView", () => {
         container: null,
       }),
     );
+  });
+
+  it("creates a full-journal systemd source without discovery or a unit", async () => {
+    const create = vi.fn().mockResolvedValue({});
+    const discover = vi.fn().mockResolvedValue([]);
+    const { view, dom } = setup({
+      createLogSource: create,
+      discoverLogTargets: discover,
+      listSshConnections: vi.fn().mockResolvedValue([
+        { id: "ssh", name: "Ancestor", username: "ancestor", host: "192.168.0.108" },
+      ]),
+    });
+    await view.load("p");
+    (dom.window.document.getElementById("projectLogsName") as HTMLInputElement).value = "Jessie";
+    (dom.window.document.getElementById("projectLogsConnection") as HTMLSelectElement).value = "SSH";
+    (dom.window.document.getElementById("projectLogsProvider") as HTMLSelectElement).value = "SYSTEMD";
+    (dom.window.document.getElementById("projectLogsSsh") as HTMLSelectElement).value = "ssh";
+    (dom.window.document.getElementById("projectLogsSystemdMode") as HTMLSelectElement).value = "FULL_JOURNAL";
+
+    await view.discover();
+    await view.save(new dom.window.Event("submit"));
+
+    expect(discover).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledWith("p", expect.objectContaining({
+      provider: "SYSTEMD", systemdMode: "FULL_JOURNAL", unit: null,
+    }));
   });
 
   it("shows discovery failures without disabling manual input", async () => {
@@ -272,6 +313,28 @@ describe("ProjectLogsView", () => {
     password.dispatchEvent(new dom.window.Event("input"));
     expect(dom.window.document.getElementById("projectLogsSshStatus")!.classList)
       .toContain("hidden");
+  });
+
+  it("ignores a stale SSH test result after form values change", async () => {
+    let resolve!: () => void;
+    const pending = new Promise<void>((done) => { resolve = done; });
+    const { view, dom } = setup({ testSshConnection: vi.fn().mockReturnValue(pending) });
+    await view.load("p");
+    for (const [id, value] of Object.entries({
+      projectLogsSshName: "Ancestor", projectLogsSshHost: "192.168.0.108",
+      projectLogsSshPort: "22", projectLogsSshUsername: "ancestor",
+      projectLogsSshKey: "/keys/id",
+    })) (dom.window.document.getElementById(id) as HTMLInputElement).value = value;
+
+    const testing = view.testSsh();
+    const host = dom.window.document.getElementById("projectLogsSshHost") as HTMLInputElement;
+    host.value = "changed.local";
+    host.dispatchEvent(new dom.window.Event("input"));
+    resolve();
+    await testing;
+
+    expect(dom.window.document.getElementById("projectLogsSshStatus")!.textContent).toBe("");
+    expect(dom.window.document.getElementById("projectLogsSshError")!.textContent).toBe("");
   });
 
   it("tests private-key values and displays a safe failure", async () => {

@@ -129,6 +129,26 @@ class ForgeAgentProjectLogsSchemaIT {
   }
 
   @Test
+  void systemdUnitAndFullJournalModesSatisfyProviderConstraint() {
+    this.forgeIt
+        .postgresql()
+        .create()
+        .to(PROJECT.withJson("logs_project.json"))
+        .to(SSH_CONNECTION.withJson("logs_ssh.json"))
+        .to(LOG_SOURCE.withJson("logs_source_systemd_unit.json"))
+        .to(LOG_SOURCE.withJson("logs_source_systemd_full_journal.json"))
+        .build();
+
+    assertThat(this.forgeIt.postgresql().get(LogSourceEntity.class).getAll()).hasSize(2);
+  }
+
+  @Test
+  void systemdTargetModeConstraintRejectsMismatchedUnit() {
+    assertInvalidWithSsh("logs_source_invalid_systemd_unit_missing.json");
+    assertInvalidWithSsh("logs_source_invalid_full_journal_unit.json");
+  }
+
+  @Test
   void privateKeyAndPasswordProfilesSatisfyAuthenticationConstraint() {
     this.forgeIt
         .postgresql()

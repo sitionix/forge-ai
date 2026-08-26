@@ -149,6 +149,28 @@ class NexusAgentProxyIT {
     }
 
     @Test
+    void sshConnectionTestForwardsTypedUnsavedRequestAndReturnsNoContent() {
+        final var upstream = this.testManager.wiremock()
+                .createMapping(ForgeAgentWireMockEndpoints.testSshConnection())
+                .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.testSshConnection())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+        upstream.verify();
+    }
+
+    @Test
+    void sshConnectionTestPreservesUpstreamAgentError() {
+        final var upstream = this.testManager.wiremock()
+                .createMapping(ForgeAgentWireMockEndpoints.testSshConnectionFailure())
+                .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.testSshConnectionFailure())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+        upstream.verify();
+    }
+
+    @Test
     void invalidLogsRequestIsRejectedBeforeAnyUpstreamCall() {
         this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.invalidLogSource())
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();

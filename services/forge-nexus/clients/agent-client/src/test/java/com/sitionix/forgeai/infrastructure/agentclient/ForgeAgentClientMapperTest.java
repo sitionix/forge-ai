@@ -607,6 +607,21 @@ class ForgeAgentClientMapperTest {
     }
 
     @Test
+    void mapsFullJournalModeThroughTypedAgentClientDtos() {
+        final var command = new com.sitionix.forgeai.domain.model.agentproxy.SaveAgentLogSourceCommand(
+                "journal", null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogConnectionType.SSH,
+                UUID.randomUUID(),
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderType.SYSTEMD,
+                null, null, null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdTargetMode.FULL_JOURNAL,
+                null, null, true);
+
+        assertThat(this.mapper.toRequest(command).systemdMode()).isEqualTo(
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdTargetMode.FULL_JOURNAL);
+    }
+
+    @Test
     void mapsPasswordSshAuthenticationThroughTypedClientDtos() {
         final var command = new com.sitionix.forgeai.domain.model.agentproxy.CreateAgentSshConnectionCommand(
                 "Ancestor",

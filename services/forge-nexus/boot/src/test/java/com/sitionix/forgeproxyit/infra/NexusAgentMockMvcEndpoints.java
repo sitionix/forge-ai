@@ -9,6 +9,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentLogTargetCandidateResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentSshConnectionRequest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
@@ -114,5 +115,25 @@ public final class NexusAgentMockMvcEndpoints {
                 (MockmvcDefault) context -> context
                         .withRequest("agent-invalid-log-source-request.json")
                         .expectStatus(HttpStatus.BAD_REQUEST.value()));
+    }
+
+    public static Endpoint<AgentSshConnectionRequest, Void> testSshConnection() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/projects/{projectId}/ssh-connections/test",
+                HttpMethod.POST, AgentSshConnectionRequest.class, Void.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("agent-test-ssh-connection-request.json")
+                        .expectStatus(HttpStatus.NO_CONTENT.value()));
+    }
+
+    public static Endpoint<AgentSshConnectionRequest, InfrastructureErrorResponse>
+            testSshConnectionFailure() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/projects/{projectId}/ssh-connections/test",
+                HttpMethod.POST, AgentSshConnectionRequest.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("agent-test-ssh-connection-request.json")
+                        .expectStatus(HttpStatus.BAD_GATEWAY.value())
+                        .expectResponse("agent-upstream-error-response.json"));
     }
 }

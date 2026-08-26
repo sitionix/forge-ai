@@ -88,6 +88,7 @@ import com.sitionix.forgeagent.domain.model.RunNode;
 import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.model.SshConnection;
 import com.sitionix.forgeagent.domain.model.SystemdLogConfiguration;
+import com.sitionix.forgeagent.domain.model.SystemdTargetMode;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
@@ -158,7 +159,9 @@ class ForgeAgentApiMapper {
         final LogProviderConfiguration configuration = switch (request.provider()) {
             case DOCKER -> new DockerLogConfiguration(
                     request.container(), request.composeService(), request.composeFile());
-            case SYSTEMD -> new SystemdLogConfiguration(request.unit());
+            case SYSTEMD -> new SystemdLogConfiguration(
+                    request.systemdMode() == null ? SystemdTargetMode.UNIT : request.systemdMode(),
+                    request.unit());
             case FILE -> new FileLogConfiguration(request.path());
         };
         return new SaveLogSourceCommand(
@@ -232,7 +235,7 @@ class ForgeAgentApiMapper {
             case DockerLogConfiguration docker -> new LogProviderConfigurationResponse(
                     docker.container(), docker.composeService(), docker.composeFile(), null, null);
             case SystemdLogConfiguration systemd -> new LogProviderConfigurationResponse(
-                    null, null, null, systemd.unit(), null);
+                    null, null, null, systemd.mode(), systemd.unit(), null);
             case FileLogConfiguration file -> new LogProviderConfigurationResponse(
                     null, null, null, null, file.path());
         };
