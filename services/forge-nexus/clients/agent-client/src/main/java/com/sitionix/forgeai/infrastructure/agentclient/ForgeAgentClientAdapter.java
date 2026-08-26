@@ -18,6 +18,16 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunComman
 import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogDiscoveryCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetCandidate;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentSshConnection;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentSshConnectionCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentLogSourceCommand;
+import com.sitionix.forgeai.domain.port.AgentLogStream;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogDiscoveryRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionRequest;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
@@ -38,6 +48,7 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     private final ForgeAgentHttpClient httpClient;
     private final ForgeAgentClientMapper mapper;
     private final ForgeAgentClientCallExecutor clientCallExecutor;
+    private final ForgeAgentLogStreamingHttpClient logStreamingHttpClient;
 
     @Override
     public List<AgentProject> listProjects() {
@@ -202,5 +213,96 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     @Override
     public AgentWorkflowRun getWorkflowRun(final UUID runId) {
         return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.getWorkflowRun(runId)));
+    }
+
+    @Override
+    public List<AgentLogSource> listProjectLogSources(final UUID projectId) {
+      final var response =
+          clientCallExecutor.execute(() -> httpClient.listProjectLogSources(projectId));
+      return response.stream().map(mapper::toDomain).toList();
+    }
+
+    @Override
+    public AgentLogSource createProjectLogSource(
+        final UUID projectId, final SaveAgentLogSourceCommand command) {
+      final AgentLogSourceRequest request = mapper.toRequest(command);
+      return mapper.toDomain(
+          clientCallExecutor.execute(() -> httpClient.createProjectLogSource(projectId, request)));
+    }
+
+    @Override
+    public AgentLogSource updateProjectLogSource(
+        final UUID projectId, final UUID sourceId, final SaveAgentLogSourceCommand command) {
+      final AgentLogSourceRequest request = mapper.toRequest(command);
+      return mapper.toDomain(
+          clientCallExecutor.execute(
+              () -> httpClient.updateProjectLogSource(projectId, sourceId, request)));
+    }
+
+    @Override
+    public void deleteProjectLogSource(final UUID projectId, final UUID sourceId) {
+      clientCallExecutor.execute(
+          () -> {
+            httpClient.deleteProjectLogSource(projectId, sourceId);
+            return null;
+          });
+    }
+
+    @Override
+    public List<AgentLogTargetCandidate> discoverProjectLogTargets(
+        final UUID projectId, final AgentLogDiscoveryCommand command) {
+      final AgentLogDiscoveryRequest request = mapper.toRequest(command);
+      return clientCallExecutor
+          .execute(() -> httpClient.discoverProjectLogTargets(projectId, request))
+          .stream()
+          .map(mapper::toDomain)
+          .toList();
+    }
+
+    @Override
+    public void validateProjectLogSource(
+        final UUID projectId, final SaveAgentLogSourceCommand command) {
+      final AgentLogSourceRequest request = mapper.toRequest(command);
+      clientCallExecutor.execute(
+          () -> {
+            httpClient.validateProjectLogSource(projectId, request);
+            return null;
+          });
+    }
+
+    @Override
+    public List<AgentSshConnection> listProjectSshConnections(final UUID projectId) {
+      return clientCallExecutor
+          .execute(() -> httpClient.listProjectSshConnections(projectId))
+          .stream()
+          .map(mapper::toDomain)
+          .toList();
+    }
+
+    @Override
+    public AgentSshConnection createProjectSshConnection(
+        final UUID projectId, final CreateAgentSshConnectionCommand command) {
+      final AgentSshConnectionRequest request = mapper.toRequest(command);
+      return mapper.toDomain(
+          clientCallExecutor.execute(
+              () -> httpClient.createProjectSshConnection(projectId, request)));
+    }
+
+    @Override
+    public void testProjectSshConnection(
+        final UUID projectId, final CreateAgentSshConnectionCommand command) {
+      final AgentSshConnectionRequest request = mapper.toRequest(command);
+      clientCallExecutor.execute(
+          () -> {
+            httpClient.testProjectSshConnection(projectId, request);
+            return null;
+          });
+    }
+
+    @Override
+    public AgentLogStream openProjectLogsStream(
+        final UUID projectId, final List<UUID> sourceIds, final int lines) {
+      return clientCallExecutor.execute(
+          () -> logStreamingHttpClient.open(projectId, sourceIds, lines));
     }
 }

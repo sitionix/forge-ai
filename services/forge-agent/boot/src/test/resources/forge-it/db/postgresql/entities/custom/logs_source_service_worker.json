@@ -1,0 +1,12 @@
+{
+  "id": "90000000-0000-4000-8000-000000000024",
+  "projectId": "90000000-0000-4000-8000-000000000001",
+  "name": "worker",
+  "serviceId": "90000000-0000-4000-8000-000000000010",
+  "connectionType": "LOCAL",
+  "provider": "DOCKER",
+  "dockerContainer": "worker",
+  "enabled": true,
+  "createdAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z"
+}

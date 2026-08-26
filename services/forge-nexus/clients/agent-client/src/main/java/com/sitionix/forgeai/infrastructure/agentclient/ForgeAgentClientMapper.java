@@ -5,6 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentDockerLogConfiguration;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentFileLogConfiguration;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogDiscoveryCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderConfiguration;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetCandidate;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentModelSelection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
@@ -23,6 +29,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunConnection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunNode;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunPort;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentSshConnection;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdLogConfiguration;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunExecutionEdge;
@@ -31,6 +39,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.ConnectionResolutionType;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentSshConnectionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
@@ -38,11 +47,16 @@ import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentLogSourceCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogDiscoveryRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogTargetCandidateResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentModelSelectionDto;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
@@ -50,6 +64,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeEffortRes
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeModelResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeProviderResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ConnectionResolutionResponse;
@@ -83,6 +99,92 @@ import org.springframework.stereotype.Component;
 public class ForgeAgentClientMapper {
 
     private final ObjectMapper objectMapper;
+
+    AgentLogSourceRequest toRequest(final SaveAgentLogSourceCommand command) {
+        return new AgentLogSourceRequest(
+                command.name(),
+                command.serviceId(),
+                command.connection(),
+                command.sshConnectionId(),
+                command.provider(),
+                command.container(),
+                command.composeService(),
+                command.composeFile(),
+                command.systemdMode(),
+                command.unit(),
+                command.path(),
+                command.enabled());
+    }
+
+    AgentLogDiscoveryRequest toRequest(final AgentLogDiscoveryCommand command) {
+        return new AgentLogDiscoveryRequest(
+                command.connection(),
+                command.sshConnectionId(),
+                command.provider(),
+                command.repositoryId());
+    }
+
+    AgentSshConnectionRequest toRequest(final CreateAgentSshConnectionCommand command) {
+        return new AgentSshConnectionRequest(
+                command.name(),
+                command.host(),
+                command.port(),
+                command.username(),
+                command.authType(),
+                command.privateKeyPath(),
+                command.password());
+    }
+
+    AgentLogSource toDomain(final AgentLogSourceResponse response) {
+        final AgentLogProviderConfiguration configuration =
+                switch (response.provider()) {
+                    case DOCKER ->
+                            new AgentDockerLogConfiguration(
+                                    response.configuration().container(),
+                                    response.configuration().composeService(),
+                                    response.configuration().composeFile());
+                    case SYSTEMD -> new AgentSystemdLogConfiguration(
+                            response.configuration().systemdMode(), response.configuration().unit());
+                    case FILE -> new AgentFileLogConfiguration(response.configuration().path());
+                };
+        return new AgentLogSource(
+                response.id(),
+                response.projectId(),
+                response.name(),
+                response.serviceId(),
+                response.connection(),
+                response.sshConnectionId(),
+                response.provider(),
+                configuration,
+                response.enabled(),
+                response.createdAt(),
+                response.updatedAt());
+    }
+
+    AgentLogTargetCandidate toDomain(final AgentLogTargetCandidateResponse response) {
+        return new AgentLogTargetCandidate(
+                response.id(),
+                response.label(),
+                response.status(),
+                response.image(),
+                response.composeProject(),
+                response.composeService(),
+                response.composeFile(),
+                response.suggested());
+    }
+
+    AgentSshConnection toDomain(final AgentSshConnectionResponse response) {
+        return new AgentSshConnection(
+                response.id(),
+                response.projectId(),
+                response.name(),
+                response.host(),
+                response.port(),
+                response.username(),
+                response.authType(),
+                response.createdAt(),
+                response.updatedAt());
+    }
 
     AgentProjectRequest toRequest(final CreateAgentProjectCommand command) {
         return new AgentProjectRequest(command.name());

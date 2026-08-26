@@ -1,0 +1,11 @@
+{
+  "id": "90000000-0000-4000-8000-000000000027",
+  "projectId": "90000000-0000-4000-8000-000000000001",
+  "name": "invalid systemd",
+  "connectionType": "LOCAL",
+  "provider": "SYSTEMD",
+  "systemdUnit": "app.service",
+  "enabled": true,
+  "createdAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z"
+}

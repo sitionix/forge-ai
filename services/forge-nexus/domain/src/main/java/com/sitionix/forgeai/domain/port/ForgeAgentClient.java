@@ -2,76 +2,105 @@ package com.sitionix.forgeai.domain.port;
 
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogDiscoveryCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetCandidate;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
-import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentSshConnection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentSshConnectionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowRunCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.ImportAgentProjectRepositoryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentLogSourceCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import java.util.List;
 import java.util.UUID;
 
 public interface ForgeAgentClient {
 
-    List<AgentProject> listProjects();
+  List<AgentProject> listProjects();
 
-    AgentProject createProject(CreateAgentProjectCommand command);
+  AgentProject createProject(CreateAgentProjectCommand command);
 
-    void deleteProject(UUID projectId);
+  void deleteProject(UUID projectId);
 
-    AgentProjectRepository importProjectRepository(UUID projectId, ImportAgentProjectRepositoryCommand command);
+  AgentProjectRepository importProjectRepository(
+      UUID projectId, ImportAgentProjectRepositoryCommand command);
 
-    List<AgentProjectRepository> listProjectRepositories(UUID projectId);
+  List<AgentProjectRepository> listProjectRepositories(UUID projectId);
 
-    AgentProjectRepository cloneProjectRepository(UUID projectId, UUID repositoryId);
+  AgentProjectRepository cloneProjectRepository(UUID projectId, UUID repositoryId);
 
-    AgentProjectRepository refreshProjectRepository(UUID projectId, UUID repositoryId);
+  AgentProjectRepository refreshProjectRepository(UUID projectId, UUID repositoryId);
 
-    AgentProjectRepository pullProjectRepository(UUID projectId, UUID repositoryId);
+  AgentProjectRepository pullProjectRepository(UUID projectId, UUID repositoryId);
 
-    AgentProjectTask createProjectTask(UUID projectId, CreateAgentProjectTaskCommand command);
+  AgentProjectTask createProjectTask(UUID projectId, CreateAgentProjectTaskCommand command);
 
-    AgentProjectTaskPage listProjectTasks(UUID projectId, int page, int size);
+  AgentProjectTaskPage listProjectTasks(UUID projectId, int page, int size);
 
-    AgentProjectTask getProjectTask(UUID taskId);
+  AgentProjectTask getProjectTask(UUID taskId);
 
-    void deleteProjectTask(UUID taskId);
+  void deleteProjectTask(UUID taskId);
 
-    AgentRuntimeCatalog getRuntime();
+  AgentRuntimeCatalog getRuntime();
 
-    List<AgentDefinitionListItem> listProjectAgents(UUID projectId);
+  List<AgentDefinitionListItem> listProjectAgents(UUID projectId);
 
-    AgentDefinitionDetails createAgent(UUID projectId, SaveAgentDefinitionCommand command);
+  AgentDefinitionDetails createAgent(UUID projectId, SaveAgentDefinitionCommand command);
 
-    AgentDefinitionDetails getAgent(UUID agentId);
+  AgentDefinitionDetails getAgent(UUID agentId);
 
-    AgentDefinitionDetails updateAgent(UUID agentId, SaveAgentDefinitionCommand command);
+  AgentDefinitionDetails updateAgent(UUID agentId, SaveAgentDefinitionCommand command);
 
-    void deleteAgent(UUID agentId);
+  void deleteAgent(UUID agentId);
 
-    List<AgentWorkflow> listProjectWorkflows(UUID projectId);
+  List<AgentWorkflow> listProjectWorkflows(UUID projectId);
 
-    AgentWorkflow createWorkflow(UUID projectId, CreateAgentWorkflowCommand command);
+  AgentWorkflow createWorkflow(UUID projectId, CreateAgentWorkflowCommand command);
 
-    AgentWorkflow getWorkflow(UUID workflowId);
+  AgentWorkflow getWorkflow(UUID workflowId);
 
-    AgentWorkflow updateWorkflow(UUID workflowId, SaveAgentWorkflowCommand command);
+  AgentWorkflow updateWorkflow(UUID workflowId, SaveAgentWorkflowCommand command);
 
-    void deleteWorkflow(UUID workflowId);
+  void deleteWorkflow(UUID workflowId);
 
-    AgentWorkflowRun createWorkflowRun(UUID workflowId, CreateAgentWorkflowRunCommand command);
+  AgentWorkflowRun createWorkflowRun(UUID workflowId, CreateAgentWorkflowRunCommand command);
 
-    List<AgentWorkflowRunSummary> listWorkflowRuns(UUID workflowId);
+  List<AgentWorkflowRunSummary> listWorkflowRuns(UUID workflowId);
 
-    AgentWorkflowRun getWorkflowRun(UUID runId);
+  AgentWorkflowRun getWorkflowRun(UUID runId);
+
+  List<AgentLogSource> listProjectLogSources(UUID projectId);
+
+  AgentLogSource createProjectLogSource(UUID projectId, SaveAgentLogSourceCommand command);
+
+  AgentLogSource updateProjectLogSource(
+      UUID projectId, UUID sourceId, SaveAgentLogSourceCommand command);
+
+  void deleteProjectLogSource(UUID projectId, UUID sourceId);
+
+  List<AgentLogTargetCandidate> discoverProjectLogTargets(
+      UUID projectId, AgentLogDiscoveryCommand command);
+
+  void validateProjectLogSource(UUID projectId, SaveAgentLogSourceCommand command);
+
+  List<AgentSshConnection> listProjectSshConnections(UUID projectId);
+
+  AgentSshConnection createProjectSshConnection(
+      UUID projectId, CreateAgentSshConnectionCommand command);
+
+  void testProjectSshConnection(UUID projectId, CreateAgentSshConnectionCommand command);
+
+  AgentLogStream openProjectLogsStream(UUID projectId, List<UUID> sourceIds, int lines);
 }

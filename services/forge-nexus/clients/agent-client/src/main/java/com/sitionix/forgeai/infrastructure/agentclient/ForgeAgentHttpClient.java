@@ -18,6 +18,12 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryRes
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogDiscoveryRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogTargetCandidateResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionResponse;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.MediaType;
@@ -108,4 +114,51 @@ public interface ForgeAgentHttpClient {
 
     @GetExchange("/api/v1/workflow-runs/{runId}")
     WorkflowRunResponse getWorkflowRun(@PathVariable UUID runId);
+
+    @GetExchange("/api/v1/projects/{projectId}/log-sources")
+    List<AgentLogSourceResponse> listProjectLogSources(@PathVariable UUID projectId);
+
+    @PostExchange(
+        value = "/api/v1/projects/{projectId}/log-sources",
+        contentType = MediaType.APPLICATION_JSON_VALUE)
+    AgentLogSourceResponse createProjectLogSource(
+        @PathVariable UUID projectId, @RequestBody AgentLogSourceRequest request);
+
+    @PutExchange(
+        value = "/api/v1/projects/{projectId}/log-sources/{sourceId}",
+        contentType = MediaType.APPLICATION_JSON_VALUE)
+    AgentLogSourceResponse updateProjectLogSource(
+        @PathVariable UUID projectId,
+        @PathVariable UUID sourceId,
+        @RequestBody AgentLogSourceRequest request);
+
+    @DeleteExchange("/api/v1/projects/{projectId}/log-sources/{sourceId}")
+    void deleteProjectLogSource(@PathVariable UUID projectId, @PathVariable UUID sourceId);
+
+    @PostExchange(
+        value = "/api/v1/projects/{projectId}/log-sources/discover",
+        contentType = MediaType.APPLICATION_JSON_VALUE)
+    List<AgentLogTargetCandidateResponse> discoverProjectLogTargets(
+        @PathVariable UUID projectId, @RequestBody AgentLogDiscoveryRequest request);
+
+    @PostExchange(
+        value = "/api/v1/projects/{projectId}/log-sources/validate",
+        contentType = MediaType.APPLICATION_JSON_VALUE)
+    void validateProjectLogSource(
+        @PathVariable UUID projectId, @RequestBody AgentLogSourceRequest request);
+
+    @GetExchange("/api/v1/projects/{projectId}/ssh-connections")
+    List<AgentSshConnectionResponse> listProjectSshConnections(@PathVariable UUID projectId);
+
+    @PostExchange(
+        value = "/api/v1/projects/{projectId}/ssh-connections",
+        contentType = MediaType.APPLICATION_JSON_VALUE)
+    AgentSshConnectionResponse createProjectSshConnection(
+        @PathVariable UUID projectId, @RequestBody AgentSshConnectionRequest request);
+
+    @PostExchange(
+        value = "/api/v1/projects/{projectId}/ssh-connections/test",
+        contentType = MediaType.APPLICATION_JSON_VALUE)
+    void testProjectSshConnection(
+        @PathVariable UUID projectId, @RequestBody AgentSshConnectionRequest request);
 }

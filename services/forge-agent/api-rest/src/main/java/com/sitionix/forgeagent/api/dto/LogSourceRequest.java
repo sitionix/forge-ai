@@ -1,0 +1,30 @@
+package com.sitionix.forgeagent.api.dto;
+
+import com.sitionix.forgeagent.domain.model.LogConnectionType;
+import com.sitionix.forgeagent.domain.model.LogProviderType;
+import com.sitionix.forgeagent.domain.model.SystemdTargetMode;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import java.util.UUID;
+
+public record LogSourceRequest(
+    @NotBlank String name,
+    UUID serviceId,
+    @NotNull LogConnectionType connection,
+    UUID sshConnectionId,
+    @NotNull LogProviderType provider,
+    String container,
+    String composeService,
+    String composeFile,
+    SystemdTargetMode systemdMode,
+    String unit,
+    String path,
+    boolean enabled) {
+  public LogSourceRequest(
+      String name, UUID serviceId, LogConnectionType connection, UUID sshConnectionId,
+      LogProviderType provider, String container, String composeService, String composeFile,
+      String unit, String path, boolean enabled) {
+    this(name, serviceId, connection, sshConnectionId, provider, container, composeService,
+        composeFile, SystemdTargetMode.UNIT, unit, path, enabled);
+  }
+}

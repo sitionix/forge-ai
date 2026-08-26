@@ -34,6 +34,13 @@
 
       <section class="panel project-section">
         <div class="agents-v2-pane-head">
+          <div><h2>Logs</h2><p>Configure sources and inspect live project runtime output.</p></div>
+          <button id="projectLogsOpen" class="button small secondary" type="button">Open Logs</button>
+        </div>
+      </section>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head">
           <div>
             <h2>Repositories</h2>
             <p>Project source remotes.</p>
@@ -78,6 +85,34 @@
         </div>
         <div id="agentsV2TasksError" class="error-box hidden"></div>
         <div id="agentsV2TasksList" class="agents-v2-task-list" aria-live="polite"></div>
+      </section>
+    </section>
+
+    <section id="projectLogsWorkspace" class="project-workspace-view hidden" aria-label="Project logs">
+      <header class="panel project-workspace-header">
+        <div class="panel-head compact">
+          <div>
+            <p id="projectLogsCrumbs" class="agents-v2-crumbs">Projects / Project / Logs</p>
+            <h1 id="projectLogsTitle">Project Logs</h1>
+            <p>Live project runtime sources.</p>
+          </div>
+          <button id="projectLogsBack" class="button small secondary" type="button">← Project</button>
+        </div>
+      </header>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head"><div><h2>Sources</h2><p>Choose one or more configured sources.</p></div><button id="projectLogsAdd" class="button small secondary" type="button">Add Log Source</button></div>
+        <div id="projectLogsSources" class="repository-list"></div>
+      </section>
+
+      <section class="panel project-section">
+        <div class="agents-v2-pane-head">
+          <label>Initial lines <input id="projectLogsLines" class="text-input" type="number" min="1" max="10000" value="100"></label>
+          <input id="projectLogsFilter" class="text-input" placeholder="Filter logs" aria-label="Filter logs">
+          <button id="projectLogsLive" class="button small" type="button">Live</button>
+          <button id="projectLogsPause" class="button small secondary" type="button">Pause</button>
+        </div>
+        <pre id="projectLogsOutput" class="project-logs-output" aria-live="polite"></pre>
       </section>
     </section>
 
@@ -172,11 +207,51 @@
       </form>
     </dialog>
 
+    <dialog id="projectLogsDialog" class="modal-dialog">
+      <form id="projectLogsForm" method="dialog" class="modal-form">
+        <div class="modal-head"><h2>Add Log Source</h2></div>
+        <div id="projectLogsError" class="error-box hidden"></div>
+        <label class="field-label">Name</label><input id="projectLogsName" class="text-input" required maxlength="120">
+        <label class="field-label">Connection</label><select id="projectLogsConnection" class="text-input"><option>LOCAL</option><option>SSH</option></select>
+        <label id="projectLogsSshField" class="field-label hidden">SSH profile<select id="projectLogsSsh" class="text-input"></select><button id="projectLogsAddSsh" class="button small secondary" type="button">New SSH profile</button></label>
+        <label class="field-label">Provider</label><select id="projectLogsProvider" class="text-input"><option>DOCKER</option><option>SYSTEMD</option><option>FILE</option></select>
+        <div id="projectLogsContainerField">
+          <label class="field-label">Docker target<select id="projectLogsDockerMode" class="text-input"><option value="CONTAINER">Container</option><option value="COMPOSE">Compose service</option></select></label>
+          <label id="projectLogsContainerTarget" class="field-label">Container<input id="projectLogsContainer" class="text-input" list="projectLogsContainers"><datalist id="projectLogsContainers"></datalist></label>
+          <div id="projectLogsComposeTarget" class="hidden">
+            <label class="field-label">Repository<select id="projectLogsRepository" class="text-input"></select></label>
+            <label class="field-label">Compose service<input id="projectLogsComposeService" class="text-input" list="projectLogsComposeServices"><datalist id="projectLogsComposeServices"></datalist></label>
+            <label class="field-label">Compose file<input id="projectLogsComposeFile" class="text-input" placeholder="/project/compose.yaml"></label>
+          </div>
+        </div>
+        <label id="projectLogsSystemdModeField" class="field-label hidden">Target<select id="projectLogsSystemdMode" class="text-input"><option value="UNIT">Unit</option><option value="FULL_JOURNAL">Full journal</option></select></label>
+        <label id="projectLogsUnitField" class="field-label hidden">Unit<input id="projectLogsUnit" class="text-input" list="projectLogsUnits"><datalist id="projectLogsUnits"></datalist></label>
+        <label id="projectLogsPathField" class="field-label hidden">Path<input id="projectLogsPath" class="text-input"></label>
+        <div id="projectLogsDiscoveryError" class="error-box"></div>
+        <label><input id="projectLogsEnabled" type="checkbox" checked> Enabled</label>
+        <div class="modal-actions"><button id="projectLogsCancel" class="button secondary" type="button">Cancel</button><button class="button" type="submit">Validate & Save</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="projectLogsSshDialog" class="modal-dialog">
+      <form id="projectLogsSshForm" method="dialog" class="modal-form">
+        <div class="modal-head"><h2>New SSH profile</h2></div>
+        <div id="projectLogsSshError" class="error-box hidden"></div>
+        <div id="projectLogsSshStatus" class="project-logs-ssh-status hidden"></div>
+        <label class="field-label">Name<input id="projectLogsSshName" class="text-input" required></label>
+        <label class="field-label">Host<input id="projectLogsSshHost" class="text-input" required></label>
+        <label class="field-label">Port<input id="projectLogsSshPort" class="text-input" type="number" min="1" max="65535" value="22" required></label>
+        <label class="field-label">Username<input id="projectLogsSshUsername" class="text-input" required></label>
+        <label class="field-label">Authentication<select id="projectLogsSshAuth" class="text-input"><option value="PRIVATE_KEY">Private key</option><option value="PASSWORD">Password</option></select></label>
+        <label id="projectLogsSshKeyField" class="field-label">Private key path<input id="projectLogsSshKey" class="text-input" required placeholder="/home/user/.ssh/id_ed25519"></label>
+        <label id="projectLogsSshPasswordField" class="field-label hidden">Password<input id="projectLogsSshPassword" class="text-input" type="password"></label>
+        <div class="modal-actions"><button id="projectLogsSshCancel" class="button secondary" type="button">Cancel</button><button id="projectLogsSshTest" class="button secondary" type="button">Test Connection</button><button class="button" type="submit">Create</button></div>
+      </form>
+    </dialog>
+
     <dialog id="agentsV2RepositoryDialog" class="modal-dialog">
       <form id="agentsV2RepositoryForm" method="dialog" class="modal-form">
-        <div class="modal-head">
-          <h2>Import Repository</h2>
-        </div>
+        <div class="modal-head"><h2>Import Repository</h2></div>
         <div id="agentsV2RepositoryModalError" class="error-box hidden"></div>
         <label class="field-label" for="agentsV2RepositoryUrl">Repository URL</label>
         <input id="agentsV2RepositoryUrl" class="text-input" type="text" required>

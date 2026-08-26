@@ -14,6 +14,9 @@ import com.sitionix.forgeagent.api.dto.CreateProjectRequest;
 import com.sitionix.forgeagent.api.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.LogProviderConfigurationResponse;
+import com.sitionix.forgeagent.api.dto.LogSourceRequest;
+import com.sitionix.forgeagent.api.dto.LogTargetCandidateResponse;
 import com.sitionix.forgeagent.api.dto.NodeRunResponse;
 import com.sitionix.forgeagent.api.dto.NodePositionRequest;
 import com.sitionix.forgeagent.api.dto.NodePositionResponse;
@@ -29,6 +32,7 @@ import com.sitionix.forgeagent.api.dto.RunNodeResponse;
 import com.sitionix.forgeagent.api.dto.RunPortResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
+import com.sitionix.forgeagent.api.dto.SshConnectionResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunGraphResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
@@ -40,6 +44,7 @@ import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
+import com.sitionix.forgeagent.application.usecase.SaveLogSourceCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
@@ -57,6 +62,12 @@ import com.sitionix.forgeagent.domain.model.GitOperationState;
 import com.sitionix.forgeagent.domain.model.GitUpstreamRelation;
 import com.sitionix.forgeagent.domain.model.GitUpstreamState;
 import com.sitionix.forgeagent.domain.model.GitWorkingTreeState;
+import com.sitionix.forgeagent.domain.model.DockerLogConfiguration;
+import com.sitionix.forgeagent.domain.model.LogConnectionType;
+import com.sitionix.forgeagent.domain.model.LogProviderType;
+import com.sitionix.forgeagent.domain.model.LogSource;
+import com.sitionix.forgeagent.domain.model.LogTargetCandidate;
+import com.sitionix.forgeagent.domain.model.LogTargetStatus;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeRun;
@@ -68,6 +79,8 @@ import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryView;
+import com.sitionix.forgeagent.domain.model.SshAuthType;
+import com.sitionix.forgeagent.domain.model.SshConnection;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.RunConnection;
@@ -104,9 +117,99 @@ class ForgeAgentApiMapperTest {
     private final ForgeAgentApiMapper mapper = new ForgeAgentApiMapper(this.objectMapper);
 
     @Test
+    void sshResponseExposesAuthTypeWithoutAuthenticationMaterial() throws Exception {
+        final SshConnection connection = new SshConnection(
+                UUID.randomUUID(),
+                PROJECT_ID,
+                "ancestor",
+                "192.168.0.108",
+                22,
+                "ancestor",
+                SshAuthType.PASSWORD,
+                null,
+                "secret;$(data)",
+                CREATED,
+                CREATED);
+
+        final SshConnectionResponse response = this.mapper.toResponse(connection);
+        assertThat(response.authType()).isEqualTo(SshAuthType.PASSWORD);
+        assertThat(java.util.Arrays.stream(SshConnectionResponse.class.getRecordComponents())
+                .map(component -> component.getName()))
+                .doesNotContain("password", "privateKeyPath");
+    }
+
+    @Test
     void mapsProjectRequestToCommand() {
         assertThat(this.mapper.toCommand(new CreateProjectRequest("Sitionix")))
                 .isEqualTo(new CreateProjectCommand("Sitionix"));
+    }
+
+    @Test
+    void mapsLogsApiWithoutExposingDomainConfigurationOrCandidate() {
+        final LogSourceRequest request = new LogSourceRequest(
+                "mission",
+                null,
+                LogConnectionType.LOCAL,
+                null,
+                LogProviderType.DOCKER,
+                "mission",
+                null,
+                null,
+                null,
+                null,
+                true);
+        assertThat(this.mapper.toCommand(request)).isEqualTo(new SaveLogSourceCommand(
+                "mission",
+                null,
+                LogConnectionType.LOCAL,
+                null,
+                LogProviderType.DOCKER,
+                new DockerLogConfiguration("mission", null, null),
+                true));
+
+        final LogSource source = new LogSource(
+                AGENT_ID,
+                PROJECT_ID,
+                "mission",
+                null,
+                LogConnectionType.LOCAL,
+                null,
+                LogProviderType.DOCKER,
+                new DockerLogConfiguration("mission", null, null),
+                true,
+                CREATED,
+                UPDATED);
+        assertThat(this.mapper.toResponse(source).configuration())
+                .isEqualTo(new LogProviderConfigurationResponse(
+                        "mission", null, null, null, null));
+
+        final var journalRequest = new LogSourceRequest(
+                "journal", null, LogConnectionType.SSH, UUID.randomUUID(),
+                LogProviderType.SYSTEMD, null, null, null,
+                com.sitionix.forgeagent.domain.model.SystemdTargetMode.FULL_JOURNAL,
+                null, null, true);
+        assertThat(this.mapper.toCommand(journalRequest).configuration()).isEqualTo(
+                new com.sitionix.forgeagent.domain.model.SystemdLogConfiguration(
+                        com.sitionix.forgeagent.domain.model.SystemdTargetMode.FULL_JOURNAL, null));
+
+        final LogTargetCandidate candidate = new LogTargetCandidate(
+                "mission",
+                "mission",
+                LogTargetStatus.RUNNING,
+                "mission:latest",
+                "forge",
+                "mission",
+                "compose.yaml",
+                false);
+        assertThat(this.mapper.toResponse(candidate)).isEqualTo(new LogTargetCandidateResponse(
+                "mission",
+                "mission",
+                LogTargetStatus.RUNNING,
+                "mission:latest",
+                "forge",
+                "mission",
+                "compose.yaml",
+                false));
     }
 
     @Test

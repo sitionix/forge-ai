@@ -1,6 +1,7 @@
 import { createAgentProjectsApi } from './agent-projects-api.js';
 import { escapeHtml } from './dom-render-helpers.js';
 import { ProjectWorkspace } from './project-workspace.js';
+import { ProjectLogsView } from './project-logs-view.js';
 import { TaskExecutionView } from './task-execution-view.js';
 import { WorkflowBuilder } from './workflow-builder.js';
 
@@ -64,6 +65,7 @@ export class AgentProjectsPage {
     this.workspace = new ProjectWorkspace({
       document: this.document,
       onBack: () => this.showProjectsIndex(),
+      onOpenLogs: () => this.openLogsWorkspace(this.state.selectedProjectId),
       onImportRepository: () => this.openRepositoryModal(),
       onCloneRepository: (repositoryId) => this.cloneRepository(repositoryId),
       onRefreshRepository: (repositoryId) => this.refreshRepository(repositoryId),
@@ -93,6 +95,8 @@ export class AgentProjectsPage {
       onBack: () => this.closeWorkflowBuilder(),
       onSaved: async () => this.loadWorkflows()
     });
+    this.logsView = null;
+    this.onPopState = () => this.syncRoute();
   }
 
   mount() {
@@ -101,6 +105,7 @@ export class AgentProjectsPage {
     this.workspace.bind();
     this.taskExecutionView.bind();
     this.workflowBuilder.bind();
+    this.window.addEventListener('popstate', this.onPopState);
     this.showProjectsIndex({ preserveProjects: true });
     this.loadProjects();
   }
@@ -110,6 +115,8 @@ export class AgentProjectsPage {
     this.stopTaskPolling();
     this.taskExecutionView.dispose();
     this.workflowBuilder.dispose();
+    this.disposeLogsWorkspace();
+    this.window.removeEventListener('popstate', this.onPopState);
   }
 
   bind() {
@@ -138,6 +145,7 @@ export class AgentProjectsPage {
     try {
       this.state.projects = await this.api.listProjects();
       this.renderProjects();
+      await this.syncRoute();
     } catch (error) {
       this.byId('agentsV2ProjectsList').innerHTML = '';
       this.showError('agentsV2ProjectsError', error.message || 'Projects failed to load.');
@@ -168,6 +176,8 @@ export class AgentProjectsPage {
     this.state.pullingRepositoryIds.clear();
     this.taskExecutionView.close();
     this.workflowBuilder.close();
+    this.disposeLogsWorkspace();
+    this.byId('projectLogsWorkspace').classList.add('hidden');
     this.byId('agentsV2ProjectsView').classList.remove('hidden');
     this.byId('agentsV2Workspace').classList.add('hidden');
     this.byId('agentsV2Builder').classList.add('hidden');
@@ -178,6 +188,7 @@ export class AgentProjectsPage {
   }
 
   async openProject(projectId) {
+    this.disposeLogsWorkspace();
     const loadSequence = this.projectLoadSequence + 1;
     this.projectLoadSequence = loadSequence;
     this.workflowLoadSequence += 1;
@@ -206,6 +217,7 @@ export class AgentProjectsPage {
     this.byId('agentsV2Workspace').classList.remove('hidden');
     this.byId('agentsV2Builder').classList.add('hidden');
     this.byId('agentsV2TaskExecution').classList.add('hidden');
+    this.byId('projectLogsWorkspace').classList.add('hidden');
     this.renderProjectWorkspace();
     this.workspace.renderLoading();
     await Promise.all([
@@ -218,6 +230,77 @@ export class AgentProjectsPage {
     if (!this.disposed && this.isCurrentProjectLoad(projectId, loadSequence)) {
       this.renderProjectWorkspace();
     }
+  }
+
+  async openLogsWorkspace(projectId, options = {}) {
+    if (!projectId) {
+      return;
+    }
+    this.stopTaskPolling();
+    this.taskExecutionView.close();
+    this.workflowBuilder.close();
+    this.disposeLogsWorkspace();
+    this.state.view = 'logs';
+    this.state.selectedProjectId = projectId;
+    this.byId('agentsV2ProjectsView').classList.add('hidden');
+    this.byId('agentsV2Workspace').classList.add('hidden');
+    this.byId('agentsV2Builder').classList.add('hidden');
+    this.byId('agentsV2TaskExecution').classList.add('hidden');
+    this.byId('projectLogsWorkspace').classList.remove('hidden');
+    const currentProject = this.state.projects.find((project) => project.id === projectId);
+    const projectName = currentProject?.name || 'Project';
+    this.byId('projectLogsTitle').textContent = `${projectName} Logs`;
+    this.byId('projectLogsCrumbs').textContent = `Projects / ${projectName} / Logs`;
+    this.byId('projectLogsBack').onclick = () => this.returnToProject();
+    if (options.pushState !== false) {
+      this.window.history.pushState(
+        { projectId, view: 'logs' },
+        '',
+        this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/logs`)
+      );
+    }
+    this.logsView = new ProjectLogsView({ document: this.document, window: this.window, api: this.api });
+    this.logsView.bind();
+    await this.logsView.load(projectId);
+  }
+
+  async returnToProject(options = {}) {
+    const projectId = this.state.selectedProjectId;
+    this.disposeLogsWorkspace();
+    this.byId('projectLogsWorkspace').classList.add('hidden');
+    if (options.pushState !== false) {
+      this.window.history.pushState({ projectId, view: 'project' }, '', this.pageUrl());
+    }
+    if (projectId) {
+      await this.openProject(projectId);
+    } else {
+      this.showProjectsIndex();
+    }
+  }
+
+  async syncRoute() {
+    const match = this.window.location.hash.match(/^#\/projects\/([^/]+)\/logs\/?$/);
+    if (match) {
+      const projectId = decodeURIComponent(match[1]);
+      if (this.state.view !== 'logs' || this.state.selectedProjectId !== projectId) {
+        await this.openLogsWorkspace(projectId, { pushState: false });
+      }
+      return;
+    }
+    if (this.state.view === 'logs') {
+      await this.returnToProject({ pushState: false });
+    }
+  }
+
+  pageUrl(hash = '') {
+    return `${this.window.location.pathname}${this.window.location.search}${hash}`;
+  }
+
+  disposeLogsWorkspace() {
+    this.logsView?.dispose();
+    this.logsView = null;
+    const back = this.byId('projectLogsBack');
+    if (back) back.onclick = null;
   }
 
   async loadRepositories(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence) {

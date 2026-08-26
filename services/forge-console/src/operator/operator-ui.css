@@ -653,6 +653,48 @@ body.sidebar-collapsed .sidebar-link {
   width: max-content;
 }
 
+.project-log-source-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.44);
+  cursor: pointer;
+}
+
+.project-log-source-row:has(input:checked) {
+  border-color: rgba(47, 111, 78, 0.38);
+  background: rgba(47, 111, 78, 0.08);
+}
+
+.project-log-source-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+}
+
+.project-log-source-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.project-log-source-meta {
+  color: rgba(27, 36, 31, 0.62);
+  font: 600 11px/1.35 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.project-log-source-row.is-disabled {
+  background: rgba(27, 36, 31, 0.035);
+  opacity: 0.68;
+  cursor: not-allowed;
+}
+
 .agents-v2-card {
   position: relative;
   display: grid;
@@ -2934,6 +2976,16 @@ body.sidebar-collapsed .sidebar-link {
   border-radius: 16px;
   background: rgba(225, 82, 65, 0.12);
   color: #7c2319;
+  padding: 14px 16px;
+  font-size: 13px;
+}
+
+.project-logs-ssh-status {
+  margin: 18px 22px 22px;
+  border: 1px solid rgba(50, 140, 85, 0.45);
+  border-radius: 16px;
+  background: rgba(50, 140, 85, 0.12);
+  color: #236b3d;
   padding: 14px 16px;
   font-size: 13px;
 }
@@ -5540,3 +5592,4 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
     grid-template-columns: 1fr;
   }
 }
+.project-logs-output { min-height: 16rem; max-height: 32rem; overflow: auto; padding: 1rem; background: #10151d; color: #d7e2ef; border-radius: .5rem; white-space: pre-wrap; }

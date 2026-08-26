@@ -10,9 +10,9 @@ import { executionConnectionsMayBundle, routesSharePositiveLengthSegment } from 
 
 const MODERN_EXECUTION_CARD_WIDTH = 288;
 
-function agentProjectsDom() {
+function agentProjectsDom(url = 'http://127.0.0.1/fgaisox/operator/agent-projects.html') {
   return new JSDOM(readFileSync(join(process.cwd(), 'src', 'operator', 'agent-projects.html'), 'utf8'), {
-    url: 'http://127.0.0.1/operator/agent-projects.html',
+    url,
     pretendToBeVisual: true
   });
 }
@@ -21,6 +21,24 @@ async function flushAsync() {
   for (let index = 0; index < 14; index += 1) {
     await Promise.resolve();
   }
+}
+
+async function goBack(dom: JSDOM) {
+  const navigated = new Promise<void>((resolve) =>
+    dom.window.addEventListener('popstate', () => resolve(), { once: true })
+  );
+  dom.window.history.back();
+  await navigated;
+  await flushAsync();
+}
+
+async function goForward(dom: JSDOM) {
+  const navigated = new Promise<void>((resolve) =>
+    dom.window.addEventListener('popstate', () => resolve(), { once: true })
+  );
+  dom.window.history.forward();
+  await navigated;
+  await flushAsync();
 }
 
 function taskRepositoryOption(document: Document, index = 0) {
@@ -486,6 +504,171 @@ function useFakeWindowTimers(dom: JSDOM) {
 }
 
 describe('Agent projects page', () => {
+  it('keeps Project lightweight and exposes only the dedicated Logs entry point', async () => {
+    const listLogSources = vi.fn().mockResolvedValue([]);
+    const streams: any[] = [];
+    class EventSourceFake {
+      constructor() {
+        streams.push(this);
+      }
+      addEventListener() {}
+      close() {}
+    }
+    const { dom, page } = await openedProject(api({ listLogSources }));
+    Object.defineProperty(dom.window, 'EventSource', { value: EventSourceFake, configurable: true });
+
+    const projectWorkspace = dom.window.document.getElementById('agentsV2Workspace')!;
+    expect(projectWorkspace.querySelector('#projectLogsOpen')?.textContent).toContain('Open Logs');
+    expect(projectWorkspace.querySelector('#projectLogsOutput')).toBeNull();
+    expect(projectWorkspace.querySelector('#projectLogsLive')).toBeNull();
+    expect(listLogSources).not.toHaveBeenCalled();
+    expect(streams).toHaveLength(0);
+    page.dispose();
+  });
+
+  it('navigates to the dedicated Logs route and loads its configured sources', async () => {
+    const source = {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Application',
+      enabled: true,
+      serviceId: null,
+      connection: 'LOCAL',
+      provider: 'DOCKER'
+    };
+    const listLogSources = vi.fn().mockResolvedValue([source]);
+    const { dom, page } = await openedProject(api({
+      listLogSources,
+      listSshConnections: vi.fn().mockResolvedValue([])
+    }));
+
+    dom.window.document.getElementById('projectLogsOpen')!.click();
+    await flushAsync();
+
+    expect(dom.window.location.pathname).toBe('/fgaisox/operator/agent-projects.html');
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/logs`);
+    expect(dom.window.document.getElementById('projectLogsWorkspace')!.classList.contains('hidden')).toBe(false);
+    expect(dom.window.document.getElementById('projectLogsTitle')!.textContent).toBe('Sitionix Logs');
+    expect(dom.window.document.getElementById('projectLogsSources')!.textContent).toContain('Application');
+    expect(listLogSources).toHaveBeenCalledWith(project().id);
+    page.dispose();
+  });
+
+  it('mounts the dedicated workspace when the current route is a Project Logs route', async () => {
+    const dom = agentProjectsDom(
+      `http://127.0.0.1/fgaisox/operator/agent-projects.html#/projects/${project().id}/logs`
+    );
+    const listLogSources = vi.fn().mockResolvedValue([]);
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: api({ listLogSources, listSshConnections: vi.fn().mockResolvedValue([]) })
+    });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('projectLogsWorkspace')!.classList.contains('hidden')).toBe(false);
+    expect(dom.window.document.getElementById('agentsV2Workspace')!.classList.contains('hidden')).toBe(true);
+    expect(dom.window.location.pathname).toBe('/fgaisox/operator/agent-projects.html');
+    expect(listLogSources).toHaveBeenCalledWith(project().id);
+    page.dispose();
+  });
+
+  it('closes the dedicated Logs EventSource when returning to Project', async () => {
+    const streams: Array<{ closed: boolean }> = [];
+    class EventSourceFake {
+      listeners = new Map<string, Function>();
+      closed = false;
+      constructor() {
+        streams.push(this);
+      }
+      addEventListener(name: string, listener: Function) {
+        this.listeners.set(name, listener);
+      }
+      close() {
+        this.closed = true;
+      }
+    }
+    const dom = agentProjectsDom();
+    Object.defineProperty(dom.window, 'EventSource', { value: EventSourceFake, configurable: true });
+    const fakeApi = api({
+      listLogSources: vi.fn().mockResolvedValue([{
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        name: 'Application',
+        enabled: true,
+        serviceId: null,
+        connection: 'LOCAL',
+        provider: 'DOCKER'
+      }]),
+      listSshConnections: vi.fn().mockResolvedValue([]),
+      logStreamUrl: vi.fn().mockReturnValue('/stream')
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    dom.window.document.getElementById('projectLogsOpen')!.click();
+    await flushAsync();
+    dom.window.document.getElementById('projectLogsLive')!.click();
+    expect(streams).toHaveLength(1);
+
+    dom.window.document.getElementById('projectLogsBack')!.click();
+    await flushAsync();
+
+    expect(streams[0]!.closed).toBe(true);
+    expect(dom.window.location.pathname).toBe('/fgaisox/operator/agent-projects.html');
+    expect(dom.window.location.hash).toBe('');
+    expect(dom.window.document.getElementById('projectLogsWorkspace')!.classList.contains('hidden')).toBe(true);
+    expect(dom.window.document.getElementById('agentsV2Workspace')!.classList.contains('hidden')).toBe(false);
+    page.dispose();
+  });
+
+  it('keeps the Logs workspace lifecycle correct across browser back and forward', async () => {
+    const streams: Array<{ closed: boolean }> = [];
+    class EventSourceFake {
+      closed = false;
+      constructor() {
+        streams.push(this);
+      }
+      addEventListener() {}
+      close() {
+        this.closed = true;
+      }
+    }
+    const listLogSources = vi.fn().mockResolvedValue([{
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Application',
+      enabled: true,
+      serviceId: null,
+      connection: 'LOCAL',
+      provider: 'DOCKER'
+    }]);
+    const { dom, page } = await openedProject(api({
+      listLogSources,
+      listSshConnections: vi.fn().mockResolvedValue([]),
+      logStreamUrl: vi.fn().mockReturnValue('/stream')
+    }));
+    Object.defineProperty(dom.window, 'EventSource', { value: EventSourceFake, configurable: true });
+
+    dom.window.document.getElementById('projectLogsOpen')!.click();
+    await flushAsync();
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/logs`);
+    dom.window.document.getElementById('projectLogsLive')!.click();
+    expect(streams).toHaveLength(1);
+
+    await goBack(dom);
+    expect(dom.window.location.pathname).toBe('/fgaisox/operator/agent-projects.html');
+    expect(dom.window.location.hash).toBe('');
+    expect(dom.window.document.getElementById('projectLogsWorkspace')!.classList.contains('hidden')).toBe(true);
+    expect(streams[0]!.closed).toBe(true);
+
+    await goForward(dom);
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/logs`);
+    expect(dom.window.document.getElementById('projectLogsWorkspace')!.classList.contains('hidden')).toBe(false);
+    expect(listLogSources).toHaveBeenCalledTimes(2);
+    page.dispose();
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -4480,10 +4663,15 @@ describe('Agent projects page', () => {
     client.getProjectTask('55555555-5555-4555-8555-555555555555');
     client.deleteProjectTask('55555555-5555-4555-8555-555555555555');
     client.getWorkflowRun('66666666-6666-4666-8666-666666666666');
+    const sshRequest = { name: 'Ancestor', host: '192.168.0.108', port: 22,
+      username: 'ancestor', authType: 'PASSWORD', privateKeyPath: null, password: 'secret' };
+    client.testSshConnection(project().id, sshRequest);
 
     const calls = [...http.get.mock.calls, ...http.post.mock.calls, ...http.put.mock.calls, ...http.delete.mock.calls].map(([path]) => path);
     expect(calls.every((path) => path.startsWith('/agents'))).toBe(true);
     expect(http.get).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`);
+    expect(http.post).toHaveBeenCalledWith(
+      `/agents/projects/${project().id}/ssh-connections/test`, sshRequest);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`, {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });

@@ -1,0 +1,12 @@
+{
+  "id": "90000000-0000-4000-8000-000000000020",
+  "projectId": "90000000-0000-4000-8000-000000000001",
+  "name": "remote app",
+  "connectionType": "SSH",
+  "sshConnectionId": "90000000-0000-4000-8000-000000000002",
+  "provider": "DOCKER",
+  "dockerContainer": "app",
+  "enabled": true,
+  "createdAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z"
+}

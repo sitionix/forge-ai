@@ -512,4 +512,66 @@ class AgentProxyApiMapperTest {
         assertThat(command.nodes()).isNull();
         assertThat(command.connections()).isNull();
     }
+
+    @Test
+    void mapsLogsConfigurationAndCompleteDiscoveryMetadataAtApiBoundary() {
+        final var source = new com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource(
+                AGENT_ID, PROJECT_ID, "web", null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogConnectionType.LOCAL, null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderType.DOCKER,
+                new com.sitionix.forgeai.domain.model.agentproxy.AgentDockerLogConfiguration(
+                        null, "web", "/repo/compose.yaml"), true, CREATED, UPDATED);
+        assertThat(this.mapper.toResponse(source).configuration()).isEqualTo(
+                new AgentLogConfigurationResponse(null, "web", "/repo/compose.yaml", null, null));
+
+        final var journal = new com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource(
+                AGENT_ID, PROJECT_ID, "journal", null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogConnectionType.SSH, UUID.randomUUID(),
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderType.SYSTEMD,
+                new com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdLogConfiguration(
+                        com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdTargetMode.FULL_JOURNAL,
+                        null), true, CREATED, UPDATED);
+        assertThat(this.mapper.toResponse(journal).configuration().systemdMode()).isEqualTo(
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdTargetMode.FULL_JOURNAL);
+
+        final var candidate = new com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetCandidate(
+                "web", "Web", com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetStatus.RUNNING,
+                "web:latest", "demo", "web", "/repo/compose.yaml", true);
+        assertThat(this.mapper.toResponse(candidate)).isEqualTo(new AgentLogTargetCandidateResponse(
+                "web", "Web", com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetStatus.RUNNING,
+                "web:latest", "demo", "web", "/repo/compose.yaml", true));
+    }
+
+    @Test
+    void mapsPasswordSshProfileWithoutResponseSecrets() {
+        final var request = new AgentSshConnectionRequest(
+                "Ancestor",
+                "192.168.0.108",
+                22,
+                "ancestor",
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD,
+                null,
+                "secret;$(data)");
+        final var command = this.mapper.toCommand(request);
+        assertThat(command.authType()).isEqualTo(
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD);
+        assertThat(command.password()).isEqualTo("secret;$(data)");
+
+        final var response = this.mapper.toResponse(
+                new com.sitionix.forgeai.domain.model.agentproxy.AgentSshConnection(
+                        AGENT_ID,
+                        PROJECT_ID,
+                        "Ancestor",
+                        "192.168.0.108",
+                        22,
+                        "ancestor",
+                        com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD,
+                        CREATED,
+                        UPDATED));
+        assertThat(response.authType()).isEqualTo(
+                com.sitionix.forgeai.domain.model.agentproxy.AgentSshAuthType.PASSWORD);
+        assertThat(Arrays.stream(AgentSshConnectionResponse.class.getRecordComponents())
+                .map(component -> component.getName()))
+                .doesNotContain("password", "privateKeyPath");
+    }
 }

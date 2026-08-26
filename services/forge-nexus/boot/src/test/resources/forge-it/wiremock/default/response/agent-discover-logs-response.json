@@ -1,0 +1,12 @@
+[
+  {
+    "id": "mission",
+    "label": "mission",
+    "status": "RUNNING",
+    "image": "mission:latest",
+    "composeProject": "rover",
+    "composeService": "mission",
+    "composeFile": "/repo/compose.yaml",
+    "suggested": false
+  }
+]
