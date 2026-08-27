@@ -33,6 +33,11 @@
       </header>
 
       <section class="panel project-section">
+        <div class="agents-v2-pane-head"><div><h2>Services</h2><p>Deployed project workloads and live runtime state.</p></div><button id="projectServiceAdd" class="button small secondary" type="button">New Service</button></div>
+        <div id="projectServicesList" class="agents-v2-card-grid" aria-live="polite"></div>
+      </section>
+
+      <section class="panel project-section">
         <div class="agents-v2-pane-head">
           <div><h2>Logs</h2><p>Configure sources and inspect live project runtime output.</p></div>
           <button id="projectLogsOpen" class="button small secondary" type="button">Open Logs</button>
@@ -99,6 +104,11 @@
           <button id="projectLogsBack" class="button small secondary" type="button">← Project</button>
         </div>
       </header>
+
+      <section id="serviceOverview" class="panel project-section hidden">
+        <div class="agents-v2-pane-head"><div><h2>Overview</h2><p id="serviceOverviewSummary"></p></div><span id="serviceRuntimeStatus" class="agents-v2-status">UNKNOWN</span></div>
+        <div id="serviceRuntimeDetails" class="repository-list"></div>
+      </section>
 
       <section class="panel project-section">
         <div class="agents-v2-pane-head"><div><h2>Sources</h2><p>Choose one or more configured sources.</p></div><button id="projectLogsAdd" class="button small secondary" type="button">Add Log Source</button></div>

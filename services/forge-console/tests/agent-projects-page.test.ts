@@ -678,7 +678,7 @@ describe('Agent projects page', () => {
     bootstrapOperatorConsole({ document: dom.window.document, window: dom.window, http: { get: vi.fn(), post: vi.fn(), put: vi.fn() } });
     expect(dom.window.document.querySelector('.sidebar-link.active')?.textContent).toContain('Projects');
     expect(dom.window.document.body.textContent).not.toContain('Tickets');
-    expect(dom.window.document.body.textContent).not.toContain('Services');
+    expect(dom.window.document.body.textContent).toContain('Services');
     expect(consoleSourceText()).not.toContain('Agents V2');
   });
 

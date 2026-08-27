@@ -28,6 +28,7 @@ export class AgentProjectsPage {
       view: 'projects',
       projects: [],
       repositories: [],
+      services: [],
       agents: [],
       workflows: [],
       tasks: [],
@@ -37,6 +38,7 @@ export class AgentProjectsPage {
       tasksTotalItems: 0,
       tasksTotalPages: 0,
       selectedProjectId: null,
+      openServiceId: null,
       repositoriesProjectId: null,
       agentsProjectId: null,
       workflowsProjectId: null,
@@ -66,6 +68,8 @@ export class AgentProjectsPage {
       document: this.document,
       onBack: () => this.showProjectsIndex(),
       onOpenLogs: () => this.openLogsWorkspace(this.state.selectedProjectId),
+      onAddService: () => this.createService(),
+      onOpenService: (serviceId) => this.openServiceWorkspace(this.state.selectedProjectId, serviceId),
       onImportRepository: () => this.openRepositoryModal(),
       onCloneRepository: (repositoryId) => this.cloneRepository(repositoryId),
       onRefreshRepository: (repositoryId) => this.refreshRepository(repositoryId),
@@ -159,6 +163,7 @@ export class AgentProjectsPage {
     this.state.view = 'projects';
     this.state.selectedProjectId = null;
     this.state.repositories = [];
+    this.state.services = [];
     this.state.agents = [];
     this.state.workflows = [];
     this.state.tasks = [];
@@ -196,6 +201,7 @@ export class AgentProjectsPage {
     this.state.view = 'project';
     this.state.selectedProjectId = projectId;
     this.state.repositories = [];
+    this.state.services = [];
     this.state.agents = [];
     this.state.workflows = [];
     this.state.tasks = [];
@@ -222,6 +228,7 @@ export class AgentProjectsPage {
     this.workspace.renderLoading();
     await Promise.all([
       this.loadRepositories(projectId, loadSequence),
+      this.loadServices(projectId, loadSequence),
       this.loadAgents(projectId, loadSequence),
       this.loadWorkflows(projectId, loadSequence),
       this.loadTasks(projectId, loadSequence, { page: 0 }),
@@ -247,6 +254,7 @@ export class AgentProjectsPage {
     this.byId('agentsV2Builder').classList.add('hidden');
     this.byId('agentsV2TaskExecution').classList.add('hidden');
     this.byId('projectLogsWorkspace').classList.remove('hidden');
+    this.byId('serviceOverview').classList.add('hidden');
     const currentProject = this.state.projects.find((project) => project.id === projectId);
     const projectName = currentProject?.name || 'Project';
     this.byId('projectLogsTitle').textContent = `${projectName} Logs`;
@@ -264,10 +272,37 @@ export class AgentProjectsPage {
     await this.logsView.load(projectId);
   }
 
+  async loadServices(projectId=this.state.selectedProjectId, loadSequence=this.projectLoadSequence){
+    if(!projectId||!this.api.listServices)return;
+    try{const services=await this.api.listServices(projectId);if(this.isCurrentProjectLoad(projectId,loadSequence)){this.state.services=services;this.workspace.renderServices(services,this.state.repositories);}}catch{if(this.isCurrentProjectLoad(projectId,loadSequence)){this.state.services=[];this.workspace.renderServices([]);}}
+  }
+
+  async createService(){
+    const projectId=this.state.selectedProjectId;if(!projectId)return;
+    const name=this.window.prompt?.('Service name');if(!name)return;
+    const provider=(this.window.prompt?.('Runtime provider: DOCKER or SYSTEMD','DOCKER')||'DOCKER').toUpperCase();
+    const identity=this.window.prompt?.(provider==='SYSTEMD'?'Systemd unit':'Docker container');if(!identity)return;
+    await this.api.createService(projectId,{name,repositoryId:null,runtimeTarget:{connection:'LOCAL',sshConnectionId:null,provider,container:provider==='DOCKER'?identity:null,unit:provider==='SYSTEMD'?identity:null}});
+    await this.loadServices(projectId,this.projectLoadSequence);
+  }
+
+  async openServiceWorkspace(projectId,serviceId,options={}){
+    if(!projectId||!serviceId)return;this.disposeLogsWorkspace();this.state.view='service';this.state.selectedProjectId=projectId;this.state.openServiceId=serviceId;
+    this.byId('agentsV2ProjectsView').classList.add('hidden');this.byId('agentsV2Workspace').classList.add('hidden');this.byId('projectLogsWorkspace').classList.remove('hidden');this.byId('serviceOverview').classList.remove('hidden');
+    const [service,runtime,sources]=await Promise.all([this.api.getService(projectId,serviceId),this.api.getServiceRuntime(projectId,serviceId),this.api.listServiceLogSources(projectId,serviceId)]);
+    this.byId('projectLogsTitle').textContent=service.name;this.byId('projectLogsCrumbs').textContent=`Projects / ${this.currentProject()?.name||'Project'} / Services / ${service.name}`;this.byId('serviceRuntimeStatus').textContent=runtime.status;
+    this.byId('serviceOverviewSummary').textContent=`${runtime.connection} · ${runtime.provider} · ${runtime.targetIdentity} · ${sources.length} log source${sources.length===1?'':'s'}`;
+    this.byId('serviceRuntimeDetails').innerHTML=Object.entries(runtime.metadata||{}).map(([k,v])=>`<div><strong>${escapeHtml(k)}</strong>: ${escapeHtml(v)}</div>`).join('')+(runtime.uptime?`<div><strong>Uptime</strong>: ${escapeHtml(runtime.uptime)}</div>`:'');
+    this.byId('projectLogsBack').onclick=()=>this.returnToProject();
+    const scoped={...this.api,listLogSources:()=>Promise.resolve(sources)};this.logsView=new ProjectLogsView({document:this.document,window:this.window,api:scoped});this.logsView.bind();await this.logsView.load(projectId);
+    if(options.pushState!==false)this.window.history.pushState({projectId,serviceId,view:'service'},'',this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`));
+  }
+
   async returnToProject(options = {}) {
     const projectId = this.state.selectedProjectId;
     this.disposeLogsWorkspace();
     this.byId('projectLogsWorkspace').classList.add('hidden');
+    this.byId('serviceOverview').classList.add('hidden');
     if (options.pushState !== false) {
       this.window.history.pushState({ projectId, view: 'project' }, '', this.pageUrl());
     }
@@ -279,6 +314,7 @@ export class AgentProjectsPage {
   }
 
   async syncRoute() {
+    const serviceMatch=this.window.location.hash.match(/^#\/projects\/([^/]+)\/services\/([^/]+)\/?$/);if(serviceMatch){const p=decodeURIComponent(serviceMatch[1]),s=decodeURIComponent(serviceMatch[2]);if(this.state.view!=='service'||this.state.openServiceId!==s)await this.openServiceWorkspace(p,s,{pushState:false});return;}
     const match = this.window.location.hash.match(/^#\/projects\/([^/]+)\/logs\/?$/);
     if (match) {
       const projectId = decodeURIComponent(match[1]);
@@ -506,6 +542,7 @@ export class AgentProjectsPage {
       this.state.pullingRepositoryIds,
       this.state.refreshingRepositoryIds
     );
+    this.workspace.renderServices(this.state.services,this.state.repositories);
   }
 
   openProjectModal() {

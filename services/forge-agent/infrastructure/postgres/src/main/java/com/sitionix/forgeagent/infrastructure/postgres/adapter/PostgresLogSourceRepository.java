@@ -26,6 +26,11 @@ public class PostgresLogSourceRepository implements LogSourceRepository {
                 .toList();
     }
 
+    @Override
+    public List<LogSource> findByProjectIdAndServiceId(final UUID projectId, final UUID serviceId) {
+        return repository.findAllByProjectIdAndServiceIdOrderByNameAscIdAsc(projectId, serviceId).stream().map(this::domain).toList();
+    }
+
     public Optional<LogSource> findById(final UUID id) {
         return this.repository.findById(id).map(this::domain);
     }

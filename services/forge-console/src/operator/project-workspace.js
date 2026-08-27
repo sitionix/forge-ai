@@ -5,6 +5,8 @@ export class ProjectWorkspace {
     this.document = options.document;
     this.onBack = options.onBack;
     this.onOpenLogs = options.onOpenLogs;
+    this.onAddService = options.onAddService || (()=>{});
+    this.onOpenService = options.onOpenService || (()=>{});
     this.onNewAgent = options.onNewAgent;
     this.onImportRepository = options.onImportRepository;
     this.onCloneRepository = options.onCloneRepository || (() => {});
@@ -24,6 +26,7 @@ export class ProjectWorkspace {
   bind() {
     this.byId('agentsV2WorkspaceBack')?.addEventListener('click', () => this.onBack());
     this.byId('projectLogsOpen')?.addEventListener('click', () => this.onOpenLogs());
+    this.byId('projectServiceAdd')?.addEventListener('click', () => this.onAddService());
     this.byId('agentsV2ImportRepository')?.addEventListener('click', () => this.onImportRepository());
     this.byId('agentsV2CreateAgent')?.addEventListener('click', () => this.onNewAgent());
     this.byId('agentsV2CreateWorkflow')?.addEventListener('click', () => this.onNewWorkflow());
@@ -55,9 +58,17 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateWorkflow').disabled = true;
     this.byId('agentsV2CreateTask').disabled = true;
     this.byId('agentsV2RepositoriesList').innerHTML = '<div class="muted-state">Loading repositories...</div>';
+    this.byId('projectServicesList').innerHTML = '<div class="muted-state">Loading services...</div>';
     this.byId('agentsV2AgentsList').innerHTML = '<div class="muted-state">Loading agents...</div>';
     this.byId('agentsV2WorkflowsList').innerHTML = '<div class="muted-state">Loading workflows...</div>';
     this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
+  }
+
+  renderServices(services, repositories = []) {
+    const list=this.byId('projectServicesList');
+    if(!services.length){list.innerHTML='<div class="muted-state">No services yet.</div>';return;}
+    list.innerHTML=services.map(s=>{const r=repositories.find(x=>x.id===s.repositoryId);const t=s.runtimeTarget||{};return `<article class="agents-v2-card"><h3>${escapeHtml(s.name)}</h3><p>${escapeHtml(r?.name||'No repository')}</p><p>${escapeHtml(t.connection||'')} · ${escapeHtml(t.provider||'')} · <code>${escapeHtml(t.container||t.unit||'')}</code></p><div class="agents-v2-card-actions"><button class="button small secondary" data-service-id="${escapeHtml(s.id)}">Open</button></div></article>`;}).join('');
+    list.querySelectorAll('[data-service-id]').forEach(e=>e.addEventListener('click',()=>this.onOpenService(e.dataset.serviceId)));
   }
 
   renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set(), refreshingRepositoryIds = new Set()) {

@@ -36,6 +36,13 @@ import org.springframework.web.service.annotation.PutExchange;
 import org.springframework.web.bind.annotation.RequestBody;
 
 public interface ForgeAgentHttpClient {
+    @GetExchange("/api/v1/projects/{projectId}/services") List<com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceResponse> listProjectServices(@PathVariable UUID projectId);
+    @PostExchange(value="/api/v1/projects/{projectId}/services",contentType=MediaType.APPLICATION_JSON_VALUE) com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceResponse createProjectService(@PathVariable UUID projectId,@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceRequest request);
+    @GetExchange("/api/v1/projects/{projectId}/services/{serviceId}") com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceResponse getProjectService(@PathVariable UUID projectId,@PathVariable UUID serviceId);
+    @PutExchange(value="/api/v1/projects/{projectId}/services/{serviceId}",contentType=MediaType.APPLICATION_JSON_VALUE) com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceResponse updateProjectService(@PathVariable UUID projectId,@PathVariable UUID serviceId,@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceRequest request);
+    @DeleteExchange("/api/v1/projects/{projectId}/services/{serviceId}") void deleteProjectService(@PathVariable UUID projectId,@PathVariable UUID serviceId);
+    @GetExchange("/api/v1/projects/{projectId}/services/{serviceId}/runtime") com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceRuntimeResponse getProjectServiceRuntime(@PathVariable UUID projectId,@PathVariable UUID serviceId);
+    @GetExchange("/api/v1/projects/{projectId}/services/{serviceId}/log-sources") List<AgentLogSourceResponse> listProjectServiceLogSources(@PathVariable UUID projectId,@PathVariable UUID serviceId);
 
     @GetExchange("/api/v1/projects")
     List<AgentProjectResponse> listProjects();

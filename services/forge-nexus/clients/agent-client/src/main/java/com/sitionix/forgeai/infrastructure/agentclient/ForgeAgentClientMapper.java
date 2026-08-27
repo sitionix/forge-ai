@@ -98,6 +98,14 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class ForgeAgentClientMapper {
 
+    com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceRequest toRequest(final com.sitionix.forgeai.domain.model.agentproxy.SaveAgentProjectServiceCommand c) {
+        var t=c.runtimeTarget(); return new com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceRequest(c.name(),c.repositoryId(),new com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceRuntimeTargetDto(t.connection(),t.sshConnectionId(),t.provider(),t.container(),t.unit()));
+    }
+    com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService toDomain(final com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceResponse r) {
+        var t=r.runtimeTarget(); return new com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService(r.id(),r.projectId(),r.name(),r.repositoryId(),new com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntimeTarget(t.connection(),t.sshConnectionId(),t.provider(),t.container(),t.unit()),r.createdAt(),r.updatedAt());
+    }
+    com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntime toDomain(final com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceRuntimeResponse r) { return new com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntime(r.status(),r.provider(),r.connection(),r.targetIdentity(),r.startedAt(),r.uptime(),r.metadata(),r.health()); }
+
     private final ObjectMapper objectMapper;
 
     AgentLogSourceRequest toRequest(final SaveAgentLogSourceCommand command) {

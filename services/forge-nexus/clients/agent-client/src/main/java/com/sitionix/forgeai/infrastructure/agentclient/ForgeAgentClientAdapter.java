@@ -45,6 +45,14 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class ForgeAgentClientAdapter implements ForgeAgentClient {
 
+    public java.util.List<com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService> listProjectServices(UUID p){return clientCallExecutor.execute(()->httpClient.listProjectServices(p)).stream().map(mapper::toDomain).toList();}
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService createProjectService(UUID p,com.sitionix.forgeai.domain.model.agentproxy.SaveAgentProjectServiceCommand c){return mapper.toDomain(clientCallExecutor.execute(()->httpClient.createProjectService(p,mapper.toRequest(c))));}
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService getProjectService(UUID p,UUID s){return mapper.toDomain(clientCallExecutor.execute(()->httpClient.getProjectService(p,s)));}
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService updateProjectService(UUID p,UUID s,com.sitionix.forgeai.domain.model.agentproxy.SaveAgentProjectServiceCommand c){return mapper.toDomain(clientCallExecutor.execute(()->httpClient.updateProjectService(p,s,mapper.toRequest(c))));}
+    public void deleteProjectService(UUID p,UUID s){clientCallExecutor.execute(()->{httpClient.deleteProjectService(p,s);return null;});}
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntime getProjectServiceRuntime(UUID p,UUID s){return mapper.toDomain(clientCallExecutor.execute(()->httpClient.getProjectServiceRuntime(p,s)));}
+    public java.util.List<com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource> listProjectServiceLogSources(UUID p,UUID s){return clientCallExecutor.execute(()->httpClient.listProjectServiceLogSources(p,s)).stream().map(mapper::toDomain).toList();}
+
     private final ForgeAgentHttpClient httpClient;
     private final ForgeAgentClientMapper mapper;
     private final ForgeAgentClientCallExecutor clientCallExecutor;

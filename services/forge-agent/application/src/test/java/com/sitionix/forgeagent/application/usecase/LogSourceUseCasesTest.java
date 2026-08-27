@@ -17,6 +17,7 @@ import org.mockito.*;
 class LogSourceUseCasesTest {
   @Mock ProjectRepository projects;
   @Mock LogSourceRepository sources;
+  @Mock ProjectServiceRepository services;
   @Mock SshConnectionRepository connections;
   @Mock DockerLogPort docker;
   @Mock RemoteLogPort remote;
@@ -32,6 +33,7 @@ class LogSourceUseCasesTest {
         new LogSourceUseCases(
             projects,
             sources,
+            services,
             connections,
             docker,
             remote,
@@ -80,10 +82,12 @@ class LogSourceUseCasesTest {
   }
 
   @Test
-  void serviceAssociationFailsExplicitlyWhenServiceModelIsUnavailable() {
-    assertThatThrownBy(() -> useCases.create(projectId, command("one", UUID.randomUUID())))
-        .isInstanceOf(ValidationException.class)
-        .hasMessageContaining("no Service resource");
+  void serviceAssociationRequiresAnOwnedService() {
+    UUID serviceId = UUID.randomUUID();
+    when(services.findById(serviceId)).thenReturn(Optional.of(new ProjectService(serviceId, projectId,
+        "api", null, new ServiceRuntimeTarget(ServiceConnectionType.LOCAL, null,
+        ServiceRuntimeProvider.DOCKER, "api", null), Instant.EPOCH, Instant.EPOCH)));
+    assertThat(useCases.create(projectId, command("one", serviceId)).serviceId()).isEqualTo(serviceId);
   }
 
   @Test
