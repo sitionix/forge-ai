@@ -286,6 +286,7 @@ export class AgentProjectsPage {
       if (this.isCurrentProjectLoad(projectId, loadSequence)) {
         this.state.services = services;
         this.workspace.renderServices(services, this.state.repositories);
+        this.loadServiceRuntimeStatuses(projectId, services, loadSequence);
       }
     } catch {
       if (this.isCurrentProjectLoad(projectId, loadSequence)) {
@@ -293,6 +294,27 @@ export class AgentProjectsPage {
         this.workspace.renderServices([]);
       }
     }
+  }
+
+  loadServiceRuntimeStatuses(projectId, services, loadSequence) {
+    if (!this.api.getServiceRuntime) return;
+    services.forEach((service) => {
+      this.api.getServiceRuntime(projectId, service.id)
+        .then((runtime) => this.applyServiceRuntimeStatus(
+          projectId, service.id, runtime?.status || 'UNKNOWN', loadSequence))
+        .catch(() => this.applyServiceRuntimeStatus(
+          projectId, service.id, 'UNKNOWN', loadSequence));
+    });
+  }
+
+  applyServiceRuntimeStatus(projectId, serviceId, status, loadSequence) {
+    if (!this.isCurrentProjectLoad(projectId, loadSequence)) return;
+    const service = this.state.services.find((candidate) => candidate.id === serviceId);
+    if (!service) return;
+    service.runtimeStatus = ['RUNNING', 'STOPPED', 'FAILED', 'UNKNOWN'].includes(status)
+      ? status
+      : 'UNKNOWN';
+    this.workspace.updateServiceRuntimeStatus(serviceId, service.runtimeStatus);
   }
 
   async openServiceModal(serviceId = null) {

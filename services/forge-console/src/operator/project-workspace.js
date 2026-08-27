@@ -75,8 +75,9 @@ export class ProjectWorkspace {
     list.innerHTML = services.map((service) => {
       const repository = repositories.find((candidate) => candidate.id === service.repositoryId);
       const target = service.runtimeTarget || {};
-      return `<article class="agents-v2-card">
+      return `<article class="agents-v2-card" data-service-card-id="${escapeHtml(service.id)}">
         <h3>${escapeHtml(service.name)}</h3>
+        <p><strong data-service-runtime-status="${escapeHtml(service.id)}">${escapeHtml(service.runtimeStatus || 'UNKNOWN')}</strong> · <span data-service-runtime-detail="${escapeHtml(service.id)}">${service.runtimeStatus ? 'Last checked' : 'Not checked'}</span></p>
         <p>${escapeHtml(repository?.name || 'No repository')}</p>
         <p>${escapeHtml(target.connection || '')} · ${escapeHtml(target.provider || '')} · <code>${escapeHtml(target.container || target.unit || '')}</code></p>
         <div class="agents-v2-card-actions">
@@ -92,6 +93,16 @@ export class ProjectWorkspace {
       element.addEventListener('click', () => this.onEditService(element.dataset.editServiceId)));
     list.querySelectorAll('[data-delete-service-id]').forEach((element) =>
       element.addEventListener('click', () => this.onDeleteService(element.dataset.deleteServiceId)));
+  }
+
+  updateServiceRuntimeStatus(serviceId, status) {
+    const list = this.byId('projectServicesList');
+    const statusElement = [...(list?.querySelectorAll('[data-service-runtime-status]') || [])]
+      .find((element) => element.dataset.serviceRuntimeStatus === serviceId);
+    const detailElement = [...(list?.querySelectorAll('[data-service-runtime-detail]') || [])]
+      .find((element) => element.dataset.serviceRuntimeDetail === serviceId);
+    if (statusElement) statusElement.textContent = status || 'UNKNOWN';
+    if (detailElement) detailElement.textContent = 'Last checked';
   }
 
   renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set(), refreshingRepositoryIds = new Set()) {

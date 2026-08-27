@@ -34,6 +34,7 @@ class NexusAgentProxyIT {
 
     private static final UUID PROJECT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final UUID REPOSITORY_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
+    private static final UUID SERVICE_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
 
     @Autowired
     private NexusProxyTestManager testManager;
@@ -174,5 +175,75 @@ class NexusAgentProxyIT {
     void invalidLogsRequestIsRejectedBeforeAnyUpstreamCall() {
         this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.invalidLogSource())
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+    }
+
+    @Test
+    void serviceCreateAndListFlowThroughTypedProxy() {
+        var create = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.createService())
+                .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.createService())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+        create.verify();
+
+        var list = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.listServices())
+                .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.listServices())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+        list.verify();
+    }
+
+    @Test
+    void serviceGetUpdateDeleteRuntimeAndLogsFlowThroughTypedProxy() {
+        var path = WireMockPathParams.create()
+                .add("projectId", equalTo(PROJECT_ID.toString()))
+                .add("serviceId", equalTo(SERVICE_ID.toString()));
+        var mvcPath = PathParams.create().add("projectId", PROJECT_ID).add("serviceId", SERVICE_ID);
+
+        var get = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.getService())
+                .pathPattern(path).createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.getService())
+                .withPathParameters(mvcPath).assertDefault();
+        get.verify();
+
+        var update = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.updateService())
+                .pathPattern(path).createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.updateService())
+                .withPathParameters(mvcPath).assertDefault();
+        update.verify();
+
+        var runtime = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.serviceRuntime())
+                .pathPattern(path).createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceRuntime())
+                .withPathParameters(mvcPath).assertDefault();
+        runtime.verify();
+
+        var logs = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.serviceLogs())
+                .pathPattern(path).createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceLogs())
+                .withPathParameters(mvcPath).assertDefault();
+        logs.verify();
+
+        var delete = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.deleteService())
+                .pathPattern(path).createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.deleteService())
+                .withPathParameters(mvcPath).assertDefault();
+        delete.verify();
+    }
+
+    @Test
+    void serviceRuntimeUpstreamErrorIsPropagatedWithoutNexusSemantics() {
+        var path = WireMockPathParams.create()
+                .add("projectId", equalTo(PROJECT_ID.toString()))
+                .add("serviceId", equalTo(SERVICE_ID.toString()));
+        var upstream = this.testManager.wiremock()
+                .createMapping(ForgeAgentWireMockEndpoints.serviceRuntimeFailure())
+                .pathPattern(path).createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceRuntimeFailure())
+                .withPathParameters(PathParams.create()
+                        .add("projectId", PROJECT_ID).add("serviceId", SERVICE_ID))
+                .assertDefault();
+        upstream.verify();
     }
 }

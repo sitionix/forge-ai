@@ -592,6 +592,53 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
+  it('renders Services immediately and resolves each runtime status independently', async () => {
+    let resolveRuntime: (value: any) => void = () => {};
+    const pendingRuntime = new Promise((resolve) => { resolveRuntime = resolve; });
+    const first = service();
+    const second = service('99999999-9999-4999-8999-999999999999');
+    const getServiceRuntime = vi.fn((_projectId: string, serviceId: string) =>
+      serviceId === first.id ? pendingRuntime : Promise.reject(new Error('unavailable')));
+    const { dom, page } = await openedProject(api({
+      listServices: vi.fn().mockResolvedValue([first, second]), getServiceRuntime
+    }));
+
+    const statuses = () => [...dom.window.document.querySelectorAll('[data-service-runtime-status]')]
+      .map((element) => element.textContent);
+    expect(statuses()).toEqual(['UNKNOWN', 'UNKNOWN']);
+    resolveRuntime({ status: 'RUNNING' });
+    await flushAsync();
+    expect(statuses()).toEqual(['RUNNING', 'UNKNOWN']);
+    page.dispose();
+  });
+
+  it('ignores stale Service runtime responses after switching Projects', async () => {
+    const projectOne = project();
+    const projectTwo = project('22222222-2222-4222-8222-222222222222', 'Second');
+    let resolveOldRuntime: (value: any) => void = () => {};
+    const oldRuntime = new Promise((resolve) => { resolveOldRuntime = resolve; });
+    const fakeApi = api({
+      listProjects: vi.fn().mockResolvedValue([projectOne, projectTwo]),
+      listServices: vi.fn((projectId: string) => Promise.resolve([
+        { ...service(), projectId, name: projectId === projectOne.id ? 'Old' : 'Current' }
+      ])),
+      getServiceRuntime: vi.fn((projectId: string) =>
+        projectId === projectOne.id ? oldRuntime : Promise.resolve({ status: 'STOPPED' }))
+    });
+    const { dom, page } = await mountedPage(fakeApi);
+
+    await page.openProject(projectOne.id);
+    await page.openProject(projectTwo.id);
+    await flushAsync();
+    resolveOldRuntime({ status: 'RUNNING' });
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('[data-service-runtime-status]')?.textContent)
+      .toBe('STOPPED');
+    expect(dom.window.document.getElementById('projectServicesList')?.textContent).toContain('Current');
+    page.dispose();
+  });
+
   it('keeps Project lightweight and exposes only the dedicated Logs entry point', async () => {
     const listLogSources = vi.fn().mockResolvedValue([]);
     const streams: any[] = [];
