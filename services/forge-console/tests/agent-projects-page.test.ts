@@ -1013,7 +1013,7 @@ describe('Agent projects page', () => {
     const { dom, page } = await openedProject(fakeApi);
 
     const summary = dom.window.document.querySelector('[data-repository-runtime-status="repo-1"]')!;
-    expect(summary.textContent).toBe('Runtime unavailable');
+    expect(summary.textContent).toBe('UNKNOWN');
     expect(summary.textContent).not.toBe('NOT CONFIGURED');
     page.dispose();
   });
@@ -1027,8 +1027,8 @@ describe('Agent projects page', () => {
     });
     const { dom, page } = await openedRepository(fakeApi, 'repo-1');
 
-    expect(dom.window.document.getElementById('repositoryRuntimeSummary')?.textContent).toBe('Runtime unavailable');
-    expect(dom.window.document.getElementById('repositoryRuntimeDetails')?.textContent).toContain('Runtime workloads unavailable');
+    expect(dom.window.document.getElementById('repositoryRuntimeSummary')?.textContent).toBe('Runtime status unknown');
+    expect(dom.window.document.getElementById('repositoryRuntimeDetails')?.textContent).toContain('Runtime workloads failed to load');
     expect(dom.window.document.getElementById('repositoryRuntimeConfigure')?.hasAttribute('disabled')).toBe(true);
     expect(dom.window.document.getElementById('repositoryRuntimeSummary')?.textContent).not.toBe('Runtime not configured');
     page.dispose();

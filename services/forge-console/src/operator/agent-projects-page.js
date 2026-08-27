@@ -805,8 +805,8 @@ export class AgentProjectsPage {
       element.addEventListener('click', () => this.selectRepositoryRuntimeService(element.dataset.runtimeServiceId)));
     if (this.state.servicesLoadState !== 'CURRENT') {
       const loading = this.state.servicesLoadState === 'LOADING';
-      this.byId('repositoryRuntimeSummary').textContent = loading ? 'Loading runtime workloads...' : 'Runtime unavailable';
-      this.byId('repositoryRuntimeDetails').innerHTML = `<div class="muted-state">${loading ? 'Loading runtime workloads...' : 'Runtime workloads unavailable'}</div>`;
+      this.byId('repositoryRuntimeSummary').textContent = loading ? 'Loading runtime workloads...' : 'Runtime status unknown';
+      this.byId('repositoryRuntimeDetails').innerHTML = `<div class="muted-state">${loading ? 'Loading runtime workloads...' : 'Runtime workloads failed to load'}</div>`;
       add.classList.add('hidden');
       remove.classList.add('hidden');
       configure.disabled = true;
@@ -2064,7 +2064,7 @@ export class AgentProjectsPage {
       return 'UNKNOWN';
     }
     if (this.state.servicesLoadState === 'FAILED') {
-      return 'UNAVAILABLE';
+      return 'UNKNOWN';
     }
     return 'NOT CONFIGURED';
   }
@@ -2074,7 +2074,7 @@ export class AgentProjectsPage {
       return 'Loading runtime workloads';
     }
     if (this.state.servicesLoadState === 'FAILED') {
-      return 'Runtime unavailable';
+      return 'Runtime status unknown';
     }
     return 'Runtime not configured';
   }

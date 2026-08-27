@@ -141,7 +141,7 @@ export class ProjectWorkspace {
       return 'Loading runtime';
     }
     if (servicesLoadState === 'FAILED') {
-      return 'Runtime unavailable';
+      return 'UNKNOWN';
     }
     const linked = services.filter((service) => service.repositoryId === repository.id);
     if (!linked.length) {
