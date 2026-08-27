@@ -16,6 +16,7 @@ export class ProjectLogsView {
     this.composeCandidates = [];
     this.listeners = [];
     this.sshFormRevision = 0;
+    this.loadGeneration = 0;
   }
   bind() {
     this.on("projectLogsAdd", "click", () => this.openAdd());
@@ -52,6 +53,7 @@ export class ProjectLogsView {
   }
   async load(projectId) {
     this.close();
+    const loadGeneration = ++this.loadGeneration;
     this.projectId = projectId;
     if (!this.api.listLogSources) {
       this.sources = [];
@@ -65,11 +67,15 @@ export class ProjectLogsView {
       this.api.listSshConnections?.(projectId) || [],
       this.api.listProjectRepositories?.(projectId) || [],
     ]);
+    if (this.loadGeneration !== loadGeneration || this.projectId !== projectId) {
+      return;
+    }
     this.renderConnections();
     this.renderRepositories();
     this.renderSources();
   }
   close() {
+    this.loadGeneration += 1;
     this.stream?.close();
     this.stream = null;
     this.projectId = null;

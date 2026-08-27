@@ -59,10 +59,10 @@ class LocalProjectWorkspaceAdapterTest {
     }
 
     @Test
-    void resolvesAndCreatesExplicitManagedProjectWorkspace() {
+    void resolvesAndCreatesExplicitManagedProjectWorkspace() throws Exception {
         final Path workspace = this.adapter.resolveProjectWorkspace(PROJECT_ID);
 
-        assertThat(workspace).isEqualTo(this.forgeRoot.resolve("forge-projects").resolve(PROJECT_ID.toString()));
+        assertThat(workspace.toRealPath()).isEqualTo(this.forgeRoot.resolve("forge-projects").resolve(PROJECT_ID.toString()).toRealPath());
         assertThat(workspace).isDirectory();
     }
 
@@ -77,7 +77,7 @@ class LocalProjectWorkspaceAdapterTest {
         ));
 
         assertThat(states.get(REPOSITORY_A_ID).cloned()).isTrue();
-        assertThat(states.get(REPOSITORY_A_ID).path()).isEqualTo(this.repositoryPath("service-a"));
+        assertThat(states.get(REPOSITORY_A_ID).path().toRealPath()).isEqualTo(this.repositoryPath("service-a").toRealPath());
         assertThat(states.get(REPOSITORY_B_ID).cloned()).isFalse();
         assertThat(states.get(REPOSITORY_B_ID).path()).isEqualTo(this.repositoryPath("service-b"));
     }

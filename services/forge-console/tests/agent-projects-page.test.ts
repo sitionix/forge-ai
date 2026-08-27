@@ -439,6 +439,13 @@ async function openedProject(fakeApi = api()) {
   return context;
 }
 
+async function openedRepository(fakeApi = api(), repositoryId = repository().id) {
+  const context = await openedProject(fakeApi);
+  await context.page.openRepositoryWorkspace(project().id, repositoryId);
+  await flushAsync();
+  return context;
+}
+
 async function openedBuilder(fakeApi = api()) {
   const context = await openedProject(fakeApi);
   await context.page.openWorkflowBuilder('33333333-3333-4333-8333-333333333333');
@@ -592,19 +599,24 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
-  it('renders Services immediately and resolves each runtime status independently', async () => {
+  it('renders repository cards with Git state and asynchronous runtime summaries', async () => {
     let resolveRuntime: (value: any) => void = () => {};
     const pendingRuntime = new Promise((resolve) => { resolveRuntime = resolve; });
-    const first = service();
-    const second = service('99999999-9999-4999-8999-999999999999');
+    const firstRepository = repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'));
+    const secondRepository = repository('repo-2', project().id, 'worker', true, branchGitState('DIRTY', 'develop'));
+    const first = { ...service('service-1'), repositoryId: firstRepository.id };
+    const second = { ...service('service-2'), repositoryId: secondRepository.id };
     const getServiceRuntime = vi.fn((_projectId: string, serviceId: string) =>
       serviceId === first.id ? pendingRuntime : Promise.reject(new Error('unavailable')));
     const { dom, page } = await openedProject(api({
+      listProjectRepositories: vi.fn().mockResolvedValue([firstRepository, secondRepository]),
       listServices: vi.fn().mockResolvedValue([first, second]), getServiceRuntime
     }));
 
-    const statuses = () => [...dom.window.document.querySelectorAll('[data-service-runtime-status]')]
-      .map((element) => element.textContent);
+    const statuses = () => [...dom.window.document.querySelectorAll('[data-repository-runtime-status]')]
+      .map((element) => element.textContent?.trim());
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Clean');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('develop · Dirty');
     expect(statuses()).toEqual(['UNKNOWN', 'UNKNOWN']);
     resolveRuntime({ status: 'RUNNING' });
     await flushAsync();
@@ -620,7 +632,7 @@ describe('Agent projects page', () => {
     const fakeApi = api({
       listProjects: vi.fn().mockResolvedValue([projectOne, projectTwo]),
       listServices: vi.fn((projectId: string) => Promise.resolve([
-        { ...service(), projectId, name: projectId === projectOne.id ? 'Old' : 'Current' }
+        { ...service(), projectId, repositoryId: repository().id, name: projectId === projectOne.id ? 'Old' : 'Current' }
       ])),
       getServiceRuntime: vi.fn((projectId: string) =>
         projectId === projectOne.id ? oldRuntime : Promise.resolve({ status: 'STOPPED' }))
@@ -633,14 +645,14 @@ describe('Agent projects page', () => {
     resolveOldRuntime({ status: 'RUNNING' });
     await flushAsync();
 
-    expect(dom.window.document.querySelector('[data-service-runtime-status]')?.textContent)
-      .toBe('STOPPED');
-    expect(dom.window.document.getElementById('projectServicesList')?.textContent).toContain('Current');
+    expect(dom.window.document.querySelector('[data-repository-runtime-status]')?.textContent)
+      .toContain('STOPPED');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
     page.dispose();
   });
 
   it('ignores an older runtime response after the same Service target is reloaded', async () => {
-    const targetA = service();
+    const targetA = { ...service(), repositoryId: repository().id };
     const targetB = {
       ...targetA,
       runtimeTarget: { ...targetA.runtimeTarget, container: 'api-v2' }
@@ -660,13 +672,13 @@ describe('Agent projects page', () => {
     await page.loadServices(project().id, page.projectLoadSequence);
     resolveB({ status: 'RUNNING' });
     await flushAsync();
-    expect(dom.window.document.querySelector('[data-service-runtime-status]')?.textContent)
-      .toBe('RUNNING');
+    expect(dom.window.document.querySelector('[data-repository-runtime-status]')?.textContent)
+      .toContain('RUNNING');
 
     resolveA({ status: 'FAILED' });
     await flushAsync();
-    expect(dom.window.document.querySelector('[data-service-runtime-status]')?.textContent)
-      .toBe('RUNNING');
+    expect(dom.window.document.querySelector('[data-repository-runtime-status]')?.textContent)
+      .toContain('RUNNING');
     page.dispose();
   });
 
@@ -936,6 +948,8 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2ProjectCrumbs')?.textContent).toBe('Projects / Sitionix');
     expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
     expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).not.toContain('git@gitlab.com:company/service-a.git');
+    expect(dom.window.document.getElementById('projectServicesList')).toBeNull();
+    expect(dom.window.document.getElementById('projectStandaloneServicesSection')?.classList.contains('hidden')).toBe(true);
     expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Architect');
     expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
@@ -943,6 +957,290 @@ describe('Agent projects page', () => {
     page.showProjectsIndex();
     expect(page.state.selectedProjectId).toBeNull();
     expect(dom.window.document.getElementById('agentsV2ProjectsView')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('clicking a repository card opens the repository workspace without an Open Service button', async () => {
+    const linkedService = { ...service('service-1'), repositoryId: repository().id };
+    const { dom, page } = await openedProject(api({
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository(undefined, project().id, 'some_bridge', true, branchGitState('CLEAN', 'main'))
+      ]),
+      listServices: vi.fn().mockResolvedValue([linkedService]),
+      getServiceRuntime: vi.fn().mockResolvedValue({ status: 'RUNNING', connection: 'LOCAL', provider: 'DOCKER', targetIdentity: 'api', uptime: 'PT1H', metadata: {} }),
+      listServiceLogSources: vi.fn().mockResolvedValue([])
+    }));
+
+    const card = dom.window.document.querySelector<HTMLElement>('[data-repository-id="88888888-8888-4888-8888-888888888888"]')!;
+    expect(card.textContent).toContain('some_bridge');
+    expect(card.textContent).toContain('main · Clean');
+    expect(card.textContent).toContain('RUNNING');
+    expect(card.textContent).not.toContain('Open');
+    card.click();
+    await flushAsync();
+
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/repositories/88888888-8888-4888-8888-888888888888`);
+    expect(dom.window.document.getElementById('projectLogsTitle')?.textContent).toBe('some_bridge');
+    expect(page.state.view).toBe('repository');
+    page.dispose();
+  });
+
+  it('repository with no linked Service shows Runtime not configured without creating a fake Service', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ]),
+      listServices: vi.fn().mockResolvedValue([]),
+      createService: vi.fn()
+    });
+    const { dom, page } = await openedRepository(fakeApi, 'repo-1');
+
+    expect(dom.window.document.getElementById('repositoryRuntimeSummary')?.textContent).toBe('Runtime not configured');
+    expect(dom.window.document.getElementById('repositoryRuntimeDetails')?.textContent).toContain('Runtime not configured');
+    expect(fakeApi.createService).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('projectLogsSourcesSection')?.classList.contains('hidden')).toBe(true);
+    page.dispose();
+  });
+
+  it('Configure Runtime creates a Service with the opened repositoryId', async () => {
+    const createService = vi.fn().mockResolvedValue({ ...service('service-1'), repositoryId: 'repo-1' });
+    const fakeApi = api({
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ]),
+      listServices: vi.fn().mockResolvedValue([]),
+      createService,
+      listSshConnections: vi.fn().mockResolvedValue([])
+    });
+    const { dom, page } = await openedRepository(fakeApi, 'repo-1');
+
+    dom.window.document.getElementById('repositoryRuntimeConfigure')?.click();
+    await flushAsync();
+    expect(dom.window.document.getElementById('projectServiceRepositoryField')?.classList.contains('hidden')).toBe(true);
+    (dom.window.document.getElementById('projectServiceName') as HTMLInputElement).value = 'api';
+    (dom.window.document.getElementById('projectServiceContainer') as HTMLInputElement).value = 'api-container';
+    await page.submitService(new dom.window.Event('submit'));
+
+    expect(createService).toHaveBeenCalledWith(project().id, {
+      name: 'api',
+      repositoryId: 'repo-1',
+      runtimeTarget: {
+        connection: 'LOCAL',
+        sshConnectionId: null,
+        provider: 'DOCKER',
+        container: 'api-container',
+        unit: null
+      }
+    });
+    page.dispose();
+  });
+
+  it('editing repository runtime uses Service API and does not modify Repository', async () => {
+    const linked = { ...service('service-1'), repositoryId: 'repo-1' };
+    const updateService = vi.fn().mockResolvedValue(linked);
+    const refreshProjectRepository = vi.fn().mockResolvedValue(repository('repo-1', project().id, 'api', true));
+    const fakeApi = api({
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ]),
+      listServices: vi.fn().mockResolvedValue([linked]),
+      listServiceLogSources: vi.fn().mockResolvedValue([]),
+      updateService,
+      refreshProjectRepository
+    });
+    const { dom, page } = await openedRepository(fakeApi, 'repo-1');
+
+    dom.window.document.getElementById('repositoryRuntimeConfigure')?.click();
+    await flushAsync();
+    (dom.window.document.getElementById('projectServiceContainer') as HTMLInputElement).value = 'api-v2';
+    await page.submitService(new dom.window.Event('submit'));
+
+    expect(updateService).toHaveBeenCalledWith(
+      project().id,
+      linked.id,
+      expect.objectContaining({
+        repositoryId: 'repo-1',
+        runtimeTarget: expect.objectContaining({ container: 'api-v2' })
+      })
+    );
+    expect(refreshProjectRepository).not.toHaveBeenCalled();
+    page.dispose();
+  });
+
+  it('one linked Service opens directly with service-scoped Logs', async () => {
+    const linked = { ...service('service-1'), repositoryId: 'repo-1', name: 'api runtime' };
+    const listServiceLogSources = vi.fn().mockResolvedValue([{
+      id: 'source-1',
+      name: 'API logs',
+      enabled: true,
+      serviceId: linked.id,
+      connection: 'LOCAL',
+      provider: 'DOCKER'
+    }]);
+    const fakeApi = api({
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ]),
+      listServices: vi.fn().mockResolvedValue([linked]),
+      listServiceLogSources
+    });
+    const { dom, page } = await openedRepository(fakeApi, 'repo-1');
+
+    expect(dom.window.document.getElementById('repositoryRuntimeServices')?.classList.contains('hidden')).toBe(true);
+    expect(dom.window.document.getElementById('repositoryRuntimeSummary')?.textContent).toContain('api runtime');
+    expect(dom.window.document.getElementById('projectLogsSources')?.textContent).toContain('API logs');
+    expect(listServiceLogSources).toHaveBeenCalledWith(project().id, linked.id);
+    page.dispose();
+  });
+
+  it('multiple linked Services are represented explicitly and selectable', async () => {
+    const apiService = { ...service('service-api'), repositoryId: 'repo-1', name: 'api' };
+    const workerService = { ...service('service-worker'), repositoryId: 'repo-1', name: 'worker' };
+    const getServiceRuntime = vi.fn((_projectId: string, serviceId: string) => Promise.resolve({
+      status: serviceId === workerService.id ? 'STOPPED' : 'RUNNING',
+      connection: 'LOCAL',
+      provider: 'DOCKER',
+      targetIdentity: serviceId,
+      metadata: {}
+    }));
+    const listServiceLogSources = vi.fn().mockResolvedValue([]);
+    const fakeApi = api({
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ]),
+      listServices: vi.fn().mockResolvedValue([workerService, apiService]),
+      getServiceRuntime,
+      listServiceLogSources
+    });
+    const { dom, page } = await openedRepository(fakeApi, 'repo-1');
+
+    const selector = dom.window.document.getElementById('repositoryRuntimeServices')!;
+    expect(selector.classList.contains('hidden')).toBe(false);
+    expect([...selector.querySelectorAll('[data-runtime-service-id]')].map((element) => element.textContent?.trim()))
+      .toEqual(['api', 'worker']);
+    expect(page.state.selectedRuntimeServiceId).toBe(apiService.id);
+
+    selector.querySelector<HTMLElement>('[data-runtime-service-id="service-worker"]')?.click();
+    await flushAsync();
+
+    expect(page.state.selectedRuntimeServiceId).toBe(workerService.id);
+    expect(dom.window.document.getElementById('repositoryRuntimeSummary')?.textContent).toContain('worker');
+    expect(listServiceLogSources).toHaveBeenLastCalledWith(project().id, workerService.id);
+    page.dispose();
+  });
+
+  it('standalone Service remains accessible from the Project page', async () => {
+    const standalone = { ...service('standalone-1'), name: 'worker' };
+    const fakeApi = api({
+      listServices: vi.fn().mockResolvedValue([standalone]),
+      getService: vi.fn().mockResolvedValue(standalone),
+      listServiceLogSources: vi.fn().mockResolvedValue([])
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    const section = dom.window.document.getElementById('projectStandaloneServicesSection')!;
+    expect(section.classList.contains('hidden')).toBe(false);
+    expect(section.textContent).toContain('worker');
+    section.querySelector<HTMLElement>('[data-standalone-service-id="standalone-1"]')?.click();
+    await flushAsync();
+
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/services/standalone-1`);
+    expect(dom.window.document.getElementById('projectLogsTitle')?.textContent).toBe('worker');
+    page.dispose();
+  });
+
+  it('project-level Logs remain project-scoped after repository workspace changes', async () => {
+    const listLogSources = vi.fn().mockResolvedValue([{
+      id: 'project-source',
+      name: 'Project logs',
+      enabled: true,
+      serviceId: null,
+      connection: 'LOCAL',
+      provider: 'DOCKER'
+    }]);
+    const listServiceLogSources = vi.fn().mockResolvedValue([]);
+    const { dom, page } = await openedProject(api({ listLogSources, listServiceLogSources }));
+
+    dom.window.document.getElementById('projectLogsOpen')?.click();
+    await flushAsync();
+
+    expect(listLogSources).toHaveBeenCalledWith(project().id);
+    expect(listServiceLogSources).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('projectLogsSources')?.textContent).toContain('Project logs');
+    page.dispose();
+  });
+
+  it('stale Repository workspace runtime responses cannot overwrite the selected repository', async () => {
+    const repoOne = repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'));
+    const repoTwo = repository('repo-2', project().id, 'worker', true, branchGitState('CLEAN', 'main'));
+    const serviceOne = { ...service('service-1'), repositoryId: repoOne.id };
+    const serviceTwo = { ...service('service-2'), repositoryId: repoTwo.id };
+    let resolveOldRuntime: (value: any) => void = () => {};
+    const oldRuntime = new Promise((resolve) => { resolveOldRuntime = resolve; });
+    const fakeApi = api({
+      listProjectRepositories: vi.fn().mockResolvedValue([repoOne, repoTwo]),
+      listServices: vi.fn().mockResolvedValue([serviceOne, serviceTwo]),
+      listServiceLogSources: vi.fn().mockResolvedValue([]),
+      getServiceRuntime: vi.fn((_projectId: string, serviceId: string) =>
+        serviceId === serviceOne.id
+          ? oldRuntime
+          : Promise.resolve({ status: 'STOPPED', connection: 'LOCAL', provider: 'DOCKER', targetIdentity: 'worker', metadata: {} }))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openRepositoryWorkspace(project().id, repoOne.id);
+    await page.openRepositoryWorkspace(project().id, repoTwo.id);
+    resolveOldRuntime({ status: 'RUNNING', connection: 'LOCAL', provider: 'DOCKER', targetIdentity: 'api', metadata: {} });
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('projectLogsTitle')?.textContent).toBe('worker');
+    expect(dom.window.document.getElementById('repositoryRuntimeStatus')?.textContent).toBe('STOPPED');
+    page.dispose();
+  });
+
+  it('Repository workspace disposes its EventSource when leaving', async () => {
+    const streams: Array<{ closed: boolean }> = [];
+    class EventSourceFake {
+      closed = false;
+      constructor() {
+        streams.push(this);
+      }
+      addEventListener() {}
+      close() {
+        this.closed = true;
+      }
+    }
+    const linked = { ...service('service-1'), repositoryId: 'repo-1' };
+    const dom = agentProjectsDom();
+    Object.defineProperty(dom.window, 'EventSource', { value: EventSourceFake, configurable: true });
+    const fakeApi = api({
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ]),
+      listServices: vi.fn().mockResolvedValue([linked]),
+      listServiceLogSources: vi.fn().mockResolvedValue([{
+        id: 'source-1',
+        name: 'API logs',
+        enabled: true,
+        serviceId: linked.id,
+        connection: 'LOCAL',
+        provider: 'DOCKER'
+      }]),
+      logStreamUrl: vi.fn().mockReturnValue('/stream')
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+    await page.openProject(project().id);
+    await page.openRepositoryWorkspace(project().id, 'repo-1');
+    dom.window.document.getElementById('projectLogsLive')?.click();
+
+    expect(streams).toHaveLength(1);
+    dom.window.document.getElementById('projectLogsBack')?.click();
+    await flushAsync();
+
+    expect(streams[0]!.closed).toBe(true);
+    expect(dom.window.document.getElementById('projectLogsWorkspace')?.classList.contains('hidden')).toBe(true);
+    page.dispose();
   });
 
   it('imports repository into Project and refreshes repository list', async () => {
@@ -973,38 +1271,28 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-b');
   });
 
-  it('shows Clone only for uncloned repositories and refreshes after clone', async () => {
+  it('shows Clone in the repository workspace for an uncloned repository and refreshes after clone', async () => {
     const cloneRequest = deferred<any>();
+    const before = [repository('repo-1', project().id, 'service-a', false)];
+    const after = [repository('repo-1', project().id, 'service-a', true)];
     const fakeApi = api({
       listProjectRepositories: vi.fn()
-        .mockResolvedValueOnce([
-          repository('repo-1', project().id, 'service-a', false),
-          repository('repo-2', project().id, 'service-b', true),
-          repository('repo-3', project().id, 'service-c', false)
-        ])
-        .mockResolvedValueOnce([
-          repository('repo-1', project().id, 'service-a', true),
-          repository('repo-2', project().id, 'service-b', true),
-          repository('repo-3', project().id, 'service-c', false)
-        ]),
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(after),
       cloneProjectRepository: vi.fn(() => cloneRequest.promise)
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
     const repoOneClone = dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]');
-    const repoThreeClone = dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-3"]');
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
+    expect(dom.window.document.getElementById('repositorySourceDetails')?.textContent).toContain('service-a');
     expect(repoOneClone).not.toBeNull();
     expect(repoOneClone?.disabled).toBe(false);
-    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-2"]')).toBeNull();
-    expect(repoThreeClone).not.toBeNull();
-    expect(repoThreeClone?.disabled).toBe(false);
 
     repoOneClone?.click();
+    await flushAsync();
     const repoOneCloneInFlight = dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]');
-    const repoThreeCloneInFlight = dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-3"]');
     expect(repoOneCloneInFlight?.disabled).toBe(true);
-    expect(repoThreeCloneInFlight?.disabled).toBe(false);
     repoOneCloneInFlight?.click();
     expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(1);
 
@@ -1012,7 +1300,7 @@ describe('Agent projects page', () => {
     await flushAsync();
 
     expect(fakeApi.cloneProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
-    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(3);
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
   });
 
@@ -1022,17 +1310,17 @@ describe('Agent projects page', () => {
         repository('repo-1', project().id, 'service-a', true, branchGitState('CLEAN', 'main'))
       ]))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
-    const text = dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent || '';
+    const text = dom.window.document.getElementById('repositorySourceDetails')?.textContent || '';
     expect(text).toContain('service-a');
-    expect(text).toContain('main · Clean');
+    expect(dom.window.document.getElementById('repositoryOverviewSummary')?.textContent).toContain('main · Clean');
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
     expect(dom.window.document.querySelector('[data-refresh-repository-id="repo-1"]')?.closest('.repository-actions')).not.toBeNull();
     const source = consoleSourceText();
     expect(source).toMatch(/\.repository-list\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
-    expect(source).toMatch(/@media \(max-width: 1000px\)[\s\S]*\.repository-list\s*\{[^}]*grid-template-columns: 1fr;/);
+    expect(source).toMatch(/@media \(max-width: 1000px\)[\s\S]*\.repository-list,[\s\S]*\.repository-detail-grid\s*\{[^}]*grid-template-columns: 1fr;/);
   });
 
   it('refreshes remote state only after an explicit repository action', async () => {
@@ -1043,23 +1331,29 @@ describe('Agent projects page', () => {
           repository('repo-1', project().id, 'service-a', true, branchGitState('CLEAN', 'main'))
         ])
         .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true, branchGitState('CLEAN', 'main'))
+        ])
+        .mockResolvedValueOnce([
           repository('repo-1', project().id, 'service-a', true, behindGitState())
         ]),
       refreshProjectRepository: vi.fn(() => refreshRequest.promise)
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
     expect(fakeApi.refreshProjectRepository).not.toHaveBeenCalled();
     const refresh = dom.window.document.querySelector<HTMLButtonElement>('[data-refresh-repository-id="repo-1"]');
     expect(refresh?.disabled).toBe(false);
+    const beforeHash = dom.window.location.hash;
     refresh?.click();
+    await flushAsync();
+    expect(dom.window.location.hash).toBe(beforeHash);
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-refresh-repository-id="repo-1"]')?.disabled).toBe(true);
 
     refreshRequest.resolve(repository('repo-1', project().id, 'service-a', true, behindGitState()));
     await flushAsync();
 
     expect(fakeApi.refreshProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
-    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(3);
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(false);
   });
 
@@ -1069,9 +1363,9 @@ describe('Agent projects page', () => {
         repository('repo-1', project().id, 'service-a', true, behindGitState())
       ]))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Clean');
+    expect(dom.window.document.getElementById('repositoryOverviewSummary')?.textContent).toContain('main · Clean');
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(false);
   });
 
@@ -1081,9 +1375,9 @@ describe('Agent projects page', () => {
         repository('repo-1', project().id, 'service-a', true, branchGitState('DIRTY', 'main'))
       ]))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Dirty');
+    expect(dom.window.document.getElementById('repositoryOverviewSummary')?.textContent).toContain('main · Dirty');
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
 
@@ -1093,9 +1387,9 @@ describe('Agent projects page', () => {
         repository('repo-1', project().id, 'service-a', true, conflictedGitState())
       ]))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Dirty');
+    expect(dom.window.document.getElementById('repositoryOverviewSummary')?.textContent).toContain('main · Dirty');
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
 
@@ -1105,9 +1399,9 @@ describe('Agent projects page', () => {
         repository('repo-1', project().id, 'service-a', true, detachedGitState())
       ]))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('detached · Clean');
+    expect(dom.window.document.getElementById('repositoryOverviewSummary')?.textContent).toContain('detached · Clean');
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
 
@@ -1117,9 +1411,9 @@ describe('Agent projects page', () => {
         repository('repo-1', project().id, 'service-a', true, noUpstreamGitState())
       ]))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Clean');
+    expect(dom.window.document.getElementById('repositoryOverviewSummary')?.textContent).toContain('main · Clean');
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
 
@@ -1129,7 +1423,7 @@ describe('Agent projects page', () => {
         repository('repo-1', project().id, 'service-a', true, divergedGitState())
       ]))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
@@ -1140,9 +1434,9 @@ describe('Agent projects page', () => {
         repository('repo-1', project().id, 'service-a', true, null)
       ]))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
-    const text = dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent || '';
+    const text = dom.window.document.getElementById('repositoryOverviewSummary')?.textContent || '';
     expect(text).toContain('Invalid Git checkout');
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
     expect(dom.window.document.querySelector('[data-pull-repository-id="repo-1"]')).toBeNull();
@@ -1161,39 +1455,35 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).not.toContain('Check');
   });
 
-  it('pulls a safe repository with per-row loading and refreshes state', async () => {
+  it('pulls a safe repository from the repository workspace and refreshes state', async () => {
     const pullRequest = deferred<any>();
+    const before = [repository('repo-1', project().id, 'service-a', true, behindGitState())];
+    const after = [repository('repo-1', project().id, 'service-a', true, branchGitState('CLEAN', 'main', false))];
     const fakeApi = api({
       listProjectRepositories: vi.fn()
-        .mockResolvedValueOnce([
-          repository('repo-1', project().id, 'service-a', true, behindGitState()),
-          repository('repo-2', project().id, 'service-b', true, behindGitState())
-        ])
-        .mockResolvedValueOnce([
-          repository('repo-1', project().id, 'service-a', true, branchGitState('CLEAN', 'main', false)),
-          repository('repo-2', project().id, 'service-b', true, behindGitState())
-        ]),
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(after),
       pullProjectRepository: vi.fn(() => pullRequest.promise)
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
     const repoOnePull = dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]');
-    const repoTwoPull = dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-2"]');
     expect(repoOnePull?.disabled).toBe(false);
-    expect(repoTwoPull?.disabled).toBe(false);
 
     repoOnePull?.click();
+    await flushAsync();
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
-    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-2"]')?.disabled).toBe(false);
 
     dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.click();
+    await flushAsync();
     expect(fakeApi.pullProjectRepository).toHaveBeenCalledTimes(1);
 
     pullRequest.resolve(repository('repo-1', project().id, 'service-a', true));
     await flushAsync();
 
     expect(fakeApi.pullProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
-    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(3);
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
 
@@ -1205,20 +1495,24 @@ describe('Agent projects page', () => {
           repository('repo-1', project().id, 'service-a', true, behindGitState())
         ])
         .mockResolvedValueOnce([
+          repository('repo-1', project().id, 'service-a', true, behindGitState())
+        ])
+        .mockResolvedValueOnce([
           repository('repo-1', project().id, 'service-a', true, divergedGitState())
         ]),
       pullProjectRepository: vi.fn(() => pullRequest.promise)
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
     dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.click();
+    await flushAsync();
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
 
     pullRequest.reject(new Error('Pull blocked.'));
     await flushAsync();
 
     expect(fakeApi.pullProjectRepository).toHaveBeenCalledTimes(1);
-    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(3);
     expect(dom.window.document.getElementById('agentsV2RepositoriesError')?.textContent).toContain('Pull blocked.');
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
@@ -1232,11 +1526,11 @@ describe('Agent projects page', () => {
       ])),
       cloneProjectRepository: vi.fn(() => cloneRequest.promise)
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
     dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.click();
+    await flushAsync();
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.disabled).toBe(true);
-    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(false);
 
     cloneRequest.reject(new Error('Clone failed.'));
     await flushAsync();
@@ -1244,61 +1538,34 @@ describe('Agent projects page', () => {
     expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(1);
     expect(dom.window.document.getElementById('agentsV2RepositoriesError')?.textContent).toContain('Clone failed.');
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.disabled).toBe(false);
-    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(false);
   });
 
-  it('tracks simultaneous repository clones independently', async () => {
+  it('does not submit duplicate Clone actions from the repository workspace', async () => {
     const repoOneClone = deferred<any>();
-    const repoTwoClone = deferred<any>();
+    const before = [repository('repo-1', project().id, 'service-a', false)];
+    const after = [repository('repo-1', project().id, 'service-a', true)];
     const fakeApi = api({
       listProjectRepositories: vi.fn()
-        .mockResolvedValueOnce([
-          repository('repo-1', project().id, 'service-a', false),
-          repository('repo-2', project().id, 'service-b', false)
-        ])
-        .mockResolvedValueOnce([
-          repository('repo-1', project().id, 'service-a', true),
-          repository('repo-2', project().id, 'service-b', false)
-        ])
-        .mockResolvedValueOnce([
-          repository('repo-1', project().id, 'service-a', true),
-          repository('repo-2', project().id, 'service-b', true)
-        ]),
-      cloneProjectRepository: vi.fn((_projectId: string, repositoryId: string) => {
-        if (repositoryId === 'repo-1') {
-          return repoOneClone.promise;
-        }
-        return repoTwoClone.promise;
-      })
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(after),
+      cloneProjectRepository: vi.fn(() => repoOneClone.promise)
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedRepository(fakeApi, 'repo-1');
 
     dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.click();
+    await flushAsync();
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.disabled).toBe(true);
-    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(false);
-
-    dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.click();
-    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(2);
-    expect(fakeApi.cloneProjectRepository).toHaveBeenNthCalledWith(1, project().id, 'repo-1');
-    expect(fakeApi.cloneProjectRepository).toHaveBeenNthCalledWith(2, project().id, 'repo-2');
-    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.disabled).toBe(true);
-    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(true);
-
     dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-1"]')?.click();
-    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(2);
+    await flushAsync();
+    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledTimes(1);
 
     repoOneClone.resolve(repository('repo-1', project().id, 'service-a', true));
     await flushAsync();
 
+    expect(fakeApi.cloneProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
-    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-clone-repository-id="repo-2"]')?.disabled).toBe(true);
-
-    repoTwoClone.resolve(repository('repo-2', project().id, 'service-b', true));
-    await flushAsync();
-
     expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(3);
-    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
-    expect(dom.window.document.querySelector('[data-clone-repository-id="repo-2"]')).toBeNull();
   });
 
   it('rejects blank repository URL locally', async () => {

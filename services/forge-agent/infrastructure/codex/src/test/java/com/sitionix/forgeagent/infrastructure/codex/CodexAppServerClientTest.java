@@ -204,7 +204,7 @@ class CodexAppServerClientTest {
 
         assertThat(Files.isDirectory(runtimeCwd)).isTrue();
         assertThat(started.process().waitFor(1, TimeUnit.SECONDS)).isTrue();
-        assertThat(started.process().inputReader().readLine()).isEqualTo(runtimeCwd.toString());
+        assertThat(Path.of(started.process().inputReader().readLine()).toRealPath()).isEqualTo(runtimeCwd.toRealPath());
     }
 
     @Test

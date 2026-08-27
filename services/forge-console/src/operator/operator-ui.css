@@ -605,6 +605,19 @@ body.sidebar-collapsed .sidebar-link {
   background: rgba(255, 255, 255, 0.44);
 }
 
+.repository-navigation-row {
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.repository-navigation-row:hover,
+.repository-navigation-row:focus-visible {
+  border-color: rgba(47, 111, 78, 0.36);
+  background: rgba(255, 255, 255, 0.66);
+  outline: none;
+  transform: translateY(-1px);
+}
+
 .repository-row code {
   min-width: 0;
   overflow: hidden;
@@ -628,6 +641,101 @@ body.sidebar-collapsed .sidebar-link {
 
 .repository-actions:empty {
   display: none;
+}
+
+.repository-runtime-summary {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-self: end;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--muted);
+  font: 800 11px/1.3 var(--mono);
+  white-space: nowrap;
+}
+
+.repository-runtime-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.repository-runtime-running {
+  color: #2257b8;
+}
+
+.repository-runtime-stopped {
+  color: #625647;
+}
+
+.repository-runtime-failed {
+  color: #b12f2f;
+}
+
+.repository-runtime-unknown {
+  color: #625647;
+}
+
+.standalone-service-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 42px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.44);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.standalone-service-row:hover,
+.standalone-service-row:focus-visible {
+  border-color: rgba(47, 111, 78, 0.36);
+  background: rgba(255, 255, 255, 0.66);
+  outline: none;
+}
+
+.repository-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.repository-detail-row {
+  display: grid;
+  gap: 3px;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.repository-detail-row strong {
+  color: rgba(27, 36, 31, 0.62);
+  font: 800 10px/1.2 var(--mono);
+  text-transform: uppercase;
+}
+
+.repository-detail-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font: 700 12px/1.35 var(--mono);
+}
+
+.runtime-service-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -6px 0 14px;
 }
 
 .repository-git-state {
@@ -865,6 +973,12 @@ body.sidebar-collapsed .sidebar-link {
 .agents-v2-status-failed {
   border-color: rgba(201, 61, 61, 0.28);
   color: #b12f2f;
+}
+
+.agents-v2-status-stopped,
+.agents-v2-status-not-configured {
+  border-color: rgba(95, 83, 67, 0.28);
+  color: #625647;
 }
 
 .agents-v2-status-pending {
@@ -5480,7 +5594,8 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 }
 
 @media (max-width: 1000px) {
-  .repository-list {
+  .repository-list,
+  .repository-detail-grid {
     grid-template-columns: 1fr;
   }
 
