@@ -10,6 +10,13 @@ export function createAgentProjectsApi(http) {
     deleteProject(projectId) {
       return http.delete(`${root}/projects/${encodeURIComponent(projectId)}`);
     },
+    listServices(projectId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/services`); },
+    createService(projectId, request) { return http.post(`${root}/projects/${encodeURIComponent(projectId)}/services`, request); },
+    getService(projectId, serviceId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`); },
+    updateService(projectId, serviceId, request) { return http.put(`${root}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`, request); },
+    deleteService(projectId, serviceId) { return http.delete(`${root}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`); },
+    getServiceRuntime(projectId, serviceId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}/runtime`); },
+    listServiceLogSources(projectId, serviceId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}/log-sources`); },
     listLogSources(projectId) {
       return http.get(
         `${root}/projects/${encodeURIComponent(projectId)}/log-sources`,

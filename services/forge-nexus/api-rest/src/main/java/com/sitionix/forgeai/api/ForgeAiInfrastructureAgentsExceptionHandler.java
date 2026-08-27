@@ -23,7 +23,8 @@ import org.springframework.web.client.RestClientException;
 @RestControllerAdvice(
     assignableTypes = {
       ForgeAiInfrastructureAgentsController.class,
-      ForgeAiProjectLogsController.class
+      ForgeAiProjectLogsController.class,
+      ForgeAiProjectServicesController.class
     })
 @RequiredArgsConstructor
 public class ForgeAiInfrastructureAgentsExceptionHandler {

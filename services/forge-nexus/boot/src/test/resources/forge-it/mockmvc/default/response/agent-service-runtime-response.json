@@ -1,0 +1,1 @@
+{"status":"RUNNING","provider":"DOCKER","connection":"LOCAL","targetIdentity":"api","startedAt":"2026-08-27T09:00:00Z","uptime":"PT1H","metadata":{"containerName":"api"},"health":"healthy"}

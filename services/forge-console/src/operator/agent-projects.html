@@ -33,6 +33,11 @@
       </header>
 
       <section class="panel project-section">
+        <div class="agents-v2-pane-head"><div><h2>Services</h2><p>Deployed project workloads and live runtime state.</p></div><button id="projectServiceAdd" class="button small secondary" type="button">New Service</button></div>
+        <div id="projectServicesList" class="agents-v2-card-grid" aria-live="polite"></div>
+      </section>
+
+      <section class="panel project-section">
         <div class="agents-v2-pane-head">
           <div><h2>Logs</h2><p>Configure sources and inspect live project runtime output.</p></div>
           <button id="projectLogsOpen" class="button small secondary" type="button">Open Logs</button>
@@ -99,6 +104,11 @@
           <button id="projectLogsBack" class="button small secondary" type="button">← Project</button>
         </div>
       </header>
+
+      <section id="serviceOverview" class="panel project-section hidden">
+        <div class="agents-v2-pane-head"><div><h2>Overview</h2><p id="serviceOverviewSummary"></p></div><span id="serviceRuntimeStatus" class="agents-v2-status">UNKNOWN</span></div>
+        <div id="serviceRuntimeDetails" class="repository-list"></div>
+      </section>
 
       <section class="panel project-section">
         <div class="agents-v2-pane-head"><div><h2>Sources</h2><p>Choose one or more configured sources.</p></div><button id="projectLogsAdd" class="button small secondary" type="button">Add Log Source</button></div>
@@ -230,6 +240,21 @@
         <div id="projectLogsDiscoveryError" class="error-box"></div>
         <label><input id="projectLogsEnabled" type="checkbox" checked> Enabled</label>
         <div class="modal-actions"><button id="projectLogsCancel" class="button secondary" type="button">Cancel</button><button class="button" type="submit">Validate & Save</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="projectServiceDialog" class="modal-dialog">
+      <form id="projectServiceForm" method="dialog" class="modal-form">
+        <div class="modal-head"><h2 id="projectServiceDialogTitle">Create Service</h2></div>
+        <div id="projectServiceError" class="error-box hidden"></div>
+        <label class="field-label">Name<input id="projectServiceName" class="text-input" required maxlength="120"></label>
+        <label class="field-label">Repository<select id="projectServiceRepository" class="text-input"><option value="">No repository</option></select></label>
+        <label class="field-label">Connection<select id="projectServiceConnection" class="text-input"><option value="LOCAL">LOCAL</option><option value="SSH">SSH</option></select></label>
+        <label id="projectServiceSshField" class="field-label hidden">SSH profile<select id="projectServiceSsh" class="text-input"></select></label>
+        <label class="field-label">Provider<select id="projectServiceProvider" class="text-input"><option value="DOCKER">DOCKER</option><option value="SYSTEMD">SYSTEMD</option></select></label>
+        <label id="projectServiceContainerField" class="field-label">Docker container<input id="projectServiceContainer" class="text-input"></label>
+        <label id="projectServiceUnitField" class="field-label hidden">Systemd unit<input id="projectServiceUnit" class="text-input"></label>
+        <div class="modal-actions"><button id="projectServiceCancel" class="button secondary" type="button">Cancel</button><button id="projectServiceSave" class="button" type="submit">Save</button></div>
       </form>
     </dialog>
 

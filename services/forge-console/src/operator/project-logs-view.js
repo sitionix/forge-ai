@@ -1,10 +1,11 @@
 import { escapeHtml } from "./dom-render-helpers.js";
 
 export class ProjectLogsView {
-  constructor({ document, window, api }) {
+  constructor({ document, window, api, serviceId = null }) {
     this.document = document;
     this.window = window;
     this.api = api;
+    this.serviceId = serviceId;
     this.projectId = null;
     this.sources = [];
     this.connections = [];
@@ -58,7 +59,9 @@ export class ProjectLogsView {
       return;
     }
     [this.sources, this.connections, this.repositories] = await Promise.all([
-      this.api.listLogSources(projectId),
+      this.serviceId
+        ? this.api.listServiceLogSources(projectId, this.serviceId)
+        : this.api.listLogSources(projectId),
       this.api.listSshConnections?.(projectId) || [],
       this.api.listProjectRepositories?.(projectId) || [],
     ]);
@@ -218,7 +221,7 @@ export class ProjectLogsView {
     this.selectComposeCandidate();
     const request = {
       name: this.byId("projectLogsName").value,
-      serviceId: null,
+      serviceId: this.serviceId,
       connection: this.byId("projectLogsConnection").value,
       sshConnectionId: this.byId("projectLogsSsh").value || null,
       provider,

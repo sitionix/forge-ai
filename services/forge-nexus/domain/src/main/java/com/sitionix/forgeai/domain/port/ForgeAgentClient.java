@@ -25,8 +25,18 @@ import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentLogSourceCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import java.util.List;
 import java.util.UUID;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntime;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentProjectServiceCommand;
 
 public interface ForgeAgentClient {
+  List<AgentProjectService> listProjectServices(UUID projectId);
+  AgentProjectService createProjectService(UUID projectId, SaveAgentProjectServiceCommand command);
+  AgentProjectService getProjectService(UUID projectId, UUID serviceId);
+  AgentProjectService updateProjectService(UUID projectId, UUID serviceId, SaveAgentProjectServiceCommand command);
+  void deleteProjectService(UUID projectId, UUID serviceId);
+  AgentServiceRuntime getProjectServiceRuntime(UUID projectId, UUID serviceId);
+  List<AgentLogSource> listProjectServiceLogSources(UUID projectId, UUID serviceId);
 
   List<AgentProject> listProjects();
 

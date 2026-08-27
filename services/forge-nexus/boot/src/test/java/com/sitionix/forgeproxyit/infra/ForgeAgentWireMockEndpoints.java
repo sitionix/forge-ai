@@ -10,6 +10,9 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogTargetCandida
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceRuntimeResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
@@ -22,6 +25,63 @@ public final class ForgeAgentWireMockEndpoints {
 
     public static Endpoint<AgentProjectRequest, AgentProjectResponse> createProject() {
         return upstreamPost(AgentProjectResponse.class, HttpStatus.CREATED, "agent-create-project-response.json");
+    }
+
+    public static Endpoint<ProjectServiceRequest, ProjectServiceResponse> createService() {
+        return serviceEndpoint("/api/v1/projects/{projectId}/services", HttpMethod.POST,
+                ProjectServiceRequest.class, ProjectServiceResponse.class, HttpStatus.CREATED,
+                "agent-service-response.json", true);
+    }
+
+    public static Endpoint<Void, ProjectServiceResponse[]> listServices() {
+        return serviceEndpoint("/api/v1/projects/{projectId}/services", HttpMethod.GET,
+                Void.class, ProjectServiceResponse[].class, HttpStatus.OK,
+                "agent-service-list-response.json", false);
+    }
+
+    public static Endpoint<Void, ProjectServiceResponse> getService() {
+        return serviceEndpoint("/api/v1/projects/{projectId}/services/{serviceId}", HttpMethod.GET,
+                Void.class, ProjectServiceResponse.class, HttpStatus.OK,
+                "agent-service-response.json", false);
+    }
+
+    public static Endpoint<ProjectServiceRequest, ProjectServiceResponse> updateService() {
+        return serviceEndpoint("/api/v1/projects/{projectId}/services/{serviceId}", HttpMethod.PUT,
+                ProjectServiceRequest.class, ProjectServiceResponse.class, HttpStatus.OK,
+                "agent-service-response.json", true);
+    }
+
+    public static Endpoint<Void, Void> deleteService() {
+        return serviceEndpoint("/api/v1/projects/{projectId}/services/{serviceId}", HttpMethod.DELETE,
+                Void.class, Void.class, HttpStatus.NO_CONTENT, null, false);
+    }
+
+    public static Endpoint<Void, ServiceRuntimeResponse> serviceRuntime() {
+        return serviceEndpoint("/api/v1/projects/{projectId}/services/{serviceId}/runtime", HttpMethod.GET,
+                Void.class, ServiceRuntimeResponse.class, HttpStatus.OK,
+                "agent-service-runtime-response.json", false);
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> serviceRuntimeFailure() {
+        return serviceEndpoint("/api/v1/projects/{projectId}/services/{serviceId}/runtime", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class, HttpStatus.BAD_GATEWAY,
+                "agent-upstream-error-response.json", false);
+    }
+
+    public static Endpoint<Void, AgentLogSourceResponse[]> serviceLogs() {
+        return serviceEndpoint("/api/v1/projects/{projectId}/services/{serviceId}/log-sources", HttpMethod.GET,
+                Void.class, AgentLogSourceResponse[].class, HttpStatus.OK,
+                "agent-service-logs-response.json", false);
+    }
+
+    private static <Request, Response> Endpoint<Request, Response> serviceEndpoint(
+            String path, HttpMethod method, Class<Request> request, Class<Response> response,
+            HttpStatus status, String fixture, boolean matchRequest) {
+        return Endpoint.createContract(path, method, request, response, (WiremockDefault) context -> {
+            context.plainUrl().responseStatus(status.value());
+            if (matchRequest) context.matchesJson("agent-service-request.json");
+            if (fixture != null) context.responseBody(fixture);
+        });
     }
 
     public static Endpoint<Void, ProjectTaskPageResponse> listTasks() {

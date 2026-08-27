@@ -23,6 +23,11 @@ public class ProjectLogsController {
     return logs.list(projectId).stream().map(this.mapper::toResponse).toList();
   }
 
+  @GetMapping("/api/v1/projects/{projectId}/services/{serviceId}/log-sources")
+  public List<LogSourceResponse> listForService(@PathVariable UUID projectId, @PathVariable UUID serviceId) {
+    return logs.list(projectId, serviceId).stream().map(this.mapper::toResponse).toList();
+  }
+
   @PostMapping("/api/v1/projects/{projectId}/log-sources")
   public ResponseEntity<LogSourceResponse> create(
       @PathVariable UUID projectId, @Valid @RequestBody LogSourceRequest r) {

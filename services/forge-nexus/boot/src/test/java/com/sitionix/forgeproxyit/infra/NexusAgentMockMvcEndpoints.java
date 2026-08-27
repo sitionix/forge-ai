@@ -10,6 +10,9 @@ import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentSshConnectionRequest;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectServiceRequest;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectServiceResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentServiceRuntimeResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
@@ -31,6 +34,63 @@ public final class NexusAgentMockMvcEndpoints {
                         .expectStatus(HttpStatus.CREATED.value())
                         .expectResponse("agent-create-project-response.json")
         );
+    }
+
+    public static Endpoint<AgentProjectServiceRequest, AgentProjectServiceResponse> createService() {
+        return serviceEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/services", HttpMethod.POST,
+                AgentProjectServiceRequest.class, AgentProjectServiceResponse.class, HttpStatus.CREATED,
+                "agent-service-response.json", true);
+    }
+
+    public static Endpoint<Void, AgentProjectServiceResponse[]> listServices() {
+        return serviceEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/services", HttpMethod.GET,
+                Void.class, AgentProjectServiceResponse[].class, HttpStatus.OK,
+                "agent-service-list-response.json", false);
+    }
+
+    public static Endpoint<Void, AgentProjectServiceResponse> getService() {
+        return serviceEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/services/{serviceId}", HttpMethod.GET,
+                Void.class, AgentProjectServiceResponse.class, HttpStatus.OK,
+                "agent-service-response.json", false);
+    }
+
+    public static Endpoint<AgentProjectServiceRequest, AgentProjectServiceResponse> updateService() {
+        return serviceEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/services/{serviceId}", HttpMethod.PUT,
+                AgentProjectServiceRequest.class, AgentProjectServiceResponse.class, HttpStatus.OK,
+                "agent-service-response.json", true);
+    }
+
+    public static Endpoint<Void, Void> deleteService() {
+        return serviceEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/services/{serviceId}", HttpMethod.DELETE,
+                Void.class, Void.class, HttpStatus.NO_CONTENT, null, false);
+    }
+
+    public static Endpoint<Void, AgentServiceRuntimeResponse> serviceRuntime() {
+        return serviceEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/services/{serviceId}/runtime", HttpMethod.GET,
+                Void.class, AgentServiceRuntimeResponse.class, HttpStatus.OK,
+                "agent-service-runtime-response.json", false);
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> serviceRuntimeFailure() {
+        return serviceEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/services/{serviceId}/runtime", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class, HttpStatus.BAD_GATEWAY,
+                "agent-upstream-error-response.json", false);
+    }
+
+    public static Endpoint<Void, AgentLogSourceResponse[]> serviceLogs() {
+        return serviceEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/services/{serviceId}/log-sources", HttpMethod.GET,
+                Void.class, AgentLogSourceResponse[].class, HttpStatus.OK,
+                "agent-service-logs-response.json", false);
+    }
+
+    private static <Request, Response> Endpoint<Request, Response> serviceEndpoint(
+            String path, HttpMethod method, Class<Request> request, Class<Response> response,
+            HttpStatus status, String fixture, boolean withRequest) {
+        return Endpoint.createContract(path, method, request, response, (MockmvcDefault) context -> {
+            context.expectStatus(status.value());
+            if (withRequest) context.withRequest("agent-service-request.json");
+            if (fixture != null) context.expectResponse(fixture);
+        });
     }
 
     public static Endpoint<Void, AgentProjectTaskPageResponse> listTasks() {

@@ -10,6 +10,11 @@ import com.sitionix.forgeagent.api.dto.CreateWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.ForgeAgentErrorResponse;
 import com.sitionix.forgeagent.api.dto.ImportProjectRepositoryRequest;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
+import com.sitionix.forgeagent.api.dto.ProjectServiceRequest;
+import com.sitionix.forgeagent.api.dto.ProjectServiceResponse;
+import com.sitionix.forgeagent.api.dto.ServiceRuntimeResponse;
+import com.sitionix.forgeagent.api.dto.LogSourceRequest;
+import com.sitionix.forgeagent.api.dto.LogSourceResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
@@ -25,6 +30,24 @@ public final class ForgeAgentMockMvcEndpoint {
 
     public static final Endpoint<Void, ProjectResponse[]> LIST_PROJECTS =
             Endpoint.createContract("/api/v1/projects", HttpMethod.GET, Void.class, ProjectResponse[].class);
+    public static final Endpoint<ProjectServiceRequest, ProjectServiceResponse> CREATE_PROJECT_SERVICE =
+            Endpoint.createContract("/api/v1/projects/{projectId}/services", HttpMethod.POST, ProjectServiceRequest.class, ProjectServiceResponse.class);
+    public static final Endpoint<Void, ProjectServiceResponse[]> LIST_PROJECT_SERVICES =
+            Endpoint.createContract("/api/v1/projects/{projectId}/services", HttpMethod.GET, Void.class, ProjectServiceResponse[].class);
+    public static final Endpoint<Void, ProjectServiceResponse> GET_PROJECT_SERVICE =
+            Endpoint.createContract("/api/v1/projects/{projectId}/services/{serviceId}", HttpMethod.GET, Void.class, ProjectServiceResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> GET_PROJECT_SERVICE_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/services/{serviceId}", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<ProjectServiceRequest, ProjectServiceResponse> UPDATE_PROJECT_SERVICE =
+            Endpoint.createContract("/api/v1/projects/{projectId}/services/{serviceId}", HttpMethod.PUT, ProjectServiceRequest.class, ProjectServiceResponse.class);
+    public static final Endpoint<Void, Void> DELETE_PROJECT_SERVICE =
+            Endpoint.createContract("/api/v1/projects/{projectId}/services/{serviceId}", HttpMethod.DELETE, Void.class, Void.class);
+    public static final Endpoint<Void, ServiceRuntimeResponse> GET_PROJECT_SERVICE_RUNTIME =
+            Endpoint.createContract("/api/v1/projects/{projectId}/services/{serviceId}/runtime", HttpMethod.GET, Void.class, ServiceRuntimeResponse.class);
+    public static final Endpoint<LogSourceRequest, LogSourceResponse> CREATE_LOG_SOURCE =
+            Endpoint.createContract("/api/v1/projects/{projectId}/log-sources", HttpMethod.POST, LogSourceRequest.class, LogSourceResponse.class);
+    public static final Endpoint<Void, LogSourceResponse[]> LIST_SERVICE_LOG_SOURCES =
+            Endpoint.createContract("/api/v1/projects/{projectId}/services/{serviceId}/log-sources", HttpMethod.GET, Void.class, LogSourceResponse[].class);
     public static final Endpoint<CreateProjectRequest, ProjectResponse> CREATE_PROJECT =
             Endpoint.createContract("/api/v1/projects", HttpMethod.POST, CreateProjectRequest.class, ProjectResponse.class);
     public static final Endpoint<CreateProjectRequest, ForgeAgentErrorResponse> CREATE_PROJECT_ERROR =

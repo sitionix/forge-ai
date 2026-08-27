@@ -5,6 +5,10 @@ export class ProjectWorkspace {
     this.document = options.document;
     this.onBack = options.onBack;
     this.onOpenLogs = options.onOpenLogs;
+    this.onAddService = options.onAddService || (()=>{});
+    this.onOpenService = options.onOpenService || (()=>{});
+    this.onEditService = options.onEditService || (() => {});
+    this.onDeleteService = options.onDeleteService || (() => {});
     this.onNewAgent = options.onNewAgent;
     this.onImportRepository = options.onImportRepository;
     this.onCloneRepository = options.onCloneRepository || (() => {});
@@ -24,6 +28,7 @@ export class ProjectWorkspace {
   bind() {
     this.byId('agentsV2WorkspaceBack')?.addEventListener('click', () => this.onBack());
     this.byId('projectLogsOpen')?.addEventListener('click', () => this.onOpenLogs());
+    this.byId('projectServiceAdd')?.addEventListener('click', () => this.onAddService());
     this.byId('agentsV2ImportRepository')?.addEventListener('click', () => this.onImportRepository());
     this.byId('agentsV2CreateAgent')?.addEventListener('click', () => this.onNewAgent());
     this.byId('agentsV2CreateWorkflow')?.addEventListener('click', () => this.onNewWorkflow());
@@ -55,9 +60,49 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateWorkflow').disabled = true;
     this.byId('agentsV2CreateTask').disabled = true;
     this.byId('agentsV2RepositoriesList').innerHTML = '<div class="muted-state">Loading repositories...</div>';
+    this.byId('projectServicesList').innerHTML = '<div class="muted-state">Loading services...</div>';
     this.byId('agentsV2AgentsList').innerHTML = '<div class="muted-state">Loading agents...</div>';
     this.byId('agentsV2WorkflowsList').innerHTML = '<div class="muted-state">Loading workflows...</div>';
     this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
+  }
+
+  renderServices(services, repositories = []) {
+    const list = this.byId('projectServicesList');
+    if (!services.length) {
+      list.innerHTML = '<div class="muted-state">No services yet.</div>';
+      return;
+    }
+    list.innerHTML = services.map((service) => {
+      const repository = repositories.find((candidate) => candidate.id === service.repositoryId);
+      const target = service.runtimeTarget || {};
+      return `<article class="agents-v2-card" data-service-card-id="${escapeHtml(service.id)}">
+        <h3>${escapeHtml(service.name)}</h3>
+        <p><strong data-service-runtime-status="${escapeHtml(service.id)}">${escapeHtml(service.runtimeStatus || 'UNKNOWN')}</strong> · <span data-service-runtime-detail="${escapeHtml(service.id)}">${service.runtimeStatus ? 'Last checked' : 'Not checked'}</span></p>
+        <p>${escapeHtml(repository?.name || 'No repository')}</p>
+        <p>${escapeHtml(target.connection || '')} · ${escapeHtml(target.provider || '')} · <code>${escapeHtml(target.container || target.unit || '')}</code></p>
+        <div class="agents-v2-card-actions">
+          <button class="button small secondary" data-service-id="${escapeHtml(service.id)}">Open</button>
+          <button class="button small secondary" data-edit-service-id="${escapeHtml(service.id)}">Edit</button>
+          <button class="button small secondary" data-delete-service-id="${escapeHtml(service.id)}">Delete</button>
+        </div>
+      </article>`;
+    }).join('');
+    list.querySelectorAll('[data-service-id]').forEach((element) =>
+      element.addEventListener('click', () => this.onOpenService(element.dataset.serviceId)));
+    list.querySelectorAll('[data-edit-service-id]').forEach((element) =>
+      element.addEventListener('click', () => this.onEditService(element.dataset.editServiceId)));
+    list.querySelectorAll('[data-delete-service-id]').forEach((element) =>
+      element.addEventListener('click', () => this.onDeleteService(element.dataset.deleteServiceId)));
+  }
+
+  updateServiceRuntimeStatus(serviceId, status) {
+    const list = this.byId('projectServicesList');
+    const statusElement = [...(list?.querySelectorAll('[data-service-runtime-status]') || [])]
+      .find((element) => element.dataset.serviceRuntimeStatus === serviceId);
+    const detailElement = [...(list?.querySelectorAll('[data-service-runtime-detail]') || [])]
+      .find((element) => element.dataset.serviceRuntimeDetail === serviceId);
+    if (statusElement) statusElement.textContent = status || 'UNKNOWN';
+    if (detailElement) detailElement.textContent = 'Last checked';
   }
 
   renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set(), refreshingRepositoryIds = new Set()) {

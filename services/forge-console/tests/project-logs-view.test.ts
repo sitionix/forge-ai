@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error The production view is a JavaScript module exercised through its public DOM contract.
 import { ProjectLogsView } from "../src/operator/project-logs-view.js";
 
-function setup(overrides: any = {}) {
+function setup(overrides: any = {}, viewOptions: any = {}) {
   const dom = new JSDOM(
     readFileSync(
       join(process.cwd(), "src/operator/agent-projects.html"),
@@ -51,12 +51,52 @@ function setup(overrides: any = {}) {
     document: dom.window.document,
     window: { EventSource: EventSourceFake },
     api,
+    ...viewOptions,
   });
   view.bind();
   return { dom, view, api, streams };
 }
 
 describe("ProjectLogsView", () => {
+  it("keeps project log creation explicitly project-scoped", async () => {
+    const create = vi.fn().mockResolvedValue({});
+    const { view, dom } = setup({ createLogSource: create });
+    await view.load("p");
+    (dom.window.document.getElementById("projectLogsName") as HTMLInputElement).value = "api";
+    (dom.window.document.getElementById("projectLogsContainer") as HTMLInputElement).value = "api";
+
+    await view.save(new dom.window.Event("submit"));
+
+    expect(create).toHaveBeenCalledWith("p", expect.objectContaining({ serviceId: null }));
+  });
+
+  it("loads and creates service logs only through the explicit service scope", async () => {
+    const serviceSource = {
+      id: "linked", name: "api", enabled: true, serviceId: "service-1",
+      connection: "LOCAL", provider: "DOCKER",
+    };
+    const listProject = vi.fn().mockResolvedValue([{ ...serviceSource, serviceId: null }]);
+    const listService = vi.fn().mockResolvedValue([serviceSource]);
+    const create = vi.fn().mockResolvedValue(serviceSource);
+    const { view, dom } = setup(
+      { listLogSources: listProject, listServiceLogSources: listService, createLogSource: create },
+      { serviceId: "service-1" },
+    );
+
+    await view.load("p");
+    expect(listProject).not.toHaveBeenCalled();
+    expect(listService).toHaveBeenCalledWith("p", "service-1");
+    (dom.window.document.getElementById("projectLogsName") as HTMLInputElement).value = "api";
+    (dom.window.document.getElementById("projectLogsContainer") as HTMLInputElement).value = "api";
+    await view.save(new dom.window.Event("submit"));
+
+    expect(create).toHaveBeenCalledWith(
+      "p", expect.objectContaining({ serviceId: "service-1" }),
+    );
+    expect(listService).toHaveBeenCalledTimes(2);
+    expect(listProject).not.toHaveBeenCalled();
+  });
+
   it("keeps the Add Log Source error hidden until an actual failure", async () => {
     const { view, dom } = setup({
       validateLogSource: vi.fn().mockRejectedValue(new Error("Invalid target")),

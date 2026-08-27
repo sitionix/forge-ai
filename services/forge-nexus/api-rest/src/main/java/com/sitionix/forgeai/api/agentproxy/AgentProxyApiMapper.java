@@ -19,6 +19,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
@@ -30,6 +31,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRunConnection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunNode;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunPort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentSshConnection;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntime;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntimeTarget;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentSystemdLogConfiguration;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
@@ -47,6 +50,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentLogSourceCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentProjectServiceCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import java.util.List;
@@ -73,6 +77,28 @@ public class AgentProxyApiMapper {
                 request.unit(),
                 request.path(),
                 request.enabled());
+    }
+
+    public SaveAgentProjectServiceCommand toCommand(final AgentProjectServiceRequest request) {
+        final AgentServiceRuntimeTargetRequest target = request.runtimeTarget();
+        return new SaveAgentProjectServiceCommand(
+                request.name(),
+                request.repositoryId(),
+                new AgentServiceRuntimeTarget(
+                        target.connection(), target.sshConnectionId(), target.provider(),
+                        target.container(), target.unit()));
+    }
+
+    public AgentProjectServiceResponse toResponse(final AgentProjectService service) {
+        return new AgentProjectServiceResponse(
+                service.id(), service.projectId(), service.name(), service.repositoryId(),
+                service.runtimeTarget(), service.createdAt(), service.updatedAt());
+    }
+
+    public AgentServiceRuntimeResponse toResponse(final AgentServiceRuntime runtime) {
+        return new AgentServiceRuntimeResponse(
+                runtime.status(), runtime.provider(), runtime.connection(), runtime.targetIdentity(),
+                runtime.startedAt(), runtime.uptime(), runtime.metadata(), runtime.health());
     }
 
     public AgentLogDiscoveryCommand toCommand(final AgentLogDiscoveryRequest request) {

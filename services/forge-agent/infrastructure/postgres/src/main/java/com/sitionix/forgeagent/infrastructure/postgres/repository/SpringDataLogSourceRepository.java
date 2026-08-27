@@ -7,4 +7,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface SpringDataLogSourceRepository extends JpaRepository<LogSourceEntity, UUID> {
     List<LogSourceEntity> findAllByProjectIdOrderByNameAscIdAsc(UUID projectId);
+    List<LogSourceEntity> findAllByProjectIdAndServiceIdOrderByNameAscIdAsc(UUID projectId, UUID serviceId);
 }

@@ -19,6 +19,7 @@ public class LogSourceUseCases {
       Pattern.compile("[A-Za-z0-9][A-Za-z0-9:_.@\\-]{0,253}\\.[A-Za-z0-9_.@-]+");
   private final ProjectRepository projects;
   private final LogSourceRepository sources;
+  private final ProjectServiceRepository services;
   private final SshConnectionRepository connections;
   private final DockerLogPort docker;
   private final RemoteLogPort remote;
@@ -31,6 +32,12 @@ public class LogSourceUseCases {
   public List<LogSource> list(UUID projectId) {
     project(projectId);
     return sources.findByProjectId(projectId);
+  }
+
+  @Transactional(readOnly = true)
+  public List<LogSource> list(UUID projectId, UUID serviceId) {
+    service(projectId, serviceId);
+    return sources.findByProjectIdAndServiceId(projectId, serviceId);
   }
 
   @Transactional(readOnly = true)
@@ -146,9 +153,7 @@ public class LogSourceUseCases {
   private void validate(UUID projectId, SaveLogSourceCommand c) {
     if (c.name() == null || c.name().isBlank())
       throw new ValidationException("Log source name is required");
-    if (c.serviceId() != null)
-      throw new ValidationException(
-          "Service association is unavailable because this Forge version has no Service resource");
+    if (c.serviceId() != null) service(projectId, c.serviceId());
     if (c.connectionType() == null || c.provider() == null)
       throw new ValidationException("Connection and provider are required");
     if (c.connectionType() == LogConnectionType.LOCAL && c.sshConnectionId() != null)
@@ -219,6 +224,12 @@ public class LogSourceUseCases {
     if (!s.projectId().equals(p))
       throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
     return s;
+  }
+
+  private ProjectService service(UUID projectId, UUID id) {
+    var service = services.findById(id).orElseThrow(() -> new NotFoundException("SERVICE_NOT_FOUND", "Service not found"));
+    if (!service.projectId().equals(projectId)) throw new NotFoundException("SERVICE_NOT_FOUND", "Service not found");
+    return service;
   }
 
   private SshConnection resolve(UUID p, LogConnectionType type, UUID id) {
