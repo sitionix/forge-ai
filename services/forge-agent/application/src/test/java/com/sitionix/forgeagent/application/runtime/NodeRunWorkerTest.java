@@ -67,7 +67,7 @@ class NodeRunWorkerTest {
         when(this.agentExecutor.execute(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> {
             enteredExecutions.countDown();
             assertThat(releaseExecutions.await(Duration.ofSeconds(5).toMillis(), TimeUnit.MILLISECONDS)).isTrue();
-            return new NodeRunOutput("{\"ok\":true}");
+            return new AgentExecutionResult(new NodeRunOutput("{\"ok\":true}"), null);
         });
 
         this.worker.poll();
@@ -75,8 +75,8 @@ class NodeRunWorkerTest {
         assertThat(enteredExecutions.await(Duration.ofSeconds(5).toMillis(), TimeUnit.MILLISECONDS)).isTrue();
         releaseExecutions.countDown();
         this.executorService.close();
-        verify(this.lifecycle).succeed(NODE_RUN_A, new NodeRunOutput("{\"ok\":true}"));
-        verify(this.lifecycle).succeed(NODE_RUN_B, new NodeRunOutput("{\"ok\":true}"));
+        verify(this.lifecycle).succeed(NODE_RUN_A, new AgentExecutionResult(new NodeRunOutput("{\"ok\":true}"), null));
+        verify(this.lifecycle).succeed(NODE_RUN_B, new AgentExecutionResult(new NodeRunOutput("{\"ok\":true}"), null));
     }
 
     @Test
@@ -88,7 +88,7 @@ class NodeRunWorkerTest {
         when(this.agentExecutor.execute(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> {
             enteredExecution.countDown();
             assertThat(releaseExecution.await(Duration.ofSeconds(5).toMillis(), TimeUnit.MILLISECONDS)).isTrue();
-            return new NodeRunOutput("{\"ok\":true}");
+            return new AgentExecutionResult(new NodeRunOutput("{\"ok\":true}"), null);
         });
 
         this.worker.poll();
@@ -98,7 +98,7 @@ class NodeRunWorkerTest {
         this.executorService.close();
 
         verify(this.agentExecutor).execute(this.claim(NODE_RUN_A));
-        verify(this.lifecycle).succeed(NODE_RUN_A, new NodeRunOutput("{\"ok\":true}"));
+        verify(this.lifecycle).succeed(NODE_RUN_A, new AgentExecutionResult(new NodeRunOutput("{\"ok\":true}"), null));
     }
 
     @Test
@@ -124,7 +124,8 @@ class NodeRunWorkerTest {
                 NODE_RUN_A,
                 new NodeRunFailure(NodeRunWorker.AGENT_EXECUTOR_FAILED, "Codex output was not valid JSON.")
         );
-        verify(this.lifecycle, never()).succeed(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        verify(this.lifecycle, never()).succeed(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(AgentExecutionResult.class));
     }
 
     @Test
@@ -140,7 +141,8 @@ class NodeRunWorkerTest {
                 NODE_RUN_A,
                 new NodeRunFailure(NodeRunWorker.AGENT_EXECUTOR_FAILED, "Agent execution failed.")
         );
-        verify(this.lifecycle, never()).succeed(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        verify(this.lifecycle, never()).succeed(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(AgentExecutionResult.class));
     }
 
     @Test
@@ -156,7 +158,8 @@ class NodeRunWorkerTest {
                 NODE_RUN_A,
                 new NodeRunFailure(NodeRunWorker.AGENT_EXECUTOR_INVALID_OUTPUT, "Agent execution returned no output.")
         );
-        verify(this.lifecycle, never()).succeed(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        verify(this.lifecycle, never()).succeed(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(AgentExecutionResult.class));
     }
 
     private NodeExecutionClaim claim(final UUID nodeRunId) {
@@ -170,6 +173,7 @@ class NodeRunWorkerTest {
                 OUTPUT_SCHEMA,
                 EXECUTION_MODEL,
                 new NodeInputEnvelope("Review auth changes.", null, List.of()),
+                List.of(),
                 new ExecutionWorkspace(java.nio.file.Path.of("/forge/project"), List.of())
         );
     }

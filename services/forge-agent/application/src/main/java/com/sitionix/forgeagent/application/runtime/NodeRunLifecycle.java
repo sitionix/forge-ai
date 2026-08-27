@@ -4,13 +4,13 @@ import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
-import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.ConnectionResolutionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
+import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
@@ -36,6 +36,7 @@ public class NodeRunLifecycle {
     private final NodeRunCompletionPersistence completionPersistence;
     private final NodeRunCompletionProcessor completionProcessor;
     private final ExecutionWorkspaceResolver executionWorkspaceResolver;
+    private final WorkflowRunGraphRepository graphRepository;
 
     public NodeRunLifecycle(final NodeRunRepository nodeRunRepository,
                             final WorkflowRunRepository workflowRunRepository,
@@ -46,7 +47,8 @@ public class NodeRunLifecycle {
                             final Clock clock,
                             final NodeRunCompletionPersistence completionPersistence,
                             final NodeRunCompletionProcessor completionProcessor,
-                            final ExecutionWorkspaceResolver executionWorkspaceResolver) {
+                            final ExecutionWorkspaceResolver executionWorkspaceResolver,
+                            final WorkflowRunGraphRepository graphRepository) {
         this.nodeRunRepository = nodeRunRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.resolutionRepository = resolutionRepository;
@@ -57,6 +59,7 @@ public class NodeRunLifecycle {
         this.completionPersistence = completionPersistence;
         this.completionProcessor = completionProcessor;
         this.executionWorkspaceResolver = executionWorkspaceResolver;
+        this.graphRepository = graphRepository;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -144,15 +147,16 @@ public class NodeRunLifecycle {
                 running.agentOutputSchema(),
                 running.executionModel(),
                 input.envelope(),
+                this.graphRepository.findOutputPortsByNode(workflowRun.id(), running.sourceNodeId()),
                 executionWorkspace
         ));
     }
 
-    public void succeed(final UUID nodeRunId, final NodeRunOutput output) {
-        if (output == null) {
+    public void succeed(final UUID nodeRunId, final AgentExecutionResult result) {
+        if (result == null || result.output() == null) {
             throw new ConflictException(LIFECYCLE_CONFLICT, "Node run success output is required.");
         }
-        if (!this.completionPersistence.markBusinessSucceeded(nodeRunId, output)) {
+        if (!this.completionPersistence.markBusinessSucceeded(nodeRunId, result)) {
             return;
         }
         this.completionProcessor.process(nodeRunId);

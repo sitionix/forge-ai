@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.runtime.ExecutionWorkspace;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputContribution;
@@ -29,6 +30,8 @@ class CodexAgentExecutorTest {
     private static final UUID SOURCE_CONNECTION_ID = UUID.fromString("60000000-0000-4000-8000-000000000001");
     private static final UUID REPOSITORY_A_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
     private static final UUID REPOSITORY_B_ID = UUID.fromString("70000000-0000-4000-8000-000000000002");
+    private static final UUID OUTPUT_A_ID = UUID.fromString("80000000-0000-4000-8000-000000000001");
+    private static final UUID OUTPUT_B_ID = UUID.fromString("80000000-0000-4000-8000-000000000002");
     private static final AgentOutputSchema OUTPUT_SCHEMA = AgentOutputSchema.ofCanonicalJsonObject("""
             {"type":"object","description":"Technical analysis result.","properties":{"summary":{"type":"string","description":"Concise summary."},"riskLevel":{"type":"string","description":"Technical risk level.","enum":["LOW","MEDIUM","HIGH"]}},"required":["summary","riskLevel"],"additionalProperties":false}
             """);
@@ -44,7 +47,7 @@ class CodexAgentExecutorTest {
     void usesClaimModelEffortAndExactParsedOutputSchema() throws Exception {
         this.client.outputText = "{\n  \"summary\": \"Done\",\n  \"riskLevel\": \"MEDIUM\"\n}";
 
-        final NodeRunOutput output = this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", "high"), OUTPUT_SCHEMA));
+        final AgentExecutionResult output = this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", "high"), OUTPUT_SCHEMA));
 
         assertThat(this.client.request.modelId()).isEqualTo("gpt-5.6-luna");
         assertThat(this.client.request.effortId()).isEqualTo("high");
@@ -52,7 +55,193 @@ class CodexAgentExecutorTest {
         assertThat(this.client.request.outputSchema().path("description").asText()).isEqualTo("Technical analysis result.");
         assertThat(this.client.request.outputSchema().path("properties").path("summary").path("description").asText()).isEqualTo("Concise summary.");
         assertThat(this.client.request.executionWorkspace()).isEqualTo(this.workspace());
-        assertThat(output).isEqualTo(new NodeRunOutput("{\"summary\":\"Done\",\"riskLevel\":\"MEDIUM\"}"));
+        assertThat(output).isEqualTo(new AgentExecutionResult(new NodeRunOutput("{\"summary\":\"Done\",\"riskLevel\":\"MEDIUM\"}"), null));
+    }
+
+    @Test
+    void multiOutputUsesOneTurnWithCollisionSafeEffectiveSchemaAndStripsForgeMetadata() throws Exception {
+        this.client.outputText = """
+                {"payload":{"summary":"Done","riskLevel":"LOW"},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_B_ID);
+
+        final AgentExecutionResult result = this.executor.execute(this.multiOutputClaim());
+
+        assertThat(this.client.executeCount).isEqualTo(1);
+        final JsonNode schema = this.client.request.outputSchema();
+        assertThat(schema.path("required")).containsExactly(
+                this.objectMapper.getNodeFactory().textNode("payload"),
+                this.objectMapper.getNodeFactory().textNode("__forge")
+        );
+        assertThat(schema.path("additionalProperties").asBoolean()).isFalse();
+        assertThat(schema.path("properties").path("payload").path("$ref").asText())
+                .isEqualTo("#/$defs/__forge_payload");
+        final JsonNode payloadSchema = schema.path("$defs").path("__forge_payload");
+        assertThat(schema.findValues("$id")).isEmpty();
+        assertThat(payloadSchema.path("additionalProperties").asBoolean()).isFalse();
+        assertThat(payloadSchema.path("properties").path("summary").path("type").asText()).isEqualTo("string");
+        assertThat(schema.path("properties").path("__forge").path("properties").path("outputPortId").path("enum"))
+                .containsExactly(
+                        this.objectMapper.getNodeFactory().textNode(OUTPUT_A_ID.toString()),
+                        this.objectMapper.getNodeFactory().textNode(OUTPUT_B_ID.toString())
+                );
+        final JsonNode input = this.objectMapper.readTree(this.client.request.userInput());
+        assertThat(input.path("availableOutputs")).hasSize(2);
+        assertThat(input.path("availableOutputs").get(0).path("name").asText()).isEqualTo("Pass");
+        assertThat(input.path("availableOutputs").get(1).path("description").asText()).isEqualTo("Return for changes");
+        assertThat(result.output()).isEqualTo(new NodeRunOutput("{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}"));
+        assertThat(result.output().jsonValue()).doesNotContain("__forge", "outputPortId");
+        assertThat(result.selectedOutputPortId()).isEqualTo(OUTPUT_B_ID);
+    }
+
+    @Test
+    void multiOutputPreservesLocalDefinitionReferencesInDedicatedPayloadResource() throws Exception {
+        final AgentOutputSchema schemaWithDefinitions = AgentOutputSchema.ofCanonicalJsonObject("""
+                {"type":"object","properties":{"steps":{"type":"array","items":{"$ref":"#/$defs/step"}}},"required":["steps"],"additionalProperties":false,"$defs":{"step":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}}}
+                """);
+        final String originalJson = schemaWithDefinitions.jsonObject();
+        final JsonNode originalSchema = this.objectMapper.readTree(schemaWithDefinitions.jsonObject());
+        this.client.outputText = """
+                {"payload":{"steps":[{"name":"compile"}]},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_A_ID);
+
+        final AgentExecutionResult result = this.executor.execute(this.multiOutputClaim(schemaWithDefinitions));
+
+        final JsonNode effective = this.client.request.outputSchema();
+        final JsonNode payloadResource = effective.path("$defs").path("__forge_payload");
+        assertThat(effective.path("properties").path("payload").path("$ref").asText())
+                .isEqualTo("#/$defs/__forge_payload");
+        assertThat(payloadResource.path("properties").path("steps").path("items").path("$ref").asText())
+                .isEqualTo("#/$defs/__forge_payload/$defs/step");
+        assertThat(payloadResource.path("$defs").path("step").path("properties").path("name").path("type").asText())
+                .isEqualTo("string");
+        assertThat(schemaWithDefinitions.jsonObject()).isEqualTo(originalJson);
+        assertThat(this.objectMapper.readTree(schemaWithDefinitions.jsonObject())).isEqualTo(originalSchema);
+        assertThat(result.output().jsonValue()).isEqualTo("{\"steps\":[{\"name\":\"compile\"}]}");
+        assertThat(result.selectedOutputPortId()).isEqualTo(OUTPUT_A_ID);
+        assertThat(this.client.executeCount).isEqualTo(1);
+    }
+
+    @Test
+    void multiOutputRootReferenceRecursesWithinPayloadResource() {
+        final AgentOutputSchema recursiveSchema = AgentOutputSchema.ofCanonicalJsonObject("""
+                {"type":"object","properties":{"value":{"type":"string"},"child":{"anyOf":[{"$ref":"#"},{"type":"null"}]}},"required":["value","child"],"additionalProperties":false}
+                """);
+        this.client.outputText = """
+                {"payload":{"value":"root","child":null},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_B_ID);
+
+        this.executor.execute(this.multiOutputClaim(recursiveSchema));
+
+        final JsonNode effective = this.client.request.outputSchema();
+        final JsonNode payloadResource = effective.path("$defs").path("__forge_payload");
+        assertThat(payloadResource.path("properties").path("child").path("anyOf").get(0).path("$ref").asText())
+                .isEqualTo("#/$defs/__forge_payload");
+        assertThat(payloadResource.path("properties").has("__forge")).isFalse();
+        assertThat(this.client.executeCount).isEqualTo(1);
+    }
+
+    @Test
+    void forgeDefinitionCannotCollideWithSameNamedUserDefinition() {
+        final AgentOutputSchema collidingSchema = AgentOutputSchema.ofCanonicalJsonObject("""
+                {"type":"object","properties":{"value":{"$ref":"#/$defs/__forge_payload"}},"required":["value"],"additionalProperties":false,"$defs":{"__forge_payload":{"type":"string"}}}
+                """);
+        this.client.outputText = """
+                {"payload":{"value":"business"},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_A_ID);
+
+        this.executor.execute(this.multiOutputClaim(collidingSchema));
+
+        final JsonNode effective = this.client.request.outputSchema();
+        final JsonNode payloadResource = effective.path("$defs").path("__forge_payload");
+        assertThat(payloadResource.path("properties").path("value").path("$ref").asText())
+                .isEqualTo("#/$defs/__forge_payload/$defs/__forge_payload");
+        assertThat(payloadResource.path("$defs").path("__forge_payload").path("type").asText()).isEqualTo("string");
+        assertThat(effective.path("$defs").size()).isEqualTo(1);
+    }
+
+    @Test
+    void multiOutputRewritesNestedLocalReferencesButLeavesExternalReferencesAndOtherStringsUnchanged() {
+        final AgentOutputSchema referencedSchema = AgentOutputSchema.ofCanonicalJsonObject("""
+                {"type":"object","description":"text containing #/$defs/inner","properties":{"nested":{"type":"object","properties":{"local":{"$ref":"#/$defs/inner"},"external":{"$ref":"https://schemas.example.test/common.json#/$defs/value"},"anchor":{"$ref":"#named"}}}},"$defs":{"inner":{"type":"string"}}}
+                """);
+        this.client.outputText = """
+                {"payload":{"nested":{"local":"x","external":"y"}},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_A_ID);
+
+        this.executor.execute(this.multiOutputClaim(referencedSchema));
+
+        final JsonNode payloadResource = this.client.request.outputSchema().path("$defs").path("__forge_payload");
+        final JsonNode nested = payloadResource.path("properties").path("nested").path("properties");
+        assertThat(nested.path("local").path("$ref").asText())
+                .isEqualTo("#/$defs/__forge_payload/$defs/inner");
+        assertThat(nested.path("external").path("$ref").asText())
+                .isEqualTo("https://schemas.example.test/common.json#/$defs/value");
+        assertThat(nested.path("anchor").path("$ref").asText()).isEqualTo("#named");
+        assertThat(payloadResource.path("description").asText()).isEqualTo("text containing #/$defs/inner");
+    }
+
+    @Test
+    void multiOutputPreservesUserSuppliedIdWithoutInjectingAnotherOne() {
+        final AgentOutputSchema schemaWithId = AgentOutputSchema.ofCanonicalJsonObject("""
+                {"$id":"https://schemas.example.test/business.json","type":"object","properties":{"value":{"$ref":"#/$defs/value"}},"$defs":{"value":{"type":"string"}}}
+                """);
+        this.client.outputText = """
+                {"payload":{"value":"x"},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_A_ID);
+
+        this.executor.execute(this.multiOutputClaim(schemaWithId));
+
+        assertThat(this.client.request.outputSchema().findValuesAsText("$id"))
+                .containsExactly("https://schemas.example.test/business.json");
+        assertThat(this.client.request.outputSchema().path("$defs").path("__forge_payload")
+                .path("properties").path("value").path("$ref").asText()).isEqualTo("#/$defs/value");
+    }
+
+    @Test
+    void multiOutputFirstTurnExplainsGenericRoutingContractWithoutDomainSemantics() {
+        this.client.outputText = """
+                {"payload":{"summary":"Done","riskLevel":"LOW"},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_A_ID);
+
+        this.executor.execute(this.multiOutputClaim());
+
+        assertThat(this.client.request.developerInstructions()).contains(
+                "`availableOutputs`, when present, contains the output choices for this invocation.",
+                "`name` and `description` define its business meaning",
+                "choose exactly one according to the actual business result",
+                "`__forge.outputPortId`",
+                "`payload` contains only the configured business output",
+                "`__forge` is workflow control metadata, not business data"
+        ).doesNotContain(
+                "Reviewer",
+                "review approval",
+                "skill",
+                "Pass when",
+                "Return when"
+        );
+        assertThat(this.client.executeCount).isEqualTo(1);
+    }
+
+    @Test
+    void multiOutputMissingSelectionFailsClosedAfterExactlyOneTurn() {
+        this.client.outputText = "{\"payload\":{\"summary\":\"Done\",\"riskLevel\":\"LOW\"},\"__forge\":{}}";
+
+        assertThatThrownBy(() -> this.executor.execute(this.multiOutputClaim()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Codex output did not select an output port.");
+        assertThat(this.client.executeCount).isEqualTo(1);
+    }
+
+    @Test
+    void multiOutputUnknownSelectionFailsClosedAfterExactlyOneTurn() {
+        this.client.outputText = """
+                {"payload":{"summary":"Done","riskLevel":"LOW"},"__forge":{"outputPortId":"99999999-9999-4999-8999-999999999999"}}
+                """;
+
+        assertThatThrownBy(() -> this.executor.execute(this.multiOutputClaim()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Codex output selected an unknown output port.");
+        assertThat(this.client.executeCount).isEqualTo(1);
     }
 
     @Test
@@ -76,6 +265,7 @@ class CodexAgentExecutorTest {
                                 null
                         ))
                 ),
+                List.of(),
                 this.workspace()
         );
 
@@ -139,6 +329,7 @@ class CodexAgentExecutorTest {
                                 null
                         ))
                 ),
+                List.of(),
                 this.workspace()
         );
 
@@ -176,6 +367,7 @@ class CodexAgentExecutorTest {
                                         UUID.randomUUID(), UUID.randomUUID(), new NodeRunOutput("{}"), REPOSITORY_B_ID)
                         )
                 ),
+                List.of(),
                 globalWorkspace
         );
 
@@ -238,7 +430,27 @@ class CodexAgentExecutorTest {
                 outputSchema,
                 executionModel,
                 new NodeInputEnvelope("Review auth changes.", null, List.of()),
+                List.of(),
                 this.workspace()
+        );
+    }
+
+    private NodeExecutionClaim multiOutputClaim() {
+        return this.multiOutputClaim(OUTPUT_SCHEMA);
+    }
+
+    private NodeExecutionClaim multiOutputClaim(final AgentOutputSchema outputSchema) {
+        final NodeExecutionClaim base = this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", "high"), outputSchema);
+        return new NodeExecutionClaim(
+                base.workflowRunId(), base.nodeRunId(), base.sourceAgentId(), base.workflowInput(), base.agentName(),
+                base.agentInstructions(), base.outputSchema(), base.executionModel(), base.inputEnvelope(),
+                List.of(
+                        new RunPort(WORKFLOW_RUN_ID, OUTPUT_A_ID, UUID.randomUUID(), PortDirection.OUTPUT,
+                                "Pass", "Continue the workflow", 0),
+                        new RunPort(WORKFLOW_RUN_ID, OUTPUT_B_ID, UUID.randomUUID(), PortDirection.OUTPUT,
+                                "Return", "Return for changes", 1)
+                ),
+                base.executionWorkspace()
         );
     }
 
@@ -249,9 +461,11 @@ class CodexAgentExecutorTest {
     private static final class RecordingCodexClient implements CodexClient {
         private CodexTurnRequest request;
         private String outputText = "{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}";
+        private int executeCount;
 
         @Override
         public String execute(final CodexTurnRequest request) {
+            this.executeCount++;
             this.request = request;
             return this.outputText;
         }

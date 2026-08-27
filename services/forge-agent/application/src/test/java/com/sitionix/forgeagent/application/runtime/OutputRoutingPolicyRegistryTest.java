@@ -16,7 +16,6 @@ import com.sitionix.forgeagent.domain.model.RunConnection;
 import com.sitionix.forgeagent.domain.model.RunPort;
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -34,14 +33,14 @@ class OutputRoutingPolicyRegistryTest {
 
     @Test
     void selectsTerminalRoutingForTerminalNode() {
-        final OutputRoutingDecision decision = this.registry(null).route(new OutputRoutingContext(null, OUTPUT, List.of(), List.of()));
+        final OutputRoutingDecision decision = this.registry().route(new OutputRoutingContext(null, OUTPUT, List.of(), List.of()));
 
         assertThat(decision).isInstanceOf(TerminalRoutingDecision.class);
     }
 
     @Test
     void selectsDirectRoutingForDeterministicTopology() {
-        final OutputRoutingDecision decision = this.registry(null).route(new OutputRoutingContext(
+        final OutputRoutingDecision decision = this.registry().route(new OutputRoutingContext(
                 null,
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Done")),
@@ -55,7 +54,7 @@ class OutputRoutingPolicyRegistryTest {
 
     @Test
     void selectsDirectRoutingForOneConfiguredOutputWithoutConnections() {
-        final OutputRoutingDecision decision = this.registry(null).route(new OutputRoutingContext(
+        final OutputRoutingDecision decision = this.registry().route(new OutputRoutingContext(
                 null,
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Done")),
@@ -69,7 +68,7 @@ class OutputRoutingPolicyRegistryTest {
 
     @Test
     void selectsDirectRoutingForOneConfiguredOutputWithManyConnections() {
-        final OutputRoutingDecision decision = this.registry(null).route(new OutputRoutingContext(
+        final OutputRoutingDecision decision = this.registry().route(new OutputRoutingContext(
                 null,
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Done")),
@@ -82,10 +81,9 @@ class OutputRoutingPolicyRegistryTest {
     }
 
     @Test
-    void selectsAiRoutingForSemanticChoiceAndPassesStablePorts() {
-        final CapturingRouter router = new CapturingRouter(OUTPUT_B);
-        final OutputRoutingDecision decision = this.registry(router).route(new OutputRoutingContext(
-                this.nodeRun(),
+    void routesUsingSelectionAlreadyPersistedByAgentExecution() {
+        final OutputRoutingDecision decision = this.registry().route(new OutputRoutingContext(
+                this.nodeRun(OUTPUT_B),
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
                 List.of(this.connection(CONNECTION_A, OUTPUT_A), this.connection(CONNECTION_B, OUTPUT_B))
@@ -94,90 +92,41 @@ class OutputRoutingPolicyRegistryTest {
         assertThat(decision)
                 .isInstanceOfSatisfying(SelectedOutputRoutingDecision.class,
                         selected -> assertThat(selected.selectedOutputPortId()).isEqualTo(OUTPUT_B));
-        assertThat(router.output).isEqualTo(OUTPUT);
-        assertThat(router.outputs)
-                .extracting(RunPort::sourcePortId, RunPort::name, RunPort::description)
-                .containsExactly(
-                        org.assertj.core.groups.Tuple.tuple(OUTPUT_A, "Pass", "Pass description"),
-                        org.assertj.core.groups.Tuple.tuple(OUTPUT_B, "Return", "Return description")
-                );
-        assertThat(router.executionModel).isEqualTo(EXECUTION_MODEL);
     }
 
     @Test
-    void selectsAiRoutingForTwoConfiguredOutputsWhenOnlyOneIsConnected() {
-        final CapturingRouter router = new CapturingRouter(OUTPUT_A);
-
-        this.registry(router).route(new OutputRoutingContext(
-                this.nodeRun(),
-                OUTPUT,
-                List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
-                List.of(this.connection(CONNECTION_A, OUTPUT_B))
-        ));
-
-        assertThat(router.outputs).hasSize(2);
-    }
-
-    @Test
-    void selectsAiRoutingForTwoConfiguredOutputsWhenNoneAreConnected() {
-        final CapturingRouter router = new CapturingRouter(OUTPUT_A);
-
-        this.registry(router).route(new OutputRoutingContext(
-                this.nodeRun(),
-                OUTPUT,
-                List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
-                List.of()
-        ));
-
-        assertThat(router.outputs).hasSize(2);
-    }
-
-    @Test
-    void rejectsNullAiSelection() {
-        assertThatThrownBy(() -> this.registry(new CapturingRouter(null)).route(new OutputRoutingContext(
-                this.nodeRun(),
+    void rejectsMissingExecutionSelection() {
+        assertThatThrownBy(() -> this.registry().route(new OutputRoutingContext(
+                this.nodeRun(null),
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
                 List.of()
         )))
                 .isInstanceOf(ConflictException.class)
                 .extracting(exception -> ((ConflictException) exception).code())
-                .isEqualTo("AI_OUTPUT_ROUTING_INVALID_PORT");
+                .isEqualTo(SelectedOutputRoutingPolicy.INVALID_SELECTED_OUTPUT_PORT);
     }
 
     @Test
-    void aiRoutingRejectsMissingSnapshottedModelInsteadOfUsingDefault() {
-        assertThatThrownBy(() -> this.registry(new CapturingRouter(OUTPUT_A)).route(new OutputRoutingContext(
-                this.nodeRunWithoutExecutionModel(),
-                OUTPUT,
-                List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
-                List.of()
-        )))
-                .isInstanceOf(ConflictException.class)
-                .extracting(exception -> ((ConflictException) exception).code())
-                .isEqualTo("AI_OUTPUT_ROUTING_MODEL_NOT_CONFIGURED");
-    }
-
-    @Test
-    void unknownAiOutputFailsClosed() {
+    void unknownSelectedOutputFailsClosed() {
         final UUID unknown = UUID.fromString("99999999-9999-4999-8999-999999999999");
 
-        assertThatThrownBy(() -> this.registry(new CapturingRouter(unknown)).route(new OutputRoutingContext(
-                this.nodeRun(),
+        assertThatThrownBy(() -> this.registry().route(new OutputRoutingContext(
+                this.nodeRun(unknown),
                 OUTPUT,
                 List.of(this.output(OUTPUT_A, "Pass"), this.output(OUTPUT_B, "Return")),
                 List.of(this.connection(CONNECTION_A, OUTPUT_A), this.connection(CONNECTION_B, OUTPUT_B))
         )))
                 .isInstanceOf(ConflictException.class)
                 .extracting(exception -> ((ConflictException) exception).code())
-                .isEqualTo("AI_OUTPUT_ROUTING_INVALID_PORT");
+                .isEqualTo(SelectedOutputRoutingPolicy.INVALID_SELECTED_OUTPUT_PORT);
     }
 
-    private OutputRoutingPolicyRegistry registry(final AiOutputRouter router) {
+    private OutputRoutingPolicyRegistry registry() {
         return new OutputRoutingPolicyRegistry(List.of(
                 new TerminalOutputRoutingPolicy(),
                 new DirectOutputRoutingPolicy(),
-                new AiOutputRoutingPolicy(Optional.ofNullable(router))
+                new SelectedOutputRoutingPolicy()
         ));
     }
 
@@ -189,15 +138,7 @@ class OutputRoutingPolicyRegistryTest {
         return new RunConnection(RUN_ID, id, outputPortId, INPUT_A);
     }
 
-    private NodeRun nodeRun() {
-        return this.nodeRun(EXECUTION_MODEL);
-    }
-
-    private NodeRun nodeRunWithoutExecutionModel() {
-        return this.nodeRun(null);
-    }
-
-    private NodeRun nodeRun(final NodeRunExecutionModel executionModel) {
+    private NodeRun nodeRun(final UUID selectedOutputPortId) {
         return new NodeRun(
                 UUID.fromString("60000000-0000-4000-8000-000000000001"),
                 RUN_ID,
@@ -211,12 +152,12 @@ class OutputRoutingPolicyRegistryTest {
                 UUID.fromString("80000000-0000-4000-8000-000000000001"),
                 null,
                 null,
-                null,
+                selectedOutputPortId,
                 null,
                 NodeRunStatus.SUCCEEDED,
                 OUTPUT,
                 null,
-                executionModel,
+                EXECUTION_MODEL,
                 Instant.parse("2026-08-15T00:00:00Z"),
                 Instant.parse("2026-08-15T00:00:01Z"),
                 Instant.parse("2026-08-15T00:00:02Z"),
@@ -224,25 +165,4 @@ class OutputRoutingPolicyRegistryTest {
         );
     }
 
-    private static final class CapturingRouter implements AiOutputRouter {
-
-        private final UUID selected;
-        private NodeRunOutput output;
-        private List<RunPort> outputs;
-        private NodeRunExecutionModel executionModel;
-
-        private CapturingRouter(final UUID selected) {
-            this.selected = selected;
-        }
-
-        @Override
-        public UUID selectOutput(final NodeRunOutput output,
-                                 final List<RunPort> outputs,
-                                 final NodeRunExecutionModel executionModel) {
-            this.output = output;
-            this.outputs = outputs;
-            this.executionModel = executionModel;
-            return this.selected;
-        }
-    }
 }
