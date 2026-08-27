@@ -11,28 +11,10 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class SshRemoteLogAdapter implements RemoteLogPort, SshConnectionProbePort {
   private final TypedProcessExecutor executor;
-  private final RuntimeTargetDiscoveryPort runtimeTargets;
 
   @Override
   public void test(SshConnection connection) {
     executor.output(command(connection, "true"), null, connection);
-  }
-
-  public List<LogTargetCandidate> discover(SshConnection c, LogProviderType provider) {
-    if (provider != LogProviderType.SYSTEMD) return List.of();
-    return runtimeTargets.discover(c, ServiceRuntimeProvider.SYSTEMD).stream()
-        .map(
-            target ->
-                new LogTargetCandidate(
-                    target.id(),
-                    target.label(),
-                    LogTargetStatus.AVAILABLE,
-                    null,
-                    null,
-                    null,
-                    null,
-                    false))
-        .toList();
   }
 
   public void validate(SshConnection c, LogProviderType p, LogProviderConfiguration cfg) {

@@ -170,6 +170,16 @@ public final class NexusAgentMockMvcEndpoints {
                         .expectResponse("agent-discover-runtime-targets-response.json"));
     }
 
+    public static Endpoint<AgentRuntimeTargetDiscoveryRequest, InfrastructureErrorResponse> discoverRuntimeTargetsConflict() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/projects/{projectId}/runtime-targets/discover", HttpMethod.POST,
+                AgentRuntimeTargetDiscoveryRequest.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("agent-discover-runtime-targets-request.json")
+                        .expectStatus(HttpStatus.CONFLICT.value())
+                        .expectResponse("agent-upstream-error-response.json"));
+    }
+
     public static Endpoint<AgentLogSourceRequest, InfrastructureErrorResponse> createLogSourceConflict() {
         return Endpoint.createContract(
                 "/api/v1/infrastructure/agents/projects/{projectId}/log-sources", HttpMethod.POST,

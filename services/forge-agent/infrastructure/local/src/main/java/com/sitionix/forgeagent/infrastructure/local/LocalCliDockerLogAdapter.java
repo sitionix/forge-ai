@@ -12,13 +12,6 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class LocalCliDockerLogAdapter implements DockerLogPort {
   private final TypedProcessExecutor executor;
-  private final RuntimeTargetDiscoveryPort runtimeTargets;
-
-  public List<LogTargetCandidate> discover(SshConnection ssh) {
-    return runtimeTargets.discover(ssh, ServiceRuntimeProvider.DOCKER).stream()
-        .map(this::candidate)
-        .toList();
-  }
 
   public List<LogTargetCandidate> discoverComposeServices(Path repository, SshConnection ssh) {
     if (repository == null || ssh != null) return List.of();
@@ -80,22 +73,6 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
         docker(ssh, "logs", "--tail", String.valueOf(safe), "--follow", "--", container),
         null,
         ssh);
-  }
-
-  private LogTargetCandidate candidate(RuntimeTargetCandidate target) {
-    return new LogTargetCandidate(
-        target.id(),
-        target.label(),
-        switch (target.status()) {
-          case RUNNING -> LogTargetStatus.RUNNING;
-          case STOPPED -> LogTargetStatus.STOPPED;
-          case AVAILABLE -> LogTargetStatus.AVAILABLE;
-        },
-        target.image(),
-        target.composeProject(),
-        target.composeService(),
-        null,
-        false);
   }
 
   private List<String> docker(SshConnection ssh, String... args) {

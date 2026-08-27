@@ -156,6 +156,16 @@ public final class ForgeAgentWireMockEndpoints {
                         .responseBody("agent-discover-runtime-targets-response.json"));
     }
 
+    public static Endpoint<RuntimeTargetDiscoveryRequest, InfrastructureErrorResponse> discoverRuntimeTargetsConflict() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/runtime-targets/discover", HttpMethod.POST,
+                RuntimeTargetDiscoveryRequest.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context
+                        .matchesJson("agent-discover-runtime-targets-request.json")
+                        .responseStatus(HttpStatus.CONFLICT.value())
+                        .responseBody("agent-upstream-error-response.json"));
+    }
+
     public static Endpoint<AgentLogSourceRequest, InfrastructureErrorResponse> createLogSourceConflict() {
         return Endpoint.createContract(
                 "/api/v1/projects/{projectId}/log-sources", HttpMethod.POST,
