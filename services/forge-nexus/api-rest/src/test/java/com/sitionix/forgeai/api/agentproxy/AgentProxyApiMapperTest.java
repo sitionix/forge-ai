@@ -22,6 +22,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetCandidate;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetDiscoveryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunConnection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunNode;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunPort;
@@ -70,6 +72,15 @@ class AgentProxyApiMapperTest {
     void mapsProjectRequestToCommand() {
         assertThat(this.mapper.toCommand(new AgentProjectRequest("Sitionix")))
                 .isEqualTo(new CreateAgentProjectCommand("Sitionix"));
+    }
+
+    @Test
+    void mapsRuntimeTargetDiscoveryContract() {
+        UUID sshId = UUID.randomUUID();
+        assertThat(this.mapper.toCommand(new AgentRuntimeTargetDiscoveryRequest("SSH", sshId, "SYSTEMD")))
+                .isEqualTo(new AgentRuntimeTargetDiscoveryCommand("SSH", sshId, "SYSTEMD"));
+        assertThat(this.mapper.toResponse(new AgentRuntimeTargetCandidate("forge-agent.service", "SYSTEMD")))
+                .isEqualTo(new AgentRuntimeTargetCandidateResponse("forge-agent.service", "SYSTEMD"));
     }
 
     @Test

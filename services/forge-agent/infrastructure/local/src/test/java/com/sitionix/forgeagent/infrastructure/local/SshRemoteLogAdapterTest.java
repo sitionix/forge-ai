@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.infrastructure.local;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sitionix.forgeagent.domain.model.*;
+import com.sitionix.forgeagent.domain.port.RuntimeTargetDiscoveryPort;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.*;
@@ -12,7 +13,7 @@ class SshRemoteLogAdapterTest {
   @Test
   void systemdAndFileAreConvertedToQuotedTypedRemoteCommands() {
     var executor = new CapturingExecutor();
-    var adapter = new SshRemoteLogAdapter(executor);
+    var adapter = new SshRemoteLogAdapter(executor, targetDiscovery());
     var ssh = connection();
     adapter.validate(ssh, LogProviderType.SYSTEMD, new SystemdLogConfiguration("rover.service"));
     assertThat(executor.command.getLast()).isEqualTo("'systemctl' 'status' '--' 'rover.service'");
@@ -23,7 +24,7 @@ class SshRemoteLogAdapterTest {
   @Test
   void fullJournalStreamsWithoutAUnitWhileUnitModeKeepsUnitArgument() {
     var executor = new CapturingExecutor();
-    var adapter = new SshRemoteLogAdapter(executor);
+    var adapter = new SshRemoteLogAdapter(executor, targetDiscovery());
     var ssh = connection();
 
     adapter.stream(ssh, LogProviderType.SYSTEMD,
@@ -41,7 +42,7 @@ class SshRemoteLogAdapterTest {
   @Test
   void dockerRemoteCommandNeverSplitsUserInputIntoLocalSshArguments() {
     var executor = new CapturingExecutor();
-    new LocalCliDockerLogAdapter(executor).validate("mission", null, null, connection());
+    new LocalCliDockerLogAdapter(executor, targetDiscovery()).validate("mission", null, null, connection());
     assertThat(executor.command).contains("--", "op@rover.local");
     assertThat(executor.command.getLast())
         .isEqualTo("'docker' 'container' 'inspect' '--' 'mission'");
@@ -51,7 +52,7 @@ class SshRemoteLogAdapterTest {
   void passwordAuthenticationIsSharedByDockerSystemdAndFileOperations() {
     var executor = new CapturingExecutor();
     var password = passwordConnection("s3cr3t;$(still-data)`literal`");
-    var remote = new SshRemoteLogAdapter(executor);
+    var remote = new SshRemoteLogAdapter(executor, targetDiscovery());
 
     remote.validate(password, LogProviderType.SYSTEMD, new SystemdLogConfiguration("rover.service"));
     assertThat(executor.command)
@@ -61,12 +62,12 @@ class SshRemoteLogAdapterTest {
     assertThat(RemoteShellCommand.environment(password)).containsEntry("SSHPASS", password.password());
 
     remote.validate(password, LogProviderType.FILE, new FileLogConfiguration("/var/log/app.log"));
-    new LocalCliDockerLogAdapter(executor).validate("mission", null, null, password);
+    new LocalCliDockerLogAdapter(executor, targetDiscovery()).validate("mission", null, null, password);
     assertThat(executor.ssh).isSameAs(password);
 
     remote.stream(password, LogProviderType.SYSTEMD, new SystemdLogConfiguration("rover.service"), 100);
     assertThat(executor.command.getLast()).contains("'journalctl'");
-    new LocalCliDockerLogAdapter(executor).stream("mission", null, null, 100, password);
+    new LocalCliDockerLogAdapter(executor, targetDiscovery()).stream("mission", null, null, 100, password);
     assertThat(executor.command.getLast()).contains("'docker' 'logs'");
   }
 
@@ -75,7 +76,7 @@ class SshRemoteLogAdapterTest {
     var executor = new CapturingExecutor();
     var connection = passwordConnection("p@ss;$(safe)");
 
-    new SshRemoteLogAdapter(executor).test(connection);
+    new SshRemoteLogAdapter(executor, targetDiscovery()).test(connection);
 
     assertThat(executor.command)
         .contains("sshpass", "-e", "PreferredAuthentications=password", "PubkeyAuthentication=no")
@@ -89,7 +90,7 @@ class SshRemoteLogAdapterTest {
   void probePreservesPrivateKeyAuthentication() {
     var executor = new CapturingExecutor();
 
-    new SshRemoteLogAdapter(executor).test(connection());
+    new SshRemoteLogAdapter(executor, targetDiscovery()).test(connection());
 
     assertThat(executor.command).contains("ssh", "-i", "/key", "BatchMode=yes");
     assertThat(executor.command).doesNotContain("sshpass", "PreferredAuthentications=password");
@@ -122,6 +123,10 @@ class SshRemoteLogAdapterTest {
         password,
         Instant.EPOCH,
         Instant.EPOCH);
+  }
+
+  private RuntimeTargetDiscoveryPort targetDiscovery() {
+    return (connection, provider) -> List.of();
   }
 
   static final class CapturingExecutor extends TypedProcessExecutor {

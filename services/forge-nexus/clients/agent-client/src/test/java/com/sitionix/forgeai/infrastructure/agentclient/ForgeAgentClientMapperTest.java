@@ -18,6 +18,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitSta
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetCandidate;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetDiscoveryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunConnection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunNode;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunPort;
@@ -65,6 +67,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryRes
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RunConnectionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RunNodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RunPortResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetCandidateResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetDiscoveryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowConnectionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowConnectionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunGraphResponse;
@@ -608,6 +612,16 @@ class ForgeAgentClientMapperTest {
                 new com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetCandidate(
                         "web", "Web", com.sitionix.forgeai.domain.model.agentproxy.AgentLogTargetStatus.RUNNING,
                         "web:latest", "demo", "web", "/repo/compose.yaml", true));
+    }
+
+    @Test
+    void mapsRuntimeTargetDiscoveryDtos() {
+        UUID sshId = UUID.randomUUID();
+        var command = new AgentRuntimeTargetDiscoveryCommand("SSH", sshId, "DOCKER");
+        assertThat(this.mapper.toRequest(command))
+                .isEqualTo(new RuntimeTargetDiscoveryRequest("SSH", sshId, "DOCKER"));
+        assertThat(this.mapper.toDomain(new RuntimeTargetCandidateResponse("forge-postgres", "DOCKER")))
+                .isEqualTo(new AgentRuntimeTargetCandidate("forge-postgres", "DOCKER"));
     }
 
     @Test

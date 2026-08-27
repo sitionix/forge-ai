@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class SshRemoteLogAdapter implements RemoteLogPort, SshConnectionProbePort {
   private final TypedProcessExecutor executor;
+  private final RuntimeTargetDiscoveryPort runtimeTargets;
 
   @Override
   public void test(SshConnection connection) {
@@ -19,20 +20,18 @@ public class SshRemoteLogAdapter implements RemoteLogPort, SshConnectionProbePor
 
   public List<LogTargetCandidate> discover(SshConnection c, LogProviderType provider) {
     if (provider != LogProviderType.SYSTEMD) return List.of();
-    return executor
-        .output(
-            command(
-                c, "systemctl", "list-units", "--type=service", "--all", "--no-legend", "--plain"),
-            null,
-            c)
-        .stream()
-        .map(String::strip)
-        .filter(s -> !s.isBlank())
-        .map(s -> s.split("\\s+", 2)[0])
+    return runtimeTargets.discover(c, ServiceRuntimeProvider.SYSTEMD).stream()
         .map(
-            u ->
+            target ->
                 new LogTargetCandidate(
-                    u, u, LogTargetStatus.AVAILABLE, null, null, null, null, false))
+                    target.id(),
+                    target.label(),
+                    LogTargetStatus.AVAILABLE,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false))
         .toList();
   }
 

@@ -18,6 +18,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetCandidate;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetDiscoveryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
@@ -50,6 +52,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResp
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetCandidateResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetDiscoveryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import java.time.Instant;
@@ -127,6 +131,23 @@ class ForgeAgentClientAdapterTest {
         inOrder.verify(this.executor).execute(any());
         inOrder.verify(this.httpClient).createProject(request);
         inOrder.verify(this.mapper).toDomain(upstreamResponse);
+    }
+
+    @Test
+    void discoverProjectRuntimeTargetsForwardsProjectAndTypedRequest() {
+        UUID sshId = UUID.randomUUID();
+        var command = new AgentRuntimeTargetDiscoveryCommand("SSH", sshId, "SYSTEMD");
+        var request = new RuntimeTargetDiscoveryRequest("SSH", sshId, "SYSTEMD");
+        var upstream = new RuntimeTargetCandidateResponse("forge-agent.service", "SYSTEMD");
+        var expected = new AgentRuntimeTargetCandidate("forge-agent.service", "SYSTEMD");
+        when(this.mapper.toRequest(command)).thenReturn(request);
+        when(this.httpClient.discoverProjectRuntimeTargets(PROJECT_ID, request)).thenReturn(List.of(upstream));
+        when(this.mapper.toDomain(upstream)).thenReturn(expected);
+
+        assertThat(this.adapter.discoverProjectRuntimeTargets(PROJECT_ID, command)).containsExactly(expected);
+
+        verify(this.httpClient).discoverProjectRuntimeTargets(PROJECT_ID, request);
+        verify(this.executor).execute(any());
     }
 
     @Test

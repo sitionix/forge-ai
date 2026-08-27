@@ -27,6 +27,7 @@ import com.sitionix.forgeagent.api.dto.ProjectRepositoryGitStateResponse;
 import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
+import com.sitionix.forgeagent.api.dto.RuntimeTargetCandidateResponse;
 import com.sitionix.forgeagent.api.dto.RunConnectionResponse;
 import com.sitionix.forgeagent.api.dto.RunNodeResponse;
 import com.sitionix.forgeagent.api.dto.RunPortResponse;
@@ -93,6 +94,9 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.model.RuntimeProviderStatus;
+import com.sitionix.forgeagent.domain.model.RuntimeTargetCandidate;
+import com.sitionix.forgeagent.domain.model.RuntimeTargetStatus;
+import com.sitionix.forgeagent.domain.model.ServiceRuntimeProvider;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
@@ -136,6 +140,20 @@ class ForgeAgentApiMapperTest {
         assertThat(java.util.Arrays.stream(SshConnectionResponse.class.getRecordComponents())
                 .map(component -> component.getName()))
                 .doesNotContain("password", "privateKeyPath");
+    }
+
+    @Test
+    void runtimeTargetCandidateResponseExposesOnlySelectableRuntimeFields() {
+        assertThat(this.mapper.toResponse(new RuntimeTargetCandidate(
+                "forge-agent.service",
+                "Forge Agent",
+                ServiceRuntimeProvider.SYSTEMD,
+                RuntimeTargetStatus.AVAILABLE,
+                null,
+                null,
+                null)))
+                .isEqualTo(new RuntimeTargetCandidateResponse(
+                        "forge-agent.service", ServiceRuntimeProvider.SYSTEMD));
     }
 
     @Test

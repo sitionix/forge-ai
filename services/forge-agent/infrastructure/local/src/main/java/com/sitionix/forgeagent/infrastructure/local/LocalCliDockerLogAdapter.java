@@ -12,18 +12,10 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class LocalCliDockerLogAdapter implements DockerLogPort {
   private final TypedProcessExecutor executor;
+  private final RuntimeTargetDiscoveryPort runtimeTargets;
 
   public List<LogTargetCandidate> discover(SshConnection ssh) {
-    List<String> command =
-        docker(
-            ssh,
-            "ps",
-            "-a",
-            "--format",
-            "{{.ID}}\\t{{.Names}}\\t{{.Status}}\\t{{.Image}}\\t{{.Label"
-                + " \"com.docker.compose.project\"}}\\t{{.Label \"com.docker.compose.service\"}}");
-    return output(command, null, ssh).stream()
-        .filter(s -> !s.isBlank())
+    return runtimeTargets.discover(ssh, ServiceRuntimeProvider.DOCKER).stream()
         .map(this::candidate)
         .toList();
   }
@@ -90,16 +82,18 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
         ssh);
   }
 
-  private LogTargetCandidate candidate(String row) {
-    String[] p = row.split("\\t", -1);
-    String name = p.length > 1 && !p[1].isBlank() ? p[1] : p[0];
+  private LogTargetCandidate candidate(RuntimeTargetCandidate target) {
     return new LogTargetCandidate(
-        name,
-        name,
-        p.length > 2 && p[2].startsWith("Up") ? LogTargetStatus.RUNNING : LogTargetStatus.STOPPED,
-        p.length > 3 ? p[3] : null,
-        p.length > 4 ? p[4] : null,
-        p.length > 5 ? p[5] : null,
+        target.id(),
+        target.label(),
+        switch (target.status()) {
+          case RUNNING -> LogTargetStatus.RUNNING;
+          case STOPPED -> LogTargetStatus.STOPPED;
+          case AVAILABLE -> LogTargetStatus.AVAILABLE;
+        },
+        target.image(),
+        target.composeProject(),
+        target.composeService(),
         null,
         false);
   }

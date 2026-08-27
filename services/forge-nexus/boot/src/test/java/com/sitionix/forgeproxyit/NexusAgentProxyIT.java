@@ -139,6 +139,17 @@ class NexusAgentProxyIT {
     }
 
     @Test
+    void runtimeTargetDiscoveryPreservesTypedProjectProxy() {
+        final var upstream = this.testManager.wiremock()
+                .createMapping(ForgeAgentWireMockEndpoints.discoverRuntimeTargets())
+                .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.discoverRuntimeTargets())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
+        upstream.verify();
+    }
+
+    @Test
     void logsUpstreamErrorStatusAndBodyArePropagated() {
         final var upstream = this.testManager.wiremock()
                 .createMapping(ForgeAgentWireMockEndpoints.createLogSourceConflict())

@@ -10,6 +10,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetCandidate;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetDiscoveryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentSshConnection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
@@ -37,6 +39,9 @@ public interface ForgeAgentClient {
   void deleteProjectService(UUID projectId, UUID serviceId);
   AgentServiceRuntime getProjectServiceRuntime(UUID projectId, UUID serviceId);
   List<AgentLogSource> listProjectServiceLogSources(UUID projectId, UUID serviceId);
+
+  List<AgentRuntimeTargetCandidate> discoverProjectRuntimeTargets(
+      UUID projectId, AgentRuntimeTargetDiscoveryCommand command);
 
   List<AgentProject> listProjects();
 

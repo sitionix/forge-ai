@@ -397,6 +397,7 @@ function api(overrides = {}) {
     getService: vi.fn((_projectId: string, id: string) => Promise.resolve(service(id))),
     getServiceRuntime: vi.fn(() => Promise.resolve({ status: 'RUNNING', connection: 'LOCAL', provider: 'DOCKER', targetIdentity: 'api', metadata: {} })),
     listServiceLogSources: vi.fn(() => Promise.resolve([])),
+    discoverRuntimeTargets: vi.fn(() => Promise.resolve([])),
     listLogSources: vi.fn(() => Promise.resolve([])),
     listSshConnections: vi.fn(() => Promise.resolve([])),
     listProjectRepositories: vi.fn((projectId: string) => Promise.resolve([repository(undefined, projectId)])),
@@ -1066,6 +1067,198 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
+  it('Docker candidates populate Configure Runtime as editable target options', async () => {
+    const discoverRuntimeTargets = vi.fn().mockResolvedValue([
+      { id: 'forge-agent', provider: 'DOCKER' },
+      { id: 'forge-nexus', provider: 'DOCKER' }
+    ]);
+    const fakeApi = api({
+      discoverRuntimeTargets,
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ])
+    });
+    const { dom, page } = await openedRepository(fakeApi, 'repo-1');
+
+    dom.window.document.getElementById('repositoryRuntimeConfigure')?.click();
+    await flushAsync();
+
+    const options = [...dom.window.document.querySelectorAll<HTMLOptionElement>('#projectServiceContainers option')]
+      .map((option) => option.value);
+    expect(discoverRuntimeTargets).toHaveBeenCalledWith(project().id, {
+      connection: 'LOCAL',
+      sshConnectionId: null,
+      provider: 'DOCKER'
+    });
+    expect(options).toEqual(['forge-agent', 'forge-nexus']);
+    expect((dom.window.document.getElementById('projectServiceContainer') as HTMLInputElement).readOnly).toBe(false);
+    page.dispose();
+  });
+
+  it('systemd units populate Configure Runtime and discovery refreshes when Provider changes', async () => {
+    const discoverRuntimeTargets = vi.fn((projectId: string, request: any) => Promise.resolve(
+      request.provider === 'SYSTEMD'
+        ? [{ id: 'forge-agent.service', provider: 'SYSTEMD' }]
+        : [{ id: 'forge-agent', provider: 'DOCKER' }]
+    ));
+    const { dom, page } = await openedRepository(api({
+      discoverRuntimeTargets,
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ])
+    }), 'repo-1');
+
+    dom.window.document.getElementById('repositoryRuntimeConfigure')?.click();
+    await flushAsync();
+    selectValue(dom, 'projectServiceProvider', 'SYSTEMD');
+    await flushAsync();
+
+    const units = [...dom.window.document.querySelectorAll<HTMLOptionElement>('#projectServiceUnits option')]
+      .map((option) => option.value);
+    expect(units).toEqual(['forge-agent.service']);
+    expect(discoverRuntimeTargets).toHaveBeenLastCalledWith(project().id, {
+      connection: 'LOCAL',
+      sshConnectionId: null,
+      provider: 'SYSTEMD'
+    });
+    page.dispose();
+  });
+
+  it('runtime discovery refreshes when LOCAL or SSH profile changes', async () => {
+    const sshOne = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const sshTwo = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const discoverRuntimeTargets = vi.fn().mockResolvedValue([]);
+    const { dom, page } = await openedRepository(api({
+      discoverRuntimeTargets,
+      listSshConnections: vi.fn().mockResolvedValue([
+        { id: sshOne, name: 'sandbox', host: 'sandbox', port: 22, username: 'forge' },
+        { id: sshTwo, name: 'prod', host: 'prod', port: 22, username: 'forge' }
+      ]),
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ])
+    }), 'repo-1');
+
+    dom.window.document.getElementById('repositoryRuntimeConfigure')?.click();
+    await flushAsync();
+    selectValue(dom, 'projectServiceConnection', 'SSH');
+    await flushAsync();
+    selectValue(dom, 'projectServiceSsh', sshOne);
+    await flushAsync();
+    selectValue(dom, 'projectServiceSsh', sshTwo);
+    await flushAsync();
+
+    expect(discoverRuntimeTargets).toHaveBeenCalledWith(project().id, {
+      connection: 'LOCAL',
+      sshConnectionId: null,
+      provider: 'DOCKER'
+    });
+    expect(discoverRuntimeTargets).toHaveBeenCalledWith(project().id, {
+      connection: 'SSH',
+      sshConnectionId: sshOne,
+      provider: 'DOCKER'
+    });
+    expect(discoverRuntimeTargets).toHaveBeenLastCalledWith(project().id, {
+      connection: 'SSH',
+      sshConnectionId: sshTwo,
+      provider: 'DOCKER'
+    });
+    page.dispose();
+  });
+
+  it('stale runtime discovery cannot overwrite current provider candidates', async () => {
+    const dockerDiscovery = deferred<any[]>();
+    const discoverRuntimeTargets = vi.fn((_projectId: string, request: any) =>
+      request.provider === 'DOCKER'
+        ? dockerDiscovery.promise
+        : Promise.resolve([{ id: 'forge-nexus.service', provider: 'SYSTEMD' }]));
+    const { dom, page } = await openedRepository(api({
+      discoverRuntimeTargets,
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ])
+    }), 'repo-1');
+
+    dom.window.document.getElementById('repositoryRuntimeConfigure')?.click();
+    await flushAsync();
+    selectValue(dom, 'projectServiceProvider', 'SYSTEMD');
+    await flushAsync();
+    dockerDiscovery.resolve([{ id: 'old-container', provider: 'DOCKER' }]);
+    await flushAsync();
+
+    const units = [...dom.window.document.querySelectorAll<HTMLOptionElement>('#projectServiceUnits option')]
+      .map((option) => option.value);
+    const containers = [...dom.window.document.querySelectorAll<HTMLOptionElement>('#projectServiceContainers option')]
+      .map((option) => option.value);
+    expect(units).toEqual(['forge-nexus.service']);
+    expect(containers).toEqual([]);
+    page.dispose();
+  });
+
+  it('modal close invalidates pending runtime discovery', async () => {
+    const discovery = deferred<any[]>();
+    const discoverRuntimeTargets = vi.fn().mockReturnValue(discovery.promise);
+    const { dom, page } = await openedRepository(api({
+      discoverRuntimeTargets,
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ])
+    }), 'repo-1');
+
+    dom.window.document.getElementById('repositoryRuntimeConfigure')?.click();
+    await flushAsync();
+    dom.window.document.getElementById('projectServiceCancel')?.click();
+    discovery.resolve([{ id: 'old-container', provider: 'DOCKER' }]);
+    await flushAsync();
+
+    expect([...dom.window.document.querySelectorAll('#projectServiceContainers option')]).toHaveLength(0);
+    expect(dom.window.document.getElementById('projectServiceDialog')?.hasAttribute('open')).toBe(false);
+    page.dispose();
+  });
+
+  it('discovery failure keeps manual runtime target entry available', async () => {
+    const discoverRuntimeTargets = vi.fn().mockRejectedValue(new Error('offline'));
+    const linked = { ...service('service-1'), repositoryId: 'repo-1', runtimeTarget: {
+      connection: 'LOCAL', sshConnectionId: null, provider: 'DOCKER', container: 'custom-runtime', unit: null
+    } };
+    const { dom, page } = await openedRepository(api({
+      discoverRuntimeTargets,
+      listServices: vi.fn().mockResolvedValue([linked]),
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ])
+    }), 'repo-1');
+
+    dom.window.document.getElementById('repositoryRuntimeConfigure')?.click();
+    await flushAsync();
+
+    expect((dom.window.document.getElementById('projectServiceContainer') as HTMLInputElement).value).toBe('custom-runtime');
+    expect(dom.window.document.getElementById('projectServiceDiscoveryError')?.textContent).toContain('Target discovery failed');
+    page.dispose();
+  });
+
+  it('saved target missing from discovery remains visible and editable', async () => {
+    const linked = { ...service('service-1'), repositoryId: 'repo-1', runtimeTarget: {
+      connection: 'LOCAL', sshConnectionId: null, provider: 'DOCKER', container: 'custom-runtime', unit: null
+    } };
+    const { dom, page } = await openedRepository(api({
+      discoverRuntimeTargets: vi.fn().mockResolvedValue([{ id: 'forge-agent', provider: 'DOCKER' }]),
+      listServices: vi.fn().mockResolvedValue([linked]),
+      listProjectRepositories: vi.fn().mockResolvedValue([
+        repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
+      ])
+    }), 'repo-1');
+
+    dom.window.document.getElementById('repositoryRuntimeConfigure')?.click();
+    await flushAsync();
+
+    const options = [...dom.window.document.querySelectorAll<HTMLOptionElement>('#projectServiceContainers option')]
+      .map((option) => option.value);
+    expect((dom.window.document.getElementById('projectServiceContainer') as HTMLInputElement).value).toBe('custom-runtime');
+    expect(options).toEqual(['custom-runtime', 'forge-agent']);
+    page.dispose();
+  });
+
   it('rejects stale Configure Runtime modal context after navigating to another repository', async () => {
     const repoA = repository('repo-a', project().id, 'api', true, branchGitState('CLEAN', 'main'));
     const repoB = repository('repo-b', project().id, 'worker', true, branchGitState('CLEAN', 'main'));
@@ -1185,9 +1378,11 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
-  it('adds another Service from a repository that already has one linked Service', async () => {
+  it('adds another Service with an independent provider and target from a repository that already has one linked Service', async () => {
     const existing = { ...service('service-api'), repositoryId: 'repo-1', name: 'api' };
-    const added = { ...service('service-worker'), repositoryId: 'repo-1', name: 'worker' };
+    const added = { ...service('service-worker'), repositoryId: 'repo-1', name: 'worker', runtimeTarget: {
+      connection: 'LOCAL', sshConnectionId: null, provider: 'SYSTEMD', container: null, unit: 'worker.service'
+    } };
     const createService = vi.fn().mockResolvedValue(added);
     const listServices = vi.fn()
       .mockResolvedValueOnce([existing])
@@ -1200,6 +1395,7 @@ describe('Agent projects page', () => {
       listServices,
       createService,
       listServiceLogSources: vi.fn().mockResolvedValue([]),
+      discoverRuntimeTargets: vi.fn().mockResolvedValue([{ id: 'worker.service', provider: 'SYSTEMD' }]),
       listSshConnections: vi.fn().mockResolvedValue([])
     });
     const { dom, page } = await openedRepository(fakeApi, 'repo-1');
@@ -1208,15 +1404,17 @@ describe('Agent projects page', () => {
     await flushAsync();
     expect(dom.window.document.getElementById('projectServiceDialogTitle')?.textContent).toBe('Configure Runtime');
     expect(dom.window.document.getElementById('projectServiceRepositoryField')?.classList.contains('hidden')).toBe(true);
+    selectValue(dom, 'projectServiceProvider', 'SYSTEMD');
+    await flushAsync();
     (dom.window.document.getElementById('projectServiceName') as HTMLInputElement).value = 'worker';
-    (dom.window.document.getElementById('projectServiceContainer') as HTMLInputElement).value = 'worker-container';
+    (dom.window.document.getElementById('projectServiceUnit') as HTMLInputElement).value = 'worker.service';
     await page.submitService(new dom.window.Event('submit'));
     await flushAsync();
 
     expect(createService).toHaveBeenCalledWith(project().id, expect.objectContaining({
       name: 'worker',
       repositoryId: 'repo-1',
-      runtimeTarget: expect.objectContaining({ container: 'worker-container' })
+      runtimeTarget: expect.objectContaining({ provider: 'SYSTEMD', unit: 'worker.service' })
     }));
     expect(page.state.selectedRuntimeServiceId).toBe(existing.id);
     expect(dom.window.document.getElementById('repositoryRuntimeServices')?.textContent).toContain('worker');
@@ -1788,6 +1986,38 @@ describe('Agent projects page', () => {
     expect(fakeApi.pullProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
     expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
+  });
+
+  it('stale Project A Git action cannot mutate Project B repositories or errors', async () => {
+    const projectA = project();
+    const projectB = project('22222222-2222-4222-8222-222222222222', 'Other');
+    const repoA = repository('repo-a', projectA.id, 'service-a', true, behindGitState());
+    const repoB = repository('repo-b', projectB.id, 'service-b', true, branchGitState('CLEAN', 'main'));
+    const pull = deferred<any>();
+    const fakeApi = api({
+      listProjects: vi.fn().mockResolvedValue([projectA, projectB]),
+      listProjectRepositories: vi.fn((projectId: string) => Promise.resolve(projectId === projectA.id ? [repoA] : [repoB])),
+      pullProjectRepository: vi.fn().mockReturnValue(pull.promise),
+      listServices: vi.fn().mockResolvedValue([])
+    });
+    const dom = agentProjectsDom();
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount();
+    await flushAsync();
+    await page.openProject(projectA.id);
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-a"]')?.click();
+    await flushAsync();
+    await page.openProject(projectB.id);
+    pull.resolve({ ...repoA, git: branchGitState('CLEAN', 'main'), projectId: projectA.id });
+    await flushAsync();
+
+    expect(page.state.selectedProjectId).toBe(projectB.id);
+    expect(page.state.repositories).toEqual([repoB]);
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-b');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).not.toContain('service-a');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesError')?.textContent).toBe('');
+    page.dispose();
   });
 
   it('pull failure refreshes repositories and restores backend-derived disabled state', async () => {

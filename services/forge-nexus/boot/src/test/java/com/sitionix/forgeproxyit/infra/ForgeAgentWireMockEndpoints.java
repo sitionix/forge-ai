@@ -8,6 +8,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceRequest
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogTargetCandidateResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetCandidateResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetDiscoveryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceRequest;
@@ -142,6 +144,16 @@ public final class ForgeAgentWireMockEndpoints {
                         .matchesJson("agent-discover-logs-request.json")
                         .responseStatus(HttpStatus.OK.value())
                         .responseBody("agent-discover-logs-response.json"));
+    }
+
+    public static Endpoint<RuntimeTargetDiscoveryRequest, RuntimeTargetCandidateResponse[]> discoverRuntimeTargets() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/runtime-targets/discover", HttpMethod.POST,
+                RuntimeTargetDiscoveryRequest.class, RuntimeTargetCandidateResponse[].class,
+                (WiremockDefault) context -> context
+                        .matchesJson("agent-discover-runtime-targets-request.json")
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("agent-discover-runtime-targets-response.json"));
     }
 
     public static Endpoint<AgentLogSourceRequest, InfrastructureErrorResponse> createLogSourceConflict() {

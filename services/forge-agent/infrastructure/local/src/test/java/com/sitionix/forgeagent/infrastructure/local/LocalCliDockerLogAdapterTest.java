@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.infrastructure.local;
 import static org.assertj.core.api.Assertions.*;
 
 import com.sitionix.forgeagent.domain.model.*;
+import com.sitionix.forgeagent.domain.port.RuntimeTargetDiscoveryPort;
 import java.nio.file.*;
 import java.util.*;
 import org.junit.jupiter.api.*;
@@ -13,7 +14,7 @@ class LocalCliDockerLogAdapterTest {
   void discoveryMapsRuntimeOutputToTypedCandidates() {
     var executor =
         new FakeExecutor(List.of("abc\tmission\tUp 2 minutes\timage:1\tancestor\tmission"));
-    var result = new LocalCliDockerLogAdapter(executor).discover(null);
+    var result = new LocalCliDockerLogAdapter(executor, new CliRuntimeTargetDiscoveryAdapter(executor)).discover(null);
     assertThat(result)
         .containsExactly(
             new LogTargetCandidate(
@@ -31,11 +32,13 @@ class LocalCliDockerLogAdapterTest {
   void discoveryUsesContainerNameInsteadOfEphemeralContainerId() {
     var first =
         new LocalCliDockerLogAdapter(
-                new FakeExecutor(List.of("old-id\tmission\tUp 1 minute\timage:1\t\t")))
+                new FakeExecutor(List.of("old-id\tmission\tUp 1 minute\timage:1\t\t")),
+                new CliRuntimeTargetDiscoveryAdapter(new FakeExecutor(List.of("old-id\tmission\tUp 1 minute\timage:1\t\t"))))
             .discover(null);
     var recreated =
         new LocalCliDockerLogAdapter(
-                new FakeExecutor(List.of("new-id\tmission\tUp 1 second\timage:1\t\t")))
+                new FakeExecutor(List.of("new-id\tmission\tUp 1 second\timage:1\t\t")),
+                new CliRuntimeTargetDiscoveryAdapter(new FakeExecutor(List.of("new-id\tmission\tUp 1 second\timage:1\t\t"))))
             .discover(null);
 
     assertThat(first.getFirst().id()).isEqualTo("mission");
@@ -45,7 +48,7 @@ class LocalCliDockerLogAdapterTest {
   @Test
   void validatesThroughTypedDockerInspectArguments() {
     var executor = new FakeExecutor(List.of());
-    new LocalCliDockerLogAdapter(executor).validate("mission", null, null, null);
+    new LocalCliDockerLogAdapter(executor, targetDiscovery()).validate("mission", null, null, null);
     assertThat(executor.command).containsExactly("docker", "container", "inspect", "--", "mission");
   }
 
@@ -72,7 +75,7 @@ class LocalCliDockerLogAdapterTest {
       throws Exception {
     Files.writeString(repository.resolve("compose.yaml"), "services: {}\n");
     var executor = new FakeExecutor(List.of("web", "worker"));
-    var result = new LocalCliDockerLogAdapter(executor).discoverComposeServices(repository, null);
+    var result = new LocalCliDockerLogAdapter(executor, targetDiscovery()).discoverComposeServices(repository, null);
     assertThat(executor.command)
         .containsExactly(
             "docker",
@@ -84,6 +87,10 @@ class LocalCliDockerLogAdapterTest {
     assertThat(result).extracting(LogTargetCandidate::id).containsExactly("web", "worker");
     assertThat(result)
         .allMatch(c -> repository.resolve("compose.yaml").toString().equals(c.composeFile()));
+  }
+
+  private RuntimeTargetDiscoveryPort targetDiscovery() {
+    return (connection, provider) -> List.of();
   }
 
   static final class FakeExecutor extends TypedProcessExecutor {
