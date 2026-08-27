@@ -264,6 +264,29 @@ def _normalize_connection_failure(exc: Exception) -> Exception:
     return CodexAppServerTransportError("Codex app-server transport failed")
 
 
+def _log_background_cleanup_failure(task: asyncio.Task[Any], message: str) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception as cleanup_exc:
+        LOGGER.debug(message, exc_info=cleanup_exc)
+
+
+async def _run_cancellation_cleanup(cleanup: Coroutine[Any, Any, Any], message: str) -> None:
+    task = asyncio.create_task(cleanup, name="codex-app-server-cancellation-cleanup")
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        if task.done():
+            _log_background_cleanup_failure(task, message)
+        else:
+            task.add_done_callback(lambda done: _log_background_cleanup_failure(done, message))
+        raise
+    except Exception as cleanup_exc:
+        LOGGER.debug(message, exc_info=cleanup_exc)
+
+
 class CodexGenerationPolicy:
     SAFE_ITEM_TYPES: ClassVar[set[str]] = {
         "userMessage",
@@ -431,9 +454,12 @@ class CodexProcessTransport:
         except asyncio.CancelledError:
             if submitted:
                 try:
-                    await self.invalidate(CodexAppServerTransportError("Codex app-server request was cancelled after submission"))
-                except (Exception, asyncio.CancelledError) as cleanup_exc:
-                    LOGGER.debug("Codex app-server cancellation cleanup failed", exc_info=cleanup_exc)
+                    await _run_cancellation_cleanup(
+                        self.invalidate(CodexAppServerTransportError("Codex app-server request was cancelled after submission")),
+                        "Codex app-server cancellation cleanup failed",
+                    )
+                except asyncio.CancelledError:
+                    pass
             raise
         finally:
             self._pending.pop(request_id, None)
@@ -458,9 +484,12 @@ class CodexProcessTransport:
         except asyncio.CancelledError:
             if submitted:
                 try:
-                    await self.invalidate(CodexAppServerTransportError("Codex app-server notification was cancelled after submission"))
-                except (Exception, asyncio.CancelledError) as cleanup_exc:
-                    LOGGER.debug("Codex app-server notification cancellation cleanup failed", exc_info=cleanup_exc)
+                    await _run_cancellation_cleanup(
+                        self.invalidate(CodexAppServerTransportError("Codex app-server notification was cancelled after submission")),
+                        "Codex app-server notification cancellation cleanup failed",
+                    )
+                except asyncio.CancelledError:
+                    pass
             raise
 
     async def stop(self, exc: Exception | None = None) -> None:
@@ -868,9 +897,12 @@ class CodexTurnExecutor:
             if active is not None:
                 self._active_turns.pop(active.turn_id, None)
                 try:
-                    await transport.invalidate(CodexAppServerTransportError("Codex app-server turn was cancelled after submission"))
-                except (Exception, asyncio.CancelledError) as cleanup_exc:
-                    LOGGER.debug("Codex app-server turn cancellation cleanup failed", exc_info=cleanup_exc)
+                    await _run_cancellation_cleanup(
+                        transport.invalidate(CodexAppServerTransportError("Codex app-server turn was cancelled after submission")),
+                        "Codex app-server turn cancellation cleanup failed",
+                    )
+                except asyncio.CancelledError:
+                    pass
             raise
         finally:
             if pre_registration:
@@ -1327,9 +1359,12 @@ class CodexAppServerClient:
                 raise
             except asyncio.CancelledError:
                 try:
-                    await transport.stop(CodexAppServerTransportError("Codex app-server initialize cancelled"))
-                except (Exception, asyncio.CancelledError) as cleanup_exc:
-                    LOGGER.debug("Codex app-server initialize cancellation cleanup failed", exc_info=cleanup_exc)
+                    await _run_cancellation_cleanup(
+                        transport.stop(CodexAppServerTransportError("Codex app-server initialize cancelled")),
+                        "Codex app-server initialize cancellation cleanup failed",
+                    )
+                except asyncio.CancelledError:
+                    pass
                 self._initialized = False
                 self._version = None
                 raise
