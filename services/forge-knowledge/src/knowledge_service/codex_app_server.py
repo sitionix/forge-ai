@@ -454,6 +454,7 @@ class CodexProcessTransport:
         except asyncio.CancelledError:
             if submitted:
                 try:
+                    self.request_process_termination()
                     await _run_cancellation_cleanup(
                         self.invalidate(CodexAppServerTransportError("Codex app-server request was cancelled after submission")),
                         "Codex app-server cancellation cleanup failed",
@@ -484,6 +485,7 @@ class CodexProcessTransport:
         except asyncio.CancelledError:
             if submitted:
                 try:
+                    self.request_process_termination()
                     await _run_cancellation_cleanup(
                         self.invalidate(CodexAppServerTransportError("Codex app-server notification was cancelled after submission")),
                         "Codex app-server notification cancellation cleanup failed",
@@ -561,6 +563,14 @@ class CodexProcessTransport:
                     raise CodexAppServerLifecycleError("Codex app-server process did not exit during forced cleanup") from timeout
         if process is not None and self._returncode(process) is not None and self._cleanup_process is process:
             self._cleanup_process = None
+
+    def request_process_termination(self) -> None:
+        process = self._process or self._cleanup_process
+        if process is None or self._returncode(process) is not None:
+            return
+        terminate = getattr(process, "terminate", None)
+        if callable(terminate):
+            terminate()
 
     async def _cancel_and_drain_reader_tasks(self) -> None:
         try:
@@ -897,6 +907,7 @@ class CodexTurnExecutor:
             if active is not None:
                 self._active_turns.pop(active.turn_id, None)
                 try:
+                    transport.request_process_termination()
                     await _run_cancellation_cleanup(
                         transport.invalidate(CodexAppServerTransportError("Codex app-server turn was cancelled after submission")),
                         "Codex app-server turn cancellation cleanup failed",
@@ -1359,6 +1370,7 @@ class CodexAppServerClient:
                 raise
             except asyncio.CancelledError:
                 try:
+                    transport.request_process_termination()
                     await _run_cancellation_cleanup(
                         transport.stop(CodexAppServerTransportError("Codex app-server initialize cancelled")),
                         "Codex app-server initialize cancellation cleanup failed",
