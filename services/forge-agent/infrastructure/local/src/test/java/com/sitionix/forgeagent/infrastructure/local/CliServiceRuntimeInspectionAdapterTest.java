@@ -73,7 +73,7 @@ class CliServiceRuntimeInspectionAdapterTest {
         List.of(
                 "systemctl", "show", "--no-pager",
                 "--property=" + CliServiceRuntimeInspectionAdapter.SYSTEMD_PROPERTIES,
-                "--", "api.service"));
+                "--", "forge-agent.service"));
   }
 
   @Test
@@ -119,7 +119,7 @@ class CliServiceRuntimeInspectionAdapterTest {
   private ServiceRuntimeTarget systemd(final ServiceConnectionType connection) {
     return new ServiceRuntimeTarget(
         connection, connection == ServiceConnectionType.SSH ? UUID.randomUUID() : null,
-        ServiceRuntimeProvider.SYSTEMD, null, "api.service");
+        ServiceRuntimeProvider.SYSTEMD, null, "forge-agent.service");
   }
 
   private SshConnection ssh() {

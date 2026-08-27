@@ -42,6 +42,31 @@ stop: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _postgres-stop
 status:
     @scripts/status.sh
 
+# Build runtime artifacts and install/update systemd units for this checkout.
+systemd-install:
+    @mvn -pl services/forge-agent/boot -am -DskipTests package
+    @scripts/console/build.sh
+    @mvn -pl services/forge-nexus/boot -am -DskipTests package
+    @if [[ ! -x "{{root}}/services/forge-knowledge/.venv/bin/uvicorn" ]]; then scripts/knowledge/bootstrap.sh; fi
+    @if [[ ! -x "{{root}}/services/forge-jarvis/.venv/bin/uvicorn" ]]; then scripts/jarvis/bootstrap.sh; fi
+    @scripts/systemd/install.sh
+
+# Start the installed Forge systemd services. Docker Postgres remains Docker-managed.
+systemd-start:
+    @scripts/systemd/control.sh start
+
+# Stop the installed Forge systemd services. Docker Postgres remains Docker-managed.
+systemd-stop:
+    @scripts/systemd/control.sh stop
+
+# Restart the installed Forge systemd services. Docker Postgres remains Docker-managed.
+systemd-restart:
+    @scripts/systemd/control.sh restart
+
+# Show status for installed Forge systemd services and the Docker-managed Postgres container.
+systemd-status:
+    @scripts/systemd/control.sh status
+
 _start-preflight:
     #!/usr/bin/env bash
     set -euo pipefail

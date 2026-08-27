@@ -322,6 +322,73 @@ case_console_build_skips_install_when_vite_exists() {
   grep -qx -- "--prefix ${TEST_CONSOLE_ROOT} run build" "${TEST_NPM_LOG}"
 }
 
+case_systemd_units_render_stable_services() {
+  local dir units env_file output
+  dir="$(new_temp_dir)"
+  units="${dir}/units"
+  env_file="${dir}/env/forge-ai.env"
+  mkdir -p "${dir}/workspace root" "${dir}/runtime" "${dir}/config"
+
+  output="$(
+    FORGE_RUNTIME_DIR="${dir}/runtime" \
+    FORGE_CONFIG_DIR="${dir}/config" \
+    FORGE_WORKSPACE_ROOT="${dir}/workspace root" \
+    FORGE_SYSTEMD_USER="forge-user" \
+    FORGE_SYSTEMD_GROUP="forge-group" \
+    "${ROOT_DIR}/scripts/systemd/render-units.sh" "${units}" "${env_file}"
+  )"
+
+  [[ "${output}" == *"Rendered Forge systemd units"* ]]
+  for unit in forge-agent.service forge-nexus.service forge-knowledge.service forge-jarvis.service; do
+    [[ -f "${units}/${unit}" ]]
+    grep -Fqx "User=forge-user" "${units}/${unit}"
+    grep -Fqx "Group=forge-group" "${units}/${unit}"
+    grep -Fqx "EnvironmentFile=${env_file}" "${units}/${unit}"
+    grep -Fqx "StandardOutput=journal" "${units}/${unit}"
+    grep -Fqx "StandardError=journal" "${units}/${unit}"
+  done
+
+  grep -Fqx "WorkingDirectory=${ROOT_DIR}" "${units}/forge-agent.service"
+  grep -Fqx "WorkingDirectory=${ROOT_DIR}" "${units}/forge-nexus.service"
+  grep -Fqx "WorkingDirectory=${ROOT_DIR}/services/forge-knowledge" "${units}/forge-knowledge.service"
+  grep -Fqx "WorkingDirectory=${ROOT_DIR}/services/forge-jarvis" "${units}/forge-jarvis.service"
+  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-agent.sh ${env_file}" "${units}/forge-agent.service"
+  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-nexus.sh ${env_file}" "${units}/forge-nexus.service"
+  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-knowledge.sh ${env_file}" "${units}/forge-knowledge.service"
+  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-jarvis.sh ${env_file}" "${units}/forge-jarvis.service"
+
+  grep -Fqx 'FORGE_AGENT_PORT="7091"' "${env_file}"
+  grep -Fqx 'FORGE_NEXUS_BASE_URL="http://127.0.0.1:9099/fgaisox"' "${env_file}"
+  grep -Fqx 'KNOWLEDGE_PORT="7081"' "${env_file}"
+  grep -Fqx 'JARVIS_PORT="7071"' "${env_file}"
+  grep -Fqx "WORKSPACE_ROOT=\"${dir}/workspace root\"" "${env_file}"
+  ! grep -RE 'PIDFile|nohup' "${units}" >/dev/null
+  ! grep -R 'FORGE_AGENT_DB_PASSWORD' "${units}" >/dev/null
+}
+
+case_systemd_launch_path_has_no_pid_file_or_nohup() {
+  ! grep -RE 'PIDFile|nohup|forge_start_background|PID_FILE' "${ROOT_DIR}/scripts/systemd" "${ROOT_DIR}/config/systemd" >/dev/null
+  grep -Fq 'exec java -jar "${FORGE_AI_HOME}/services/forge-agent/boot/target/boot-0.0.1-SNAPSHOT.jar"' "${ROOT_DIR}/scripts/systemd/run-forge-agent.sh"
+  grep -Fq 'exec java -jar "${FORGE_AI_HOME}/services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar"' "${ROOT_DIR}/scripts/systemd/run-forge-nexus.sh"
+  grep -Fq 'knowledge_service.main:app' "${ROOT_DIR}/scripts/systemd/run-forge-knowledge.sh"
+  grep -Fq 'jarvis_agent.main:app' "${ROOT_DIR}/scripts/systemd/run-forge-jarvis.sh"
+}
+
+case_systemd_unit_templates_have_no_committed_secrets_or_postgres_unit() {
+  ! grep -R 'FORGE_AGENT_DB_PASSWORD=' "${ROOT_DIR}/config/systemd" >/dev/null
+  ! grep -R 'forge-agent-postgres.service' "${ROOT_DIR}/config/systemd" >/dev/null
+  ! grep -R 'postgres.service' "${ROOT_DIR}/config/systemd" >/dev/null
+}
+
+case_dev_launcher_and_systemd_workflows_are_separate() {
+  grep -Fqx 'start service="all":' "${ROOT_DIR}/Justfile"
+  grep -Fqx 'systemd-start:' "${ROOT_DIR}/Justfile"
+  grep -Fqx 'systemd-stop:' "${ROOT_DIR}/Justfile"
+  grep -Fqx 'systemd-restart:' "${ROOT_DIR}/Justfile"
+  grep -Fq 'forge_start_background' "${ROOT_DIR}/scripts/lib/process.sh"
+  ! awk '/^start service="all":/{flag=1; next} /^_start-all:/{flag=0} flag {print}' "${ROOT_DIR}/Justfile" | grep -q 'systemctl'
+}
+
 run_case "ollama API already reachable" case_ollama_api_already_reachable
 run_case "ollama API unavailable and CLI absent" case_ollama_cli_absent
 run_case "ollama CLI start succeeds" case_ollama_start_succeeds
@@ -337,5 +404,9 @@ run_case "GNU stat absent with BSD stat fallback" case_gnu_stat_absent_bsd_fallb
 run_case "Jarvis startup has no mandatory Ollama gate" case_jarvis_start_has_no_ollama_gate
 run_case "Console build installs dependencies when Vite is missing" case_console_build_installs_dependencies_when_vite_missing
 run_case "Console build skips dependency install when Vite exists" case_console_build_skips_install_when_vite_exists
+run_case "systemd units render stable Forge services" case_systemd_units_render_stable_services
+run_case "systemd launch path has no PID file or nohup" case_systemd_launch_path_has_no_pid_file_or_nohup
+run_case "systemd unit templates have no committed secrets or Postgres unit" case_systemd_unit_templates_have_no_committed_secrets_or_postgres_unit
+run_case "dev launcher and systemd workflows are separate" case_dev_launcher_and_systemd_workflows_are_separate
 
 printf 'Portable startup shell tests: PASS %s/%s\n' "${PASSED}" "${TOTAL}"

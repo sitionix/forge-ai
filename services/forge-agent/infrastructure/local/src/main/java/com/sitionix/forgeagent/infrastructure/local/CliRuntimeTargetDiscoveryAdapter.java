@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.infrastructure.local;
 
+import com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException;
 import com.sitionix.forgeagent.domain.model.RuntimeTargetCandidate;
 import com.sitionix.forgeagent.domain.model.RuntimeTargetStatus;
 import com.sitionix.forgeagent.domain.model.ServiceRuntimeProvider;
@@ -42,31 +43,40 @@ public class CliRuntimeTargetDiscoveryAdapter implements RuntimeTargetDiscoveryP
   }
 
   private List<RuntimeTargetCandidate> discoverSystemd(SshConnection connection) {
-    return output(
-            connection,
-            command(
-                connection,
-                "systemctl",
-                "list-units",
-                "--type=service",
-                "--all",
-                "--no-legend",
-                "--plain"))
-        .stream()
-        .map(String::strip)
-        .filter(row -> !row.isBlank())
-        .map(row -> row.split("\\s+", 2)[0])
-        .map(
-            unit ->
-                new RuntimeTargetCandidate(
-                    unit,
-                    unit,
-                    ServiceRuntimeProvider.SYSTEMD,
-                    RuntimeTargetStatus.AVAILABLE,
-                    null,
-                    null,
-                    null))
-        .toList();
+    try {
+      return output(
+              connection,
+              command(
+                  connection,
+                  "systemctl",
+                  "list-units",
+                  "--type=service",
+                  "--all",
+                  "--no-legend",
+                  "--plain"))
+          .stream()
+          .map(String::strip)
+          .filter(row -> !row.isBlank())
+          .map(row -> row.split("\\s+", 2)[0])
+          .map(
+              unit ->
+                  new RuntimeTargetCandidate(
+                      unit,
+                      unit,
+                      ServiceRuntimeProvider.SYSTEMD,
+                      RuntimeTargetStatus.AVAILABLE,
+                      null,
+                      null,
+                      null))
+          .toList();
+    } catch (InfrastructureExecutionException exception) {
+      if ("RUNTIME_COMMAND_FAILED".equals(exception.code())
+          || "RUNTIME_UNAVAILABLE".equals(exception.code())) {
+        throw new InfrastructureExecutionException(
+            "SYSTEMD_UNAVAILABLE", "Systemd is not available on the selected host.");
+      }
+      throw exception;
+    }
   }
 
   private RuntimeTargetCandidate dockerCandidate(String row) {

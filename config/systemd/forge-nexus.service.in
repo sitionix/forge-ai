@@ -1,0 +1,23 @@
+[Unit]
+Description=Forge Nexus
+After=network-online.target forge-agent.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@FORGE_SYSTEMD_USER@
+Group=@FORGE_SYSTEMD_GROUP@
+WorkingDirectory=@FORGE_AI_HOME@
+EnvironmentFile=@FORGE_SYSTEMD_ENV_FILE@
+ExecStart=@FORGE_AI_HOME@/scripts/systemd/run-forge-nexus.sh @FORGE_SYSTEMD_ENV_FILE@
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

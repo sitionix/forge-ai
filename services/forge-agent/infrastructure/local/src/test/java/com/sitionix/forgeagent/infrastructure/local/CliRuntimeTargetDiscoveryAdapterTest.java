@@ -1,7 +1,9 @@
 package com.sitionix.forgeagent.infrastructure.local;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException;
 import com.sitionix.forgeagent.domain.model.RuntimeTargetCandidate;
 import com.sitionix.forgeagent.domain.model.RuntimeTargetStatus;
 import com.sitionix.forgeagent.domain.model.ServiceRuntimeProvider;
@@ -43,8 +45,14 @@ class CliRuntimeTargetDiscoveryAdapterTest {
   }
 
   @Test
-  void localSystemdDiscoveryMapsUnits() {
-    var executor = new CapturingExecutor(List.of("forge-agent.service loaded active running Forge Agent"));
+  void localSystemdDiscoveryMapsUnitsIncludingForgeServices() {
+    var executor =
+        new CapturingExecutor(
+            List.of(
+                "forge-agent.service loaded active running Forge Agent",
+                "forge-nexus.service loaded active running Forge Nexus",
+                "forge-knowledge.service loaded active running Forge Knowledge",
+                "forge-jarvis.service loaded active running Forge Jarvis"));
 
     var result = new CliRuntimeTargetDiscoveryAdapter(executor)
         .discover(null, ServiceRuntimeProvider.SYSTEMD);
@@ -66,7 +74,46 @@ class CliRuntimeTargetDiscoveryAdapterTest {
                 RuntimeTargetStatus.AVAILABLE,
                 null,
                 null,
+                null),
+            new RuntimeTargetCandidate(
+                "forge-nexus.service",
+                "forge-nexus.service",
+                ServiceRuntimeProvider.SYSTEMD,
+                RuntimeTargetStatus.AVAILABLE,
+                null,
+                null,
+                null),
+            new RuntimeTargetCandidate(
+                "forge-knowledge.service",
+                "forge-knowledge.service",
+                ServiceRuntimeProvider.SYSTEMD,
+                RuntimeTargetStatus.AVAILABLE,
+                null,
+                null,
+                null),
+            new RuntimeTargetCandidate(
+                "forge-jarvis.service",
+                "forge-jarvis.service",
+                ServiceRuntimeProvider.SYSTEMD,
+                RuntimeTargetStatus.AVAILABLE,
+                null,
+                null,
                 null));
+  }
+
+  @Test
+  void systemdUnavailableFailureIsTyped() {
+    var executor =
+        new CapturingExecutor(
+            new InfrastructureExecutionException(
+                "RUNTIME_COMMAND_FAILED", "Runtime command failed: systemd unavailable"));
+
+    assertThatThrownBy(
+            () -> new CliRuntimeTargetDiscoveryAdapter(executor)
+                .discover(null, ServiceRuntimeProvider.SYSTEMD))
+        .isInstanceOf(InfrastructureExecutionException.class)
+        .extracting("code")
+        .isEqualTo("SYSTEMD_UNAVAILABLE");
   }
 
   @Test
@@ -109,7 +156,7 @@ class CliRuntimeTargetDiscoveryAdapterTest {
   }
 
   static final class CapturingExecutor extends TypedProcessExecutor {
-    private final List<String> result;
+    private final Object result;
     List<String> command;
     SshConnection ssh;
 
@@ -117,17 +164,25 @@ class CliRuntimeTargetDiscoveryAdapterTest {
       this.result = result;
     }
 
-    @Override
-    List<String> output(List<String> command, Path cwd) {
-      this.command = command;
-      return result;
+    CapturingExecutor(RuntimeException result) {
+      this.result = result;
     }
 
     @Override
+    @SuppressWarnings("unchecked")
+    List<String> output(List<String> command, Path cwd) {
+      this.command = command;
+      if (result instanceof RuntimeException failure) throw failure;
+      return (List<String>) result;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
     List<String> output(List<String> command, Path cwd, SshConnection ssh) {
       this.command = command;
       this.ssh = ssh;
-      return result;
+      if (result instanceof RuntimeException failure) throw failure;
+      return (List<String>) result;
     }
   }
 }
