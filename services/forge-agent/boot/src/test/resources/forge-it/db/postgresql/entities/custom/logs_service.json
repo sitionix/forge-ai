@@ -1,0 +1,10 @@
+{
+  "id": "90000000-0000-4000-8000-000000000010",
+  "projectId": "90000000-0000-4000-8000-000000000001",
+  "name": "application",
+  "connectionType": "LOCAL",
+  "provider": "DOCKER",
+  "dockerContainer": "app",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:00Z"
+}

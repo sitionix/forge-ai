@@ -41,7 +41,7 @@ class LogSourceUseCasesTest {
             workspaces,
             git,
             Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
-    when(projects.findById(projectId))
+    lenient().when(projects.findById(projectId))
         .thenReturn(Optional.of(new Project(projectId, "P", "p", Instant.EPOCH, Instant.EPOCH)));
     lenient().when(sources.save(any())).thenAnswer(i -> i.getArgument(0));
   }
@@ -88,6 +88,31 @@ class LogSourceUseCasesTest {
         "api", null, new ServiceRuntimeTarget(ServiceConnectionType.LOCAL, null,
         ServiceRuntimeProvider.DOCKER, "api", null), Instant.EPOCH, Instant.EPOCH)));
     assertThat(useCases.create(projectId, command("one", serviceId)).serviceId()).isEqualTo(serviceId);
+  }
+
+  @Test
+  void serviceScopedListingReturnsOnlyRepositoryResultsForThatService() {
+    UUID serviceId = UUID.randomUUID();
+    ProjectService service = service(serviceId, projectId);
+    LogSource linked = new LogSource(
+        UUID.randomUUID(), projectId, "api", serviceId, LogConnectionType.LOCAL, null,
+        LogProviderType.DOCKER, new DockerLogConfiguration("api", null, null), true,
+        Instant.EPOCH, Instant.EPOCH);
+    when(services.findById(serviceId)).thenReturn(Optional.of(service));
+    when(sources.findByProjectIdAndServiceId(projectId, serviceId)).thenReturn(List.of(linked));
+
+    assertThat(useCases.list(projectId, serviceId)).containsExactly(linked);
+  }
+
+  @Test
+  void crossProjectServiceAssociationAndListingAreRejected() {
+    UUID serviceId = UUID.randomUUID();
+    when(services.findById(serviceId)).thenReturn(Optional.of(service(serviceId, UUID.randomUUID())));
+
+    assertThatThrownBy(() -> useCases.create(projectId, command("one", serviceId)))
+        .isInstanceOf(NotFoundException.class);
+    assertThatThrownBy(() -> useCases.list(projectId, serviceId))
+        .isInstanceOf(NotFoundException.class);
   }
 
   @Test
@@ -235,5 +260,12 @@ class LogSourceUseCasesTest {
   private SshConnection ssh(UUID id) {
     return new SshConnection(
         id, projectId, "ssh", "host", 22, "user", "/key", Instant.EPOCH, Instant.EPOCH);
+  }
+
+  private ProjectService service(UUID id, UUID owner) {
+    return new ProjectService(id, owner, "api", null,
+        new ServiceRuntimeTarget(ServiceConnectionType.LOCAL, null,
+            ServiceRuntimeProvider.DOCKER, "api", null),
+        Instant.EPOCH, Instant.EPOCH);
   }
 }

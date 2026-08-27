@@ -158,6 +158,22 @@ function repository(
   };
 }
 
+function service(id = '99999999-9999-4999-8999-999999999999', projectId = project().id) {
+  return {
+    id,
+    projectId,
+    name: 'api',
+    repositoryId: null,
+    runtimeTarget: {
+      connection: 'LOCAL',
+      sshConnectionId: null,
+      provider: 'DOCKER',
+      container: 'api',
+      unit: null
+    }
+  };
+}
+
 function repositoryGitState(branch: string | null = 'main', workingTree: string | null = 'CLEAN', pullAvailable = false) {
   return {
     branch,
@@ -373,6 +389,15 @@ function api(overrides = {}) {
     listProjects: vi.fn(() => Promise.resolve([project()])),
     createProject: vi.fn(() => Promise.resolve(project('22222222-2222-4222-8222-222222222222', 'Forge AI'))),
     deleteProject: vi.fn(() => Promise.resolve({})),
+    listServices: vi.fn(() => Promise.resolve([])),
+    createService: vi.fn((_projectId: string, request: any) => Promise.resolve({ ...service(), ...request })),
+    updateService: vi.fn((_projectId: string, id: string, request: any) => Promise.resolve({ ...service(id), ...request })),
+    deleteService: vi.fn(() => Promise.resolve({})),
+    getService: vi.fn((_projectId: string, id: string) => Promise.resolve(service(id))),
+    getServiceRuntime: vi.fn(() => Promise.resolve({ status: 'RUNNING', connection: 'LOCAL', provider: 'DOCKER', targetIdentity: 'api', metadata: {} })),
+    listServiceLogSources: vi.fn(() => Promise.resolve([])),
+    listLogSources: vi.fn(() => Promise.resolve([])),
+    listSshConnections: vi.fn(() => Promise.resolve([])),
     listProjectRepositories: vi.fn((projectId: string) => Promise.resolve([repository(undefined, projectId)])),
     importProjectRepository: vi.fn(() => Promise.resolve(repository())),
     cloneProjectRepository: vi.fn(() => Promise.resolve(repository(undefined, project().id, 'service-a', true))),
@@ -504,6 +529,69 @@ function useFakeWindowTimers(dom: JSDOM) {
 }
 
 describe('Agent projects page', () => {
+  it('creates a Service through the typed form without prompts', async () => {
+    const createService = vi.fn().mockResolvedValue(service());
+    const fakeApi = api({ createService, listSshConnections: vi.fn().mockResolvedValue([]) });
+    const { dom, page } = await openedProject(fakeApi);
+    const prompt = vi.spyOn(dom.window, 'prompt');
+
+    await page.openServiceModal();
+    (dom.window.document.getElementById('projectServiceName') as HTMLInputElement).value = 'worker';
+    (dom.window.document.getElementById('projectServiceRepository') as HTMLSelectElement).value =
+      '88888888-8888-4888-8888-888888888888';
+    (dom.window.document.getElementById('projectServiceProvider') as HTMLSelectElement).value = 'SYSTEMD';
+    (dom.window.document.getElementById('projectServiceUnit') as HTMLInputElement).value = 'worker.service';
+    page.renderServiceTargetFields();
+    await page.submitService(new dom.window.Event('submit'));
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(createService).toHaveBeenCalledWith(project().id, {
+      name: 'worker',
+      repositoryId: '88888888-8888-4888-8888-888888888888',
+      runtimeTarget: {
+        connection: 'LOCAL', sshConnectionId: null, provider: 'SYSTEMD',
+        container: null, unit: 'worker.service'
+      }
+    });
+    page.dispose();
+  });
+
+  it('edits SSH Services and deletes them through CRUD APIs', async () => {
+    const existing = {
+      ...service(),
+      runtimeTarget: {
+        connection: 'SSH', sshConnectionId: 'ssh-1', provider: 'DOCKER',
+        container: 'api', unit: null
+      }
+    };
+    const updateService = vi.fn().mockResolvedValue(existing);
+    const deleteService = vi.fn().mockResolvedValue({});
+    const fakeApi = api({
+      listServices: vi.fn().mockResolvedValue([existing]),
+      listSshConnections: vi.fn().mockResolvedValue([
+        { id: 'ssh-1', name: 'prod', username: 'operator', host: 'prod.local' }
+      ]),
+      updateService,
+      deleteService
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    dom.window.confirm = vi.fn(() => true);
+
+    await page.openServiceModal(existing.id);
+    expect((dom.window.document.getElementById('projectServiceSsh') as HTMLSelectElement).value)
+      .toBe('ssh-1');
+    (dom.window.document.getElementById('projectServiceContainer') as HTMLInputElement).value = 'api-v2';
+    await page.submitService(new dom.window.Event('submit'));
+    expect(updateService).toHaveBeenCalledWith(
+      project().id, existing.id,
+      expect.objectContaining({ runtimeTarget: expect.objectContaining({ sshConnectionId: 'ssh-1', container: 'api-v2' }) })
+    );
+
+    await page.deleteService(existing.id);
+    expect(deleteService).toHaveBeenCalledWith(project().id, existing.id);
+    page.dispose();
+  });
+
   it('keeps Project lightweight and exposes only the dedicated Logs entry point', async () => {
     const listLogSources = vi.fn().mockResolvedValue([]);
     const streams: any[] = [];

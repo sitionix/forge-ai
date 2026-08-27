@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.it.tests;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.DELETE_PROJECT;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.LOG_SOURCE;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
+import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT_SERVICE;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.SSH_CONNECTION;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -91,6 +92,7 @@ class ForgeAgentProjectLogsSchemaIT {
         .postgresql()
         .create()
         .to(PROJECT.withJson("logs_project.json"))
+        .to(PROJECT_SERVICE.withJson("logs_service.json"))
         .to(LOG_SOURCE.withJson("logs_source_custom.json"))
         .to(LOG_SOURCE.withJson("logs_source_service_app.json"))
         .to(LOG_SOURCE.withJson("logs_source_service_worker.json"))
@@ -101,6 +103,13 @@ class ForgeAgentProjectLogsSchemaIT {
     assertThat(sources).hasSize(3);
     assertThat(sources).filteredOn(source -> source.getServiceId() == null).hasSize(1);
     assertThat(sources).filteredOn(source -> SERVICE_ID.equals(source.getServiceId())).hasSize(2);
+
+    this.forgeIt.postgresql().clearAllData(List.of(PROJECT_SERVICE));
+
+    final List<LogSourceEntity> retained =
+        this.forgeIt.postgresql().get(LogSourceEntity.class).getAll();
+    assertThat(retained).hasSize(3);
+    assertThat(retained).allMatch(source -> source.getServiceId() == null);
   }
 
   @Test

@@ -7,6 +7,8 @@ export class ProjectWorkspace {
     this.onOpenLogs = options.onOpenLogs;
     this.onAddService = options.onAddService || (()=>{});
     this.onOpenService = options.onOpenService || (()=>{});
+    this.onEditService = options.onEditService || (() => {});
+    this.onDeleteService = options.onDeleteService || (() => {});
     this.onNewAgent = options.onNewAgent;
     this.onImportRepository = options.onImportRepository;
     this.onCloneRepository = options.onCloneRepository || (() => {});
@@ -65,10 +67,31 @@ export class ProjectWorkspace {
   }
 
   renderServices(services, repositories = []) {
-    const list=this.byId('projectServicesList');
-    if(!services.length){list.innerHTML='<div class="muted-state">No services yet.</div>';return;}
-    list.innerHTML=services.map(s=>{const r=repositories.find(x=>x.id===s.repositoryId);const t=s.runtimeTarget||{};return `<article class="agents-v2-card"><h3>${escapeHtml(s.name)}</h3><p>${escapeHtml(r?.name||'No repository')}</p><p>${escapeHtml(t.connection||'')} · ${escapeHtml(t.provider||'')} · <code>${escapeHtml(t.container||t.unit||'')}</code></p><div class="agents-v2-card-actions"><button class="button small secondary" data-service-id="${escapeHtml(s.id)}">Open</button></div></article>`;}).join('');
-    list.querySelectorAll('[data-service-id]').forEach(e=>e.addEventListener('click',()=>this.onOpenService(e.dataset.serviceId)));
+    const list = this.byId('projectServicesList');
+    if (!services.length) {
+      list.innerHTML = '<div class="muted-state">No services yet.</div>';
+      return;
+    }
+    list.innerHTML = services.map((service) => {
+      const repository = repositories.find((candidate) => candidate.id === service.repositoryId);
+      const target = service.runtimeTarget || {};
+      return `<article class="agents-v2-card">
+        <h3>${escapeHtml(service.name)}</h3>
+        <p>${escapeHtml(repository?.name || 'No repository')}</p>
+        <p>${escapeHtml(target.connection || '')} · ${escapeHtml(target.provider || '')} · <code>${escapeHtml(target.container || target.unit || '')}</code></p>
+        <div class="agents-v2-card-actions">
+          <button class="button small secondary" data-service-id="${escapeHtml(service.id)}">Open</button>
+          <button class="button small secondary" data-edit-service-id="${escapeHtml(service.id)}">Edit</button>
+          <button class="button small secondary" data-delete-service-id="${escapeHtml(service.id)}">Delete</button>
+        </div>
+      </article>`;
+    }).join('');
+    list.querySelectorAll('[data-service-id]').forEach((element) =>
+      element.addEventListener('click', () => this.onOpenService(element.dataset.serviceId)));
+    list.querySelectorAll('[data-edit-service-id]').forEach((element) =>
+      element.addEventListener('click', () => this.onEditService(element.dataset.editServiceId)));
+    list.querySelectorAll('[data-delete-service-id]').forEach((element) =>
+      element.addEventListener('click', () => this.onDeleteService(element.dataset.deleteServiceId)));
   }
 
   renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set(), refreshingRepositoryIds = new Set()) {

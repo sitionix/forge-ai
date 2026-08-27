@@ -4,33 +4,134 @@ import com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException
 import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.ServiceRuntimeInspectionPort;
 import java.time.*;
-import java.time.format.DateTimeParseException;
+import java.time.format.*;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-@Component @RequiredArgsConstructor
+@Component
+@RequiredArgsConstructor
 public class CliServiceRuntimeInspectionAdapter implements ServiceRuntimeInspectionPort {
+  static final String DOCKER_FORMAT =
+      "{{.State.Status}}|{{.State.StartedAt}}|{{.State.ExitCode}}|"
+          + "{{if .State.Health}}{{.State.Health.Status}}{{end}}|{{.Name}}|{{.Config.Image}}";
+  static final String SYSTEMD_PROPERTIES =
+      "ActiveState,SubState,ExecMainStartTimestamp,MainPID,ExecMainStatus,Result";
+  private static final DateTimeFormatter SYSTEMD_TIMESTAMP =
+      DateTimeFormatter.ofPattern("EEE yyyy-MM-dd HH:mm:ss z", Locale.ENGLISH);
+
   private final TypedProcessExecutor executor;
-  public ServiceRuntimeView inspect(ProjectService service, SshConnection ssh) {
-    try { return service.runtimeTarget().provider()==ServiceRuntimeProvider.DOCKER ? docker(service.runtimeTarget(),ssh) : systemd(service.runtimeTarget(),ssh); }
-    catch (InfrastructureExecutionException | DateTimeParseException e) { return unknown(service.runtimeTarget(), Map.of("inspectionError", e.getMessage())); }
+  private final Clock clock;
+
+  @Override
+  public ServiceRuntimeView inspect(final ProjectService service, final SshConnection ssh) {
+    try {
+      return service.runtimeTarget().provider() == ServiceRuntimeProvider.DOCKER
+          ? inspectDocker(service.runtimeTarget(), ssh)
+          : inspectSystemd(service.runtimeTarget(), ssh);
+    } catch (final InfrastructureExecutionException | IllegalArgumentException exception) {
+      return unknown(service.runtimeTarget(), exception.getMessage());
+    }
   }
-  private ServiceRuntimeView docker(ServiceRuntimeTarget t,SshConnection ssh) {
-    var args=List.of("docker","inspect","--format","{{.State.Status}}|{{.State.StartedAt}}|{{.State.ExitCode}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|{{.Name}}|{{.Config.Image}}","--",RuntimeTargetValidator.docker(t.container(),"Docker container"));
-    var line=output(args,ssh).stream().findFirst().orElseThrow(()->new InfrastructureExecutionException("RUNTIME_EMPTY","Docker returned no state"));
-    var p=line.split("\\|",-1); var status=switch(p[0]){case "running"->ServiceRuntimeStatus.RUNNING;case "exited","created","paused"->ServiceRuntimeStatus.STOPPED;case "dead","removing","restarting"->ServiceRuntimeStatus.FAILED;default->ServiceRuntimeStatus.UNKNOWN;};
-    Instant started=parse(p.length>1?p[1]:null); var metadata=new LinkedHashMap<String,String>(); if(p.length>2)metadata.put("exitCode",p[2]);if(p.length>4)metadata.put("containerName",p[4]);if(p.length>5)metadata.put("image",p[5]);
-    return view(t,status,started,metadata,p.length>3&&!p[3].isBlank()?p[3]:null);
+
+  private ServiceRuntimeView inspectDocker(
+      final ServiceRuntimeTarget target, final SshConnection ssh) {
+    final List<String> arguments =
+        List.of(
+            "docker", "inspect", "--format", DOCKER_FORMAT, "--",
+            RuntimeTargetValidator.docker(target.container(), "Docker container"));
+    final String line =
+        output(arguments, ssh).stream()
+            .findFirst()
+            .orElseThrow(
+                () -> new InfrastructureExecutionException("RUNTIME_EMPTY", "Docker returned no state"));
+    final String[] values = line.split("\\|", -1);
+    if (values.length != 6) throw new IllegalArgumentException("Docker returned invalid state");
+    final int exitCode = Integer.parseInt(values[2]);
+    final Instant startedAt = parseDockerTimestamp(values[1]);
+    final Map<String, String> metadata = new LinkedHashMap<>();
+    metadata.put("exitCode", values[2]);
+    metadata.put("containerName", values[4]);
+    metadata.put("image", values[5]);
+    return view(
+        target,
+        dockerStatus(values[0], exitCode),
+        startedAt,
+        metadata,
+        values[3].isBlank() ? null : values[3]);
   }
-  private ServiceRuntimeView systemd(ServiceRuntimeTarget t,SshConnection ssh) {
-    var args=List.of("systemctl","show","--no-pager","--property=ActiveState,SubState,ExecMainStartTimestampMonotonic,MainPID,ExecMainStatus,Result","--",RuntimeTargetValidator.unit(t.unit()));
-    var values=new LinkedHashMap<String,String>(); for(String line:output(args,ssh)){int i=line.indexOf('=');if(i>0)values.put(line.substring(0,i),line.substring(i+1));}
-    String active=values.get("ActiveState"); var status=switch(active==null?"":active){case "active","activating","reloading"->ServiceRuntimeStatus.RUNNING;case "inactive","deactivating"->ServiceRuntimeStatus.STOPPED;case "failed"->ServiceRuntimeStatus.FAILED;default->ServiceRuntimeStatus.UNKNOWN;};
-    var metadata=new LinkedHashMap<>(values); metadata.remove("ActiveState"); return view(t,status,null,metadata,null);
+
+  private ServiceRuntimeView inspectSystemd(
+      final ServiceRuntimeTarget target, final SshConnection ssh) {
+    final List<String> arguments =
+        List.of(
+            "systemctl", "show", "--no-pager", "--property=" + SYSTEMD_PROPERTIES, "--",
+            RuntimeTargetValidator.unit(target.unit()));
+    final Map<String, String> values = new LinkedHashMap<>();
+    for (final String line : output(arguments, ssh)) {
+      final int separator = line.indexOf('=');
+      if (separator > 0) values.put(line.substring(0, separator), line.substring(separator + 1));
+    }
+    final Instant startedAt = parseSystemdTimestamp(values.get("ExecMainStartTimestamp"));
+    final Map<String, String> metadata = new LinkedHashMap<>(values);
+    metadata.remove("ActiveState");
+    metadata.remove("ExecMainStartTimestamp");
+    return view(target, systemdStatus(values.get("ActiveState")), startedAt, metadata, null);
   }
-  private List<String> output(List<String> args,SshConnection ssh){return executor.output(ssh==null?args:RemoteShellCommand.ssh(ssh,args),null,ssh);}
-  private ServiceRuntimeView view(ServiceRuntimeTarget t,ServiceRuntimeStatus s,Instant started,Map<String,String> metadata,String health){return new ServiceRuntimeView(s,t.provider(),t.connection(),t.identity(),started,started==null?null:Duration.between(started,Instant.now()),Map.copyOf(metadata),health);}
-  private ServiceRuntimeView unknown(ServiceRuntimeTarget t,Map<String,String> metadata){return new ServiceRuntimeView(ServiceRuntimeStatus.UNKNOWN,t.provider(),t.connection(),t.identity(),null,null,metadata,null);}
-  private Instant parse(String value){if(value==null||value.isBlank()||value.startsWith("0001-"))return null;return Instant.parse(value);}
+
+  private List<String> output(final List<String> arguments, final SshConnection ssh) {
+    return executor.output(
+        ssh == null ? arguments : RemoteShellCommand.ssh(ssh, arguments), null, ssh);
+  }
+
+  private ServiceRuntimeView view(
+      final ServiceRuntimeTarget target, final ServiceRuntimeStatus status,
+      final Instant startedAt, final Map<String, String> metadata, final String health) {
+    final Duration uptime =
+        startedAt == null || startedAt.isAfter(clock.instant())
+            ? null
+            : Duration.between(startedAt, clock.instant());
+    return new ServiceRuntimeView(
+        status, target.provider(), target.connection(), target.identity(), startedAt, uptime,
+        Map.copyOf(metadata), health);
+  }
+
+  private ServiceRuntimeView unknown(final ServiceRuntimeTarget target, final String message) {
+    return new ServiceRuntimeView(
+        ServiceRuntimeStatus.UNKNOWN, target.provider(), target.connection(), target.identity(),
+        null, null,
+        Map.of("inspectionError", message == null ? "Runtime inspection failed" : message), null);
+  }
+
+  private ServiceRuntimeStatus dockerStatus(final String state, final int exitCode) {
+    return switch (state) {
+      case "running" -> ServiceRuntimeStatus.RUNNING;
+      case "exited" -> exitCode == 0 ? ServiceRuntimeStatus.STOPPED : ServiceRuntimeStatus.FAILED;
+      case "dead", "removing", "restarting" -> ServiceRuntimeStatus.FAILED;
+      default -> ServiceRuntimeStatus.UNKNOWN;
+    };
+  }
+
+  private ServiceRuntimeStatus systemdStatus(final String state) {
+    return switch (state == null ? "" : state) {
+      case "active", "activating", "reloading" -> ServiceRuntimeStatus.RUNNING;
+      case "inactive", "deactivating" -> ServiceRuntimeStatus.STOPPED;
+      case "failed" -> ServiceRuntimeStatus.FAILED;
+      default -> ServiceRuntimeStatus.UNKNOWN;
+    };
+  }
+
+  private Instant parseDockerTimestamp(final String value) {
+    if (value == null || value.isBlank() || value.startsWith("0001-")) return null;
+    return Instant.parse(value);
+  }
+
+  private Instant parseSystemdTimestamp(final String value) {
+    if (value == null || value.isBlank() || value.equalsIgnoreCase("n/a")) return null;
+    try {
+      return ZonedDateTime.parse(value, SYSTEMD_TIMESTAMP).toInstant();
+    } catch (final DateTimeParseException ignored) {
+      return null;
+    }
+  }
 }
