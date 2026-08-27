@@ -1482,6 +1482,8 @@ class CodexAppServerClient:
             return await asyncio.wrap_future(submitted.result)
         except asyncio.CancelledError:
             self._register_cancellation_cleanup(submitted.completed)
+            if self._transport is not None:
+                self._transport.request_process_termination()
             submitted.cancel()
             submitted.result.cancel()
             try:
