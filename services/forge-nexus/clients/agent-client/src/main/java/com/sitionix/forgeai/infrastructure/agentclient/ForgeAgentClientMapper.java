@@ -228,6 +228,7 @@ public class ForgeAgentClientMapper {
                 response.id(),
                 response.projectId(),
                 response.name(),
+                response.remoteUrl(),
                 response.cloned(),
                 this.toDomain(response.git()),
                 response.createdAt()

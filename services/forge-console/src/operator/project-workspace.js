@@ -5,11 +5,8 @@ export class ProjectWorkspace {
     this.document = options.document;
     this.onBack = options.onBack;
     this.onOpenLogs = options.onOpenLogs;
-    this.onAddService = options.onAddService || (()=>{});
     this.onOpenRepository = options.onOpenRepository || (() => {});
     this.onOpenService = options.onOpenService || (()=>{});
-    this.onEditService = options.onEditService || (() => {});
-    this.onDeleteService = options.onDeleteService || (() => {});
     this.onNewAgent = options.onNewAgent;
     this.onImportRepository = options.onImportRepository;
     this.onCloneRepository = options.onCloneRepository || (() => {});
@@ -29,14 +26,13 @@ export class ProjectWorkspace {
   bind() {
     this.byId('agentsV2WorkspaceBack')?.addEventListener('click', () => this.onBack());
     this.byId('projectLogsOpen')?.addEventListener('click', () => this.onOpenLogs());
-    this.byId('projectServiceAdd')?.addEventListener('click', () => this.onAddService());
     this.byId('agentsV2ImportRepository')?.addEventListener('click', () => this.onImportRepository());
     this.byId('agentsV2CreateAgent')?.addEventListener('click', () => this.onNewAgent());
     this.byId('agentsV2CreateWorkflow')?.addEventListener('click', () => this.onNewWorkflow());
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, repositories, services, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null) {
+  render(project, repositories, services, agents, workflows, tasks, repositoriesCurrent, servicesLoadState, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2ImportRepository').disabled = !project || !repositoriesCurrent;
@@ -49,7 +45,7 @@ export class ProjectWorkspace {
       || !tasksCurrent
       || !workflows.length
       || !repositories.length;
-    this.renderRepositories(repositories, services, repositoriesCurrent, repositoriesLoadFailed);
+    this.renderRepositories(repositories, services, repositoriesCurrent, servicesLoadState, repositoriesLoadFailed);
     this.renderStandaloneServices(services);
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
@@ -102,7 +98,7 @@ export class ProjectWorkspace {
     if (statusElement) statusElement.textContent = status || 'UNKNOWN';
   }
 
-  renderRepositories(repositories, services, repositoriesCurrent, repositoriesLoadFailed) {
+  renderRepositories(repositories, services, repositoriesCurrent, servicesLoadState, repositoriesLoadFailed) {
     const list = this.byId('agentsV2RepositoriesList');
     if (repositoriesLoadFailed) {
       list.innerHTML = '';
@@ -122,8 +118,8 @@ export class ProjectWorkspace {
           <code>${escapeHtml(repository.name || '')}</code>
           ${this.renderRepositoryGitState(repository)}
         </span>
-        <span class="repository-runtime-summary repository-runtime-${escapeHtml(runtimeTone(this.repositoryRuntimeSummary(repository, services)))}">
-          <span class="repository-runtime-dot" aria-hidden="true"></span><span data-repository-runtime-status="${escapeHtml(repository.id)}">${escapeHtml(this.repositoryRuntimeSummary(repository, services))}</span>
+        <span class="repository-runtime-summary repository-runtime-${escapeHtml(this.repositoryRuntimeSummaryTone(repository, services, servicesLoadState))}">
+          <span class="repository-runtime-dot" aria-hidden="true"></span><span data-repository-runtime-status="${escapeHtml(repository.id)}">${escapeHtml(this.repositoryRuntimeSummary(repository, services, servicesLoadState))}</span>
         </span>
       </article>
     `).join('');
@@ -140,7 +136,13 @@ export class ProjectWorkspace {
     });
   }
 
-  repositoryRuntimeSummary(repository, services) {
+  repositoryRuntimeSummary(repository, services, servicesLoadState = 'CURRENT') {
+    if (servicesLoadState === 'LOADING') {
+      return 'Loading runtime';
+    }
+    if (servicesLoadState === 'FAILED') {
+      return 'Runtime unavailable';
+    }
     const linked = services.filter((service) => service.repositoryId === repository.id);
     if (!linked.length) {
       return 'NOT CONFIGURED';
@@ -149,16 +151,38 @@ export class ProjectWorkspace {
     if (linked.length === 1) {
       return statuses[0];
     }
-    if (statuses.includes('FAILED')) {
-      return 'FAILED';
+    const counts = statuses.reduce((summary, status) => {
+      summary[status] = (summary[status] || 0) + 1;
+      return summary;
+    }, {});
+    return [
+      `${linked.length} services`,
+      counts.RUNNING ? `${counts.RUNNING} running` : '',
+      counts.STOPPED ? `${counts.STOPPED} stopped` : '',
+      counts.FAILED ? `${counts.FAILED} failed` : '',
+      counts.UNKNOWN ? `${counts.UNKNOWN} unknown` : ''
+    ].filter(Boolean).join(' · ');
+  }
+
+  repositoryRuntimeSummaryTone(repository, services, servicesLoadState = 'CURRENT') {
+    if (servicesLoadState === 'LOADING' || servicesLoadState === 'FAILED') {
+      return 'unknown';
     }
-    if (statuses.includes('RUNNING')) {
-      return 'RUNNING';
+    const linked = services.filter((service) => service.repositoryId === repository.id);
+    if (!linked.length) {
+      return 'not-configured';
+    }
+    const statuses = linked.map((service) => service.runtimeStatus || 'UNKNOWN');
+    if (statuses.includes('FAILED')) {
+      return 'failed';
+    }
+    if (statuses.every((status) => status === 'RUNNING')) {
+      return 'running';
     }
     if (statuses.every((status) => status === 'STOPPED')) {
-      return 'STOPPED';
+      return 'stopped';
     }
-    return 'UNKNOWN';
+    return 'unknown';
   }
 
   renderRepositoryAction(repository, pullingRepositoryIds = new Set()) {

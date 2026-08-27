@@ -126,7 +126,11 @@
       <section id="repositoryRuntimeSection" class="panel project-section hidden">
         <div class="agents-v2-pane-head">
           <div><h2>Runtime</h2><p id="repositoryRuntimeSummary">Runtime not configured</p></div>
-          <button id="repositoryRuntimeConfigure" class="button small secondary" type="button">Configure Runtime</button>
+          <div class="repository-actions">
+            <button id="repositoryRuntimeAdd" class="button small secondary hidden" type="button">Add Service</button>
+            <button id="repositoryRuntimeConfigure" class="button small secondary" type="button">Configure Runtime</button>
+            <button id="repositoryRuntimeDelete" class="button small secondary hidden" type="button">Delete</button>
+          </div>
         </div>
         <div id="repositoryRuntimeServices" class="runtime-service-selector hidden"></div>
         <div id="repositoryRuntimeDetails" class="repository-detail-grid"></div>

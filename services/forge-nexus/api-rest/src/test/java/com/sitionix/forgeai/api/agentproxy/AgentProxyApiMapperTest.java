@@ -151,6 +151,7 @@ class AgentProxyApiMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 new AgentProjectRepositoryGitState(
                         null,
@@ -162,6 +163,7 @@ class AgentProxyApiMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 new AgentProjectRepositoryGitStateResponse(null, "CLEAN", false),
                 CREATED
@@ -175,6 +177,7 @@ class AgentProxyApiMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 new AgentProjectRepositoryGitStateResponse("main", "CLEAN", false),
                 CREATED
@@ -185,7 +188,7 @@ class AgentProxyApiMapperTest {
                 .toList();
         final var json = this.objectMapper.valueToTree(response.git());
 
-        assertThat(responseFields).containsExactly("id", "projectId", "name", "cloned", "git", "createdAt");
+        assertThat(responseFields).containsExactly("id", "projectId", "name", "remoteUrl", "cloned", "git", "createdAt");
         assertThat(json.size()).isEqualTo(3);
         assertThat(json.has("branch")).isTrue();
         assertThat(json.has("workingTree")).isTrue();

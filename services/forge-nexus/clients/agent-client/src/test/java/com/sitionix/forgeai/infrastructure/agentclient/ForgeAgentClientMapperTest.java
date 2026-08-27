@@ -221,6 +221,7 @@ class ForgeAgentClientMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 new ProjectRepositoryGitStateResponse("main", "DIRTY", false),
                 CREATED
@@ -230,6 +231,7 @@ class ForgeAgentClientMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 new AgentProjectRepositoryGitState("main", "DIRTY", false),
                 CREATED
@@ -243,6 +245,7 @@ class ForgeAgentClientMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 null,
                 CREATED
@@ -252,6 +255,7 @@ class ForgeAgentClientMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 null,
                 CREATED

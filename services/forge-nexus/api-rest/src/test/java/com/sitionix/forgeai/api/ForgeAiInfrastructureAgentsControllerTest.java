@@ -569,6 +569,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 false,
                 null,
                 NOW
@@ -580,6 +581,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 false,
                 null,
                 NOW

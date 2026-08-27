@@ -230,6 +230,7 @@ public class AgentProxyApiMapper {
                 repository.id(),
                 repository.projectId(),
                 repository.name(),
+                repository.remoteUrl(),
                 repository.cloned(),
                 this.toResponse(repository.git()),
                 repository.createdAt()

@@ -525,7 +525,7 @@ class ForgeAgentControllerTest {
     }
 
     private ProjectRepositoryView projectRepository() {
-        return new ProjectRepositoryView(REPOSITORY_ID, PROJECT_ID, "service-a", false, null, NOW);
+        return new ProjectRepositoryView(REPOSITORY_ID, PROJECT_ID, "service-a", "git@gitlab.com:company/service-a.git", false, null, NOW);
     }
 
     private ProjectRepositoryResponse projectRepositoryResponse() {
@@ -533,6 +533,7 @@ class ForgeAgentControllerTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 false,
                 null,
                 NOW

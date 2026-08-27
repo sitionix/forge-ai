@@ -223,6 +223,6 @@ public class ProjectRepositoryUseCases {
                                          final String name,
                                          final boolean cloned,
                                          final GitLocalRepositoryState gitState) {
-        return new ProjectRepositoryView(repository.id(), projectId, name, cloned, gitState, repository.createdAt());
+        return new ProjectRepositoryView(repository.id(), projectId, name, repository.remoteUrl(), cloned, gitState, repository.createdAt());
     }
 }

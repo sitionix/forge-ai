@@ -7,6 +7,7 @@ public record ProjectRepositoryResponse(
         UUID id,
         UUID projectId,
         String name,
+        String remoteUrl,
         boolean cloned,
         ProjectRepositoryGitStateResponse git,
         Instant createdAt

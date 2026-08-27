@@ -29,6 +29,7 @@ export class AgentProjectsPage {
       projects: [],
       repositories: [],
       services: [],
+      servicesLoadState: 'LOADING',
       sshConnections: [],
       agents: [],
       workflows: [],
@@ -68,6 +69,7 @@ export class AgentProjectsPage {
     this.serviceRuntimeLoadGeneration = 0;
     this.repositoryWorkspaceSequence = 0;
     this.repositoryRuntimeLoadGeneration = 0;
+    this.serviceModalLoadGeneration = 0;
     this.workflowLoadSequence = 0;
     this.taskPollTimer = null;
     this.taskPollInFlight = null;
@@ -78,11 +80,8 @@ export class AgentProjectsPage {
       document: this.document,
       onBack: () => this.showProjectsIndex(),
       onOpenLogs: () => this.openLogsWorkspace(this.state.selectedProjectId),
-      onAddService: () => this.openServiceModal(),
       onOpenRepository: (repositoryId) => this.openRepositoryWorkspace(this.state.selectedProjectId, repositoryId),
       onOpenService: (serviceId) => this.openServiceWorkspace(this.state.selectedProjectId, serviceId),
-      onEditService: (serviceId) => this.openServiceModal(serviceId),
-      onDeleteService: (serviceId) => this.deleteService(serviceId),
       onImportRepository: () => this.openRepositoryModal(),
       onCloneRepository: (repositoryId) => this.cloneRepository(repositoryId),
       onRefreshRepository: (repositoryId) => this.refreshRepository(repositoryId),
@@ -141,7 +140,7 @@ export class AgentProjectsPage {
     this.byId('agentsV2ProjectCancel')?.addEventListener('click', () => this.closeDialog('agentsV2ProjectDialog'));
     this.byId('agentsV2ProjectForm')?.addEventListener('submit', (event) => this.submitProject(event));
     this.byId('projectServiceForm')?.addEventListener('submit', (event) => this.submitService(event));
-    this.byId('projectServiceCancel')?.addEventListener('click', () => this.closeDialog('projectServiceDialog'));
+    this.byId('projectServiceCancel')?.addEventListener('click', () => this.closeServiceModal());
     this.byId('projectServiceConnection')?.addEventListener('change', () => this.renderServiceTargetFields());
     this.byId('projectServiceProvider')?.addEventListener('change', () => this.renderServiceTargetFields());
     this.byId('agentsV2RepositoryCancel')?.addEventListener('click', () => this.closeDialog('agentsV2RepositoryDialog'));
@@ -178,6 +177,7 @@ export class AgentProjectsPage {
     this.workflowLoadSequence += 1;
     this.repositoryWorkspaceSequence += 1;
     this.repositoryRuntimeLoadGeneration += 1;
+    this.serviceModalLoadGeneration += 1;
     this.stopTaskPolling();
     this.state.view = 'projects';
     this.state.selectedProjectId = null;
@@ -185,6 +185,7 @@ export class AgentProjectsPage {
     this.state.selectedRuntimeServiceId = null;
     this.state.repositories = [];
     this.state.services = [];
+    this.state.servicesLoadState = 'LOADING';
     this.state.sshConnections = [];
     this.state.agents = [];
     this.state.workflows = [];
@@ -224,6 +225,7 @@ export class AgentProjectsPage {
     this.workflowLoadSequence += 1;
     this.repositoryWorkspaceSequence += 1;
     this.repositoryRuntimeLoadGeneration += 1;
+    this.serviceModalLoadGeneration += 1;
     this.stopTaskPolling();
     this.state.view = 'project';
     this.state.selectedProjectId = projectId;
@@ -231,6 +233,7 @@ export class AgentProjectsPage {
     this.state.selectedRuntimeServiceId = null;
     this.state.repositories = [];
     this.state.services = [];
+    this.state.servicesLoadState = 'LOADING';
     this.state.sshConnections = [];
     this.state.agents = [];
     this.state.workflows = [];
@@ -282,10 +285,12 @@ export class AgentProjectsPage {
     this.disposeLogsWorkspace();
     this.repositoryWorkspaceSequence += 1;
     this.repositoryRuntimeLoadGeneration += 1;
+    this.serviceModalLoadGeneration += 1;
     this.state.view = 'logs';
     this.state.selectedProjectId = projectId;
     this.state.selectedRepositoryId = null;
     this.state.selectedRuntimeServiceId = null;
+    this.state.servicesLoadState = 'LOADING';
     this.byId('agentsV2ProjectsView').classList.add('hidden');
     this.byId('agentsV2Workspace').classList.add('hidden');
     this.byId('agentsV2Builder').classList.add('hidden');
@@ -314,11 +319,16 @@ export class AgentProjectsPage {
   async loadServices(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence) {
     if (!projectId || !this.api.listServices) return;
     const runtimeGeneration = ++this.serviceRuntimeLoadGeneration;
+    this.state.servicesLoadState = 'LOADING';
+    if (this.state.view === 'project') {
+      this.renderProjectWorkspace();
+    }
     try {
       const services = await this.api.listServices(projectId);
       if (this.isCurrentProjectLoad(projectId, loadSequence)
           && this.serviceRuntimeLoadGeneration === runtimeGeneration) {
         this.state.services = services;
+        this.state.servicesLoadState = 'CURRENT';
         if (this.state.view === 'project') {
           this.renderProjectWorkspace();
         }
@@ -328,6 +338,7 @@ export class AgentProjectsPage {
       if (this.isCurrentProjectLoad(projectId, loadSequence)
           && this.serviceRuntimeLoadGeneration === runtimeGeneration) {
         this.state.services = [];
+        this.state.servicesLoadState = 'FAILED';
         if (this.state.view === 'project') {
           this.renderProjectWorkspace();
         }
@@ -364,6 +375,14 @@ export class AgentProjectsPage {
   async openServiceModal(serviceId = null, options = {}) {
     const projectId = this.state.selectedProjectId;
     if (!projectId) return;
+    const modalGeneration = ++this.serviceModalLoadGeneration;
+    const context = {
+      view: this.state.view,
+      repositoryId: options.repositoryId || null,
+      selectedRepositoryId: this.state.selectedRepositoryId,
+      selectedRuntimeServiceId: this.state.selectedRuntimeServiceId,
+      serviceId
+    };
     const service = serviceId
       ? this.state.services.find((candidate) => candidate.id === serviceId)
       : null;
@@ -372,6 +391,9 @@ export class AgentProjectsPage {
       ? this.state.repositories.find((candidate) => candidate.id === repositoryId)
       : null;
     const connections = await this.api.listSshConnections(projectId);
+    if (!this.isCurrentServiceModalContext(projectId, modalGeneration, context)) {
+      return;
+    }
     this.state.editingServiceId = service?.id || null;
     this.state.configuringRepositoryId = options.repositoryId || null;
     this.byId('projectServiceDialogTitle').textContent = service ? 'Edit Runtime' : (repositoryId ? 'Configure Runtime' : 'Create Service');
@@ -431,7 +453,7 @@ export class AgentProjectsPage {
       } else {
         await this.api.createService(projectId, request);
       }
-      this.closeDialog('projectServiceDialog');
+      this.closeServiceModal();
       this.state.editingServiceId = null;
       this.state.configuringRepositoryId = null;
       if (this.state.view === 'repository' && this.state.selectedRepositoryId) {
@@ -458,8 +480,16 @@ export class AgentProjectsPage {
     }
   }
 
+  closeServiceModal() {
+    this.serviceModalLoadGeneration += 1;
+    this.state.editingServiceId = null;
+    this.state.configuringRepositoryId = null;
+    this.byId('projectServiceRepositoryField')?.classList.remove('hidden');
+    this.closeDialog('projectServiceDialog');
+  }
+
   async openServiceWorkspace(projectId,serviceId,options={}){
-    if(!projectId||!serviceId)return;this.disposeLogsWorkspace();this.repositoryWorkspaceSequence += 1;this.repositoryRuntimeLoadGeneration += 1;this.state.view='service';this.state.selectedProjectId=projectId;this.state.selectedRepositoryId=null;this.state.selectedRuntimeServiceId=null;this.state.openServiceId=serviceId;
+    if(!projectId||!serviceId)return;this.disposeLogsWorkspace();this.repositoryWorkspaceSequence += 1;this.repositoryRuntimeLoadGeneration += 1;this.serviceModalLoadGeneration += 1;this.state.view='service';this.state.selectedProjectId=projectId;this.state.selectedRepositoryId=null;this.state.selectedRuntimeServiceId=null;this.state.openServiceId=serviceId;
     this.byId('agentsV2ProjectsView').classList.add('hidden');this.byId('agentsV2Workspace').classList.add('hidden');this.byId('projectLogsWorkspace').classList.remove('hidden');this.byId('serviceOverview').classList.remove('hidden');this.hideRepositoryWorkspacePanels();this.showLogSections(true);
     const [service,runtime,sources]=await Promise.all([this.api.getService(projectId,serviceId),this.api.getServiceRuntime(projectId,serviceId),this.api.listServiceLogSources(projectId,serviceId)]);
     this.byId('projectLogsTitle').textContent=service.name;this.byId('projectLogsCrumbs').textContent=`Projects / ${this.currentProject()?.name||'Project'} / Services / ${service.name}`;this.byId('serviceRuntimeStatus').textContent=runtime.status;
@@ -486,6 +516,7 @@ export class AgentProjectsPage {
     const workspaceSequence = this.repositoryWorkspaceSequence + 1;
     this.repositoryWorkspaceSequence = workspaceSequence;
     this.repositoryRuntimeLoadGeneration += 1;
+    this.serviceModalLoadGeneration += 1;
     this.state.view = 'repository';
     this.state.selectedProjectId = projectId;
     this.state.selectedRepositoryId = repositoryId;
@@ -495,6 +526,7 @@ export class AgentProjectsPage {
     this.state.openTaskId = null;
     this.state.repositoryRuntime = null;
     this.state.repositoryRuntimeError = '';
+    this.state.servicesLoadState = 'LOADING';
     this.byId('agentsV2ProjectsView').classList.add('hidden');
     this.byId('agentsV2Workspace').classList.add('hidden');
     this.byId('agentsV2Builder').classList.add('hidden');
@@ -516,15 +548,18 @@ export class AgentProjectsPage {
 
   async reloadRepositoryWorkspaceData(projectId, repositoryId, workspaceSequence) {
     try {
-      const [repositories, services, connections] = await Promise.all([
+      const [repositories, servicesResult, connections] = await Promise.all([
         this.api.listProjectRepositories(projectId),
-        this.api.listServices(projectId),
+        this.api.listServices(projectId)
+          .then((services) => ({ services, error: null }))
+          .catch((error) => ({ services: [], error })),
         this.api.listSshConnections?.(projectId) || []
       ]);
       if (!this.isCurrentRepositoryWorkspace(projectId, repositoryId, workspaceSequence)) return;
       this.state.repositories = repositories;
       this.state.repositoriesProjectId = projectId;
-      this.state.services = services;
+      this.state.services = servicesResult.services;
+      this.state.servicesLoadState = servicesResult.error ? 'FAILED' : 'CURRENT';
       this.state.sshConnections = connections;
       await this.renderRepositoryWorkspaceForSelection(projectId, repositoryId, workspaceSequence);
     } catch (error) {
@@ -536,14 +571,21 @@ export class AgentProjectsPage {
   }
 
   async reloadRepositoryServices(projectId, repositoryId, workspaceSequence) {
+    this.state.servicesLoadState = 'LOADING';
+    this.renderCurrentRepositoryWorkspace();
     try {
       const services = await this.api.listServices(projectId);
       if (!this.isCurrentRepositoryWorkspace(projectId, repositoryId, workspaceSequence)) return;
       this.state.services = services;
+      this.state.servicesLoadState = 'CURRENT';
       await this.renderRepositoryWorkspaceForSelection(projectId, repositoryId, workspaceSequence);
     } catch (error) {
       if (!this.isCurrentRepositoryWorkspace(projectId, repositoryId, workspaceSequence)) return;
+      this.state.services = [];
+      this.state.servicesLoadState = 'FAILED';
+      this.renderCurrentRepositoryWorkspace();
       this.byId('repositoryRuntimeSummary').textContent = error.message || 'Runtime workloads failed to load.';
+      this.showLogSections(false);
     }
   }
 
@@ -555,7 +597,9 @@ export class AgentProjectsPage {
       this.showLogSections(false);
       return;
     }
-    const linkedServices = this.linkedServicesForRepository(repositoryId);
+    const linkedServices = this.state.servicesLoadState === 'CURRENT'
+      ? this.linkedServicesForRepository(repositoryId)
+      : [];
     if (!linkedServices.some((service) => service.id === this.state.selectedRuntimeServiceId)) {
       this.state.selectedRuntimeServiceId = linkedServices[0]?.id || null;
     }
@@ -576,6 +620,21 @@ export class AgentProjectsPage {
       .sort((left, right) => (left.name || '').localeCompare(right.name || '') || (left.id || '').localeCompare(right.id || ''));
   }
 
+  currentRepository() {
+    return this.state.repositories.find((candidate) => candidate.id === this.state.selectedRepositoryId) || null;
+  }
+
+  renderCurrentRepositoryWorkspace() {
+    const repository = this.currentRepository();
+    if (!repository) {
+      return;
+    }
+    const linkedServices = this.state.servicesLoadState === 'CURRENT'
+      ? this.linkedServicesForRepository(repository.id)
+      : [];
+    this.renderRepositoryWorkspace(repository, linkedServices);
+  }
+
   renderRepositoryWorkspaceLoading(projectId) {
     const projectName = this.state.projects.find((candidate) => candidate.id === projectId)?.name || 'Project';
     this.byId('projectLogsCrumbs').textContent = `Projects / ${projectName} / Repositories`;
@@ -593,8 +652,12 @@ export class AgentProjectsPage {
     const projectName = this.currentProject()?.name || 'Project';
     const selectedService = linkedServices.find((service) => service.id === this.state.selectedRuntimeServiceId) || null;
     const runtime = selectedService ? this.state.repositoryRuntime : null;
-    const status = selectedService ? (runtime?.status || selectedService.runtimeStatus || 'UNKNOWN') : 'NOT CONFIGURED';
-    const targetSummary = selectedService ? this.serviceTargetSummary(selectedService) : 'Runtime not configured';
+    const status = selectedService
+      ? (runtime?.status || selectedService.runtimeStatus || 'UNKNOWN')
+      : this.repositoryRuntimeUnavailableStatus();
+    const targetSummary = selectedService
+      ? this.serviceTargetSummary(selectedService)
+      : this.repositoryRuntimeUnavailableSummary();
     this.byId('projectLogsCrumbs').textContent = `Projects / ${projectName} / Repositories / ${repository.name || 'Repository'}`;
     this.byId('projectLogsTitle').textContent = repository.name || 'Repository';
     this.byId('projectLogsBack').onclick = () => this.returnToProject();
@@ -611,6 +674,7 @@ export class AgentProjectsPage {
     ]);
     this.byId('repositorySourceDetails').innerHTML = this.detailGrid([
       ['Name', repository.name || 'Repository'],
+      ['Remote URL', repository.remoteUrl || ''],
       ['Branch', repository.cloned ? (repository.git?.branch || 'detached') : 'Not cloned'],
       ['Working tree', repository.cloned ? this.repositoryWorkingTreeText(repository) : 'Not cloned']
     ]);
@@ -637,9 +701,15 @@ export class AgentProjectsPage {
   }
 
   renderRepositoryRuntimeSection(repository, linkedServices, selectedService, runtime) {
+    const add = this.byId('repositoryRuntimeAdd');
     const configure = this.byId('repositoryRuntimeConfigure');
+    const remove = this.byId('repositoryRuntimeDelete');
+    add.classList.toggle('hidden', !selectedService);
+    add.onclick = () => this.openServiceModal(null, { repositoryId: repository.id });
     configure.textContent = selectedService ? 'Configure' : 'Configure Runtime';
     configure.onclick = () => this.openServiceModal(selectedService?.id || null, { repositoryId: repository.id });
+    remove.classList.toggle('hidden', !selectedService);
+    remove.onclick = () => selectedService && this.deleteService(selectedService.id);
     const selector = this.byId('repositoryRuntimeServices');
     selector.classList.toggle('hidden', linkedServices.length <= 1);
     selector.innerHTML = linkedServices.length > 1
@@ -651,6 +721,16 @@ export class AgentProjectsPage {
       : '';
     selector.querySelectorAll('[data-runtime-service-id]').forEach((element) =>
       element.addEventListener('click', () => this.selectRepositoryRuntimeService(element.dataset.runtimeServiceId)));
+    if (this.state.servicesLoadState !== 'CURRENT') {
+      const loading = this.state.servicesLoadState === 'LOADING';
+      this.byId('repositoryRuntimeSummary').textContent = loading ? 'Loading runtime workloads...' : 'Runtime unavailable';
+      this.byId('repositoryRuntimeDetails').innerHTML = `<div class="muted-state">${loading ? 'Loading runtime workloads...' : 'Runtime workloads unavailable'}</div>`;
+      add.classList.add('hidden');
+      remove.classList.add('hidden');
+      configure.disabled = true;
+      return;
+    }
+    configure.disabled = false;
     if (!selectedService) {
       this.byId('repositoryRuntimeSummary').textContent = 'Runtime not configured';
       this.byId('repositoryRuntimeDetails').innerHTML = '<div class="muted-state">Runtime not configured</div>';
@@ -717,16 +797,20 @@ export class AgentProjectsPage {
     this.disposeLogsWorkspace();
     if (!this.isCurrentRepositoryWorkspace(projectId, repositoryId, workspaceSequence) || this.state.selectedRuntimeServiceId !== serviceId) return;
     this.showLogSections(true);
-    this.logsView = new ProjectLogsView({
+    const view = new ProjectLogsView({
       document: this.document,
       window: this.window,
       api: this.api,
       serviceId,
     });
-    this.logsView.bind();
-    await this.logsView.load(projectId);
+    this.logsView = view;
+    view.bind();
+    await view.load(projectId);
     if (!this.isCurrentRepositoryWorkspace(projectId, repositoryId, workspaceSequence) || this.state.selectedRuntimeServiceId !== serviceId) {
-      this.disposeLogsWorkspace();
+      view.dispose();
+      if (this.logsView === view) {
+        this.logsView = null;
+      }
     }
   }
 
@@ -973,6 +1057,7 @@ export class AgentProjectsPage {
       this.state.workflows,
       this.state.tasks,
       this.repositoriesDataCurrent(),
+      this.state.servicesLoadState,
       this.projectDataCurrent(),
       this.workflowsDataCurrent(),
       this.tasksDataCurrent(),
@@ -1051,8 +1136,8 @@ export class AgentProjectsPage {
     this.showError('agentsV2RepositoriesError', '');
     await this.renderAfterRepositoryAction();
     try {
-      await this.api.cloneProjectRepository(this.state.selectedProjectId, repositoryId);
-      await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
+      const repository = await this.api.cloneProjectRepository(this.state.selectedProjectId, repositoryId);
+      this.updateRepositoryState(repository);
       await this.renderAfterRepositoryAction();
     } catch (error) {
       this.showError('agentsV2RepositoriesError', error.message || 'Repository could not be cloned.');
@@ -1074,11 +1159,11 @@ export class AgentProjectsPage {
     this.showError('agentsV2RepositoriesError', '');
     await this.renderAfterRepositoryAction();
     try {
-      await this.api.pullProjectRepository(this.state.selectedProjectId, repositoryId);
-      await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
+      const repository = await this.api.pullProjectRepository(this.state.selectedProjectId, repositoryId);
+      this.updateRepositoryState(repository);
       await this.renderAfterRepositoryAction();
     } catch (error) {
-      await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
+      await this.reloadRepositoryStateOnly(repositoryId);
       await this.renderAfterRepositoryAction();
       this.showError('agentsV2RepositoriesError', error.message || 'Repository could not be pulled.');
     } finally {
@@ -1099,8 +1184,8 @@ export class AgentProjectsPage {
     this.showError('agentsV2RepositoriesError', '');
     await this.renderAfterRepositoryAction();
     try {
-      await this.api.refreshProjectRepository(this.state.selectedProjectId, repositoryId);
-      await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
+      const repository = await this.api.refreshProjectRepository(this.state.selectedProjectId, repositoryId);
+      this.updateRepositoryState(repository);
       await this.renderAfterRepositoryAction();
     } catch (error) {
       this.showError('agentsV2RepositoriesError', error.message || 'Repository remote state could not be refreshed.');
@@ -1112,14 +1197,37 @@ export class AgentProjectsPage {
 
   async renderAfterRepositoryAction() {
     if (this.state.view === 'repository' && this.state.selectedProjectId && this.state.selectedRepositoryId) {
-      await this.renderRepositoryWorkspaceForSelection(
-        this.state.selectedProjectId,
-        this.state.selectedRepositoryId,
-        this.repositoryWorkspaceSequence
-      );
+      this.renderCurrentRepositoryWorkspace();
       return;
     }
     this.renderProjectWorkspace();
+  }
+
+  async reloadRepositoryStateOnly(repositoryId) {
+    const projectId = this.state.selectedProjectId;
+    if (!projectId) return;
+    try {
+      const repositories = await this.api.listProjectRepositories(projectId);
+      if (this.state.selectedProjectId !== projectId || this.state.repositoriesLoadFailed) return;
+      this.state.repositories = repositories;
+      this.state.repositoriesProjectId = projectId;
+    } catch {
+      // Preserve the last known Repository state if a best-effort post-action refresh fails.
+    }
+  }
+
+  updateRepositoryState(repository) {
+    if (!repository?.id) return;
+    const index = this.state.repositories.findIndex((candidate) => candidate.id === repository.id);
+    if (index === -1) {
+      this.state.repositories = [...this.state.repositories, repository];
+      return;
+    }
+    this.state.repositories = [
+      ...this.state.repositories.slice(0, index),
+      repository,
+      ...this.state.repositories.slice(index + 1)
+    ];
   }
 
   repositoriesDataCurrent() {
@@ -1838,6 +1946,26 @@ export class AgentProjectsPage {
     return `${target.provider || 'Runtime'} · ${targetIdentity}`;
   }
 
+  repositoryRuntimeUnavailableStatus() {
+    if (this.state.servicesLoadState === 'LOADING') {
+      return 'UNKNOWN';
+    }
+    if (this.state.servicesLoadState === 'FAILED') {
+      return 'UNAVAILABLE';
+    }
+    return 'NOT CONFIGURED';
+  }
+
+  repositoryRuntimeUnavailableSummary() {
+    if (this.state.servicesLoadState === 'LOADING') {
+      return 'Loading runtime workloads';
+    }
+    if (this.state.servicesLoadState === 'FAILED') {
+      return 'Runtime unavailable';
+    }
+    return 'Runtime not configured';
+  }
+
   formatUptime(value) {
     if (!value || typeof value !== 'string') {
       return '';
@@ -1907,6 +2035,19 @@ export class AgentProjectsPage {
     return this.isCurrentRepositoryWorkspace(projectId, repositoryId, workspaceSequence)
       && this.state.selectedRuntimeServiceId === serviceId
       && this.repositoryRuntimeLoadGeneration === runtimeGeneration;
+  }
+
+  isCurrentServiceModalContext(projectId, modalGeneration, context) {
+    if (this.disposed || this.state.selectedProjectId !== projectId || this.serviceModalLoadGeneration !== modalGeneration) {
+      return false;
+    }
+    if (context.view === 'repository') {
+      return this.state.view === 'repository'
+        && this.state.selectedRepositoryId === context.selectedRepositoryId
+        && (!context.repositoryId || this.state.selectedRepositoryId === context.repositoryId)
+        && this.state.selectedRuntimeServiceId === context.selectedRuntimeServiceId;
+    }
+    return this.state.view === context.view;
   }
 
   isCurrentTaskLoad(projectId, loadSequence, page) {

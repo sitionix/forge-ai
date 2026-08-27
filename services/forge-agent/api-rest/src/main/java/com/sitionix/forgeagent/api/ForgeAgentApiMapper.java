@@ -246,6 +246,7 @@ class ForgeAgentApiMapper {
                 repository.id(),
                 repository.projectId(),
                 repository.name(),
+                repository.remoteUrl(),
                 repository.cloned(),
                 this.toGitStateResponse(repository),
                 repository.createdAt()

@@ -145,6 +145,7 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 false,
                 null,
                 CREATED
@@ -153,6 +154,7 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 false,
                 null,
                 CREATED
@@ -175,6 +177,7 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 false,
                 null,
                 CREATED
@@ -183,6 +186,7 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 false,
                 null,
                 CREATED
@@ -203,6 +207,7 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 null,
                 CREATED
@@ -211,6 +216,7 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 null,
                 CREATED
@@ -231,6 +237,7 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 null,
                 CREATED
@@ -239,6 +246,7 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 null,
                 CREATED
@@ -259,6 +267,7 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 null,
                 CREATED
@@ -267,6 +276,7 @@ class ForgeAgentClientAdapterTest {
                 REPOSITORY_ID,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 null,
                 CREATED

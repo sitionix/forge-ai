@@ -248,11 +248,12 @@ class ForgeAgentApiMapperTest {
     void mapsUnclonedProjectRepositoryWithNullGitState() {
         final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
 
-        assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", false, null, CREATED)))
+        assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", "git@gitlab.com:company/service-a.git", false, null, CREATED)))
                 .isEqualTo(new ProjectRepositoryResponse(
                         repositoryId,
                         PROJECT_ID,
                         "service-a",
+                        "git@gitlab.com:company/service-a.git",
                         false,
                         null,
                         CREATED
@@ -270,11 +271,12 @@ class ForgeAgentApiMapperTest {
                 new GitUpstreamState("origin/main", GitUpstreamRelation.BEHIND)
         );
 
-        assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", true, gitState, CREATED)))
+        assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", "git@gitlab.com:company/service-a.git", true, gitState, CREATED)))
                 .isEqualTo(new ProjectRepositoryResponse(
                         repositoryId,
                         PROJECT_ID,
                         "service-a",
+                        "git@gitlab.com:company/service-a.git",
                         true,
                         new ProjectRepositoryGitStateResponse("main", "CLEAN", true),
                         CREATED
@@ -285,11 +287,12 @@ class ForgeAgentApiMapperTest {
     void mapsInvalidProjectRepositoryGitState() {
         final UUID repositoryId = UUID.fromString("88888888-8888-4888-8888-888888888888");
 
-        assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", true, GitLocalRepositoryState.invalid(), CREATED)))
+        assertThat(this.mapper.toResponse(new ProjectRepositoryView(repositoryId, PROJECT_ID, "service-a", "git@gitlab.com:company/service-a.git", true, GitLocalRepositoryState.invalid(), CREATED)))
                 .isEqualTo(new ProjectRepositoryResponse(
                         repositoryId,
                         PROJECT_ID,
                         "service-a",
+                        "git@gitlab.com:company/service-a.git",
                         true,
                         null,
                         CREATED
@@ -303,6 +306,7 @@ class ForgeAgentApiMapperTest {
                 repositoryId,
                 PROJECT_ID,
                 "service-a",
+                "git@gitlab.com:company/service-a.git",
                 true,
                 new ProjectRepositoryGitStateResponse("main", "CLEAN", false),
                 CREATED
@@ -313,7 +317,7 @@ class ForgeAgentApiMapperTest {
                 .toList();
         final var json = this.objectMapper.valueToTree(response.git());
 
-        assertThat(responseFields).containsExactly("id", "projectId", "name", "cloned", "git", "createdAt");
+        assertThat(responseFields).containsExactly("id", "projectId", "name", "remoteUrl", "cloned", "git", "createdAt");
         assertThat(json.size()).isEqualTo(3);
         assertThat(json.has("branch")).isTrue();
         assertThat(json.has("workingTree")).isTrue();
