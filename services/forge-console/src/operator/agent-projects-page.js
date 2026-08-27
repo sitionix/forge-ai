@@ -59,6 +59,7 @@ export class AgentProjectsPage {
       saving: false
     };
     this.projectLoadSequence = 0;
+    this.serviceRuntimeLoadGeneration = 0;
     this.workflowLoadSequence = 0;
     this.taskPollTimer = null;
     this.taskPollInFlight = null;
@@ -281,34 +282,38 @@ export class AgentProjectsPage {
 
   async loadServices(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence) {
     if (!projectId || !this.api.listServices) return;
+    const runtimeGeneration = ++this.serviceRuntimeLoadGeneration;
     try {
       const services = await this.api.listServices(projectId);
-      if (this.isCurrentProjectLoad(projectId, loadSequence)) {
+      if (this.isCurrentProjectLoad(projectId, loadSequence)
+          && this.serviceRuntimeLoadGeneration === runtimeGeneration) {
         this.state.services = services;
         this.workspace.renderServices(services, this.state.repositories);
-        this.loadServiceRuntimeStatuses(projectId, services, loadSequence);
+        this.loadServiceRuntimeStatuses(projectId, services, loadSequence, runtimeGeneration);
       }
     } catch {
-      if (this.isCurrentProjectLoad(projectId, loadSequence)) {
+      if (this.isCurrentProjectLoad(projectId, loadSequence)
+          && this.serviceRuntimeLoadGeneration === runtimeGeneration) {
         this.state.services = [];
         this.workspace.renderServices([]);
       }
     }
   }
 
-  loadServiceRuntimeStatuses(projectId, services, loadSequence) {
+  loadServiceRuntimeStatuses(projectId, services, loadSequence, runtimeGeneration) {
     if (!this.api.getServiceRuntime) return;
     services.forEach((service) => {
       this.api.getServiceRuntime(projectId, service.id)
         .then((runtime) => this.applyServiceRuntimeStatus(
-          projectId, service.id, runtime?.status || 'UNKNOWN', loadSequence))
+          projectId, service.id, runtime?.status || 'UNKNOWN', loadSequence, runtimeGeneration))
         .catch(() => this.applyServiceRuntimeStatus(
-          projectId, service.id, 'UNKNOWN', loadSequence));
+          projectId, service.id, 'UNKNOWN', loadSequence, runtimeGeneration));
     });
   }
 
-  applyServiceRuntimeStatus(projectId, serviceId, status, loadSequence) {
+  applyServiceRuntimeStatus(projectId, serviceId, status, loadSequence, runtimeGeneration) {
     if (!this.isCurrentProjectLoad(projectId, loadSequence)) return;
+    if (this.serviceRuntimeLoadGeneration !== runtimeGeneration) return;
     const service = this.state.services.find((candidate) => candidate.id === serviceId);
     if (!service) return;
     service.runtimeStatus = ['RUNNING', 'STOPPED', 'FAILED', 'UNKNOWN'].includes(status)

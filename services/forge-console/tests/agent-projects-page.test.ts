@@ -639,6 +639,37 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
+  it('ignores an older runtime response after the same Service target is reloaded', async () => {
+    const targetA = service();
+    const targetB = {
+      ...targetA,
+      runtimeTarget: { ...targetA.runtimeTarget, container: 'api-v2' }
+    };
+    let resolveA: (value: any) => void = () => {};
+    let resolveB: (value: any) => void = () => {};
+    const runtimeA = new Promise((resolve) => { resolveA = resolve; });
+    const runtimeB = new Promise((resolve) => { resolveB = resolve; });
+    const listServices = vi.fn()
+      .mockResolvedValueOnce([targetA])
+      .mockResolvedValueOnce([targetB]);
+    const getServiceRuntime = vi.fn()
+      .mockReturnValueOnce(runtimeA)
+      .mockReturnValueOnce(runtimeB);
+    const { dom, page } = await openedProject(api({ listServices, getServiceRuntime }));
+
+    await page.loadServices(project().id, page.projectLoadSequence);
+    resolveB({ status: 'RUNNING' });
+    await flushAsync();
+    expect(dom.window.document.querySelector('[data-service-runtime-status]')?.textContent)
+      .toBe('RUNNING');
+
+    resolveA({ status: 'FAILED' });
+    await flushAsync();
+    expect(dom.window.document.querySelector('[data-service-runtime-status]')?.textContent)
+      .toBe('RUNNING');
+    page.dispose();
+  });
+
   it('keeps Project lightweight and exposes only the dedicated Logs entry point', async () => {
     const listLogSources = vi.fn().mockResolvedValue([]);
     const streams: any[] = [];
