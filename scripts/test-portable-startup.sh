@@ -88,6 +88,37 @@ EOF
   chmod +x "${bin_dir}/ollama"
 }
 
+write_fake_systemctl() {
+  local bin_dir="$1"
+  cat > "${bin_dir}/systemctl" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  is-active)
+    printf '%s\n' "${TEST_SYSTEMD_STATE:-inactive}" inactive inactive inactive
+    [[ "${TEST_SYSTEMD_STATE:-inactive}" == "active" || "${TEST_SYSTEMD_STATE:-inactive}" == "activating" ]]
+    ;;
+  show)
+    printf '%s\n' "${TEST_SYSTEMD_MAIN_PID:-0}" 0 0 0
+    ;;
+  stop)
+    exit 0
+    ;;
+esac
+EOF
+  chmod +x "${bin_dir}/systemctl"
+}
+
+write_fake_lsof_for_port() {
+  local bin_dir="$1"
+  cat > "${bin_dir}/lsof" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"TCP:${TEST_LISTENER_PORT}"* ]]; then
+  printf '%s\n' "${TEST_SYSTEMD_MAIN_PID}"
+fi
+EOF
+  chmod +x "${bin_dir}/lsof"
+}
+
 write_fake_ollama_never_ready() {
   local bin_dir="$1"
   cat > "${bin_dir}/ollama" <<'EOF'
@@ -404,6 +435,86 @@ case_dev_start_refuses_active_systemd_without_killing() {
   ! grep -q 'kill' "${bin}/systemctl"
 }
 
+case_just_stop_refuses_systemd_state() {
+  local state dir bin output pid
+  for state in active activating; do
+    dir="$(new_temp_dir)"
+    bin="${dir}/bin"
+    mkdir -p "${bin}"
+    write_fake_systemctl "${bin}"
+    sleep 60 &
+    pid="$!"
+    CHILD_PIDS+=("${pid}")
+    if output="$(PATH="${bin}:${SYSTEM_PATH}" TEST_SYSTEMD_STATE="${state}" just --justfile "${ROOT_DIR}/Justfile" stop 2>&1)"; then
+      return 1
+    fi
+    [[ "${output}" == *"Forge systemd runtime is active"* ]]
+    kill -0 "${pid}" >/dev/null 2>&1
+  done
+}
+
+case_service_dev_stop_preserves_systemd_main_pid() {
+  local service pid_name dir bin pid output
+  for service in knowledge jarvis; do
+    dir="$(new_temp_dir)"
+    bin="${dir}/bin"
+    mkdir -p "${bin}" "${dir}/${service}"
+    write_fake_systemctl "${bin}"
+    sleep 60 &
+    pid="$!"
+    CHILD_PIDS+=("${pid}")
+    if [[ "${service}" == "knowledge" ]]; then
+      pid_name="knowledge-service.pid"
+    else
+      pid_name="jarvis-agent.pid"
+    fi
+    printf '%s\n' "${pid}" > "${dir}/${service}/${pid_name}"
+    if output="$(PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_DIR="${dir}" TEST_SYSTEMD_MAIN_PID="${pid}" "${ROOT_DIR}/scripts/${service}/stop.sh" 2>&1)"; then
+      return 1
+    fi
+    [[ "${output}" == *"systemd-owned Forge PID ${pid}"* ]]
+    kill -0 "${pid}" >/dev/null 2>&1
+  done
+}
+
+case_java_port_fallback_preserves_systemd_main_pid() {
+  local port dir bin pid output
+  for port in 9099 7091; do
+    dir="$(new_temp_dir)"
+    bin="${dir}/bin"
+    mkdir -p "${bin}"
+    write_fake_systemctl "${bin}"
+    write_fake_lsof_for_port "${bin}"
+    sleep 60 &
+    pid="$!"
+    CHILD_PIDS+=("${pid}")
+    if output="$(PATH="${bin}:${SYSTEM_PATH}" TEST_LISTENER_PORT="${port}" TEST_SYSTEMD_MAIN_PID="${pid}" just --justfile "${ROOT_DIR}/Justfile" _app-stop 2>&1)"; then
+      return 1
+    fi
+    [[ "${output}" == *"systemd-owned Forge PID ${pid}"* ]]
+    kill -0 "${pid}" >/dev/null 2>&1
+  done
+}
+
+case_normal_dev_owned_process_is_stoppable() {
+  local dir bin pid
+  dir="$(new_temp_dir)"
+  bin="${dir}/bin"
+  mkdir -p "${bin}" "${dir}/knowledge"
+  write_fake_systemctl "${bin}"
+  sleep 60 &
+  pid="$!"
+  CHILD_PIDS+=("${pid}")
+  printf '%s\n' "${pid}" > "${dir}/knowledge/knowledge-service.pid"
+  PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_DIR="${dir}" TEST_SYSTEMD_MAIN_PID=0 "${ROOT_DIR}/scripts/knowledge/stop.sh"
+  ! kill -0 "${pid}" >/dev/null 2>&1
+}
+
+case_systemd_stop_uses_only_systemctl() {
+  awk '/^  stop\)/,/^    ;;/ { print }' "${ROOT_DIR}/scripts/systemd/control.sh" | grep -Fq 'systemctl stop "${REVERSE_UNITS[@]}"'
+  ! awk '/^  stop\)/,/^    ;;/ { print }' "${ROOT_DIR}/scripts/systemd/control.sh" | grep -Eq 'kill|_app-stop|knowledge/stop|jarvis/stop'
+}
+
 case_systemd_unit_templates_have_no_committed_secrets_or_postgres_unit() {
   ! grep -R 'FORGE_AGENT_DB_PASSWORD=' "${ROOT_DIR}/config/systemd" >/dev/null
   ! grep -R 'forge-agent-postgres.service' "${ROOT_DIR}/config/systemd" >/dev/null
@@ -440,5 +551,10 @@ run_case "systemd unit templates have no committed secrets or Postgres unit" cas
 run_case "dev launcher and systemd workflows are separate" case_dev_launcher_and_systemd_workflows_are_separate
 run_case "systemd start refuses a dev-owned process without killing it" case_systemd_start_refuses_dev_owned_process
 run_case "dev start refuses active systemd without killing it" case_dev_start_refuses_active_systemd_without_killing
+run_case "just stop refuses active and activating systemd without killing" case_just_stop_refuses_systemd_state
+run_case "Knowledge and Jarvis dev stop preserve systemd MainPID" case_service_dev_stop_preserves_systemd_main_pid
+run_case "Agent and Nexus port fallback preserve systemd MainPID" case_java_port_fallback_preserves_systemd_main_pid
+run_case "normal dev-owned process remains stoppable" case_normal_dev_owned_process_is_stoppable
+run_case "systemd stop uses only systemctl" case_systemd_stop_uses_only_systemctl
 
 printf 'Portable startup shell tests: PASS %s/%s\n' "${PASSED}" "${TOTAL}"

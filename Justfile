@@ -37,7 +37,13 @@ _start-all: _start-preflight _app-stop _jarvis-stop _knowledge-stop _ollama-stop
     @echo "  postgres:  postgresql://localhost:54329/forge_agent"
     @echo "  sqlite:    {{sqlite_path}}"
 
-stop: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _postgres-stop
+stop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    scripts/runtime-ownership.sh assert-systemd-inactive
+    just --justfile "{{root}}/Justfile" _stop-dev
+
+_stop-dev: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _postgres-stop
     @echo "Forge AI stack stopped."
 
 status:
@@ -190,6 +196,7 @@ _java-service-rebuild-restart service:
 
     if [[ -f "${pid_file}" ]] && kill -0 "$(cat "${pid_file}")" >/dev/null 2>&1; then
         pid="$(cat "${pid_file}")"
+        "{{root}}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "${pid}"
         echo "Stopping ${display_name} pid ${pid}"
         kill "${pid}" >/dev/null 2>&1 || true
         rm -f "${pid_file}"
@@ -200,6 +207,7 @@ _java-service-rebuild-restart service:
         if [[ -n "${listener_pids}" ]]; then
             echo "Stopping ${display_name} listener pid(s) ${listener_pids}"
             for pid in ${listener_pids}; do
+                "{{root}}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "${pid}"
                 kill "${pid}" >/dev/null 2>&1 || true
             done
             rm -f "${pid_file}"
@@ -239,6 +247,7 @@ _app-start:
     source "{{root}}/scripts/lib/process.sh"
     mkdir -p "{{root}}/var/logs"
     if [[ -f "{{agent_pid}}" ]] && kill -0 "$(cat "{{agent_pid}}")" >/dev/null 2>&1; then
+        "{{root}}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "$(cat "{{agent_pid}}")"
         echo "Stopping Forge Agent pid $(cat "{{agent_pid}}")"
         kill "$(cat "{{agent_pid}}")" >/dev/null 2>&1 || true
         rm -f "{{agent_pid}}"
@@ -249,6 +258,7 @@ _app-start:
         if [[ -n "${agent_port_pid}" ]]; then
             echo "Stopping Forge Agent listener pid ${agent_port_pid}"
             for pid in ${agent_port_pid}; do
+                "{{root}}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "${pid}"
                 kill "${pid}" >/dev/null 2>&1 || true
             done
             rm -f "{{agent_pid}}"
@@ -300,6 +310,7 @@ _app-start:
         exit 1
     fi
     if [[ -f "{{app_pid}}" ]] && kill -0 "$(cat "{{app_pid}}")" >/dev/null 2>&1; then
+        "{{root}}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "$(cat "{{app_pid}}")"
         echo "Stopping Forge AI app pid $(cat "{{app_pid}}")"
         kill "$(cat "{{app_pid}}")" >/dev/null 2>&1 || true
         rm -f "{{app_pid}}"
@@ -310,6 +321,7 @@ _app-start:
         if [[ -n "${app_port_pid}" ]]; then
             echo "Stopping Forge AI app listener pid ${app_port_pid}"
             for pid in ${app_port_pid}; do
+                "{{root}}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "${pid}"
                 kill "${pid}" >/dev/null 2>&1 || true
             done
             rm -f "{{app_pid}}"
@@ -383,6 +395,7 @@ _app-stop:
     stopped=0
     if [[ -f "{{app_pid}}" ]] && kill -0 "$(cat "{{app_pid}}")" >/dev/null 2>&1; then
         pid="$(cat "{{app_pid}}")"
+        "{{root}}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "${pid}"
         kill "${pid}" >/dev/null 2>&1 || true
         echo "Stopped Forge AI app pid ${pid}"
         stopped=1
@@ -393,6 +406,7 @@ _app-stop:
         if [[ -n "${pids}" ]]; then
             echo "Stopping Forge AI app listener pid(s) ${pids}"
             for pid in ${pids}; do
+                "{{root}}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "${pid}"
                 kill "${pid}" >/dev/null 2>&1 || true
             done
             stopped=1
@@ -400,6 +414,7 @@ _app-stop:
     fi
     if [[ -f "{{agent_pid}}" ]] && kill -0 "$(cat "{{agent_pid}}")" >/dev/null 2>&1; then
         pid="$(cat "{{agent_pid}}")"
+        "{{root}}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "${pid}"
         kill "${pid}" >/dev/null 2>&1 || true
         echo "Stopped Forge Agent pid ${pid}"
         stopped=1
@@ -410,6 +425,7 @@ _app-stop:
         if [[ -n "${pids}" ]]; then
             echo "Stopping Forge Agent listener pid(s) ${pids}"
             for pid in ${pids}; do
+                "{{root}}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "${pid}"
                 kill "${pid}" >/dev/null 2>&1 || true
             done
             stopped=1

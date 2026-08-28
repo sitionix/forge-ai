@@ -11,6 +11,7 @@ stopped=0
 if [[ -f "${PID_FILE}" ]]; then
   PID="$(cat "${PID_FILE}")"
   if kill -0 "${PID}" >/dev/null 2>&1; then
+    "${FORGE_AI_HOME}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "${PID}"
     kill "${PID}" >/dev/null 2>&1 || true
     echo "Stopped Knowledge service PID ${PID}."
     stopped=1
@@ -28,6 +29,7 @@ if command -v lsof >/dev/null 2>&1; then
     for pid in ${pids}; do
       cmd="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
       if [[ "${cmd}" == *"knowledge_service.main:app"* ]]; then
+        "${FORGE_AI_HOME}/scripts/runtime-ownership.sh" assert-pid-not-systemd-owned "${pid}"
         kill "${pid}" >/dev/null 2>&1 || true
         stopped=1
       else

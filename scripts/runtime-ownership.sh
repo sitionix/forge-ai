@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 FORGE_AI_HOME="${FORGE_AI_HOME:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
-ACTION="${1:?Usage: runtime-ownership.sh assert-dev-inactive|assert-systemd-inactive}"
+ACTION="${1:?Usage: runtime-ownership.sh assert-dev-inactive|assert-systemd-inactive|assert-pid-not-systemd-owned PID}"
 UNITS=(forge-agent.service forge-nexus.service forge-knowledge.service forge-jarvis.service)
 PID_FILES=(
   "${FORGE_AI_HOME}/var/forge-agent.pid"
@@ -64,6 +64,13 @@ case "${ACTION}" in
   assert-systemd-inactive)
     if systemd_runtime_active; then
       echo "Forge systemd runtime is active. Stop it with 'just systemd-stop' before starting development runtime." >&2
+      exit 1
+    fi
+    ;;
+  assert-pid-not-systemd-owned)
+    pid="${2:?PID is required}"
+    if pid_is_systemd_owned "${pid}"; then
+      echo "Refusing to stop systemd-owned Forge PID ${pid}. Stop it with 'just systemd-stop'." >&2
       exit 1
     fi
     ;;
