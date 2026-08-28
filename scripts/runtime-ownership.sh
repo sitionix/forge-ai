@@ -57,20 +57,20 @@ systemd_runtime_active() {
 case "${ACTION}" in
   assert-dev-inactive)
     if dev_runtime_active; then
-      echo "Forge development runtime is active. Stop it with 'just stop' before starting systemd runtime." >&2
+      echo "Forge development runtime is active. Stop it with 'just _stop-dev' before starting systemd runtime." >&2
       exit 1
     fi
     ;;
   assert-systemd-inactive)
     if systemd_runtime_active; then
-      echo "Forge systemd runtime is active. Stop it with 'just systemd-stop' before starting development runtime." >&2
+      echo "Forge systemd runtime is active. Stop it with 'just stop' before starting development runtime." >&2
       exit 1
     fi
     ;;
   assert-pid-not-systemd-owned)
     pid="${2:?PID is required}"
     if pid_is_systemd_owned "${pid}"; then
-      echo "Refusing to stop systemd-owned Forge PID ${pid}. Stop it with 'just systemd-stop'." >&2
+      echo "Refusing to stop systemd-owned Forge PID ${pid}. Stop it with 'just stop'." >&2
       exit 1
     fi
     ;;

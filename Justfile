@@ -11,8 +11,12 @@ knowledge_url := "http://127.0.0.1:7081"
 jarvis_url := "http://127.0.0.1:7071"
 sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 
-# Rebuild and start all services, or one deployable service: agent, nexus, knowledge, jarvis.
-start service="all":
+# Start the installed Forge systemd runtime. Docker Postgres remains Docker-managed.
+start:
+    @scripts/systemd/control.sh start
+
+# Internal development launcher retained for development-focused checks.
+_dev-start service="all":
     #!/usr/bin/env bash
     set -euo pipefail
     scripts/runtime-ownership.sh assert-systemd-inactive
@@ -38,16 +42,13 @@ _start-all: _start-preflight _app-stop _jarvis-stop _knowledge-stop _ollama-stop
     @echo "  sqlite:    {{sqlite_path}}"
 
 stop:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    scripts/runtime-ownership.sh assert-systemd-inactive
-    just --justfile "{{root}}/Justfile" _stop-dev
+    @scripts/systemd/control.sh stop
 
 _stop-dev: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _postgres-stop
     @echo "Forge AI stack stopped."
 
 status:
-    @scripts/status.sh
+    @scripts/systemd/control.sh status
 
 # Build runtime artifacts and install/update systemd units for this checkout.
 systemd-install:
@@ -58,21 +59,9 @@ systemd-install:
     @if [[ ! -x "{{root}}/services/forge-jarvis/.venv/bin/uvicorn" ]]; then scripts/jarvis/bootstrap.sh; fi
     @scripts/systemd/install.sh
 
-# Start the installed Forge systemd services. Docker Postgres remains Docker-managed.
-systemd-start:
-    @scripts/systemd/control.sh start
-
-# Stop the installed Forge systemd services. Docker Postgres remains Docker-managed.
-systemd-stop:
-    @scripts/systemd/control.sh stop
-
 # Restart the installed Forge systemd services. Docker Postgres remains Docker-managed.
-systemd-restart:
+restart:
     @scripts/systemd/control.sh restart
-
-# Show status for installed Forge systemd services and the Docker-managed Postgres container.
-systemd-status:
-    @scripts/systemd/control.sh status
 
 _start-preflight:
     #!/usr/bin/env bash

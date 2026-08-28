@@ -49,4 +49,4 @@ fi
 
 printf 'Installed Forge systemd units to %s\n' "${UNIT_DIR}"
 printf 'Installed Forge systemd environment to %s\n' "${ENV_FILE}"
-printf 'Start with: just systemd-start\n'
+printf 'Start with: just start\n'

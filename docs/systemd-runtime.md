@@ -13,17 +13,17 @@ These units are runtime wrappers around the existing deployable applications. Th
 
 ```bash
 just systemd-install
-just systemd-start
-just systemd-status
-just systemd-restart
-just systemd-stop
+just start
+just status
+just restart
+just stop
 ```
 
 `just start` remains the lightweight development launcher that uses the existing PID-file based scripts. The `systemd-*` recipes are the installed runtime path where systemd owns process lifecycle, `MainPID`, restart policy, startup timestamp, exit status, and journald output.
 
 The units use `Restart=on-failure` with `RestartSec=5s`. Normal operator stops are not restarted; failed processes are restarted by systemd and remain visible through systemd state and journal metadata.
 
-`forge-agent-postgres` remains Docker-managed by `compose.yaml`. It is started by `just systemd-start` as a prerequisite for `forge-agent.service`, but it is not modeled as a Forge systemd Service.
+`forge-agent-postgres` remains Docker-managed by `compose.yaml`. It is started by `just start` as a prerequisite for `forge-agent.service`, but it is not modeled as a Forge systemd Service.
 
 ## Discovery
 

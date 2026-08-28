@@ -101,6 +101,9 @@ case "${1:-}" in
     printf '%s\n' "${TEST_SYSTEMD_MAIN_PID:-0}" 0 0 0
     ;;
   stop)
+    if [[ -n "${TEST_SYSTEMCTL_LOG:-}" ]]; then
+      printf '%s\n' "$*" >> "${TEST_SYSTEMCTL_LOG}"
+    fi
     exit 0
     ;;
 esac
@@ -435,20 +438,19 @@ case_dev_start_refuses_active_systemd_without_killing() {
   ! grep -q 'kill' "${bin}/systemctl"
 }
 
-case_just_stop_refuses_systemd_state() {
-  local state dir bin output pid
+case_just_stop_uses_systemd_for_active_state() {
+  local state dir bin pid log
   for state in active activating; do
     dir="$(new_temp_dir)"
     bin="${dir}/bin"
     mkdir -p "${bin}"
     write_fake_systemctl "${bin}"
+    log="${dir}/systemctl.log"
     sleep 60 &
     pid="$!"
     CHILD_PIDS+=("${pid}")
-    if output="$(PATH="${bin}:${SYSTEM_PATH}" TEST_SYSTEMD_STATE="${state}" just --justfile "${ROOT_DIR}/Justfile" stop 2>&1)"; then
-      return 1
-    fi
-    [[ "${output}" == *"Forge systemd runtime is active"* ]]
+    PATH="${bin}:${SYSTEM_PATH}" TEST_SYSTEMD_STATE="${state}" TEST_SYSTEMCTL_LOG="${log}" FORGE_SYSTEMD_USE_SUDO=0 just --justfile "${ROOT_DIR}/Justfile" stop
+    grep -Fq 'stop forge-nexus.service forge-agent.service forge-jarvis.service forge-knowledge.service' "${log}"
     kill -0 "${pid}" >/dev/null 2>&1
   done
 }
@@ -522,12 +524,13 @@ case_systemd_unit_templates_have_no_committed_secrets_or_postgres_unit() {
 }
 
 case_dev_launcher_and_systemd_workflows_are_separate() {
-  grep -Fqx 'start service="all":' "${ROOT_DIR}/Justfile"
-  grep -Fqx 'systemd-start:' "${ROOT_DIR}/Justfile"
-  grep -Fqx 'systemd-stop:' "${ROOT_DIR}/Justfile"
-  grep -Fqx 'systemd-restart:' "${ROOT_DIR}/Justfile"
+  grep -Fqx 'start:' "${ROOT_DIR}/Justfile"
+  grep -Fqx 'stop:' "${ROOT_DIR}/Justfile"
+  grep -Fqx 'restart:' "${ROOT_DIR}/Justfile"
+  grep -Fqx '_dev-start service="all":' "${ROOT_DIR}/Justfile"
   grep -Fq 'forge_start_background' "${ROOT_DIR}/scripts/lib/process.sh"
-  ! awk '/^start service="all":/{flag=1; next} /^_start-all:/{flag=0} flag {print}' "${ROOT_DIR}/Justfile" | grep -q 'systemctl'
+  awk '/^start:/{flag=1; next} /^# Internal development launcher/{flag=0} flag {print}' "${ROOT_DIR}/Justfile" | grep -Fq 'scripts/systemd/control.sh start'
+  awk '/^_dev-start service="all":/{flag=1; next} /^_start-all:/{flag=0} flag {print}' "${ROOT_DIR}/Justfile" | grep -Fq 'assert-systemd-inactive'
 }
 
 run_case "ollama API already reachable" case_ollama_api_already_reachable
@@ -551,7 +554,7 @@ run_case "systemd unit templates have no committed secrets or Postgres unit" cas
 run_case "dev launcher and systemd workflows are separate" case_dev_launcher_and_systemd_workflows_are_separate
 run_case "systemd start refuses a dev-owned process without killing it" case_systemd_start_refuses_dev_owned_process
 run_case "dev start refuses active systemd without killing it" case_dev_start_refuses_active_systemd_without_killing
-run_case "just stop refuses active and activating systemd without killing" case_just_stop_refuses_systemd_state
+run_case "just stop uses systemd for active and activating units" case_just_stop_uses_systemd_for_active_state
 run_case "Knowledge and Jarvis dev stop preserve systemd MainPID" case_service_dev_stop_preserves_systemd_main_pid
 run_case "Agent and Nexus port fallback preserve systemd MainPID" case_java_port_fallback_preserves_systemd_main_pid
 run_case "normal dev-owned process remains stoppable" case_normal_dev_owned_process_is_stoppable
