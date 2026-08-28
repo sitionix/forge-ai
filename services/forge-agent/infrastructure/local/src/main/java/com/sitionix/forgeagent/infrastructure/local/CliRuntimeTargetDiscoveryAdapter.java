@@ -71,7 +71,7 @@ public class CliRuntimeTargetDiscoveryAdapter implements RuntimeTargetDiscoveryP
           .toList();
     } catch (InfrastructureExecutionException exception) {
       if ("RUNTIME_COMMAND_FAILED".equals(exception.code())
-          || "RUNTIME_UNAVAILABLE".equals(exception.code())) {
+          || (connection == null && "RUNTIME_UNAVAILABLE".equals(exception.code()))) {
         throw new InfrastructureExecutionException(
             "SYSTEMD_UNAVAILABLE", "Systemd is not available on the selected host.");
       }

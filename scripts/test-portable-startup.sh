@@ -352,10 +352,10 @@ case_systemd_units_render_stable_services() {
   grep -Fqx "WorkingDirectory=${ROOT_DIR}" "${units}/forge-nexus.service"
   grep -Fqx "WorkingDirectory=${ROOT_DIR}/services/forge-knowledge" "${units}/forge-knowledge.service"
   grep -Fqx "WorkingDirectory=${ROOT_DIR}/services/forge-jarvis" "${units}/forge-jarvis.service"
-  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-agent.sh ${env_file}" "${units}/forge-agent.service"
-  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-nexus.sh ${env_file}" "${units}/forge-nexus.service"
-  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-knowledge.sh ${env_file}" "${units}/forge-knowledge.service"
-  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-jarvis.sh ${env_file}" "${units}/forge-jarvis.service"
+  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-agent.sh" "${units}/forge-agent.service"
+  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-nexus.sh" "${units}/forge-nexus.service"
+  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-knowledge.sh" "${units}/forge-knowledge.service"
+  grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-jarvis.sh" "${units}/forge-jarvis.service"
 
   grep -Fqx 'FORGE_AGENT_PORT="7091"' "${env_file}"
   grep -Fqx 'FORGE_NEXUS_BASE_URL="http://127.0.0.1:9099/fgaisox"' "${env_file}"
@@ -368,10 +368,40 @@ case_systemd_units_render_stable_services() {
 
 case_systemd_launch_path_has_no_pid_file_or_nohup() {
   ! grep -RE 'PIDFile|nohup|forge_start_background|PID_FILE' "${ROOT_DIR}/scripts/systemd" "${ROOT_DIR}/config/systemd" >/dev/null
+  ! grep -RE 'source .*forge-ai\.env|forge_systemd_load_env|\$\{1:-\}' "${ROOT_DIR}/scripts/systemd/run-forge-"*.sh >/dev/null
   grep -Fq 'exec java -jar "${FORGE_AI_HOME}/services/forge-agent/boot/target/boot-0.0.1-SNAPSHOT.jar"' "${ROOT_DIR}/scripts/systemd/run-forge-agent.sh"
   grep -Fq 'exec java -jar "${FORGE_AI_HOME}/services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar"' "${ROOT_DIR}/scripts/systemd/run-forge-nexus.sh"
   grep -Fq 'knowledge_service.main:app' "${ROOT_DIR}/scripts/systemd/run-forge-knowledge.sh"
   grep -Fq 'jarvis_agent.main:app' "${ROOT_DIR}/scripts/systemd/run-forge-jarvis.sh"
+}
+
+case_systemd_start_refuses_dev_owned_process() {
+  local dir output pid
+  dir="$(new_temp_dir)"
+  mkdir -p "${dir}/var"
+  sleep 60 &
+  pid="$!"
+  CHILD_PIDS+=("${pid}")
+  printf '%s\n' "${pid}" > "${dir}/var/forge-agent.pid"
+  if output="$(FORGE_AI_HOME="${dir}" "${ROOT_DIR}/scripts/runtime-ownership.sh" assert-dev-inactive 2>&1)"; then
+    return 1
+  fi
+  [[ "${output}" == *"Forge development runtime is active"* ]]
+  kill -0 "${pid}" >/dev/null 2>&1
+}
+
+case_dev_start_refuses_active_systemd_without_killing() {
+  local dir bin output
+  dir="$(new_temp_dir)"
+  bin="${dir}/bin"
+  mkdir -p "${bin}"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "active\\ninactive\\ninactive\\ninactive\\n"' > "${bin}/systemctl"
+  chmod +x "${bin}/systemctl"
+  if output="$(PATH="${bin}:${SYSTEM_PATH}" FORGE_AI_HOME="${dir}" "${ROOT_DIR}/scripts/runtime-ownership.sh" assert-systemd-inactive 2>&1)"; then
+    return 1
+  fi
+  [[ "${output}" == *"Forge systemd runtime is active"* ]]
+  ! grep -q 'kill' "${bin}/systemctl"
 }
 
 case_systemd_unit_templates_have_no_committed_secrets_or_postgres_unit() {
@@ -408,5 +438,7 @@ run_case "systemd units render stable Forge services" case_systemd_units_render_
 run_case "systemd launch path has no PID file or nohup" case_systemd_launch_path_has_no_pid_file_or_nohup
 run_case "systemd unit templates have no committed secrets or Postgres unit" case_systemd_unit_templates_have_no_committed_secrets_or_postgres_unit
 run_case "dev launcher and systemd workflows are separate" case_dev_launcher_and_systemd_workflows_are_separate
+run_case "systemd start refuses a dev-owned process without killing it" case_systemd_start_refuses_dev_owned_process
+run_case "dev start refuses active systemd without killing it" case_dev_start_refuses_active_systemd_without_killing
 
 printf 'Portable startup shell tests: PASS %s/%s\n' "${PASSED}" "${TOTAL}"

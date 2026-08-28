@@ -15,6 +15,7 @@ sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 start service="all":
     #!/usr/bin/env bash
     set -euo pipefail
+    scripts/runtime-ownership.sh assert-systemd-inactive
     case "{{service}}" in
         all) just --justfile "{{root}}/Justfile" _start-all ;;
         agent) just --justfile "{{root}}/Justfile" _agent-restart ;;

@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=env.sh
-source "${SCRIPT_DIR}/env.sh"
-forge_systemd_load_env "${1:-}"
+: "${FORGE_AI_HOME:?FORGE_AI_HOME is required}"
 
 KNOWLEDGE_ROOT="${FORGE_AI_HOME}/services/forge-knowledge"
 PYTHON="${KNOWLEDGE_ROOT}/.venv/bin/python3"

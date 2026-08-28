@@ -476,11 +476,14 @@ export class AgentProjectsPage {
         return;
       }
       this.renderServiceTargetCandidates(provider, candidates || []);
-    } catch {
+    } catch (error) {
       if (!this.isCurrentServiceTargetDiscovery(projectId, modalGeneration, discoveryGeneration, context)) {
         return;
       }
-      this.showServiceDiscoveryError('Target discovery failed. You can still enter a target manually.');
+      const upstreamMessage = typeof error?.message === 'string' ? error.message.trim() : '';
+      this.showServiceDiscoveryError(
+        upstreamMessage || 'Target discovery failed. You can still enter a target manually.'
+      );
     }
   }
 

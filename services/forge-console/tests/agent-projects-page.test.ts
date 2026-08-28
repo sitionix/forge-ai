@@ -1233,7 +1233,7 @@ describe('Agent projects page', () => {
     await flushAsync();
 
     expect((dom.window.document.getElementById('projectServiceContainer') as HTMLInputElement).value).toBe('custom-runtime');
-    expect(dom.window.document.getElementById('projectServiceDiscoveryError')?.textContent).toContain('Target discovery failed');
+    expect(dom.window.document.getElementById('projectServiceDiscoveryError')?.textContent).toContain('offline');
     page.dispose();
   });
 

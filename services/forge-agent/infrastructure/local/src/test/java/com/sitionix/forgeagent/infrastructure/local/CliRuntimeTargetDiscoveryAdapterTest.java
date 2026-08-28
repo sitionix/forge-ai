@@ -117,6 +117,49 @@ class CliRuntimeTargetDiscoveryAdapterTest {
   }
 
   @Test
+  void sshHostSystemdUnavailableIsTyped() {
+    var executor =
+        new CapturingExecutor(
+            new InfrastructureExecutionException(
+                "RUNTIME_COMMAND_FAILED", "Runtime command failed"));
+
+    assertThatThrownBy(
+            () -> new CliRuntimeTargetDiscoveryAdapter(executor)
+                .discover(connection(), ServiceRuntimeProvider.SYSTEMD))
+        .isInstanceOf(InfrastructureExecutionException.class)
+        .extracting("code")
+        .isEqualTo("SYSTEMD_UNAVAILABLE");
+  }
+
+  @Test
+  void sshTransportFailureIsPreserved() {
+    var executor =
+        new CapturingExecutor(
+            new InfrastructureExecutionException(
+                "SSH_TRANSPORT_FAILED", "SSH connection to the selected host failed"));
+
+    assertThatThrownBy(
+            () -> new CliRuntimeTargetDiscoveryAdapter(executor)
+                .discover(connection(), ServiceRuntimeProvider.SYSTEMD))
+        .isInstanceOf(InfrastructureExecutionException.class)
+        .extracting("code")
+        .isEqualTo("SSH_TRANSPORT_FAILED");
+  }
+
+  @Test
+  void timeoutAndInterruptionArePreserved() {
+    for (String code : List.of("RUNTIME_TIMEOUT", "RUNTIME_INTERRUPTED")) {
+      var executor = new CapturingExecutor(new InfrastructureExecutionException(code, code));
+      assertThatThrownBy(
+              () -> new CliRuntimeTargetDiscoveryAdapter(executor)
+                  .discover(null, ServiceRuntimeProvider.SYSTEMD))
+          .isInstanceOf(InfrastructureExecutionException.class)
+          .extracting("code")
+          .isEqualTo(code);
+    }
+  }
+
+  @Test
   void sshDockerDiscoveryUsesTypedSshCommand() {
     var executor = new CapturingExecutor(List.of("abc\tforge-agent\tExited\timage:1\t\t"));
     var ssh = connection();

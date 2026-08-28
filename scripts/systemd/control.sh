@@ -28,6 +28,7 @@ run_privileged() {
 
 case "${ACTION}" in
   start)
+    "${FORGE_AI_HOME}/scripts/runtime-ownership.sh" assert-dev-inactive
     docker compose --project-directory "${FORGE_AI_HOME}" up -d forge-agent-postgres
     run_privileged systemctl start "${UNITS[@]}"
     ;;
@@ -35,6 +36,7 @@ case "${ACTION}" in
     run_privileged systemctl stop "${REVERSE_UNITS[@]}"
     ;;
   restart)
+    "${FORGE_AI_HOME}/scripts/runtime-ownership.sh" assert-dev-inactive
     docker compose --project-directory "${FORGE_AI_HOME}" up -d forge-agent-postgres
     run_privileged systemctl restart "${UNITS[@]}"
     ;;
