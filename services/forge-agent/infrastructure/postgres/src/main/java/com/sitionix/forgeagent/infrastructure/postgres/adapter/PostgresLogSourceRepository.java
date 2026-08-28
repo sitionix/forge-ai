@@ -60,6 +60,7 @@ public class PostgresLogSourceRepository implements LogSourceRepository {
                 entity.getId(),
                 entity.getProjectId(),
                 entity.getName(),
+                entity.getOwnerType(),
                 entity.getServiceId(), entity.getAssetId(),
                 entity.getConnectionType(),
                 entity.getSshConnectionId(),
@@ -75,6 +76,7 @@ public class PostgresLogSourceRepository implements LogSourceRepository {
         entity.setId(source.id());
         entity.setProjectId(source.projectId());
         entity.setName(source.name());
+        entity.setOwnerType(source.ownerType());
         entity.setServiceId(source.serviceId());
         entity.setAssetId(source.assetId());
         entity.setConnectionType(source.connectionType());

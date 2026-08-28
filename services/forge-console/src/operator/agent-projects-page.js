@@ -287,7 +287,6 @@ export class AgentProjectsPage {
     await Promise.all([
       this.loadRepositories(projectId, loadSequence),
       this.loadAssets(projectId, loadSequence),
-      this.loadServices(projectId, loadSequence),
       this.loadAgents(projectId, loadSequence),
       this.loadWorkflows(projectId, loadSequence),
       this.loadTasks(projectId, loadSequence, { page: 0 }),
@@ -386,9 +385,12 @@ export class AgentProjectsPage {
       selectedRuntimeServiceId: this.state.selectedRuntimeServiceId,
       serviceId
     };
-    const service = serviceId
+    let service = serviceId
       ? this.state.services.find((candidate) => candidate.id === serviceId)
       : null;
+    if (serviceId && !service && this.api.getService) {
+      service = await this.api.getService(projectId, serviceId);
+    }
     const repositoryId = options.repositoryId || service?.repositoryId || null;
     const repository = repositoryId
       ? this.state.repositories.find((candidate) => candidate.id === repositoryId)
@@ -551,7 +553,7 @@ export class AgentProjectsPage {
   async deleteService(serviceId) {
     const projectId = this.state.selectedProjectId;
     if (!projectId) return;
-    if (this.window.confirm && !this.window.confirm('Delete this service? Linked logs will remain at project level.')) return;
+    if (this.window.confirm && !this.window.confirm('Delete this service? Legacy linked logs will be archived and cannot stream.')) return;
     await this.api.deleteService(projectId, serviceId);
     if (this.state.view === 'repository' && this.state.selectedRepositoryId) {
       await this.reloadRepositoryServices(projectId, this.state.selectedRepositoryId, this.repositoryWorkspaceSequence);

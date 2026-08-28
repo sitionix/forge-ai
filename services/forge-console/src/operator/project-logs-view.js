@@ -60,8 +60,10 @@ export class ProjectLogsView {
   }
 
   renderFilterOptions() {
-    const assetNames = new Map(this.assets.map((asset) => [asset.id, asset.name]));
-    const assets = uniqueOwners(this.sources, "assetId", assetNames);
+    const assets = this.assets
+      .filter((asset) => asset.id)
+      .map((asset) => ({ id: asset.id, name: asset.name || asset.id }))
+      .sort((left, right) => left.name.localeCompare(right.name));
     const services = uniqueOwners(this.sources, "serviceId");
     this.renderOwnerOptions("projectLogsResourceFilter", assets, this.initialAssetId);
     this.renderOwnerOptions("projectLogsServiceFilter", services, this.initialServiceId);

@@ -24,6 +24,7 @@ public class LogSourceUseCases {
   private final SshConnectionRepository connections;
   private final DockerLogPort docker;
   private final RemoteLogPort remote;
+  private final SystemdLogPort systemd;
   private final RuntimeTargetDiscoveryUseCases runtimeTargets;
   private final ProjectRepositoryLinkRepository repositories;
   private final LocalProjectWorkspacePort workspaces;
@@ -37,7 +38,8 @@ public class LogSourceUseCases {
     // Persisted Service-owned rows are retained for data compatibility, but are never effective.
     // The current Service runtimeTarget is the sole source of truth at every read/stream boundary.
     var result = new ArrayList<>(sources.findByProjectId(projectId).stream()
-        .filter(source -> source.serviceId() == null)
+        .filter(source -> source.ownerType() != LogSourceOwnerType.LEGACY_SERVICE
+            && source.serviceId() == null)
         .toList());
     services.findByProjectId(projectId).stream().map(this::derived).forEach(result::add);
     return List.copyOf(result);
@@ -85,7 +87,7 @@ public class LogSourceUseCases {
   }
 
   public LogSource update(UUID projectId, UUID id, SaveLogSourceCommand c) {
-    var old = mutableOwned(projectId, id);
+    var old = updatableOwned(projectId, id);
     validate(projectId, c);
     return sources.save(
         new LogSource(
@@ -103,7 +105,7 @@ public class LogSourceUseCases {
   }
 
   public void delete(UUID projectId, UUID id) {
-    sources.delete(mutableOwned(projectId, id));
+    sources.delete(deletableOwned(projectId, id));
   }
 
   @Transactional(readOnly = true)
@@ -144,6 +146,8 @@ public class LogSourceUseCases {
     if (c.provider() == LogProviderType.DOCKER) {
       var d = (DockerLogConfiguration) c.configuration();
       docker.validate(d.container(), d.composeService(), d.composeFile(), ssh);
+    } else if (c.provider() == LogProviderType.SYSTEMD) {
+      systemd.validate((SystemdLogConfiguration) c.configuration(), ssh);
     } else remote.validate(ssh, c.provider(), c.configuration());
   }
 
@@ -154,8 +158,7 @@ public class LogSourceUseCases {
 
   @Transactional(readOnly = true)
   public LogStream stream(UUID projectId, LogSource s, int lines) {
-    if (s.serviceId() != null && !s.id().equals(derivedId(s.serviceId())))
-      s = derived(service(projectId, s.serviceId()));
+    s = effective(projectId, s);
     if (lines < 1 || lines > 10_000)
       throw new ValidationException("Initial line count must be between 1 and 10000");
     if (!s.projectId().equals(projectId))
@@ -172,6 +175,9 @@ public class LogSourceUseCases {
     if (s.provider() == LogProviderType.DOCKER) {
       var d = (DockerLogConfiguration) s.configuration();
       return docker.stream(d.container(), d.composeService(), d.composeFile(), lines, ssh);
+    }
+    if (s.provider() == LogProviderType.SYSTEMD) {
+      return systemd.stream((SystemdLogConfiguration) s.configuration(), lines, ssh);
     }
     return remote.stream(ssh, s.provider(), s.configuration(), lines);
   }
@@ -248,18 +254,42 @@ public class LogSourceUseCases {
         .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found")));
     if (!s.projectId().equals(p))
       throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
-    return s.serviceId() == null ? s : derived(service(p, s.serviceId()));
+    return effective(p, s);
   }
 
-  private LogSource mutableOwned(UUID projectId, UUID id) {
+  private LogSource updatableOwned(UUID projectId, UUID id) {
     project(projectId);
     var source = sources.findById(id)
         .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found"));
     if (!source.projectId().equals(projectId))
       throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
-    if (source.serviceId() != null)
+    if (source.ownerType() != LogSourceOwnerType.CUSTOM)
+      throw new ValidationException("Only custom project log sources can be updated");
+    return source;
+  }
+
+  private LogSource deletableOwned(UUID projectId, UUID id) {
+    project(projectId);
+    var source = sources.findById(id)
+        .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found"));
+    if (!source.projectId().equals(projectId))
+      throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
+    if (source.ownerType() == LogSourceOwnerType.LEGACY_SERVICE)
       throw new ValidationException("Legacy Service log sources are immutable compatibility data");
     return source;
+  }
+
+  private LogSource effective(UUID projectId, LogSource source) {
+    if (source.ownerType() != LogSourceOwnerType.LEGACY_SERVICE && source.serviceId() == null)
+      return source;
+    if (source.serviceId() != null && source.id().equals(derivedId(source.serviceId())))
+      return source;
+    if (source.serviceId() == null)
+      throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
+    return services.findById(source.serviceId())
+        .filter(service -> service.projectId().equals(projectId))
+        .map(this::derived)
+        .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found"));
   }
 
   private LogSource derived(ProjectService service) {

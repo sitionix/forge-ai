@@ -63,39 +63,6 @@ export class ProjectWorkspace {
     this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
   }
 
-  renderStandaloneServices(services) {
-    const section = this.byId('projectStandaloneServicesSection');
-    const list = this.byId('projectStandaloneServicesList');
-    const standalone = services
-      .filter((service) => !service.repositoryId)
-      .sort((left, right) => (left.name || '').localeCompare(right.name || '') || (left.id || '').localeCompare(right.id || ''));
-    section?.classList.toggle('hidden', !standalone.length);
-    if (!standalone.length) {
-      list.innerHTML = '';
-      return;
-    }
-    list.innerHTML = standalone.map((service) => `
-      <button class="standalone-service-row" type="button" data-standalone-service-id="${escapeHtml(service.id)}">
-        <span class="repository-main">
-          <strong>${escapeHtml(service.name)}</strong>
-          <span class="repository-git-state">No repository</span>
-        </span>
-        <span class="repository-runtime-summary repository-runtime-${escapeHtml(runtimeTone(service.runtimeStatus || 'UNKNOWN'))}">
-          <span class="repository-runtime-dot" aria-hidden="true"></span><span data-service-runtime-status="${escapeHtml(service.id)}">${escapeHtml(service.runtimeStatus || 'UNKNOWN')}</span>
-        </span>
-      </button>
-    `).join('');
-    list.querySelectorAll('[data-standalone-service-id]').forEach((element) =>
-      element.addEventListener('click', () => this.onOpenService(element.dataset.standaloneServiceId)));
-  }
-
-  updateServiceRuntimeStatus(serviceId, status) {
-    const list = this.document;
-    const statusElement = [...(list?.querySelectorAll('[data-service-runtime-status]') || [])]
-      .find((element) => element.dataset.serviceRuntimeStatus === serviceId);
-    if (statusElement) statusElement.textContent = status || 'UNKNOWN';
-  }
-
   renderRepositories(repositories, assets, repositoriesCurrent, repositoriesLoadFailed) {
     const list = this.byId('agentsV2RepositoriesList');
     if (repositoriesLoadFailed) {
@@ -133,55 +100,6 @@ export class ProjectWorkspace {
       const open = () => this.onOpenAsset(element.dataset.assetId);
       element.addEventListener('click', open); element.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
     });
-  }
-
-  repositoryRuntimeSummary(repository, services, servicesLoadState = 'CURRENT') {
-    if (servicesLoadState === 'LOADING') {
-      return 'Loading runtime';
-    }
-    if (servicesLoadState === 'FAILED') {
-      return 'UNKNOWN';
-    }
-    const linked = services.filter((service) => service.repositoryId === repository.id);
-    if (!linked.length) {
-      return 'NOT CONFIGURED';
-    }
-    const statuses = linked.map((service) => service.runtimeStatus || 'UNKNOWN');
-    if (linked.length === 1) {
-      return statuses[0];
-    }
-    const counts = statuses.reduce((summary, status) => {
-      summary[status] = (summary[status] || 0) + 1;
-      return summary;
-    }, {});
-    return [
-      `${linked.length} services`,
-      counts.RUNNING ? `${counts.RUNNING} running` : '',
-      counts.STOPPED ? `${counts.STOPPED} stopped` : '',
-      counts.FAILED ? `${counts.FAILED} failed` : '',
-      counts.UNKNOWN ? `${counts.UNKNOWN} unknown` : ''
-    ].filter(Boolean).join(' · ');
-  }
-
-  repositoryRuntimeSummaryTone(repository, services, servicesLoadState = 'CURRENT') {
-    if (servicesLoadState === 'LOADING' || servicesLoadState === 'FAILED') {
-      return 'unknown';
-    }
-    const linked = services.filter((service) => service.repositoryId === repository.id);
-    if (!linked.length) {
-      return 'not-configured';
-    }
-    const statuses = linked.map((service) => service.runtimeStatus || 'UNKNOWN');
-    if (statuses.includes('FAILED')) {
-      return 'failed';
-    }
-    if (statuses.every((status) => status === 'RUNNING')) {
-      return 'running';
-    }
-    if (statuses.every((status) => status === 'STOPPED')) {
-      return 'stopped';
-    }
-    return 'unknown';
   }
 
   renderRepositoryAction(repository, pullingRepositoryIds = new Set()) {
@@ -443,20 +361,6 @@ export function statusTone(status) {
   }
   if (normalized === 'cancelled') {
     return 'cancelled';
-  }
-  return 'unknown';
-}
-
-export function runtimeTone(status) {
-  const normalized = (status || '').toLowerCase().replace(/\s+/g, '-');
-  if (normalized === 'running') {
-    return 'running';
-  }
-  if (normalized === 'stopped' || normalized === 'not-configured') {
-    return 'stopped';
-  }
-  if (normalized === 'failed') {
-    return 'failed';
   }
   return 'unknown';
 }

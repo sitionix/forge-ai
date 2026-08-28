@@ -10,29 +10,30 @@ import org.junit.jupiter.api.Test;
 
 class SshRemoteLogAdapterTest {
   @Test
-  void systemdAndFileAreConvertedToQuotedTypedRemoteCommands() {
+  void fileIsConvertedToQuotedTypedRemoteCommand() {
     var executor = new CapturingExecutor();
     var adapter = new SshRemoteLogAdapter(executor);
     var ssh = connection();
-    adapter.validate(ssh, LogProviderType.SYSTEMD, new SystemdLogConfiguration("rover.service"));
-    assertThat(executor.command.getLast()).isEqualTo("'systemctl' 'status' '--' 'rover.service'");
+
     adapter.validate(ssh, LogProviderType.FILE, new FileLogConfiguration("/var/log/a file.log"));
     assertThat(executor.command.getLast()).isEqualTo("'test' '-r' '/var/log/a file.log'");
   }
 
   @Test
-  void fullJournalStreamsWithoutAUnitWhileUnitModeKeepsUnitArgument() {
+  void systemdCommandsUseLocalOrQuotedSshExecution() {
     var executor = new CapturingExecutor();
-    var adapter = new SshRemoteLogAdapter(executor);
+    var adapter = new LocalCliSystemdLogAdapter(executor);
     var ssh = connection();
 
-    adapter.stream(ssh, LogProviderType.SYSTEMD,
-        new SystemdLogConfiguration(SystemdTargetMode.UNIT, "rover.service"), 50);
+    adapter.stream(new SystemdLogConfiguration(SystemdTargetMode.UNIT, "rover.service"), 50, null);
+    assertThat(executor.command)
+        .containsExactly("journalctl", "--unit", "rover.service", "--lines", "50", "--follow", "--output", "short-iso");
+
+    adapter.stream(new SystemdLogConfiguration(SystemdTargetMode.UNIT, "rover.service"), 50, ssh);
     assertThat(executor.command.getLast())
         .contains("'journalctl' '--unit' 'rover.service' '--lines' '50' '--follow'");
 
-    adapter.stream(ssh, LogProviderType.SYSTEMD,
-        new SystemdLogConfiguration(SystemdTargetMode.FULL_JOURNAL, null), 50);
+    adapter.stream(new SystemdLogConfiguration(SystemdTargetMode.FULL_JOURNAL, null), 50, ssh);
     assertThat(executor.command.getLast())
         .contains("'journalctl' '--lines' '50' '--follow'")
         .doesNotContain("'--unit'");
@@ -52,8 +53,9 @@ class SshRemoteLogAdapterTest {
     var executor = new CapturingExecutor();
     var password = passwordConnection("s3cr3t;$(still-data)`literal`");
     var remote = new SshRemoteLogAdapter(executor);
+    var systemd = new LocalCliSystemdLogAdapter(executor);
 
-    remote.validate(password, LogProviderType.SYSTEMD, new SystemdLogConfiguration("rover.service"));
+    systemd.validate(new SystemdLogConfiguration("rover.service"), password);
     assertThat(executor.command)
         .startsWith("sshpass", "-e", "ssh")
         .contains("PreferredAuthentications=password", "PubkeyAuthentication=no");
@@ -64,7 +66,7 @@ class SshRemoteLogAdapterTest {
     new LocalCliDockerLogAdapter(executor).validate("mission", null, null, password);
     assertThat(executor.ssh).isSameAs(password);
 
-    remote.stream(password, LogProviderType.SYSTEMD, new SystemdLogConfiguration("rover.service"), 100);
+    systemd.stream(new SystemdLogConfiguration("rover.service"), 100, password);
     assertThat(executor.command.getLast()).contains("'journalctl'");
     new LocalCliDockerLogAdapter(executor).stream("mission", null, null, 100, password);
     assertThat(executor.command.getLast()).contains("'docker' 'logs'");
@@ -94,6 +96,17 @@ class SshRemoteLogAdapterTest {
     assertThat(executor.command).contains("ssh", "-i", "/key", "BatchMode=yes");
     assertThat(executor.command).doesNotContain("sshpass", "PreferredAuthentications=password");
     assertThat(RemoteShellCommand.environment(executor.ssh)).isEmpty();
+  }
+
+  @Test
+  void systemdUnitValidationRejectsUnsafeUnitBeforeCommandExecution() {
+    var executor = new CapturingExecutor();
+    var adapter = new LocalCliSystemdLogAdapter(executor);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            adapter.stream(new SystemdLogConfiguration(SystemdTargetMode.UNIT, "bad;unit.service"), 100, null))
+        .isInstanceOf(com.sitionix.forgeagent.domain.exception.ValidationException.class);
+    assertThat(executor.command).isNull();
   }
 
   private SshConnection connection() {

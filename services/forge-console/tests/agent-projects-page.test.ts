@@ -577,6 +577,7 @@ describe('Agent projects page', () => {
     const deleteService = vi.fn().mockResolvedValue({});
     const fakeApi = api({
       listServices: vi.fn().mockResolvedValue([existing]),
+      getService: vi.fn().mockResolvedValue(existing),
       listSshConnections: vi.fn().mockResolvedValue([
         { id: 'ssh-1', name: 'prod', username: 'operator', host: 'prod.local' }
       ]),
@@ -807,14 +808,15 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2ProjectsView')?.textContent).not.toContain('New Workflow');
   });
 
-  it('opening a Project does not inspect runtime for its Services', async () => {
+  it('opening a Project does not load or inspect Services', async () => {
+    const listServices = vi.fn().mockResolvedValue(Array.from({ length: 25 }, (_, index) => service(`service-${index}`)));
     const getServiceRuntime = vi.fn().mockResolvedValue({ status: 'RUNNING' });
-    const manyServices = Array.from({ length: 25 }, (_, index) => service(`service-${index}`));
     const { page } = await openedProject(api({
-      listServices: vi.fn().mockResolvedValue(manyServices),
+      listServices,
       getServiceRuntime,
     }));
 
+    expect(listServices).not.toHaveBeenCalled();
     expect(getServiceRuntime).not.toHaveBeenCalled();
     page.dispose();
   });
@@ -951,11 +953,12 @@ describe('Agent projects page', () => {
   });
 
   it('keeps Resource rows minimal when Service listing fails on Project page', async () => {
+    const listServices = vi.fn().mockRejectedValue(new Error('Services unavailable.'));
     const fakeApi = api({
       listProjectRepositories: vi.fn().mockResolvedValue([
         repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
       ]),
-      listServices: vi.fn().mockRejectedValue(new Error('Services unavailable.'))
+      listServices
     });
     const { dom, page } = await openedProject(fakeApi);
 
@@ -963,6 +966,7 @@ describe('Agent projects page', () => {
     expect(row.textContent).toContain('api');
     expect(row.textContent).toContain('GIT');
     expect(row.querySelector('[data-repository-runtime-status]')).toBeNull();
+    expect(listServices).not.toHaveBeenCalled();
     page.dispose();
   });
 
@@ -1336,7 +1340,6 @@ describe('Agent projects page', () => {
     const createService = vi.fn().mockResolvedValue(added);
     const listServices = vi.fn()
       .mockResolvedValueOnce([existing])
-      .mockResolvedValueOnce([existing])
       .mockResolvedValueOnce([existing, added]);
     const fakeApi = api({
       listProjectRepositories: vi.fn().mockResolvedValue([
@@ -1376,7 +1379,6 @@ describe('Agent projects page', () => {
     const workerService = { ...service('service-worker'), repositoryId: 'repo-1', name: 'worker' };
     const deleteService = vi.fn().mockResolvedValue({});
     const listServices = vi.fn()
-      .mockResolvedValueOnce([apiService, workerService])
       .mockResolvedValueOnce([apiService, workerService])
       .mockResolvedValueOnce([apiService]);
     const fakeApi = api({

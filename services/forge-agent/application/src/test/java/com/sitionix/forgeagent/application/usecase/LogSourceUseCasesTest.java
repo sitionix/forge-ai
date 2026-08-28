@@ -21,6 +21,7 @@ class LogSourceUseCasesTest {
   @Mock SshConnectionRepository connections;
   @Mock DockerLogPort docker;
   @Mock RemoteLogPort remote;
+  @Mock SystemdLogPort systemdLogs;
   @Mock RuntimeTargetDiscoveryUseCases runtimeTargets;
   @Mock ProjectRepositoryLinkRepository repositories;
   @Mock LocalProjectWorkspacePort workspaces;
@@ -38,6 +39,7 @@ class LogSourceUseCasesTest {
             connections,
             docker,
             remote,
+            systemdLogs,
             runtimeTargets,
             repositories,
             workspaces,
@@ -176,6 +178,68 @@ class LogSourceUseCasesTest {
     verify(docker).stream("api", null, null, 100, null);
     verify(docker).stream("new-api", null, null, 100, null);
     verify(docker, never()).stream(eq("stale"), any(), any(), anyInt(), any());
+  }
+
+  @Test
+  void localSystemdDerivedServiceStreamsThroughSystemdPortWithoutSsh() {
+    UUID serviceId = UUID.randomUUID();
+    var service = new ProjectService(serviceId, projectId, "forge-agent", null,
+        new ServiceRuntimeTarget(ServiceConnectionType.LOCAL, null,
+            ServiceRuntimeProvider.SYSTEMD, null, "forge-agent.service"),
+        Instant.EPOCH, Instant.EPOCH);
+    var stream = mock(LogStream.class);
+    when(services.findById(serviceId)).thenReturn(Optional.of(service));
+    when(systemdLogs.stream(
+            new SystemdLogConfiguration(SystemdTargetMode.UNIT, "forge-agent.service"), 250, null))
+        .thenReturn(stream);
+
+    var source = useCases.list(projectId, serviceId).getFirst();
+    assertThat(useCases.stream(projectId, source, 250)).isSameAs(stream);
+
+    verify(systemdLogs).stream(
+        new SystemdLogConfiguration(SystemdTargetMode.UNIT, "forge-agent.service"), 250, null);
+    verifyNoInteractions(remote);
+  }
+
+  @Test
+  void sshSystemdDerivedServiceStreamsThroughSystemdPortWithOwnedSsh() {
+    UUID serviceId = UUID.randomUUID();
+    UUID sshId = UUID.randomUUID();
+    var ssh = ssh(sshId);
+    var service = new ProjectService(serviceId, projectId, "forge-agent", null,
+        new ServiceRuntimeTarget(ServiceConnectionType.SSH, sshId,
+            ServiceRuntimeProvider.SYSTEMD, null, "forge-agent.service"),
+        Instant.EPOCH, Instant.EPOCH);
+    var stream = mock(LogStream.class);
+    when(services.findById(serviceId)).thenReturn(Optional.of(service));
+    when(connections.findById(sshId)).thenReturn(Optional.of(ssh));
+    when(systemdLogs.stream(
+            new SystemdLogConfiguration(SystemdTargetMode.UNIT, "forge-agent.service"), 100, ssh))
+        .thenReturn(stream);
+
+    assertThat(useCases.stream(projectId, useCases.list(projectId, serviceId).getFirst(), 100))
+        .isSameAs(stream);
+
+    verify(systemdLogs).stream(
+        new SystemdLogConfiguration(SystemdTargetMode.UNIT, "forge-agent.service"), 100, ssh);
+    verifyNoInteractions(remote);
+  }
+
+  @Test
+  void legacyServiceSourceWithNullServiceIdIsHiddenAndFailsClosed() {
+    UUID sourceId = UUID.randomUUID();
+    var stale = new LogSource(sourceId, projectId, "legacy", LogSourceOwnerType.LEGACY_SERVICE,
+        null, null, LogConnectionType.LOCAL, null, LogProviderType.DOCKER,
+        new DockerLogConfiguration("stale-container", null, null), true,
+        Instant.EPOCH, Instant.EPOCH);
+    when(sources.findByProjectId(projectId)).thenReturn(List.of(stale));
+    when(sources.findById(sourceId)).thenReturn(Optional.of(stale));
+    when(services.findByProjectId(projectId)).thenReturn(List.of());
+
+    assertThat(useCases.list(projectId)).isEmpty();
+    assertThatThrownBy(() -> useCases.stream(projectId, sourceId, 100))
+        .isInstanceOf(NotFoundException.class);
+    verifyNoInteractions(docker);
   }
 
   @Test

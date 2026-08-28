@@ -80,7 +80,7 @@ public class ProjectAssetUseCases {
           : new SystemdLogConfiguration(SystemdTargetMode.UNIT, target);
     }
     var now = clock.instant();
-    return logSources.save(new LogSource(UUID.randomUUID(), projectId, name.strip(), null, assetId,
+    return logSources.save(new LogSource(UUID.randomUUID(), projectId, name.strip(), LogSourceOwnerType.ASSET, null, assetId,
         LogConnectionType.SSH, null, provider, configuration, enabled, now, now));
   }
 

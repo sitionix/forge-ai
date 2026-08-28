@@ -72,6 +72,10 @@ public final class ForgeAgentMockMvcEndpoint {
             Endpoint.createContract("/api/v1/projects/{projectId}/services/{serviceId}/runtime", HttpMethod.GET, Void.class, ServiceRuntimeResponse.class);
     public static final Endpoint<LogSourceRequest, LogSourceResponse> CREATE_LOG_SOURCE =
             Endpoint.createContract("/api/v1/projects/{projectId}/log-sources", HttpMethod.POST, LogSourceRequest.class, LogSourceResponse.class);
+    public static final Endpoint<Void, LogSourceResponse[]> LIST_LOG_SOURCES =
+            Endpoint.createContract("/api/v1/projects/{projectId}/log-sources", HttpMethod.GET, Void.class, LogSourceResponse[].class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> STREAM_LOGS_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/logs/stream", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, LogSourceResponse[]> LIST_SERVICE_LOG_SOURCES =
             Endpoint.createContract("/api/v1/projects/{projectId}/services/{serviceId}/log-sources", HttpMethod.GET, Void.class, LogSourceResponse[].class);
     public static final Endpoint<CreateProjectRequest, ProjectResponse> CREATE_PROJECT =

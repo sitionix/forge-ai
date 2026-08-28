@@ -81,6 +81,23 @@ describe("ProjectLogsView", () => {
     expect(dom.window.document.getElementById("projectLogsSources")?.textContent).toContain("camera.service");
   });
 
+  it("keeps an initial Resource scope even when that Resource has zero sources", async () => {
+    const listed = [
+      { id: "mamba-source", name: "mamba.service", enabled: true, serviceId: null, assetId: "asset-2", provider: "SYSTEMD" },
+    ];
+    const assets = [
+      { id: "asset-1", name: "Jessie" },
+      { id: "asset-2", name: "Mamba" },
+    ];
+    const { dom, view } = setup({ assetId: "asset-1" }, listed, assets);
+
+    await view.load("project-1");
+
+    expect((dom.window.document.getElementById("projectLogsResourceFilter") as HTMLSelectElement).value).toBe("asset-1");
+    expect(dom.window.document.getElementById("projectLogsSources")?.textContent).toContain("No matching log sources.");
+    expect(dom.window.document.getElementById("projectLogsSources")?.textContent).not.toContain("mamba.service");
+  });
+
   it("filters sources by provider and streams only the resulting selection", async () => {
     const { dom, view, streams, api } = setup();
     await view.load("project-1");
