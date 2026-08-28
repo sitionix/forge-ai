@@ -11,7 +11,7 @@ const sources = [
   { id: "custom-source", name: "Audit file", enabled: true, serviceId: null, assetId: null, provider: "FILE" },
 ];
 
-function setup(options: any = {}, listed = sources) {
+function setup(options: any = {}, listed = sources, assets = [{ id: "asset-1", name: "Jessie" }]) {
   const dom = new JSDOM(readFileSync(join(process.cwd(), "src/operator/agent-projects.html"), "utf8"));
   const streams: any[] = [];
   class EventSourceFake {
@@ -24,6 +24,7 @@ function setup(options: any = {}, listed = sources) {
   }
   const api = {
     listLogSources: vi.fn().mockResolvedValue(listed),
+    listProjectAssets: vi.fn().mockResolvedValue(assets),
     logStreamUrl: vi.fn().mockReturnValue("/stream"),
   };
   const view = new ProjectLogsView({
@@ -64,6 +65,20 @@ describe("ProjectLogsView", () => {
     expect((dom.window.document.getElementById("projectLogsResourceFilter") as HTMLSelectElement).value).toBe("asset-1");
     expect(dom.window.document.querySelectorAll("[data-log-source]")).toHaveLength(1);
     expect(dom.window.document.getElementById("projectLogsSources")?.textContent).toContain("Worker");
+  });
+
+  it("uses the Resource name once for multiple Asset-owned sources", async () => {
+    const assetSources = [
+      { id: "one", name: "openvins.service", enabled: true, serviceId: null, assetId: "asset-1", provider: "SYSTEMD" },
+      { id: "two", name: "camera.service", enabled: true, serviceId: null, assetId: "asset-1", provider: "SYSTEMD" },
+    ];
+    const { dom, view } = setup({}, assetSources, [{ id: "asset-1", name: "Jessie" }]);
+    await view.load("project-1");
+
+    const options = [...dom.window.document.querySelectorAll("#projectLogsResourceFilter option")];
+    expect(options.map((option) => option.textContent)).toEqual(["All", "Jessie"]);
+    expect(dom.window.document.getElementById("projectLogsSources")?.textContent).toContain("openvins.service");
+    expect(dom.window.document.getElementById("projectLogsSources")?.textContent).toContain("camera.service");
   });
 
   it("filters sources by provider and streams only the resulting selection", async () => {

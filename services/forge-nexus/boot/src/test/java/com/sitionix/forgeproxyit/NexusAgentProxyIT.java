@@ -35,9 +35,49 @@ class NexusAgentProxyIT {
     private static final UUID PROJECT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final UUID REPOSITORY_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID SERVICE_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+    private static final UUID ASSET_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
 
     @Autowired
     private NexusProxyTestManager testManager;
+
+    @Test
+    void assetCrudInspectionAndMonitoringFlowThroughTheFullTypedProxy() {
+        var projectPath = WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString()));
+        var assetPath = WireMockPathParams.create()
+                .add("projectId", equalTo(PROJECT_ID.toString()))
+                .add("assetId", equalTo(ASSET_ID.toString()));
+        var mvcProject = PathParams.create().add("projectId", PROJECT_ID);
+        var mvcAsset = PathParams.create().add("projectId", PROJECT_ID).add("assetId", ASSET_ID);
+
+        verify(ForgeAgentWireMockEndpoints.createAsset(), NexusAgentMockMvcEndpoints.createAsset(), projectPath, mvcProject);
+        verify(ForgeAgentWireMockEndpoints.listAssets(), NexusAgentMockMvcEndpoints.listAssets(), projectPath, mvcProject);
+        verify(ForgeAgentWireMockEndpoints.getAsset(), NexusAgentMockMvcEndpoints.getAsset(), assetPath, mvcAsset);
+        verify(ForgeAgentWireMockEndpoints.assetMetrics(), NexusAgentMockMvcEndpoints.assetMetrics(), assetPath, mvcAsset);
+        verify(ForgeAgentWireMockEndpoints.assetCapabilities(), NexusAgentMockMvcEndpoints.assetCapabilities(), assetPath, mvcAsset);
+        verify(ForgeAgentWireMockEndpoints.createAssetMonitoring(), NexusAgentMockMvcEndpoints.createAssetMonitoring(), assetPath, mvcAsset);
+        verify(ForgeAgentWireMockEndpoints.listAssetMonitoring(), NexusAgentMockMvcEndpoints.listAssetMonitoring(), assetPath, mvcAsset);
+        verify(ForgeAgentWireMockEndpoints.deleteAsset(), NexusAgentMockMvcEndpoints.deleteAsset(), assetPath, mvcAsset);
+    }
+
+    @Test
+    void assetUpstreamErrorsUseExistingNexusErrorMapping() {
+        var path = WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString()))
+                .add("assetId", equalTo(ASSET_ID.toString()));
+        var mvc = PathParams.create().add("projectId", PROJECT_ID).add("assetId", ASSET_ID);
+        verify(ForgeAgentWireMockEndpoints.assetMetricsFailure(),
+                NexusAgentMockMvcEndpoints.assetMetricsFailure(), path, mvc);
+    }
+
+    private <Request, Response> void verify(
+            com.sitionix.forgeit.domain.endpoint.Endpoint<Request, Response> upstreamEndpoint,
+            com.sitionix.forgeit.domain.endpoint.Endpoint<?, ?> nexusEndpoint,
+            WireMockPathParams upstreamPath,
+            PathParams nexusPath) {
+        final var upstream = this.testManager.wiremock().createMapping(upstreamEndpoint)
+                .pathPattern(upstreamPath).createDefault();
+        this.testManager.mockMvc().ping(nexusEndpoint).withPathParameters(nexusPath).assertDefault();
+        upstream.verify();
+    }
 
     @Test
     void postBodyAndResponseFlowThroughTypedAgentProxy() {

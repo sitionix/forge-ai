@@ -362,7 +362,6 @@ export class AgentProjectsPage {
         if (this.state.view === 'project') {
           this.renderProjectWorkspace();
         }
-        this.loadServiceRuntimeStatuses(projectId, services, loadSequence, runtimeGeneration);
       }
     } catch {
       if (this.isCurrentProjectLoad(projectId, loadSequence)
@@ -373,32 +372,6 @@ export class AgentProjectsPage {
           this.renderProjectWorkspace();
         }
       }
-    }
-  }
-
-  loadServiceRuntimeStatuses(projectId, services, loadSequence, runtimeGeneration) {
-    if (!this.api.getServiceRuntime) return;
-    services.forEach((service) => {
-      this.api.getServiceRuntime(projectId, service.id)
-        .then((runtime) => this.applyServiceRuntimeStatus(
-          projectId, service.id, runtime?.status || 'UNKNOWN', loadSequence, runtimeGeneration))
-        .catch(() => this.applyServiceRuntimeStatus(
-          projectId, service.id, 'UNKNOWN', loadSequence, runtimeGeneration));
-    });
-  }
-
-  applyServiceRuntimeStatus(projectId, serviceId, status, loadSequence, runtimeGeneration) {
-    if (!this.isCurrentProjectLoad(projectId, loadSequence)) return;
-    if (this.serviceRuntimeLoadGeneration !== runtimeGeneration) return;
-    const service = this.state.services.find((candidate) => candidate.id === serviceId);
-    if (!service) return;
-    service.runtimeStatus = ['RUNNING', 'STOPPED', 'FAILED', 'UNKNOWN'].includes(status)
-      ? status
-      : 'UNKNOWN';
-    if (this.state.view === 'project') {
-      this.renderProjectWorkspace();
-    } else {
-      this.workspace.updateServiceRuntimeStatus(serviceId, service.runtimeStatus);
     }
   }
 

@@ -1,0 +1,1 @@
+{"cpuTotalPercent":37.5,"cpuPerCorePercent":[25.0,50.0],"ramTotalBytes":8192,"ramUsedBytes":4096,"loadAverage1m":0.5,"loadAverage5m":0.4,"loadAverage15m":0.3,"disks":[{"mount":"/","totalBytes":1000,"usedBytes":400}],"network":[{"interfaceName":"eth0","receivedBytes":123,"transmittedBytes":456}],"uptimeSeconds":3600,"temperatures":[{"sensor":"cpu","celsius":42.0}]}

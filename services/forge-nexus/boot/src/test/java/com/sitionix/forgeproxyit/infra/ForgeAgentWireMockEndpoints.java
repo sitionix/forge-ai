@@ -15,6 +15,11 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectRepositoryResp
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectServiceResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceRuntimeResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMetricsResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetCapabilitiesResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMonitoringRequest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
@@ -23,6 +28,66 @@ import org.springframework.http.HttpStatus;
 public final class ForgeAgentWireMockEndpoints {
 
     private ForgeAgentWireMockEndpoints() {
+    }
+
+    public static Endpoint<ProjectAssetRequest, ProjectAssetResponse> createAsset() {
+        return assetEndpoint("/api/v1/projects/{projectId}/assets", HttpMethod.POST,
+                ProjectAssetRequest.class, ProjectAssetResponse.class, HttpStatus.CREATED,
+                "agent-asset-response.json", "agent-asset-request.json");
+    }
+
+    public static Endpoint<Void, ProjectAssetResponse[]> listAssets() {
+        return assetEndpoint("/api/v1/projects/{projectId}/assets", HttpMethod.GET,
+                Void.class, ProjectAssetResponse[].class, HttpStatus.OK,
+                "agent-asset-list-response.json", null);
+    }
+
+    public static Endpoint<Void, ProjectAssetResponse> getAsset() {
+        return assetEndpoint("/api/v1/projects/{projectId}/assets/{assetId}", HttpMethod.GET,
+                Void.class, ProjectAssetResponse.class, HttpStatus.OK, "agent-asset-response.json", null);
+    }
+
+    public static Endpoint<Void, AssetMetricsResponse> assetMetrics() {
+        return assetEndpoint("/api/v1/projects/{projectId}/assets/{assetId}/metrics", HttpMethod.GET,
+                Void.class, AssetMetricsResponse.class, HttpStatus.OK, "agent-asset-metrics-response.json", null);
+    }
+
+    public static Endpoint<Void, AssetCapabilitiesResponse> assetCapabilities() {
+        return assetEndpoint("/api/v1/projects/{projectId}/assets/{assetId}/capabilities", HttpMethod.GET,
+                Void.class, AssetCapabilitiesResponse.class, HttpStatus.OK, "agent-asset-capabilities-response.json", null);
+    }
+
+    public static Endpoint<AssetMonitoringRequest, AgentLogSourceResponse> createAssetMonitoring() {
+        return assetEndpoint("/api/v1/projects/{projectId}/assets/{assetId}/monitoring", HttpMethod.POST,
+                AssetMonitoringRequest.class, AgentLogSourceResponse.class, HttpStatus.CREATED,
+                "agent-asset-monitoring-response.json", "agent-asset-monitoring-request.json");
+    }
+
+    public static Endpoint<Void, AgentLogSourceResponse[]> listAssetMonitoring() {
+        return assetEndpoint("/api/v1/projects/{projectId}/assets/{assetId}/monitoring", HttpMethod.GET,
+                Void.class, AgentLogSourceResponse[].class, HttpStatus.OK,
+                "agent-asset-monitoring-list-response.json", null);
+    }
+
+    public static Endpoint<Void, Void> deleteAsset() {
+        return assetEndpoint("/api/v1/projects/{projectId}/assets/{assetId}", HttpMethod.DELETE,
+                Void.class, Void.class, HttpStatus.NO_CONTENT, null, null);
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> assetMetricsFailure() {
+        return assetEndpoint("/api/v1/projects/{projectId}/assets/{assetId}/metrics", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class, HttpStatus.BAD_GATEWAY,
+                "agent-upstream-error-response.json", null);
+    }
+
+    private static <Request, Response> Endpoint<Request, Response> assetEndpoint(
+            String path, HttpMethod method, Class<Request> request, Class<Response> response,
+            HttpStatus status, String responseFixture, String requestFixture) {
+        return Endpoint.createContract(path, method, request, response, (WiremockDefault) context -> {
+            context.plainUrl().responseStatus(status.value());
+            if (requestFixture != null) context.matchesJson(requestFixture);
+            if (responseFixture != null) context.responseBody(responseFixture);
+        });
     }
 
     public static Endpoint<AgentProjectRequest, AgentProjectResponse> createProject() {

@@ -10,6 +10,7 @@ export class ProjectLogsView {
     this.initialAssetId = assetId;
     this.projectId = null;
     this.sources = [];
+    this.assets = [];
     this.events = [];
     this.stream = null;
     this.paused = false;
@@ -29,8 +30,13 @@ export class ProjectLogsView {
     this.close();
     const generation = ++this.loadGeneration;
     this.projectId = projectId;
-    this.sources = this.api.listLogSources ? await this.api.listLogSources(projectId) : [];
+    const [sources, assets] = await Promise.all([
+      this.api.listLogSources ? this.api.listLogSources(projectId) : [],
+      this.api.listProjectAssets ? this.api.listProjectAssets(projectId) : [],
+    ]);
     if (this.loadGeneration !== generation || this.projectId !== projectId) return;
+    this.sources = sources;
+    this.assets = assets;
     this.renderFilterOptions();
     this.renderSources();
   }
@@ -48,12 +54,14 @@ export class ProjectLogsView {
       element.removeEventListener(event, listener));
     this.listeners = [];
     this.sources = [];
+    this.assets = [];
     this.events = [];
     this.paused = false;
   }
 
   renderFilterOptions() {
-    const assets = uniqueOwners(this.sources, "assetId");
+    const assetNames = new Map(this.assets.map((asset) => [asset.id, asset.name]));
+    const assets = uniqueOwners(this.sources, "assetId", assetNames);
     const services = uniqueOwners(this.sources, "serviceId");
     this.renderOwnerOptions("projectLogsResourceFilter", assets, this.initialAssetId);
     this.renderOwnerOptions("projectLogsServiceFilter", services, this.initialServiceId);
@@ -151,9 +159,9 @@ export class ProjectLogsView {
   }
 }
 
-function uniqueOwners(sources, field) {
+function uniqueOwners(sources, field, names = new Map()) {
   const owners = new Map();
   sources.filter((source) => source[field]).forEach((source) =>
-    owners.set(source[field], { id: source[field], name: source.name }));
+    owners.set(source[field], { id: source[field], name: names.get(source[field]) || source.name }));
   return [...owners.values()].sort((left, right) => left.name.localeCompare(right.name));
 }

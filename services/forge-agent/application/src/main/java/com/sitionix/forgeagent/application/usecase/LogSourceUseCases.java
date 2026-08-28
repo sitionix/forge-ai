@@ -85,7 +85,7 @@ public class LogSourceUseCases {
   }
 
   public LogSource update(UUID projectId, UUID id, SaveLogSourceCommand c) {
-    var old = owned(projectId, id);
+    var old = mutableOwned(projectId, id);
     validate(projectId, c);
     return sources.save(
         new LogSource(
@@ -103,7 +103,7 @@ public class LogSourceUseCases {
   }
 
   public void delete(UUID projectId, UUID id) {
-    sources.delete(owned(projectId, id));
+    sources.delete(mutableOwned(projectId, id));
   }
 
   @Transactional(readOnly = true)
@@ -154,6 +154,8 @@ public class LogSourceUseCases {
 
   @Transactional(readOnly = true)
   public LogStream stream(UUID projectId, LogSource s, int lines) {
+    if (s.serviceId() != null && !s.id().equals(derivedId(s.serviceId())))
+      s = derived(service(projectId, s.serviceId()));
     if (lines < 1 || lines > 10_000)
       throw new ValidationException("Initial line count must be between 1 and 10000");
     if (!s.projectId().equals(projectId))
@@ -177,7 +179,8 @@ public class LogSourceUseCases {
   private void validate(UUID projectId, SaveLogSourceCommand c) {
     if (c.name() == null || c.name().isBlank())
       throw new ValidationException("Log source name is required");
-    if (c.serviceId() != null) service(projectId, c.serviceId());
+    if (c.serviceId() != null)
+      throw new ValidationException("Service log sources are derived from runtimeTarget");
     if (c.connectionType() == null || c.provider() == null)
       throw new ValidationException("Connection and provider are required");
     if (c.connectionType() == LogConnectionType.LOCAL && c.sshConnectionId() != null)
@@ -245,7 +248,18 @@ public class LogSourceUseCases {
         .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found")));
     if (!s.projectId().equals(p))
       throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
-    return s;
+    return s.serviceId() == null ? s : derived(service(p, s.serviceId()));
+  }
+
+  private LogSource mutableOwned(UUID projectId, UUID id) {
+    project(projectId);
+    var source = sources.findById(id)
+        .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found"));
+    if (!source.projectId().equals(projectId))
+      throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
+    if (source.serviceId() != null)
+      throw new ValidationException("Legacy Service log sources are immutable compatibility data");
+    return source;
   }
 
   private LogSource derived(ProjectService service) {

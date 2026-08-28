@@ -39,6 +39,18 @@ class CliAssetInspectionAdapterTest {
         assertThat(metrics.uptimeSeconds()).isNull();
     }
 
+    @Test
+    void parsesIndentedProcNetDevRowsAndIgnoresLoopbackAndMalformedRows() {
+        var adapter = new CliAssetInspectionAdapter(new StubExecutor());
+
+        assertThat(adapter.networkMetric("  eth0: 123 1 2 3 4 5 6 7 456 8 9 10 11 12 13 14"))
+                .isEqualTo(new com.sitionix.forgeagent.domain.model.AssetMetrics.NetworkMetric(
+                        "eth0", 123L, 456L));
+        assertThat(adapter.networkMetric("    lo: 9 0 0 0 0 0 0 0 10 0 0 0 0 0 0 0")).isNull();
+        assertThat(adapter.networkMetric(" malformed row ")).isNull();
+        assertThat(adapter.networkMetric("eth1: 123 only-two-columns")).isNull();
+    }
+
     private static SshConnection connection() {
         return new SshConnection(UUID.randomUUID(), UUID.randomUUID(), "server", "server.local", 22,
                 "forge", SshAuthType.PRIVATE_KEY, "/key", null, Instant.EPOCH, Instant.EPOCH);

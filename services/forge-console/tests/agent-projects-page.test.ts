@@ -807,6 +807,18 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2ProjectsView')?.textContent).not.toContain('New Workflow');
   });
 
+  it('opening a Project does not inspect runtime for its Services', async () => {
+    const getServiceRuntime = vi.fn().mockResolvedValue({ status: 'RUNNING' });
+    const manyServices = Array.from({ length: 25 }, (_, index) => service(`service-${index}`));
+    const { page } = await openedProject(api({
+      listServices: vi.fn().mockResolvedValue(manyServices),
+      getServiceRuntime,
+    }));
+
+    expect(getServiceRuntime).not.toHaveBeenCalled();
+    page.dispose();
+  });
+
   it('Project renders x delete control instead of visible Delete text action', async () => {
     const { dom } = await mountedPage();
     const card = dom.window.document.querySelector<HTMLElement>('.project-card')!;

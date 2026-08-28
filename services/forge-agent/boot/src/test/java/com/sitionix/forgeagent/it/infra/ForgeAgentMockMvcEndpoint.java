@@ -12,6 +12,11 @@ import com.sitionix.forgeagent.api.dto.ImportProjectRepositoryRequest;
 import com.sitionix.forgeagent.api.dto.ProjectResponse;
 import com.sitionix.forgeagent.api.dto.ProjectServiceRequest;
 import com.sitionix.forgeagent.api.dto.ProjectServiceResponse;
+import com.sitionix.forgeagent.api.dto.ProjectAssetRequest;
+import com.sitionix.forgeagent.api.dto.ProjectAssetResponse;
+import com.sitionix.forgeagent.api.dto.AssetMonitoringRequest;
+import com.sitionix.forgeagent.domain.model.AssetCapabilities;
+import com.sitionix.forgeagent.domain.model.AssetMetrics;
 import com.sitionix.forgeagent.api.dto.ServiceRuntimeResponse;
 import com.sitionix.forgeagent.api.dto.LogSourceRequest;
 import com.sitionix.forgeagent.api.dto.LogSourceResponse;
@@ -27,6 +32,27 @@ import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 
 public final class ForgeAgentMockMvcEndpoint {
+
+    public static final Endpoint<ProjectAssetRequest, ProjectAssetResponse> CREATE_PROJECT_ASSET =
+            Endpoint.createContract("/api/v1/projects/{projectId}/assets", HttpMethod.POST, ProjectAssetRequest.class, ProjectAssetResponse.class);
+    public static final Endpoint<ProjectAssetRequest, ForgeAgentErrorResponse> CREATE_PROJECT_ASSET_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/assets", HttpMethod.POST, ProjectAssetRequest.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, ProjectAssetResponse[]> LIST_PROJECT_ASSETS =
+            Endpoint.createContract("/api/v1/projects/{projectId}/assets", HttpMethod.GET, Void.class, ProjectAssetResponse[].class);
+    public static final Endpoint<Void, ProjectAssetResponse> GET_PROJECT_ASSET =
+            Endpoint.createContract("/api/v1/projects/{projectId}/assets/{assetId}", HttpMethod.GET, Void.class, ProjectAssetResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> GET_PROJECT_ASSET_ERROR =
+            Endpoint.createContract("/api/v1/projects/{projectId}/assets/{assetId}", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, AssetMetrics> GET_PROJECT_ASSET_METRICS =
+            Endpoint.createContract("/api/v1/projects/{projectId}/assets/{assetId}/metrics", HttpMethod.GET, Void.class, AssetMetrics.class);
+    public static final Endpoint<Void, AssetCapabilities> GET_PROJECT_ASSET_CAPABILITIES =
+            Endpoint.createContract("/api/v1/projects/{projectId}/assets/{assetId}/capabilities", HttpMethod.GET, Void.class, AssetCapabilities.class);
+    public static final Endpoint<AssetMonitoringRequest, LogSourceResponse> CREATE_PROJECT_ASSET_MONITORING =
+            Endpoint.createContract("/api/v1/projects/{projectId}/assets/{assetId}/monitoring", HttpMethod.POST, AssetMonitoringRequest.class, LogSourceResponse.class);
+    public static final Endpoint<Void, LogSourceResponse[]> LIST_PROJECT_ASSET_MONITORING =
+            Endpoint.createContract("/api/v1/projects/{projectId}/assets/{assetId}/monitoring", HttpMethod.GET, Void.class, LogSourceResponse[].class);
+    public static final Endpoint<Void, Void> DELETE_PROJECT_ASSET =
+            Endpoint.createContract("/api/v1/projects/{projectId}/assets/{assetId}", HttpMethod.DELETE, Void.class, Void.class);
 
     public static final Endpoint<Void, ProjectResponse[]> LIST_PROJECTS =
             Endpoint.createContract("/api/v1/projects", HttpMethod.GET, Void.class, ProjectResponse[].class);

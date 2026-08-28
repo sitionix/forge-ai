@@ -13,7 +13,7 @@ public class CliAssetInspectionAdapter implements AssetInspectionPort {
       free -b | awk '/^Mem:/{print "RAM|"$2"|"$3}'
       awk '{print "LOAD|"$1"|"$2"|"$3}' /proc/loadavg
       df -B1 -P | awk 'NR>1{print "DISK|"$6"|"$2"|"$3}'
-      awk -F'[: ]+' 'NR>2 && $1!="lo"{print "NET|"$1"|"$3"|"$11}' /proc/net/dev
+      sed 's/^/NETDEV|/' /proc/net/dev
       awk '{printf "UPTIME|%.0f\\n",$1}' /proc/uptime
       for f in /sys/class/thermal/thermal_zone*/temp; do [ -r "$f" ] && awk -v n="$f" '{print "TEMP|"n"|"$1/1000}' "$f"; done
       """;
@@ -44,6 +44,10 @@ public class CliAssetInspectionAdapter implements AssetInspectionPort {
           case "LOAD" -> { load1 = Double.parseDouble(p[1]); load5 = Double.parseDouble(p[2]); load15 = Double.parseDouble(p[3]); }
           case "DISK" -> disks.add(new AssetMetrics.DiskMetric(p[1], Long.parseLong(p[2]), Long.parseLong(p[3])));
           case "NET" -> network.add(new AssetMetrics.NetworkMetric(p[1], Long.parseLong(p[2]), Long.parseLong(p[3])));
+          case "NETDEV" -> {
+            AssetMetrics.NetworkMetric metric = networkMetric(row.substring("NETDEV|".length()));
+            if (metric != null) network.add(metric);
+          }
           case "UPTIME" -> uptime = Long.parseLong(p[1]);
           case "TEMP" -> temperatures.add(new AssetMetrics.TemperatureMetric(p[1], Double.parseDouble(p[2])));
           default -> { }
@@ -84,6 +88,21 @@ public class CliAssetInspectionAdapter implements AssetInspectionPort {
     if (totalDelta <= 0 || idleDelta < 0) return null;
     double value = (totalDelta - idleDelta) * 100.0 / totalDelta;
     return Math.max(0.0, Math.min(100.0, value));
+  }
+
+  AssetMetrics.NetworkMetric networkMetric(String row) {
+    try {
+      int separator = row.indexOf(':');
+      if (separator < 1) return null;
+      String interfaceName = row.substring(0, separator).strip();
+      if (interfaceName.isEmpty() || interfaceName.equals("lo")) return null;
+      String[] values = row.substring(separator + 1).strip().split("\\s+");
+      if (values.length < 9) return null;
+      return new AssetMetrics.NetworkMetric(
+          interfaceName, Long.parseLong(values[0]), Long.parseLong(values[8]));
+    } catch (RuntimeException ignored) {
+      return null;
+    }
   }
 
   private void pauseBetweenCpuSamples() {
