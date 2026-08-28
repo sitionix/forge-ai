@@ -19,7 +19,7 @@ just restart
 just stop
 ```
 
-`just start` remains the lightweight development launcher that uses the existing PID-file based scripts. The `systemd-*` recipes are the installed runtime path where systemd owns process lifecycle, `MainPID`, restart policy, startup timestamp, exit status, and journald output.
+`just start`, `just stop`, `just status`, and `just restart` are the public installed-runtime commands. They manage the four Forge systemd units, where systemd owns process lifecycle, `MainPID`, restart policy, startup timestamp, exit status, and journald output. The lightweight PID-file launcher remains internal for development-focused checks and cannot compete with active systemd workloads.
 
 The units use `Restart=on-failure` with `RestartSec=5s`. Normal operator stops are not restarted; failed processes are restarted by systemd and remain visible through systemd state and journal metadata.
 
