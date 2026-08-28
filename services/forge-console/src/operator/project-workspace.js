@@ -5,10 +5,8 @@ export class ProjectWorkspace {
     this.document = options.document;
     this.onBack = options.onBack;
     this.onOpenLogs = options.onOpenLogs;
-    this.onAddService = options.onAddService || (()=>{});
+    this.onOpenRepository = options.onOpenRepository || (() => {});
     this.onOpenService = options.onOpenService || (()=>{});
-    this.onEditService = options.onEditService || (() => {});
-    this.onDeleteService = options.onDeleteService || (() => {});
     this.onNewAgent = options.onNewAgent;
     this.onImportRepository = options.onImportRepository;
     this.onCloneRepository = options.onCloneRepository || (() => {});
@@ -28,14 +26,13 @@ export class ProjectWorkspace {
   bind() {
     this.byId('agentsV2WorkspaceBack')?.addEventListener('click', () => this.onBack());
     this.byId('projectLogsOpen')?.addEventListener('click', () => this.onOpenLogs());
-    this.byId('projectServiceAdd')?.addEventListener('click', () => this.onAddService());
     this.byId('agentsV2ImportRepository')?.addEventListener('click', () => this.onImportRepository());
     this.byId('agentsV2CreateAgent')?.addEventListener('click', () => this.onNewAgent());
     this.byId('agentsV2CreateWorkflow')?.addEventListener('click', () => this.onNewWorkflow());
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, repositories, agents, workflows, tasks, repositoriesCurrent, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set(), refreshingRepositoryIds = new Set()) {
+  render(project, repositories, services, agents, workflows, tasks, repositoriesCurrent, servicesLoadState, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2ImportRepository').disabled = !project || !repositoriesCurrent;
@@ -48,7 +45,8 @@ export class ProjectWorkspace {
       || !tasksCurrent
       || !workflows.length
       || !repositories.length;
-    this.renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds, pullingRepositoryIds, refreshingRepositoryIds);
+    this.renderRepositories(repositories, services, repositoriesCurrent, servicesLoadState, repositoriesLoadFailed);
+    this.renderStandaloneServices(services);
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
     this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed, taskPage);
@@ -60,52 +58,47 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateWorkflow').disabled = true;
     this.byId('agentsV2CreateTask').disabled = true;
     this.byId('agentsV2RepositoriesList').innerHTML = '<div class="muted-state">Loading repositories...</div>';
-    this.byId('projectServicesList').innerHTML = '<div class="muted-state">Loading services...</div>';
+    this.byId('projectStandaloneServicesSection')?.classList.add('hidden');
+    this.byId('projectStandaloneServicesList').innerHTML = '';
     this.byId('agentsV2AgentsList').innerHTML = '<div class="muted-state">Loading agents...</div>';
     this.byId('agentsV2WorkflowsList').innerHTML = '<div class="muted-state">Loading workflows...</div>';
     this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
   }
 
-  renderServices(services, repositories = []) {
-    const list = this.byId('projectServicesList');
-    if (!services.length) {
-      list.innerHTML = '<div class="muted-state">No services yet.</div>';
+  renderStandaloneServices(services) {
+    const section = this.byId('projectStandaloneServicesSection');
+    const list = this.byId('projectStandaloneServicesList');
+    const standalone = services
+      .filter((service) => !service.repositoryId)
+      .sort((left, right) => (left.name || '').localeCompare(right.name || '') || (left.id || '').localeCompare(right.id || ''));
+    section?.classList.toggle('hidden', !standalone.length);
+    if (!standalone.length) {
+      list.innerHTML = '';
       return;
     }
-    list.innerHTML = services.map((service) => {
-      const repository = repositories.find((candidate) => candidate.id === service.repositoryId);
-      const target = service.runtimeTarget || {};
-      return `<article class="agents-v2-card" data-service-card-id="${escapeHtml(service.id)}">
-        <h3>${escapeHtml(service.name)}</h3>
-        <p><strong data-service-runtime-status="${escapeHtml(service.id)}">${escapeHtml(service.runtimeStatus || 'UNKNOWN')}</strong> · <span data-service-runtime-detail="${escapeHtml(service.id)}">${service.runtimeStatus ? 'Last checked' : 'Not checked'}</span></p>
-        <p>${escapeHtml(repository?.name || 'No repository')}</p>
-        <p>${escapeHtml(target.connection || '')} · ${escapeHtml(target.provider || '')} · <code>${escapeHtml(target.container || target.unit || '')}</code></p>
-        <div class="agents-v2-card-actions">
-          <button class="button small secondary" data-service-id="${escapeHtml(service.id)}">Open</button>
-          <button class="button small secondary" data-edit-service-id="${escapeHtml(service.id)}">Edit</button>
-          <button class="button small secondary" data-delete-service-id="${escapeHtml(service.id)}">Delete</button>
-        </div>
-      </article>`;
-    }).join('');
-    list.querySelectorAll('[data-service-id]').forEach((element) =>
-      element.addEventListener('click', () => this.onOpenService(element.dataset.serviceId)));
-    list.querySelectorAll('[data-edit-service-id]').forEach((element) =>
-      element.addEventListener('click', () => this.onEditService(element.dataset.editServiceId)));
-    list.querySelectorAll('[data-delete-service-id]').forEach((element) =>
-      element.addEventListener('click', () => this.onDeleteService(element.dataset.deleteServiceId)));
+    list.innerHTML = standalone.map((service) => `
+      <button class="standalone-service-row" type="button" data-standalone-service-id="${escapeHtml(service.id)}">
+        <span class="repository-main">
+          <strong>${escapeHtml(service.name)}</strong>
+          <span class="repository-git-state">No repository</span>
+        </span>
+        <span class="repository-runtime-summary repository-runtime-${escapeHtml(runtimeTone(service.runtimeStatus || 'UNKNOWN'))}">
+          <span class="repository-runtime-dot" aria-hidden="true"></span><span data-service-runtime-status="${escapeHtml(service.id)}">${escapeHtml(service.runtimeStatus || 'UNKNOWN')}</span>
+        </span>
+      </button>
+    `).join('');
+    list.querySelectorAll('[data-standalone-service-id]').forEach((element) =>
+      element.addEventListener('click', () => this.onOpenService(element.dataset.standaloneServiceId)));
   }
 
   updateServiceRuntimeStatus(serviceId, status) {
-    const list = this.byId('projectServicesList');
+    const list = this.document;
     const statusElement = [...(list?.querySelectorAll('[data-service-runtime-status]') || [])]
       .find((element) => element.dataset.serviceRuntimeStatus === serviceId);
-    const detailElement = [...(list?.querySelectorAll('[data-service-runtime-detail]') || [])]
-      .find((element) => element.dataset.serviceRuntimeDetail === serviceId);
     if (statusElement) statusElement.textContent = status || 'UNKNOWN';
-    if (detailElement) detailElement.textContent = 'Last checked';
   }
 
-  renderRepositories(repositories, repositoriesCurrent, repositoriesLoadFailed, cloningRepositoryIds = new Set(), pullingRepositoryIds = new Set(), refreshingRepositoryIds = new Set()) {
+  renderRepositories(repositories, services, repositoriesCurrent, servicesLoadState, repositoriesLoadFailed) {
     const list = this.byId('agentsV2RepositoriesList');
     if (repositoriesLoadFailed) {
       list.innerHTML = '';
@@ -120,31 +113,76 @@ export class ProjectWorkspace {
       return;
     }
     list.innerHTML = repositories.map((repository) => `
-      <article class="repository-row">
+      <article class="repository-row repository-navigation-row" role="button" tabindex="0" data-repository-id="${escapeHtml(repository.id)}">
         <span class="repository-main">
           <code>${escapeHtml(repository.name || '')}</code>
           ${this.renderRepositoryGitState(repository)}
         </span>
-        <span class="repository-actions">
-          ${repository.cloned === false ? `
-            <button class="button tiny secondary" type="button" data-clone-repository-id="${escapeHtml(repository.id)}"${cloningRepositoryIds.has(repository.id) ? ' disabled' : ''}>Clone</button>
-          ` : ''}
-          ${repository.cloned ? `
-            <button class="button tiny secondary" type="button" data-refresh-repository-id="${escapeHtml(repository.id)}"${refreshingRepositoryIds.has(repository.id) ? ' disabled' : ''}>Refresh</button>
-          ` : ''}
-          ${this.renderRepositoryAction(repository, pullingRepositoryIds)}
+        <span class="repository-runtime-summary repository-runtime-${escapeHtml(this.repositoryRuntimeSummaryTone(repository, services, servicesLoadState))}">
+          <span class="repository-runtime-dot" aria-hidden="true"></span><span data-repository-runtime-status="${escapeHtml(repository.id)}">${escapeHtml(this.repositoryRuntimeSummary(repository, services, servicesLoadState))}</span>
         </span>
       </article>
     `).join('');
-    list.querySelectorAll('[data-clone-repository-id]').forEach((element) => {
-      element.addEventListener('click', () => this.onCloneRepository(element.dataset.cloneRepositoryId));
+    list.querySelectorAll('[data-repository-id]').forEach((element) => {
+      const open = () => this.onOpenRepository(element.dataset.repositoryId);
+      element.addEventListener('click', open);
+      element.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') {
+          return;
+        }
+        event.preventDefault();
+        open();
+      });
     });
-    list.querySelectorAll('[data-pull-repository-id]').forEach((element) => {
-      element.addEventListener('click', () => this.onPullRepository(element.dataset.pullRepositoryId));
-    });
-    list.querySelectorAll('[data-refresh-repository-id]').forEach((element) => {
-      element.addEventListener('click', () => this.onRefreshRepository(element.dataset.refreshRepositoryId));
-    });
+  }
+
+  repositoryRuntimeSummary(repository, services, servicesLoadState = 'CURRENT') {
+    if (servicesLoadState === 'LOADING') {
+      return 'Loading runtime';
+    }
+    if (servicesLoadState === 'FAILED') {
+      return 'UNKNOWN';
+    }
+    const linked = services.filter((service) => service.repositoryId === repository.id);
+    if (!linked.length) {
+      return 'NOT CONFIGURED';
+    }
+    const statuses = linked.map((service) => service.runtimeStatus || 'UNKNOWN');
+    if (linked.length === 1) {
+      return statuses[0];
+    }
+    const counts = statuses.reduce((summary, status) => {
+      summary[status] = (summary[status] || 0) + 1;
+      return summary;
+    }, {});
+    return [
+      `${linked.length} services`,
+      counts.RUNNING ? `${counts.RUNNING} running` : '',
+      counts.STOPPED ? `${counts.STOPPED} stopped` : '',
+      counts.FAILED ? `${counts.FAILED} failed` : '',
+      counts.UNKNOWN ? `${counts.UNKNOWN} unknown` : ''
+    ].filter(Boolean).join(' · ');
+  }
+
+  repositoryRuntimeSummaryTone(repository, services, servicesLoadState = 'CURRENT') {
+    if (servicesLoadState === 'LOADING' || servicesLoadState === 'FAILED') {
+      return 'unknown';
+    }
+    const linked = services.filter((service) => service.repositoryId === repository.id);
+    if (!linked.length) {
+      return 'not-configured';
+    }
+    const statuses = linked.map((service) => service.runtimeStatus || 'UNKNOWN');
+    if (statuses.includes('FAILED')) {
+      return 'failed';
+    }
+    if (statuses.every((status) => status === 'RUNNING')) {
+      return 'running';
+    }
+    if (statuses.every((status) => status === 'STOPPED')) {
+      return 'stopped';
+    }
+    return 'unknown';
   }
 
   renderRepositoryAction(repository, pullingRepositoryIds = new Set()) {
@@ -392,6 +430,12 @@ export function statusTone(status) {
   if (normalized === 'failed') {
     return 'failed';
   }
+  if (normalized === 'stopped') {
+    return 'stopped';
+  }
+  if (normalized === 'not configured') {
+    return 'not-configured';
+  }
   if (normalized === 'blocked') {
     return 'blocked';
   }
@@ -400,6 +444,20 @@ export function statusTone(status) {
   }
   if (normalized === 'cancelled') {
     return 'cancelled';
+  }
+  return 'unknown';
+}
+
+export function runtimeTone(status) {
+  const normalized = (status || '').toLowerCase().replace(/\s+/g, '-');
+  if (normalized === 'running') {
+    return 'running';
+  }
+  if (normalized === 'stopped' || normalized === 'not-configured') {
+    return 'stopped';
+  }
+  if (normalized === 'failed') {
+    return 'failed';
   }
   return 'unknown';
 }

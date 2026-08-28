@@ -34,6 +34,7 @@ import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
+import com.sitionix.forgeagent.api.dto.RuntimeTargetCandidateResponse;
 import com.sitionix.forgeagent.api.dto.RunConnectionResponse;
 import com.sitionix.forgeagent.api.dto.RunNodeResponse;
 import com.sitionix.forgeagent.api.dto.RunPortResponse;
@@ -86,6 +87,7 @@ import com.sitionix.forgeagent.domain.model.ProjectTaskSummary;
 import com.sitionix.forgeagent.domain.model.RunConnection;
 import com.sitionix.forgeagent.domain.model.RunNode;
 import com.sitionix.forgeagent.domain.model.RunPort;
+import com.sitionix.forgeagent.domain.model.RuntimeTargetCandidate;
 import com.sitionix.forgeagent.domain.model.SshConnection;
 import com.sitionix.forgeagent.domain.model.SystemdLogConfiguration;
 import com.sitionix.forgeagent.domain.model.SystemdTargetMode;
@@ -216,6 +218,10 @@ class ForgeAgentApiMapper {
                 candidate.suggested());
     }
 
+    RuntimeTargetCandidateResponse toResponse(final RuntimeTargetCandidate candidate) {
+        return new RuntimeTargetCandidateResponse(candidate.id(), candidate.provider());
+    }
+
     SshConnectionResponse toResponse(final SshConnection connection) {
         return new SshConnectionResponse(
                 connection.id(),
@@ -246,6 +252,7 @@ class ForgeAgentApiMapper {
                 repository.id(),
                 repository.projectId(),
                 repository.name(),
+                repository.remoteUrl(),
                 repository.cloned(),
                 this.toGitStateResponse(repository),
                 repository.createdAt()

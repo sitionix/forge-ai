@@ -29,8 +29,13 @@ class TypedProcessExecutor {
         throw failure("RUNTIME_TIMEOUT", "Runtime command timed out", null);
       }
       String text = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-      if (process.exitValue() != 0)
+      if (process.exitValue() != 0) {
+        if (ssh != null && process.exitValue() == 255) {
+          throw failure(
+              "SSH_TRANSPORT_FAILED", "SSH connection to the selected host failed", null);
+        }
         throw failure("RUNTIME_COMMAND_FAILED", "Runtime command failed: " + text.strip(), null);
+      }
       return text.lines().toList();
     } catch (IOException e) {
       if (RemoteShellCommand.passwordAuthentication(ssh)) {
@@ -38,6 +43,9 @@ class TypedProcessExecutor {
             "SSH_PASSWORD_AUTH_UNAVAILABLE",
             "Password SSH authentication requires sshpass",
             e);
+      }
+      if (ssh != null) {
+        throw failure("SSH_TRANSPORT_FAILED", "SSH connection to the selected host failed", e);
       }
       throw failure("RUNTIME_UNAVAILABLE", "Runtime provider is unavailable", e);
     } catch (InterruptedException e) {

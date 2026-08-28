@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.api;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
+import com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import jakarta.validation.Valid;
@@ -101,6 +102,29 @@ class ForgeAgentExceptionHandlerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(response.getBody().code()).isEqualTo("PERSISTENCE_CONFLICT");
         assertThat(response.getBody().message()).isEqualTo("Request conflicts with existing Forge Agent configuration data.");
+    }
+
+    @Test
+    void systemdUnavailableReturnsServiceUnavailableWithTypedCode() {
+        final var response = this.handler.handleInfrastructureExecution(
+                new InfrastructureExecutionException("SYSTEMD_UNAVAILABLE", "Systemd is not available on the selected host."),
+                this.request()
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        assertThat(response.getBody().code()).isEqualTo("SYSTEMD_UNAVAILABLE");
+        assertThat(response.getBody().message()).isEqualTo("Systemd is not available on the selected host.");
+    }
+
+    @Test
+    void otherInfrastructureFailuresRemainInternalError() {
+        final var response = this.handler.handleInfrastructureExecution(
+                new InfrastructureExecutionException("RUNTIME_COMMAND_FAILED", "Runtime command failed."),
+                this.request()
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(response.getBody().code()).isEqualTo("RUNTIME_COMMAND_FAILED");
     }
 
     @Test

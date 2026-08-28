@@ -17,25 +17,6 @@ public class SshRemoteLogAdapter implements RemoteLogPort, SshConnectionProbePor
     executor.output(command(connection, "true"), null, connection);
   }
 
-  public List<LogTargetCandidate> discover(SshConnection c, LogProviderType provider) {
-    if (provider != LogProviderType.SYSTEMD) return List.of();
-    return executor
-        .output(
-            command(
-                c, "systemctl", "list-units", "--type=service", "--all", "--no-legend", "--plain"),
-            null,
-            c)
-        .stream()
-        .map(String::strip)
-        .filter(s -> !s.isBlank())
-        .map(s -> s.split("\\s+", 2)[0])
-        .map(
-            u ->
-                new LogTargetCandidate(
-                    u, u, LogTargetStatus.AVAILABLE, null, null, null, null, false))
-        .toList();
-  }
-
   public void validate(SshConnection c, LogProviderType p, LogProviderConfiguration cfg) {
     executor.output(validation(c, p, cfg), null, c);
   }

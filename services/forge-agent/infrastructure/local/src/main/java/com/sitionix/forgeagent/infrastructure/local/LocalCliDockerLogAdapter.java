@@ -13,21 +13,6 @@ import org.springframework.stereotype.Component;
 public class LocalCliDockerLogAdapter implements DockerLogPort {
   private final TypedProcessExecutor executor;
 
-  public List<LogTargetCandidate> discover(SshConnection ssh) {
-    List<String> command =
-        docker(
-            ssh,
-            "ps",
-            "-a",
-            "--format",
-            "{{.ID}}\\t{{.Names}}\\t{{.Status}}\\t{{.Image}}\\t{{.Label"
-                + " \"com.docker.compose.project\"}}\\t{{.Label \"com.docker.compose.service\"}}");
-    return output(command, null, ssh).stream()
-        .filter(s -> !s.isBlank())
-        .map(this::candidate)
-        .toList();
-  }
-
   public List<LogTargetCandidate> discoverComposeServices(Path repository, SshConnection ssh) {
     if (repository == null || ssh != null) return List.of();
     for (String name :
@@ -88,20 +73,6 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
         docker(ssh, "logs", "--tail", String.valueOf(safe), "--follow", "--", container),
         null,
         ssh);
-  }
-
-  private LogTargetCandidate candidate(String row) {
-    String[] p = row.split("\\t", -1);
-    String name = p.length > 1 && !p[1].isBlank() ? p[1] : p[0];
-    return new LogTargetCandidate(
-        name,
-        name,
-        p.length > 2 && p[2].startsWith("Up") ? LogTargetStatus.RUNNING : LogTargetStatus.STOPPED,
-        p.length > 3 ? p[3] : null,
-        p.length > 4 ? p[4] : null,
-        p.length > 5 ? p[5] : null,
-        null,
-        false);
   }
 
   private List<String> docker(SshConnection ssh, String... args) {

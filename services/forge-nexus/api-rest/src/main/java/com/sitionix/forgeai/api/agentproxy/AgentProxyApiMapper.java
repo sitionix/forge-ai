@@ -27,6 +27,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetCandidate;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetDiscoveryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunConnection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunNode;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunPort;
@@ -87,6 +89,17 @@ public class AgentProxyApiMapper {
                 new AgentServiceRuntimeTarget(
                         target.connection(), target.sshConnectionId(), target.provider(),
                         target.container(), target.unit()));
+    }
+
+    public AgentRuntimeTargetDiscoveryCommand toCommand(final AgentRuntimeTargetDiscoveryRequest request) {
+        return new AgentRuntimeTargetDiscoveryCommand(
+                request.connection(),
+                request.sshConnectionId(),
+                request.provider());
+    }
+
+    public AgentRuntimeTargetCandidateResponse toResponse(final AgentRuntimeTargetCandidate candidate) {
+        return new AgentRuntimeTargetCandidateResponse(candidate.id(), candidate.provider());
     }
 
     public AgentProjectServiceResponse toResponse(final AgentProjectService service) {
@@ -230,6 +243,7 @@ public class AgentProxyApiMapper {
                 repository.id(),
                 repository.projectId(),
                 repository.name(),
+                repository.remoteUrl(),
                 repository.cloned(),
                 this.toResponse(repository.git()),
                 repository.createdAt()

@@ -2,6 +2,7 @@
   "id": "ignored",
   "projectId": "10000000-0000-4000-8000-000000000001",
   "name": "service-a",
+  "remoteUrl": "git@gitlab.com:company/service-a.git",
   "cloned": true,
   "git": {
     "branch": "main",

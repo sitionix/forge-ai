@@ -1,0 +1,6 @@
+[
+  {
+    "id": "forge-nexus.service",
+    "provider": "SYSTEMD"
+  }
+]

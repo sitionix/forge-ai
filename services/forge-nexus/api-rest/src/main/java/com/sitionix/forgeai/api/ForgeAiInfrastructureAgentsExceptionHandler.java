@@ -24,7 +24,8 @@ import org.springframework.web.client.RestClientException;
     assignableTypes = {
       ForgeAiInfrastructureAgentsController.class,
       ForgeAiProjectLogsController.class,
-      ForgeAiProjectServicesController.class
+      ForgeAiProjectServicesController.class,
+      ForgeAiRuntimeTargetDiscoveryController.class
     })
 @RequiredArgsConstructor
 public class ForgeAiInfrastructureAgentsExceptionHandler {

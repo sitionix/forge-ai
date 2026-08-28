@@ -1,0 +1,5 @@
+{
+  "connection": "SSH",
+  "sshConnectionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "provider": "SYSTEMD"
+}

@@ -42,6 +42,9 @@ public class ForgeAgentExceptionHandler {
     @ExceptionHandler(InfrastructureExecutionException.class)
     ResponseEntity<ForgeAgentErrorResponse> handleInfrastructureExecution(final InfrastructureExecutionException exception,
                                                                           final HttpServletRequest request) {
+        if ("SYSTEMD_UNAVAILABLE".equals(exception.code())) {
+            return this.response(HttpStatus.SERVICE_UNAVAILABLE, exception, request);
+        }
         return this.response(HttpStatus.INTERNAL_SERVER_ERROR, exception, request);
     }
 

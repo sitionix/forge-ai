@@ -10,39 +10,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 class LocalCliDockerLogAdapterTest {
   @Test
-  void discoveryMapsRuntimeOutputToTypedCandidates() {
-    var executor =
-        new FakeExecutor(List.of("abc\tmission\tUp 2 minutes\timage:1\tancestor\tmission"));
-    var result = new LocalCliDockerLogAdapter(executor).discover(null);
-    assertThat(result)
-        .containsExactly(
-            new LogTargetCandidate(
-                "mission",
-                "mission",
-                LogTargetStatus.RUNNING,
-                "image:1",
-                "ancestor",
-                "mission",
-                null,
-                false));
-  }
-
-  @Test
-  void discoveryUsesContainerNameInsteadOfEphemeralContainerId() {
-    var first =
-        new LocalCliDockerLogAdapter(
-                new FakeExecutor(List.of("old-id\tmission\tUp 1 minute\timage:1\t\t")))
-            .discover(null);
-    var recreated =
-        new LocalCliDockerLogAdapter(
-                new FakeExecutor(List.of("new-id\tmission\tUp 1 second\timage:1\t\t")))
-            .discover(null);
-
-    assertThat(first.getFirst().id()).isEqualTo("mission");
-    assertThat(recreated.getFirst().id()).isEqualTo("mission");
-  }
-
-  @Test
   void validatesThroughTypedDockerInspectArguments() {
     var executor = new FakeExecutor(List.of());
     new LocalCliDockerLogAdapter(executor).validate("mission", null, null, null);

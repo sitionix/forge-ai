@@ -8,6 +8,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTask;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskPage;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectTaskSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetCandidate;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetDiscoveryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
@@ -35,6 +37,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateWorkflowRunRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.CreateProjectTaskRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ImportProjectRepositoryRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetDiscoveryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import java.util.List;
 import java.util.UUID;
@@ -52,6 +55,7 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     public void deleteProjectService(UUID p,UUID s){clientCallExecutor.execute(()->{httpClient.deleteProjectService(p,s);return null;});}
     public com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntime getProjectServiceRuntime(UUID p,UUID s){return mapper.toDomain(clientCallExecutor.execute(()->httpClient.getProjectServiceRuntime(p,s)));}
     public java.util.List<com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource> listProjectServiceLogSources(UUID p,UUID s){return clientCallExecutor.execute(()->httpClient.listProjectServiceLogSources(p,s)).stream().map(mapper::toDomain).toList();}
+    public List<AgentRuntimeTargetCandidate> discoverProjectRuntimeTargets(UUID p,AgentRuntimeTargetDiscoveryCommand c){RuntimeTargetDiscoveryRequest r=mapper.toRequest(c);return clientCallExecutor.execute(()->httpClient.discoverProjectRuntimeTargets(p,r)).stream().map(mapper::toDomain).toList();}
 
     private final ForgeAgentHttpClient httpClient;
     private final ForgeAgentClientMapper mapper;

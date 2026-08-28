@@ -26,6 +26,8 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeEffort;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeModel;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProvider;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetCandidate;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetDiscoveryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunConnection;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunNode;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRunPort;
@@ -87,6 +89,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryRes
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RunConnectionResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RunNodeResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RunPortResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetCandidateResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetDiscoveryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunGraphResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunExecutionEdgeResponse;
@@ -105,6 +109,17 @@ public class ForgeAgentClientMapper {
         var t=r.runtimeTarget(); return new com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService(r.id(),r.projectId(),r.name(),r.repositoryId(),new com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntimeTarget(t.connection(),t.sshConnectionId(),t.provider(),t.container(),t.unit()),r.createdAt(),r.updatedAt());
     }
     com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntime toDomain(final com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceRuntimeResponse r) { return new com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntime(r.status(),r.provider(),r.connection(),r.targetIdentity(),r.startedAt(),r.uptime(),r.metadata(),r.health()); }
+
+    RuntimeTargetDiscoveryRequest toRequest(final AgentRuntimeTargetDiscoveryCommand command) {
+        return new RuntimeTargetDiscoveryRequest(
+                command.connection(),
+                command.sshConnectionId(),
+                command.provider());
+    }
+
+    AgentRuntimeTargetCandidate toDomain(final RuntimeTargetCandidateResponse response) {
+        return new AgentRuntimeTargetCandidate(response.id(), response.provider());
+    }
 
     private final ObjectMapper objectMapper;
 
@@ -228,6 +243,7 @@ public class ForgeAgentClientMapper {
                 response.id(),
                 response.projectId(),
                 response.name(),
+                response.remoteUrl(),
                 response.cloned(),
                 this.toDomain(response.git()),
                 response.createdAt()

@@ -6,10 +6,13 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/forge-env.sh"
 
 if command -v just >/dev/null 2>&1; then
-  (cd "${FORGE_AI_HOME}" && just _app-stop) || true
+  (cd "${FORGE_AI_HOME}" && just stop)
+  exit 0
 else
+  "${SCRIPT_DIR}/runtime-ownership.sh" assert-systemd-inactive
   PID_FILE="${FORGE_AI_HOME}/var/forge-ai.pid"
   if [[ -f "${PID_FILE}" ]] && kill -0 "$(cat "${PID_FILE}")" >/dev/null 2>&1; then
+    "${SCRIPT_DIR}/runtime-ownership.sh" assert-pid-not-systemd-owned "$(cat "${PID_FILE}")"
     kill "$(cat "${PID_FILE}")"
     echo "Stopped Forge Nexus PID $(cat "${PID_FILE}")."
   else
@@ -19,6 +22,7 @@ else
 
   AGENT_PID_FILE="${FORGE_AI_HOME}/var/forge-agent.pid"
   if [[ -f "${AGENT_PID_FILE}" ]] && kill -0 "$(cat "${AGENT_PID_FILE}")" >/dev/null 2>&1; then
+    "${SCRIPT_DIR}/runtime-ownership.sh" assert-pid-not-systemd-owned "$(cat "${AGENT_PID_FILE}")"
     kill "$(cat "${AGENT_PID_FILE}")"
     echo "Stopped Forge Agent PID $(cat "${AGENT_PID_FILE}")."
   else

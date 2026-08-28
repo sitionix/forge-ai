@@ -17,6 +17,12 @@ export function createAgentProjectsApi(http) {
     deleteService(projectId, serviceId) { return http.delete(`${root}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`); },
     getServiceRuntime(projectId, serviceId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}/runtime`); },
     listServiceLogSources(projectId, serviceId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}/log-sources`); },
+    discoverRuntimeTargets(projectId, request) {
+      return http.post(
+        `${root}/projects/${encodeURIComponent(projectId)}/runtime-targets/discover`,
+        request,
+      );
+    },
     listLogSources(projectId) {
       return http.get(
         `${root}/projects/${encodeURIComponent(projectId)}/log-sources`,

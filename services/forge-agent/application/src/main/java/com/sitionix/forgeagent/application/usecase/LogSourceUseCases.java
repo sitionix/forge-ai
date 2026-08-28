@@ -23,6 +23,7 @@ public class LogSourceUseCases {
   private final SshConnectionRepository connections;
   private final DockerLogPort docker;
   private final RemoteLogPort remote;
+  private final RuntimeTargetDiscoveryUseCases runtimeTargets;
   private final ProjectRepositoryLinkRepository repositories;
   private final LocalProjectWorkspacePort workspaces;
   private final GitRepositoryPort git;
@@ -112,8 +113,16 @@ public class LogSourceUseCases {
     if (connection == LogConnectionType.SSH && repositoryId != null)
       throw new ValidationException("Compose repository discovery is available only locally");
     SshConnection ssh = resolve(projectId, connection, sshId);
-    if (provider != LogProviderType.DOCKER) return remote.discover(ssh, provider);
-    var candidates = new ArrayList<>(docker.discover(ssh));
+    if (provider != LogProviderType.DOCKER) {
+      return runtimeTargets.discover(projectId, runtimeCommand(connection, sshId, provider)).stream()
+          .map(this::logCandidate)
+          .toList();
+    }
+    var candidates =
+        new ArrayList<>(
+            runtimeTargets.discover(projectId, runtimeCommand(connection, sshId, provider)).stream()
+                .map(this::logCandidate)
+                .toList());
     if (connection == LogConnectionType.LOCAL && repositoryId != null)
       candidates.addAll(discoverCompose(projectId, repositoryId));
     return List.copyOf(candidates);
@@ -263,6 +272,32 @@ public class LogSourceUseCases {
     if (state == null || !state.cloned())
       throw new ValidationException("Project repository is not cloned");
     return docker.discoverComposeServices(state.path(), null);
+  }
+
+  private RuntimeTargetDiscoveryCommand runtimeCommand(
+      LogConnectionType connection, UUID sshId, LogProviderType provider) {
+    return new RuntimeTargetDiscoveryCommand(
+        connection == LogConnectionType.LOCAL ? ServiceConnectionType.LOCAL : ServiceConnectionType.SSH,
+        sshId,
+        provider == LogProviderType.DOCKER
+            ? ServiceRuntimeProvider.DOCKER
+            : ServiceRuntimeProvider.SYSTEMD);
+  }
+
+  private LogTargetCandidate logCandidate(RuntimeTargetCandidate target) {
+    return new LogTargetCandidate(
+        target.id(),
+        target.label(),
+        switch (target.status()) {
+          case RUNNING -> LogTargetStatus.RUNNING;
+          case STOPPED -> LogTargetStatus.STOPPED;
+          case AVAILABLE -> LogTargetStatus.AVAILABLE;
+        },
+        target.image(),
+        target.composeProject(),
+        target.composeService(),
+        null,
+        false);
   }
 
   private boolean nonblank(String value) {

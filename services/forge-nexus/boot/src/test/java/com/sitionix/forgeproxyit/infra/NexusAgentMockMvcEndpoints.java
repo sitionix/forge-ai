@@ -9,6 +9,8 @@ import com.sitionix.forgeai.api.agentproxy.AgentLogTargetCandidateResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentRuntimeTargetCandidateResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentRuntimeTargetDiscoveryRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentSshConnectionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectServiceRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectServiceResponse;
@@ -156,6 +158,26 @@ public final class NexusAgentMockMvcEndpoints {
                         .withRequest("agent-discover-logs-request.json")
                         .expectStatus(HttpStatus.OK.value())
                         .expectResponse("agent-discover-logs-response.json"));
+    }
+
+    public static Endpoint<AgentRuntimeTargetDiscoveryRequest, AgentRuntimeTargetCandidateResponse[]> discoverRuntimeTargets() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/projects/{projectId}/runtime-targets/discover", HttpMethod.POST,
+                AgentRuntimeTargetDiscoveryRequest.class, AgentRuntimeTargetCandidateResponse[].class,
+                (MockmvcDefault) context -> context
+                        .withRequest("agent-discover-runtime-targets-request.json")
+                        .expectStatus(HttpStatus.OK.value())
+                        .expectResponse("agent-discover-runtime-targets-response.json"));
+    }
+
+    public static Endpoint<AgentRuntimeTargetDiscoveryRequest, InfrastructureErrorResponse> discoverRuntimeTargetsConflict() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/projects/{projectId}/runtime-targets/discover", HttpMethod.POST,
+                AgentRuntimeTargetDiscoveryRequest.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("agent-discover-runtime-targets-request.json")
+                        .expectStatus(HttpStatus.CONFLICT.value())
+                        .expectResponse("agent-upstream-error-response.json"));
     }
 
     public static Endpoint<AgentLogSourceRequest, InfrastructureErrorResponse> createLogSourceConflict() {

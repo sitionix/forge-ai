@@ -24,6 +24,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceRespons
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogTargetCandidateResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentSshConnectionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetCandidateResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetDiscoveryRequest;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.MediaType;
@@ -43,6 +45,7 @@ public interface ForgeAgentHttpClient {
     @DeleteExchange("/api/v1/projects/{projectId}/services/{serviceId}") void deleteProjectService(@PathVariable UUID projectId,@PathVariable UUID serviceId);
     @GetExchange("/api/v1/projects/{projectId}/services/{serviceId}/runtime") com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceRuntimeResponse getProjectServiceRuntime(@PathVariable UUID projectId,@PathVariable UUID serviceId);
     @GetExchange("/api/v1/projects/{projectId}/services/{serviceId}/log-sources") List<AgentLogSourceResponse> listProjectServiceLogSources(@PathVariable UUID projectId,@PathVariable UUID serviceId);
+    @PostExchange(value="/api/v1/projects/{projectId}/runtime-targets/discover",contentType=MediaType.APPLICATION_JSON_VALUE) List<RuntimeTargetCandidateResponse> discoverProjectRuntimeTargets(@PathVariable UUID projectId,@RequestBody RuntimeTargetDiscoveryRequest request);
 
     @GetExchange("/api/v1/projects")
     List<AgentProjectResponse> listProjects();

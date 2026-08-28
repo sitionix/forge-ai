@@ -21,6 +21,7 @@ class LogSourceUseCasesTest {
   @Mock SshConnectionRepository connections;
   @Mock DockerLogPort docker;
   @Mock RemoteLogPort remote;
+  @Mock RuntimeTargetDiscoveryUseCases runtimeTargets;
   @Mock ProjectRepositoryLinkRepository repositories;
   @Mock LocalProjectWorkspacePort workspaces;
   @Mock GitRepositoryPort git;
@@ -37,6 +38,7 @@ class LogSourceUseCasesTest {
             connections,
             docker,
             remote,
+            runtimeTargets,
             repositories,
             workspaces,
             git,
@@ -218,12 +220,63 @@ class LogSourceUseCasesTest {
             "web",
             path.resolve("compose.yaml").toString(),
             false);
-    when(docker.discover(any())).thenReturn(List.of());
+    when(runtimeTargets.discover(eq(projectId), any()))
+        .thenReturn(List.of());
     when(docker.discoverComposeServices(path, null)).thenReturn(List.of(candidate));
     assertThat(
             useCases.discover(
                 projectId, LogConnectionType.LOCAL, null, LogProviderType.DOCKER, repositoryId))
         .containsExactly(candidate);
+  }
+
+  @Test
+  void dockerAndSystemdDiscoveryDelegateToSharedRuntimeTargets() {
+    UUID sshId = UUID.randomUUID();
+    var dockerCandidate =
+        new RuntimeTargetCandidate(
+            "api",
+            "api",
+            ServiceRuntimeProvider.DOCKER,
+            RuntimeTargetStatus.RUNNING,
+            "image:1",
+            "stack",
+            "api");
+    var unitCandidate =
+        new RuntimeTargetCandidate(
+            "forge-agent.service",
+            "forge-agent.service",
+            ServiceRuntimeProvider.SYSTEMD,
+            RuntimeTargetStatus.AVAILABLE,
+            null,
+            null,
+            null);
+    when(connections.findById(sshId)).thenReturn(Optional.of(ssh(sshId)));
+    when(runtimeTargets.discover(
+            projectId,
+            new RuntimeTargetDiscoveryCommand(
+                ServiceConnectionType.LOCAL, null, ServiceRuntimeProvider.DOCKER)))
+        .thenReturn(List.of(dockerCandidate));
+    when(runtimeTargets.discover(
+            projectId,
+            new RuntimeTargetDiscoveryCommand(
+                ServiceConnectionType.SSH, sshId, ServiceRuntimeProvider.SYSTEMD)))
+        .thenReturn(List.of(unitCandidate));
+
+    assertThat(useCases.discover(projectId, LogConnectionType.LOCAL, null, LogProviderType.DOCKER, null))
+        .containsExactly(
+            new LogTargetCandidate(
+                "api", "api", LogTargetStatus.RUNNING, "image:1", "stack", "api", null, false));
+    assertThat(useCases.discover(projectId, LogConnectionType.SSH, sshId, LogProviderType.SYSTEMD, null))
+        .containsExactly(
+            new LogTargetCandidate(
+                "forge-agent.service",
+                "forge-agent.service",
+                LogTargetStatus.AVAILABLE,
+                null,
+                null,
+                null,
+                null,
+                false));
   }
 
   @Test
