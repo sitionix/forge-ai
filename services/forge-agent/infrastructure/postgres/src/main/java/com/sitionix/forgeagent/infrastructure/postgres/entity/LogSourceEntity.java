@@ -15,6 +15,7 @@ public class LogSourceEntity {
     @Column(name="project_id", nullable=false) private UUID projectId;
     @Column(nullable=false, length=120) private String name;
     @Column(name="service_id") private UUID serviceId;
+    @Column(name="asset_id") private UUID assetId;
     @Enumerated(EnumType.STRING) @Column(name="connection_type", nullable=false) private LogConnectionType connectionType;
     @Column(name="ssh_connection_id") private UUID sshConnectionId;
     @Enumerated(EnumType.STRING) @Column(nullable=false) private LogProviderType provider;

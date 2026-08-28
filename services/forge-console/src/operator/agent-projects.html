@@ -35,23 +35,18 @@
       <section class="panel project-section">
         <div class="agents-v2-pane-head">
           <div>
-            <h2>Repositories</h2>
-            <p>Project source workspaces and linked runtime state.</p>
+            <h2>Resources</h2>
+            <p>Project sources.</p>
           </div>
-          <button id="agentsV2ImportRepository" class="button small secondary" type="button" disabled>Import Repository</button>
+          <button id="agentsV2ImportRepository" class="button small secondary" type="button" disabled>+ Add Resource</button>
         </div>
         <div id="agentsV2RepositoriesError" class="error-box hidden"></div>
         <div id="agentsV2RepositoriesList" class="repository-list" aria-live="polite"></div>
       </section>
 
-      <section id="projectStandaloneServicesSection" class="panel project-section hidden">
-        <div class="agents-v2-pane-head"><div><h2>Standalone Services</h2><p>Runtime workloads without a repository association.</p></div></div>
-        <div id="projectStandaloneServicesList" class="repository-list" aria-live="polite"></div>
-      </section>
-
       <section class="panel project-section">
         <div class="agents-v2-pane-head">
-          <div><h2>Logs</h2><p>Configure sources and inspect live project runtime output.</p></div>
+          <div><h2>Logs</h2></div>
           <button id="projectLogsOpen" class="button small secondary" type="button">Open Logs</button>
         </div>
       </section>
@@ -137,7 +132,7 @@
       </section>
 
       <section id="projectLogsSourcesSection" class="panel project-section">
-        <div class="agents-v2-pane-head"><div><h2>Sources</h2><p>Choose one or more configured sources.</p></div><button id="projectLogsAdd" class="button small secondary" type="button">Add Log Source</button></div>
+        <div class="agents-v2-pane-head"><div><h2>Sources</h2><p>Filter configured and Service-derived logs.</p></div></div>
         <div id="projectLogsSources" class="repository-list"></div>
       </section>
 
@@ -303,13 +298,14 @@
 
     <dialog id="agentsV2RepositoryDialog" class="modal-dialog">
       <form id="agentsV2RepositoryForm" method="dialog" class="modal-form">
-        <div class="modal-head"><h2>Import Repository</h2></div>
+        <div class="modal-head"><h2>Add Resource</h2></div>
         <div id="agentsV2RepositoryModalError" class="error-box hidden"></div>
-        <label class="field-label" for="agentsV2RepositoryUrl">Repository URL</label>
-        <input id="agentsV2RepositoryUrl" class="text-input" type="text" required>
+        <label class="field-label">Source<select id="agentsV2ResourceSource" class="text-input"><option value="GIT">GIT</option><option value="SSH">SSH</option></select></label>
+        <div id="agentsV2GitResourceFields"><label class="field-label" for="agentsV2RepositoryUrl">Repository URL</label><input id="agentsV2RepositoryUrl" class="text-input" type="text"></div>
+        <div id="agentsV2SshResourceFields" class="hidden"><label class="field-label">Resource name<input id="agentsV2AssetName" class="text-input"></label><label class="field-label">SSH profile<select id="agentsV2AssetSsh" class="text-input"></select></label><button id="agentsV2AssetCreateSsh" class="button small secondary" type="button">Create / test SSH profile</button></div>
         <div class="modal-actions">
           <button id="agentsV2RepositoryCancel" class="button secondary" type="button">Cancel</button>
-          <button id="agentsV2RepositoryImport" class="button" type="submit">Import</button>
+          <button id="agentsV2RepositoryImport" class="button" type="submit">Continue</button>
         </div>
       </form>
     </dialog>

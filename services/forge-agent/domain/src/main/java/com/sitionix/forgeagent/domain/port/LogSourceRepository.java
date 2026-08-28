@@ -8,6 +8,7 @@ import java.util.UUID;
 public interface LogSourceRepository {
     List<LogSource> findByProjectId(UUID projectId);
     List<LogSource> findByProjectIdAndServiceId(UUID projectId, UUID serviceId);
+    List<LogSource> findByProjectIdAndAssetId(UUID projectId, UUID assetId);
     Optional<LogSource> findById(UUID id);
     LogSource save(LogSource source);
     void delete(LogSource source);

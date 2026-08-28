@@ -1,0 +1,3 @@
+package com.sitionix.forgeai.domain.usecase;
+import com.sitionix.forgeai.domain.model.agentproxy.*; import java.util.*;
+public interface ManageAgentProjectAssets { List<AgentProjectAsset> list(UUID projectId); AgentProjectAsset create(UUID projectId, CreateAgentProjectAssetCommand command); AgentProjectAsset get(UUID projectId, UUID assetId); AgentAssetMetrics metrics(UUID projectId, UUID assetId); AgentAssetCapabilities capabilities(UUID projectId, UUID assetId); List<AgentLogSource> monitoring(UUID projectId,UUID assetId); AgentLogSource monitor(UUID projectId,UUID assetId,SaveAgentAssetMonitoringCommand command); void delete(UUID projectId, UUID assetId); }

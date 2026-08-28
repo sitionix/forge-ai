@@ -28,6 +28,7 @@ export class AgentProjectsPage {
       view: 'projects',
       projects: [],
       repositories: [],
+      assets: [],
       services: [],
       servicesLoadState: 'LOADING',
       sshConnections: [],
@@ -82,6 +83,7 @@ export class AgentProjectsPage {
       onBack: () => this.showProjectsIndex(),
       onOpenLogs: () => this.openLogsWorkspace(this.state.selectedProjectId),
       onOpenRepository: (repositoryId) => this.openRepositoryWorkspace(this.state.selectedProjectId, repositoryId),
+      onOpenAsset: (assetId) => this.openAssetWorkspace(this.state.selectedProjectId, assetId),
       onOpenService: (serviceId) => this.openServiceWorkspace(this.state.selectedProjectId, serviceId),
       onImportRepository: () => this.openRepositoryModal(),
       onCloneRepository: (repositoryId) => this.cloneRepository(repositoryId),
@@ -147,6 +149,8 @@ export class AgentProjectsPage {
     this.byId('projectServiceProvider')?.addEventListener('change', () => this.onServiceTargetDiscoveryContextChanged());
     this.byId('agentsV2RepositoryCancel')?.addEventListener('click', () => this.closeDialog('agentsV2RepositoryDialog'));
     this.byId('agentsV2RepositoryForm')?.addEventListener('submit', (event) => this.submitRepository(event));
+    this.byId('agentsV2ResourceSource')?.addEventListener('change', () => this.renderResourceSourceFields());
+    this.byId('agentsV2AssetCreateSsh')?.addEventListener('click', () => this.byId('projectLogsSshDialog')?.showModal());
     this.byId('agentsV2AgentCancel')?.addEventListener('click', () => this.closeDialog('agentsV2AgentDialog'));
     this.byId('agentsV2AgentForm')?.addEventListener('submit', (event) => this.submitAgent(event));
     this.byId('agentsV2AgentOutputJson')?.addEventListener('input', () => this.showFieldError(''));
@@ -187,6 +191,7 @@ export class AgentProjectsPage {
     this.state.selectedRepositoryId = null;
     this.state.selectedRuntimeServiceId = null;
     this.state.repositories = [];
+    this.state.assets = [];
     this.state.services = [];
     this.state.servicesLoadState = 'LOADING';
     this.state.sshConnections = [];
@@ -268,6 +273,7 @@ export class AgentProjectsPage {
     this.workspace.renderLoading();
     await Promise.all([
       this.loadRepositories(projectId, loadSequence),
+      this.loadAssets(projectId, loadSequence),
       this.loadServices(projectId, loadSequence),
       this.loadAgents(projectId, loadSequence),
       this.loadWorkflows(projectId, loadSequence),
@@ -589,6 +595,42 @@ export class AgentProjectsPage {
     this.logsView.bind();
     await this.logsView.load(projectId);
     if(options.pushState!==false)this.window.history.pushState({projectId,serviceId,view:'service'},'',this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`));
+  }
+
+  async openAssetWorkspace(projectId, assetId) {
+    const generation = ++this.repositoryWorkspaceSequence;
+    this.state.view = 'asset'; this.state.selectedProjectId = projectId;
+    this.byId('agentsV2Workspace').classList.add('hidden'); this.byId('projectLogsWorkspace').classList.remove('hidden');
+    this.hideRepositoryWorkspacePanels(); this.showLogSections(false); this.byId('repositoryOverview').classList.remove('hidden');
+    this.byId('repositoryOverviewSummary').textContent = 'Loading Resource…';
+    try {
+      const [asset, metrics, capabilities, connections] = await Promise.all([this.api.getProjectAsset(projectId, assetId), this.api.getProjectAssetMetrics(projectId, assetId), this.api.getProjectAssetCapabilities(projectId, assetId), this.api.listSshConnections(projectId)]);
+      if (generation !== this.repositoryWorkspaceSequence || this.state.view !== 'asset') return;
+      const connection = connections.find((candidate) => candidate.id === asset.sshConnectionId);
+      this.byId('projectLogsTitle').textContent = asset.name; this.byId('projectLogsCrumbs').textContent = `Projects / Resources / ${asset.name}`;
+      this.byId('repositoryOverviewSummary').textContent = connection ? `${connection.username}@${connection.host}:${connection.port}` : 'SSH profile unavailable';
+      const value = (v, suffix = '') => v == null ? 'Unavailable' : `${v}${suffix}`;
+      this.byId('repositoryOverviewDetails').innerHTML = `<div><strong>Connection</strong><span>${connection?.name || 'Unavailable'}</span></div><div><strong>CPU total</strong><span>${value(metrics.cpuTotalPercent, '%')}</span></div><div><strong>CPU per core</strong><span>${(metrics.cpuPerCorePercent || []).map((v) => value(v, '%')).join(' · ') || 'Unavailable'}</span></div><div><strong>RAM</strong><span>${metrics.ramUsedBytes == null ? 'Unavailable' : `${metrics.ramUsedBytes} / ${metrics.ramTotalBytes} bytes`}</span></div><div><strong>Load average</strong><span>${metrics.loadAverage1m == null ? 'Unavailable' : `${metrics.loadAverage1m} · ${metrics.loadAverage5m} · ${metrics.loadAverage15m}`}</span></div><div><strong>Disks</strong><span>${(metrics.disks || []).map((d) => `${d.mount}: ${d.usedBytes}/${d.totalBytes}`).join(' · ') || 'Unavailable'}</span></div><div><strong>Network</strong><span>${(metrics.network || []).map((n) => `${n.interfaceName}: ↓${n.receivedBytes} ↑${n.transmittedBytes}`).join(' · ') || 'Unavailable'}</span></div><div><strong>Uptime</strong><span>${value(metrics.uptimeSeconds, 's')}</span></div><div><strong>Temperatures</strong><span>${(metrics.temperatures || []).map((t) => `${t.celsius}°C`).join(' · ') || 'Unavailable'}</span></div><div><strong>Capabilities</strong><span>systemd: ${capabilities.systemdAvailable ? 'available' : 'unavailable'} · Docker: ${capabilities.dockerAvailable ? 'available' : 'unavailable'}</span></div>`;
+      this.byId('repositoryOverviewDetails').insertAdjacentHTML('beforeend', '<div><button id="assetConfigureMonitoring" class="button small secondary" type="button">Configure Monitoring</button> <button id="assetOpenLogs" class="button small secondary" type="button">Open Logs</button></div>');
+      this.byId('assetOpenLogs').onclick = () => this.openLogsWorkspace(projectId);
+      this.byId('assetConfigureMonitoring').onclick = () => this.configureAssetMonitoring(projectId, asset, capabilities);
+      this.byId('projectLogsBack').onclick = () => this.returnToProject();
+    } catch (error) { if (generation === this.repositoryWorkspaceSequence) this.byId('repositoryOverviewSummary').textContent = error.message || 'Resource failed to load.'; }
+  }
+
+  async configureAssetMonitoring(projectId, asset, capabilities) {
+    const available = [capabilities.systemdAvailable && 'SYSTEMD', capabilities.dockerAvailable && 'DOCKER', 'FILE'].filter(Boolean);
+    const provider = (this.window.prompt(`Provider (${available.join(' / ')})`, available[0]) || '').toUpperCase();
+    if (!available.includes(provider)) return;
+    let target = '';
+    if (provider === 'FILE') target = this.window.prompt('Absolute file path') || '';
+    else {
+      const candidates = await this.api.discoverRuntimeTargets(projectId, { connection: 'SSH', sshConnectionId: asset.sshConnectionId, provider });
+      const search = (this.window.prompt('Search discovered targets', '') || '').toLowerCase();
+      const filtered = candidates.filter((candidate) => !search || candidate.id.toLowerCase().includes(search));
+      target = this.window.prompt(`Select target:\n${filtered.slice(0, 100).map((candidate) => candidate.id).join('\n')}`, filtered[0]?.id || '') || '';
+    }
+    if (target) await this.api.createProjectAssetMonitoring(projectId, asset.id, { name: target, provider, target, enabled: true });
   }
 
   async openRepositoryWorkspace(projectId, repositoryId, options = {}) {
@@ -976,6 +1018,18 @@ export class AgentProjectsPage {
     }
   }
 
+  async loadAssets(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence) {
+    if (!projectId || !this.api.listProjectAssets) return;
+    try {
+      const assets = await this.api.listProjectAssets(projectId);
+      if (!this.isCurrentProjectLoad(projectId, loadSequence)) return;
+      this.state.assets = assets;
+      this.renderProjectWorkspace();
+    } catch (error) {
+      if (this.isCurrentProjectLoad(projectId, loadSequence)) this.showError('agentsV2RepositoriesError', error.message || 'Resources failed to load.');
+    }
+  }
+
   async loadAgents(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence) {
     if (!projectId) {
       return;
@@ -1149,7 +1203,8 @@ export class AgentProjectsPage {
       this.state.repositoriesLoadFailed,
       this.state.tasksLoadFailed,
       this.state.runtime,
-      this.currentTaskPage()
+      this.currentTaskPage(),
+      this.state.assets
     );
   }
 
@@ -1185,6 +1240,13 @@ export class AgentProjectsPage {
     }
     this.showError('agentsV2RepositoryModalError', '');
     this.byId('agentsV2RepositoryUrl').value = '';
+    this.byId('agentsV2AssetName').value = '';
+    this.byId('agentsV2ResourceSource').value = 'GIT';
+    this.renderResourceSourceFields();
+    Promise.resolve(this.api.listSshConnections?.(this.state.selectedProjectId) || []).then((connections) => {
+      this.state.sshConnections = connections;
+      this.byId('agentsV2AssetSsh').innerHTML = connections.map((connection) => `<option value="${connection.id}">${connection.name} · ${connection.username}@${connection.host}</option>`).join('');
+    });
     this.openDialog('agentsV2RepositoryDialog');
   }
 
@@ -1193,8 +1255,9 @@ export class AgentProjectsPage {
     if (this.state.saving || !this.repositoriesDataCurrent()) {
       return;
     }
+    const source = this.byId('agentsV2ResourceSource').value;
     const remoteUrl = this.byId('agentsV2RepositoryUrl').value.trim();
-    if (!remoteUrl) {
+    if (source === 'GIT' && !remoteUrl) {
       this.showError('agentsV2RepositoryModalError', 'Repository URL is required.');
       return;
     }
@@ -1202,15 +1265,23 @@ export class AgentProjectsPage {
     this.byId('agentsV2RepositoryImport').disabled = true;
     this.showError('agentsV2RepositoryModalError', '');
     try {
-      await this.api.importProjectRepository(this.state.selectedProjectId, { remoteUrl });
+      if (source === 'GIT') await this.api.importProjectRepository(this.state.selectedProjectId, { remoteUrl });
+      else await this.api.createProjectAsset(this.state.selectedProjectId, { name: this.byId('agentsV2AssetName').value.trim(), sshConnectionId: this.byId('agentsV2AssetSsh').value });
       this.closeDialog('agentsV2RepositoryDialog');
       await this.loadRepositories(this.state.selectedProjectId, this.projectLoadSequence);
+      await this.loadAssets(this.state.selectedProjectId, this.projectLoadSequence);
     } catch (error) {
       this.showError('agentsV2RepositoryModalError', error.message || 'Repository could not be imported.');
     } finally {
       this.state.saving = false;
       this.byId('agentsV2RepositoryImport').disabled = false;
     }
+  }
+
+  renderResourceSourceFields() {
+    const ssh = this.byId('agentsV2ResourceSource')?.value === 'SSH';
+    this.byId('agentsV2GitResourceFields')?.classList.toggle('hidden', ssh);
+    this.byId('agentsV2SshResourceFields')?.classList.toggle('hidden', !ssh);
   }
 
   async cloneRepository(repositoryId) {

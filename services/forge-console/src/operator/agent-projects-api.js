@@ -10,6 +10,13 @@ export function createAgentProjectsApi(http) {
     deleteProject(projectId) {
       return http.delete(`${root}/projects/${encodeURIComponent(projectId)}`);
     },
+    listProjectAssets(projectId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/assets`); },
+    createProjectAsset(projectId, request) { return http.post(`${root}/projects/${encodeURIComponent(projectId)}/assets`, request); },
+    getProjectAsset(projectId, assetId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`); },
+    getProjectAssetMetrics(projectId, assetId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/metrics`); },
+    getProjectAssetCapabilities(projectId, assetId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/capabilities`); },
+    listProjectAssetMonitoring(projectId, assetId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/monitoring`); },
+    createProjectAssetMonitoring(projectId, assetId, request) { return http.post(`${root}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/monitoring`, request); },
     listServices(projectId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/services`); },
     createService(projectId, request) { return http.post(`${root}/projects/${encodeURIComponent(projectId)}/services`, request); },
     getService(projectId, serviceId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`); },

@@ -9,6 +9,7 @@ import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Service
 @RequiredArgsConstructor
@@ -28,17 +29,23 @@ public class LogSourceUseCases {
   private final LocalProjectWorkspacePort workspaces;
   private final GitRepositoryPort git;
   private final Clock clock;
+  @Autowired(required = false) private ProjectAssetRepository assets;
 
   @Transactional(readOnly = true)
   public List<LogSource> list(UUID projectId) {
     project(projectId);
-    return sources.findByProjectId(projectId);
+    var result = new ArrayList<>(sources.findByProjectId(projectId));
+    var persistedServiceIds = result.stream().map(LogSource::serviceId).filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+    services.findByProjectId(projectId).stream().filter(service -> !persistedServiceIds.contains(service.id())).map(this::derived).forEach(result::add);
+    return List.copyOf(result);
   }
 
   @Transactional(readOnly = true)
   public List<LogSource> list(UUID projectId, UUID serviceId) {
-    service(projectId, serviceId);
-    return sources.findByProjectIdAndServiceId(projectId, serviceId);
+    var service = service(projectId, serviceId);
+    var result = new ArrayList<>(sources.findByProjectIdAndServiceId(projectId, serviceId));
+    if (result.isEmpty()) result.add(derived(service));
+    return List.copyOf(result);
   }
 
   @Transactional(readOnly = true)
@@ -151,7 +158,14 @@ public class LogSourceUseCases {
     if (!s.projectId().equals(projectId))
       throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
     if (!s.enabled()) throw new ValidationException("Log source is disabled");
-    SshConnection ssh = resolve(projectId, s.connectionType(), s.sshConnectionId());
+    UUID sshId = s.sshConnectionId();
+    if (s.assetId() != null) {
+      var asset = assets == null ? Optional.<ProjectAsset>empty() : assets.findById(s.assetId());
+      sshId = asset.filter(a -> a.projectId().equals(projectId))
+          .orElseThrow(() -> new NotFoundException("ASSET_NOT_FOUND", "Resource not found"))
+          .sshConnectionId();
+    }
+    SshConnection ssh = resolve(projectId, s.connectionType(), sshId);
     if (s.provider() == LogProviderType.DOCKER) {
       var d = (DockerLogConfiguration) s.configuration();
       return docker.stream(d.container(), d.composeService(), d.composeFile(), lines, ssh);
@@ -225,14 +239,27 @@ public class LogSourceUseCases {
 
   private LogSource owned(UUID p, UUID id) {
     project(p);
-    var s =
-        sources
-            .findById(id)
-            .orElseThrow(
-                () -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found"));
+    var s = sources.findById(id).orElseGet(() -> services.findByProjectId(p).stream()
+        .filter(service -> derivedId(service.id()).equals(id)).findFirst().map(this::derived)
+        .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found")));
     if (!s.projectId().equals(p))
       throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
     return s;
+  }
+
+  private LogSource derived(ProjectService service) {
+    var target = service.runtimeTarget();
+    var connection = target.connection() == ServiceConnectionType.SSH ? LogConnectionType.SSH : LogConnectionType.LOCAL;
+    var provider = target.provider() == ServiceRuntimeProvider.DOCKER ? LogProviderType.DOCKER : LogProviderType.SYSTEMD;
+    LogProviderConfiguration configuration = provider == LogProviderType.DOCKER
+        ? new DockerLogConfiguration(target.container(), null, null)
+        : new SystemdLogConfiguration(SystemdTargetMode.UNIT, target.unit());
+    return new LogSource(derivedId(service.id()), service.projectId(), service.name(), service.id(), null,
+        connection, target.sshConnectionId(), provider, configuration, true, service.createdAt(), service.updatedAt());
+  }
+
+  private UUID derivedId(UUID serviceId) {
+    return UUID.nameUUIDFromBytes(("service-log:" + serviceId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
   private ProjectService service(UUID projectId, UUID id) {

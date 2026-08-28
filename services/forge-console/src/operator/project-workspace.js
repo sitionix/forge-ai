@@ -6,6 +6,7 @@ export class ProjectWorkspace {
     this.onBack = options.onBack;
     this.onOpenLogs = options.onOpenLogs;
     this.onOpenRepository = options.onOpenRepository || (() => {});
+    this.onOpenAsset = options.onOpenAsset || (() => {});
     this.onOpenService = options.onOpenService || (()=>{});
     this.onNewAgent = options.onNewAgent;
     this.onImportRepository = options.onImportRepository;
@@ -32,7 +33,7 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, repositories, services, agents, workflows, tasks, repositoriesCurrent, servicesLoadState, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null) {
+  render(project, repositories, services, agents, workflows, tasks, repositoriesCurrent, servicesLoadState, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null, assets = []) {
     this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
     this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
     this.byId('agentsV2ImportRepository').disabled = !project || !repositoriesCurrent;
@@ -45,8 +46,7 @@ export class ProjectWorkspace {
       || !tasksCurrent
       || !workflows.length
       || !repositories.length;
-    this.renderRepositories(repositories, services, repositoriesCurrent, servicesLoadState, repositoriesLoadFailed);
-    this.renderStandaloneServices(services);
+    this.renderRepositories(repositories, assets, repositoriesCurrent, repositoriesLoadFailed);
     this.renderAgents(agents, runtimeCatalog);
     this.renderWorkflows(workflows);
     this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed, taskPage);
@@ -58,8 +58,6 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateWorkflow').disabled = true;
     this.byId('agentsV2CreateTask').disabled = true;
     this.byId('agentsV2RepositoriesList').innerHTML = '<div class="muted-state">Loading repositories...</div>';
-    this.byId('projectStandaloneServicesSection')?.classList.add('hidden');
-    this.byId('projectStandaloneServicesList').innerHTML = '';
     this.byId('agentsV2AgentsList').innerHTML = '<div class="muted-state">Loading agents...</div>';
     this.byId('agentsV2WorkflowsList').innerHTML = '<div class="muted-state">Loading workflows...</div>';
     this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
@@ -98,7 +96,7 @@ export class ProjectWorkspace {
     if (statusElement) statusElement.textContent = status || 'UNKNOWN';
   }
 
-  renderRepositories(repositories, services, repositoriesCurrent, servicesLoadState, repositoriesLoadFailed) {
+  renderRepositories(repositories, assets, repositoriesCurrent, repositoriesLoadFailed) {
     const list = this.byId('agentsV2RepositoriesList');
     if (repositoriesLoadFailed) {
       list.innerHTML = '';
@@ -108,21 +106,18 @@ export class ProjectWorkspace {
       list.innerHTML = '<div class="muted-state">Loading repositories...</div>';
       return;
     }
-    if (!repositories.length) {
-      list.innerHTML = '<div class="muted-state">No repositories yet.</div>';
+    if (!repositories.length && !assets.length) {
+      list.innerHTML = '<div class="muted-state">No resources yet.</div>';
       return;
     }
     list.innerHTML = repositories.map((repository) => `
       <article class="repository-row repository-navigation-row" role="button" tabindex="0" data-repository-id="${escapeHtml(repository.id)}">
         <span class="repository-main">
           <code>${escapeHtml(repository.name || '')}</code>
-          ${this.renderRepositoryGitState(repository)}
-        </span>
-        <span class="repository-runtime-summary repository-runtime-${escapeHtml(this.repositoryRuntimeSummaryTone(repository, services, servicesLoadState))}">
-          <span class="repository-runtime-dot" aria-hidden="true"></span><span data-repository-runtime-status="${escapeHtml(repository.id)}">${escapeHtml(this.repositoryRuntimeSummary(repository, services, servicesLoadState))}</span>
+          <span class="repository-git-state">GIT</span>${this.renderRepositoryGitState(repository)}
         </span>
       </article>
-    `).join('');
+    `).join('') + assets.map((asset) => `<article class="repository-row repository-navigation-row" role="button" tabindex="0" data-asset-id="${escapeHtml(asset.id)}"><span class="repository-main"><code>${escapeHtml(asset.name || '')}</code><span class="repository-git-state">SSH</span></span></article>`).join('');
     list.querySelectorAll('[data-repository-id]').forEach((element) => {
       const open = () => this.onOpenRepository(element.dataset.repositoryId);
       element.addEventListener('click', open);
@@ -133,6 +128,10 @@ export class ProjectWorkspace {
         event.preventDefault();
         open();
       });
+    });
+    list.querySelectorAll('[data-asset-id]').forEach((element) => {
+      const open = () => this.onOpenAsset(element.dataset.assetId);
+      element.addEventListener('click', open); element.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
     });
   }
 

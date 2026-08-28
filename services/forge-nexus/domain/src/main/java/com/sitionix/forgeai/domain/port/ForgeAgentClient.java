@@ -30,8 +30,21 @@ import java.util.UUID;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntime;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentProjectServiceCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectAssetCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentAssetCapabilities;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentAssetMonitoringCommand;
 
 public interface ForgeAgentClient {
+  List<AgentProjectAsset> listProjectAssets(UUID projectId);
+  AgentProjectAsset createProjectAsset(UUID projectId, CreateAgentProjectAssetCommand command);
+  AgentProjectAsset getProjectAsset(UUID projectId, UUID assetId);
+  AgentAssetMetrics getProjectAssetMetrics(UUID projectId, UUID assetId);
+  AgentAssetCapabilities getProjectAssetCapabilities(UUID projectId, UUID assetId);
+  void deleteProjectAsset(UUID projectId, UUID assetId);
+  List<AgentLogSource> listProjectAssetMonitoring(UUID projectId, UUID assetId);
+  AgentLogSource createProjectAssetMonitoring(UUID projectId, UUID assetId, SaveAgentAssetMonitoringCommand command);
   List<AgentProjectService> listProjectServices(UUID projectId);
   AgentProjectService createProjectService(UUID projectId, SaveAgentProjectServiceCommand command);
   AgentProjectService getProjectService(UUID projectId, UUID serviceId);
