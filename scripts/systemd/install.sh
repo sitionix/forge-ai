@@ -35,7 +35,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"${SCRIPT_DIR}/render-units.sh" "${tmp_dir}/units" "${tmp_dir}/forge-ai.env"
+"${SCRIPT_DIR}/render-units.sh" "${tmp_dir}/units" "${tmp_dir}/forge-ai.env" "${ENV_FILE}"
 
 run_privileged install -d -m 0755 "${UNIT_DIR}" "${ENV_DIR}"
 run_privileged install -m 0600 "${tmp_dir}/forge-ai.env" "${ENV_FILE}"

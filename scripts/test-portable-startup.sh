@@ -400,6 +400,20 @@ case_systemd_units_render_stable_services() {
   ! grep -R 'FORGE_AGENT_DB_PASSWORD' "${units}" >/dev/null
 }
 
+case_systemd_install_renders_installed_env_path() {
+  local dir units staged_env installed_env
+  dir="$(new_temp_dir)"
+  units="${dir}/units"
+  staged_env="${dir}/staged/forge-ai.env"
+  installed_env="/etc/forge-ai/forge-ai.env"
+  "${ROOT_DIR}/scripts/systemd/render-units.sh" "${units}" "${staged_env}" "${installed_env}" >/dev/null
+  for unit in forge-agent.service forge-nexus.service forge-knowledge.service forge-jarvis.service; do
+    grep -Fqx "EnvironmentFile=${installed_env}" "${units}/${unit}"
+    ! grep -Fq "EnvironmentFile=${staged_env}" "${units}/${unit}"
+  done
+  [[ -f "${staged_env}" ]]
+}
+
 case_systemd_launch_path_has_no_pid_file_or_nohup() {
   ! grep -RE 'PIDFile|nohup|forge_start_background|PID_FILE' "${ROOT_DIR}/scripts/systemd" "${ROOT_DIR}/config/systemd" >/dev/null
   ! grep -RE 'source .*forge-ai\.env|forge_systemd_load_env|\$\{1:-\}' "${ROOT_DIR}/scripts/systemd/run-forge-"*.sh >/dev/null
@@ -549,6 +563,7 @@ run_case "Jarvis startup has no mandatory Ollama gate" case_jarvis_start_has_no_
 run_case "Console build installs dependencies when Vite is missing" case_console_build_installs_dependencies_when_vite_missing
 run_case "Console build skips dependency install when Vite exists" case_console_build_skips_install_when_vite_exists
 run_case "systemd units render stable Forge services" case_systemd_units_render_stable_services
+run_case "systemd install units reference the installed env path" case_systemd_install_renders_installed_env_path
 run_case "systemd launch path has no PID file or nohup" case_systemd_launch_path_has_no_pid_file_or_nohup
 run_case "systemd unit templates have no committed secrets or Postgres unit" case_systemd_unit_templates_have_no_committed_secrets_or_postgres_unit
 run_case "dev launcher and systemd workflows are separate" case_dev_launcher_and_systemd_workflows_are_separate

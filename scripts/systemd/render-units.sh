@@ -6,8 +6,9 @@ FORGE_AI_HOME="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=../lib/forge-env.sh
 source "${FORGE_AI_HOME}/scripts/lib/forge-env.sh"
 
-OUTPUT_DIR="${1:?Usage: render-units.sh OUTPUT_DIR [ENV_FILE]}"
+OUTPUT_DIR="${1:?Usage: render-units.sh OUTPUT_DIR [ENV_FILE] [UNIT_ENV_FILE]}"
 ENV_FILE="${2:-${OUTPUT_DIR}/forge-ai.env}"
+UNIT_ENV_FILE="${3:-${ENV_FILE}}"
 TEMPLATE_DIR="${FORGE_AI_HOME}/config/systemd"
 SYSTEMD_USER="${FORGE_SYSTEMD_USER:-$(id -un)}"
 SYSTEMD_GROUP="${FORGE_SYSTEMD_GROUP:-$(id -gn)}"
@@ -20,7 +21,7 @@ render_template() {
   local content
   content="$(< "${template}")"
   content="${content//@FORGE_AI_HOME@/${FORGE_AI_HOME}}"
-  content="${content//@FORGE_SYSTEMD_ENV_FILE@/${ENV_FILE}}"
+  content="${content//@FORGE_SYSTEMD_ENV_FILE@/${UNIT_ENV_FILE}}"
   content="${content//@FORGE_SYSTEMD_USER@/${SYSTEMD_USER}}"
   content="${content//@FORGE_SYSTEMD_GROUP@/${SYSTEMD_GROUP}}"
   printf '%s\n' "${content}" > "${target}"
