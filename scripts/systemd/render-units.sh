@@ -13,6 +13,21 @@ TEMPLATE_DIR="${FORGE_AI_HOME}/config/systemd"
 SYSTEMD_USER="${FORGE_SYSTEMD_USER:-$(id -un)}"
 SYSTEMD_GROUP="${FORGE_SYSTEMD_GROUP:-$(id -gn)}"
 
+resolve_codex_command() {
+  if [[ -n "${FORGE_AGENT_CODEX_COMMAND:-}" ]]; then
+    printf '%s\n' "${FORGE_AGENT_CODEX_COMMAND}"
+    return
+  fi
+
+  local codex_bin
+  codex_bin="$(command -v codex 2>/dev/null || true)"
+  if [[ -n "${codex_bin}" ]]; then
+    printf '%s,app-server,--stdio\n' "${codex_bin}"
+  else
+    printf 'codex,app-server,--stdio\n'
+  fi
+}
+
 mkdir -p "${OUTPUT_DIR}" "$(dirname -- "${ENV_FILE}")"
 
 render_template() {
@@ -50,6 +65,7 @@ render_template "${TEMPLATE_DIR}/forge-jarvis.service.in" "${OUTPUT_DIR}/forge-j
   env_line "FORGE_AGENT_DB_URL" "${FORGE_AGENT_DB_URL:-jdbc:postgresql://localhost:54329/forge_agent}"
   env_line "FORGE_AGENT_DB_USERNAME" "${FORGE_AGENT_DB_USERNAME:-forge_agent}"
   env_line "FORGE_AGENT_DB_PASSWORD" "${FORGE_AGENT_DB_PASSWORD:-forge_agent}"
+  env_line "FORGE_AGENT_CODEX_COMMAND" "$(resolve_codex_command)"
   env_line "FORGE_AGENT_PORT" "7091"
   env_line "FORGE_NEXUS_BASE_URL" "http://127.0.0.1:9099/fgaisox"
   env_line "FORGE_KNOWLEDGE_BASE_URL" "http://127.0.0.1:7081"

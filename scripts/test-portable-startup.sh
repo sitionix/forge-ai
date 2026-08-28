@@ -392,12 +392,29 @@ case_systemd_units_render_stable_services() {
   grep -Fqx "ExecStart=${ROOT_DIR}/scripts/systemd/run-forge-jarvis.sh" "${units}/forge-jarvis.service"
 
   grep -Fqx 'FORGE_AGENT_PORT="7091"' "${env_file}"
+  grep -Fqx 'FORGE_AGENT_CODEX_COMMAND="codex,app-server,--stdio"' "${env_file}"
   grep -Fqx 'FORGE_NEXUS_BASE_URL="http://127.0.0.1:9099/fgaisox"' "${env_file}"
   grep -Fqx 'KNOWLEDGE_PORT="7081"' "${env_file}"
   grep -Fqx 'JARVIS_PORT="7071"' "${env_file}"
   grep -Fqx "WORKSPACE_ROOT=\"${dir}/workspace root\"" "${env_file}"
   ! grep -RE 'PIDFile|nohup' "${units}" >/dev/null
   ! grep -R 'FORGE_AGENT_DB_PASSWORD' "${units}" >/dev/null
+}
+
+case_systemd_env_resolves_absolute_codex_command() {
+  local dir bin units env_file
+  dir="$(new_temp_dir)"
+  bin="${dir}/bin"
+  units="${dir}/units"
+  env_file="${dir}/forge-ai.env"
+  mkdir -p "${bin}"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${bin}/codex"
+  chmod +x "${bin}/codex"
+
+  PATH="${bin}:${SYSTEM_PATH}" \
+    "${ROOT_DIR}/scripts/systemd/render-units.sh" "${units}" "${env_file}" >/dev/null
+
+  grep -Fqx "FORGE_AGENT_CODEX_COMMAND=\"${bin}/codex,app-server,--stdio\"" "${env_file}"
 }
 
 case_systemd_install_renders_installed_env_path() {
@@ -563,6 +580,7 @@ run_case "Jarvis startup has no mandatory Ollama gate" case_jarvis_start_has_no_
 run_case "Console build installs dependencies when Vite is missing" case_console_build_installs_dependencies_when_vite_missing
 run_case "Console build skips dependency install when Vite exists" case_console_build_skips_install_when_vite_exists
 run_case "systemd units render stable Forge services" case_systemd_units_render_stable_services
+run_case "systemd env resolves absolute Codex command" case_systemd_env_resolves_absolute_codex_command
 run_case "systemd install units reference the installed env path" case_systemd_install_renders_installed_env_path
 run_case "systemd launch path has no PID file or nohup" case_systemd_launch_path_has_no_pid_file_or_nohup
 run_case "systemd unit templates have no committed secrets or Postgres unit" case_systemd_unit_templates_have_no_committed_secrets_or_postgres_unit
