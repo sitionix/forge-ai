@@ -10,7 +10,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class CliAssetInspectionAdapter implements AssetInspectionPort {
   private static final String METRICS_PROBE = """
-      awk '/^cpu[0-9 ]/{idle=$5+$6; total=0; for(i=2;i<=NF;i++) total+=$i; printf "CPU|%s|%.2f\\n",$1,(total-idle)*100/total}' /proc/stat
       free -b | awk '/^Mem:/{print "RAM|"$2"|"$3}'
       awk '{print "LOAD|"$1"|"$2"|"$3}' /proc/loadavg
       df -B1 -P | awk 'NR>1{print "DISK|"$6"|"$2"|"$3}'
@@ -23,8 +22,16 @@ public class CliAssetInspectionAdapter implements AssetInspectionPort {
   public CliAssetInspectionAdapter(TypedProcessExecutor executor) { this.executor = executor; }
 
   @Override public AssetMetrics metrics(SshConnection connection) {
+    CpuSnapshot before = cpuSnapshot(connection);
+    pauseBetweenCpuSamples();
+    CpuSnapshot after = cpuSnapshot(connection);
     List<String> rows = output(connection, List.of("sh", "-c", METRICS_PROBE));
-    Double total = null; var cores = new ArrayList<Double>(); Long ramTotal = null, ramUsed = null, uptime = null;
+    Double total = utilization(before.total(), after.total());
+    var cores = new ArrayList<Double>();
+    for (int index = 0; index < Math.min(before.cores().size(), after.cores().size()); index++)
+      cores.add(utilization(before.cores().get(index), after.cores().get(index)));
+    cores.removeIf(Objects::isNull);
+    Long ramTotal = null, ramUsed = null, uptime = null;
     Double load1 = null, load5 = null, load15 = null;
     var disks = new ArrayList<AssetMetrics.DiskMetric>();
     var network = new ArrayList<AssetMetrics.NetworkMetric>();
@@ -33,7 +40,6 @@ public class CliAssetInspectionAdapter implements AssetInspectionPort {
       String[] p = row.split("\\|", -1);
       try {
         switch (p[0]) {
-          case "CPU" -> { double value = Double.parseDouble(p[2]); if ("cpu".equals(p[1])) total = value; else cores.add(value); }
           case "RAM" -> { ramTotal = Long.parseLong(p[1]); ramUsed = Long.parseLong(p[2]); }
           case "LOAD" -> { load1 = Double.parseDouble(p[1]); load5 = Double.parseDouble(p[2]); load15 = Double.parseDouble(p[3]); }
           case "DISK" -> disks.add(new AssetMetrics.DiskMetric(p[1], Long.parseLong(p[2]), Long.parseLong(p[3])));
@@ -48,6 +54,46 @@ public class CliAssetInspectionAdapter implements AssetInspectionPort {
         List.copyOf(disks), List.copyOf(network), uptime, List.copyOf(temperatures));
   }
 
+  private CpuSnapshot cpuSnapshot(SshConnection connection) {
+    var samples = output(connection, List.of("cat", "/proc/stat")).stream()
+        .filter(line -> line.matches("^cpu(?:\\d+)?\\s+.*"))
+        .map(this::cpuTimes)
+        .filter(Objects::nonNull)
+        .toList();
+    return samples.isEmpty()
+        ? new CpuSnapshot(null, List.of())
+        : new CpuSnapshot(samples.getFirst(), List.copyOf(samples.subList(1, samples.size())));
+  }
+
+  private CpuTimes cpuTimes(String line) {
+    try {
+      String[] values = line.strip().split("\\s+");
+      long total = 0;
+      for (int index = 1; index < values.length; index++) total += Long.parseLong(values[index]);
+      long idle = Long.parseLong(values[4]) + (values.length > 5 ? Long.parseLong(values[5]) : 0L);
+      return new CpuTimes(total, idle);
+    } catch (RuntimeException exception) {
+      return null;
+    }
+  }
+
+  private Double utilization(CpuTimes before, CpuTimes after) {
+    if (before == null || after == null) return null;
+    long totalDelta = after.total() - before.total();
+    long idleDelta = after.idle() - before.idle();
+    if (totalDelta <= 0 || idleDelta < 0) return null;
+    double value = (totalDelta - idleDelta) * 100.0 / totalDelta;
+    return Math.max(0.0, Math.min(100.0, value));
+  }
+
+  private void pauseBetweenCpuSamples() {
+    try {
+      Thread.sleep(250);
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
   @Override public AssetCapabilities capabilities(SshConnection connection) {
     var rows = output(connection, List.of("sh", "-c",
         "command -v systemctl >/dev/null 2>&1 && echo SYSTEMD || true; command -v docker >/dev/null 2>&1 && echo DOCKER || true"));
@@ -58,4 +104,7 @@ public class CliAssetInspectionAdapter implements AssetInspectionPort {
     if (connection == null) throw new InfrastructureExecutionException("SSH_CONNECTION_REQUIRED", "SSH connection is required");
     return executor.output(RemoteShellCommand.ssh(connection, fixed), null, connection);
   }
+
+  private record CpuTimes(long total, long idle) {}
+  private record CpuSnapshot(CpuTimes total, List<CpuTimes> cores) {}
 }

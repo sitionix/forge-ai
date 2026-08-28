@@ -93,17 +93,33 @@ class LogSourceUseCasesTest {
   }
 
   @Test
-  void serviceScopedListingReturnsOnlyRepositoryResultsForThatService() {
+  void stalePersistedServiceSourceCannotOverrideCurrentRuntimeTarget() {
     UUID serviceId = UUID.randomUUID();
     ProjectService service = service(serviceId, projectId);
     LogSource linked = new LogSource(
         UUID.randomUUID(), projectId, "api", serviceId, LogConnectionType.LOCAL, null,
-        LogProviderType.DOCKER, new DockerLogConfiguration("api", null, null), true,
+        LogProviderType.DOCKER, new DockerLogConfiguration("old-api", null, null), true,
         Instant.EPOCH, Instant.EPOCH);
     when(services.findById(serviceId)).thenReturn(Optional.of(service));
-    when(sources.findByProjectIdAndServiceId(projectId, serviceId)).thenReturn(List.of(linked));
+    assertThat(useCases.list(projectId, serviceId)).singleElement().satisfies(effective -> {
+      assertThat(effective.id()).isNotEqualTo(linked.id());
+      assertThat(((DockerLogConfiguration) effective.configuration()).container()).isEqualTo("api");
+    });
+  }
 
-    assertThat(useCases.list(projectId, serviceId)).containsExactly(linked);
+  @Test
+  void changingServiceRuntimeTargetImmediatelyChangesDerivedLogs() {
+    UUID serviceId = UUID.randomUUID();
+    var oldTarget = service(serviceId, projectId);
+    var newTarget = new ProjectService(serviceId, projectId, "api", null,
+        new ServiceRuntimeTarget(ServiceConnectionType.LOCAL, null,
+            ServiceRuntimeProvider.DOCKER, "new-api", null), Instant.EPOCH, Instant.EPOCH);
+    when(services.findById(serviceId)).thenReturn(Optional.of(oldTarget), Optional.of(newTarget));
+
+    assertThat(((DockerLogConfiguration) useCases.list(projectId, serviceId).getFirst().configuration()).container())
+        .isEqualTo("api");
+    assertThat(((DockerLogConfiguration) useCases.list(projectId, serviceId).getFirst().configuration()).container())
+        .isEqualTo("new-api");
   }
 
   @Test

@@ -4,6 +4,7 @@ import { ProjectWorkspace, statusTone } from './project-workspace.js';
 import { ProjectLogsView } from './project-logs-view.js';
 import { TaskExecutionView } from './task-execution-view.js';
 import { WorkflowBuilder } from './workflow-builder.js';
+import { SshProfileFlow } from './ssh-profile-flow.js';
 
 const DEFAULT_OUTPUT_SCHEMA = {
   type: 'object',
@@ -72,6 +73,8 @@ export class AgentProjectsPage {
     this.repositoryRuntimeLoadGeneration = 0;
     this.serviceModalLoadGeneration = 0;
     this.serviceTargetDiscoveryGeneration = 0;
+    this.assetMonitoringGeneration = 0;
+    this.assetMonitoring = null;
     this.workflowLoadSequence = 0;
     this.taskPollTimer = null;
     this.taskPollInFlight = null;
@@ -115,6 +118,7 @@ export class AgentProjectsPage {
       onSaved: async () => this.loadWorkflows()
     });
     this.logsView = null;
+    this.sshProfileFlow = new SshProfileFlow({ document: this.document, api: this.api });
     this.onPopState = () => this.syncRoute();
   }
 
@@ -124,6 +128,7 @@ export class AgentProjectsPage {
     this.workspace.bind();
     this.taskExecutionView.bind();
     this.workflowBuilder.bind();
+    this.sshProfileFlow.bind();
     this.window.addEventListener('popstate', this.onPopState);
     this.showProjectsIndex({ preserveProjects: true });
     this.loadProjects();
@@ -149,8 +154,16 @@ export class AgentProjectsPage {
     this.byId('projectServiceProvider')?.addEventListener('change', () => this.onServiceTargetDiscoveryContextChanged());
     this.byId('agentsV2RepositoryCancel')?.addEventListener('click', () => this.closeDialog('agentsV2RepositoryDialog'));
     this.byId('agentsV2RepositoryForm')?.addEventListener('submit', (event) => this.submitRepository(event));
-    this.byId('agentsV2ResourceSource')?.addEventListener('change', () => this.renderResourceSourceFields());
-    this.byId('agentsV2AssetCreateSsh')?.addEventListener('click', () => this.byId('projectLogsSshDialog')?.showModal());
+    this.byId('agentsV2ResourceSource')?.addEventListener('change', () => {
+      this.resourceSourceSelected = false;
+      this.renderResourceSourceFields();
+    });
+    this.byId('agentsV2AssetCreateSsh')?.addEventListener('click', () =>
+      this.sshProfileFlow.open(this.state.selectedProjectId, (created) => this.refreshAssetSshProfiles(created.id)));
+    this.byId('assetMonitoringCancel')?.addEventListener('click', () => this.closeDialog('assetMonitoringDialog'));
+    this.byId('assetMonitoringForm')?.addEventListener('submit', (event) => this.saveAssetMonitoring(event));
+    this.byId('assetMonitoringSystemdSearch')?.addEventListener('input', () => this.renderAssetMonitoringTargets('SYSTEMD'));
+    this.byId('assetMonitoringDockerSearch')?.addEventListener('input', () => this.renderAssetMonitoringTargets('DOCKER'));
     this.byId('agentsV2AgentCancel')?.addEventListener('click', () => this.closeDialog('agentsV2AgentDialog'));
     this.byId('agentsV2AgentForm')?.addEventListener('submit', (event) => this.submitAgent(event));
     this.byId('agentsV2AgentOutputJson')?.addEventListener('input', () => this.showFieldError(''));
@@ -322,7 +335,13 @@ export class AgentProjectsPage {
         this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/logs`)
       );
     }
-    this.logsView = new ProjectLogsView({ document: this.document, window: this.window, api: this.api });
+    this.logsView = new ProjectLogsView({
+      document: this.document,
+      window: this.window,
+      api: this.api,
+      serviceId: options.serviceId || null,
+      assetId: options.assetId || null,
+    });
     this.logsView.bind();
     await this.logsView.load(projectId);
   }
@@ -578,26 +597,38 @@ export class AgentProjectsPage {
     this.closeDialog('projectServiceDialog');
   }
 
-  async openServiceWorkspace(projectId,serviceId,options={}){
-    if(!projectId||!serviceId)return;this.disposeLogsWorkspace();this.repositoryWorkspaceSequence += 1;this.repositoryRuntimeLoadGeneration += 1;this.serviceModalLoadGeneration += 1;this.serviceTargetDiscoveryGeneration += 1;this.state.view='service';this.state.selectedProjectId=projectId;this.state.selectedRepositoryId=null;this.state.selectedRuntimeServiceId=null;this.state.openServiceId=serviceId;
-    this.byId('agentsV2ProjectsView').classList.add('hidden');this.byId('agentsV2Workspace').classList.add('hidden');this.byId('projectLogsWorkspace').classList.remove('hidden');this.byId('serviceOverview').classList.remove('hidden');this.hideRepositoryWorkspacePanels();this.showLogSections(true);
-    const [service,runtime,sources]=await Promise.all([this.api.getService(projectId,serviceId),this.api.getServiceRuntime(projectId,serviceId),this.api.listServiceLogSources(projectId,serviceId)]);
-    this.byId('projectLogsTitle').textContent=service.name;this.byId('projectLogsCrumbs').textContent=`Projects / ${this.currentProject()?.name||'Project'} / Services / ${service.name}`;this.byId('serviceRuntimeStatus').textContent=runtime.status;
-    this.byId('serviceOverviewSummary').textContent=`${runtime.connection} · ${runtime.provider} · ${runtime.targetIdentity} · ${sources.length} log source${sources.length===1?'':'s'}`;
-    this.byId('serviceRuntimeDetails').innerHTML=Object.entries(runtime.metadata||{}).map(([k,v])=>`<div><strong>${escapeHtml(k)}</strong>: ${escapeHtml(v)}</div>`).join('')+(runtime.uptime?`<div><strong>Uptime</strong>: ${escapeHtml(runtime.uptime)}</div>`:'');
-    this.byId('projectLogsBack').onclick=()=>this.returnToProject();
-    this.logsView = new ProjectLogsView({
-      document: this.document,
-      window: this.window,
-      api: this.api,
-      serviceId,
-    });
-    this.logsView.bind();
-    await this.logsView.load(projectId);
-    if(options.pushState!==false)this.window.history.pushState({projectId,serviceId,view:'service'},'',this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`));
+  async openServiceWorkspace(projectId, serviceId, options = {}) {
+    if (!projectId || !serviceId) return;
+    this.disposeLogsWorkspace();
+    this.repositoryWorkspaceSequence += 1;
+    this.state.view = 'service';
+    this.state.selectedProjectId = projectId;
+    this.state.openServiceId = serviceId;
+    this.byId('agentsV2ProjectsView').classList.add('hidden');
+    this.byId('agentsV2Workspace').classList.add('hidden');
+    this.byId('projectLogsWorkspace').classList.remove('hidden');
+    this.byId('serviceOverview').classList.remove('hidden');
+    this.hideRepositoryWorkspacePanels();
+    this.showLogSections(false);
+    const [service, runtime] = await Promise.all([
+      this.api.getService(projectId, serviceId),
+      this.api.getServiceRuntime(projectId, serviceId),
+    ]);
+    this.byId('projectLogsTitle').textContent = service.name;
+    this.byId('projectLogsCrumbs').textContent = `Projects / ${this.currentProject()?.name || 'Project'} / Services / ${service.name}`;
+    this.byId('serviceRuntimeStatus').textContent = runtime.status;
+    this.byId('serviceOverviewSummary').textContent = `${runtime.connection} · ${runtime.provider} · ${runtime.targetIdentity}`;
+    this.byId('serviceRuntimeDetails').innerHTML = Object.entries(runtime.metadata || {})
+      .map(([key, value]) => `<div><strong>${escapeHtml(key)}</strong>: ${escapeHtml(value)}</div>`).join('')
+      + (runtime.uptime ? `<div><strong>Uptime</strong>: ${escapeHtml(runtime.uptime)}</div>` : '');
+    this.byId('serviceOpenLogs').onclick = () => this.openLogsWorkspace(projectId, { serviceId });
+    this.byId('projectLogsBack').onclick = () => this.returnToProject();
+    if (options.pushState !== false) this.window.history.pushState(
+      { projectId, serviceId, view: 'service' }, '',
+      this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`));
   }
 
-  async openAssetWorkspace(projectId, assetId) {
+  async openAssetWorkspace(projectId, assetId, options = {}) {
     const generation = ++this.repositoryWorkspaceSequence;
     this.state.view = 'asset'; this.state.selectedProjectId = projectId;
     this.byId('agentsV2Workspace').classList.add('hidden'); this.byId('projectLogsWorkspace').classList.remove('hidden');
@@ -612,25 +643,106 @@ export class AgentProjectsPage {
       const value = (v, suffix = '') => v == null ? 'Unavailable' : `${v}${suffix}`;
       this.byId('repositoryOverviewDetails').innerHTML = `<div><strong>Connection</strong><span>${connection?.name || 'Unavailable'}</span></div><div><strong>CPU total</strong><span>${value(metrics.cpuTotalPercent, '%')}</span></div><div><strong>CPU per core</strong><span>${(metrics.cpuPerCorePercent || []).map((v) => value(v, '%')).join(' · ') || 'Unavailable'}</span></div><div><strong>RAM</strong><span>${metrics.ramUsedBytes == null ? 'Unavailable' : `${metrics.ramUsedBytes} / ${metrics.ramTotalBytes} bytes`}</span></div><div><strong>Load average</strong><span>${metrics.loadAverage1m == null ? 'Unavailable' : `${metrics.loadAverage1m} · ${metrics.loadAverage5m} · ${metrics.loadAverage15m}`}</span></div><div><strong>Disks</strong><span>${(metrics.disks || []).map((d) => `${d.mount}: ${d.usedBytes}/${d.totalBytes}`).join(' · ') || 'Unavailable'}</span></div><div><strong>Network</strong><span>${(metrics.network || []).map((n) => `${n.interfaceName}: ↓${n.receivedBytes} ↑${n.transmittedBytes}`).join(' · ') || 'Unavailable'}</span></div><div><strong>Uptime</strong><span>${value(metrics.uptimeSeconds, 's')}</span></div><div><strong>Temperatures</strong><span>${(metrics.temperatures || []).map((t) => `${t.celsius}°C`).join(' · ') || 'Unavailable'}</span></div><div><strong>Capabilities</strong><span>systemd: ${capabilities.systemdAvailable ? 'available' : 'unavailable'} · Docker: ${capabilities.dockerAvailable ? 'available' : 'unavailable'}</span></div>`;
       this.byId('repositoryOverviewDetails').insertAdjacentHTML('beforeend', '<div><button id="assetConfigureMonitoring" class="button small secondary" type="button">Configure Monitoring</button> <button id="assetOpenLogs" class="button small secondary" type="button">Open Logs</button></div>');
-      this.byId('assetOpenLogs').onclick = () => this.openLogsWorkspace(projectId);
+      this.byId('assetOpenLogs').onclick = () => this.openLogsWorkspace(projectId, { assetId });
       this.byId('assetConfigureMonitoring').onclick = () => this.configureAssetMonitoring(projectId, asset, capabilities);
       this.byId('projectLogsBack').onclick = () => this.returnToProject();
+      if (options.pushState !== false) this.window.history.pushState(
+        { projectId, assetId, view: 'asset' }, '',
+        this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`));
     } catch (error) { if (generation === this.repositoryWorkspaceSequence) this.byId('repositoryOverviewSummary').textContent = error.message || 'Resource failed to load.'; }
   }
 
   async configureAssetMonitoring(projectId, asset, capabilities) {
-    const available = [capabilities.systemdAvailable && 'SYSTEMD', capabilities.dockerAvailable && 'DOCKER', 'FILE'].filter(Boolean);
-    const provider = (this.window.prompt(`Provider (${available.join(' / ')})`, available[0]) || '').toUpperCase();
-    if (!available.includes(provider)) return;
-    let target = '';
-    if (provider === 'FILE') target = this.window.prompt('Absolute file path') || '';
-    else {
-      const candidates = await this.api.discoverRuntimeTargets(projectId, { connection: 'SSH', sshConnectionId: asset.sshConnectionId, provider });
-      const search = (this.window.prompt('Search discovered targets', '') || '').toLowerCase();
-      const filtered = candidates.filter((candidate) => !search || candidate.id.toLowerCase().includes(search));
-      target = this.window.prompt(`Select target:\n${filtered.slice(0, 100).map((candidate) => candidate.id).join('\n')}`, filtered[0]?.id || '') || '';
+    const generation = ++this.assetMonitoringGeneration;
+    this.assetMonitoring = { projectId, asset, capabilities, configured: [], candidates: {}, selected: new Set() };
+    this.byId('assetMonitoringError').classList.add('hidden');
+    this.byId('assetMonitoringSystemdSearch').value = '';
+    this.byId('assetMonitoringDockerSearch').value = '';
+    this.byId('assetMonitoringFilePath').value = '';
+    this.byId('assetMonitoringSystemdSection').classList.toggle('hidden', !capabilities.systemdAvailable);
+    this.byId('assetMonitoringDockerSection').classList.toggle('hidden', !capabilities.dockerAvailable);
+    this.openDialog('assetMonitoringDialog');
+    try {
+      const [configured, systemd, docker] = await Promise.all([
+        this.api.listProjectAssetMonitoring(projectId, asset.id),
+        capabilities.systemdAvailable
+          ? this.api.discoverRuntimeTargets(projectId, { connection: 'SSH', sshConnectionId: asset.sshConnectionId, provider: 'SYSTEMD' })
+          : [],
+        capabilities.dockerAvailable
+          ? this.api.discoverRuntimeTargets(projectId, { connection: 'SSH', sshConnectionId: asset.sshConnectionId, provider: 'DOCKER' })
+          : [],
+      ]);
+      if (generation !== this.assetMonitoringGeneration || this.assetMonitoring?.asset.id !== asset.id) return;
+      this.assetMonitoring.configured = configured;
+      this.assetMonitoring.selected = new Set(configured
+        .filter((source) => source.provider !== 'FILE')
+        .map((source) => `${source.provider}:${this.monitoringTarget(source)}`));
+      this.assetMonitoring.candidates = { SYSTEMD: systemd, DOCKER: docker };
+      const file = configured.find((source) => source.provider === 'FILE');
+      this.byId('assetMonitoringFilePath').value = file?.configuration?.path || '';
+      this.renderAssetMonitoringTargets('SYSTEMD');
+      this.renderAssetMonitoringTargets('DOCKER');
+    } catch (error) {
+      if (generation === this.assetMonitoringGeneration) this.showError(
+        'assetMonitoringError', error.message || 'Monitoring configuration failed to load.');
     }
-    if (target) await this.api.createProjectAssetMonitoring(projectId, asset.id, { name: target, provider, target, enabled: true });
+  }
+
+  renderAssetMonitoringTargets(provider) {
+    if (!this.assetMonitoring) return;
+    const searchId = provider === 'SYSTEMD' ? 'assetMonitoringSystemdSearch' : 'assetMonitoringDockerSearch';
+    const listId = provider === 'SYSTEMD' ? 'assetMonitoringSystemdTargets' : 'assetMonitoringDockerTargets';
+    const search = this.byId(searchId).value.toLowerCase();
+    const selected = this.assetMonitoring.selected;
+    this.byId(listId).innerHTML = (this.assetMonitoring.candidates[provider] || [])
+      .filter((candidate) => !search || candidate.id.toLowerCase().includes(search))
+      .map((candidate) => `<label><input type="checkbox" data-monitoring-provider="${provider}" value="${escapeHtml(candidate.id)}" ${selected.has(`${provider}:${candidate.id}`) ? 'checked' : ''}> ${escapeHtml(candidate.id)}</label>`)
+      .join('') || '<div class="muted-state">No matching targets.</div>';
+    this.byId(listId).querySelectorAll('[data-monitoring-provider]').forEach((input) =>
+      input.addEventListener('change', () => {
+        const targetKey = `${provider}:${input.value}`;
+        if (input.checked) this.assetMonitoring.selected.add(targetKey);
+        else this.assetMonitoring.selected.delete(targetKey);
+      }));
+  }
+
+  monitoringTarget(source) {
+    if (source.provider === 'DOCKER') return source.configuration?.container;
+    if (source.provider === 'SYSTEMD') return source.configuration?.unit;
+    return source.configuration?.path;
+  }
+
+  async saveAssetMonitoring(event) {
+    event.preventDefault();
+    const context = this.assetMonitoring;
+    if (!context) return;
+    const desired = [...context.selected].map((selected) => {
+      const separator = selected.indexOf(':');
+      return { provider: selected.slice(0, separator), target: selected.slice(separator + 1) };
+    });
+    const filePath = this.byId('assetMonitoringFilePath').value.trim();
+    if (filePath) desired.push({ provider: 'FILE', target: filePath });
+    const key = (item) => `${item.provider}:${item.target}`;
+    const existing = new Map(context.configured.map((source) => [
+      key({ provider: source.provider, target: this.monitoringTarget(source) }), source,
+    ]));
+    const wanted = new Map(desired.map((target) => [key(target), target]));
+    this.byId('assetMonitoringSave').disabled = true;
+    try {
+      await Promise.all([
+        ...[...wanted].filter(([targetKey]) => !existing.has(targetKey)).map(([, target]) =>
+          this.api.createProjectAssetMonitoring(context.projectId, context.asset.id, {
+            name: target.target, provider: target.provider, target: target.target, enabled: true,
+          })),
+        ...[...existing].filter(([targetKey]) => !wanted.has(targetKey)).map(([, source]) =>
+          this.api.deleteLogSource(context.projectId, source.id)),
+      ]);
+      this.closeDialog('assetMonitoringDialog');
+    } catch (error) {
+      this.showError('assetMonitoringError', error.message || 'Monitoring configuration could not be saved.');
+    } finally {
+      this.byId('assetMonitoringSave').disabled = false;
+    }
   }
 
   async openRepositoryWorkspace(projectId, repositoryId, options = {}) {
@@ -738,7 +850,7 @@ export class AgentProjectsPage {
       return;
     }
     this.loadSelectedRepositoryRuntime(projectId, repositoryId, selectedServiceId, workspaceSequence);
-    await this.loadSelectedRepositoryLogs(projectId, repositoryId, selectedServiceId, workspaceSequence);
+    this.showLogSections(false);
   }
 
   linkedServicesForRepository(repositoryId) {
@@ -831,12 +943,16 @@ export class AgentProjectsPage {
     const add = this.byId('repositoryRuntimeAdd');
     const configure = this.byId('repositoryRuntimeConfigure');
     const remove = this.byId('repositoryRuntimeDelete');
+    const openLogs = this.byId('repositoryOpenLogs');
     add.classList.toggle('hidden', !selectedService);
     add.onclick = () => this.openServiceModal(null, { repositoryId: repository.id });
     configure.textContent = selectedService ? 'Configure' : 'Configure Runtime';
     configure.onclick = () => this.openServiceModal(selectedService?.id || null, { repositoryId: repository.id });
     remove.classList.toggle('hidden', !selectedService);
     remove.onclick = () => selectedService && this.deleteService(selectedService.id);
+    openLogs.classList.toggle('hidden', !selectedService);
+    openLogs.onclick = () => selectedService && this.openLogsWorkspace(
+      this.state.selectedProjectId, { serviceId: selectedService.id });
     const selector = this.byId('repositoryRuntimeServices');
     selector.classList.toggle('hidden', linkedServices.length <= 1);
     selector.innerHTML = linkedServices.length > 1
@@ -854,6 +970,7 @@ export class AgentProjectsPage {
       this.byId('repositoryRuntimeDetails').innerHTML = `<div class="muted-state">${loading ? 'Loading runtime workloads...' : 'Runtime workloads failed to load'}</div>`;
       add.classList.add('hidden');
       remove.classList.add('hidden');
+      openLogs.classList.add('hidden');
       configure.disabled = true;
       return;
     }
@@ -920,27 +1037,6 @@ export class AgentProjectsPage {
       });
   }
 
-  async loadSelectedRepositoryLogs(projectId, repositoryId, serviceId, workspaceSequence) {
-    this.disposeLogsWorkspace();
-    if (!this.isCurrentRepositoryWorkspace(projectId, repositoryId, workspaceSequence) || this.state.selectedRuntimeServiceId !== serviceId) return;
-    this.showLogSections(true);
-    const view = new ProjectLogsView({
-      document: this.document,
-      window: this.window,
-      api: this.api,
-      serviceId,
-    });
-    this.logsView = view;
-    view.bind();
-    await view.load(projectId);
-    if (!this.isCurrentRepositoryWorkspace(projectId, repositoryId, workspaceSequence) || this.state.selectedRuntimeServiceId !== serviceId) {
-      view.dispose();
-      if (this.logsView === view) {
-        this.logsView = null;
-      }
-    }
-  }
-
   async returnToProject(options = {}) {
     const projectId = this.state.selectedProjectId;
     this.disposeLogsWorkspace();
@@ -957,6 +1053,13 @@ export class AgentProjectsPage {
   }
 
   async syncRoute() {
+    const assetMatch = this.window.location.hash.match(/^#\/projects\/([^/]+)\/assets\/([^/]+)\/?$/);
+    if (assetMatch) {
+      const projectId = decodeURIComponent(assetMatch[1]);
+      const assetId = decodeURIComponent(assetMatch[2]);
+      if (this.state.view !== 'asset') await this.openAssetWorkspace(projectId, assetId, { pushState: false });
+      return;
+    }
     const repositoryMatch = this.window.location.hash.match(/^#\/projects\/([^/]+)\/repositories\/([^/]+)\/?$/);
     if (repositoryMatch) {
       const projectId = decodeURIComponent(repositoryMatch[1]);
@@ -975,7 +1078,8 @@ export class AgentProjectsPage {
       }
       return;
     }
-    if (this.state.view === 'logs' || this.state.view === 'service' || this.state.view === 'repository') {
+    if (this.state.view === 'logs' || this.state.view === 'service'
+        || this.state.view === 'repository' || this.state.view === 'asset') {
       await this.returnToProject({ pushState: false });
     }
   }
@@ -1242,11 +1346,9 @@ export class AgentProjectsPage {
     this.byId('agentsV2RepositoryUrl').value = '';
     this.byId('agentsV2AssetName').value = '';
     this.byId('agentsV2ResourceSource').value = 'GIT';
+    this.resourceSourceSelected = false;
     this.renderResourceSourceFields();
-    Promise.resolve(this.api.listSshConnections?.(this.state.selectedProjectId) || []).then((connections) => {
-      this.state.sshConnections = connections;
-      this.byId('agentsV2AssetSsh').innerHTML = connections.map((connection) => `<option value="${connection.id}">${connection.name} · ${connection.username}@${connection.host}</option>`).join('');
-    });
+    this.refreshAssetSshProfiles();
     this.openDialog('agentsV2RepositoryDialog');
   }
 
@@ -1256,6 +1358,11 @@ export class AgentProjectsPage {
       return;
     }
     const source = this.byId('agentsV2ResourceSource').value;
+    if (!this.resourceSourceSelected) {
+      this.resourceSourceSelected = true;
+      this.renderResourceSourceFields();
+      return;
+    }
     const remoteUrl = this.byId('agentsV2RepositoryUrl').value.trim();
     if (source === 'GIT' && !remoteUrl) {
       this.showError('agentsV2RepositoryModalError', 'Repository URL is required.');
@@ -1280,8 +1387,22 @@ export class AgentProjectsPage {
 
   renderResourceSourceFields() {
     const ssh = this.byId('agentsV2ResourceSource')?.value === 'SSH';
-    this.byId('agentsV2GitResourceFields')?.classList.toggle('hidden', ssh);
-    this.byId('agentsV2SshResourceFields')?.classList.toggle('hidden', !ssh);
+    this.byId('agentsV2GitResourceFields')?.classList.toggle('hidden', !this.resourceSourceSelected || ssh);
+    this.byId('agentsV2SshResourceFields')?.classList.toggle('hidden', !this.resourceSourceSelected || !ssh);
+    this.byId('agentsV2RepositoryImport').textContent = this.resourceSourceSelected
+      ? (ssh ? 'Add Resource' : 'Import Repository')
+      : 'Continue';
+  }
+
+  async refreshAssetSshProfiles(selectedId = null) {
+    const projectId = this.state.selectedProjectId;
+    const connections = await (this.api.listSshConnections?.(projectId) || []);
+    if (projectId !== this.state.selectedProjectId) return;
+    this.state.sshConnections = connections;
+    const select = this.byId('agentsV2AssetSsh');
+    select.innerHTML = '<option value="">Select profile</option>' + connections.map((connection) =>
+      `<option value="${escapeHtml(connection.id)}">${escapeHtml(connection.name)} · ${escapeHtml(connection.username)}@${escapeHtml(connection.host)}</option>`).join('');
+    select.value = selectedId || '';
   }
 
   async cloneRepository(repositoryId) {

@@ -175,6 +175,7 @@ public class ForgeAgentClientMapper {
                 response.projectId(),
                 response.name(),
                 response.serviceId(),
+                response.assetId(),
                 response.connection(),
                 response.sshConnectionId(),
                 response.provider(),

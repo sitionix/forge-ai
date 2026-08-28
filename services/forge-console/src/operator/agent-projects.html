@@ -45,10 +45,7 @@
       </section>
 
       <section class="panel project-section">
-        <div class="agents-v2-pane-head">
-          <div><h2>Logs</h2></div>
-          <button id="projectLogsOpen" class="button small secondary" type="button">Open Logs</button>
-        </div>
+        <button id="projectLogsOpen" class="button small secondary" type="button">Open Logs</button>
       </section>
 
       <section class="panel project-section">
@@ -101,7 +98,7 @@
       </header>
 
       <section id="serviceOverview" class="panel project-section hidden">
-        <div class="agents-v2-pane-head"><div><h2>Overview</h2><p id="serviceOverviewSummary"></p></div><span id="serviceRuntimeStatus" class="agents-v2-status">UNKNOWN</span></div>
+        <div class="agents-v2-pane-head"><div><h2>Overview</h2><p id="serviceOverviewSummary"></p></div><div><span id="serviceRuntimeStatus" class="agents-v2-status">UNKNOWN</span> <button id="serviceOpenLogs" class="button small secondary" type="button">Open Logs</button></div></div>
         <div id="serviceRuntimeDetails" class="repository-list"></div>
       </section>
 
@@ -125,6 +122,7 @@
             <button id="repositoryRuntimeAdd" class="button small secondary hidden" type="button">Add Service</button>
             <button id="repositoryRuntimeConfigure" class="button small secondary" type="button">Configure Runtime</button>
             <button id="repositoryRuntimeDelete" class="button small secondary hidden" type="button">Delete</button>
+            <button id="repositoryOpenLogs" class="button small secondary hidden" type="button">Open Logs</button>
           </div>
         </div>
         <div id="repositoryRuntimeServices" class="runtime-service-selector hidden"></div>
@@ -133,6 +131,11 @@
 
       <section id="projectLogsSourcesSection" class="panel project-section">
         <div class="agents-v2-pane-head"><div><h2>Sources</h2><p>Filter configured and Service-derived logs.</p></div></div>
+        <div class="agents-v2-pane-head">
+          <label>Resource <select id="projectLogsResourceFilter" class="text-input"><option value="">All</option></select></label>
+          <label>Service <select id="projectLogsServiceFilter" class="text-input"><option value="">All</option></select></label>
+          <label>Provider <select id="projectLogsProviderFilter" class="text-input"><option value="">All</option><option>DOCKER</option><option>SYSTEMD</option><option>FILE</option></select></label>
+        </div>
         <div id="projectLogsSources" class="repository-list"></div>
       </section>
 
@@ -238,32 +241,6 @@
       </form>
     </dialog>
 
-    <dialog id="projectLogsDialog" class="modal-dialog">
-      <form id="projectLogsForm" method="dialog" class="modal-form">
-        <div class="modal-head"><h2>Add Log Source</h2></div>
-        <div id="projectLogsError" class="error-box hidden"></div>
-        <label class="field-label">Name</label><input id="projectLogsName" class="text-input" required maxlength="120">
-        <label class="field-label">Connection</label><select id="projectLogsConnection" class="text-input"><option>LOCAL</option><option>SSH</option></select>
-        <label id="projectLogsSshField" class="field-label hidden">SSH profile<select id="projectLogsSsh" class="text-input"></select><button id="projectLogsAddSsh" class="button small secondary" type="button">New SSH profile</button></label>
-        <label class="field-label">Provider</label><select id="projectLogsProvider" class="text-input"><option>DOCKER</option><option>SYSTEMD</option><option>FILE</option></select>
-        <div id="projectLogsContainerField">
-          <label class="field-label">Docker target<select id="projectLogsDockerMode" class="text-input"><option value="CONTAINER">Container</option><option value="COMPOSE">Compose service</option></select></label>
-          <label id="projectLogsContainerTarget" class="field-label">Container<input id="projectLogsContainer" class="text-input" list="projectLogsContainers"><datalist id="projectLogsContainers"></datalist></label>
-          <div id="projectLogsComposeTarget" class="hidden">
-            <label class="field-label">Repository<select id="projectLogsRepository" class="text-input"></select></label>
-            <label class="field-label">Compose service<input id="projectLogsComposeService" class="text-input" list="projectLogsComposeServices"><datalist id="projectLogsComposeServices"></datalist></label>
-            <label class="field-label">Compose file<input id="projectLogsComposeFile" class="text-input" placeholder="/project/compose.yaml"></label>
-          </div>
-        </div>
-        <label id="projectLogsSystemdModeField" class="field-label hidden">Target<select id="projectLogsSystemdMode" class="text-input"><option value="UNIT">Unit</option><option value="FULL_JOURNAL">Full journal</option></select></label>
-        <label id="projectLogsUnitField" class="field-label hidden">Unit<input id="projectLogsUnit" class="text-input" list="projectLogsUnits"><datalist id="projectLogsUnits"></datalist></label>
-        <label id="projectLogsPathField" class="field-label hidden">Path<input id="projectLogsPath" class="text-input"></label>
-        <div id="projectLogsDiscoveryError" class="error-box"></div>
-        <label><input id="projectLogsEnabled" type="checkbox" checked> Enabled</label>
-        <div class="modal-actions"><button id="projectLogsCancel" class="button secondary" type="button">Cancel</button><button class="button" type="submit">Validate & Save</button></div>
-      </form>
-    </dialog>
-
     <dialog id="projectServiceDialog" class="modal-dialog">
       <form id="projectServiceForm" method="dialog" class="modal-form">
         <div class="modal-head"><h2 id="projectServiceDialogTitle">Create Service</h2></div>
@@ -293,6 +270,28 @@
         <label id="projectLogsSshKeyField" class="field-label">Private key path<input id="projectLogsSshKey" class="text-input" required placeholder="/home/user/.ssh/id_ed25519"></label>
         <label id="projectLogsSshPasswordField" class="field-label hidden">Password<input id="projectLogsSshPassword" class="text-input" type="password"></label>
         <div class="modal-actions"><button id="projectLogsSshCancel" class="button secondary" type="button">Cancel</button><button id="projectLogsSshTest" class="button secondary" type="button">Test Connection</button><button class="button" type="submit">Create</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="assetMonitoringDialog" class="modal-dialog wide">
+      <form id="assetMonitoringForm" method="dialog" class="modal-form">
+        <div class="modal-head"><h2>Configure Monitoring</h2></div>
+        <div id="assetMonitoringError" class="error-box hidden"></div>
+        <section id="assetMonitoringSystemdSection" class="hidden">
+          <h3>SYSTEMD</h3>
+          <input id="assetMonitoringSystemdSearch" class="text-input" type="search" placeholder="Search units">
+          <div id="assetMonitoringSystemdTargets" class="agents-v2-checkbox-list"></div>
+        </section>
+        <section id="assetMonitoringDockerSection" class="hidden">
+          <h3>DOCKER</h3>
+          <input id="assetMonitoringDockerSearch" class="text-input" type="search" placeholder="Search containers">
+          <div id="assetMonitoringDockerTargets" class="agents-v2-checkbox-list"></div>
+        </section>
+        <details>
+          <summary>Advanced manual target</summary>
+          <label class="field-label">File path<input id="assetMonitoringFilePath" class="text-input" placeholder="/var/log/application.log"></label>
+        </details>
+        <div class="modal-actions"><button id="assetMonitoringCancel" class="button secondary" type="button">Cancel</button><button id="assetMonitoringSave" class="button" type="submit">Save</button></div>
       </form>
     </dialog>
 

@@ -197,6 +197,7 @@ class ForgeAgentApiMapper {
                 source.projectId(),
                 source.name(),
                 source.serviceId(),
+                source.assetId(),
                 source.connectionType(),
                 source.sshConnectionId(),
                 source.provider(),

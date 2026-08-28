@@ -48,15 +48,97 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class ForgeAgentClientAdapter implements ForgeAgentClient {
 
-    public com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset getProjectAsset(UUID p,UUID a){return asset(clientCallExecutor.execute(()->httpClient.getProjectAsset(p,a)));}
-    public java.util.List<com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset> listProjectAssets(UUID p){return clientCallExecutor.execute(()->httpClient.listProjectAssets(p)).stream().map(this::asset).toList();}
-    public com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset createProjectAsset(UUID p,com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectAssetCommand c){return asset(clientCallExecutor.execute(()->httpClient.createProjectAsset(p,new com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetRequest(c.name(),c.sshConnectionId()))));}
-    public com.sitionix.forgeai.domain.model.agentproxy.AgentAssetCapabilities getProjectAssetCapabilities(UUID p,UUID a){var r=clientCallExecutor.execute(()->httpClient.getProjectAssetCapabilities(p,a));return new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetCapabilities(r.systemdAvailable(),r.dockerAvailable());}
-    public com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics getProjectAssetMetrics(UUID p,UUID a){var r=clientCallExecutor.execute(()->httpClient.getProjectAssetMetrics(p,a));return new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics(r.cpuTotalPercent(),r.cpuPerCorePercent(),r.ramTotalBytes(),r.ramUsedBytes(),r.loadAverage1m(),r.loadAverage5m(),r.loadAverage15m(),r.disks().stream().map(d->new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics.Disk(d.mount(),d.totalBytes(),d.usedBytes())).toList(),r.network().stream().map(n->new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics.Network(n.interfaceName(),n.receivedBytes(),n.transmittedBytes())).toList(),r.uptimeSeconds(),r.temperatures().stream().map(t->new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics.Temperature(t.sensor(),t.celsius())).toList());}
-    public void deleteProjectAsset(UUID p,UUID a){clientCallExecutor.execute(()->{httpClient.deleteProjectAsset(p,a);return null;});}
-    public java.util.List<com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource> listProjectAssetMonitoring(UUID p,UUID a){return clientCallExecutor.execute(()->httpClient.listProjectAssetMonitoring(p,a)).stream().map(mapper::toDomain).toList();}
-    public com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource createProjectAssetMonitoring(UUID p,UUID a,com.sitionix.forgeai.domain.model.agentproxy.SaveAgentAssetMonitoringCommand c){return mapper.toDomain(clientCallExecutor.execute(()->httpClient.createProjectAssetMonitoring(p,a,new com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMonitoringRequest(c.name(),c.provider(),c.target(),c.enabled()))));}
-    private com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset asset(com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetResponse r){return new com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset(r.id(),r.projectId(),r.name(),r.sshConnectionId(),r.createdAt(),r.updatedAt());}
+    @Override
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset getProjectAsset(
+            final UUID projectId, final UUID assetId) {
+        return this.asset(this.clientCallExecutor.execute(
+                () -> this.httpClient.getProjectAsset(projectId, assetId)));
+    }
+
+    @Override
+    public List<com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset> listProjectAssets(
+            final UUID projectId) {
+        return this.clientCallExecutor.execute(() -> this.httpClient.listProjectAssets(projectId)).stream()
+                .map(this::asset)
+                .toList();
+    }
+
+    @Override
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset createProjectAsset(
+            final UUID projectId,
+            final com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectAssetCommand command) {
+        final var request = new com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetRequest(
+                command.name(), command.sshConnectionId());
+        return this.asset(this.clientCallExecutor.execute(
+                () -> this.httpClient.createProjectAsset(projectId, request)));
+    }
+
+    @Override
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentAssetCapabilities getProjectAssetCapabilities(
+            final UUID projectId, final UUID assetId) {
+        final var response = this.clientCallExecutor.execute(
+                () -> this.httpClient.getProjectAssetCapabilities(projectId, assetId));
+        return new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetCapabilities(
+                response.systemdAvailable(), response.dockerAvailable());
+    }
+
+    @Override
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics getProjectAssetMetrics(
+            final UUID projectId, final UUID assetId) {
+        final var response = this.clientCallExecutor.execute(
+                () -> this.httpClient.getProjectAssetMetrics(projectId, assetId));
+        return new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics(
+                response.cpuTotalPercent(), response.cpuPerCorePercent(),
+                response.ramTotalBytes(), response.ramUsedBytes(),
+                response.loadAverage1m(), response.loadAverage5m(), response.loadAverage15m(),
+                response.disks().stream()
+                        .map(disk -> new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics.Disk(
+                                disk.mount(), disk.totalBytes(), disk.usedBytes()))
+                        .toList(),
+                response.network().stream()
+                        .map(network -> new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics.Network(
+                                network.interfaceName(), network.receivedBytes(), network.transmittedBytes()))
+                        .toList(),
+                response.uptimeSeconds(),
+                response.temperatures().stream()
+                        .map(temperature -> new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics.Temperature(
+                                temperature.sensor(), temperature.celsius()))
+                        .toList());
+    }
+
+    @Override
+    public void deleteProjectAsset(final UUID projectId, final UUID assetId) {
+        this.clientCallExecutor.execute(() -> {
+            this.httpClient.deleteProjectAsset(projectId, assetId);
+            return null;
+        });
+    }
+
+    @Override
+    public List<AgentLogSource> listProjectAssetMonitoring(final UUID projectId, final UUID assetId) {
+        return this.clientCallExecutor.execute(
+                        () -> this.httpClient.listProjectAssetMonitoring(projectId, assetId)).stream()
+                .map(this.mapper::toDomain)
+                .toList();
+    }
+
+    @Override
+    public AgentLogSource createProjectAssetMonitoring(
+            final UUID projectId,
+            final UUID assetId,
+            final com.sitionix.forgeai.domain.model.agentproxy.SaveAgentAssetMonitoringCommand command) {
+        final var request = new com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMonitoringRequest(
+                command.name(), command.provider(), command.target(), command.enabled());
+        return this.mapper.toDomain(this.clientCallExecutor.execute(
+                () -> this.httpClient.createProjectAssetMonitoring(projectId, assetId, request)));
+    }
+
+    private com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset asset(
+            final com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetResponse response) {
+        return new com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset(
+                response.id(), response.projectId(), response.name(), response.sshConnectionId(),
+                response.createdAt(), response.updatedAt());
+    }
 
     public java.util.List<com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService> listProjectServices(UUID p){return clientCallExecutor.execute(()->httpClient.listProjectServices(p)).stream().map(mapper::toDomain).toList();}
     public com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService createProjectService(UUID p,com.sitionix.forgeai.domain.model.agentproxy.SaveAgentProjectServiceCommand c){return mapper.toDomain(clientCallExecutor.execute(()->httpClient.createProjectService(p,mapper.toRequest(c))));}

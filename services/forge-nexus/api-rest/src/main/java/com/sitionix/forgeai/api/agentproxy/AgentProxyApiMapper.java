@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentAssetCapabilities;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDockerLogConfiguration;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentFileLogConfiguration;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentLogDiscoveryCommand;
@@ -17,6 +19,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepositoryGitState;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService;
@@ -42,6 +45,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunExecutionEdg
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunGraph;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectAssetCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentSshConnectionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
@@ -51,6 +55,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.Node;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentAssetMonitoringCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentLogSourceCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentProjectServiceCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
@@ -64,6 +69,50 @@ import org.springframework.stereotype.Component;
 public class AgentProxyApiMapper {
 
     private final ObjectMapper objectMapper;
+
+    public CreateAgentProjectAssetCommand toCommand(final AgentProjectAssetRequest request) {
+        return new CreateAgentProjectAssetCommand(request.name(), request.sshConnectionId());
+    }
+
+    public SaveAgentAssetMonitoringCommand toCommand(final AgentAssetMonitoringRequest request) {
+        return new SaveAgentAssetMonitoringCommand(
+                request.name(), request.provider(), request.target(), request.enabled());
+    }
+
+    public AgentProjectAssetResponse toResponse(final AgentProjectAsset asset) {
+        return new AgentProjectAssetResponse(
+                asset.id(), asset.projectId(), asset.name(), asset.sshConnectionId(),
+                asset.createdAt(), asset.updatedAt());
+    }
+
+    public AgentAssetCapabilitiesResponse toResponse(final AgentAssetCapabilities capabilities) {
+        return new AgentAssetCapabilitiesResponse(
+                capabilities.systemdAvailable(), capabilities.dockerAvailable());
+    }
+
+    public AgentAssetMetricsResponse toResponse(final AgentAssetMetrics metrics) {
+        return new AgentAssetMetricsResponse(
+                metrics.cpuTotalPercent(),
+                metrics.cpuPerCorePercent(),
+                metrics.ramTotalBytes(),
+                metrics.ramUsedBytes(),
+                metrics.loadAverage1m(),
+                metrics.loadAverage5m(),
+                metrics.loadAverage15m(),
+                metrics.disks().stream()
+                        .map(disk -> new AgentAssetMetricsResponse.DiskResponse(
+                                disk.mount(), disk.totalBytes(), disk.usedBytes()))
+                        .toList(),
+                metrics.network().stream()
+                        .map(network -> new AgentAssetMetricsResponse.NetworkResponse(
+                                network.interfaceName(), network.receivedBytes(), network.transmittedBytes()))
+                        .toList(),
+                metrics.uptimeSeconds(),
+                metrics.temperatures().stream()
+                        .map(temperature -> new AgentAssetMetricsResponse.TemperatureResponse(
+                                temperature.sensor(), temperature.celsius()))
+                        .toList());
+    }
 
     public SaveAgentLogSourceCommand toCommand(final AgentLogSourceRequest request) {
         return new SaveAgentLogSourceCommand(
@@ -139,6 +188,7 @@ public class AgentProxyApiMapper {
                 source.projectId(),
                 source.name(),
                 source.serviceId(),
+                source.assetId(),
                 source.connection(),
                 source.sshConnectionId(),
                 source.provider(),

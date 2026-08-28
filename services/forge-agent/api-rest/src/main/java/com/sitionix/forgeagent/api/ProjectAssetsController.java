@@ -49,6 +49,7 @@ public class ProjectAssetsController {
       case SystemdLogConfiguration systemd -> new LogProviderConfigurationResponse(null, null, null, systemd.mode(), systemd.unit(), null);
       case FileLogConfiguration f -> new LogProviderConfigurationResponse(null, null, null, null, null, f.path());
     };
-    return new LogSourceResponse(s.id(), s.projectId(), s.name(), s.serviceId(), s.connectionType(), s.sshConnectionId(), s.provider(), c, s.enabled(), s.createdAt(), s.updatedAt());
+    return new LogSourceResponse(s.id(), s.projectId(), s.name(), s.serviceId(), s.assetId(),
+        s.connectionType(), s.sshConnectionId(), s.provider(), c, s.enabled(), s.createdAt(), s.updatedAt());
   }
 }

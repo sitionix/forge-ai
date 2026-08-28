@@ -34,18 +34,19 @@ public class LogSourceUseCases {
   @Transactional(readOnly = true)
   public List<LogSource> list(UUID projectId) {
     project(projectId);
-    var result = new ArrayList<>(sources.findByProjectId(projectId));
-    var persistedServiceIds = result.stream().map(LogSource::serviceId).filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
-    services.findByProjectId(projectId).stream().filter(service -> !persistedServiceIds.contains(service.id())).map(this::derived).forEach(result::add);
+    // Persisted Service-owned rows are retained for data compatibility, but are never effective.
+    // The current Service runtimeTarget is the sole source of truth at every read/stream boundary.
+    var result = new ArrayList<>(sources.findByProjectId(projectId).stream()
+        .filter(source -> source.serviceId() == null)
+        .toList());
+    services.findByProjectId(projectId).stream().map(this::derived).forEach(result::add);
     return List.copyOf(result);
   }
 
   @Transactional(readOnly = true)
   public List<LogSource> list(UUID projectId, UUID serviceId) {
     var service = service(projectId, serviceId);
-    var result = new ArrayList<>(sources.findByProjectIdAndServiceId(projectId, serviceId));
-    if (result.isEmpty()) result.add(derived(service));
-    return List.copyOf(result);
+    return List.of(derived(service));
   }
 
   @Transactional(readOnly = true)
