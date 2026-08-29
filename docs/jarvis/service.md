@@ -5,7 +5,7 @@ FastAPI service for converting local text commands into strict JSON intents thro
 Run from the Forge AI repository root:
 
 ```bash
-scripts/jarvis/start.sh
+just start
 ```
 
 Or run the service directly:

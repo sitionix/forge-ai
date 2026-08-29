@@ -14,4 +14,4 @@ python3 -m venv "${KNOWLEDGE_ROOT}/.venv"
 mkdir -p "${FORGE_RUNTIME_DIR}/knowledge/logs"
 
 echo "Knowledge bootstrap complete."
-echo "Next: scripts/knowledge/init-local-config.sh, then scripts/knowledge/start.sh"
+echo "Next: scripts/knowledge/init-local-config.sh, then 'just start'"

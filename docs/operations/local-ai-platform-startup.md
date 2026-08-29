@@ -1,63 +1,24 @@
-# Local AI Platform Startup
+# Local AI platform operations
 
-From a fresh clone:
-
-```bash
-scripts/bootstrap.sh
-scripts/validate-config.sh
-scripts/start.sh
-scripts/status.sh
-```
-
-`scripts/start.sh` delegates to the existing `Justfile` when `just` is available. Service control scripts live only under root `scripts/`:
+Use the repository-root runtime contract on both Ubuntu and macOS:
 
 ```bash
-scripts/knowledge/bootstrap.sh
-scripts/knowledge/start.sh
-scripts/knowledge/status.sh
-scripts/knowledge/validate-config.sh
-
-scripts/jarvis/bootstrap.sh
-scripts/jarvis/start.sh
-scripts/jarvis/status.sh
-scripts/jarvis/smoke-test.sh
+just start
+just status
+just logs knowledge
+just logs jarvis
+just stop
 ```
 
-## Override Workspace Root
+`just start` owns the complete Forge stack: Docker-managed Postgres plus
+Knowledge, Jarvis, Agent, and Nexus. On Ubuntu the processes and logs are owned
+by systemd. On macOS they are owned by the detached managed session.
 
-The service catalog uses paths relative to the workspace containing the repos. Override it with:
+To follow all application logs, run `just logs`. To access an interactive
+managed-session window on macOS, run `just attach knowledge` (or `jarvis`,
+`agent`, or `nexus`). Ubuntu systemd workloads are non-interactive; use their
+logs instead.
 
-```bash
-FORGE_WORKSPACE_ROOT=/absolute/path/to/workspace scripts/validate-config.sh
-```
-
-The default is the parent directory of `FORGE_AI_HOME`.
-
-## Status Checks
-
-Read-only checks:
-
-```bash
-scripts/status.sh
-curl -fsS http://127.0.0.1:9099/fgaisox/actuator/health
-curl -fsS http://127.0.0.1:9099/fgaisox/api/v1/infrastructure/jarvis/status
-curl -fsS http://127.0.0.1:9099/fgaisox/api/v1/infrastructure/knowledge/status
-curl -fsS http://127.0.0.1:9099/fgaisox/api/v1/infrastructure/knowledge/overview
-```
-
-Do not run inventory or analysis build endpoints as a health check; they can be expensive.
-
-## Stop
-
-```bash
-scripts/stop.sh
-```
-
-This stops the Java app when managed by the local PID/Justfile flow, then stops Jarvis and Knowledge through the root scripts.
-
-## Physical Service Roots
-
-- Forge Nexus: `services/forge-nexus`
-- Forge Console: `services/forge-console/src/operator`
-- Forge Knowledge: `services/forge-knowledge`
-- Forge Jarvis: `services/forge-jarvis`
+Startup is successful only after all four health endpoints respond. Check real
+process, health, and Postgres state with `just status`. Restart the same selected
+backend with `just restart`.

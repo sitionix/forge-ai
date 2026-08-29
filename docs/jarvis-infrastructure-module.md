@@ -36,10 +36,10 @@ They delegate to `infrastructure/jarvis/scripts/*`.
 
 ```bash
 scripts/jarvis/bootstrap.sh
-JARVIS_PORT=7071 scripts/jarvis/start.sh
+just start
 JARVIS_PORT=7071 scripts/jarvis/status.sh
 JARVIS_PORT=7071 scripts/jarvis/smoke-test.sh
-scripts/jarvis/stop.sh
+just stop
 ```
 
 `7071` is used while the old standalone Jarvis may still own `7070`.
