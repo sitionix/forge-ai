@@ -49,35 +49,35 @@ EOF
   chmod +x "${bin}/docker" "${bin}/curl"
 }
 
-fake_tmux_bin() {
+fake_launchd_bin() {
   local bin="$1"
-  cat > "${bin}/tmux" <<'EOF'
+  cat > "${bin}/launchctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-state="${TEST_TMUX_STATE}"
-printf 'tmux %s\n' "$*" >> "${TEST_RUNTIME_LOG}"
+state="${TEST_LAUNCHD_STATE}"
+printf 'launchctl %s\n' "$*" >> "${TEST_RUNTIME_LOG}"
 case "${1:-}" in
-  has-session) [[ -d "${state}/session" ]] ;;
-  new-session) mkdir -p "${state}/session"; printf '0:0' > "${state}/session/runtime" ;;
-  set-option|pipe-pane) ;;
-  new-window)
-    while (($#)); do [[ "$1" == -n ]] && { shift; name="$1"; break; }; shift; done
-    printf '0:0' > "${state}/session/${name}"
+  print)
+    if [[ "${2:-}" == gui/*/* ]]; then
+      name="${2##*/}"
+      [[ -f "${state}/${name}" ]] || exit 113
+      printf 'state = running\npid = 123\n'
+    fi
     ;;
-  kill-window) rm -f "${state}/session/runtime" ;;
-  kill-session) rm -rf "${state}/session" ;;
-  display-message)
-    target=""; while (($#)); do [[ "$1" == -t ]] && { shift; target="$1"; }; shift || true; done
-    name="${target##*:}"; cat "${state}/session/${name}"
+  bootstrap)
+    mkdir -p "${state}"
+    name="$(basename "${3}" .plist)"
+    : > "${state}/${name}"
     ;;
-  select-window|attach-session) ;;
+  kickstart) ;;
+  bootout) rm -f "${state}/${2##*/}" ;;
 esac
 EOF
   cat > "${bin}/tail" <<'EOF'
 #!/usr/bin/env bash
 printf 'tail %s\n' "$*" >> "${TEST_RUNTIME_LOG}"
 EOF
-  chmod +x "${bin}/tmux" "${bin}/tail"
+  chmod +x "${bin}/launchctl" "${bin}/tail"
 }
 
 case_backend_resolution() {
@@ -85,7 +85,9 @@ case_backend_resolution() {
   dir="$(tmp)"; bin="${dir}/bin"; log="${dir}/log"; runtime="${dir}/systemd"; mkdir -p "${bin}" "${runtime}"
   export TEST_RUNTIME_LOG="${log}"
   fake_systemd_bin "${bin}"
-  [[ "$(PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_OS=Darwin "${ROOT}/scripts/runtime/resolve-backend.sh")" == MANAGED_LOCAL_SESSION ]]
+  fake_launchd_bin "${bin}"
+  export TEST_LAUNCHD_STATE="${dir}/launchd"
+  [[ "$(PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_OS=Darwin "${ROOT}/scripts/runtime/resolve-backend.sh")" == LAUNCHD ]]
   [[ "$(PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_OS=Linux FORGE_RUNTIME_LINUX_ID=ubuntu FORGE_SYSTEMD_RUNTIME_DIR="${runtime}" "${ROOT}/scripts/runtime/resolve-backend.sh")" == SYSTEMD ]]
 }
 
@@ -95,7 +97,7 @@ case_unusable_systemd_never_falls_back() {
   fake_systemd_bin "${bin}"
   if output="$(PATH="${bin}:${SYSTEM_PATH}" TEST_SYSTEMD_USABLE=0 FORGE_RUNTIME_OS=Linux FORGE_RUNTIME_LINUX_ID=ubuntu FORGE_SYSTEMD_RUNTIME_DIR="${dir}/systemd" "${ROOT}/scripts/runtime/control.sh" start 2>&1)"; then return 1; fi
   [[ "${output}" == *"manager is not usable"* ]]
-  ! grep -q tmux "${dir}/log"
+  ! grep -q launchctl "${dir}/log"
 }
 
 case_inactive_systemd_never_selects() {
@@ -111,7 +113,7 @@ case_systemd_action_failure_never_falls_back() {
   dir="$(tmp)"; bin="${dir}/bin"; mkdir -p "${bin}" "${dir}/systemd"; export TEST_RUNTIME_LOG="${dir}/log"
   fake_systemd_bin "${bin}"; fake_common_bin "${bin}"
   if PATH="${bin}:${SYSTEM_PATH}" TEST_SYSTEMD_START_EXIT=23 FORGE_SYSTEMD_USE_SUDO=0 FORGE_RUNTIME_OS=Linux FORGE_RUNTIME_LINUX_ID=ubuntu FORGE_SYSTEMD_RUNTIME_DIR="${dir}/systemd" "${ROOT}/scripts/runtime/control.sh" start >/dev/null 2>&1; then return 1; fi
-  ! grep -q tmux "${dir}/log"
+  ! grep -q launchctl "${dir}/log"
 }
 
 case_systemd_lifecycle() {
@@ -127,45 +129,47 @@ case_systemd_lifecycle() {
   grep -q 'systemctl is-active forge-agent.service' "${dir}/log"
 }
 
-case_managed_session_lifecycle() {
+case_launchd_lifecycle() {
   local dir bin prepare
-  dir="$(tmp)"; bin="${dir}/bin"; prepare="${dir}/prepare"; mkdir -p "${bin}"; export TEST_RUNTIME_LOG="${dir}/log" TEST_TMUX_STATE="${dir}/tmux"
-  fake_common_bin "${bin}"; fake_tmux_bin "${bin}"
+  dir="$(tmp)"; bin="${dir}/bin"; prepare="${dir}/prepare"; mkdir -p "${bin}"; export TEST_RUNTIME_LOG="${dir}/log" TEST_LAUNCHD_STATE="${dir}/launchd"
+  fake_common_bin "${bin}"; fake_launchd_bin "${bin}"
   cat > "${prepare}" <<'EOF'
 #!/usr/bin/env bash
 printf 'prepare\n' >> "${TEST_RUNTIME_LOG}"
 EOF
   chmod +x "${prepare}"
-  local envs=(PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_OS=Darwin FORGE_RUNTIME_PREPARE_COMMAND="${prepare}" FORGE_MANAGED_SESSION_DIR="${dir}/managed" FORGE_RUNTIME_HEALTH_ATTEMPTS=1)
+  local envs=(PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_OS=Darwin FORGE_RUNTIME_PREPARE_COMMAND="${prepare}" FORGE_LAUNCHD_DIR="${dir}/plists" FORGE_LAUNCHD_LOG_DIR="${dir}/logs" FORGE_RUNTIME_HEALTH_ATTEMPTS=1)
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" start >/dev/null
-  [[ -d "${dir}/tmux/session" ]]
+  [[ -f "${dir}/launchd/ai.forge.agent" ]]
+  grep -Fq "${ROOT}/scripts/runtime/run-agent.sh" "${dir}/plists/ai.forge.agent.plist"
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" status >/dev/null
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" logs agent >/dev/null
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" logs all >/dev/null
-  env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" attach agent >/dev/null
-  env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" start >/dev/null
-  [[ "$(grep -c '^prepare$' "${dir}/log")" == 1 ]]
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" restart >/dev/null
   [[ "$(grep -c '^prepare$' "${dir}/log")" == 2 ]]
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" stop >/dev/null
-  [[ ! -d "${dir}/tmux/session" ]]
+  [[ ! -e "${dir}/launchd/ai.forge.agent" ]]
 }
 
-case_failed_child_is_real() {
+case_launchd_rejects_foreign_loaded_service() {
   local dir bin prepare output
-  dir="$(tmp)"; bin="${dir}/bin"; prepare="${dir}/prepare"; mkdir -p "${bin}"; export TEST_RUNTIME_LOG="${dir}/log" TEST_TMUX_STATE="${dir}/tmux"
-  fake_common_bin "${bin}"; fake_tmux_bin "${bin}"; printf '#!/usr/bin/env bash\n' > "${prepare}"; chmod +x "${prepare}"
-  PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_OS=Darwin FORGE_RUNTIME_PREPARE_COMMAND="${prepare}" FORGE_MANAGED_SESSION_DIR="${dir}/managed" FORGE_RUNTIME_HEALTH_ATTEMPTS=1 "${ROOT}/scripts/runtime/control.sh" start >/dev/null
-  printf '1:17' > "${dir}/tmux/session/agent"
-  if output="$(PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_OS=Darwin FORGE_MANAGED_SESSION_DIR="${dir}/managed" "${ROOT}/scripts/runtime/control.sh" status 2>&1)"; then return 1; fi
-  [[ "${output}" == *"FAILED(17)"* ]]
+  dir="$(tmp)"; bin="${dir}/bin"; prepare="${dir}/prepare"; mkdir -p "${bin}" "${dir}/launchd" "${dir}/plists"
+  export TEST_RUNTIME_LOG="${dir}/log" TEST_LAUNCHD_STATE="${dir}/launchd"
+  fake_common_bin "${bin}"; fake_launchd_bin "${bin}"; printf '#!/usr/bin/env bash\n' > "${prepare}"; chmod +x "${prepare}"
+  : > "${dir}/launchd/ai.forge.agent"
+  printf '%s\n' '<plist><string>/another/checkout/scripts/runtime/run-agent.sh</string></plist>' > "${dir}/plists/ai.forge.agent.plist"
+  if output="$(PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_OS=Darwin FORGE_RUNTIME_PREPARE_COMMAND="${prepare}" FORGE_LAUNCHD_DIR="${dir}/plists" FORGE_LAUNCHD_LOG_DIR="${dir}/logs" "${ROOT}/scripts/runtime/control.sh" start 2>&1)"; then return 1; fi
+  [[ "${output}" == *"foreign launchd service"* ]]
+  [[ -f "${dir}/launchd/ai.forge.agent" ]]
 }
 
 case_architecture_cleanup() {
-  ! rg -n '_dev-start|_stop-dev|forge_start_background|forge-agent\.pid|forge-ai\.pid|nohup' "${ROOT}/Justfile" "${ROOT}/scripts/runtime" >/dev/null
-  ! rg -n 'lsof|kill .*port|kill .*listener' "${ROOT}/scripts/runtime" >/dev/null
+  ! rg -n '_dev-start|_stop-dev|forge_start_background|forge-agent\.pid|forge-ai\.pid|nohup|tmux|MANAGED_LOCAL_SESSION' "${ROOT}/Justfile" "${ROOT}/scripts/runtime" "${ROOT}/scripts/launchd" >/dev/null
+  ! rg -n 'lsof|kill .*port|kill .*listener' "${ROOT}/scripts/runtime" "${ROOT}/scripts/launchd" >/dev/null
   [[ ! -e "${ROOT}/scripts/runtime-ownership.sh" && ! -e "${ROOT}/scripts/lib/process.sh" ]]
-  for command in start stop restart status logs attach; do rg -q "^${command}([[:space:]].*)?:" "${ROOT}/Justfile"; done
+  [[ ! -e "${ROOT}/scripts/runtime/managed-session.sh" ]]
+  for command in start stop restart status logs; do rg -q "^${command}([[:space:]].*)?:" "${ROOT}/Justfile"; done
+  ! rg -q '^attach([[:space:]].*)?:' "${ROOT}/Justfile"
 }
 
 case_systemd_units_use_runtime_runners() {
@@ -178,13 +182,13 @@ case_systemd_units_use_runtime_runners() {
   rg -q 'scripts/runtime/run-jarvis\.sh' "${dir}/units/forge-jarvis.service"
 }
 
-run_case "backend resolver selects systemd and managed session" case_backend_resolution
+run_case "backend resolver selects systemd and launchd" case_backend_resolution
 run_case "unusable systemd never falls back" case_unusable_systemd_never_falls_back
 run_case "systemctl without an active systemd runtime is rejected" case_inactive_systemd_never_selects
 run_case "a selected systemd action never falls back" case_systemd_action_failure_never_falls_back
 run_case "systemd lifecycle uses one owner" case_systemd_lifecycle
-run_case "managed session start/status/logs/attach/restart/stop" case_managed_session_lifecycle
-run_case "managed session reports a failed child" case_failed_child_is_real
+run_case "launchd start/status/logs/restart/stop" case_launchd_lifecycle
+run_case "launchd does not replace a foreign loaded service" case_launchd_rejects_foreign_loaded_service
 run_case "legacy PID/nohup launcher is removed" case_architecture_cleanup
 run_case "rendered systemd units use the runtime service runners" case_systemd_units_use_runtime_runners
 printf 'Portable startup shell tests: PASS %s/%s\n' "${PASSED}" "${TOTAL}"

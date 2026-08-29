@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-ACTION="${1:?Usage: systemd.sh validate|start|stop|restart|status|logs|attach [service]}"
+ACTION="${1:?Usage: systemd.sh validate|start|stop|restart|status|logs [service]}"
 SERVICE="${2:-all}"
 RUNTIME_DIR="${FORGE_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}"
 UNITS=(forge-knowledge.service forge-jarvis.service forge-agent.service forge-nexus.service)
@@ -106,6 +106,5 @@ case "${ACTION}" in
     [[ " ${UNITS[*]} " == *" forge-${SERVICE}.service "* ]] || { echo "Unknown service: ${SERVICE}" >&2; exit 2; }
     privileged journalctl --follow --unit "forge-${SERVICE}.service"
     ;;
-  attach) validate; echo "Interactive attach is not supported by the SYSTEMD backend; use 'just logs ${SERVICE}'." >&2; exit 2 ;;
   *) echo "Unknown systemd action: ${ACTION}" >&2; exit 2 ;;
 esac

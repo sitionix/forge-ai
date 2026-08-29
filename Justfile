@@ -15,9 +15,6 @@ status:
 logs service="all":
     @scripts/runtime/control.sh logs "{{service}}"
 
-attach service="nexus":
-    @scripts/runtime/control.sh attach "{{service}}"
-
 systemd-install:
     @scripts/runtime/prepare.sh
     @scripts/systemd/install.sh

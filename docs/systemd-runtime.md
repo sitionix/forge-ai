@@ -8,20 +8,17 @@ just stop
 just restart
 just status
 just logs [service]
-just attach [service]
 ```
 
 The runtime resolver selects one backend before performing an operation. Ubuntu
 uses `SYSTEMD` only when systemd is the active, reachable system manager and all
-Forge units are installed. macOS uses `MANAGED_LOCAL_SESSION`. A selected
+Forge units are installed. macOS uses `LAUNCHD`. A selected
 backend is authoritative: a systemd error is reported and never causes a local
 process fallback.
 
 Logical service names are `knowledge`, `jarvis`, `agent`, `nexus`, and
 `postgres`. `just logs` follows all Forge application logs; pass a service name
-to follow only that service. `just attach <service>` attaches to a macOS managed
-session window. Systemd does not expose interactive application sessions, so on
-Ubuntu use `just logs <service>`.
+to follow only that service.
 
 ## Ubuntu
 
@@ -45,15 +42,15 @@ Lifecycle commands fail explicitly when the manager or installation is unusable.
 
 ## macOS
 
-Install `tmux` and the normal Forge build prerequisites. `just start` builds the
-applications, starts Docker-managed Postgres, and creates a detached `tmux`
-session named `forge-ai`. That session owns the four application processes and
-their output. The launching terminal can exit without stopping Forge.
+`just start` builds the applications, starts Docker-managed Postgres, renders
+LaunchAgent plists for the current checkout under `~/Library/LaunchAgents`, and
+loads Knowledge, Jarvis, Agent, and Nexus into the current user's launchd
+domain. The command returns while launchd continues to own the services.
 
-`just status` reads the actual pane exit state and application health. A crashed
-child is reported as failed, including its exit code. `just stop` removes only
-the explicitly owned Forge session and stops its Postgres dependency; it never
-kills processes by port.
+Application stdout and stderr are owned by launchd under
+`var/launchd/logs`. `just logs [service]` follows those files, `just status`
+combines launchd state with application health, and `just stop` unloads the four
+Forge LaunchAgents before stopping Postgres.
 
 ## Runtime target discovery
 

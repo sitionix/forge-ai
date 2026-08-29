@@ -3,7 +3,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 OS="${FORGE_RUNTIME_OS:-$(uname -s)}"
 case "${OS}" in
-  Darwin) printf 'MANAGED_LOCAL_SESSION\n' ;;
+  Darwin)
+    command -v launchctl >/dev/null 2>&1 || { echo "macOS Forge runtime requires launchctl." >&2; exit 1; }
+    printf 'LAUNCHD\n'
+    ;;
   Linux)
     linux_id="${FORGE_RUNTIME_LINUX_ID:-}"
     if [[ -z "${linux_id}" && -r /etc/os-release ]]; then

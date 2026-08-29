@@ -14,10 +14,7 @@ infrastructure/jarvis/
     system-prompt.md
   scripts/
     bootstrap.sh
-    start.sh
-    status.sh
     smoke-test.sh
-    stop.sh
   services/
     jarvis-agent/
       src/jarvis_agent/
@@ -37,12 +34,11 @@ They delegate to `infrastructure/jarvis/scripts/*`.
 ```bash
 scripts/jarvis/bootstrap.sh
 just start
-JARVIS_PORT=7071 scripts/jarvis/status.sh
+just status
+just logs jarvis
 JARVIS_PORT=7071 scripts/jarvis/smoke-test.sh
 just stop
 ```
-
-`7071` is used while the old standalone Jarvis may still own `7070`.
 
 ## Local Jarvis API
 

@@ -12,12 +12,11 @@ just stop
 
 `just start` owns the complete Forge stack: Docker-managed Postgres plus
 Knowledge, Jarvis, Agent, and Nexus. On Ubuntu the processes and logs are owned
-by systemd. On macOS they are owned by the detached managed session.
+by systemd. On macOS they are owned by launchd LaunchAgents generated for the
+current checkout.
 
-To follow all application logs, run `just logs`. To access an interactive
-managed-session window on macOS, run `just attach knowledge` (or `jarvis`,
-`agent`, or `nexus`). Ubuntu systemd workloads are non-interactive; use their
-logs instead.
+To follow all application logs, run `just logs`; pass `knowledge`, `jarvis`,
+`agent`, `nexus`, or `postgres` to follow one logical service.
 
 Startup is successful only after all four health endpoints respond. Check real
 process, health, and Postgres state with `just status`. Restart the same selected
