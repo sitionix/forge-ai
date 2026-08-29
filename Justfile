@@ -11,9 +11,15 @@ knowledge_url := "http://127.0.0.1:7081"
 jarvis_url := "http://127.0.0.1:7071"
 sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 
-# Start the installed Forge systemd runtime. Docker Postgres remains Docker-managed.
+# Start Forge. Uses systemd when available; falls back to the development runtime on hosts such as macOS.
 start:
-    @scripts/systemd/control.sh start
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v systemctl >/dev/null 2>&1; then
+        scripts/systemd/control.sh start
+    else
+        just --justfile "{{root}}/Justfile" _dev-start
+    fi
 
 # Internal development launcher retained for development-focused checks.
 _dev-start service="all":
@@ -42,13 +48,25 @@ _start-all: _start-preflight _app-stop _jarvis-stop _knowledge-stop _ollama-stop
     @echo "  sqlite:    {{sqlite_path}}"
 
 stop:
-    @scripts/systemd/control.sh stop
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v systemctl >/dev/null 2>&1; then
+        scripts/systemd/control.sh stop
+    else
+        just --justfile "{{root}}/Justfile" _stop-dev
+    fi
 
 _stop-dev: _app-stop _jarvis-stop _knowledge-stop _ollama-stop _postgres-stop
     @echo "Forge AI stack stopped."
 
 status:
-    @scripts/systemd/control.sh status
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v systemctl >/dev/null 2>&1; then
+        scripts/systemd/control.sh status
+    else
+        scripts/status.sh
+    fi
 
 # Build runtime artifacts and install/update systemd units for this checkout.
 systemd-install:
@@ -59,9 +77,16 @@ systemd-install:
     @if [[ ! -x "{{root}}/services/forge-jarvis/.venv/bin/uvicorn" ]]; then scripts/jarvis/bootstrap.sh; fi
     @scripts/systemd/install.sh
 
-# Restart the installed Forge systemd services. Docker Postgres remains Docker-managed.
+# Restart Forge. Uses systemd when available; falls back to the development runtime on hosts such as macOS.
 restart:
-    @scripts/systemd/control.sh restart
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v systemctl >/dev/null 2>&1; then
+        scripts/systemd/control.sh restart
+    else
+        just --justfile "{{root}}/Justfile" _stop-dev
+        just --justfile "{{root}}/Justfile" _dev-start
+    fi
 
 _start-preflight:
     #!/usr/bin/env bash

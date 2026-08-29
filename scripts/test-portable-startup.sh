@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SYSTEM_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+JUST_BIN="$(command -v just)"
 PASSED=0
 TOTAL=0
 TEMP_DIRS=()
@@ -480,7 +481,7 @@ case_just_stop_uses_systemd_for_active_state() {
     sleep 60 &
     pid="$!"
     CHILD_PIDS+=("${pid}")
-    PATH="${bin}:${SYSTEM_PATH}" TEST_SYSTEMD_STATE="${state}" TEST_SYSTEMCTL_LOG="${log}" FORGE_SYSTEMD_USE_SUDO=0 just --justfile "${ROOT_DIR}/Justfile" stop
+    PATH="${bin}:${SYSTEM_PATH}" TEST_SYSTEMD_STATE="${state}" TEST_SYSTEMCTL_LOG="${log}" FORGE_SYSTEMD_USE_SUDO=0 "${JUST_BIN}" --justfile "${ROOT_DIR}/Justfile" stop
     grep -Fq 'stop forge-nexus.service forge-agent.service forge-jarvis.service forge-knowledge.service' "${log}"
     kill -0 "${pid}" >/dev/null 2>&1
   done
@@ -521,7 +522,7 @@ case_java_port_fallback_preserves_systemd_main_pid() {
     sleep 60 &
     pid="$!"
     CHILD_PIDS+=("${pid}")
-    if output="$(PATH="${bin}:${SYSTEM_PATH}" TEST_LISTENER_PORT="${port}" TEST_SYSTEMD_MAIN_PID="${pid}" just --justfile "${ROOT_DIR}/Justfile" _app-stop 2>&1)"; then
+    if output="$(PATH="${bin}:${SYSTEM_PATH}" TEST_LISTENER_PORT="${port}" TEST_SYSTEMD_MAIN_PID="${pid}" "${JUST_BIN}" --justfile "${ROOT_DIR}/Justfile" _app-stop 2>&1)"; then
       return 1
     fi
     [[ "${output}" == *"systemd-owned Forge PID ${pid}"* ]]
@@ -554,13 +555,17 @@ case_systemd_unit_templates_have_no_committed_secrets_or_postgres_unit() {
   ! grep -R 'postgres.service' "${ROOT_DIR}/config/systemd" >/dev/null
 }
 
-case_dev_launcher_and_systemd_workflows_are_separate() {
+case_public_launcher_dispatches_between_systemd_and_dev_runtime() {
   grep -Fqx 'start:' "${ROOT_DIR}/Justfile"
   grep -Fqx 'stop:' "${ROOT_DIR}/Justfile"
   grep -Fqx 'restart:' "${ROOT_DIR}/Justfile"
   grep -Fqx '_dev-start service="all":' "${ROOT_DIR}/Justfile"
   grep -Fq 'forge_start_background' "${ROOT_DIR}/scripts/lib/process.sh"
+  awk '/^start:/{flag=1; next} /^# Internal development launcher/{flag=0} flag {print}' "${ROOT_DIR}/Justfile" | grep -Fq 'command -v systemctl'
   awk '/^start:/{flag=1; next} /^# Internal development launcher/{flag=0} flag {print}' "${ROOT_DIR}/Justfile" | grep -Fq 'scripts/systemd/control.sh start'
+  awk '/^start:/{flag=1; next} /^# Internal development launcher/{flag=0} flag {print}' "${ROOT_DIR}/Justfile" | grep -Fq '_dev-start'
+  awk '/^stop:/{flag=1; next} /^_stop-dev:/{flag=0} flag {print}' "${ROOT_DIR}/Justfile" | grep -Fq '_stop-dev'
+  awk '/^restart:/{flag=1; next} /^_start-preflight:/{flag=0} flag {print}' "${ROOT_DIR}/Justfile" | grep -Fq '_dev-start'
   awk '/^_dev-start service="all":/{flag=1; next} /^_start-all:/{flag=0} flag {print}' "${ROOT_DIR}/Justfile" | grep -Fq 'assert-systemd-inactive'
 }
 
@@ -584,7 +589,7 @@ run_case "systemd env resolves absolute Codex command" case_systemd_env_resolves
 run_case "systemd install units reference the installed env path" case_systemd_install_renders_installed_env_path
 run_case "systemd launch path has no PID file or nohup" case_systemd_launch_path_has_no_pid_file_or_nohup
 run_case "systemd unit templates have no committed secrets or Postgres unit" case_systemd_unit_templates_have_no_committed_secrets_or_postgres_unit
-run_case "dev launcher and systemd workflows are separate" case_dev_launcher_and_systemd_workflows_are_separate
+run_case "public launcher dispatches between systemd and dev runtime" case_public_launcher_dispatches_between_systemd_and_dev_runtime
 run_case "systemd start refuses a dev-owned process without killing it" case_systemd_start_refuses_dev_owned_process
 run_case "dev start refuses active systemd without killing it" case_dev_start_refuses_active_systemd_without_killing
 run_case "just stop uses systemd for active and activating units" case_just_stop_uses_systemd_for_active_state
