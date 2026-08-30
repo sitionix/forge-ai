@@ -44,6 +44,7 @@ if [[ "$*" == *"ps --status running -q"* ]]; then echo postgres-container; fi
 EOF
   cat > "${bin}/curl" <<'EOF'
 #!/usr/bin/env bash
+printf 'curl %s\n' "$*" >> "${TEST_RUNTIME_LOG}"
 exit "${TEST_CURL_EXIT:-0}"
 EOF
   chmod +x "${bin}/docker" "${bin}/curl"
@@ -61,7 +62,11 @@ case "${1:-}" in
     if [[ "${2:-}" == gui/*/* ]]; then
       name="${2##*/}"
       [[ -f "${state}/${name}" ]] || exit 113
-      printf 'state = running\npid = 123\n'
+      if [[ "${TEST_LAUNCHD_NON_RUNNING_SERVICE:-}" == "${name#ai.forge.}" ]]; then
+        printf 'state = exited\nlast exit code = 48\n'
+      else
+        printf 'state = running\npid = 123\n'
+      fi
     fi
     ;;
   bootstrap)
@@ -163,6 +168,16 @@ case_launchd_rejects_foreign_loaded_service() {
   [[ -f "${dir}/launchd/ai.forge.agent" ]]
 }
 
+case_launchd_stale_health_never_masks_failed_job() {
+  local dir bin prepare output
+  dir="$(tmp)"; bin="${dir}/bin"; prepare="${dir}/prepare"; mkdir -p "${bin}"
+  export TEST_RUNTIME_LOG="${dir}/log" TEST_LAUNCHD_STATE="${dir}/launchd"
+  fake_common_bin "${bin}"; fake_launchd_bin "${bin}"; printf '#!/usr/bin/env bash\n' > "${prepare}"; chmod +x "${prepare}"
+  if output="$(PATH="${bin}:${SYSTEM_PATH}" TEST_LAUNCHD_NON_RUNNING_SERVICE=agent TEST_CURL_EXIT=0 FORGE_RUNTIME_OS=Darwin FORGE_RUNTIME_PREPARE_COMMAND="${prepare}" FORGE_LAUNCHD_DIR="${dir}/plists" FORGE_LAUNCHD_LOG_DIR="${dir}/logs" FORGE_RUNTIME_HEALTH_ATTEMPTS=1 "${ROOT}/scripts/runtime/control.sh" start 2>&1)"; then return 1; fi
+  [[ "${output}" == *"agent LaunchAgent is not running (state=exited, last exit code=48)"* ]]
+  ! grep -q 'curl .*7091/actuator/health' "${dir}/log"
+}
+
 case_architecture_cleanup() {
   ! rg -n '_dev-start|_stop-dev|forge_start_background|forge-agent\.pid|forge-ai\.pid|nohup|tmux|MANAGED_LOCAL_SESSION' "${ROOT}/Justfile" "${ROOT}/scripts/runtime" "${ROOT}/scripts/launchd" >/dev/null
   ! rg -n 'lsof|kill .*port|kill .*listener' "${ROOT}/scripts/runtime" "${ROOT}/scripts/launchd" >/dev/null
@@ -189,6 +204,7 @@ run_case "a selected systemd action never falls back" case_systemd_action_failur
 run_case "systemd lifecycle uses one owner" case_systemd_lifecycle
 run_case "launchd start/status/logs/restart/stop" case_launchd_lifecycle
 run_case "launchd does not replace a foreign loaded service" case_launchd_rejects_foreign_loaded_service
+run_case "launchd rejects stale-port health when the job has exited" case_launchd_stale_health_never_masks_failed_job
 run_case "legacy PID/nohup launcher is removed" case_architecture_cleanup
 run_case "rendered systemd units use the runtime service runners" case_systemd_units_use_runtime_runners
 printf 'Portable startup shell tests: PASS %s/%s\n' "${PASSED}" "${TOTAL}"

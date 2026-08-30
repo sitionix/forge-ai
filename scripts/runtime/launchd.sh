@@ -76,12 +76,22 @@ health_url() {
 }
 
 wait_healthy() {
-  local service="$1" attempts="${FORGE_RUNTIME_HEALTH_ATTEMPTS:-60}"
+  local service="$1" attempts="${FORGE_RUNTIME_HEALTH_ATTEMPTS:-60}" details state exit_code
   for ((i=0; i<attempts; i++)); do
-    is_loaded "${service}" && curl --connect-timeout 2 --max-time 5 -fsS "$(health_url "${service}")" >/dev/null 2>&1 && return 0
+    if ! details="$(launchctl print "$(target "${service}")" 2>/dev/null)"; then
+      echo "${service} LaunchAgent disappeared before becoming healthy." >&2
+      return 1
+    fi
+    state="$(sed -n 's/^[[:space:]]*state = //p' <<<"${details}" | head -n 1)"
+    if [[ "${state}" != running ]]; then
+      exit_code="$(sed -n 's/^[[:space:]]*last exit code = //p' <<<"${details}" | head -n 1)"
+      echo "${service} LaunchAgent is not running (state=${state:-unknown}${exit_code:+, last exit code=${exit_code}})." >&2
+      return 1
+    fi
+    if curl --connect-timeout 2 --max-time 5 -fsS "$(health_url "${service}")" >/dev/null 2>&1; then return 0; fi
     sleep 1
   done
-  echo "${service} did not become healthy: $(health_url "${service}")" >&2
+  echo "${service} LaunchAgent is running but did not become healthy: $(health_url "${service}")" >&2
   return 1
 }
 
