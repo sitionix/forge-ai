@@ -38,6 +38,17 @@ function setup(options: any = {}, listed = sources, assets = [{ id: "asset-1", n
 }
 
 describe("ProjectLogsView", () => {
+  function mockLogViewport(output: HTMLElement) {
+    Object.defineProperties(output, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: {
+        configurable: true,
+        get: () => 100 + (output.textContent ? output.textContent.split("\n").length * 20 : 0),
+      },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+  }
+
   it("keeps the open Sources popover unclipped and above the following stream panel", () => {
     const html = readFileSync(join(process.cwd(), "src/operator/agent-projects.html"), "utf8");
     const css = readFileSync(join(process.cwd(), "src/operator/operator-ui.css"), "utf8");
@@ -62,6 +73,33 @@ describe("ProjectLogsView", () => {
     expect(dom.window.document.getElementById("projectLogsSources")?.textContent).toContain("Resource · DOCKER");
     expect(dom.window.document.getElementById("projectLogsSources")?.textContent).toContain("Custom · FILE");
     expect(dom.window.document.getElementById("projectLogsDialog")).toBeNull();
+  });
+
+  it("follows new log events while the viewer is already at the tail", () => {
+    const { dom, view } = setup();
+    const output = dom.window.document.getElementById("projectLogsOutput")!;
+    mockLogViewport(output);
+
+    view.pushEvent({ sourceName: "API", message: "first" });
+    output.scrollTop = output.scrollHeight - output.clientHeight;
+    view.pushEvent({ sourceName: "API", message: "latest" });
+
+    expect(output.textContent).toContain("latest");
+    expect(output.scrollTop).toBe(output.scrollHeight);
+  });
+
+  it("preserves the reading position when the viewer was scrolled away from the tail", () => {
+    const { dom, view } = setup();
+    const output = dom.window.document.getElementById("projectLogsOutput")!;
+    mockLogViewport(output);
+    view.events = Array.from({ length: 12 }, (_, index) => ({ sourceName: "API", message: `line ${index}` }));
+    view.renderEvents();
+    output.scrollTop = 40;
+
+    view.pushEvent({ sourceName: "API", message: "new while reading" });
+
+    expect(output.textContent).toContain("new while reading");
+    expect(output.scrollTop).toBe(40);
   });
 
   it("applies the initial Service scope", async () => {

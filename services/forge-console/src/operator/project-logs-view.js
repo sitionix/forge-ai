@@ -1,5 +1,7 @@
 import { escapeHtml } from "./dom-render-helpers.js";
 
+const LOG_TAIL_THRESHOLD_PX = 24;
+
 /** The single project log viewer. Configuration belongs to Service/Asset workspaces. */
 export class ProjectLogsView {
   constructor({ document, window, api, serviceId = null, assetId = null, onResourceScopeChange = null }) {
@@ -178,12 +180,18 @@ export class ProjectLogsView {
   }
 
   renderEvents() {
+    const output = this.byId("projectLogsOutput");
+    const previousScrollTop = output.scrollTop;
+    const followsTail = !output.textContent
+      || output.scrollHeight - output.scrollTop - output.clientHeight <= LOG_TAIL_THRESHOLD_PX;
     const filter = this.byId("projectLogsFilter").value.toLowerCase();
-    this.byId("projectLogsOutput").textContent = this.events
+    output.textContent = this.events
       .filter((event) => !filter || event.message.toLowerCase().includes(filter)
         || event.sourceName.toLowerCase().includes(filter))
       .map((event) => `${event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : ""} [${event.sourceName}] ${event.message}`)
       .join("\n");
+    if (followsTail) output.scrollTop = output.scrollHeight;
+    else output.scrollTop = previousScrollTop;
   }
 
   byId(id) {
