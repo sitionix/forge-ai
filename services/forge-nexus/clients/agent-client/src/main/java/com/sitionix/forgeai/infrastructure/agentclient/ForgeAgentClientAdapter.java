@@ -133,6 +133,18 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
                 () -> this.httpClient.createProjectAssetMonitoring(projectId, assetId, request)));
     }
 
+    @Override
+    public List<AgentLogSource> replaceProjectAssetMonitoring(final UUID projectId, final UUID assetId,
+            final com.sitionix.forgeai.domain.model.agentproxy.ReplaceAgentAssetMonitoringCommand command) {
+        var request = new com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMonitoringReplacementRequest(
+                command.targets().stream().map(target ->
+                        new com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMonitoringReplacementRequest.Target(
+                                target.provider(), target.target())).toList());
+        return this.clientCallExecutor.execute(() ->
+                this.httpClient.replaceProjectAssetMonitoring(projectId, assetId, request)).stream()
+                .map(this.mapper::toDomain).toList();
+    }
+
     private com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset asset(
             final com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetResponse response) {
         return new com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset(

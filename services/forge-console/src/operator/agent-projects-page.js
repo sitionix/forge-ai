@@ -160,10 +160,18 @@ export class AgentProjectsPage {
     });
     this.byId('agentsV2AssetCreateSsh')?.addEventListener('click', () =>
       this.sshProfileFlow.open(this.state.selectedProjectId, (created) => this.refreshAssetSshProfiles(created.id)));
-    this.byId('assetMonitoringCancel')?.addEventListener('click', () => this.closeDialog('assetMonitoringDialog'));
+    this.byId('assetMonitoringCancel')?.addEventListener('click', () => this.requestCloseAssetMonitoring());
     this.byId('assetMonitoringForm')?.addEventListener('submit', (event) => this.saveAssetMonitoring(event));
-    this.byId('assetMonitoringSystemdSearch')?.addEventListener('input', () => this.renderAssetMonitoringTargets('SYSTEMD'));
-    this.byId('assetMonitoringDockerSearch')?.addEventListener('input', () => this.renderAssetMonitoringTargets('DOCKER'));
+    this.byId('assetMonitoringSearch')?.addEventListener('input', () => { if (!this.assetMonitoring?.saving) this.renderAssetMonitoringProvider(); });
+    this.byId('assetMonitoringSelectedOnly')?.addEventListener('change', () => { if (!this.assetMonitoring?.saving) this.renderAssetMonitoringProvider(); });
+    this.byId('assetMonitoringRetry')?.addEventListener('click', () => this.refreshAssetMonitoringProvider(this.assetMonitoring?.activeProvider));
+    this.byId('assetMonitoringRefreshAll')?.addEventListener('click', () => this.refreshAllAssetMonitoring());
+    this.byId('assetMonitoringAddFile')?.addEventListener('click', () => {
+      if (!this.assetMonitoring || this.assetMonitoring.saving) return;
+      this.assetMonitoring.files.push(''); this.renderAssetMonitoring();
+    });
+    this.byId('assetMonitoringDialog')?.addEventListener('cancel', (event) => { event.preventDefault(); this.requestCloseAssetMonitoring(); });
+    this.byId('assetMonitoringDialog')?.addEventListener('click', (event) => { if (event.target === this.byId('assetMonitoringDialog')) this.requestCloseAssetMonitoring(); });
     this.byId('agentsV2AgentCancel')?.addEventListener('click', () => this.closeDialog('agentsV2AgentDialog'));
     this.byId('agentsV2AgentForm')?.addEventListener('submit', (event) => this.submitAgent(event));
     this.byId('agentsV2AgentOutputJson')?.addEventListener('input', () => this.showFieldError(''));
@@ -619,7 +627,8 @@ export class AgentProjectsPage {
       this.byId('repositoryOverviewDetails').innerHTML = `<div><strong>Connection</strong><span>${connection?.name || 'Unavailable'}</span></div><div><strong>CPU total</strong><span>${value(metrics.cpuTotalPercent, '%')}</span></div><div><strong>CPU per core</strong><span>${(metrics.cpuPerCorePercent || []).map((v) => value(v, '%')).join(' · ') || 'Unavailable'}</span></div><div><strong>RAM</strong><span>${metrics.ramUsedBytes == null ? 'Unavailable' : `${metrics.ramUsedBytes} / ${metrics.ramTotalBytes} bytes`}</span></div><div><strong>Load average</strong><span>${metrics.loadAverage1m == null ? 'Unavailable' : `${metrics.loadAverage1m} · ${metrics.loadAverage5m} · ${metrics.loadAverage15m}`}</span></div><div><strong>Disks</strong><span>${(metrics.disks || []).map((d) => `${d.mount}: ${d.usedBytes}/${d.totalBytes}`).join(' · ') || 'Unavailable'}</span></div><div><strong>Network</strong><span>${(metrics.network || []).map((n) => `${n.interfaceName}: ↓${n.receivedBytes} ↑${n.transmittedBytes}`).join(' · ') || 'Unavailable'}</span></div><div><strong>Uptime</strong><span>${value(metrics.uptimeSeconds, 's')}</span></div><div><strong>Temperatures</strong><span>${(metrics.temperatures || []).map((t) => `${t.celsius}°C`).join(' · ') || 'Unavailable'}</span></div><div><strong>Capabilities</strong><span>systemd: ${capabilities.systemdAvailable ? 'available' : 'unavailable'} · Docker: ${capabilities.dockerAvailable ? 'available' : 'unavailable'}</span></div>`;
       this.byId('repositoryOverviewDetails').insertAdjacentHTML('beforeend', '<div><button id="assetConfigureMonitoring" class="button small secondary" type="button">Configure Monitoring</button> <button id="assetOpenLogs" class="button small secondary" type="button">Open Logs</button></div>');
       this.byId('assetOpenLogs').onclick = () => this.openLogsWorkspace(projectId, { assetId });
-      this.byId('assetConfigureMonitoring').onclick = () => this.configureAssetMonitoring(projectId, asset, capabilities);
+      this.byId('assetConfigureMonitoring').onclick = () => this.configureAssetMonitoring(projectId,
+        { ...asset, connectionIdentity: connection ? `${connection.username}@${connection.host}:${connection.port}` : 'SSH profile unavailable' }, capabilities);
       this.byId('projectLogsBack').onclick = () => this.returnToProject();
       if (options.pushState !== false) this.window.history.pushState(
         { projectId, assetId, view: 'asset' }, '',
@@ -629,56 +638,173 @@ export class AgentProjectsPage {
 
   async configureAssetMonitoring(projectId, asset, capabilities) {
     const generation = ++this.assetMonitoringGeneration;
-    this.assetMonitoring = { projectId, asset, capabilities, configured: [], candidates: {}, selected: new Set() };
-    this.byId('assetMonitoringError').classList.add('hidden');
-    this.byId('assetMonitoringSystemdSearch').value = '';
-    this.byId('assetMonitoringDockerSearch').value = '';
-    this.byId('assetMonitoringFilePath').value = '';
-    this.byId('assetMonitoringSystemdSection').classList.toggle('hidden', !capabilities.systemdAvailable);
-    this.byId('assetMonitoringDockerSection').classList.toggle('hidden', !capabilities.dockerAvailable);
+    this.assetMonitoring = { projectId, asset, capabilities, persisted: new Set(), selected: new Set(), files: [],
+      candidates: { SYSTEMD: [], DOCKER: [] }, discovery: { SYSTEMD: { status: 'idle' }, DOCKER: { status: 'idle' } },
+      refreshGeneration: { SYSTEMD: 0, DOCKER: 0 }, activeProvider: capabilities.systemdAvailable ? 'SYSTEMD' : capabilities.dockerAvailable ? 'DOCKER' : 'FILES',
+      loaded: false, loadError: false, saving: false };
+    this.showError('assetMonitoringError', ''); this.showError('assetMonitoringProviderWarning', ''); this.showError('assetMonitoringFilesError', '');
+    this.byId('assetMonitoringTitle').textContent = `Configure Monitoring — ${asset.name || 'Resource'}`;
+    this.byId('assetMonitoringIdentity').textContent = asset.connectionIdentity || `SSH connection ${asset.sshConnectionId}`;
+    this.byId('assetMonitoringSearch').value = ''; this.byId('assetMonitoringSelectedOnly').checked = false;
+    this.byId('assetMonitoringTabs').innerHTML = '';
+    this.byId('assetMonitoringTargets').innerHTML = '<div class="muted-state">Loading persisted monitoring…</div>';
+    this.byId('assetMonitoringFiles').innerHTML = '';
+    this.byId('assetMonitoringRuntimePanel').classList.remove('hidden'); this.byId('assetMonitoringFilesPanel').classList.add('hidden');
+    this.byId('assetMonitoringChanges').textContent = 'Loading…';
+    this.byId('assetMonitoringSave').disabled = true; this.byId('assetMonitoringCancel').disabled = false;
+    this.byId('assetMonitoringRefreshAll').textContent = 'Loading…'; this.byId('assetMonitoringRefreshAll').disabled = true;
     this.openDialog('assetMonitoringDialog');
-    try {
-      const [configured, systemd, docker] = await Promise.all([
-        this.api.listProjectAssetMonitoring(projectId, asset.id),
-        capabilities.systemdAvailable
-          ? this.api.discoverRuntimeTargets(projectId, { connection: 'SSH', sshConnectionId: asset.sshConnectionId, provider: 'SYSTEMD' })
-          : [],
-        capabilities.dockerAvailable
-          ? this.api.discoverRuntimeTargets(projectId, { connection: 'SSH', sshConnectionId: asset.sshConnectionId, provider: 'DOCKER' })
-          : [],
-      ]);
-      if (generation !== this.assetMonitoringGeneration || this.assetMonitoring?.asset.id !== asset.id) return;
-      this.assetMonitoring.configured = configured;
-      this.assetMonitoring.selected = new Set(configured
-        .filter((source) => source.provider !== 'FILE')
-        .map((source) => `${source.provider}:${this.monitoringTarget(source)}`));
-      this.assetMonitoring.candidates = { SYSTEMD: systemd, DOCKER: docker };
-      const file = configured.find((source) => source.provider === 'FILE');
-      this.byId('assetMonitoringFilePath').value = file?.configuration?.path || '';
-      this.renderAssetMonitoringTargets('SYSTEMD');
-      this.renderAssetMonitoringTargets('DOCKER');
-    } catch (error) {
-      if (generation === this.assetMonitoringGeneration) this.showError(
-        'assetMonitoringError', error.message || 'Monitoring configuration failed to load.');
-    }
+    await this.loadPersistedAssetMonitoring(generation);
   }
 
-  renderAssetMonitoringTargets(provider) {
-    if (!this.assetMonitoring) return;
-    const searchId = provider === 'SYSTEMD' ? 'assetMonitoringSystemdSearch' : 'assetMonitoringDockerSearch';
-    const listId = provider === 'SYSTEMD' ? 'assetMonitoringSystemdTargets' : 'assetMonitoringDockerTargets';
-    const search = this.byId(searchId).value.toLowerCase();
-    const selected = this.assetMonitoring.selected;
-    this.byId(listId).innerHTML = (this.assetMonitoring.candidates[provider] || [])
-      .filter((candidate) => !search || candidate.id.toLowerCase().includes(search))
-      .map((candidate) => `<label><input type="checkbox" data-monitoring-provider="${provider}" value="${escapeHtml(candidate.id)}" ${selected.has(`${provider}:${candidate.id}`) ? 'checked' : ''}> ${escapeHtml(candidate.id)}</label>`)
-      .join('') || '<div class="muted-state">No matching targets.</div>';
-    this.byId(listId).querySelectorAll('[data-monitoring-provider]').forEach((input) =>
-      input.addEventListener('change', () => {
-        const targetKey = `${provider}:${input.value}`;
-        if (input.checked) this.assetMonitoring.selected.add(targetKey);
-        else this.assetMonitoring.selected.delete(targetKey);
-      }));
+  async loadPersistedAssetMonitoring(generation = this.assetMonitoringGeneration) {
+    const context = this.assetMonitoring; if (!context || context.saving) return;
+    context.loaded = false; context.loadError = false;
+    this.byId('assetMonitoringSave').disabled = true; this.byId('assetMonitoringRefreshAll').disabled = true;
+    this.byId('assetMonitoringRefreshAll').textContent = 'Loading…'; this.showError('assetMonitoringError', '');
+    try {
+      const configured = await this.api.listProjectAssetMonitoring(context.projectId, context.asset.id);
+      if (generation !== this.assetMonitoringGeneration || this.assetMonitoring !== context) return;
+      const runtimeKeys = configured.filter((source) => source.provider !== 'FILE').map((source) => `${source.provider}:${this.monitoringTarget(source)}`);
+      context.persisted = new Set([...runtimeKeys, ...configured.filter((source) => source.provider === 'FILE').map((source) => `FILE:${this.monitoringTarget(source)}`)]);
+      context.selected = new Set(runtimeKeys); context.files = configured.filter((source) => source.provider === 'FILE').map((source) => this.monitoringTarget(source));
+      context.loaded = true;
+      if (!this.providerVisible(context.activeProvider)) context.activeProvider = this.visibleMonitoringProviders()[0] || 'FILES';
+      this.renderAssetMonitoring();
+      ['SYSTEMD', 'DOCKER'].filter((provider) => context.capabilities[provider === 'SYSTEMD' ? 'systemdAvailable' : 'dockerAvailable'])
+        .forEach((provider) => this.refreshAssetMonitoringProvider(provider));
+    } catch (error) {
+      if (generation !== this.assetMonitoringGeneration || this.assetMonitoring !== context) return;
+      context.persisted = new Set(); context.selected = new Set(); context.files = []; context.candidates = { SYSTEMD: [], DOCKER: [] }; context.loadError = true;
+      this.byId('assetMonitoringTabs').innerHTML = ''; this.byId('assetMonitoringTargets').innerHTML = '<div class="muted-state">Monitoring configuration unavailable.</div>';
+      this.byId('assetMonitoringFiles').innerHTML = ''; this.byId('assetMonitoringChanges').textContent = 'Load failed'; this.byId('assetMonitoringSave').disabled = true;
+      this.showError('assetMonitoringError', error.message || 'Persisted monitoring configuration failed to load.');
+    }
+    this.byId('assetMonitoringRefreshAll').textContent = context.loadError ? 'Retry loading' : 'Refresh discovery';
+    this.byId('assetMonitoringRefreshAll').disabled = false;
+  }
+
+  refreshAllAssetMonitoring() {
+    const context = this.assetMonitoring; if (!context || context.saving) return;
+    if (!context.loaded) { this.loadPersistedAssetMonitoring(this.assetMonitoringGeneration); return; }
+    ['SYSTEMD', 'DOCKER'].forEach((provider) => this.refreshAssetMonitoringProvider(provider));
+  }
+
+  visibleMonitoringProviders() { return ['SYSTEMD', 'DOCKER', 'FILES'].filter((provider) => this.providerVisible(provider)); }
+  providerVisible(provider) {
+    if (!this.assetMonitoring || provider === 'FILES') return provider === 'FILES';
+    const capability = this.assetMonitoring.capabilities[provider === 'SYSTEMD' ? 'systemdAvailable' : 'dockerAvailable'];
+    return capability || [...this.assetMonitoring.persisted].some((key) => key.startsWith(`${provider}:`));
+  }
+  renderAssetMonitoring() {
+    if (!this.assetMonitoring || !this.assetMonitoring.loaded) return;
+    this.byId('assetMonitoringTabs').innerHTML = this.visibleMonitoringProviders().map((provider) => {
+      const count = provider === 'FILES' ? this.assetMonitoring.files.filter((path) => path.trim()).length : [...this.assetMonitoring.selected].filter((key) => key.startsWith(`${provider}:`)).length;
+      return `<button type="button" data-monitoring-tab="${provider}" class="${provider === this.assetMonitoring.activeProvider ? 'active' : ''}">${provider} ${count}</button>`;
+    }).join('');
+    this.byId('assetMonitoringTabs').querySelectorAll('[data-monitoring-tab]').forEach((tab) => tab.addEventListener('click', () => {
+      if (this.assetMonitoring.saving) return;
+      this.assetMonitoring.activeProvider = tab.dataset.monitoringTab; this.byId('assetMonitoringSearch').value = ''; this.byId('assetMonitoringSelectedOnly').checked = false; this.renderAssetMonitoring();
+    }));
+    const files = this.assetMonitoring.activeProvider === 'FILES';
+    this.byId('assetMonitoringRuntimePanel').classList.toggle('hidden', files); this.byId('assetMonitoringFilesPanel').classList.toggle('hidden', !files);
+    if (files) this.renderAssetMonitoringFiles(); else this.renderAssetMonitoringProvider();
+    this.renderAssetMonitoringChanges();
+  }
+  renderAssetMonitoringProvider() {
+    const context = this.assetMonitoring; if (!context || context.activeProvider === 'FILES') return;
+    const provider = context.activeProvider, selected = new Set([...context.selected].filter((key) => key.startsWith(`${provider}:`)).map((key) => key.slice(provider.length + 1)));
+    const detected = new Set((context.candidates[provider] || []).map((candidate) => candidate.id));
+    const all = new Set([...selected, ...detected]); const search = this.byId('assetMonitoringSearch').value.trim().toLowerCase();
+    const selectedOnly = this.byId('assetMonitoringSelectedOnly').checked;
+    const groups = { 'Selected but unavailable': [], Selected: [], Available: [] };
+    [...all].filter((target) => (!search || target.toLowerCase().includes(search)) && (!selectedOnly || selected.has(target))).forEach((target) => {
+      if (selected.has(target) && !detected.has(target)) groups['Selected but unavailable'].push(target);
+      else if (selected.has(target)) groups.Selected.push(target); else groups.Available.push(target);
+    });
+    Object.values(groups).forEach((targets) => targets.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })));
+    this.byId('assetMonitoringProviderStats').textContent = `${selected.size} selected · ${detected.size} discovered · ${groups['Selected but unavailable'].length} unavailable selected`;
+    const status = context.discovery[provider];
+    this.byId('assetMonitoringRetry').textContent = status.status === 'error' ? 'Retry' : status.status === 'loading' ? 'Refreshing…' : 'Refresh';
+    this.byId('assetMonitoringRetry').disabled = status.status === 'loading';
+    this.showError('assetMonitoringProviderWarning', status.status === 'error' ? `${status.error} Persisted targets are unchanged.` : '');
+    this.byId('assetMonitoringTargets').innerHTML = Object.entries(groups).filter(([, targets]) => targets.length).map(([name, targets]) =>
+      `<h4>${name}</h4>${targets.map((target) => `<label class="monitoring-target-row"><input type="checkbox" data-monitoring-provider="${provider}" value="${escapeHtml(target)}" ${selected.has(target) ? 'checked' : ''}><span class="target-id">${escapeHtml(target)}</span><span class="monitoring-badge">${detected.has(target) ? 'Detected' : 'Not detected'}</span></label>`).join('')}`).join('') || '<div class="muted-state">No matching targets.</div>';
+    this.byId('assetMonitoringTargets').querySelectorAll('[data-monitoring-provider]').forEach((input) => input.addEventListener('change', () => {
+      if (context.saving) return;
+      const key = `${provider}:${input.value}`; if (input.checked) context.selected.add(key); else context.selected.delete(key); this.renderAssetMonitoring();
+    }));
+  }
+  async refreshAssetMonitoringProvider(provider) {
+    const context = this.assetMonitoring; if (!context || !context.loaded || context.saving || !['SYSTEMD', 'DOCKER'].includes(provider) || !this.providerVisible(provider)) return;
+    const modalGeneration = this.assetMonitoringGeneration, refreshGeneration = ++context.refreshGeneration[provider];
+    context.discovery[provider] = { status: 'loading' }; if (context.activeProvider === provider) this.renderAssetMonitoringProvider();
+    try {
+      const candidates = await this.api.discoverRuntimeTargets(context.projectId, { connection: 'SSH', sshConnectionId: context.asset.sshConnectionId, provider });
+      if (modalGeneration !== this.assetMonitoringGeneration || this.assetMonitoring !== context || refreshGeneration !== context.refreshGeneration[provider]) return;
+      context.candidates[provider] = candidates; context.discovery[provider] = { status: 'ready' };
+    } catch (error) {
+      if (modalGeneration !== this.assetMonitoringGeneration || this.assetMonitoring !== context || refreshGeneration !== context.refreshGeneration[provider]) return;
+      context.candidates[provider] = [];
+      context.discovery[provider] = { status: 'error', error: error.message || `${provider} discovery failed.` };
+    }
+    if (context.activeProvider === provider) this.renderAssetMonitoringProvider();
+  }
+  renderAssetMonitoringFiles() {
+    const context = this.assetMonitoring; if (!context) return;
+    this.byId('assetMonitoringFiles').innerHTML = context.files.map((path, index) => `<div class="monitoring-file-row"><input class="text-input" data-monitoring-file="${index}" value="${escapeHtml(path)}" placeholder="/var/log/application.log"><button class="button small secondary" data-remove-monitoring-file="${index}" type="button">Remove</button></div>`).join('') || '<div class="muted-state">No file paths configured.</div>';
+    this.byId('assetMonitoringFiles').querySelectorAll('[data-monitoring-file]').forEach((input) => input.addEventListener('input', () => {
+      if (context.saving) return;
+      context.files[Number(input.dataset.monitoringFile)] = input.value; this.validateMonitoringFiles(); this.renderAssetMonitoringChanges();
+    }));
+    this.byId('assetMonitoringFiles').querySelectorAll('[data-remove-monitoring-file]').forEach((button) => button.addEventListener('click', () => {
+      if (context.saving) return;
+      context.files.splice(Number(button.dataset.removeMonitoringFile), 1); this.renderAssetMonitoring();
+    }));
+    this.validateMonitoringFiles();
+  }
+  validateMonitoringFiles() {
+    const paths = this.assetMonitoring?.files.map((path) => path.trim()) || []; let error = '';
+    if (paths.some((path) => !path)) error = 'File paths cannot be empty. Remove unused rows.';
+    else if (paths.some((path) => !path.startsWith('/') || path.includes('\0'))) error = 'Each file target must be a valid absolute POSIX path.';
+    else if (new Set(paths).size !== paths.length) error = 'Duplicate file paths are not allowed.';
+    this.showError('assetMonitoringFilesError', error); return !error;
+  }
+  desiredAssetMonitoringKeys() { return new Set([...(this.assetMonitoring?.selected || []), ...(this.assetMonitoring?.files || []).map((path) => `FILE:${path.trim()}`)]); }
+  renderAssetMonitoringChanges() {
+    const context = this.assetMonitoring; if (!context) return; const desired = this.desiredAssetMonitoringKeys();
+    this.updateAssetMonitoringTabCounts();
+    const added = [...desired].filter((key) => !context.persisted.has(key)).length, removed = [...context.persisted].filter((key) => !desired.has(key)).length;
+    this.byId('assetMonitoringChanges').textContent = context.saving ? 'Saving…' : added || removed ? `${added} added · ${removed} removed` : 'No changes';
+    this.byId('assetMonitoringSave').textContent = context.saving ? 'Saving…' : 'Save changes';
+    this.byId('assetMonitoringSave').disabled = context.saving || !context.loaded || (!added && !removed) || !this.validateMonitoringFiles();
+    this.freezeAssetMonitoringEditor(context.saving);
+    this.byId('assetMonitoringCancel').disabled = context.saving;
+    this.byId('assetMonitoringRefreshAll').disabled = context.saving;
+    this.byId('assetMonitoringRetry').disabled = context.saving
+      || context.discovery[context.activeProvider]?.status === 'loading';
+  }
+  freezeAssetMonitoringEditor(frozen) {
+    ['assetMonitoringSearch', 'assetMonitoringSelectedOnly', 'assetMonitoringRetry', 'assetMonitoringRefreshAll',
+      'assetMonitoringAddFile', 'assetMonitoringCancel'].forEach((id) => { const control = this.byId(id); if (control) control.disabled = frozen; });
+    this.byId('assetMonitoringTabs').querySelectorAll('[data-monitoring-tab]').forEach((control) => { control.disabled = frozen; });
+    this.byId('assetMonitoringTargets').querySelectorAll('[data-monitoring-provider]').forEach((control) => { control.disabled = frozen; });
+    this.byId('assetMonitoringFiles').querySelectorAll('[data-monitoring-file], [data-remove-monitoring-file]').forEach((control) => { control.disabled = frozen; });
+  }
+  updateAssetMonitoringTabCounts() {
+    const context = this.assetMonitoring; if (!context) return;
+    this.byId('assetMonitoringTabs').querySelectorAll('[data-monitoring-tab]').forEach((tab) => {
+      const provider = tab.dataset.monitoringTab;
+      const count = provider === 'FILES' ? context.files.filter((path) => path.trim()).length : [...context.selected].filter((key) => key.startsWith(`${provider}:`)).length;
+      tab.textContent = `${provider} ${count}`;
+    });
+  }
+  requestCloseAssetMonitoring() {
+    const context = this.assetMonitoring; if (!context) return this.closeDialog('assetMonitoringDialog');
+    if (context.saving) return;
+    const desired = this.desiredAssetMonitoringKeys(), dirty = desired.size !== context.persisted.size || [...desired].some((key) => !context.persisted.has(key));
+    if (dirty && !this.window.confirm('Discard unsaved monitoring changes?')) return;
+    ++this.assetMonitoringGeneration; this.assetMonitoring = null; this.closeDialog('assetMonitoringDialog');
   }
 
   monitoringTarget(source) {
@@ -690,33 +816,22 @@ export class AgentProjectsPage {
   async saveAssetMonitoring(event) {
     event.preventDefault();
     const context = this.assetMonitoring;
-    if (!context) return;
+    if (!context || !context.loaded || context.saving || !this.validateMonitoringFiles()) return;
     const desired = [...context.selected].map((selected) => {
       const separator = selected.indexOf(':');
       return { provider: selected.slice(0, separator), target: selected.slice(separator + 1) };
     });
-    const filePath = this.byId('assetMonitoringFilePath').value.trim();
-    if (filePath) desired.push({ provider: 'FILE', target: filePath });
-    const key = (item) => `${item.provider}:${item.target}`;
-    const existing = new Map(context.configured.map((source) => [
-      key({ provider: source.provider, target: this.monitoringTarget(source) }), source,
-    ]));
-    const wanted = new Map(desired.map((target) => [key(target), target]));
-    this.byId('assetMonitoringSave').disabled = true;
+    context.files.forEach((path) => desired.push({ provider: 'FILE', target: path.trim() }));
+    context.saving = true; this.renderAssetMonitoringChanges(); this.showError('assetMonitoringError', '');
     try {
-      await Promise.all([
-        ...[...wanted].filter(([targetKey]) => !existing.has(targetKey)).map(([, target]) =>
-          this.api.createProjectAssetMonitoring(context.projectId, context.asset.id, {
-            name: target.target, provider: target.provider, target: target.target, enabled: true,
-          })),
-        ...[...existing].filter(([targetKey]) => !wanted.has(targetKey)).map(([, source]) =>
-          this.api.deleteLogSource(context.projectId, source.id)),
-      ]);
+      await this.api.replaceProjectAssetMonitoring(context.projectId, context.asset.id, { targets: desired });
+      ++this.assetMonitoringGeneration; this.assetMonitoring = null;
       this.closeDialog('assetMonitoringDialog');
+      this.window.setTimeout(() => { const summary = this.byId('repositoryOverviewSummary'); if (summary) summary.textContent = `${summary.textContent} · Monitoring configured`; }, 0);
     } catch (error) {
       this.showError('assetMonitoringError', error.message || 'Monitoring configuration could not be saved.');
     } finally {
-      this.byId('assetMonitoringSave').disabled = false;
+      if (this.assetMonitoring === context) { context.saving = false; this.renderAssetMonitoring(); }
     }
   }
 

@@ -35,6 +35,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectAssetComma
 import com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentAssetCapabilities;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentAssetMonitoringCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.ReplaceAgentAssetMonitoringCommand;
 
 public interface ForgeAgentClient {
   List<AgentProjectAsset> listProjectAssets(UUID projectId);
@@ -45,6 +46,7 @@ public interface ForgeAgentClient {
   void deleteProjectAsset(UUID projectId, UUID assetId);
   List<AgentLogSource> listProjectAssetMonitoring(UUID projectId, UUID assetId);
   AgentLogSource createProjectAssetMonitoring(UUID projectId, UUID assetId, SaveAgentAssetMonitoringCommand command);
+  List<AgentLogSource> replaceProjectAssetMonitoring(UUID projectId, UUID assetId, ReplaceAgentAssetMonitoringCommand command);
   List<AgentProjectService> listProjectServices(UUID projectId);
   AgentProjectService createProjectService(UUID projectId, SaveAgentProjectServiceCommand command);
   AgentProjectService getProjectService(UUID projectId, UUID serviceId);

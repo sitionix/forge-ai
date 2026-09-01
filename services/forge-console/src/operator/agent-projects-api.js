@@ -17,6 +17,7 @@ export function createAgentProjectsApi(http) {
     getProjectAssetCapabilities(projectId, assetId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/capabilities`); },
     listProjectAssetMonitoring(projectId, assetId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/monitoring`); },
     createProjectAssetMonitoring(projectId, assetId, request) { return http.post(`${root}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/monitoring`, request); },
+    replaceProjectAssetMonitoring(projectId, assetId, request) { return http.put(`${root}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/monitoring`, request); },
     listServices(projectId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/services`); },
     createService(projectId, request) { return http.post(`${root}/projects/${encodeURIComponent(projectId)}/services`, request); },
     getService(projectId, serviceId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`); },

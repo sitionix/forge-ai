@@ -40,6 +40,13 @@ public class ProjectAssetsController {
     return ResponseEntity.status(HttpStatus.CREATED).body(logResponse(assets.monitor(projectId, assetId,
         request.provider(), request.name(), request.target(), request.enabled())));
   }
+  @PutMapping("/{assetId}/monitoring") public List<LogSourceResponse> replaceMonitoring(
+      @PathVariable UUID projectId, @PathVariable UUID assetId,
+      @Valid @RequestBody AssetMonitoringReplacementRequest request) {
+    return assets.replaceMonitoring(projectId, assetId, request.targets().stream()
+        .map(target -> new ProjectAssetUseCases.MonitoringTarget(target.provider(), target.target())).toList())
+        .stream().map(this::logResponse).toList();
+  }
   @DeleteMapping("/{assetId}") @ResponseStatus(HttpStatus.NO_CONTENT)
   public void delete(@PathVariable UUID projectId, @PathVariable UUID assetId) { assets.delete(projectId, assetId); }
   private ProjectAssetResponse response(ProjectAsset a) { return new ProjectAssetResponse(a.id(), a.projectId(), a.name(), a.sshConnectionId(), a.createdAt(), a.updatedAt()); }

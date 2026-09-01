@@ -274,24 +274,21 @@
     </dialog>
 
     <dialog id="assetMonitoringDialog" class="modal-dialog wide">
-      <form id="assetMonitoringForm" method="dialog" class="modal-form">
-        <div class="modal-head"><h2>Configure Monitoring</h2></div>
+      <form id="assetMonitoringForm" class="modal-form monitoring-workspace">
+        <div class="modal-head"><div><h2 id="assetMonitoringTitle">Configure Monitoring</h2><p id="assetMonitoringIdentity" class="muted-state"></p></div><button id="assetMonitoringRefreshAll" class="button small secondary" type="button">Refresh discovery</button></div>
         <div id="assetMonitoringError" class="error-box hidden"></div>
-        <section id="assetMonitoringSystemdSection" class="hidden">
-          <h3>SYSTEMD</h3>
-          <input id="assetMonitoringSystemdSearch" class="text-input" type="search" placeholder="Search units">
-          <div id="assetMonitoringSystemdTargets" class="agents-v2-checkbox-list"></div>
+        <nav id="assetMonitoringTabs" class="monitoring-tabs" aria-label="Monitoring providers"></nav>
+        <section id="assetMonitoringRuntimePanel">
+          <div class="monitoring-toolbar"><input id="assetMonitoringSearch" class="text-input" type="search" placeholder="Search targets"><label class="monitoring-toggle"><input id="assetMonitoringSelectedOnly" type="checkbox"> Selected only</label><button id="assetMonitoringRetry" class="button small secondary" type="button">Refresh</button></div>
+          <div id="assetMonitoringProviderStats" class="monitoring-stats"></div>
+          <div id="assetMonitoringProviderWarning" class="warning-box hidden"></div>
+          <div id="assetMonitoringTargets" class="agents-v2-checkbox-list monitoring-target-list"></div>
         </section>
-        <section id="assetMonitoringDockerSection" class="hidden">
-          <h3>DOCKER</h3>
-          <input id="assetMonitoringDockerSearch" class="text-input" type="search" placeholder="Search containers">
-          <div id="assetMonitoringDockerTargets" class="agents-v2-checkbox-list"></div>
+        <section id="assetMonitoringFilesPanel" class="hidden">
+          <div class="monitoring-files-head"><p>Enter absolute POSIX paths to logs on this Resource.</p><button id="assetMonitoringAddFile" class="button small secondary" type="button">Add file path</button></div>
+          <div id="assetMonitoringFiles"></div><div id="assetMonitoringFilesError" class="error-box hidden"></div>
         </section>
-        <details>
-          <summary>Advanced manual target</summary>
-          <label class="field-label">File path<input id="assetMonitoringFilePath" class="text-input" placeholder="/var/log/application.log"></label>
-        </details>
-        <div class="modal-actions"><button id="assetMonitoringCancel" class="button secondary" type="button">Cancel</button><button id="assetMonitoringSave" class="button" type="submit">Save</button></div>
+        <div class="modal-actions monitoring-footer"><span id="assetMonitoringChanges" class="muted-state">No changes</span><button id="assetMonitoringCancel" class="button secondary" type="button">Cancel</button><button id="assetMonitoringSave" class="button" type="submit" disabled>Save changes</button></div>
       </form>
     </dialog>
 

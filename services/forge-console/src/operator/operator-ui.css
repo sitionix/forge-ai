@@ -2011,6 +2011,25 @@ body.sidebar-collapsed .sidebar-link {
   width: min(780px, calc(100vw - 32px));
 }
 
+.monitoring-workspace { min-height: min(720px, 86vh); display: flex; flex-direction: column; }
+.monitoring-workspace .modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.monitoring-workspace .modal-head p { margin: 4px 0 0; }
+.monitoring-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-color, #334155); margin: 4px 0 16px; }
+.monitoring-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 10px 14px; color: inherit; cursor: pointer; }
+.monitoring-tabs button.active { border-bottom-color: var(--accent-color, #38bdf8); }
+.monitoring-toolbar, .monitoring-files-head { display: flex; align-items: center; gap: 12px; }
+.monitoring-toolbar .text-input { flex: 1; }
+.monitoring-toggle { white-space: nowrap; }
+.monitoring-stats { margin: 10px 0; font-size: 0.85rem; opacity: .78; }
+.monitoring-target-list { overflow: auto; max-height: 430px; min-height: 260px; }
+.monitoring-target-list h4 { position: sticky; top: 0; margin: 0; padding: 10px 4px 6px; background: var(--surface-color, #111827); z-index: 1; }
+.monitoring-target-row { display: flex !important; align-items: center; gap: 9px; padding: 7px 5px; }
+.monitoring-target-row .target-id { flex: 1; font-family: monospace; overflow-wrap: anywhere; }
+.monitoring-badge { border: 1px solid currentColor; border-radius: 999px; padding: 2px 7px; font-size: .72rem; opacity: .75; }
+.monitoring-file-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 10px 0; }
+.monitoring-footer { margin-top: auto; position: sticky; bottom: 0; }
+.monitoring-footer #assetMonitoringChanges { margin-right: auto; }
+
 .modal-dialog::backdrop {
   background: rgba(7, 10, 9, 0.58);
 }
