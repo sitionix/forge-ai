@@ -162,11 +162,14 @@ export class AgentProjectsPage {
       this.sshProfileFlow.open(this.state.selectedProjectId, (created) => this.refreshAssetSshProfiles(created.id)));
     this.byId('assetMonitoringCancel')?.addEventListener('click', () => this.requestCloseAssetMonitoring());
     this.byId('assetMonitoringForm')?.addEventListener('submit', (event) => this.saveAssetMonitoring(event));
-    this.byId('assetMonitoringSearch')?.addEventListener('input', () => this.renderAssetMonitoringProvider());
-    this.byId('assetMonitoringSelectedOnly')?.addEventListener('change', () => this.renderAssetMonitoringProvider());
+    this.byId('assetMonitoringSearch')?.addEventListener('input', () => { if (!this.assetMonitoring?.saving) this.renderAssetMonitoringProvider(); });
+    this.byId('assetMonitoringSelectedOnly')?.addEventListener('change', () => { if (!this.assetMonitoring?.saving) this.renderAssetMonitoringProvider(); });
     this.byId('assetMonitoringRetry')?.addEventListener('click', () => this.refreshAssetMonitoringProvider(this.assetMonitoring?.activeProvider));
     this.byId('assetMonitoringRefreshAll')?.addEventListener('click', () => this.refreshAllAssetMonitoring());
-    this.byId('assetMonitoringAddFile')?.addEventListener('click', () => { this.assetMonitoring?.files.push(''); this.renderAssetMonitoringFiles(); });
+    this.byId('assetMonitoringAddFile')?.addEventListener('click', () => {
+      if (!this.assetMonitoring || this.assetMonitoring.saving) return;
+      this.assetMonitoring.files.push(''); this.renderAssetMonitoring();
+    });
     this.byId('assetMonitoringDialog')?.addEventListener('cancel', (event) => { event.preventDefault(); this.requestCloseAssetMonitoring(); });
     this.byId('assetMonitoringDialog')?.addEventListener('click', (event) => { if (event.target === this.byId('assetMonitoringDialog')) this.requestCloseAssetMonitoring(); });
     this.byId('agentsV2AgentCancel')?.addEventListener('click', () => this.closeDialog('agentsV2AgentDialog'));
@@ -700,6 +703,7 @@ export class AgentProjectsPage {
       return `<button type="button" data-monitoring-tab="${provider}" class="${provider === this.assetMonitoring.activeProvider ? 'active' : ''}">${provider} ${count}</button>`;
     }).join('');
     this.byId('assetMonitoringTabs').querySelectorAll('[data-monitoring-tab]').forEach((tab) => tab.addEventListener('click', () => {
+      if (this.assetMonitoring.saving) return;
       this.assetMonitoring.activeProvider = tab.dataset.monitoringTab; this.byId('assetMonitoringSearch').value = ''; this.byId('assetMonitoringSelectedOnly').checked = false; this.renderAssetMonitoring();
     }));
     const files = this.assetMonitoring.activeProvider === 'FILES';
@@ -727,6 +731,7 @@ export class AgentProjectsPage {
     this.byId('assetMonitoringTargets').innerHTML = Object.entries(groups).filter(([, targets]) => targets.length).map(([name, targets]) =>
       `<h4>${name}</h4>${targets.map((target) => `<label class="monitoring-target-row"><input type="checkbox" data-monitoring-provider="${provider}" value="${escapeHtml(target)}" ${selected.has(target) ? 'checked' : ''}><span class="target-id">${escapeHtml(target)}</span><span class="monitoring-badge">${detected.has(target) ? 'Detected' : 'Not detected'}</span></label>`).join('')}`).join('') || '<div class="muted-state">No matching targets.</div>';
     this.byId('assetMonitoringTargets').querySelectorAll('[data-monitoring-provider]').forEach((input) => input.addEventListener('change', () => {
+      if (context.saving) return;
       const key = `${provider}:${input.value}`; if (input.checked) context.selected.add(key); else context.selected.delete(key); this.renderAssetMonitoring();
     }));
   }
@@ -748,8 +753,14 @@ export class AgentProjectsPage {
   renderAssetMonitoringFiles() {
     const context = this.assetMonitoring; if (!context) return;
     this.byId('assetMonitoringFiles').innerHTML = context.files.map((path, index) => `<div class="monitoring-file-row"><input class="text-input" data-monitoring-file="${index}" value="${escapeHtml(path)}" placeholder="/var/log/application.log"><button class="button small secondary" data-remove-monitoring-file="${index}" type="button">Remove</button></div>`).join('') || '<div class="muted-state">No file paths configured.</div>';
-    this.byId('assetMonitoringFiles').querySelectorAll('[data-monitoring-file]').forEach((input) => input.addEventListener('input', () => { context.files[Number(input.dataset.monitoringFile)] = input.value; this.validateMonitoringFiles(); this.renderAssetMonitoringChanges(); }));
-    this.byId('assetMonitoringFiles').querySelectorAll('[data-remove-monitoring-file]').forEach((button) => button.addEventListener('click', () => { context.files.splice(Number(button.dataset.removeMonitoringFile), 1); this.renderAssetMonitoring(); }));
+    this.byId('assetMonitoringFiles').querySelectorAll('[data-monitoring-file]').forEach((input) => input.addEventListener('input', () => {
+      if (context.saving) return;
+      context.files[Number(input.dataset.monitoringFile)] = input.value; this.validateMonitoringFiles(); this.renderAssetMonitoringChanges();
+    }));
+    this.byId('assetMonitoringFiles').querySelectorAll('[data-remove-monitoring-file]').forEach((button) => button.addEventListener('click', () => {
+      if (context.saving) return;
+      context.files.splice(Number(button.dataset.removeMonitoringFile), 1); this.renderAssetMonitoring();
+    }));
     this.validateMonitoringFiles();
   }
   validateMonitoringFiles() {
@@ -767,10 +778,18 @@ export class AgentProjectsPage {
     this.byId('assetMonitoringChanges').textContent = context.saving ? 'Saving…' : added || removed ? `${added} added · ${removed} removed` : 'No changes';
     this.byId('assetMonitoringSave').textContent = context.saving ? 'Saving…' : 'Save changes';
     this.byId('assetMonitoringSave').disabled = context.saving || !context.loaded || (!added && !removed) || !this.validateMonitoringFiles();
+    this.freezeAssetMonitoringEditor(context.saving);
     this.byId('assetMonitoringCancel').disabled = context.saving;
     this.byId('assetMonitoringRefreshAll').disabled = context.saving;
     this.byId('assetMonitoringRetry').disabled = context.saving
       || context.discovery[context.activeProvider]?.status === 'loading';
+  }
+  freezeAssetMonitoringEditor(frozen) {
+    ['assetMonitoringSearch', 'assetMonitoringSelectedOnly', 'assetMonitoringRetry', 'assetMonitoringRefreshAll',
+      'assetMonitoringAddFile', 'assetMonitoringCancel'].forEach((id) => { const control = this.byId(id); if (control) control.disabled = frozen; });
+    this.byId('assetMonitoringTabs').querySelectorAll('[data-monitoring-tab]').forEach((control) => { control.disabled = frozen; });
+    this.byId('assetMonitoringTargets').querySelectorAll('[data-monitoring-provider]').forEach((control) => { control.disabled = frozen; });
+    this.byId('assetMonitoringFiles').querySelectorAll('[data-monitoring-file], [data-remove-monitoring-file]').forEach((control) => { control.disabled = frozen; });
   }
   updateAssetMonitoringTabCounts() {
     const context = this.assetMonitoring; if (!context) return;
@@ -812,7 +831,7 @@ export class AgentProjectsPage {
     } catch (error) {
       this.showError('assetMonitoringError', error.message || 'Monitoring configuration could not be saved.');
     } finally {
-      if (this.assetMonitoring === context) { context.saving = false; this.renderAssetMonitoringChanges(); }
+      if (this.assetMonitoring === context) { context.saving = false; this.renderAssetMonitoring(); }
     }
   }
 
