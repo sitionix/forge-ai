@@ -336,10 +336,11 @@ export class AgentProjectsPage {
     this.byId('projectLogsCrumbs').textContent = `Projects / ${projectName} / Logs`;
     this.byId('projectLogsBack').onclick = () => this.returnToProject();
     if (options.pushState !== false) {
+      const resourceQuery = options.assetId ? `?resource=${encodeURIComponent(options.assetId)}` : '';
       this.window.history.pushState(
         { projectId, view: 'logs' },
         '',
-        this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/logs`)
+        this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/logs${resourceQuery}`)
       );
     }
     this.logsView = new ProjectLogsView({
@@ -348,6 +349,7 @@ export class AgentProjectsPage {
       api: this.api,
       serviceId: options.serviceId || null,
       assetId: options.assetId || null,
+      onResourceScopeChange: (assetId) => this.replaceLogsResourceScope(projectId, assetId),
     });
     this.logsView.bind();
     await this.logsView.load(projectId);
@@ -1160,11 +1162,12 @@ export class AgentProjectsPage {
       return;
     }
     const serviceMatch=this.window.location.hash.match(/^#\/projects\/([^/]+)\/services\/([^/]+)\/?$/);if(serviceMatch){const p=decodeURIComponent(serviceMatch[1]),s=decodeURIComponent(serviceMatch[2]);if(this.state.view!=='service'||this.state.openServiceId!==s)await this.openServiceWorkspace(p,s,{pushState:false});return;}
-    const match = this.window.location.hash.match(/^#\/projects\/([^/]+)\/logs\/?$/);
+    const match = this.window.location.hash.match(/^#\/projects\/([^/]+)\/logs\/?(?:\?([^#]*))?$/);
     if (match) {
       const projectId = decodeURIComponent(match[1]);
+      const assetId = new URLSearchParams(match[2] || '').get('resource');
       if (this.state.view !== 'logs' || this.state.selectedProjectId !== projectId) {
-        await this.openLogsWorkspace(projectId, { pushState: false });
+        await this.openLogsWorkspace(projectId, { pushState: false, assetId });
       }
       return;
     }
@@ -1176,6 +1179,15 @@ export class AgentProjectsPage {
 
   pageUrl(hash = '') {
     return `${this.window.location.pathname}${this.window.location.search}${hash}`;
+  }
+
+  replaceLogsResourceScope(projectId, assetId) {
+    if (this.state.view !== 'logs' || this.state.selectedProjectId !== projectId) return;
+    const resourceQuery = assetId ? `?resource=${encodeURIComponent(assetId)}` : '';
+    this.window.history.replaceState(
+      { projectId, view: 'logs' }, '',
+      this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/logs${resourceQuery}`)
+    );
   }
 
   disposeLogsWorkspace() {

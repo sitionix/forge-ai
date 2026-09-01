@@ -690,6 +690,75 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
+  it('restores Resource-scoped Logs from the route and replaces the URL when changed', async () => {
+    const assetId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const dom = agentProjectsDom(
+      `http://127.0.0.1/fgaisox/operator/agent-projects.html#/projects/${project().id}/logs?resource=${assetId}`
+    );
+    const replaceState = vi.spyOn(dom.window.history, 'replaceState');
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: api({
+        listLogSources: vi.fn().mockResolvedValue([]),
+        listProjectAssets: vi.fn().mockResolvedValue([{ id: assetId, name: 'Jessie' }]),
+        listSshConnections: vi.fn().mockResolvedValue([])
+      })
+    });
+    page.mount();
+    await flushAsync();
+
+    const resource = dom.window.document.getElementById('projectLogsResourceFilter') as HTMLSelectElement;
+    expect(resource.value).toBe(assetId);
+    resource.value = '';
+    resource.dispatchEvent(new dom.window.Event('change'));
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/logs`);
+    expect(replaceState).toHaveBeenCalled();
+    page.dispose();
+  });
+
+  it('removes an invalid Resource scope without breaking Logs', async () => {
+    const dom = agentProjectsDom(
+      `http://127.0.0.1/fgaisox/operator/agent-projects.html#/projects/${project().id}/logs?resource=deleted`
+    );
+    const page = new AgentProjectsPage({
+      document: dom.window.document,
+      window: dom.window,
+      api: api({ listLogSources: vi.fn().mockResolvedValue([]), listProjectAssets: vi.fn().mockResolvedValue([]) })
+    });
+    page.mount();
+    await flushAsync();
+
+    expect((dom.window.document.getElementById('projectLogsResourceFilter') as HTMLSelectElement).value).toBe('');
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/logs`);
+    expect(dom.window.document.getElementById('projectLogsWorkspace')?.classList.contains('hidden')).toBe(false);
+    page.dispose();
+  });
+
+  it('opens the shared Logs viewer scoped from an SSH Resource', async () => {
+    const assetId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const fakeApi = api({
+      getProjectAsset: vi.fn().mockResolvedValue({ id: assetId, name: 'Jessie', sshConnectionId: 'ssh-1' }),
+      getProjectAssetMetrics: vi.fn().mockResolvedValue({}),
+      getProjectAssetCapabilities: vi.fn().mockResolvedValue({ systemdAvailable: true, dockerAvailable: true }),
+      listSshConnections: vi.fn().mockResolvedValue([{ id: 'ssh-1', name: 'Jessie SSH', username: 'ops', host: 'jessie', port: 22 }]),
+      listProjectAssets: vi.fn().mockResolvedValue([{ id: assetId, name: 'Jessie' }]),
+      listLogSources: vi.fn().mockResolvedValue([{
+        id: 'asset-source', name: 'journal', enabled: true, assetId, serviceId: null, provider: 'SYSTEMD'
+      }])
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openAssetWorkspace(project().id, assetId);
+    dom.window.document.getElementById('assetOpenLogs')?.click();
+    await flushAsync();
+
+    expect(dom.window.location.hash).toBe(
+      `#/projects/${project().id}/logs?resource=${assetId}`);
+    expect((dom.window.document.getElementById('projectLogsResourceFilter') as HTMLSelectElement).value).toBe(assetId);
+    expect(dom.window.document.getElementById('projectLogsWorkspace')?.classList.contains('hidden')).toBe(false);
+    page.dispose();
+  });
+
   it('closes the dedicated Logs EventSource when returning to Project', async () => {
     const streams: Array<{ closed: boolean }> = [];
     class EventSourceFake {

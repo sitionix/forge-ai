@@ -135,8 +135,19 @@
           <label>Resource <select id="projectLogsResourceFilter" class="text-input"><option value="">All</option></select></label>
           <label>Service <select id="projectLogsServiceFilter" class="text-input"><option value="">All</option></select></label>
           <label>Provider <select id="projectLogsProviderFilter" class="text-input"><option value="">All</option><option>DOCKER</option><option>SYSTEMD</option><option>FILE</option></select></label>
+          <div class="project-log-sources-label"><span>Sources</span>
+            <details id="projectLogsSourcesDropdown" class="project-log-sources-dropdown">
+              <summary id="projectLogsSourcesSummary">0 selected</summary>
+              <div class="project-log-sources-popover">
+                <div class="project-log-sources-toolbar">
+                  <strong id="projectLogsSelectedCount">0 selected</strong>
+                  <span><button id="projectLogsSelectAll" class="button small secondary" type="button">Select all</button> <button id="projectLogsClearAll" class="button small secondary" type="button">Clear all</button></span>
+                </div>
+                <div id="projectLogsSources" class="project-log-sources-list"></div>
+              </div>
+            </details>
+          </div>
         </div>
-        <div id="projectLogsSources" class="repository-list"></div>
       </section>
 
       <section id="projectLogsStreamSection" class="panel project-section">

@@ -98,7 +98,7 @@ describe("ProjectLogsView", () => {
     expect(dom.window.document.getElementById("projectLogsSources")?.textContent).not.toContain("mamba.service");
   });
 
-  it("filters sources by provider and streams only the resulting selection", async () => {
+  it("keeps selected sources outside the current filter and streams the explicit selection", async () => {
     const { dom, view, streams, api } = setup();
     await view.load("project-1");
     const provider = dom.window.document.getElementById("projectLogsProviderFilter") as HTMLSelectElement;
@@ -107,8 +107,60 @@ describe("ProjectLogsView", () => {
     dom.window.document.getElementById("projectLogsLive")?.click();
 
     expect(dom.window.document.querySelectorAll("[data-log-source]")).toHaveLength(1);
-    expect(api.logStreamUrl).toHaveBeenCalledWith("project-1", ["custom-source"], 100);
+    expect(api.logStreamUrl).toHaveBeenCalledWith(
+      "project-1", ["service-source", "asset-source", "custom-source"], 100);
     expect(streams).toHaveLength(1);
+  });
+
+  it("uses a compact dropdown and persists manual selection across filters", async () => {
+    const { dom, view } = setup();
+    await view.load("project-1");
+    const dropdown = dom.window.document.getElementById("projectLogsSourcesDropdown") as HTMLDetailsElement;
+    const service = dom.window.document.querySelector('[data-log-source][value="service-source"]') as HTMLInputElement;
+    dropdown.open = true;
+    service.checked = false;
+    service.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+
+    const provider = dom.window.document.getElementById("projectLogsProviderFilter") as HTMLSelectElement;
+    provider.value = "FILE";
+    provider.dispatchEvent(new dom.window.Event("change"));
+    provider.value = "";
+    provider.dispatchEvent(new dom.window.Event("change"));
+
+    expect(dropdown.open).toBe(true);
+    expect((dom.window.document.querySelector('[data-log-source][value="service-source"]') as HTMLInputElement).checked).toBe(false);
+    expect(dom.window.document.getElementById("projectLogsSourcesSummary")?.textContent).toBe("2 selected");
+  });
+
+  it("Select all and Clear all affect only the enabled sources in the filtered set", async () => {
+    const listed = [...sources, {
+      id: "disabled-file", name: "Unavailable", enabled: false,
+      serviceId: null, assetId: null, provider: "FILE",
+    }];
+    const { dom, view, api } = setup({}, listed);
+    await view.load("project-1");
+    const provider = dom.window.document.getElementById("projectLogsProviderFilter") as HTMLSelectElement;
+    provider.value = "FILE";
+    provider.dispatchEvent(new dom.window.Event("change"));
+    dom.window.document.getElementById("projectLogsClearAll")?.click();
+    dom.window.document.getElementById("projectLogsLive")?.click();
+    expect(api.logStreamUrl).toHaveBeenLastCalledWith(
+      "project-1", ["service-source", "asset-source"], 100);
+
+    dom.window.document.getElementById("projectLogsSelectAll")?.click();
+    dom.window.document.getElementById("projectLogsLive")?.click();
+    expect(api.logStreamUrl).toHaveBeenLastCalledWith(
+      "project-1", ["service-source", "asset-source", "custom-source"], 100);
+    expect((dom.window.document.querySelector('[data-log-source][value="disabled-file"]') as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("falls back from an invalid initial Resource scope", async () => {
+    const onResourceScopeChange = vi.fn();
+    const { dom, view } = setup({ assetId: "deleted", onResourceScopeChange });
+    await view.load("project-1");
+
+    expect((dom.window.document.getElementById("projectLogsResourceFilter") as HTMLSelectElement).value).toBe("");
+    expect(onResourceScopeChange).toHaveBeenCalledWith(null);
   });
 
   it("ignores a stale async load after another Project is opened", async () => {
