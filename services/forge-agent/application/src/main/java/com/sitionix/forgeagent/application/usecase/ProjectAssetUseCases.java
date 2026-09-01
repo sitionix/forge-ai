@@ -84,6 +84,67 @@ public class ProjectAssetUseCases {
         LogConnectionType.SSH, null, provider, configuration, enabled, now, now));
   }
 
+  public record MonitoringTarget(LogProviderType provider, String target) {}
+
+  public List<LogSource> replaceMonitoring(UUID projectId, UUID assetId, List<MonitoringTarget> requested) {
+    var asset = owned(projectId, assetId);
+    var connection = connection(projectId, asset.sshConnectionId());
+    var existing = logSources.findByProjectIdAndAssetId(projectId, assetId);
+    var existingByKey = new LinkedHashMap<String, LogSource>();
+    existing.forEach(source -> existingByKey.put(monitoringKey(source.provider(), monitoringTarget(source)), source));
+
+    var desired = new LinkedHashMap<String, MonitoringTarget>();
+    for (var item : requested == null ? List.<MonitoringTarget>of() : requested) {
+      if (item == null || item.provider() == null || item.target() == null || item.target().isBlank())
+        throw new ValidationException("Monitoring provider and target are required");
+      var target = item.target().strip();
+      var normalized = new MonitoringTarget(item.provider(), target);
+      if (desired.putIfAbsent(monitoringKey(item.provider(), target), normalized) != null)
+        throw new ValidationException("Duplicate monitoring target: " + item.provider() + ":" + target);
+      if (item.provider() == LogProviderType.FILE) {
+        if (!target.startsWith("/") || target.indexOf('\0') >= 0)
+          throw new ValidationException("File target must be an absolute POSIX path");
+      } else if (!existingByKey.containsKey(monitoringKey(item.provider(), target))) {
+        var runtimeProvider = item.provider() == LogProviderType.DOCKER
+            ? ServiceRuntimeProvider.DOCKER : ServiceRuntimeProvider.SYSTEMD;
+        if (discovery.discover(connection, runtimeProvider).stream().noneMatch(candidate -> candidate.id().equals(target)))
+          throw new ValidationException("New monitoring target was not discovered on this Resource: " + target);
+      }
+    }
+
+    var now = clock.instant();
+    var result = new ArrayList<LogSource>();
+    for (var entry : desired.entrySet()) {
+      var unchanged = existingByKey.get(entry.getKey());
+      if (unchanged != null) {
+        result.add(unchanged);
+        continue;
+      }
+      var target = entry.getValue();
+      LogProviderConfiguration configuration = switch (target.provider()) {
+        case FILE -> new FileLogConfiguration(target.target());
+        case DOCKER -> new DockerLogConfiguration(target.target(), null, null);
+        case SYSTEMD -> new SystemdLogConfiguration(SystemdTargetMode.UNIT, target.target());
+      };
+      result.add(logSources.save(new LogSource(UUID.randomUUID(), projectId, target.target(),
+          LogSourceOwnerType.ASSET, null, assetId, LogConnectionType.SSH, null,
+          target.provider(), configuration, true, now, now)));
+    }
+    existing.stream().filter(source -> !desired.containsKey(monitoringKey(source.provider(), monitoringTarget(source))))
+        .forEach(logSources::delete);
+    return result;
+  }
+
+  private String monitoringTarget(LogSource source) {
+    return switch (source.configuration()) {
+      case DockerLogConfiguration docker -> docker.container();
+      case SystemdLogConfiguration systemd -> systemd.unit();
+      case FileLogConfiguration file -> file.path();
+    };
+  }
+
+  private String monitoringKey(LogProviderType provider, String target) { return provider + "\0" + target; }
+
   public void delete(UUID projectId, UUID assetId) {
     var asset = owned(projectId, assetId);
     logSources.findByProjectIdAndAssetId(projectId, assetId).forEach(logSources::delete);

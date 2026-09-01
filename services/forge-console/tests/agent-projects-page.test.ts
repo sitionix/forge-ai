@@ -5693,8 +5693,7 @@ describe('SSH Resource monitoring workspace', () => {
       id: 'old-source', assetId: 'asset-1', serviceId: null, provider: 'SYSTEMD',
       configuration: { unit: 'old.service' }, enabled: true
     }];
-    const createProjectAssetMonitoring = vi.fn().mockResolvedValue({});
-    const deleteLogSource = vi.fn().mockResolvedValue({});
+    const replaceProjectAssetMonitoring = vi.fn().mockResolvedValue([]);
     const createService = vi.fn();
     const fakeApi = api({
       listProjectAssetMonitoring: vi.fn().mockResolvedValue(configured),
@@ -5703,8 +5702,7 @@ describe('SSH Resource monitoring workspace', () => {
           ? [{ id: 'old.service' }, { id: 'new.service' }]
           : [{ id: 'api' }, { id: 'worker' }]
       )),
-      createProjectAssetMonitoring,
-      deleteLogSource,
+      replaceProjectAssetMonitoring,
       createService,
     });
     const { dom, page } = await mountedPage(fakeApi);
@@ -5712,27 +5710,82 @@ describe('SSH Resource monitoring workspace', () => {
       systemdAvailable: true, dockerAvailable: true,
     });
 
-    const systemdSearch = dom.window.document.getElementById('assetMonitoringSystemdSearch') as HTMLInputElement;
+    await Promise.resolve();
+    const systemdSearch = dom.window.document.getElementById('assetMonitoringSearch') as HTMLInputElement;
     systemdSearch.value = 'new';
     systemdSearch.dispatchEvent(new dom.window.Event('input'));
     const newUnit = dom.window.document.querySelector<HTMLInputElement>('[data-monitoring-provider="SYSTEMD"][value="new.service"]')!;
     newUnit.checked = true;
     newUnit.dispatchEvent(new dom.window.Event('change'));
     page.assetMonitoring.selected.delete('SYSTEMD:old.service');
+    (dom.window.document.querySelector('[data-monitoring-tab="DOCKER"]') as HTMLButtonElement).click();
     const docker = dom.window.document.querySelector<HTMLInputElement>('[data-monitoring-provider="DOCKER"][value="api"]')!;
     docker.checked = true;
     docker.dispatchEvent(new dom.window.Event('change'));
 
     await page.saveAssetMonitoring(new dom.window.Event('submit'));
 
-    expect(createProjectAssetMonitoring).toHaveBeenCalledWith(project().id, 'asset-1', {
-      name: 'new.service', provider: 'SYSTEMD', target: 'new.service', enabled: true,
-    });
-    expect(createProjectAssetMonitoring).toHaveBeenCalledWith(project().id, 'asset-1', {
-      name: 'api', provider: 'DOCKER', target: 'api', enabled: true,
-    });
-    expect(deleteLogSource).toHaveBeenCalledWith(project().id, 'old-source');
+    expect(replaceProjectAssetMonitoring).toHaveBeenCalledWith(project().id, 'asset-1', { targets: expect.arrayContaining([
+      { provider: 'SYSTEMD', target: 'new.service' }, { provider: 'DOCKER', target: 'api' },
+    ]) });
     expect(createService).not.toHaveBeenCalled();
+    page.dispose();
+  });
+
+  it('keeps persisted targets visible and removable when provider discovery fails', async () => {
+    const fakeApi = api({
+      listProjectAssetMonitoring: vi.fn().mockResolvedValue([{ id: 'stale', assetId: 'asset-1', provider: 'SYSTEMD', configuration: { unit: 'ancestor-openvins.service' } }]),
+      discoverRuntimeTargets: vi.fn().mockRejectedValue(new Error('SSH discovery unavailable')),
+      replaceProjectAssetMonitoring: vi.fn().mockResolvedValue([]),
+    });
+    const { dom, page } = await mountedPage(fakeApi);
+    await page.configureAssetMonitoring(project().id, { id: 'asset-1', name: 'Flight computer', sshConnectionId: 'ssh-1' }, { systemdAvailable: true, dockerAvailable: false });
+    await Promise.resolve(); await Promise.resolve();
+    const target = dom.window.document.querySelector<HTMLInputElement>('[value="ancestor-openvins.service"]')!;
+    expect(target.checked).toBe(true);
+    expect(target.closest('label')?.textContent).toContain('Not detected');
+    expect(dom.window.document.getElementById('assetMonitoringProviderWarning')?.textContent).toContain('SSH discovery unavailable');
+    target.checked = false; target.dispatchEvent(new dom.window.Event('change'));
+    expect(dom.window.document.getElementById('assetMonitoringChanges')?.textContent).toContain('1 removed');
+    page.dispose();
+  });
+
+  it('preserves multiple FILE targets while saving an unrelated Docker change', async () => {
+    const replace = vi.fn().mockResolvedValue([]);
+    const fakeApi = api({
+      listProjectAssetMonitoring: vi.fn().mockResolvedValue([
+        { id: 'a', assetId: 'asset-1', provider: 'FILE', configuration: { path: '/var/log/a.log' } },
+        { id: 'b', assetId: 'asset-1', provider: 'FILE', configuration: { path: '/var/log/b.log' } },
+      ]),
+      discoverRuntimeTargets: vi.fn().mockResolvedValue([{ id: 'camera' }]), replaceProjectAssetMonitoring: replace,
+    });
+    const { dom, page } = await mountedPage(fakeApi);
+    await page.configureAssetMonitoring(project().id, { id: 'asset-1', sshConnectionId: 'ssh-1' }, { systemdAvailable: false, dockerAvailable: true });
+    await Promise.resolve();
+    expect(page.assetMonitoring.files).toEqual(['/var/log/a.log', '/var/log/b.log']);
+    const camera = dom.window.document.querySelector<HTMLInputElement>('[value="camera"]')!;
+    camera.checked = true; camera.dispatchEvent(new dom.window.Event('change'));
+    await page.saveAssetMonitoring(new dom.window.Event('submit'));
+    expect(replace).toHaveBeenCalledWith(project().id, 'asset-1', { targets: expect.arrayContaining([
+      { provider: 'DOCKER', target: 'camera' }, { provider: 'FILE', target: '/var/log/a.log' }, { provider: 'FILE', target: '/var/log/b.log' },
+    ]) });
+    page.dispose();
+  });
+
+  it('keeps the dirty draft open after an atomic save failure', async () => {
+    const fakeApi = api({
+      listProjectAssetMonitoring: vi.fn().mockResolvedValue([]), discoverRuntimeTargets: vi.fn().mockResolvedValue([{ id: 'api' }]),
+      replaceProjectAssetMonitoring: vi.fn().mockRejectedValue(new Error('Transaction rolled back')),
+    });
+    const { dom, page } = await mountedPage(fakeApi);
+    await page.configureAssetMonitoring(project().id, { id: 'asset-1', sshConnectionId: 'ssh-1' }, { systemdAvailable: false, dockerAvailable: true });
+    await Promise.resolve();
+    const apiTarget = dom.window.document.querySelector<HTMLInputElement>('[value="api"]')!;
+    apiTarget.checked = true; apiTarget.dispatchEvent(new dom.window.Event('change'));
+    await page.saveAssetMonitoring(new dom.window.Event('submit'));
+    expect(page.assetMonitoring.selected.has('DOCKER:api')).toBe(true);
+    expect(dom.window.document.getElementById('assetMonitoringDialog')?.hasAttribute('open')).toBe(true);
+    expect(dom.window.document.getElementById('assetMonitoringError')?.textContent).toContain('Transaction rolled back');
     page.dispose();
   });
 });

@@ -6,6 +6,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentLogSource;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectAssetCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentAssetMonitoringCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.ReplaceAgentAssetMonitoringCommand;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
 import com.sitionix.forgeai.domain.usecase.ManageAgentProjectAssets;
 import java.util.List;
@@ -54,6 +55,12 @@ public class AgentProjectAssetsUseCase implements ManageAgentProjectAssets {
             final UUID assetId,
             final SaveAgentAssetMonitoringCommand command) {
         return this.client.createProjectAssetMonitoring(projectId, assetId, command);
+    }
+
+    @Override
+    public List<AgentLogSource> replaceMonitoring(final UUID projectId, final UUID assetId,
+            final ReplaceAgentAssetMonitoringCommand command) {
+        return this.client.replaceProjectAssetMonitoring(projectId, assetId, command);
     }
 
     @Override

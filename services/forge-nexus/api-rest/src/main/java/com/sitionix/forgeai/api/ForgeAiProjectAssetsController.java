@@ -3,6 +3,7 @@ package com.sitionix.forgeai.api;
 import com.sitionix.forgeai.api.agentproxy.AgentAssetCapabilitiesResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentAssetMetricsResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentAssetMonitoringRequest;
+import com.sitionix.forgeai.api.agentproxy.AgentAssetMonitoringReplacementRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentLogSourceResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectAssetRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectAssetResponse;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -73,6 +75,17 @@ public class ForgeAiProjectAssetsController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(this.mapper.toResponse(
                         this.assets.monitor(projectId, assetId, this.mapper.toCommand(request))));
+    }
+
+    @PutMapping("/{assetId}/monitoring")
+    public List<AgentLogSourceResponse> replaceMonitoring(
+            @PathVariable final UUID projectId, @PathVariable final UUID assetId,
+            @Valid @RequestBody final AgentAssetMonitoringReplacementRequest request) {
+        var command = new com.sitionix.forgeai.domain.model.agentproxy.ReplaceAgentAssetMonitoringCommand(
+                request.targets().stream().map(target ->
+                        new com.sitionix.forgeai.domain.model.agentproxy.ReplaceAgentAssetMonitoringCommand.Target(
+                                target.provider(), target.target())).toList());
+        return this.assets.replaceMonitoring(projectId, assetId, command).stream().map(this.mapper::toResponse).toList();
     }
 
     @DeleteMapping("/{assetId}")
