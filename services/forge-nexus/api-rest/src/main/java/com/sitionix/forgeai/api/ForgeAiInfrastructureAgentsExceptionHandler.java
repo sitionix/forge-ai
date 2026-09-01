@@ -25,6 +25,7 @@ import org.springframework.web.client.RestClientException;
       ForgeAiInfrastructureAgentsController.class,
       ForgeAiProjectLogsController.class,
       ForgeAiProjectServicesController.class,
+      ForgeAiProjectAssetsController.class,
       ForgeAiRuntimeTargetDiscoveryController.class
     })
 @RequiredArgsConstructor

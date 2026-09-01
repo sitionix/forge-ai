@@ -640,6 +640,20 @@ class ForgeAgentClientMapperTest {
     }
 
     @Test
+    void preservesAssetOwnershipWhenMappingLogSources() {
+        final var assetId = UUID.randomUUID();
+        final var response = new com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceResponse(
+                UUID.randomUUID(), UUID.randomUUID(), "api", null, assetId,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogConnectionType.SSH, UUID.randomUUID(),
+                com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderType.DOCKER,
+                new com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogConfigurationResponse(
+                        "api", null, null, null, null),
+                true, java.time.Instant.EPOCH, java.time.Instant.EPOCH);
+
+        assertThat(this.mapper.toDomain(response).assetId()).isEqualTo(assetId);
+    }
+
+    @Test
     void mapsPasswordSshAuthenticationThroughTypedClientDtos() {
         final var command = new com.sitionix.forgeai.domain.model.agentproxy.CreateAgentSshConnectionCommand(
                 "Ancestor",

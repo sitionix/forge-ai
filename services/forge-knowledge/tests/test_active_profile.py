@@ -183,7 +183,11 @@ def test_active_profile_get_adds_display_metadata_without_persisting_it(tmp_path
     assert stored == {"llmProfile": {"providerId": "ollama", "modelId": "qwen", "effort": None}}
 
 
-def test_active_profile_get_keeps_ids_when_display_metadata_lookup_fails(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+def test_active_profile_get_keeps_ids_when_display_metadata_lookup_fails(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+):
     store = ActiveProfileStore(tmp_path / "active.sqlite")
     persisted = store.init(provider_id="ollama", model_id="qwen")
     secret = "secret-token-123"
@@ -201,7 +205,7 @@ def test_active_profile_get_keeps_ids_when_display_metadata_lookup_fails(tmp_pat
     assert response.llmProfile.modelId == "qwen"
     assert response.llmProfile.providerDisplayName is None
     assert response.llmProfile.modelDisplayName is None
-    log_text = caplog.text
+    log_text = caplog.text + capsys.readouterr().err
     assert "provider_id=ollama" in log_text
     assert "model_id=qwen" in log_text
     assert "RuntimeError" in log_text
@@ -411,7 +415,11 @@ def test_codex_activation_is_executable_when_provider_and_effort_are_valid(tmp_p
     }
 
 
-def test_usage_registry_handles_unregistered_provider_and_source_failure(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+def test_usage_registry_handles_unregistered_provider_and_source_failure(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+):
     registry = LlmUsageRegistry()
     registry.register(FakeUsageSource(error=RuntimeError("token secret@example.com should not leak")))
     store = ActiveProfileStore(tmp_path / "active.sqlite")
@@ -423,8 +431,9 @@ def test_usage_registry_handles_unregistered_provider_and_source_failure(tmp_pat
 
     assert response.usage is None
     assert registry.resolve_optional("ollama") is None
-    assert "RuntimeError" in caplog.text
-    assert "token secret@example.com should not leak" not in caplog.text
+    log_text = caplog.text + capsys.readouterr().err
+    assert "RuntimeError" in log_text
+    assert "token secret@example.com should not leak" not in log_text
 
 
 def test_usage_source_failure_through_http_returns_null_usage_without_secret_text(tmp_path: Path, caplog: pytest.LogCaptureFixture):

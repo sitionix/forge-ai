@@ -1,0 +1,1 @@
+{"name":"camera.service","provider":"SYSTEMD","target":"camera.service","enabled":true}

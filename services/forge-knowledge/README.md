@@ -12,7 +12,7 @@ Knowledge also includes an optional AI-assisted graph analysis layer. It analyze
 scripts/knowledge/bootstrap.sh
 scripts/knowledge/init-local-config.sh
 scripts/knowledge/validate-config.sh
-scripts/knowledge/start.sh
+just start
 ```
 
 The root `config/knowledge/knowledge-sources.yaml` points to the service catalog and workspace root; it must not duplicate the service list.

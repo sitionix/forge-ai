@@ -185,11 +185,13 @@ class ForgeAgentApiMapperTest {
                 new DockerLogConfiguration("mission", null, null),
                 true));
 
+        final UUID assetId = UUID.randomUUID();
         final LogSource source = new LogSource(
                 AGENT_ID,
                 PROJECT_ID,
                 "mission",
                 null,
+                assetId,
                 LogConnectionType.LOCAL,
                 null,
                 LogProviderType.DOCKER,
@@ -200,6 +202,7 @@ class ForgeAgentApiMapperTest {
         assertThat(this.mapper.toResponse(source).configuration())
                 .isEqualTo(new LogProviderConfigurationResponse(
                         "mission", null, null, null, null));
+        assertThat(this.mapper.toResponse(source).assetId()).isEqualTo(assetId);
 
         final var journalRequest = new LogSourceRequest(
                 "journal", null, LogConnectionType.SSH, UUID.randomUUID(),

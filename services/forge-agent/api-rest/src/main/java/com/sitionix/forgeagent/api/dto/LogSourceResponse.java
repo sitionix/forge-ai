@@ -10,10 +10,19 @@ public record LogSourceResponse(
     UUID projectId,
     String name,
     UUID serviceId,
+    UUID assetId,
     LogConnectionType connection,
     UUID sshConnectionId,
     LogProviderType provider,
     LogProviderConfigurationResponse configuration,
     boolean enabled,
     Instant createdAt,
-    Instant updatedAt) {}
+    Instant updatedAt) {
+  public LogSourceResponse(UUID id, UUID projectId, String name, UUID serviceId,
+      LogConnectionType connection, UUID sshConnectionId, LogProviderType provider,
+      LogProviderConfigurationResponse configuration, boolean enabled,
+      Instant createdAt, Instant updatedAt) {
+    this(id, projectId, name, serviceId, null, connection, sshConnectionId, provider,
+        configuration, enabled, createdAt, updatedAt);
+  }
+}

@@ -15,6 +15,11 @@ import com.sitionix.forgeai.api.agentproxy.AgentSshConnectionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectServiceRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectServiceResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentServiceRuntimeResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectAssetRequest;
+import com.sitionix.forgeai.api.agentproxy.AgentProjectAssetResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentAssetMetricsResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentAssetCapabilitiesResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentAssetMonitoringRequest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
@@ -23,6 +28,66 @@ import org.springframework.http.HttpStatus;
 public final class NexusAgentMockMvcEndpoints {
 
     private NexusAgentMockMvcEndpoints() {
+    }
+
+    public static Endpoint<AgentProjectAssetRequest, AgentProjectAssetResponse> createAsset() {
+        return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/assets", HttpMethod.POST,
+                AgentProjectAssetRequest.class, AgentProjectAssetResponse.class, HttpStatus.CREATED,
+                "agent-asset-response.json", "agent-asset-request.json");
+    }
+
+    public static Endpoint<Void, AgentProjectAssetResponse[]> listAssets() {
+        return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/assets", HttpMethod.GET,
+                Void.class, AgentProjectAssetResponse[].class, HttpStatus.OK,
+                "agent-asset-list-response.json", null);
+    }
+
+    public static Endpoint<Void, AgentProjectAssetResponse> getAsset() {
+        return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/assets/{assetId}", HttpMethod.GET,
+                Void.class, AgentProjectAssetResponse.class, HttpStatus.OK, "agent-asset-response.json", null);
+    }
+
+    public static Endpoint<Void, AgentAssetMetricsResponse> assetMetrics() {
+        return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/assets/{assetId}/metrics", HttpMethod.GET,
+                Void.class, AgentAssetMetricsResponse.class, HttpStatus.OK, "agent-asset-metrics-response.json", null);
+    }
+
+    public static Endpoint<Void, AgentAssetCapabilitiesResponse> assetCapabilities() {
+        return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/assets/{assetId}/capabilities", HttpMethod.GET,
+                Void.class, AgentAssetCapabilitiesResponse.class, HttpStatus.OK, "agent-asset-capabilities-response.json", null);
+    }
+
+    public static Endpoint<AgentAssetMonitoringRequest, AgentLogSourceResponse> createAssetMonitoring() {
+        return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/assets/{assetId}/monitoring", HttpMethod.POST,
+                AgentAssetMonitoringRequest.class, AgentLogSourceResponse.class, HttpStatus.CREATED,
+                "agent-asset-monitoring-response.json", "agent-asset-monitoring-request.json");
+    }
+
+    public static Endpoint<Void, AgentLogSourceResponse[]> listAssetMonitoring() {
+        return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/assets/{assetId}/monitoring", HttpMethod.GET,
+                Void.class, AgentLogSourceResponse[].class, HttpStatus.OK,
+                "agent-asset-monitoring-list-response.json", null);
+    }
+
+    public static Endpoint<Void, Void> deleteAsset() {
+        return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/assets/{assetId}", HttpMethod.DELETE,
+                Void.class, Void.class, HttpStatus.NO_CONTENT, null, null);
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> assetMetricsFailure() {
+        return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/assets/{assetId}/metrics", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class, HttpStatus.BAD_GATEWAY,
+                "agent-upstream-error-response.json", null);
+    }
+
+    private static <Request, Response> Endpoint<Request, Response> assetEndpoint(
+            String path, HttpMethod method, Class<Request> request, Class<Response> response,
+            HttpStatus status, String responseFixture, String requestFixture) {
+        return Endpoint.createContract(path, method, request, response, (MockmvcDefault) context -> {
+            context.expectStatus(status.value());
+            if (requestFixture != null) context.withRequest(requestFixture);
+            if (responseFixture != null) context.expectResponse(responseFixture);
+        });
     }
 
     public static Endpoint<AgentProjectRequest, AgentProjectResponse> createProject() {

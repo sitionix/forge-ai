@@ -9,6 +9,7 @@ import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Service
 @RequiredArgsConstructor
@@ -23,22 +24,31 @@ public class LogSourceUseCases {
   private final SshConnectionRepository connections;
   private final DockerLogPort docker;
   private final RemoteLogPort remote;
+  private final SystemdLogPort systemd;
   private final RuntimeTargetDiscoveryUseCases runtimeTargets;
   private final ProjectRepositoryLinkRepository repositories;
   private final LocalProjectWorkspacePort workspaces;
   private final GitRepositoryPort git;
   private final Clock clock;
+  @Autowired(required = false) private ProjectAssetRepository assets;
 
   @Transactional(readOnly = true)
   public List<LogSource> list(UUID projectId) {
     project(projectId);
-    return sources.findByProjectId(projectId);
+    // Persisted Service-owned rows are retained for data compatibility, but are never effective.
+    // The current Service runtimeTarget is the sole source of truth at every read/stream boundary.
+    var result = new ArrayList<>(sources.findByProjectId(projectId).stream()
+        .filter(source -> source.ownerType() != LogSourceOwnerType.LEGACY_SERVICE
+            && source.serviceId() == null)
+        .toList());
+    services.findByProjectId(projectId).stream().map(this::derived).forEach(result::add);
+    return List.copyOf(result);
   }
 
   @Transactional(readOnly = true)
   public List<LogSource> list(UUID projectId, UUID serviceId) {
-    service(projectId, serviceId);
-    return sources.findByProjectIdAndServiceId(projectId, serviceId);
+    var service = service(projectId, serviceId);
+    return List.of(derived(service));
   }
 
   @Transactional(readOnly = true)
@@ -77,7 +87,7 @@ public class LogSourceUseCases {
   }
 
   public LogSource update(UUID projectId, UUID id, SaveLogSourceCommand c) {
-    var old = owned(projectId, id);
+    var old = updatableOwned(projectId, id);
     validate(projectId, c);
     return sources.save(
         new LogSource(
@@ -95,7 +105,7 @@ public class LogSourceUseCases {
   }
 
   public void delete(UUID projectId, UUID id) {
-    sources.delete(owned(projectId, id));
+    sources.delete(deletableOwned(projectId, id));
   }
 
   @Transactional(readOnly = true)
@@ -136,6 +146,8 @@ public class LogSourceUseCases {
     if (c.provider() == LogProviderType.DOCKER) {
       var d = (DockerLogConfiguration) c.configuration();
       docker.validate(d.container(), d.composeService(), d.composeFile(), ssh);
+    } else if (c.provider() == LogProviderType.SYSTEMD) {
+      systemd.validate((SystemdLogConfiguration) c.configuration(), ssh);
     } else remote.validate(ssh, c.provider(), c.configuration());
   }
 
@@ -146,15 +158,26 @@ public class LogSourceUseCases {
 
   @Transactional(readOnly = true)
   public LogStream stream(UUID projectId, LogSource s, int lines) {
+    s = effective(projectId, s);
     if (lines < 1 || lines > 10_000)
       throw new ValidationException("Initial line count must be between 1 and 10000");
     if (!s.projectId().equals(projectId))
       throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
     if (!s.enabled()) throw new ValidationException("Log source is disabled");
-    SshConnection ssh = resolve(projectId, s.connectionType(), s.sshConnectionId());
+    UUID sshId = s.sshConnectionId();
+    if (s.assetId() != null) {
+      var asset = assets == null ? Optional.<ProjectAsset>empty() : assets.findById(s.assetId());
+      sshId = asset.filter(a -> a.projectId().equals(projectId))
+          .orElseThrow(() -> new NotFoundException("ASSET_NOT_FOUND", "Resource not found"))
+          .sshConnectionId();
+    }
+    SshConnection ssh = resolve(projectId, s.connectionType(), sshId);
     if (s.provider() == LogProviderType.DOCKER) {
       var d = (DockerLogConfiguration) s.configuration();
       return docker.stream(d.container(), d.composeService(), d.composeFile(), lines, ssh);
+    }
+    if (s.provider() == LogProviderType.SYSTEMD) {
+      return systemd.stream((SystemdLogConfiguration) s.configuration(), lines, ssh);
     }
     return remote.stream(ssh, s.provider(), s.configuration(), lines);
   }
@@ -162,7 +185,8 @@ public class LogSourceUseCases {
   private void validate(UUID projectId, SaveLogSourceCommand c) {
     if (c.name() == null || c.name().isBlank())
       throw new ValidationException("Log source name is required");
-    if (c.serviceId() != null) service(projectId, c.serviceId());
+    if (c.serviceId() != null)
+      throw new ValidationException("Service log sources are derived from runtimeTarget");
     if (c.connectionType() == null || c.provider() == null)
       throw new ValidationException("Connection and provider are required");
     if (c.connectionType() == LogConnectionType.LOCAL && c.sshConnectionId() != null)
@@ -225,14 +249,62 @@ public class LogSourceUseCases {
 
   private LogSource owned(UUID p, UUID id) {
     project(p);
-    var s =
-        sources
-            .findById(id)
-            .orElseThrow(
-                () -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found"));
+    var s = sources.findById(id).orElseGet(() -> services.findByProjectId(p).stream()
+        .filter(service -> derivedId(service.id()).equals(id)).findFirst().map(this::derived)
+        .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found")));
     if (!s.projectId().equals(p))
       throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
-    return s;
+    return effective(p, s);
+  }
+
+  private LogSource updatableOwned(UUID projectId, UUID id) {
+    project(projectId);
+    var source = sources.findById(id)
+        .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found"));
+    if (!source.projectId().equals(projectId))
+      throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
+    if (source.ownerType() != LogSourceOwnerType.CUSTOM)
+      throw new ValidationException("Only custom project log sources can be updated");
+    return source;
+  }
+
+  private LogSource deletableOwned(UUID projectId, UUID id) {
+    project(projectId);
+    var source = sources.findById(id)
+        .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found"));
+    if (!source.projectId().equals(projectId))
+      throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
+    if (source.ownerType() == LogSourceOwnerType.LEGACY_SERVICE)
+      throw new ValidationException("Legacy Service log sources are immutable compatibility data");
+    return source;
+  }
+
+  private LogSource effective(UUID projectId, LogSource source) {
+    if (source.ownerType() != LogSourceOwnerType.LEGACY_SERVICE && source.serviceId() == null)
+      return source;
+    if (source.serviceId() != null && source.id().equals(derivedId(source.serviceId())))
+      return source;
+    if (source.serviceId() == null)
+      throw new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found");
+    return services.findById(source.serviceId())
+        .filter(service -> service.projectId().equals(projectId))
+        .map(this::derived)
+        .orElseThrow(() -> new NotFoundException("LOG_SOURCE_NOT_FOUND", "Log source not found"));
+  }
+
+  private LogSource derived(ProjectService service) {
+    var target = service.runtimeTarget();
+    var connection = target.connection() == ServiceConnectionType.SSH ? LogConnectionType.SSH : LogConnectionType.LOCAL;
+    var provider = target.provider() == ServiceRuntimeProvider.DOCKER ? LogProviderType.DOCKER : LogProviderType.SYSTEMD;
+    LogProviderConfiguration configuration = provider == LogProviderType.DOCKER
+        ? new DockerLogConfiguration(target.container(), null, null)
+        : new SystemdLogConfiguration(SystemdTargetMode.UNIT, target.unit());
+    return new LogSource(derivedId(service.id()), service.projectId(), service.name(), service.id(), null,
+        connection, target.sshConnectionId(), provider, configuration, true, service.createdAt(), service.updatedAt());
+  }
+
+  private UUID derivedId(UUID serviceId) {
+    return UUID.nameUUIDFromBytes(("service-log:" + serviceId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
   private ProjectService service(UUID projectId, UUID id) {

@@ -1,40 +1,58 @@
-# Forge AI systemd Runtime
+# Forge runtime
 
-Forge AI can be installed as four systemd-owned workloads:
+Forge exposes one lifecycle contract on supported developer and operator hosts:
 
-- `forge-agent.service`
-- `forge-nexus.service`
-- `forge-knowledge.service`
-- `forge-jarvis.service`
+```bash
+just start
+just stop
+just restart
+just status
+just logs [service]
+```
 
-These units are runtime wrappers around the existing deployable applications. They do not create a new Forge runtime provider or merge the applications into one process.
+The runtime resolver selects one backend before performing an operation. Ubuntu
+uses `SYSTEMD` only when systemd is the active, reachable system manager and all
+Forge units are installed. macOS uses `LAUNCHD`. A selected
+backend is authoritative: a systemd error is reported and never causes a local
+process fallback.
 
-## Workflow
+Logical service names are `knowledge`, `jarvis`, `agent`, `nexus`, and
+`postgres`. `just logs` follows all Forge application logs; pass a service name
+to follow only that service.
+
+## Ubuntu
+
+Install or refresh the four systemd units once:
 
 ```bash
 just systemd-install
-just start
-just status
-just restart
-just stop
 ```
 
-`just start`, `just stop`, `just status`, and `just restart` are the public installed-runtime commands. They manage the four Forge systemd units, where systemd owns process lifecycle, `MainPID`, restart policy, startup timestamp, exit status, and journald output. The lightweight PID-file launcher remains internal for development-focused checks and cannot compete with active systemd workloads.
+The units are:
 
-The units use `Restart=on-failure` with `RestartSec=5s`. Normal operator stops are not restarted; failed processes are restarted by systemd and remain visible through systemd state and journal metadata.
+- `forge-knowledge.service`
+- `forge-jarvis.service`
+- `forge-agent.service`
+- `forge-nexus.service`
 
-`forge-agent-postgres` remains Docker-managed by `compose.yaml`. It is started by `just start` as a prerequisite for `forge-agent.service`, but it is not modeled as a Forge systemd Service.
+Systemd owns application process identity, restart policy, exit state, and
+journald output. Docker Compose owns `forge-agent-postgres`. `just start` starts
+Postgres, starts the units, and waits for every application health endpoint.
+Lifecycle commands fail explicitly when the manager or installation is unusable.
 
-## Discovery
+## macOS
 
-After the units are installed and started on a Linux host with systemd, the existing runtime target discovery flow sees them through `LOCAL + SYSTEMD` because they are ordinary systemd unit names:
+`just start` builds the applications, starts Docker-managed Postgres, renders
+LaunchAgent plists for the current checkout under `~/Library/LaunchAgents`, and
+loads Knowledge, Jarvis, Agent, and Nexus into the current user's launchd
+domain. The command returns while launchd continues to own the services.
 
-```bash
-systemctl list-units --type=service --all --no-legend --plain
-```
+Application stdout and stderr are owned by launchd under
+`var/launchd/logs`. `just logs [service]` follows those files, `just status`
+combines launchd state with application health, and `just stop` unloads the four
+Forge LaunchAgents before stopping Postgres.
 
-Runtime inspection continues to use the existing SYSTEMD provider:
+## Runtime target discovery
 
-```bash
-systemctl show --no-pager --property=ActiveState,SubState,ExecMainStartTimestamp,MainPID,ExecMainStatus,Result -- forge-agent.service
-```
+On Ubuntu the installed units remain ordinary systemd targets and continue to
+work with the existing `LOCAL + SYSTEMD` discovery and inspection providers.

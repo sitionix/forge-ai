@@ -3,9 +3,13 @@ package com.sitionix.forgeagent.it.tests;
 import static com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.*;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.sitionix.forgeagent.infrastructure.postgres.entity.LogSourceEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectServiceEntity;
+import com.sitionix.forgeagent.domain.model.LogSourceOwnerType;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
@@ -13,6 +17,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.web.servlet.MockMvc;
 
 @IntegrationTest
 class ForgeAgentProjectServiceIT {
@@ -22,6 +27,8 @@ class ForgeAgentProjectServiceIT {
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
+    @Autowired
+    private MockMvc mockMvc;
 
     @Test
     void serviceCrudRuntimeLogsDeleteSemanticsAndProjectIsolationUseRealRestAndPersistence() {
@@ -69,6 +76,37 @@ class ForgeAgentProjectServiceIT {
                 .expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
         assertThat(this.forgeIt.postgresql().get(LogSourceEntity.class).getAll())
                 .singleElement().satisfies(source -> assertThat(source.getServiceId()).isNull());
+    }
+
+    @Test
+    void legacyServiceSourceSurvivesServiceDeleteButIsNotEffectiveOrStreamable() throws Exception {
+        final UUID legacySourceId = UUID.fromString("90000000-0000-4000-8000-000000000023");
+        this.forgeIt.postgresql().create()
+                .to(PROJECT.withJson("logs_project.json"))
+                .to(PROJECT_SERVICE.withJson("logs_service.json"))
+                .to(LOG_SOURCE.withJson("logs_source_service_app.json"))
+                .build();
+
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_SERVICE)
+                .withPathParameters(service(PROJECT_ID, SEEDED_SERVICE_ID))
+                .expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
+
+        assertThat(this.forgeIt.postgresql().get(LogSourceEntity.class).getAll())
+                .singleElement().satisfies(source -> {
+                    assertThat(source.getId()).isEqualTo(legacySourceId);
+                    assertThat(source.getOwnerType()).isEqualTo(LogSourceOwnerType.LEGACY_SERVICE);
+                    assertThat(source.getServiceId()).isNull();
+                    assertThat(source.getDockerContainer()).isEqualTo("app");
+                });
+
+        this.mockMvc.perform(get("/api/v1/projects/{projectId}/log-sources", PROJECT_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+
+        this.mockMvc.perform(get("/api/v1/projects/{projectId}/logs/stream", PROJECT_ID)
+                        .queryParam("sourceId", legacySourceId.toString())
+                        .queryParam("lines", "10"))
+                .andExpect(status().isNotFound());
     }
 
     private static PathParams project(UUID projectId) {

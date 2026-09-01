@@ -21,6 +21,7 @@ class LogSourceUseCasesTest {
   @Mock SshConnectionRepository connections;
   @Mock DockerLogPort docker;
   @Mock RemoteLogPort remote;
+  @Mock SystemdLogPort systemdLogs;
   @Mock RuntimeTargetDiscoveryUseCases runtimeTargets;
   @Mock ProjectRepositoryLinkRepository repositories;
   @Mock LocalProjectWorkspacePort workspaces;
@@ -38,6 +39,7 @@ class LogSourceUseCasesTest {
             connections,
             docker,
             remote,
+            systemdLogs,
             runtimeTargets,
             repositories,
             workspaces,
@@ -84,26 +86,160 @@ class LogSourceUseCasesTest {
   }
 
   @Test
-  void serviceAssociationRequiresAnOwnedService() {
+  void createWithServiceIdIsRejectedBecauseServiceSourcesAreDerived() {
     UUID serviceId = UUID.randomUUID();
-    when(services.findById(serviceId)).thenReturn(Optional.of(new ProjectService(serviceId, projectId,
-        "api", null, new ServiceRuntimeTarget(ServiceConnectionType.LOCAL, null,
-        ServiceRuntimeProvider.DOCKER, "api", null), Instant.EPOCH, Instant.EPOCH)));
-    assertThat(useCases.create(projectId, command("one", serviceId)).serviceId()).isEqualTo(serviceId);
+    assertThatThrownBy(() -> useCases.create(projectId, command("one", serviceId)))
+        .isInstanceOf(ValidationException.class)
+        .hasMessageContaining("derived from runtimeTarget");
+    verify(sources, never()).save(any());
   }
 
   @Test
-  void serviceScopedListingReturnsOnlyRepositoryResultsForThatService() {
+  void updateWithServiceIdIsRejectedBecauseServiceSourcesAreDerived() {
+    UUID sourceId = UUID.randomUUID();
+    var existing = new LogSource(sourceId, projectId, "custom", null, LogConnectionType.LOCAL,
+        null, LogProviderType.DOCKER, new DockerLogConfiguration("custom", null, null), true,
+        Instant.EPOCH, Instant.EPOCH);
+    when(sources.findById(sourceId)).thenReturn(Optional.of(existing));
+
+    assertThatThrownBy(() -> useCases.update(projectId, sourceId, command("one", UUID.randomUUID())))
+        .isInstanceOf(ValidationException.class)
+        .hasMessageContaining("derived from runtimeTarget");
+    verify(sources, never()).save(any());
+  }
+
+  @Test
+  void stalePersistedServiceSourceCannotOverrideCurrentRuntimeTarget() {
     UUID serviceId = UUID.randomUUID();
     ProjectService service = service(serviceId, projectId);
     LogSource linked = new LogSource(
         UUID.randomUUID(), projectId, "api", serviceId, LogConnectionType.LOCAL, null,
-        LogProviderType.DOCKER, new DockerLogConfiguration("api", null, null), true,
+        LogProviderType.DOCKER, new DockerLogConfiguration("old-api", null, null), true,
         Instant.EPOCH, Instant.EPOCH);
     when(services.findById(serviceId)).thenReturn(Optional.of(service));
-    when(sources.findByProjectIdAndServiceId(projectId, serviceId)).thenReturn(List.of(linked));
+    assertThat(useCases.list(projectId, serviceId)).singleElement().satisfies(effective -> {
+      assertThat(effective.id()).isNotEqualTo(linked.id());
+      assertThat(((DockerLogConfiguration) effective.configuration()).container()).isEqualTo("api");
+    });
+  }
 
-    assertThat(useCases.list(projectId, serviceId)).containsExactly(linked);
+  @Test
+  void changingServiceRuntimeTargetImmediatelyChangesDerivedLogs() {
+    UUID serviceId = UUID.randomUUID();
+    var oldTarget = service(serviceId, projectId);
+    var newTarget = new ProjectService(serviceId, projectId, "api", null,
+        new ServiceRuntimeTarget(ServiceConnectionType.LOCAL, null,
+            ServiceRuntimeProvider.DOCKER, "new-api", null), Instant.EPOCH, Instant.EPOCH);
+    when(services.findById(serviceId)).thenReturn(Optional.of(oldTarget), Optional.of(newTarget));
+
+    assertThat(((DockerLogConfiguration) useCases.list(projectId, serviceId).getFirst().configuration()).container())
+        .isEqualTo("api");
+    assertThat(((DockerLogConfiguration) useCases.list(projectId, serviceId).getFirst().configuration()).container())
+        .isEqualTo("new-api");
+  }
+
+  @Test
+  void stalePersistedServiceSourceIdStreamsTheCurrentRuntimeTarget() {
+    UUID serviceId = UUID.randomUUID();
+    UUID sourceId = UUID.randomUUID();
+    var stale = new LogSource(sourceId, projectId, "legacy", serviceId, LogConnectionType.LOCAL,
+        null, LogProviderType.DOCKER, new DockerLogConfiguration("old-api", null, null), true,
+        Instant.EPOCH, Instant.EPOCH);
+    when(sources.findById(sourceId)).thenReturn(Optional.of(stale));
+    when(services.findById(serviceId)).thenReturn(Optional.of(service(serviceId, projectId)));
+    when(docker.stream(eq("api"), isNull(), isNull(), eq(100), isNull()))
+        .thenReturn(mock(LogStream.class));
+
+    useCases.stream(projectId, sourceId, 100);
+
+    verify(docker).stream("api", null, null, 100, null);
+    verify(docker, never()).stream(eq("old-api"), any(), any(), anyInt(), any());
+  }
+
+  @Test
+  void runtimeTargetChangeImmediatelyChangesStreamResolvedFromLegacySourceId() {
+    UUID serviceId = UUID.randomUUID();
+    UUID sourceId = UUID.randomUUID();
+    var stale = new LogSource(sourceId, projectId, "legacy", serviceId, LogConnectionType.LOCAL,
+        null, LogProviderType.DOCKER, new DockerLogConfiguration("stale", null, null), true,
+        Instant.EPOCH, Instant.EPOCH);
+    var before = service(serviceId, projectId);
+    var after = new ProjectService(serviceId, projectId, "api", null,
+        new ServiceRuntimeTarget(ServiceConnectionType.LOCAL, null,
+            ServiceRuntimeProvider.DOCKER, "new-api", null), Instant.EPOCH, Instant.EPOCH);
+    when(sources.findById(sourceId)).thenReturn(Optional.of(stale));
+    when(services.findById(serviceId)).thenReturn(Optional.of(before), Optional.of(after));
+    when(docker.stream(anyString(), isNull(), isNull(), eq(100), isNull()))
+        .thenReturn(mock(LogStream.class));
+
+    useCases.stream(projectId, sourceId, 100);
+    useCases.stream(projectId, sourceId, 100);
+
+    verify(docker).stream("api", null, null, 100, null);
+    verify(docker).stream("new-api", null, null, 100, null);
+    verify(docker, never()).stream(eq("stale"), any(), any(), anyInt(), any());
+  }
+
+  @Test
+  void localSystemdDerivedServiceStreamsThroughSystemdPortWithoutSsh() {
+    UUID serviceId = UUID.randomUUID();
+    var service = new ProjectService(serviceId, projectId, "forge-agent", null,
+        new ServiceRuntimeTarget(ServiceConnectionType.LOCAL, null,
+            ServiceRuntimeProvider.SYSTEMD, null, "forge-agent.service"),
+        Instant.EPOCH, Instant.EPOCH);
+    var stream = mock(LogStream.class);
+    when(services.findById(serviceId)).thenReturn(Optional.of(service));
+    when(systemdLogs.stream(
+            new SystemdLogConfiguration(SystemdTargetMode.UNIT, "forge-agent.service"), 250, null))
+        .thenReturn(stream);
+
+    var source = useCases.list(projectId, serviceId).getFirst();
+    assertThat(useCases.stream(projectId, source, 250)).isSameAs(stream);
+
+    verify(systemdLogs).stream(
+        new SystemdLogConfiguration(SystemdTargetMode.UNIT, "forge-agent.service"), 250, null);
+    verifyNoInteractions(remote);
+  }
+
+  @Test
+  void sshSystemdDerivedServiceStreamsThroughSystemdPortWithOwnedSsh() {
+    UUID serviceId = UUID.randomUUID();
+    UUID sshId = UUID.randomUUID();
+    var ssh = ssh(sshId);
+    var service = new ProjectService(serviceId, projectId, "forge-agent", null,
+        new ServiceRuntimeTarget(ServiceConnectionType.SSH, sshId,
+            ServiceRuntimeProvider.SYSTEMD, null, "forge-agent.service"),
+        Instant.EPOCH, Instant.EPOCH);
+    var stream = mock(LogStream.class);
+    when(services.findById(serviceId)).thenReturn(Optional.of(service));
+    when(connections.findById(sshId)).thenReturn(Optional.of(ssh));
+    when(systemdLogs.stream(
+            new SystemdLogConfiguration(SystemdTargetMode.UNIT, "forge-agent.service"), 100, ssh))
+        .thenReturn(stream);
+
+    assertThat(useCases.stream(projectId, useCases.list(projectId, serviceId).getFirst(), 100))
+        .isSameAs(stream);
+
+    verify(systemdLogs).stream(
+        new SystemdLogConfiguration(SystemdTargetMode.UNIT, "forge-agent.service"), 100, ssh);
+    verifyNoInteractions(remote);
+  }
+
+  @Test
+  void legacyServiceSourceWithNullServiceIdIsHiddenAndFailsClosed() {
+    UUID sourceId = UUID.randomUUID();
+    var stale = new LogSource(sourceId, projectId, "legacy", LogSourceOwnerType.LEGACY_SERVICE,
+        null, null, LogConnectionType.LOCAL, null, LogProviderType.DOCKER,
+        new DockerLogConfiguration("stale-container", null, null), true,
+        Instant.EPOCH, Instant.EPOCH);
+    when(sources.findByProjectId(projectId)).thenReturn(List.of(stale));
+    when(sources.findById(sourceId)).thenReturn(Optional.of(stale));
+    when(services.findByProjectId(projectId)).thenReturn(List.of());
+
+    assertThat(useCases.list(projectId)).isEmpty();
+    assertThatThrownBy(() -> useCases.stream(projectId, sourceId, 100))
+        .isInstanceOf(NotFoundException.class);
+    verifyNoInteractions(docker);
   }
 
   @Test
@@ -112,7 +248,7 @@ class LogSourceUseCasesTest {
     when(services.findById(serviceId)).thenReturn(Optional.of(service(serviceId, UUID.randomUUID())));
 
     assertThatThrownBy(() -> useCases.create(projectId, command("one", serviceId)))
-        .isInstanceOf(NotFoundException.class);
+        .isInstanceOf(ValidationException.class);
     assertThatThrownBy(() -> useCases.list(projectId, serviceId))
         .isInstanceOf(NotFoundException.class);
   }

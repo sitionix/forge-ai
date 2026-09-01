@@ -9,10 +9,19 @@ public record AgentLogSourceResponse(
     UUID projectId,
     String name,
     UUID serviceId,
+    UUID assetId,
     AgentLogConnectionType connection,
     UUID sshConnectionId,
     AgentLogProviderType provider,
     AgentLogConfigurationResponse configuration,
     boolean enabled,
     Instant createdAt,
-    Instant updatedAt) {}
+    Instant updatedAt) {
+  public AgentLogSourceResponse(UUID id, UUID projectId, String name, UUID serviceId,
+      AgentLogConnectionType connection, UUID sshConnectionId, AgentLogProviderType provider,
+      AgentLogConfigurationResponse configuration, boolean enabled,
+      Instant createdAt, Instant updatedAt) {
+    this(id, projectId, name, serviceId, null, connection, sshConnectionId, provider,
+        configuration, enabled, createdAt, updatedAt);
+  }
+}

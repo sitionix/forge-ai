@@ -577,6 +577,7 @@ describe('Agent projects page', () => {
     const deleteService = vi.fn().mockResolvedValue({});
     const fakeApi = api({
       listServices: vi.fn().mockResolvedValue([existing]),
+      getService: vi.fn().mockResolvedValue(existing),
       listSshConnections: vi.fn().mockResolvedValue([
         { id: 'ssh-1', name: 'prod', username: 'operator', host: 'prod.local' }
       ]),
@@ -601,86 +602,21 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
-  it('renders repository cards with Git state and asynchronous runtime summaries', async () => {
-    let resolveRuntime: (value: any) => void = () => {};
-    const pendingRuntime = new Promise((resolve) => { resolveRuntime = resolve; });
+  it('renders minimal GIT Resource rows without runtime details', async () => {
     const firstRepository = repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'));
     const secondRepository = repository('repo-2', project().id, 'worker', true, branchGitState('DIRTY', 'develop'));
-    const first = { ...service('service-1'), repositoryId: firstRepository.id };
-    const second = { ...service('service-2'), repositoryId: secondRepository.id };
-    const getServiceRuntime = vi.fn((_projectId: string, serviceId: string) =>
-      serviceId === first.id ? pendingRuntime : Promise.reject(new Error('unavailable')));
     const { dom, page } = await openedProject(api({
       listProjectRepositories: vi.fn().mockResolvedValue([firstRepository, secondRepository]),
-      listServices: vi.fn().mockResolvedValue([first, second]), getServiceRuntime
+      listServices: vi.fn().mockResolvedValue([])
     }));
 
-    const statuses = () => [...dom.window.document.querySelectorAll('[data-repository-runtime-status]')]
-      .map((element) => element.textContent?.trim());
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('main · Clean');
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('develop · Dirty');
-    expect(statuses()).toEqual(['UNKNOWN', 'UNKNOWN']);
-    resolveRuntime({ status: 'RUNNING' });
-    await flushAsync();
-    expect(statuses()).toEqual(['RUNNING', 'UNKNOWN']);
-    page.dispose();
-  });
-
-  it('ignores stale Service runtime responses after switching Projects', async () => {
-    const projectOne = project();
-    const projectTwo = project('22222222-2222-4222-8222-222222222222', 'Second');
-    let resolveOldRuntime: (value: any) => void = () => {};
-    const oldRuntime = new Promise((resolve) => { resolveOldRuntime = resolve; });
-    const fakeApi = api({
-      listProjects: vi.fn().mockResolvedValue([projectOne, projectTwo]),
-      listServices: vi.fn((projectId: string) => Promise.resolve([
-        { ...service(), projectId, repositoryId: repository().id, name: projectId === projectOne.id ? 'Old' : 'Current' }
-      ])),
-      getServiceRuntime: vi.fn((projectId: string) =>
-        projectId === projectOne.id ? oldRuntime : Promise.resolve({ status: 'STOPPED' }))
-    });
-    const { dom, page } = await mountedPage(fakeApi);
-
-    await page.openProject(projectOne.id);
-    await page.openProject(projectTwo.id);
-    await flushAsync();
-    resolveOldRuntime({ status: 'RUNNING' });
-    await flushAsync();
-
-    expect(dom.window.document.querySelector('[data-repository-runtime-status]')?.textContent)
-      .toContain('STOPPED');
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
-    page.dispose();
-  });
-
-  it('ignores an older runtime response after the same Service target is reloaded', async () => {
-    const targetA = { ...service(), repositoryId: repository().id };
-    const targetB = {
-      ...targetA,
-      runtimeTarget: { ...targetA.runtimeTarget, container: 'api-v2' }
-    };
-    let resolveA: (value: any) => void = () => {};
-    let resolveB: (value: any) => void = () => {};
-    const runtimeA = new Promise((resolve) => { resolveA = resolve; });
-    const runtimeB = new Promise((resolve) => { resolveB = resolve; });
-    const listServices = vi.fn()
-      .mockResolvedValueOnce([targetA])
-      .mockResolvedValueOnce([targetB]);
-    const getServiceRuntime = vi.fn()
-      .mockReturnValueOnce(runtimeA)
-      .mockReturnValueOnce(runtimeB);
-    const { dom, page } = await openedProject(api({ listServices, getServiceRuntime }));
-
-    await page.loadServices(project().id, page.projectLoadSequence);
-    resolveB({ status: 'RUNNING' });
-    await flushAsync();
-    expect(dom.window.document.querySelector('[data-repository-runtime-status]')?.textContent)
-      .toContain('RUNNING');
-
-    resolveA({ status: 'FAILED' });
-    await flushAsync();
-    expect(dom.window.document.querySelector('[data-repository-runtime-status]')?.textContent)
-      .toContain('RUNNING');
+    const rows = [...dom.window.document.querySelectorAll('[data-repository-id]')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain('api');
+    expect(rows[0]!.textContent).toContain('GIT');
+    expect(rows[0]!.textContent).toContain('main · Clean');
+    expect(rows[1]!.textContent).toContain('develop · Dirty');
+    expect(rows[0]!.textContent).not.toMatch(/RUNNING|STOPPED|service/i);
     page.dispose();
   });
 
@@ -858,7 +794,7 @@ describe('Agent projects page', () => {
     bootstrapOperatorConsole({ document: dom.window.document, window: dom.window, http: { get: vi.fn(), post: vi.fn(), put: vi.fn() } });
     expect(dom.window.document.querySelector('.sidebar-link.active')?.textContent).toContain('Projects');
     expect(dom.window.document.body.textContent).not.toContain('Tickets');
-    expect(dom.window.document.body.textContent).toContain('Services');
+    expect(dom.window.document.body.textContent).toContain('Resources');
     expect(consoleSourceText()).not.toContain('Agents V2');
   });
 
@@ -870,6 +806,19 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2ProjectsList')?.textContent).toContain('Sitionix');
     expect(dom.window.document.getElementById('agentsV2ProjectsView')?.textContent).not.toContain('New Agent');
     expect(dom.window.document.getElementById('agentsV2ProjectsView')?.textContent).not.toContain('New Workflow');
+  });
+
+  it('opening a Project does not load or inspect Services', async () => {
+    const listServices = vi.fn().mockResolvedValue(Array.from({ length: 25 }, (_, index) => service(`service-${index}`)));
+    const getServiceRuntime = vi.fn().mockResolvedValue({ status: 'RUNNING' });
+    const { page } = await openedProject(api({
+      listServices,
+      getServiceRuntime,
+    }));
+
+    expect(listServices).not.toHaveBeenCalled();
+    expect(getServiceRuntime).not.toHaveBeenCalled();
+    page.dispose();
   });
 
   it('Project renders x delete control instead of visible Delete text action', async () => {
@@ -951,7 +900,7 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
     expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).not.toContain('git@gitlab.com:company/service-a.git');
     expect(dom.window.document.getElementById('projectServicesList')).toBeNull();
-    expect(dom.window.document.getElementById('projectStandaloneServicesSection')?.classList.contains('hidden')).toBe(true);
+    expect(dom.window.document.getElementById('projectStandaloneServicesSection')).toBeNull();
     expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Architect');
     expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
@@ -975,7 +924,7 @@ describe('Agent projects page', () => {
     const card = dom.window.document.querySelector<HTMLElement>('[data-repository-id="88888888-8888-4888-8888-888888888888"]')!;
     expect(card.textContent).toContain('some_bridge');
     expect(card.textContent).toContain('main · Clean');
-    expect(card.textContent).toContain('RUNNING');
+    expect(card.textContent).not.toContain('RUNNING');
     expect(card.textContent).not.toContain('Open');
     card.click();
     await flushAsync();
@@ -1003,18 +952,21 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
-  it('does not render Runtime not configured when Service listing fails on Project page', async () => {
+  it('keeps Resource rows minimal when Service listing fails on Project page', async () => {
+    const listServices = vi.fn().mockRejectedValue(new Error('Services unavailable.'));
     const fakeApi = api({
       listProjectRepositories: vi.fn().mockResolvedValue([
         repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
       ]),
-      listServices: vi.fn().mockRejectedValue(new Error('Services unavailable.'))
+      listServices
     });
     const { dom, page } = await openedProject(fakeApi);
 
-    const summary = dom.window.document.querySelector('[data-repository-runtime-status="repo-1"]')!;
-    expect(summary.textContent).toBe('UNKNOWN');
-    expect(summary.textContent).not.toBe('NOT CONFIGURED');
+    const row = dom.window.document.querySelector('[data-repository-id="repo-1"]')!;
+    expect(row.textContent).toContain('api');
+    expect(row.textContent).toContain('GIT');
+    expect(row.querySelector('[data-repository-runtime-status]')).toBeNull();
+    expect(listServices).not.toHaveBeenCalled();
     page.dispose();
   });
 
@@ -1316,7 +1268,7 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
-  it('one linked Service opens directly with service-scoped Logs', async () => {
+  it('one linked Service exposes only Open Logs from the repository workspace', async () => {
     const linked = { ...service('service-1'), repositoryId: 'repo-1', name: 'api runtime' };
     const listServiceLogSources = vi.fn().mockResolvedValue([{
       id: 'source-1',
@@ -1337,8 +1289,9 @@ describe('Agent projects page', () => {
 
     expect(dom.window.document.getElementById('repositoryRuntimeServices')?.classList.contains('hidden')).toBe(true);
     expect(dom.window.document.getElementById('repositoryRuntimeSummary')?.textContent).toContain('api runtime');
-    expect(dom.window.document.getElementById('projectLogsSources')?.textContent).toContain('API logs');
-    expect(listServiceLogSources).toHaveBeenCalledWith(project().id, linked.id);
+    expect(dom.window.document.getElementById('projectLogsSourcesSection')?.classList.contains('hidden')).toBe(true);
+    expect(dom.window.document.getElementById('repositoryOpenLogs')?.classList.contains('hidden')).toBe(false);
+    expect(listServiceLogSources).not.toHaveBeenCalled();
     page.dispose();
   });
 
@@ -1374,7 +1327,8 @@ describe('Agent projects page', () => {
 
     expect(page.state.selectedRuntimeServiceId).toBe(workerService.id);
     expect(dom.window.document.getElementById('repositoryRuntimeSummary')?.textContent).toContain('worker');
-    expect(listServiceLogSources).toHaveBeenLastCalledWith(project().id, workerService.id);
+    expect(dom.window.document.getElementById('repositoryOpenLogs')?.classList.contains('hidden')).toBe(false);
+    expect(listServiceLogSources).not.toHaveBeenCalled();
     page.dispose();
   });
 
@@ -1385,7 +1339,6 @@ describe('Agent projects page', () => {
     } };
     const createService = vi.fn().mockResolvedValue(added);
     const listServices = vi.fn()
-      .mockResolvedValueOnce([existing])
       .mockResolvedValueOnce([existing])
       .mockResolvedValueOnce([existing, added]);
     const fakeApi = api({
@@ -1427,7 +1380,6 @@ describe('Agent projects page', () => {
     const deleteService = vi.fn().mockResolvedValue({});
     const listServices = vi.fn()
       .mockResolvedValueOnce([apiService, workerService])
-      .mockResolvedValueOnce([apiService, workerService])
       .mockResolvedValueOnce([apiService]);
     const fakeApi = api({
       listProjectRepositories: vi.fn().mockResolvedValue([
@@ -1451,7 +1403,7 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
-  it('renders mixed multi-Service repository summary without presenting it as RUNNING', async () => {
+  it('does not render mixed multi-Service summaries in a GIT Resource row', async () => {
     const apiService = { ...service('service-api'), repositoryId: 'repo-1', name: 'api' };
     const workerService = { ...service('service-worker'), repositoryId: 'repo-1', name: 'worker' };
     const sidecarService = { ...service('service-sidecar'), repositoryId: 'repo-1', name: 'sidecar' };
@@ -1471,14 +1423,13 @@ describe('Agent projects page', () => {
     }));
     await flushAsync();
 
-    const summary = dom.window.document.querySelector('[data-repository-runtime-status="repo-1"]')!;
-    expect(summary.textContent).toBe('3 services · 1 running · 1 stopped · 1 unknown');
-    expect(summary.textContent).not.toBe('RUNNING');
-    expect(summary.closest('.repository-runtime-summary')?.classList.contains('repository-runtime-running')).toBe(false);
+    const row = dom.window.document.querySelector('[data-repository-id="repo-1"]')!;
+    expect(row.querySelector('[data-repository-runtime-status]')).toBeNull();
+    expect(row.textContent).not.toMatch(/services|running|stopped|unknown/i);
     page.dispose();
   });
 
-  it('renders multi-Service repository summary with visible failure tone', async () => {
+  it('does not render Service failure state in a GIT Resource row', async () => {
     const apiService = { ...service('service-api'), repositoryId: 'repo-1', name: 'api', runtimeStatus: 'RUNNING' };
     const workerService = { ...service('service-worker'), repositoryId: 'repo-1', name: 'worker', runtimeStatus: 'FAILED' };
     const { dom, page } = await openedProject(api({
@@ -1493,13 +1444,13 @@ describe('Agent projects page', () => {
     }));
     await flushAsync();
 
-    const summary = dom.window.document.querySelector('[data-repository-runtime-status="repo-1"]')!;
-    expect(summary.textContent).toBe('2 services · 1 running · 1 failed');
-    expect(summary.closest('.repository-runtime-summary')?.classList.contains('repository-runtime-failed')).toBe(true);
+    const row = dom.window.document.querySelector('[data-repository-id="repo-1"]')!;
+    expect(row.querySelector('[data-repository-runtime-status]')).toBeNull();
+    expect(row.textContent).not.toMatch(/running|failed/i);
     page.dispose();
   });
 
-  it('standalone Service remains accessible from the Project page', async () => {
+  it('does not render the former top-level Standalone Services UI', async () => {
     const standalone = { ...service('standalone-1'), name: 'worker' };
     const fakeApi = api({
       listServices: vi.fn().mockResolvedValue([standalone]),
@@ -1508,14 +1459,8 @@ describe('Agent projects page', () => {
     });
     const { dom, page } = await openedProject(fakeApi);
 
-    const section = dom.window.document.getElementById('projectStandaloneServicesSection')!;
-    expect(section.classList.contains('hidden')).toBe(false);
-    expect(section.textContent).toContain('worker');
-    section.querySelector<HTMLElement>('[data-standalone-service-id="standalone-1"]')?.click();
-    await flushAsync();
-
-    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/services/standalone-1`);
-    expect(dom.window.document.getElementById('projectLogsTitle')?.textContent).toBe('worker');
+    expect(dom.window.document.getElementById('projectStandaloneServicesSection')).toBeNull();
+    expect(dom.window.document.getElementById('agentsV2Workspace')?.textContent).not.toContain('worker');
     page.dispose();
   });
 
@@ -1605,11 +1550,11 @@ describe('Agent projects page', () => {
     await page.openRepositoryWorkspace(project().id, 'repo-1');
     dom.window.document.getElementById('projectLogsLive')?.click();
 
-    expect(streams).toHaveLength(1);
+    expect(streams).toHaveLength(0);
     dom.window.document.getElementById('projectLogsBack')?.click();
     await flushAsync();
 
-    expect(streams[0]!.closed).toBe(true);
+    expect(streams).toHaveLength(0);
     expect(dom.window.document.getElementById('projectLogsWorkspace')?.classList.contains('hidden')).toBe(true);
     page.dispose();
   });
@@ -1657,21 +1602,19 @@ describe('Agent projects page', () => {
     await page.openProject(project().id);
     await page.openRepositoryWorkspace(project().id, 'repo-1');
     dom.window.document.getElementById('projectLogsLive')?.click();
-    expect(streams).toHaveLength(1);
+    expect(streams).toHaveLength(0);
     const logSourceLoads = listServiceLogSources.mock.calls.length;
     const runtimeLoads = getServiceRuntime.mock.calls.length;
 
     dom.window.document.querySelector<HTMLButtonElement>('[data-refresh-repository-id="repo-1"]')?.click();
     await flushAsync();
-    expect(streams).toHaveLength(1);
-    expect(streams[0]!.closed).toBe(false);
+    expect(streams).toHaveLength(0);
     expect(listServiceLogSources).toHaveBeenCalledTimes(logSourceLoads);
     expect(getServiceRuntime).toHaveBeenCalledTimes(runtimeLoads);
 
     dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.click();
     await flushAsync();
-    expect(streams).toHaveLength(1);
-    expect(streams[0]!.closed).toBe(false);
+    expect(streams).toHaveLength(0);
     expect(listServiceLogSources).toHaveBeenCalledTimes(logSourceLoads);
     expect(getServiceRuntime).toHaveBeenCalledTimes(runtimeLoads);
     page.dispose();
@@ -1723,7 +1666,7 @@ describe('Agent projects page', () => {
     dom.window.document.querySelector<HTMLElement>('[data-runtime-service-id="service-worker"]')?.click();
     await flushAsync();
     dom.window.document.getElementById('projectLogsLive')?.click();
-    expect(streams).toHaveLength(1);
+    expect(streams).toHaveLength(0);
 
     apiLogs.resolve([{
       id: 'api-source',
@@ -1737,9 +1680,8 @@ describe('Agent projects page', () => {
     await flushAsync();
 
     expect(page.state.selectedRuntimeServiceId).toBe(workerService.id);
-    expect(dom.window.document.getElementById('projectLogsSources')?.textContent).toContain('Worker logs');
-    expect(streams).toHaveLength(1);
-    expect(streams[0]!.closed).toBe(false);
+    expect(dom.window.document.getElementById('projectLogsSourcesSection')?.classList.contains('hidden')).toBe(true);
+    expect(streams).toHaveLength(0);
     page.dispose();
   });
 
@@ -1755,9 +1697,10 @@ describe('Agent projects page', () => {
     });
     const { dom } = await openedProject(fakeApi);
 
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('No repositories yet.');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('No resources yet.');
 
     dom.window.document.getElementById('agentsV2ImportRepository')?.click();
+    dom.window.document.getElementById('agentsV2RepositoryForm')?.dispatchEvent(new dom.window.Event('submit'));
     const input = dom.window.document.getElementById('agentsV2RepositoryUrl') as HTMLInputElement;
     input.value = ' git@gitlab.com:company/service-a.git ';
     dom.window.document.getElementById('agentsV2RepositoryForm')?.dispatchEvent(new dom.window.Event('submit'));
@@ -2105,6 +2048,7 @@ describe('Agent projects page', () => {
     const { dom, fakeApi } = await openedProject();
 
     dom.window.document.getElementById('agentsV2ImportRepository')?.click();
+    dom.window.document.getElementById('agentsV2RepositoryForm')?.dispatchEvent(new dom.window.Event('submit'));
     (dom.window.document.getElementById('agentsV2RepositoryUrl') as HTMLInputElement).value = '   ';
     dom.window.document.getElementById('agentsV2RepositoryForm')?.dispatchEvent(new dom.window.Event('submit'));
     await flushAsync();
@@ -5724,3 +5668,71 @@ function walk(directory: string): string[] {
     return [path];
   });
 }
+
+describe('SSH Resource monitoring workspace', () => {
+  it('asks for GIT or SSH before showing a source-specific Add Resource flow', async () => {
+    const listProjectAssets = vi.fn().mockResolvedValue([]);
+    const { dom, page } = await openedProject(api({ listProjectAssets }));
+    dom.window.document.getElementById('agentsV2ImportRepository')?.click();
+
+    expect(dom.window.document.getElementById('agentsV2GitResourceFields')?.classList.contains('hidden')).toBe(true);
+    expect(dom.window.document.getElementById('agentsV2SshResourceFields')?.classList.contains('hidden')).toBe(true);
+    const source = dom.window.document.getElementById('agentsV2ResourceSource') as HTMLSelectElement;
+    source.value = 'SSH';
+    source.dispatchEvent(new dom.window.Event('change'));
+    dom.window.document.getElementById('agentsV2RepositoryForm')?.dispatchEvent(new dom.window.Event('submit'));
+
+    expect(dom.window.document.getElementById('agentsV2GitResourceFields')?.classList.contains('hidden')).toBe(true);
+    expect(dom.window.document.getElementById('agentsV2SshResourceFields')?.classList.contains('hidden')).toBe(false);
+    expect(dom.window.document.getElementById('agentsV2RepositoryImport')?.textContent).toBe('Add Resource');
+    page.dispose();
+  });
+
+  it('searches, multi-selects, adds and removes Asset-owned targets without creating a Service', async () => {
+    const configured = [{
+      id: 'old-source', assetId: 'asset-1', serviceId: null, provider: 'SYSTEMD',
+      configuration: { unit: 'old.service' }, enabled: true
+    }];
+    const createProjectAssetMonitoring = vi.fn().mockResolvedValue({});
+    const deleteLogSource = vi.fn().mockResolvedValue({});
+    const createService = vi.fn();
+    const fakeApi = api({
+      listProjectAssetMonitoring: vi.fn().mockResolvedValue(configured),
+      discoverRuntimeTargets: vi.fn((_projectId: string, request: any) => Promise.resolve(
+        request.provider === 'SYSTEMD'
+          ? [{ id: 'old.service' }, { id: 'new.service' }]
+          : [{ id: 'api' }, { id: 'worker' }]
+      )),
+      createProjectAssetMonitoring,
+      deleteLogSource,
+      createService,
+    });
+    const { dom, page } = await mountedPage(fakeApi);
+    await page.configureAssetMonitoring(project().id, { id: 'asset-1', sshConnectionId: 'ssh-1' }, {
+      systemdAvailable: true, dockerAvailable: true,
+    });
+
+    const systemdSearch = dom.window.document.getElementById('assetMonitoringSystemdSearch') as HTMLInputElement;
+    systemdSearch.value = 'new';
+    systemdSearch.dispatchEvent(new dom.window.Event('input'));
+    const newUnit = dom.window.document.querySelector<HTMLInputElement>('[data-monitoring-provider="SYSTEMD"][value="new.service"]')!;
+    newUnit.checked = true;
+    newUnit.dispatchEvent(new dom.window.Event('change'));
+    page.assetMonitoring.selected.delete('SYSTEMD:old.service');
+    const docker = dom.window.document.querySelector<HTMLInputElement>('[data-monitoring-provider="DOCKER"][value="api"]')!;
+    docker.checked = true;
+    docker.dispatchEvent(new dom.window.Event('change'));
+
+    await page.saveAssetMonitoring(new dom.window.Event('submit'));
+
+    expect(createProjectAssetMonitoring).toHaveBeenCalledWith(project().id, 'asset-1', {
+      name: 'new.service', provider: 'SYSTEMD', target: 'new.service', enabled: true,
+    });
+    expect(createProjectAssetMonitoring).toHaveBeenCalledWith(project().id, 'asset-1', {
+      name: 'api', provider: 'DOCKER', target: 'api', enabled: true,
+    });
+    expect(deleteLogSource).toHaveBeenCalledWith(project().id, 'old-source');
+    expect(createService).not.toHaveBeenCalled();
+    page.dispose();
+  });
+});

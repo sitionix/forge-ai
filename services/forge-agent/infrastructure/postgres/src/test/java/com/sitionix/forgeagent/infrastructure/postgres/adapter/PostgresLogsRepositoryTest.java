@@ -36,6 +36,7 @@ class PostgresLogsRepositoryTest {
     var captor = ArgumentCaptor.forClass(LogSourceEntity.class);
     verify(spring).save(captor.capture());
     assertThat(captor.getValue().getServiceId()).isNull();
+    assertThat(captor.getValue().getOwnerType()).isEqualTo(LogSourceOwnerType.CUSTOM);
     assertThat(captor.getValue().getProjectId()).isEqualTo(p);
     assertThat(captor.getValue().getSshConnectionId()).isEqualTo(ssh);
     assertThat(captor.getValue().getComposeService()).isEqualTo("web");
@@ -50,8 +51,10 @@ class PostgresLogsRepositoryTest {
     var two = entity(UUID.randomUUID(), p, "two");
     when(spring.findAllByProjectIdOrderByNameAscIdAsc(p)).thenReturn(List.of(one, two));
     assertThat(new PostgresLogSourceRepository(spring).findByProjectId(p))
-        .extracting(LogSource::name)
-        .containsExactly("one", "two");
+        .extracting(LogSource::name, LogSource::ownerType)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple("one", LogSourceOwnerType.CUSTOM),
+            org.assertj.core.groups.Tuple.tuple("two", LogSourceOwnerType.CUSTOM));
   }
 
   @Test

@@ -31,6 +31,12 @@ public class PostgresLogSourceRepository implements LogSourceRepository {
         return repository.findAllByProjectIdAndServiceIdOrderByNameAscIdAsc(projectId, serviceId).stream().map(this::domain).toList();
     }
 
+    @Override
+    public List<LogSource> findByProjectIdAndAssetId(final UUID projectId, final UUID assetId) {
+        return this.repository.findByProjectIdAndAssetIdOrderByCreatedAtAscIdAsc(projectId, assetId).stream()
+                .map(this::domain).toList();
+    }
+
     public Optional<LogSource> findById(final UUID id) {
         return this.repository.findById(id).map(this::domain);
     }
@@ -54,7 +60,8 @@ public class PostgresLogSourceRepository implements LogSourceRepository {
                 entity.getId(),
                 entity.getProjectId(),
                 entity.getName(),
-                entity.getServiceId(),
+                entity.getOwnerType(),
+                entity.getServiceId(), entity.getAssetId(),
                 entity.getConnectionType(),
                 entity.getSshConnectionId(),
                 entity.getProvider(),
@@ -69,7 +76,9 @@ public class PostgresLogSourceRepository implements LogSourceRepository {
         entity.setId(source.id());
         entity.setProjectId(source.projectId());
         entity.setName(source.name());
+        entity.setOwnerType(source.ownerType());
         entity.setServiceId(source.serviceId());
+        entity.setAssetId(source.assetId());
         entity.setConnectionType(source.connectionType());
         entity.setSshConnectionId(source.sshConnectionId());
         entity.setProvider(source.provider());

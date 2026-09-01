@@ -6,6 +6,7 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.NodeRunEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectServiceEntity;
+import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectAssetEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.SshConnectionEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowEntity;
@@ -55,6 +56,11 @@ public final class ForgeAgentDbContracts {
 
     public static final DbContract<ProjectServiceEntity> PROJECT_SERVICE =
             DbContractsDsl.entity(ProjectServiceEntity.class)
+                    .cleanupPolicy(CleanupPolicy.DELETE_ALL)
+                    .build();
+
+    public static final DbContract<ProjectAssetEntity> PROJECT_ASSET =
+            DbContractsDsl.entity(ProjectAssetEntity.class)
                     .cleanupPolicy(CleanupPolicy.DELETE_ALL)
                     .build();
 

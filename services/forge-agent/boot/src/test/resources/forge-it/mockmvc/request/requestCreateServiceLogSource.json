@@ -1,1 +1,1 @@
-{"name":"service-api","serviceId":"90000000-0000-4000-8000-000000000010","connection":"LOCAL","sshConnectionId":null,"provider":"DOCKER","container":"api","composeService":null,"composeFile":null,"systemdMode":null,"unit":null,"path":null,"enabled":true}
+{"name":"legacy-custom","serviceId":null,"connection":"LOCAL","sshConnectionId":null,"provider":"DOCKER","container":"api","composeService":null,"composeFile":null,"systemdMode":null,"unit":null,"path":null,"enabled":true}

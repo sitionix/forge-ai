@@ -2,6 +2,7 @@
   "id": "90000000-0000-4000-8000-000000000024",
   "projectId": "90000000-0000-4000-8000-000000000001",
   "name": "worker",
+  "ownerType": "LEGACY_SERVICE",
   "serviceId": "90000000-0000-4000-8000-000000000010",
   "connectionType": "LOCAL",
   "provider": "DOCKER",

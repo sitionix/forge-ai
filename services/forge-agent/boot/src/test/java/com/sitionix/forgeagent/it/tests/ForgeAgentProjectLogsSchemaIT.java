@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeagent.infrastructure.postgres.entity.LogSourceEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.SshConnectionEntity;
+import com.sitionix.forgeagent.domain.model.LogSourceOwnerType;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
@@ -101,7 +102,8 @@ class ForgeAgentProjectLogsSchemaIT {
     final List<LogSourceEntity> sources =
         this.forgeIt.postgresql().get(LogSourceEntity.class).getAll();
     assertThat(sources).hasSize(3);
-    assertThat(sources).filteredOn(source -> source.getServiceId() == null).hasSize(1);
+    assertThat(sources).filteredOn(source -> source.getOwnerType() == LogSourceOwnerType.CUSTOM).hasSize(1);
+    assertThat(sources).filteredOn(source -> source.getOwnerType() == LogSourceOwnerType.LEGACY_SERVICE).hasSize(2);
     assertThat(sources).filteredOn(source -> SERVICE_ID.equals(source.getServiceId())).hasSize(2);
 
     this.forgeIt.postgresql().clearAllData(List.of(PROJECT_SERVICE));
@@ -110,6 +112,7 @@ class ForgeAgentProjectLogsSchemaIT {
         this.forgeIt.postgresql().get(LogSourceEntity.class).getAll();
     assertThat(retained).hasSize(3);
     assertThat(retained).allMatch(source -> source.getServiceId() == null);
+    assertThat(retained).filteredOn(source -> source.getOwnerType() == LogSourceOwnerType.LEGACY_SERVICE).hasSize(2);
   }
 
   @Test
