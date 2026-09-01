@@ -49,7 +49,7 @@ describe("ProjectLogsView", () => {
     });
   }
 
-  it("keeps the open Sources popover unclipped and above the following stream panel", () => {
+  it("keeps the Sources popover in normal flow so the section expands before the stream panel", () => {
     const html = readFileSync(join(process.cwd(), "src/operator/agent-projects.html"), "utf8");
     const css = readFileSync(join(process.cwd(), "src/operator/operator-ui.css"), "utf8");
     const dom = new JSDOM(html);
@@ -59,9 +59,9 @@ describe("ProjectLogsView", () => {
 
     expect(sourcesSection.compareDocumentPosition(streamSection) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(sourcesSection.contains(popover)).toBe(true);
-    expect(css).toMatch(/#projectLogsSourcesSection\s*\{[^}]*overflow:\s*visible;[^}]*z-index:\s*2;/s);
-    expect(css).toMatch(/#projectLogsStreamSection\s*\{[^}]*z-index:\s*1;/s);
-    expect(css).toMatch(/\.project-log-sources-popover\s*\{[^}]*position:\s*absolute;[^}]*top:\s*100%;/s);
+    expect(css).toMatch(/\.project-log-sources-popover\s*\{[^}]*position:\s*static;[^}]*display:\s*block;[^}]*width:\s*100%;/s);
+    expect(css).not.toMatch(/#projectLogsSourcesSection\s*\{[^}]*z-index:/s);
+    expect(css).not.toMatch(/\.project-log-sources-popover\s*\{[^}]*position:\s*absolute;/s);
   });
 
   it("is the viewer for Service-derived, Asset-owned, and legacy/custom sources", async () => {
