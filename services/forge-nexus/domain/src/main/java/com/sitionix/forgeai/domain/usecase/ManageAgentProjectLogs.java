@@ -18,11 +18,5 @@ public interface ManageAgentProjectLogs {
 
   void validate(UUID projectId, SaveAgentLogSourceCommand command);
 
-  List<AgentSshConnection> listSshConnections(UUID projectId);
-
-  AgentSshConnection createSshConnection(UUID projectId, CreateAgentSshConnectionCommand command);
-
-  void testSshConnection(UUID projectId, CreateAgentSshConnectionCommand command);
-
   AgentLogStream openStream(UUID projectId, List<UUID> sourceIds, int lines);
 }

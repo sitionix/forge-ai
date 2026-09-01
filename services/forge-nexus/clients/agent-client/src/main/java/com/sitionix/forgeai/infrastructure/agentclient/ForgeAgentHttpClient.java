@@ -180,4 +180,8 @@ public interface ForgeAgentHttpClient {
         contentType = MediaType.APPLICATION_JSON_VALUE)
     void testProjectSshConnection(
         @PathVariable UUID projectId, @RequestBody AgentSshConnectionRequest request);
+
+    @GetExchange("/api/v1/projects/{projectId}/ssh-connections/{connectionId}/metrics")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMetricsResponse getProjectSshConnectionMetrics(
+        @PathVariable UUID projectId, @PathVariable UUID connectionId);
 }

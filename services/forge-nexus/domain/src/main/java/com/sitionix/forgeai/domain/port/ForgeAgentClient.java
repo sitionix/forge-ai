@@ -132,5 +132,7 @@ public interface ForgeAgentClient {
 
   void testProjectSshConnection(UUID projectId, CreateAgentSshConnectionCommand command);
 
+  AgentAssetMetrics getProjectSshConnectionMetrics(UUID projectId, UUID connectionId);
+
   AgentLogStream openProjectLogsStream(UUID projectId, List<UUID> sourceIds, int lines);
 }

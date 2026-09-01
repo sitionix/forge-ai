@@ -97,6 +97,17 @@
         </div>
       </header>
 
+      <section id="systemHealthSection" class="panel project-section system-health">
+        <div class="agents-v2-pane-head">
+          <div><h2>System Health</h2><p id="systemHealthStatus" class="system-health-status" aria-live="polite"></p></div>
+          <div class="system-health-source">
+            <label>Source <select id="systemHealthSource" class="text-input"><option value="">Select SSH connection</option></select></label>
+            <button id="systemHealthAddConnection" class="button small secondary" type="button">+ Add connection</button>
+          </div>
+        </div>
+        <div id="systemHealthContent" aria-live="polite"><div class="muted-state">Select a connection to view system health.</div></div>
+      </section>
+
       <section id="serviceOverview" class="panel project-section hidden">
         <div class="agents-v2-pane-head"><div><h2>Overview</h2><p id="serviceOverviewSummary"></p></div><div><span id="serviceRuntimeStatus" class="agents-v2-status">UNKNOWN</span> <button id="serviceOpenLogs" class="button small secondary" type="button">Open Logs</button></div></div>
         <div id="serviceRuntimeDetails" class="repository-list"></div>

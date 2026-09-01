@@ -416,6 +416,23 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     }
 
     @Override
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics getProjectSshConnectionMetrics(
+            final UUID projectId, final UUID connectionId) {
+        return assetMetrics(this.clientCallExecutor.execute(
+                () -> this.httpClient.getProjectSshConnectionMetrics(projectId, connectionId)));
+    }
+
+    private com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics assetMetrics(
+            com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMetricsResponse response) {
+        return new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics(
+                response.cpuTotalPercent(), response.cpuPerCorePercent(), response.ramTotalBytes(), response.ramUsedBytes(),
+                response.loadAverage1m(), response.loadAverage5m(), response.loadAverage15m(),
+                response.disks().stream().map(d -> new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics.Disk(d.mount(), d.totalBytes(), d.usedBytes())).toList(),
+                response.network().stream().map(n -> new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics.Network(n.interfaceName(), n.receivedBytes(), n.transmittedBytes())).toList(),
+                response.uptimeSeconds(), response.temperatures().stream().map(t -> new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics.Temperature(t.sensor(), t.celsius())).toList());
+    }
+
+    @Override
     public AgentLogStream openProjectLogsStream(
         final UUID projectId, final List<UUID> sourceIds, final int lines) {
       return clientCallExecutor.execute(
