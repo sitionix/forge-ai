@@ -9,13 +9,20 @@ import org.springframework.stereotype.Component;
 /** Linux-only fixed probes. No part of a command is supplied by an API caller. */
 @Component
 public class CliAssetInspectionAdapter implements AssetInspectionPort {
-  private static final String METRICS_PROBE = """
+  static final String METRICS_PROBE = """
       free -b | awk '/^Mem:/{print "RAM|"$2"|"$3}'
       awk '{print "LOAD|"$1"|"$2"|"$3}' /proc/loadavg
       df -B1 -P | awk 'NR>1{print "DISK|"$6"|"$2"|"$3}'
       sed 's/^/NETDEV|/' /proc/net/dev
       awk '{printf "UPTIME|%.0f\\n",$1}' /proc/uptime
-      for f in /sys/class/thermal/thermal_zone*/temp; do [ -r "$f" ] && awk -v n="$f" '{print "TEMP|"n"|"$1/1000}' "$f"; done
+      for z in /sys/class/thermal/thermal_zone*; do
+        f="$z/temp"
+        [ -r "$f" ] || continue
+        n="$(cat "$z/type" 2>/dev/null || true)"
+        [ -n "$n" ] || n="${z##*/}"
+        n="$(printf '%s' "$n" | tr '|\r\n' '   ')"
+        awk -v n="$n" '{print "TEMP|"n"|"$1/1000}' "$f"
+      done
       """;
 
   private final TypedProcessExecutor executor;
