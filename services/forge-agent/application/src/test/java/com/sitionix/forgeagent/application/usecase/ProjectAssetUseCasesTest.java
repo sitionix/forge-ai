@@ -79,4 +79,40 @@ class ProjectAssetUseCasesTest {
     assertThatThrownBy(()->useCases.replaceMonitoring(project,assetId,duplicate)).hasMessageContaining("Duplicate");
     verify(logs,never()).save(any()); verify(logs,never()).delete(any());
   }
+
+  @Test void desiredStateDiscoversEachRuntimeProviderOnlyOnceAndNormalizesPersistedDuplicates() {
+    var projects=mock(ProjectRepository.class); var assets=mock(ProjectAssetRepository.class);
+    var connections=mock(SshConnectionRepository.class); var logs=mock(LogSourceRepository.class);
+    var discovery=mock(RuntimeTargetDiscoveryPort.class);
+    UUID project=UUID.randomUUID(), assetId=UUID.randomUUID(), sshId=UUID.randomUUID(); Instant now=Instant.EPOCH;
+    when(projects.findById(project)).thenReturn(Optional.of(new Project(project,"p","p",now,now)));
+    when(assets.findById(assetId)).thenReturn(Optional.of(new ProjectAsset(assetId,project,"server",sshId,now,now)));
+    var ssh=new SshConnection(sshId,project,"host","example",22,"user","/key",now,now); when(connections.findById(sshId)).thenReturn(Optional.of(ssh));
+    var first=new LogSource(UUID.randomUUID(),project,"same.service",LogSourceOwnerType.ASSET,null,assetId,LogConnectionType.SSH,null,
+        LogProviderType.SYSTEMD,new SystemdLogConfiguration(SystemdTargetMode.UNIT,"same.service"),true,now,now);
+    var duplicate=new LogSource(UUID.randomUUID(),project,"same.service",LogSourceOwnerType.ASSET,null,assetId,LogConnectionType.SSH,null,
+        LogProviderType.SYSTEMD,new SystemdLogConfiguration(SystemdTargetMode.UNIT,"same.service"),true,now,now);
+    when(logs.findByProjectIdAndAssetId(project,assetId)).thenReturn(List.of(first,duplicate)); when(logs.save(any())).thenAnswer(call->call.getArgument(0));
+    when(discovery.discover(ssh,ServiceRuntimeProvider.SYSTEMD)).thenReturn(List.of(
+        candidate("one.service",ServiceRuntimeProvider.SYSTEMD),candidate("two.service",ServiceRuntimeProvider.SYSTEMD)));
+    when(discovery.discover(ssh,ServiceRuntimeProvider.DOCKER)).thenReturn(List.of(
+        candidate("api",ServiceRuntimeProvider.DOCKER),candidate("worker",ServiceRuntimeProvider.DOCKER)));
+    var useCases=new ProjectAssetUseCases(projects,assets,connections,logs,mock(AssetInspectionPort.class),discovery,Clock.fixed(now,ZoneOffset.UTC));
+
+    var result=useCases.replaceMonitoring(project,assetId,List.of(
+        new ProjectAssetUseCases.MonitoringTarget(LogProviderType.SYSTEMD,"same.service"),
+        new ProjectAssetUseCases.MonitoringTarget(LogProviderType.SYSTEMD,"one.service"),
+        new ProjectAssetUseCases.MonitoringTarget(LogProviderType.SYSTEMD,"two.service"),
+        new ProjectAssetUseCases.MonitoringTarget(LogProviderType.DOCKER,"api"),
+        new ProjectAssetUseCases.MonitoringTarget(LogProviderType.DOCKER,"worker")));
+
+    verify(discovery,times(1)).discover(ssh,ServiceRuntimeProvider.SYSTEMD);
+    verify(discovery,times(1)).discover(ssh,ServiceRuntimeProvider.DOCKER);
+    verify(logs).delete(duplicate); verify(logs,never()).delete(first);
+    assertThat(result).extracting(source -> source.provider()+":"+source.name()).doesNotHaveDuplicates();
+  }
+
+  private static RuntimeTargetCandidate candidate(String id, ServiceRuntimeProvider provider) {
+    return new RuntimeTargetCandidate(id,id,provider,RuntimeTargetStatus.RUNNING,null,null,null);
+  }
 }

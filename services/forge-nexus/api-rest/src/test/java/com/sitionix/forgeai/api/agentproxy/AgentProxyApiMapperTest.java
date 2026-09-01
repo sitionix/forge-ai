@@ -69,6 +69,22 @@ class AgentProxyApiMapperTest {
     private final AgentProxyApiMapper mapper = new AgentProxyApiMapper(this.objectMapper);
 
     @Test
+    void mapsAssetMonitoringReplacementAtTheApiBoundary() {
+        var request = new AgentAssetMonitoringReplacementRequest(List.of(
+                new AgentAssetMonitoringReplacementRequest.Target(
+                        com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderType.SYSTEMD,
+                        "ancestor.service")));
+
+        var command = this.mapper.toCommand(request);
+
+        assertThat(command.targets()).singleElement().satisfies(target -> {
+            assertThat(target.provider()).isEqualTo(
+                    com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderType.SYSTEMD);
+            assertThat(target.target()).isEqualTo("ancestor.service");
+        });
+    }
+
+    @Test
     void mapsProjectRequestToCommand() {
         assertThat(this.mapper.toCommand(new AgentProjectRequest("Sitionix")))
                 .isEqualTo(new CreateAgentProjectCommand("Sitionix"));

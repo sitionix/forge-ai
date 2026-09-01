@@ -81,11 +81,8 @@ public class ForgeAiProjectAssetsController {
     public List<AgentLogSourceResponse> replaceMonitoring(
             @PathVariable final UUID projectId, @PathVariable final UUID assetId,
             @Valid @RequestBody final AgentAssetMonitoringReplacementRequest request) {
-        var command = new com.sitionix.forgeai.domain.model.agentproxy.ReplaceAgentAssetMonitoringCommand(
-                request.targets().stream().map(target ->
-                        new com.sitionix.forgeai.domain.model.agentproxy.ReplaceAgentAssetMonitoringCommand.Target(
-                                target.provider(), target.target())).toList());
-        return this.assets.replaceMonitoring(projectId, assetId, command).stream().map(this.mapper::toResponse).toList();
+        return this.assets.replaceMonitoring(projectId, assetId, this.mapper.toCommand(request)).stream()
+                .map(this.mapper::toResponse).toList();
     }
 
     @DeleteMapping("/{assetId}")

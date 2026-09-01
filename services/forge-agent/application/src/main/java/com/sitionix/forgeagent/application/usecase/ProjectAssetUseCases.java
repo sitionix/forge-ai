@@ -91,9 +91,14 @@ public class ProjectAssetUseCases {
     var connection = connection(projectId, asset.sshConnectionId());
     var existing = logSources.findByProjectIdAndAssetId(projectId, assetId);
     var existingByKey = new LinkedHashMap<String, LogSource>();
-    existing.forEach(source -> existingByKey.put(monitoringKey(source.provider(), monitoringTarget(source)), source));
+    var duplicateExisting = new HashSet<UUID>();
+    existing.forEach(source -> {
+      var key = monitoringKey(source.provider(), monitoringTarget(source));
+      if (existingByKey.putIfAbsent(key, source) != null) duplicateExisting.add(source.id());
+    });
 
     var desired = new LinkedHashMap<String, MonitoringTarget>();
+    var newTargets = new EnumMap<LogProviderType, Set<String>>(LogProviderType.class);
     for (var item : requested == null ? List.<MonitoringTarget>of() : requested) {
       if (item == null || item.provider() == null || item.target() == null || item.target().isBlank())
         throw new ValidationException("Monitoring provider and target are required");
@@ -105,11 +110,20 @@ public class ProjectAssetUseCases {
         if (!target.startsWith("/") || target.indexOf('\0') >= 0)
           throw new ValidationException("File target must be an absolute POSIX path");
       } else if (!existingByKey.containsKey(monitoringKey(item.provider(), target))) {
-        var runtimeProvider = item.provider() == LogProviderType.DOCKER
-            ? ServiceRuntimeProvider.DOCKER : ServiceRuntimeProvider.SYSTEMD;
-        if (discovery.discover(connection, runtimeProvider).stream().noneMatch(candidate -> candidate.id().equals(target)))
-          throw new ValidationException("New monitoring target was not discovered on this Resource: " + target);
+        newTargets.computeIfAbsent(item.provider(), ignored -> new LinkedHashSet<>()).add(target);
       }
+    }
+
+    for (var provider : List.of(LogProviderType.SYSTEMD, LogProviderType.DOCKER)) {
+      var required = newTargets.getOrDefault(provider, Set.of());
+      if (required.isEmpty()) continue;
+      var runtimeProvider = provider == LogProviderType.DOCKER
+          ? ServiceRuntimeProvider.DOCKER : ServiceRuntimeProvider.SYSTEMD;
+      var discovered = discovery.discover(connection, runtimeProvider).stream()
+          .map(RuntimeTargetCandidate::id).collect(java.util.stream.Collectors.toSet());
+      required.stream().filter(target -> !discovered.contains(target)).findFirst().ifPresent(target -> {
+        throw new ValidationException("New monitoring target was not discovered on this Resource: " + target);
+      });
     }
 
     var now = clock.instant();
@@ -130,7 +144,8 @@ public class ProjectAssetUseCases {
           LogSourceOwnerType.ASSET, null, assetId, LogConnectionType.SSH, null,
           target.provider(), configuration, true, now, now)));
     }
-    existing.stream().filter(source -> !desired.containsKey(monitoringKey(source.provider(), monitoringTarget(source))))
+    existing.stream().filter(source -> duplicateExisting.contains(source.id())
+            || !desired.containsKey(monitoringKey(source.provider(), monitoringTarget(source))))
         .forEach(logSources::delete);
     return result;
   }

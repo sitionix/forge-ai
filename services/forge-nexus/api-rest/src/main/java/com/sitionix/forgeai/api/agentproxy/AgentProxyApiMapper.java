@@ -56,6 +56,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.NodePort;
 import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentAssetMonitoringCommand;
+import com.sitionix.forgeai.domain.model.agentproxy.ReplaceAgentAssetMonitoringCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentLogSourceCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentProjectServiceCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
@@ -77,6 +78,13 @@ public class AgentProxyApiMapper {
     public SaveAgentAssetMonitoringCommand toCommand(final AgentAssetMonitoringRequest request) {
         return new SaveAgentAssetMonitoringCommand(
                 request.name(), request.provider(), request.target(), request.enabled());
+    }
+
+    public ReplaceAgentAssetMonitoringCommand toCommand(final AgentAssetMonitoringReplacementRequest request) {
+        return new ReplaceAgentAssetMonitoringCommand(request.targets().stream()
+                .map(target -> new ReplaceAgentAssetMonitoringCommand.Target(
+                        target.provider(), target.target()))
+                .toList());
     }
 
     public AgentProjectAssetResponse toResponse(final AgentProjectAsset asset) {
