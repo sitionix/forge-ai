@@ -21,7 +21,7 @@ case "$*" in
   "show --property=Version --value") echo 257 ;;
   *"--property=LoadState --value"*) echo loaded ;;
   is-active*) echo active ;;
-  start*) [[ "${TEST_SYSTEMD_START_EXIT:-0}" == 0 ]] || exit "${TEST_SYSTEMD_START_EXIT}" ;;
+  restart*) [[ "${TEST_SYSTEMD_START_EXIT:-0}" == 0 ]] || exit "${TEST_SYSTEMD_START_EXIT}" ;;
 esac
 EOF
   cat > "${bin}/journalctl" <<'EOF'
@@ -114,23 +114,29 @@ case_inactive_systemd_never_selects() {
 }
 
 case_systemd_action_failure_never_falls_back() {
-  local dir bin
-  dir="$(tmp)"; bin="${dir}/bin"; mkdir -p "${bin}" "${dir}/systemd"; export TEST_RUNTIME_LOG="${dir}/log"
+  local dir bin prepare
+  dir="$(tmp)"; bin="${dir}/bin"; prepare="${dir}/prepare"; mkdir -p "${bin}" "${dir}/systemd"; export TEST_RUNTIME_LOG="${dir}/log"
   fake_systemd_bin "${bin}"; fake_common_bin "${bin}"
-  if PATH="${bin}:${SYSTEM_PATH}" TEST_SYSTEMD_START_EXIT=23 FORGE_SYSTEMD_USE_SUDO=0 FORGE_RUNTIME_OS=Linux FORGE_RUNTIME_LINUX_ID=ubuntu FORGE_SYSTEMD_RUNTIME_DIR="${dir}/systemd" "${ROOT}/scripts/runtime/control.sh" start >/dev/null 2>&1; then return 1; fi
+  printf '#!/usr/bin/env bash\n' > "${prepare}"; chmod +x "${prepare}"
+  if PATH="${bin}:${SYSTEM_PATH}" TEST_SYSTEMD_START_EXIT=23 FORGE_RUNTIME_PREPARE_COMMAND="${prepare}" FORGE_SYSTEMD_USE_SUDO=0 FORGE_RUNTIME_OS=Linux FORGE_RUNTIME_LINUX_ID=ubuntu FORGE_SYSTEMD_RUNTIME_DIR="${dir}/systemd" "${ROOT}/scripts/runtime/control.sh" start >/dev/null 2>&1; then return 1; fi
   ! grep -q launchctl "${dir}/log"
 }
 
 case_systemd_lifecycle() {
-  local dir bin action
-  dir="$(tmp)"; bin="${dir}/bin"; mkdir -p "${bin}" "${dir}/systemd"; export TEST_RUNTIME_LOG="${dir}/log"
+  local dir bin prepare action
+  dir="$(tmp)"; bin="${dir}/bin"; prepare="${dir}/prepare"; mkdir -p "${bin}" "${dir}/systemd"; export TEST_RUNTIME_LOG="${dir}/log"
   fake_systemd_bin "${bin}"; fake_common_bin "${bin}"
+  cat > "${prepare}" <<'EOF'
+#!/usr/bin/env bash
+printf 'prepare\n' >> "${TEST_RUNTIME_LOG}"
+EOF
+  chmod +x "${prepare}"
   for action in start stop restart status; do
-    PATH="${bin}:${SYSTEM_PATH}" FORGE_SYSTEMD_USE_SUDO=0 FORGE_RUNTIME_OS=Linux FORGE_RUNTIME_LINUX_ID=ubuntu FORGE_SYSTEMD_RUNTIME_DIR="${dir}/systemd" "${ROOT}/scripts/runtime/control.sh" "${action}" >/dev/null
+    PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_PREPARE_COMMAND="${prepare}" FORGE_SYSTEMD_USE_SUDO=0 FORGE_RUNTIME_OS=Linux FORGE_RUNTIME_LINUX_ID=ubuntu FORGE_SYSTEMD_RUNTIME_DIR="${dir}/systemd" "${ROOT}/scripts/runtime/control.sh" "${action}" >/dev/null
   done
-  grep -q 'systemctl start forge-knowledge.service' "${dir}/log"
   grep -q 'systemctl stop forge-nexus.service' "${dir}/log"
   grep -q 'systemctl restart forge-knowledge.service' "${dir}/log"
+  [[ "$(grep -c '^prepare$' "${dir}/log")" == 2 ]]
   grep -q 'systemctl is-active forge-agent.service' "${dir}/log"
 }
 
