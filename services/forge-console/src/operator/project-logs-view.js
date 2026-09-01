@@ -46,8 +46,10 @@ export class ProjectLogsView {
     if (this.loadGeneration !== generation || this.projectId !== projectId) return;
     this.sources = sources;
     this.assets = assets;
-    this.selectedSourceIds = new Set(sources.filter((source) => source.enabled).map((source) => source.id));
     this.renderFilterOptions();
+    this.selectedSourceIds = new Set(this.filteredSources()
+      .filter((source) => source.enabled)
+      .map((source) => source.id));
     this.renderSources();
   }
 

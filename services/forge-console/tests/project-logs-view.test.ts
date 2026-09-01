@@ -67,6 +67,76 @@ describe("ProjectLogsView", () => {
     expect(dom.window.document.getElementById("projectLogsSources")?.textContent).toContain("Worker");
   });
 
+  it("streams only enabled sources in the initial Resource scope", async () => {
+    const listed = [
+      { id: "jessie-systemd", name: "API", enabled: true, serviceId: null, assetId: "asset-1", provider: "SYSTEMD" },
+      { id: "jessie-docker", name: "Worker", enabled: true, serviceId: null, assetId: "asset-1", provider: "DOCKER" },
+      { id: "jessie-disabled", name: "Disabled", enabled: false, serviceId: null, assetId: "asset-1", provider: "FILE" },
+      { id: "mamba-systemd", name: "Camera", enabled: true, serviceId: null, assetId: "asset-2", provider: "SYSTEMD" },
+    ];
+    const assets = [{ id: "asset-1", name: "Jessie" }, { id: "asset-2", name: "Mamba" }];
+    const { dom, view, api } = setup({ assetId: "asset-1" }, listed, assets);
+    await view.load("project-1");
+    dom.window.document.getElementById("projectLogsLive")?.click();
+
+    expect(dom.window.document.getElementById("projectLogsSourcesSummary")?.textContent).toBe("2 selected");
+    expect(api.logStreamUrl).toHaveBeenCalledWith(
+      "project-1", ["jessie-systemd", "jessie-docker"], 100);
+  });
+
+  it("streams only enabled sources in the initial Service scope", async () => {
+    const listed = [
+      { id: "api-systemd", name: "API", enabled: true, serviceId: "service-1", assetId: null, provider: "SYSTEMD" },
+      { id: "api-disabled", name: "Disabled", enabled: false, serviceId: "service-1", assetId: null, provider: "FILE" },
+      { id: "worker-docker", name: "Worker", enabled: true, serviceId: "service-2", assetId: null, provider: "DOCKER" },
+    ];
+    const { dom, view, api } = setup({ serviceId: "service-1" }, listed);
+    await view.load("project-1");
+    dom.window.document.getElementById("projectLogsLive")?.click();
+
+    expect(dom.window.document.getElementById("projectLogsSourcesSummary")?.textContent).toBe("1 selected");
+    expect(api.logStreamUrl).toHaveBeenCalledWith("project-1", ["api-systemd"], 100);
+  });
+
+  it("streams all enabled sources when Project Logs opens unscoped", async () => {
+    const listed = [...sources, {
+      id: "disabled-source", name: "Disabled", enabled: false,
+      serviceId: null, assetId: null, provider: "FILE",
+    }];
+    const { dom, view, api } = setup({}, listed);
+    await view.load("project-1");
+    dom.window.document.getElementById("projectLogsLive")?.click();
+
+    expect(api.logStreamUrl).toHaveBeenCalledWith(
+      "project-1", ["service-source", "asset-source", "custom-source"], 100);
+  });
+
+  it("does not mutate explicit selection when filters change after scoped initialization", async () => {
+    const listed = [
+      { id: "jessie-systemd", name: "API", enabled: true, serviceId: null, assetId: "asset-1", provider: "SYSTEMD" },
+      { id: "mamba-docker", name: "Worker", enabled: true, serviceId: null, assetId: "asset-2", provider: "DOCKER" },
+      { id: "service-file", name: "Audit", enabled: true, serviceId: "service-1", assetId: null, provider: "FILE" },
+    ];
+    const assets = [{ id: "asset-1", name: "Jessie" }, { id: "asset-2", name: "Mamba" }];
+    const { dom, view, api } = setup({ assetId: "asset-1" }, listed, assets);
+    await view.load("project-1");
+    const resource = dom.window.document.getElementById("projectLogsResourceFilter") as HTMLSelectElement;
+    const service = dom.window.document.getElementById("projectLogsServiceFilter") as HTMLSelectElement;
+    const provider = dom.window.document.getElementById("projectLogsProviderFilter") as HTMLSelectElement;
+
+    resource.value = "";
+    resource.dispatchEvent(new dom.window.Event("change"));
+    service.value = "service-1";
+    service.dispatchEvent(new dom.window.Event("change"));
+    provider.value = "FILE";
+    provider.dispatchEvent(new dom.window.Event("change"));
+    dom.window.document.getElementById("projectLogsLive")?.click();
+
+    expect([...view.selectedSourceIds]).toEqual(["jessie-systemd"]);
+    expect(dom.window.document.getElementById("projectLogsSourcesSummary")?.textContent).toBe("1 selected");
+    expect(api.logStreamUrl).toHaveBeenCalledWith("project-1", ["jessie-systemd"], 100);
+  });
+
   it("uses the Resource name once for multiple Asset-owned sources", async () => {
     const assetSources = [
       { id: "one", name: "openvins.service", enabled: true, serviceId: null, assetId: "asset-1", provider: "SYSTEMD" },
