@@ -24,7 +24,8 @@ public class CliServiceMetricsAdapter implements ServiceMetricsPort {
   @Override public ServiceMetricsSnapshot collect(SshConnection connection) {
     var result = new ArrayList<ServiceResourceMetrics>();
     var values = new LinkedHashMap<String, String>();
-    for (String row : executor.output(List.of("sh", "-c", SERVICE_PROBE), null, connection)) {
+    var command = RemoteShellCommand.ssh(connection, List.of("sh", "-c", SERVICE_PROBE));
+    for (String row : executor.output(command, null, connection)) {
       if (row.isBlank()) { add(values, result); values.clear(); continue; }
       int separator = row.indexOf('=');
       if (separator > 0) values.put(row.substring(0, separator), row.substring(separator + 1));

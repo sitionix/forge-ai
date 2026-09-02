@@ -20,8 +20,9 @@ class CliServiceMetricsAdapterTest {
         "Id=beta.service", "Description=Beta", "CPUUsageNSec=infinity",
         "MemoryCurrent=[not set]", "TasksCurrent=3"));
 
+    var connection = connection();
     var snapshot = new CliServiceMetricsAdapter(executor,
-        Clock.fixed(Instant.parse("2026-09-02T10:00:00Z"), ZoneOffset.UTC)).collect(connection());
+        Clock.fixed(Instant.parse("2026-09-02T10:00:00Z"), ZoneOffset.UTC)).collect(connection);
 
     assertThat(snapshot.sampledAt()).isEqualTo(Instant.parse("2026-09-02T10:00:00Z"));
     assertThat(snapshot.services()).containsExactly(
@@ -29,8 +30,10 @@ class CliServiceMetricsAdapterTest {
             "alpha.service", "Alpha worker", 2500000000L, 1073741824L, 12L),
         new com.sitionix.forgeagent.domain.model.ServiceResourceMetrics(
             "beta.service", "Beta", null, null, 3L));
-    assertThat(executor.command).containsExactly("sh", "-c", CliServiceMetricsAdapter.SERVICE_PROBE);
-    assertThat(executor.connection).isNotNull();
+    assertThat(executor.command).isEqualTo(RemoteShellCommand.ssh(
+        connection, List.of("sh", "-c", CliServiceMetricsAdapter.SERVICE_PROBE)));
+    assertThat(executor.command).startsWith("ssh").contains("forge@server.local");
+    assertThat(executor.connection).isSameAs(connection);
   }
 
   private static SshConnection connection() {
