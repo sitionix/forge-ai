@@ -12,8 +12,11 @@ import org.springframework.stereotype.Component;
 @Component
 public class CliServiceMetricsAdapter implements ServiceMetricsPort {
   static final String SERVICE_PROBE = """
-      units="$(systemctl list-units --type=service --state=running --no-legend --plain | awk '{print $1}')"
-      [ -z "$units" ] || systemctl show --property=Id,Description,CPUUsageNSec,MemoryCurrent,TasksCurrent $units
+      listed="$(systemctl list-units --type=service --state=running --no-legend --plain)"
+      status=$?
+      [ "$status" -eq 0 ] || exit "$status"
+      units="$(printf '%s\n' "$listed" | awk '{print $1}')"
+      [ -z "$units" ] || systemctl show --property=Id,Description,CPUUsageNSec,MemoryCurrent,TasksCurrent $units || exit $?
       printf '\nFORGE_SAMPLED_AT_NANOS=%s\n' "$(date +%s%N)"
       """;
   private final TypedProcessExecutor executor;

@@ -60,6 +60,57 @@ class CliServiceMetricsAdapterTest {
     assertThat(java.nio.file.Files.readString(capture)).contains("alpha.service").doesNotContain("stopped.service");
   }
 
+  @Test
+  void fixedProbeFailsWhenRunningServiceDiscoveryFails(@TempDir java.nio.file.Path temp) throws Exception {
+    var systemctl = temp.resolve("systemctl");
+    java.nio.file.Files.writeString(systemctl, """
+        #!/bin/sh
+        [ "$1" != "list-units" ] || exit 17
+        exit 0
+        """);
+    systemctl.toFile().setExecutable(true);
+
+    assertThat(executeProbe(temp).waitFor()).isEqualTo(17);
+  }
+
+  @Test
+  void fixedProbeFailsWhenQueryingServicePropertiesFails(@TempDir java.nio.file.Path temp) throws Exception {
+    var systemctl = temp.resolve("systemctl");
+    java.nio.file.Files.writeString(systemctl, """
+        #!/bin/sh
+        if [ "$1" = "list-units" ]; then
+          printf 'alpha.service loaded active running Alpha\\n'
+          exit 0
+        fi
+        exit 23
+        """);
+    systemctl.toFile().setExecutable(true);
+
+    assertThat(executeProbe(temp).waitFor()).isEqualTo(23);
+  }
+
+  @Test
+  void fixedProbeSucceedsWhenNoRunningServicesAreDiscovered(@TempDir java.nio.file.Path temp) throws Exception {
+    var systemctl = temp.resolve("systemctl");
+    java.nio.file.Files.writeString(systemctl, """
+        #!/bin/sh
+        [ "$1" != "list-units" ] || exit 0
+        exit 99
+        """);
+    systemctl.toFile().setExecutable(true);
+
+    var executed = executeProbe(temp);
+    assertThat(executed.waitFor()).isZero();
+    assertThat(new String(executed.getInputStream().readAllBytes()))
+        .contains("FORGE_SAMPLED_AT_NANOS=");
+  }
+
+  private static Process executeProbe(java.nio.file.Path temp) throws Exception {
+    var builder = new ProcessBuilder("sh", "-c", CliServiceMetricsAdapter.SERVICE_PROBE);
+    builder.environment().put("PATH", temp + ":" + System.getenv("PATH"));
+    return builder.start();
+  }
+
   private static SshConnection connection() {
     return new SshConnection(UUID.randomUUID(), UUID.randomUUID(), "server", "server.local", 22,
         "forge", SshAuthType.PRIVATE_KEY, "/key", null, Instant.EPOCH, Instant.EPOCH);
