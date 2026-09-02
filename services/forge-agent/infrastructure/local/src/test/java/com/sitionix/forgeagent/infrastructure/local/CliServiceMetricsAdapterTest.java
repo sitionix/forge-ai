@@ -4,12 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sitionix.forgeagent.domain.model.SshAuthType;
 import com.sitionix.forgeagent.domain.model.SshConnection;
-import java.time.Clock;
 import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class CliServiceMetricsAdapterTest {
   @Test
@@ -18,13 +17,13 @@ class CliServiceMetricsAdapterTest {
         "Id=alpha.service", "Description=Alpha worker", "CPUUsageNSec=2500000000",
         "MemoryCurrent=1073741824", "TasksCurrent=12", "",
         "Id=beta.service", "Description=Beta", "CPUUsageNSec=infinity",
-        "MemoryCurrent=[not set]", "TasksCurrent=3"));
+        "MemoryCurrent=[not set]", "TasksCurrent=3", "",
+        "FORGE_SAMPLED_AT_NANOS=1788343200123456789"));
 
     var connection = connection();
-    var snapshot = new CliServiceMetricsAdapter(executor,
-        Clock.fixed(Instant.parse("2026-09-02T10:00:00Z"), ZoneOffset.UTC)).collect(connection);
+    var snapshot = new CliServiceMetricsAdapter(executor).collect(connection);
 
-    assertThat(snapshot.sampledAt()).isEqualTo(Instant.parse("2026-09-02T10:00:00Z"));
+    assertThat(snapshot.sampledAt()).isEqualTo(Instant.parse("2026-09-02T10:00:00.123456789Z"));
     assertThat(snapshot.services()).containsExactly(
         new com.sitionix.forgeagent.domain.model.ServiceResourceMetrics(
             "alpha.service", "Alpha worker", 2500000000L, 1073741824L, 12L),
@@ -34,6 +33,31 @@ class CliServiceMetricsAdapterTest {
         connection, List.of("sh", "-c", CliServiceMetricsAdapter.SERVICE_PROBE)));
     assertThat(executor.command).startsWith("ssh").contains("forge@server.local");
     assertThat(executor.connection).isSameAs(connection);
+  }
+
+  @Test
+  void fixedProbeShowsOnlyUnitsDiscoveredAsRunning(@TempDir java.nio.file.Path temp) throws Exception {
+    var capture = temp.resolve("show-args");
+    var systemctl = temp.resolve("systemctl");
+    java.nio.file.Files.writeString(systemctl, """
+        #!/bin/sh
+        if [ "$1" = "list-units" ]; then
+          case " $* " in
+            *' --state=running '*) printf 'alpha.service loaded active running Alpha\\n' ;;
+            *) printf 'alpha.service loaded active running Alpha\\nstopped.service loaded inactive dead Stopped\\n' ;;
+          esac
+          exit 0
+        fi
+        printf '%s\\n' "$@" > "$CAPTURE"
+        printf 'Id=alpha.service\\nCPUUsageNSec=1\\n'
+        """);
+    systemctl.toFile().setExecutable(true);
+    var builder = new ProcessBuilder("sh", "-c", CliServiceMetricsAdapter.SERVICE_PROBE);
+    builder.environment().put("PATH", temp + ":" + System.getenv("PATH"));
+    builder.environment().put("CAPTURE", capture.toString());
+    var executed = builder.start();
+    assertThat(executed.waitFor()).isZero();
+    assertThat(java.nio.file.Files.readString(capture)).contains("alpha.service").doesNotContain("stopped.service");
   }
 
   private static SshConnection connection() {

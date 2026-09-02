@@ -42,6 +42,9 @@ describe("SystemHealthView", () => {
     expect(dom.window.document.querySelector(".service-metrics-row td:nth-child(2)")?.textContent).toBe("—");
     await view.refreshServices();
     await vi.waitFor(() => expect(dom.window.document.querySelectorAll(".service-metrics-row").length).toBe(3));
+    expect([...dom.window.document.querySelectorAll(".service-metrics-row strong")].map((node) => node.textContent))
+      .toEqual(["a.service", "b.service", "d.service"]);
+    expect(dom.window.document.body.textContent).not.toContain("c.service");
     expect(dom.window.document.body.textContent).toContain("20%");
     (dom.window.document.getElementById("serviceMetricsToggle") as HTMLElement).click();
     expect(dom.window.document.querySelectorAll(".service-metrics-row").length).toBe(4);
@@ -49,6 +52,7 @@ describe("SystemHealthView", () => {
     const sort = dom.window.document.getElementById("serviceMetricsSort") as HTMLSelectElement;
     sort.value = "ram"; sort.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
     expect(dom.window.document.querySelector(".service-metrics-row")?.textContent).toContain("b.service");
+    expect(dom.window.document.querySelector(".service-metrics-row:last-child")?.textContent).toContain("c.service");
     const nameSort = dom.window.document.getElementById("serviceMetricsSort") as HTMLSelectElement;
     nameSort.value = "name"; nameSort.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
     expect(dom.window.document.querySelector(".service-metrics-row")?.textContent).toContain("a.service");
