@@ -6,6 +6,9 @@
 # OS
 .DS_Store
 
+# Local Codex instructions
+/AGENTS.md
+
 # Build output
 target/
 **/target/
