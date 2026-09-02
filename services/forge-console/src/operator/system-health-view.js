@@ -8,17 +8,22 @@ export const HEALTH_THRESHOLDS = Object.freeze({
 });
 
 export class SystemHealthView {
-  constructor({ document, window, api, sshProfileFlow, assetId = null, pollIntervalMs = 2000 }) {
+  constructor({ document, window, api, sshProfileFlow, assetId = null, pollIntervalMs = 2000, servicePollIntervalMs = 4000 }) {
     this.document = document; this.window = window; this.api = api; this.sshProfileFlow = sshProfileFlow;
     this.assetId = assetId; this.pollIntervalMs = pollIntervalMs; this.projectId = null;
     this.connectionId = null; this.connections = []; this.metrics = null; this.error = "";
     this.loading = false; this.stale = false; this.generation = 0; this.timer = null; this.inFlightGeneration = null;
     this.listeners = [];
+    this.servicePollIntervalMs = servicePollIntervalMs; this.serviceSnapshot = null; this.previousServiceSnapshot = null;
+    this.serviceError = ""; this.serviceStale = false; this.serviceTimer = null; this.serviceInFlightGeneration = null;
+    this.servicesExpanded = false; this.serviceSort = "cpu";
   }
 
   bind() {
     this.on("systemHealthSource", "change", (event) => this.select(event.target.value || null));
     this.on("systemHealthAddConnection", "click", () => this.sshProfileFlow.open(this.projectId, (created) => this.connectionCreated(created)));
+    this.on("systemHealthContent", "click", (event) => { if (event.target.closest?.("#serviceMetricsToggle")) { this.servicesExpanded = !this.servicesExpanded; this.render(); } });
+    this.on("systemHealthContent", "change", (event) => { if (event.target.id === "serviceMetricsSort") { this.serviceSort = event.target.value; this.render(); } });
   }
 
   async load(projectId) {
@@ -59,10 +64,31 @@ export class SystemHealthView {
     this.stopTimer();
     this.connectionId = connectionId;
     this.metrics = null; this.error = ""; this.stale = false; this.loading = Boolean(connectionId);
+    this.stopServiceTimer(); this.serviceSnapshot = null; this.previousServiceSnapshot = null; this.serviceError = ""; this.serviceStale = false; this.servicesExpanded = false; this.serviceSort = "cpu";
     ++this.generation;
     this.byId("systemHealthSource").value = connectionId || "";
     this.render();
-    if (connectionId) this.refresh();
+    if (connectionId) { this.refresh(); this.refreshServices(); }
+  }
+
+  async refreshServices() {
+    if (!this.projectId || !this.connectionId || this.serviceInFlightGeneration === this.generation) return;
+    const generation = this.generation, projectId = this.projectId, connectionId = this.connectionId;
+    this.serviceInFlightGeneration = generation;
+    try {
+      const snapshot = await this.api.getSshConnectionServiceMetrics(projectId, connectionId);
+      if (generation !== this.generation || connectionId !== this.connectionId) return;
+      this.previousServiceSnapshot = this.serviceSnapshot; this.serviceSnapshot = snapshot;
+      this.serviceError = ""; this.serviceStale = false;
+    } catch (error) {
+      if (generation !== this.generation || connectionId !== this.connectionId) return;
+      this.serviceError = error.message || "Unable to read service metrics."; this.serviceStale = Boolean(this.serviceSnapshot);
+    } finally {
+      if (this.serviceInFlightGeneration === generation) this.serviceInFlightGeneration = null;
+      if (generation === this.generation && connectionId === this.connectionId) {
+        this.render(); this.serviceTimer = this.window.setTimeout(() => this.refreshServices(), this.servicePollIntervalMs);
+      }
+    }
   }
 
   async refresh() {
@@ -86,9 +112,10 @@ export class SystemHealthView {
     }
   }
 
-  close() { this.stopTimer(); ++this.generation; this.projectId = null; this.connectionId = null; }
+  close() { this.stopTimer(); this.stopServiceTimer(); ++this.generation; this.projectId = null; this.connectionId = null; }
   dispose() { this.close(); this.listeners.forEach(({ element, event, listener }) => element.removeEventListener(event, listener)); this.listeners = []; }
   stopTimer() { if (this.timer !== null) this.window.clearTimeout(this.timer); this.timer = null; }
+  stopServiceTimer() { if (this.serviceTimer !== null) this.window.clearTimeout(this.serviceTimer); this.serviceTimer = null; }
 
   renderConnections() {
     const select = this.byId("systemHealthSource");
@@ -110,7 +137,7 @@ export class SystemHealthView {
         <section><h3>Memory</h3>${this.memory(m)}</section>
         <section><h3>Temperature</h3>${this.temperatures(m.temperatures)}</section>
       </div>${this.secondary(m)}
-      <section class="system-health-additional"><h3>Additional info</h3><p>No additional diagnostics yet.</p></section>`;
+      <section class="system-health-additional"><h3>Additional info</h3>${this.serviceMetrics(m)}</section>`;
   }
 
   cpuCores(cores) {
@@ -132,6 +159,26 @@ export class SystemHealthView {
     const network = Array.isArray(m.network) && m.network.length ? m.network.map((n) => `<div>${escapeHtml(n.interfaceName)} — RX ${formatBytes(n.receivedBytes)} · TX ${formatBytes(n.transmittedBytes)}</div>`).join("") : "Unavailable";
     return `<dl class="system-health-secondary"><div><dt>Load average</dt><dd>${load}</dd></div><div><dt>Uptime</dt><dd>${formatUptime(m.uptimeSeconds)}</dd></div><div><dt>Disks</dt><dd>${disks}</dd></div><div><dt>Network</dt><dd>${network}</dd></div></dl>`;
   }
+  serviceMetrics(host) {
+    if (!this.serviceSnapshot) return `<div class="muted-state">${escapeHtml(this.serviceError || "Loading service resource usage…")}</div>`;
+    const previous = new Map((this.previousServiceSnapshot?.services || []).map((s) => [s.unit, s]));
+    const beforeAt = Date.parse(this.previousServiceSnapshot?.sampledAt || ""), afterAt = Date.parse(this.serviceSnapshot.sampledAt || "");
+    const cores = Array.isArray(host.cpuPerCorePercent) && host.cpuPerCorePercent.length ? host.cpuPerCorePercent.length : null;
+    let rows = (this.serviceSnapshot.services || []).map((service) => ({ ...service,
+      cpuPercent: calculateServiceCpuPercent(previous.get(service.unit)?.cpuUsageNanos, service.cpuUsageNanos, beforeAt, afterAt, cores) }));
+    const availableLast = (a, b, key, direction = -1) => number(a[key]) === number(b[key])
+      ? number(a[key]) ? direction * (a[key] - b[key]) : a.unit.localeCompare(b.unit)
+      : number(a[key]) ? -1 : 1;
+    rows.sort(this.serviceSort === "name" ? (a, b) => a.unit.localeCompare(b.unit)
+      : this.serviceSort === "ram" ? (a, b) => availableLast(a, b, "memoryBytes")
+      : (a, b) => availableLast(a, b, "cpuPercent"));
+    const shown = this.servicesExpanded ? rows : rows.slice(0, 3);
+    const body = shown.map((s) => `<tr class="service-metrics-row"><td><strong>${escapeHtml(s.unit)}</strong>${s.description ? `<small>${escapeHtml(s.description)}</small>` : ""}</td><td>${number(s.cpuPercent) ? formatPercent(s.cpuPercent) : "—"}</td><td>${serviceRam(s.memoryBytes, host.ramTotalBytes)}</td><td>${number(s.tasks) ? escapeHtml(s.tasks) : "—"}</td></tr>`).join("");
+    return `${this.serviceError ? `<div class="system-health-error">${escapeHtml(this.serviceError)}${this.serviceStale ? " · stale" : ""}</div>` : ""}
+      ${this.servicesExpanded ? `<label class="service-metrics-sort">Sort by <select id="serviceMetricsSort"><option value="cpu"${this.serviceSort === "cpu" ? " selected" : ""}>CPU</option><option value="ram"${this.serviceSort === "ram" ? " selected" : ""}>RAM</option><option value="name"${this.serviceSort === "name" ? " selected" : ""}>Name</option></select></label>` : ""}
+      <div class="service-metrics-table-wrap"><table class="service-metrics-table"><thead><tr><th>Service</th><th>CPU</th><th>RAM</th><th>Tasks</th></tr></thead><tbody>${body || '<tr><td colspan="4">No running services</td></tr>'}</tbody></table></div>
+      ${rows.length > 3 ? `<button id="serviceMetricsToggle" type="button" class="secondary-button">${this.servicesExpanded ? "Show less" : "Show more"}</button>` : ""}`;
+  }
   byId(id) { return this.document.getElementById(id); }
   on(id, event, listener) { const element = this.byId(id); if (!element) return; element.addEventListener(event, listener); this.listeners.push({ element, event, listener }); }
 }
@@ -140,6 +187,11 @@ function number(value) { return typeof value === "number" && Number.isFinite(val
 function tone(value, kind) { if (!number(value)) return "normal"; const t = HEALTH_THRESHOLDS[kind]; return value >= t.critical ? "critical" : value >= t.warning ? "warning" : "normal"; }
 function bar(label, value, kind) { const available = number(value); if (!available) return `<div class="muted-state">${escapeHtml(label)} unavailable</div>`; const width = Math.min(100, Math.max(0, value)); return `<div class="health-bar-row"><span>${escapeHtml(label)}</span><div class="health-bar"><i class="tone-${tone(value, kind)}" style="width:${width}%"></i></div><strong>${formatPercent(value)}</strong></div>`; }
 function formatPercent(value) { return `${formatNumber(value)}%`; }
+export function calculateServiceCpuPercent(beforeCpu, afterCpu, beforeMs, afterMs, cpuCount) {
+  if (![beforeCpu, afterCpu, beforeMs, afterMs, cpuCount].every(number) || afterCpu < beforeCpu || afterMs <= beforeMs || cpuCount <= 0) return null;
+  return (afterCpu - beforeCpu) / ((afterMs - beforeMs) * 1_000_000) / cpuCount * 100;
+}
+function serviceRam(bytes, total) { if (!number(bytes)) return "—"; const percent = number(total) && total > 0 ? ` · ${formatPercent(bytes / total * 100)}` : ""; return `${formatBytes(bytes)}${percent}`; }
 function formatNumber(value) { return number(value) ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value) : "Unavailable"; }
 export function formatBytes(value) { if (!number(value) || value < 0) return "Unavailable"; const units = ["B", "KB", "MB", "GB", "TB"]; let n = value, i = 0; while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; } return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: i ? 1 : 0 }).format(n)} ${units[i]}`; }
 export function formatUptime(seconds) { if (!number(seconds) || seconds < 0) return "Unavailable"; const days = Math.floor(seconds / 86400), hours = Math.floor(seconds % 86400 / 3600), minutes = Math.floor(seconds % 3600 / 60); return [days && `${days}d`, hours && `${hours}h`, !days && minutes && `${minutes}m`].filter(Boolean).join(" ") || "< 1m"; }

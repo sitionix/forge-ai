@@ -40,4 +40,10 @@ public class SshConnectionsController {
   public AssetMetrics metrics(@PathVariable UUID projectId, @PathVariable UUID connectionId) {
     return ssh.metrics(projectId, connectionId);
   }
+
+  @GetMapping("/{connectionId}/service-metrics")
+  public com.sitionix.forgeagent.domain.model.ServiceMetricsSnapshot serviceMetrics(
+      @PathVariable UUID projectId, @PathVariable UUID connectionId) {
+    return ssh.serviceMetrics(projectId, connectionId);
+  }
 }

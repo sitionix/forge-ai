@@ -5754,6 +5754,12 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .system-health-secondary dt { font-weight: 600; }
 .system-health-additional { margin-top: .8rem; }
 .system-health-additional p { margin: 0; color: var(--muted, #687385); }
+.service-metrics-table-wrap { overflow-x: auto; }
+.service-metrics-table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+.service-metrics-table th, .service-metrics-table td { padding: .45rem .55rem; text-align: left; border-bottom: 1px solid var(--border, #dce2ea); }
+.service-metrics-table td small { display: block; margin-top: .15rem; color: var(--muted, #687385); }
+.service-metrics-sort { display: flex; justify-content: flex-end; align-items: center; gap: .4rem; margin-bottom: .45rem; font-size: .82rem; }
+#serviceMetricsToggle { margin-top: .6rem; }
 .system-health-error { display: grid; gap: .2rem; margin-bottom: .6rem; color: #b42318; }
 @media (max-width: 900px) { .system-health-primary, .system-health-secondary { grid-template-columns: 1fr; } }
 

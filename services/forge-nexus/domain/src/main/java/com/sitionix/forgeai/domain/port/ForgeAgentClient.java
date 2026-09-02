@@ -13,6 +13,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeCatalog;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetCandidate;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeTargetDiscoveryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentSshConnection;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentServiceMetricsSnapshot;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
@@ -133,6 +134,7 @@ public interface ForgeAgentClient {
   void testProjectSshConnection(UUID projectId, CreateAgentSshConnectionCommand command);
 
   AgentAssetMetrics getProjectSshConnectionMetrics(UUID projectId, UUID connectionId);
+  AgentServiceMetricsSnapshot getProjectSshConnectionServiceMetrics(UUID projectId, UUID connectionId);
 
   AgentLogStream openProjectLogsStream(UUID projectId, List<UUID> sourceIds, int lines);
 }

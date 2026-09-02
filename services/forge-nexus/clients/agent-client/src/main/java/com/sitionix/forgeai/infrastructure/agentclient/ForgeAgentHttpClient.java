@@ -184,4 +184,8 @@ public interface ForgeAgentHttpClient {
     @GetExchange("/api/v1/projects/{projectId}/ssh-connections/{connectionId}/metrics")
     com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMetricsResponse getProjectSshConnectionMetrics(
         @PathVariable UUID projectId, @PathVariable UUID connectionId);
+
+    @GetExchange("/api/v1/projects/{projectId}/ssh-connections/{connectionId}/service-metrics")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceMetricsResponse getProjectSshConnectionServiceMetrics(
+        @PathVariable UUID projectId, @PathVariable UUID connectionId);
 }
