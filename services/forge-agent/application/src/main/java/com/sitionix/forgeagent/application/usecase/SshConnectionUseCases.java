@@ -21,6 +21,7 @@ public class SshConnectionUseCases {
   private final SshConnectionRepository connections;
   private final SshConnectionProbePort probe;
   private final AssetInspectionPort inspection;
+  private final ServiceMetricsPort serviceMetrics;
   private final Clock clock;
 
   @Transactional(readOnly = true)
@@ -49,11 +50,19 @@ public class SshConnectionUseCases {
 
   @Transactional(readOnly = true)
   public AssetMetrics metrics(UUID projectId, UUID connectionId) {
+    return inspection.metrics(ownedConnection(projectId, connectionId));
+  }
+
+  @Transactional(readOnly = true)
+  public com.sitionix.forgeagent.domain.model.ServiceMetricsSnapshot serviceMetrics(
+      UUID projectId, UUID connectionId) {
+    return serviceMetrics.collect(ownedConnection(projectId, connectionId));
+  }
+
+  private SshConnection ownedConnection(UUID projectId, UUID connectionId) {
     project(projectId);
-    var connection = connections.findById(connectionId)
-        .filter(candidate -> candidate.projectId().equals(projectId))
+    return connections.findById(connectionId).filter(c -> c.projectId().equals(projectId))
         .orElseThrow(() -> new NotFoundException("SSH_CONNECTION_NOT_FOUND", "SSH connection not found"));
-    return inspection.metrics(connection);
   }
 
   private SshConnection connection(UUID projectId, SaveSshConnectionCommand command, java.time.Instant now) {

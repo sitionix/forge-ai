@@ -1,0 +1,1 @@
+{"sampledAt":"2026-09-02T10:00:00Z","services":[{"unit":"alpha.service","description":"Alpha worker","cpuUsageNanos":2500000000,"memoryBytes":1073741824,"tasks":12},{"unit":"beta.service","description":null,"cpuUsageNanos":null,"memoryBytes":null,"tasks":null}]}

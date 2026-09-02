@@ -19,6 +19,7 @@ import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import com.sitionix.forgeagent.domain.port.AssetInspectionPort;
 import com.sitionix.forgeagent.domain.port.SshConnectionRepository;
 import com.sitionix.forgeagent.domain.port.SshConnectionProbePort;
+import com.sitionix.forgeagent.domain.port.ServiceMetricsPort;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -34,6 +35,7 @@ class SshConnectionUseCasesTest {
   private final SshConnectionRepository connections = mock(SshConnectionRepository.class);
   private final SshConnectionProbePort probe = mock(SshConnectionProbePort.class);
   private final AssetInspectionPort inspection = mock(AssetInspectionPort.class);
+  private final ServiceMetricsPort serviceMetrics = mock(ServiceMetricsPort.class);
   private SshConnectionUseCases useCases;
 
   @BeforeEach
@@ -44,7 +46,7 @@ class SshConnectionUseCasesTest {
     when(connections.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     useCases =
         new SshConnectionUseCases(
-            projects, connections, probe, inspection, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+            projects, connections, probe, inspection, serviceMetrics, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
   }
 
   @Test
@@ -69,6 +71,30 @@ class SshConnectionUseCasesTest {
     assertThatThrownBy(() -> useCases.metrics(projectId, connection.id()))
         .isInstanceOf(NotFoundException.class);
     verifyNoInteractions(inspection);
+  }
+
+  @Test
+  void serviceMetricsUseTheOwnedPersistedConnection() {
+    var connection = new SshConnection(UUID.randomUUID(), projectId, "Jessie", "host", 22,
+        "ops", SshAuthType.PRIVATE_KEY, "/key", null, Instant.EPOCH, Instant.EPOCH);
+    var snapshot = new com.sitionix.forgeagent.domain.model.ServiceMetricsSnapshot(
+        Instant.EPOCH, List.of());
+    when(connections.findById(connection.id())).thenReturn(Optional.of(connection));
+    when(serviceMetrics.collect(connection)).thenReturn(snapshot);
+
+    assertThat(useCases.serviceMetrics(projectId, connection.id())).isSameAs(snapshot);
+    verify(serviceMetrics).collect(connection);
+  }
+
+  @Test
+  void serviceMetricsRejectCrossProjectConnectionWithoutCollection() {
+    var connection = new SshConnection(UUID.randomUUID(), UUID.randomUUID(), "Other", "host", 22,
+        "ops", SshAuthType.PRIVATE_KEY, "/key", null, Instant.EPOCH, Instant.EPOCH);
+    when(connections.findById(connection.id())).thenReturn(Optional.of(connection));
+
+    assertThatThrownBy(() -> useCases.serviceMetrics(projectId, connection.id()))
+        .isInstanceOf(NotFoundException.class);
+    verifyNoInteractions(serviceMetrics);
   }
 
   @Test

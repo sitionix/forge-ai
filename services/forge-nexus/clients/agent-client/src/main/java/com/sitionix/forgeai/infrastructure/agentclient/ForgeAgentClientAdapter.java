@@ -1,5 +1,8 @@
 package com.sitionix.forgeai.infrastructure.agentclient;
 
+import com.sitionix.forgeai.domain.model.agentproxy.AgentServiceMetricsSnapshot;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentServiceResourceMetrics;
+
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
@@ -420,6 +423,15 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
             final UUID projectId, final UUID connectionId) {
         return assetMetrics(this.clientCallExecutor.execute(
                 () -> this.httpClient.getProjectSshConnectionMetrics(projectId, connectionId)));
+    }
+
+    @Override
+    public AgentServiceMetricsSnapshot getProjectSshConnectionServiceMetrics(UUID projectId, UUID connectionId) {
+        var response = clientCallExecutor.execute(
+            () -> httpClient.getProjectSshConnectionServiceMetrics(projectId, connectionId));
+        return new AgentServiceMetricsSnapshot(response.sampledAt(), response.services().stream()
+            .map(s -> new AgentServiceResourceMetrics(s.unit(), s.description(), s.cpuUsageNanos(), s.memoryBytes(), s.tasks()))
+            .toList());
     }
 
     private com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics assetMetrics(

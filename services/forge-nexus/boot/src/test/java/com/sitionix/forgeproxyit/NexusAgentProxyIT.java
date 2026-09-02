@@ -36,6 +36,7 @@ class NexusAgentProxyIT {
     private static final UUID REPOSITORY_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final UUID SERVICE_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID ASSET_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
+    private static final UUID CONNECTION_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
 
     @Autowired
     private NexusProxyTestManager testManager;
@@ -66,6 +67,14 @@ class NexusAgentProxyIT {
         var mvc = PathParams.create().add("projectId", PROJECT_ID).add("assetId", ASSET_ID);
         verify(ForgeAgentWireMockEndpoints.assetMetricsFailure(),
                 NexusAgentMockMvcEndpoints.assetMetricsFailure(), path, mvc);
+    }
+
+    @Test
+    void serviceMetricsForwardProjectAndConnectionThroughTheTypedProxy() {
+        var upstream = WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString()))
+                .add("connectionId", equalTo(CONNECTION_ID.toString()));
+        var nexus = PathParams.create().add("projectId", PROJECT_ID).add("connectionId", CONNECTION_ID);
+        verify(ForgeAgentWireMockEndpoints.serviceMetrics(), NexusAgentMockMvcEndpoints.serviceMetrics(), upstream, nexus);
     }
 
     private <Request, Response> void verify(

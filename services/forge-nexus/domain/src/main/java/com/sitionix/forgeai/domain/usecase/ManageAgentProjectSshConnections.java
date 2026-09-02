@@ -9,4 +9,5 @@ public interface ManageAgentProjectSshConnections {
   AgentSshConnection create(UUID projectId, CreateAgentSshConnectionCommand command);
   void test(UUID projectId, CreateAgentSshConnectionCommand command);
   AgentAssetMetrics metrics(UUID projectId, UUID connectionId);
+  AgentServiceMetricsSnapshot serviceMetrics(UUID projectId, UUID connectionId);
 }

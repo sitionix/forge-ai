@@ -7,6 +7,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentAssetCapabilities;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentServiceMetricsSnapshot;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDockerLogConfiguration;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentFileLogConfiguration;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentLogDiscoveryCommand;
@@ -633,4 +634,9 @@ public class AgentProxyApiMapper {
         }
     }
 
+    public AgentServiceMetricsResponse toResponse(AgentServiceMetricsSnapshot snapshot) {
+        return new AgentServiceMetricsResponse(snapshot.sampledAt(), snapshot.services().stream()
+            .map(s -> new AgentServiceResourceMetricsResponse(s.unit(), s.description(), s.cpuUsageNanos(), s.memoryBytes(), s.tasks()))
+            .toList());
+    }
 }

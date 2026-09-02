@@ -32,4 +32,8 @@ public class ForgeAiProjectSshConnectionsController {
   public AgentAssetMetricsResponse metrics(@PathVariable UUID projectId, @PathVariable UUID connectionId) {
     return mapper.toResponse(ssh.metrics(projectId, connectionId));
   }
+  @GetMapping("/{connectionId}/service-metrics")
+  public AgentServiceMetricsResponse serviceMetrics(@PathVariable UUID projectId, @PathVariable UUID connectionId) {
+    return mapper.toResponse(ssh.serviceMetrics(projectId, connectionId));
+  }
 }
