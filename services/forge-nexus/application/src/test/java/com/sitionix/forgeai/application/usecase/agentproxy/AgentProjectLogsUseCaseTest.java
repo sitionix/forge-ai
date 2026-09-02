@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeai.application.agentproxy.AgentProjectLogsUseCase;
+import com.sitionix.forgeai.application.agentproxy.AgentProjectSshConnectionsUseCase;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentLogConnectionType;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentLogDiscoveryCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentLogProviderType;
@@ -41,12 +42,12 @@ class AgentProjectLogsUseCaseTest {
   @Test
   void delegatesUnsavedSshConnectionTest() {
     final ForgeAgentClient client = mock(ForgeAgentClient.class);
-    final AgentProjectLogsUseCase useCase = new AgentProjectLogsUseCase(client);
+    final AgentProjectSshConnectionsUseCase useCase = new AgentProjectSshConnectionsUseCase(client);
     final UUID projectId = UUID.randomUUID();
     final CreateAgentSshConnectionCommand command =
         new CreateAgentSshConnectionCommand("profile", "host", 22, "user", "/key");
 
-    useCase.testSshConnection(projectId, command);
+    useCase.test(projectId, command);
 
     verify(client).testProjectSshConnection(projectId, command);
   }

@@ -16,6 +16,7 @@ import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.SshConnection;
 import com.sitionix.forgeagent.domain.model.SshAuthType;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
+import com.sitionix.forgeagent.domain.port.AssetInspectionPort;
 import com.sitionix.forgeagent.domain.port.SshConnectionRepository;
 import com.sitionix.forgeagent.domain.port.SshConnectionProbePort;
 import java.time.Clock;
@@ -32,6 +33,7 @@ class SshConnectionUseCasesTest {
   private final ProjectRepository projects = mock(ProjectRepository.class);
   private final SshConnectionRepository connections = mock(SshConnectionRepository.class);
   private final SshConnectionProbePort probe = mock(SshConnectionProbePort.class);
+  private final AssetInspectionPort inspection = mock(AssetInspectionPort.class);
   private SshConnectionUseCases useCases;
 
   @BeforeEach
@@ -42,7 +44,31 @@ class SshConnectionUseCasesTest {
     when(connections.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     useCases =
         new SshConnectionUseCases(
-            projects, connections, probe, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+            projects, connections, probe, inspection, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+  }
+
+  @Test
+  void metricsInspectThePersistedConnectionWithoutAnAsset() {
+    var connection = new SshConnection(UUID.randomUUID(), projectId, "Jessie", "host", 22,
+        "ops", SshAuthType.PRIVATE_KEY, "/key", null, Instant.EPOCH, Instant.EPOCH);
+    var metrics = new com.sitionix.forgeagent.domain.model.AssetMetrics(12.0, List.of(12.0),
+        10L, 5L, null, null, null, List.of(), List.of(), null, List.of());
+    when(connections.findById(connection.id())).thenReturn(Optional.of(connection));
+    when(inspection.metrics(connection)).thenReturn(metrics);
+
+    assertThat(useCases.metrics(projectId, connection.id())).isSameAs(metrics);
+    verify(inspection).metrics(connection);
+  }
+
+  @Test
+  void metricsRejectAConnectionOwnedByAnotherProject() {
+    var connection = new SshConnection(UUID.randomUUID(), UUID.randomUUID(), "Other", "host", 22,
+        "ops", SshAuthType.PRIVATE_KEY, "/key", null, Instant.EPOCH, Instant.EPOCH);
+    when(connections.findById(connection.id())).thenReturn(Optional.of(connection));
+
+    assertThatThrownBy(() -> useCases.metrics(projectId, connection.id()))
+        .isInstanceOf(NotFoundException.class);
+    verifyNoInteractions(inspection);
   }
 
   @Test

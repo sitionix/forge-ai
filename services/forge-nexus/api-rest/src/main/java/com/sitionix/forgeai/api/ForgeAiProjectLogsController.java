@@ -60,25 +60,6 @@ public class ForgeAiProjectLogsController {
     logs.validate(projectId, mapper.toCommand(request));
   }
 
-  @GetMapping("/ssh-connections")
-  public List<AgentSshConnectionResponse> listSsh(@PathVariable UUID projectId) {
-    return logs.listSshConnections(projectId).stream().map(mapper::toResponse).toList();
-  }
-
-  @PostMapping("/ssh-connections")
-  @ResponseStatus(HttpStatus.CREATED)
-  public AgentSshConnectionResponse createSsh(
-      @PathVariable UUID projectId, @Valid @RequestBody AgentSshConnectionRequest request) {
-    return mapper.toResponse(logs.createSshConnection(projectId, mapper.toCommand(request)));
-  }
-
-  @PostMapping("/ssh-connections/test")
-  @ResponseStatus(HttpStatus.NO_CONTENT)
-  public void testSsh(
-      @PathVariable UUID projectId, @Valid @RequestBody AgentSshConnectionRequest request) {
-    logs.testSshConnection(projectId, mapper.toCommand(request));
-  }
-
   @GetMapping(path = "/logs/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   public ResponseEntity<StreamingResponseBody> stream(
       @PathVariable UUID projectId,

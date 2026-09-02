@@ -5,6 +5,7 @@ import { ProjectLogsView } from './project-logs-view.js';
 import { TaskExecutionView } from './task-execution-view.js';
 import { WorkflowBuilder } from './workflow-builder.js';
 import { SshProfileFlow } from './ssh-profile-flow.js';
+import { SystemHealthView } from './system-health-view.js';
 
 const DEFAULT_OUTPUT_SCHEMA = {
   type: 'object',
@@ -118,6 +119,7 @@ export class AgentProjectsPage {
       onSaved: async () => this.loadWorkflows()
     });
     this.logsView = null;
+    this.systemHealthView = null;
     this.sshProfileFlow = new SshProfileFlow({ document: this.document, api: this.api });
     this.onPopState = () => this.syncRoute();
   }
@@ -351,8 +353,13 @@ export class AgentProjectsPage {
       assetId: options.assetId || null,
       onResourceScopeChange: (assetId) => this.replaceLogsResourceScope(projectId, assetId),
     });
+    this.systemHealthView = new SystemHealthView({
+      document: this.document, window: this.window, api: this.api,
+      sshProfileFlow: this.sshProfileFlow, assetId: options.assetId || null,
+    });
+    this.systemHealthView.bind();
     this.logsView.bind();
-    await this.logsView.load(projectId);
+    await Promise.all([this.systemHealthView.load(projectId), this.logsView.load(projectId)]);
   }
 
   async loadServices(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence) {
@@ -1191,6 +1198,8 @@ export class AgentProjectsPage {
   }
 
   disposeLogsWorkspace() {
+    this.systemHealthView?.dispose();
+    this.systemHealthView = null;
     this.logsView?.dispose();
     this.logsView = null;
     const back = this.byId('projectLogsBack');

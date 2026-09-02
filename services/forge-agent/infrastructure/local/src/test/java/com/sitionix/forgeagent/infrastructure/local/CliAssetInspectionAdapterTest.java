@@ -51,6 +51,23 @@ class CliAssetInspectionAdapterTest {
         assertThat(adapter.networkMetric("eth1: 123 only-two-columns")).isNull();
     }
 
+    @Test
+    void usesThermalZoneTypeWithZoneNameFallbackAndKeepsCelsiusValues() {
+        var executor = new StubExecutor(
+                List.of("cpu  100 0 100 800 0"),
+                List.of("cpu  110 0 110 880 0"),
+                List.of("TEMP|x86_pkg_temp|61.25", "TEMP|thermal_zone1|74"));
+
+        var metrics = new CliAssetInspectionAdapter(executor).metrics(connection());
+
+        assertThat(metrics.temperatures()).containsExactly(
+                new com.sitionix.forgeagent.domain.model.AssetMetrics.TemperatureMetric("x86_pkg_temp", 61.25),
+                new com.sitionix.forgeagent.domain.model.AssetMetrics.TemperatureMetric("thermal_zone1", 74.0));
+        assertThat(CliAssetInspectionAdapter.METRICS_PROBE)
+                .contains("$z/type", "n=\"${z##*/}\"")
+                .doesNotContain("awk -v n=\"$f\"");
+    }
+
     private static SshConnection connection() {
         return new SshConnection(UUID.randomUUID(), UUID.randomUUID(), "server", "server.local", 22,
                 "forge", SshAuthType.PRIVATE_KEY, "/key", null, Instant.EPOCH, Instant.EPOCH);

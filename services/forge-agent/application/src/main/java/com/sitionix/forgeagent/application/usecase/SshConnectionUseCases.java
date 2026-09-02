@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.application.usecase;
 import com.sitionix.forgeagent.domain.exception.*;
 import com.sitionix.forgeagent.domain.model.SshConnection;
 import com.sitionix.forgeagent.domain.model.SshAuthType;
+import com.sitionix.forgeagent.domain.model.AssetMetrics;
 import com.sitionix.forgeagent.domain.port.*;
 import java.time.Clock;
 import java.util.*;
@@ -19,6 +20,7 @@ public class SshConnectionUseCases {
   private final ProjectRepository projects;
   private final SshConnectionRepository connections;
   private final SshConnectionProbePort probe;
+  private final AssetInspectionPort inspection;
   private final Clock clock;
 
   @Transactional(readOnly = true)
@@ -43,6 +45,15 @@ public class SshConnectionUseCases {
     check(command);
     var now = clock.instant();
     probe.test(connection(projectId, command, now));
+  }
+
+  @Transactional(readOnly = true)
+  public AssetMetrics metrics(UUID projectId, UUID connectionId) {
+    project(projectId);
+    var connection = connections.findById(connectionId)
+        .filter(candidate -> candidate.projectId().equals(projectId))
+        .orElseThrow(() -> new NotFoundException("SSH_CONNECTION_NOT_FOUND", "SSH connection not found"));
+    return inspection.metrics(connection);
   }
 
   private SshConnection connection(UUID projectId, SaveSshConnectionCommand command, java.time.Instant now) {

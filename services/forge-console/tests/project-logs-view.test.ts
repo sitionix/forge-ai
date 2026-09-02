@@ -38,6 +38,32 @@ function setup(options: any = {}, listed = sources, assets = [{ id: "asset-1", n
 }
 
 describe("ProjectLogsView", () => {
+  function mockLogViewport(output: HTMLElement) {
+    Object.defineProperties(output, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: {
+        configurable: true,
+        get: () => 100 + (output.textContent ? output.textContent.split("\n").length * 20 : 0),
+      },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+  }
+
+  it("keeps the Sources popover in normal flow so the section expands before the stream panel", () => {
+    const html = readFileSync(join(process.cwd(), "src/operator/agent-projects.html"), "utf8");
+    const css = readFileSync(join(process.cwd(), "src/operator/operator-ui.css"), "utf8");
+    const dom = new JSDOM(html);
+    const sourcesSection = dom.window.document.getElementById("projectLogsSourcesSection")!;
+    const streamSection = dom.window.document.getElementById("projectLogsStreamSection")!;
+    const popover = dom.window.document.querySelector(".project-log-sources-popover")!;
+
+    expect(sourcesSection.compareDocumentPosition(streamSection) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sourcesSection.contains(popover)).toBe(true);
+    expect(css).toMatch(/\.project-log-sources-popover\s*\{[^}]*position:\s*static;[^}]*display:\s*block;[^}]*width:\s*100%;/s);
+    expect(css).not.toMatch(/#projectLogsSourcesSection\s*\{[^}]*z-index:/s);
+    expect(css).not.toMatch(/\.project-log-sources-popover\s*\{[^}]*position:\s*absolute;/s);
+  });
+
   it("is the viewer for Service-derived, Asset-owned, and legacy/custom sources", async () => {
     const { dom, view, api } = setup();
     await view.load("project-1");
@@ -47,6 +73,33 @@ describe("ProjectLogsView", () => {
     expect(dom.window.document.getElementById("projectLogsSources")?.textContent).toContain("Resource · DOCKER");
     expect(dom.window.document.getElementById("projectLogsSources")?.textContent).toContain("Custom · FILE");
     expect(dom.window.document.getElementById("projectLogsDialog")).toBeNull();
+  });
+
+  it("follows new log events while the viewer is already at the tail", () => {
+    const { dom, view } = setup();
+    const output = dom.window.document.getElementById("projectLogsOutput")!;
+    mockLogViewport(output);
+
+    view.pushEvent({ sourceName: "API", message: "first" });
+    output.scrollTop = output.scrollHeight - output.clientHeight;
+    view.pushEvent({ sourceName: "API", message: "latest" });
+
+    expect(output.textContent).toContain("latest");
+    expect(output.scrollTop).toBe(output.scrollHeight);
+  });
+
+  it("preserves the reading position when the viewer was scrolled away from the tail", () => {
+    const { dom, view } = setup();
+    const output = dom.window.document.getElementById("projectLogsOutput")!;
+    mockLogViewport(output);
+    view.events = Array.from({ length: 12 }, (_, index) => ({ sourceName: "API", message: `line ${index}` }));
+    view.renderEvents();
+    output.scrollTop = 40;
+
+    view.pushEvent({ sourceName: "API", message: "new while reading" });
+
+    expect(output.textContent).toContain("new while reading");
+    expect(output.scrollTop).toBe(40);
   });
 
   it("applies the initial Service scope", async () => {

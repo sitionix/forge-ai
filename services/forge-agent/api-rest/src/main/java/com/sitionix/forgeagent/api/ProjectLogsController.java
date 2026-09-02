@@ -14,7 +14,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @RequiredArgsConstructor
 public class ProjectLogsController {
   private final LogSourceUseCases logs;
-  private final SshConnectionUseCases ssh;
   private final ProjectLogSseService streaming;
   private final ForgeAgentApiMapper mapper;
 
@@ -73,22 +72,4 @@ public class ProjectLogsController {
     return streaming.stream(projectId, sourceId, lines);
   }
 
-  @GetMapping("/api/v1/projects/{projectId}/ssh-connections")
-  public List<SshConnectionResponse> sshList(@PathVariable UUID projectId) {
-    return ssh.list(projectId).stream().map(this.mapper::toResponse).toList();
-  }
-
-  @PostMapping("/api/v1/projects/{projectId}/ssh-connections")
-  @ResponseStatus(HttpStatus.CREATED)
-  public SshConnectionResponse sshCreate(
-      @PathVariable UUID projectId, @Valid @RequestBody SshConnectionRequest r) {
-    return this.mapper.toResponse(ssh.create(projectId, this.mapper.toCommand(r)));
-  }
-
-  @PostMapping("/api/v1/projects/{projectId}/ssh-connections/test")
-  @ResponseStatus(HttpStatus.NO_CONTENT)
-  public void sshTest(
-      @PathVariable UUID projectId, @Valid @RequestBody SshConnectionRequest request) {
-    ssh.test(projectId, this.mapper.toCommand(request));
-  }
 }

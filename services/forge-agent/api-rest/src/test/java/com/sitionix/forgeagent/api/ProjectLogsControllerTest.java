@@ -31,6 +31,7 @@ class ProjectLogsControllerTest {
   private SshConnectionUseCases ssh;
   private ProjectLogSseService streaming;
   private ProjectLogsController controller;
+  private SshConnectionsController sshController;
 
   @BeforeEach
   void setUp() {
@@ -38,8 +39,9 @@ class ProjectLogsControllerTest {
     this.ssh = mock(SshConnectionUseCases.class);
     this.streaming = mock(ProjectLogSseService.class);
     this.controller =
-        new ProjectLogsController(
-            this.logs, this.ssh, this.streaming, new ForgeAgentApiMapper(new ObjectMapper()));
+        new ProjectLogsController(this.logs, this.streaming, new ForgeAgentApiMapper(new ObjectMapper()));
+    this.sshController = new SshConnectionsController(
+        this.ssh, new ForgeAgentApiMapper(new ObjectMapper()));
   }
 
   @Test
@@ -116,8 +118,8 @@ class ProjectLogsControllerTest {
     final SseEmitter emitter = new SseEmitter();
     when(this.streaming.stream(projectId, List.of(sourceId), 100)).thenReturn(emitter);
 
-    assertThat(this.controller.sshList(projectId)).hasSize(1);
-    assertThat(this.controller.sshCreate(projectId, request).id()).isEqualTo(sshId);
+    assertThat(this.sshController.list(projectId)).hasSize(1);
+    assertThat(this.sshController.create(projectId, request).id()).isEqualTo(sshId);
     assertThat(this.controller.stream(projectId, List.of(sourceId), 100)).isSameAs(emitter);
   }
 
@@ -159,9 +161,9 @@ class ProjectLogsControllerTest {
     when(this.ssh.list(projectId)).thenReturn(List.of(connection));
     when(this.ssh.create(projectId, command)).thenReturn(connection);
 
-    assertThat(this.controller.sshCreate(projectId, request).authType())
+    assertThat(this.sshController.create(projectId, request).authType())
         .isEqualTo(SshAuthType.PASSWORD);
-    assertThat(this.controller.sshList(projectId).getFirst().authType())
+    assertThat(this.sshController.list(projectId).getFirst().authType())
         .isEqualTo(SshAuthType.PASSWORD);
     verify(this.ssh).create(projectId, command);
   }
@@ -174,7 +176,7 @@ class ProjectLogsControllerTest {
     final SaveSshConnectionCommand command = new SaveSshConnectionCommand(
         "Ancestor", "192.168.0.108", 22, "ancestor", SshAuthType.PASSWORD, null, "secret");
 
-    this.controller.sshTest(projectId, request);
+    this.sshController.test(projectId, request);
 
     verify(this.ssh).test(projectId, command);
   }

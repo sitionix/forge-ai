@@ -223,23 +223,5 @@ class ForgeAiProjectLogsControllerTest {
     when(mapper.toResponse(candidate)).thenReturn(candidateResponse);
     assertThat(controller.discover(projectId, discoveryRequest)).containsExactly(candidateResponse);
 
-    AgentSshConnectionRequest sshRequest =
-        new AgentSshConnectionRequest("rover", "rover.local", 22, "operator", "/keys/id");
-    CreateAgentSshConnectionCommand createSsh =
-        new CreateAgentSshConnectionCommand("rover", "rover.local", 22, "operator", "/keys/id");
-    AgentSshConnection ssh =
-        new AgentSshConnection(
-            sshId, projectId, "rover", "rover.local", 22, "operator", Instant.EPOCH, Instant.EPOCH);
-    AgentSshConnectionResponse sshResponse =
-        new AgentSshConnectionResponse(
-            sshId, projectId, "rover", "rover.local", 22, "operator", Instant.EPOCH, Instant.EPOCH);
-    when(mapper.toCommand(sshRequest)).thenReturn(createSsh);
-    when(logs.listSshConnections(projectId)).thenReturn(List.of(ssh));
-    when(logs.createSshConnection(projectId, createSsh)).thenReturn(ssh);
-    when(mapper.toResponse(ssh)).thenReturn(sshResponse);
-    assertThat(controller.listSsh(projectId)).containsExactly(sshResponse);
-    assertThat(controller.createSsh(projectId, sshRequest)).isEqualTo(sshResponse);
-    controller.testSsh(projectId, sshRequest);
-    verify(logs).testSshConnection(projectId, createSsh);
   }
 }
