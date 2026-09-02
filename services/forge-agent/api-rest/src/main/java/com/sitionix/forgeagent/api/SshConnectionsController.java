@@ -46,4 +46,17 @@ public class SshConnectionsController {
       @PathVariable UUID projectId, @PathVariable UUID connectionId) {
     return ssh.serviceMetrics(projectId, connectionId);
   }
+
+  @GetMapping("/{connectionId}/service-metrics/{unit}/processes")
+  public com.sitionix.forgeagent.domain.model.ServiceProcessMetricsSnapshot serviceProcesses(
+      @PathVariable UUID projectId, @PathVariable UUID connectionId, @PathVariable String unit,
+      @RequestParam(defaultValue = "cpu") String sort) {
+    final com.sitionix.forgeagent.domain.model.ProcessMetricsSort typedSort;
+    try {
+      typedSort = com.sitionix.forgeagent.domain.model.ProcessMetricsSort.valueOf(sort.toUpperCase(java.util.Locale.ROOT));
+    } catch (RuntimeException ignored) {
+      throw new com.sitionix.forgeagent.domain.exception.ValidationException("Process metric sort is invalid");
+    }
+    return ssh.serviceProcesses(projectId, connectionId, unit, typedSort);
+  }
 }

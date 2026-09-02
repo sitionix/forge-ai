@@ -5646,6 +5646,7 @@ describe('Agent projects page', () => {
       username: 'ancestor', authType: 'PASSWORD', privateKeyPath: null, password: 'secret' };
     client.testSshConnection(project().id, sshRequest);
     client.getSshConnectionServiceMetrics(project().id, '55555555-5555-4555-8555-555555555555');
+    client.getSshConnectionServiceProcesses(project().id, '55555555-5555-4555-8555-555555555555', 'alpha@1.service', 'ram');
 
     const calls = [...http.get.mock.calls, ...http.post.mock.calls, ...http.put.mock.calls, ...http.delete.mock.calls].map(([path]) => path);
     expect(calls.every((path) => path.startsWith('/agents'))).toBe(true);
@@ -5654,6 +5655,8 @@ describe('Agent projects page', () => {
       `/agents/projects/${project().id}/ssh-connections/test`, sshRequest);
     expect(http.get).toHaveBeenCalledWith(
       `/agents/projects/${project().id}/ssh-connections/55555555-5555-4555-8555-555555555555/service-metrics`);
+    expect(http.get).toHaveBeenCalledWith(
+      `/agents/projects/${project().id}/ssh-connections/55555555-5555-4555-8555-555555555555/service-metrics/alpha%401.service/processes?sort=ram`);
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`, {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });

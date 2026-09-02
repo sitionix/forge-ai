@@ -20,6 +20,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentProjectAssetResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentAssetMetricsResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentAssetCapabilitiesResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentServiceMetricsResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentServiceProcessMetricsResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentAssetMonitoringRequest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
@@ -62,6 +63,12 @@ public final class NexusAgentMockMvcEndpoints {
         return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/ssh-connections/{connectionId}/service-metrics",
                 HttpMethod.GET, Void.class, AgentServiceMetricsResponse.class, HttpStatus.OK,
                 "agent-service-metrics-response.json", null);
+    }
+
+    public static Endpoint<Void, AgentServiceProcessMetricsResponse> serviceProcesses() {
+        return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/ssh-connections/{connectionId}/service-metrics/{unit}/processes",
+                HttpMethod.GET, Void.class, AgentServiceProcessMetricsResponse.class, HttpStatus.OK,
+                "agent-service-process-metrics-response.json", null);
     }
 
     public static Endpoint<AgentAssetMonitoringRequest, AgentLogSourceResponse> createAssetMonitoring() {

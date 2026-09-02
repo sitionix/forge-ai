@@ -16,17 +16,274 @@ const serviceSample = { sampledAt: "2026-09-02T10:00:04Z", services: [
   { unit: "c.service", description: null, cpuUsageNanos: null, memoryBytes: null, tasks: null },
   { unit: "d.service", description: "Delta", cpuUsageNanos: 400000000, memoryBytes: 1048576, tasks: 1 },
 ] };
+const processSample = { unit: "a.service", sort: "CPU", sampledAt: "2026-09-02T10:00:05Z", processes: [
+  { pid: 11, process: "worker", cpuPercent: 12.5, rssBytes: 1048576, threads: 4 },
+  { pid: 12, process: "helper", cpuPercent: null, rssBytes: null, threads: null },
+] };
 
 function setup(overrides: any = {}, options: any = {}) {
   const dom = new JSDOM(readFileSync(join(process.cwd(), "src/operator/agent-projects.html"), "utf8"));
   const api = { listSshConnections: vi.fn().mockResolvedValue([connection]), getSshConnectionMetrics: vi.fn().mockResolvedValue(metrics),
-    getSshConnectionServiceMetrics: vi.fn().mockResolvedValue(serviceSample), ...overrides };
+    getSshConnectionServiceMetrics: vi.fn().mockResolvedValue(serviceSample),
+    getSshConnectionServiceProcesses: vi.fn().mockResolvedValue(processSample), ...overrides };
   const view = new SystemHealthView({ document: dom.window.document, window: dom.window, api,
     sshProfileFlow: { open: vi.fn() }, pollIntervalMs: 100000, ...options });
   view.bind(); return { dom, api, view };
 }
 
 describe("SystemHealthView", () => {
+  it("shows the fullest disk first and expands the remaining disk rows on demand", async () => {
+    const diskMetrics = { ...metrics, disks: [
+      { mount: "/run", totalBytes: 1_000, usedBytes: 950 },
+      { mount: "/boot", totalBytes: 1_000, usedBytes: 220 },
+      { mount: "/", totalBytes: 1_000, usedBytes: 880 },
+      { mount: "/run/user/1000", totalBytes: 1_000, usedBytes: 0 },
+    ] };
+    const { dom, view } = setup({ getSshConnectionMetrics: vi.fn().mockResolvedValue(diskMetrics) });
+
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelectorAll(".system-health-disk-row")).toHaveLength(1));
+    expect(dom.window.document.querySelector(".system-health-disk-mount")?.textContent).toBe("/run");
+    const toggle = dom.window.document.getElementById("systemHealthDisksToggle") as HTMLButtonElement;
+    expect(toggle.textContent).toContain("Show all (4)"); toggle.click();
+    const rows = [...dom.window.document.querySelectorAll(".system-health-disk-row")];
+    expect(rows.map((row) => row.querySelector(".system-health-disk-mount")?.textContent))
+      .toEqual(["/run", "/", "/boot", "/run/user/1000"]);
+    expect(rows[0]!.textContent).toContain("95%");
+    expect(rows[0]!.querySelector(".system-health-disk-bar")?.getAttribute("aria-valuenow")).toBe("95");
+    expect(rows[0]!.classList).toContain("is-ephemeral");
+    expect(dom.window.document.getElementById("systemHealthDisksToggle")?.textContent).toContain("Show less");
+    (dom.window.document.getElementById("systemHealthDisksToggle") as HTMLButtonElement).click();
+    expect(dom.window.document.querySelectorAll(".system-health-disk-row")).toHaveLength(1);
+    view.dispose();
+  });
+
+  it("renders long temperature sensor names as compact titled rows", async () => {
+    const longSensor = "bigcore0-thermal-zone-with-a-long-name";
+    const { dom, view } = setup({ getSshConnectionMetrics: vi.fn().mockResolvedValue({ ...metrics,
+      temperatures: [{ sensor: longSensor, celsius: 51.8 }] }) });
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelector(".health-sensor-name")).not.toBeNull());
+    const sensor = dom.window.document.querySelector(".health-sensor-name") as HTMLElement;
+    expect(sensor.textContent).toBe(longSensor); expect(sensor.title).toBe(longSensor);
+    expect(sensor.parentElement?.textContent).toContain("51.8°C"); view.dispose();
+  });
+
+  it("requests processes only after expanding the selected service and collapses on second click", async () => {
+    const request = vi.fn().mockResolvedValue(processSample);
+    const { dom, view } = setup({ getSshConnectionServiceProcesses: request });
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+    expect(request).not.toHaveBeenCalled();
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("project-1", "ssh-1", "a.service", "cpu"));
+    await vi.waitFor(() => expect(dom.window.document.querySelector(".service-process-row")?.textContent).toContain("worker"));
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    expect(dom.window.document.querySelector(".service-process-detail-row")).toBeNull();
+    expect(request).toHaveBeenCalledOnce(); view.dispose();
+  });
+
+  it("queues a service switch until the active process request settles", async () => {
+    let resolveA!: (value: any) => void;
+    const pendingA = new Promise((resolve) => { resolveA = resolve; });
+    const request = vi.fn((_: string, __: string, unit: string) => unit === "a.service" ? pendingA
+      : Promise.resolve({ ...processSample, unit, processes: [{ ...processSample.processes[0], pid: 99, process: "beta" }] }));
+    const { dom, view } = setup({ getSshConnectionServiceProcesses: request });
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    (dom.window.document.querySelector('[data-service-unit="b.service"]') as HTMLElement).click();
+    expect(request).toHaveBeenCalledOnce();
+    resolveA(processSample);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request).toHaveBeenLastCalledWith("project-1", "ssh-1", "b.service", "cpu");
+    await vi.waitFor(() => expect(dom.window.document.querySelector(".service-process-row")?.textContent).toContain("beta"));
+    expect(dom.window.document.body.textContent).not.toContain("worker");
+    expect(dom.window.document.querySelectorAll(".service-process-detail-row")).toHaveLength(1); view.dispose();
+  });
+
+  it("queues RAM sorting until the pending CPU request settles", async () => {
+    let resolveCpu!: (value: any) => void;
+    const cpu = new Promise((resolve) => { resolveCpu = resolve; });
+    const ramResult = { ...processSample, sort: "RAM", processes: [{ ...processSample.processes[0], process: "ram-result" }] };
+    const request = vi.fn().mockReturnValueOnce(cpu).mockResolvedValueOnce(ramResult);
+    const { dom, view } = setup({ getSshConnectionServiceProcesses: request });
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    const sort = dom.window.document.querySelector(".service-process-sort") as HTMLSelectElement;
+    sort.value = "ram"; sort.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+
+    expect(request).toHaveBeenCalledOnce();
+    resolveCpu(processSample);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request).toHaveBeenLastCalledWith("project-1", "ssh-1", "a.service", "ram");
+    await vi.waitFor(() => expect(dom.window.document.body.textContent).toContain("ram-result"));
+    expect(dom.window.document.body.textContent).not.toContain("worker"); view.dispose();
+  });
+
+  it("coalesces rapid CPU RAM CPU changes to the final desired process request", async () => {
+    let resolveInitial!: (value: any) => void;
+    const initial = new Promise((resolve) => { resolveInitial = resolve; });
+    const finalResult = { ...processSample, processes: [{ ...processSample.processes[0], process: "final-cpu" }] };
+    let active = 0, maxActive = 0;
+    const request = vi.fn((_: string, __: string, ___: string, sort: string) => {
+      active++; maxActive = Math.max(maxActive, active);
+      const result = request.mock.calls.length === 1 ? initial : Promise.resolve(finalResult);
+      return result.finally(() => { active--; });
+    });
+    const { dom, view } = setup({ getSshConnectionServiceProcesses: request });
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    let sort = dom.window.document.querySelector(".service-process-sort") as HTMLSelectElement;
+    sort.value = "ram"; sort.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    sort = dom.window.document.querySelector(".service-process-sort") as HTMLSelectElement;
+    sort.value = "cpu"; sort.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    expect(request).toHaveBeenCalledOnce();
+
+    resolveInitial(processSample);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request).toHaveBeenLastCalledWith("project-1", "ssh-1", "a.service", "cpu");
+    await vi.waitFor(() => expect(dom.window.document.body.textContent).toContain("final-cpu"));
+    expect(dom.window.document.body.textContent).not.toContain("worker");
+    expect(maxActive).toBe(1); view.dispose();
+  });
+
+  it("renders at most five processes and requests RAM sorting independently", async () => {
+    const many = { ...processSample, processes: Array.from({ length: 7 }, (_, index) => ({
+      pid: index + 1, process: `p${index + 1}`, cpuPercent: 7 - index, rssBytes: (index + 1) * 1024, threads: 1 })) };
+    const request = vi.fn().mockResolvedValue(many);
+    const { dom, view } = setup({ getSshConnectionServiceProcesses: request });
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    await vi.waitFor(() => expect(dom.window.document.querySelectorAll(".service-process-row")).toHaveLength(5));
+    const sort = dom.window.document.querySelector(".service-process-sort") as HTMLSelectElement;
+    sort.value = "ram"; sort.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(request).toHaveBeenLastCalledWith("project-1", "ssh-1", "a.service", "ram"));
+    view.dispose();
+  });
+
+  it("shows process loading error and empty states without hiding service metrics", async () => {
+    let reject!: (error: Error) => void;
+    const pending = new Promise((_, rejected) => { reject = rejected; });
+    const request = vi.fn().mockReturnValueOnce(pending).mockResolvedValueOnce({ ...processSample, processes: [] });
+    const { dom, view } = setup({ getSshConnectionServiceProcesses: request });
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    expect(dom.window.document.body.textContent).toContain("Loading service processes");
+    reject(new Error("process timeout"));
+    await vi.waitFor(() => expect(dom.window.document.body.textContent).toContain("process timeout"));
+    expect(dom.window.document.body.textContent).toContain("a.service");
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    await vi.waitFor(() => expect(dom.window.document.body.textContent).toContain("No processes in this service"));
+    view.dispose();
+  });
+
+  it("does not overlap identical process requests and clears state on project change and dispose", async () => {
+    let resolve!: (value: any) => void;
+    const pending = new Promise((done) => { resolve = done; });
+    const request = vi.fn().mockReturnValue(pending);
+    const { dom, view } = setup({ getSshConnectionServiceProcesses: request });
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    await view.refreshProcesses(); expect(request).toHaveBeenCalledOnce();
+    await view.load("project-2");
+    expect(view.expandedServiceUnit).toBeNull();
+    resolve(processSample); await Promise.resolve();
+    expect(view.processSnapshot).toBeNull();
+    view.dispose(); expect(view.expandedServiceUnit).toBeNull();
+  });
+
+  it("clears queued process work after connection and close changes", async () => {
+    let resolveCpu!: (value: any) => void;
+    const cpu = new Promise((done) => { resolveCpu = done; });
+    const ramResult = { ...processSample, sort: "RAM", processes: [{ ...processSample.processes[0], process: "ram-result" }] };
+    const request = vi.fn((_: string, __: string, ___: string, sort: string) =>
+      sort === "cpu" ? cpu : Promise.resolve(ramResult));
+    const { dom, view } = setup({ listSshConnections: vi.fn().mockResolvedValue([connection, { ...connection, id: "ssh-2" }]),
+      getSshConnectionServiceProcesses: request });
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    const sort = dom.window.document.querySelector(".service-process-sort") as HTMLSelectElement;
+    sort.value = "ram"; sort.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    view.select("ssh-2"); expect(view.expandedServiceUnit).toBeNull();
+    resolveCpu(processSample); await Promise.resolve(); await Promise.resolve();
+    expect(request).toHaveBeenCalledOnce();
+    expect(dom.window.document.body.textContent).not.toContain("worker");
+    view.close(); expect(view.processSnapshot).toBeNull(); view.dispose();
+  });
+
+  it.each(["collapse", "project", "close", "dispose"])(
+    "drops queued process work and stale output on %s",
+    async (action) => {
+      let resolveCpu!: (value: any) => void;
+      const cpu = new Promise((done) => { resolveCpu = done; });
+      const request = vi.fn().mockReturnValue(cpu);
+      const { dom, view } = setup({ getSshConnectionServiceProcesses: request });
+      await view.load("project-1"); view.select("ssh-1");
+      await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+      (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+      const sort = dom.window.document.querySelector(".service-process-sort") as HTMLSelectElement;
+      sort.value = "ram"; sort.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      expect(request).toHaveBeenCalledOnce();
+
+      if (action === "collapse") {
+        (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+      } else if (action === "project") {
+        await view.load("project-2");
+      } else if (action === "close") {
+        view.close();
+      } else {
+        view.dispose();
+      }
+      resolveCpu(processSample); await Promise.resolve(); await Promise.resolve();
+      expect(request).toHaveBeenCalledOnce();
+      expect(view.processSnapshot).toBeNull();
+      expect(dom.window.document.body.textContent).not.toContain("worker");
+      view.dispose();
+    },
+  );
+
+  it.each(["connection", "project"])(
+    "keeps a new %s selection behind the old active process request",
+    async (change) => {
+      let resolveOld!: (value: any) => void;
+      const oldRequest = new Promise((done) => { resolveOld = done; });
+      let active = 0, maxActive = 0;
+      const fresh = { ...processSample, processes: [{ ...processSample.processes[0], process: "fresh-selection" }] };
+      const request = vi.fn(() => {
+        active++; maxActive = Math.max(maxActive, active);
+        const result = request.mock.calls.length === 1 ? oldRequest : Promise.resolve(fresh);
+        return result.finally(() => { active--; });
+      });
+      const connections = [connection, { ...connection, id: "ssh-2" }];
+      const { dom, view } = setup({ listSshConnections: vi.fn().mockResolvedValue(connections),
+        getSshConnectionServiceProcesses: request });
+      await view.load("project-1"); view.select("ssh-1");
+      await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+      (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+
+      if (change === "connection") view.select("ssh-2");
+      else await view.load("project-2");
+      await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+      (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+      expect(request).toHaveBeenCalledOnce();
+
+      resolveOld(processSample);
+      await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(dom.window.document.body.textContent).toContain("fresh-selection"));
+      expect(request).toHaveBeenLastCalledWith(change === "project" ? "project-2" : "project-1",
+        change === "connection" ? "ssh-2" : "ssh-1", "a.service", "cpu");
+      expect(dom.window.document.body.textContent).not.toContain("worker");
+      expect(maxActive).toBe(1); view.dispose();
+    },
+  );
   it("normalizes service CPU delta against total host capacity", () => {
     expect(calculateServiceCpuPercent(1_000_000_000, 5_000_000_000, 4_000, 8_000, 4)).toBe(25);
     expect(calculateServiceCpuPercent(null, 5, 1, 2, 4)).toBeNull();
@@ -60,6 +317,30 @@ describe("SystemHealthView", () => {
     (dom.window.document.getElementById("serviceMetricsToggle") as HTMLElement).click();
     expect(dom.window.document.querySelectorAll(".service-metrics-row").length).toBe(3);
     expect(dom.window.document.getElementById("serviceMetricsToggle")?.textContent).toContain("Show more"); view.dispose();
+  });
+
+  it("keeps an expanded service visible when a refresh moves it outside the top three", async () => {
+    const initial = { ...serviceSample, sampledAt: "2026-09-02T10:00:00Z", services: serviceSample.services.map((s) => ({ ...s,
+      cpuUsageNanos: 0 })) };
+    const later = { ...serviceSample, sampledAt: "2026-09-02T10:00:04Z", services: [
+      { ...serviceSample.services[0], cpuUsageNanos: 100_000_000 },
+      { ...serviceSample.services[1], cpuUsageNanos: 900_000_000 },
+      { ...serviceSample.services[2], cpuUsageNanos: 800_000_000 },
+      { ...serviceSample.services[3], cpuUsageNanos: 700_000_000 },
+    ] };
+    const serviceRequest = vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(later);
+    const { dom, view } = setup({ getSshConnectionServiceMetrics: serviceRequest });
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+    (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+    await vi.waitFor(() => expect(dom.window.document.querySelector(".service-process-detail-row")).not.toBeNull());
+
+    await view.refreshServices();
+    const visible = [...dom.window.document.querySelectorAll(".service-metrics-row")]
+      .map((row) => row.getAttribute("data-service-unit"));
+    expect(visible).toEqual(["b.service", "c.service", "d.service", "a.service"]);
+    expect(dom.window.document.querySelector('[data-service-unit="a.service"]')?.classList).toContain("is-expanded");
+    expect(dom.window.document.querySelector(".service-process-detail-row")).not.toBeNull(); view.dispose();
   });
 
   it("does not overlap service requests", async () => {

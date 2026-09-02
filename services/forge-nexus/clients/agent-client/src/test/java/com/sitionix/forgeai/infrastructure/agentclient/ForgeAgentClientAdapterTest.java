@@ -662,4 +662,25 @@ class ForgeAgentClientAdapterTest {
         verify(this.executor).execute(any());
         verify(this.httpClient).testProjectSshConnection(PROJECT_ID, request);
     }
+
+    @Test
+    void serviceProcessesForwardIdentifiersUnitAndSortAndMapTypedResponse() {
+        var connectionId = UUID.randomUUID();
+        var upstream = new com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceProcessMetricsResponse(
+                "alpha.service", "CPU", CREATED,
+                List.of(new com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceProcessResponse(
+                        42L, "worker", 12.5, 2048L, 3L)));
+        when(httpClient.getProjectSshConnectionServiceProcesses(
+                PROJECT_ID, connectionId, "alpha.service", "cpu")).thenReturn(upstream);
+
+        var result = adapter.getProjectSshConnectionServiceProcesses(
+                PROJECT_ID, connectionId, "alpha.service", "cpu");
+
+        assertThat(result).isEqualTo(new com.sitionix.forgeai.domain.model.agentproxy.AgentServiceProcessMetricsSnapshot(
+                "alpha.service", "CPU", CREATED,
+                List.of(new com.sitionix.forgeai.domain.model.agentproxy.AgentServiceProcessMetrics(
+                        42L, "worker", 12.5, 2048L, 3L))));
+        verify(httpClient).getProjectSshConnectionServiceProcesses(
+                PROJECT_ID, connectionId, "alpha.service", "cpu");
+    }
 }

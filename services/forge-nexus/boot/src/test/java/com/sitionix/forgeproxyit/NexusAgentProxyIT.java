@@ -1,6 +1,7 @@
 package com.sitionix.forgeproxyit;
 
 import static com.sitionix.forgeit.wiremock.api.Parameter.equalTo;
+import static com.sitionix.forgeit.wiremock.api.Parameter.matches;
 
 import com.sitionix.forgeai.Application;
 import com.sitionix.forgeproxyit.infra.ForgeAgentWireMockEndpoints;
@@ -75,6 +76,24 @@ class NexusAgentProxyIT {
                 .add("connectionId", equalTo(CONNECTION_ID.toString()));
         var nexus = PathParams.create().add("projectId", PROJECT_ID).add("connectionId", CONNECTION_ID);
         verify(ForgeAgentWireMockEndpoints.serviceMetrics(), NexusAgentMockMvcEndpoints.serviceMetrics(), upstream, nexus);
+    }
+
+    @Test
+    void serviceProcessesForwardProjectConnectionUnitAndSortThroughTheTypedProxy() {
+        var unit = "worker\\x2dblue@1.service";
+        var upstreamPath = WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString()))
+                .add("connectionId", equalTo(CONNECTION_ID.toString()))
+                .add("unit", matches("worker(?:%5C|\\\\)x2dblue(?:@|%40)1\\.service"));
+        var upstream = testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.serviceProcesses())
+                .pathPattern(upstreamPath)
+                .urlWithQueryParam(WireMockQueryParams.create().add("sort", equalTo("ram")))
+                .createDefault();
+        testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceProcesses())
+                .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)
+                        .add("connectionId", CONNECTION_ID).add("unit", unit))
+                .withQueryParameters(QueryParams.create().add("sort", "ram"))
+                .assertDefault();
+        upstream.verify();
     }
 
     private <Request, Response> void verify(

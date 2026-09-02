@@ -188,4 +188,9 @@ public interface ForgeAgentHttpClient {
     @GetExchange("/api/v1/projects/{projectId}/ssh-connections/{connectionId}/service-metrics")
     com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceMetricsResponse getProjectSshConnectionServiceMetrics(
         @PathVariable UUID projectId, @PathVariable UUID connectionId);
+
+    @GetExchange("/api/v1/projects/{projectId}/ssh-connections/{connectionId}/service-metrics/{unit}/processes")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceProcessMetricsResponse getProjectSshConnectionServiceProcesses(
+        @PathVariable UUID projectId, @PathVariable UUID connectionId, @PathVariable String unit,
+        @org.springframework.web.bind.annotation.RequestParam String sort);
 }

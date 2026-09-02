@@ -13,20 +13,36 @@ export class SystemHealthView {
     this.assetId = assetId; this.pollIntervalMs = pollIntervalMs; this.projectId = null;
     this.connectionId = null; this.connections = []; this.metrics = null; this.error = "";
     this.loading = false; this.stale = false; this.generation = 0; this.timer = null; this.inFlightGeneration = null;
+    this.disksExpanded = false;
     this.listeners = [];
     this.servicePollIntervalMs = servicePollIntervalMs; this.serviceSnapshot = null; this.previousServiceSnapshot = null;
     this.serviceError = ""; this.serviceStale = false; this.serviceTimer = null; this.serviceInFlightGeneration = null;
     this.servicesExpanded = false; this.serviceSort = "cpu";
+    this.expandedServiceUnit = null; this.processSort = "cpu"; this.processSnapshot = null;
+    this.processError = ""; this.processLoading = false; this.processRequestId = 0;
+    this.processInFlight = null; this.processDesired = null;
   }
 
   bind() {
     this.on("systemHealthSource", "change", (event) => this.select(event.target.value || null));
     this.on("systemHealthAddConnection", "click", () => this.sshProfileFlow.open(this.projectId, (created) => this.connectionCreated(created)));
-    this.on("systemHealthContent", "click", (event) => { if (event.target.closest?.("#serviceMetricsToggle")) { this.servicesExpanded = !this.servicesExpanded; this.render(); } });
-    this.on("systemHealthContent", "change", (event) => { if (event.target.id === "serviceMetricsSort") { this.serviceSort = event.target.value; this.render(); } });
+    this.on("systemHealthContent", "click", (event) => {
+      if (event.target.closest?.("#systemHealthDisksToggle")) { this.disksExpanded = !this.disksExpanded; this.render(); return; }
+      if (event.target.closest?.("#serviceMetricsToggle")) { this.servicesExpanded = !this.servicesExpanded; this.render(); return; }
+      const row = event.target.closest?.(".service-metrics-row[data-service-unit]");
+      if (row) this.toggleServiceProcesses(row.dataset.serviceUnit);
+    });
+    this.on("systemHealthContent", "change", (event) => {
+      if (event.target.id === "serviceMetricsSort") { this.serviceSort = event.target.value; this.render(); }
+      if (event.target.classList?.contains("service-process-sort")) {
+        this.processSort = event.target.value; this.processSnapshot = null; this.processError = "";
+        this.refreshProcesses(); this.render();
+      }
+    });
   }
 
   async load(projectId) {
+    if (projectId !== this.projectId) { this.clearProcesses(); this.disksExpanded = false; }
     this.projectId = projectId;
     const generation = ++this.generation;
     let connections, asset;
@@ -63,8 +79,10 @@ export class SystemHealthView {
   select(connectionId) {
     this.stopTimer();
     this.connectionId = connectionId;
+    this.disksExpanded = false;
     this.metrics = null; this.error = ""; this.stale = false; this.loading = Boolean(connectionId);
     this.stopServiceTimer(); this.serviceSnapshot = null; this.previousServiceSnapshot = null; this.serviceError = ""; this.serviceStale = false; this.servicesExpanded = false; this.serviceSort = "cpu";
+    this.clearProcesses();
     ++this.generation;
     this.byId("systemHealthSource").value = connectionId || "";
     this.render();
@@ -91,6 +109,61 @@ export class SystemHealthView {
     }
   }
 
+  toggleServiceProcesses(unit) {
+    if (this.expandedServiceUnit === unit) { this.clearProcesses(); this.render(); return; }
+    this.clearProcesses(); this.expandedServiceUnit = unit; this.processSort = "cpu";
+    this.refreshProcesses(); this.render();
+  }
+
+  async refreshProcesses() {
+    if (!this.projectId || !this.connectionId || !this.expandedServiceUnit) return;
+    const target = { generation: this.generation, projectId: this.projectId, connectionId: this.connectionId,
+      unit: this.expandedServiceUnit, sort: this.processSort };
+    if (this.sameProcessTarget(this.processDesired, target)
+        || (!this.processDesired && this.processInFlight?.requestId === this.processRequestId
+          && this.sameProcessTarget(this.processInFlight, target))) return;
+    target.requestId = ++this.processRequestId;
+    this.processDesired = target;
+    this.processLoading = true; this.processError = "";
+    if (this.processInFlight) return;
+    return this.runDesiredProcessRequest();
+  }
+
+  async runDesiredProcessRequest() {
+    const target = this.processDesired;
+    if (!target || this.processInFlight) return;
+    this.processDesired = null; this.processInFlight = target;
+    const { requestId, generation, projectId, connectionId, unit, sort } = target;
+    try {
+      const snapshot = await this.api.getSshConnectionServiceProcesses(projectId, connectionId, unit, sort);
+      if (requestId !== this.processRequestId || generation !== this.generation
+          || projectId !== this.projectId || connectionId !== this.connectionId
+          || unit !== this.expandedServiceUnit || sort !== this.processSort) return;
+      this.processSnapshot = snapshot; this.processError = "";
+    } catch (error) {
+      if (requestId !== this.processRequestId || generation !== this.generation
+          || unit !== this.expandedServiceUnit || sort !== this.processSort) return;
+      this.processSnapshot = null; this.processError = error.message || "Unable to read service processes.";
+    } finally {
+      if (this.processInFlight?.requestId === requestId) this.processInFlight = null;
+      if (this.processDesired) return this.runDesiredProcessRequest();
+      if (requestId === this.processRequestId && generation === this.generation
+          && unit === this.expandedServiceUnit && sort === this.processSort) {
+        this.processLoading = false; this.render();
+      }
+    }
+  }
+
+  sameProcessTarget(left, right) {
+    return left?.generation === right?.generation && left?.projectId === right?.projectId
+      && left?.connectionId === right?.connectionId && left?.unit === right?.unit && left?.sort === right?.sort;
+  }
+
+  clearProcesses() {
+    ++this.processRequestId; this.expandedServiceUnit = null; this.processSort = "cpu";
+    this.processSnapshot = null; this.processError = ""; this.processLoading = false; this.processDesired = null;
+  }
+
   async refresh() {
     if (!this.projectId || !this.connectionId || this.inFlightGeneration === this.generation) return;
     const generation = this.generation, projectId = this.projectId, connectionId = this.connectionId;
@@ -112,7 +185,7 @@ export class SystemHealthView {
     }
   }
 
-  close() { this.stopTimer(); this.stopServiceTimer(); ++this.generation; this.projectId = null; this.connectionId = null; }
+  close() { this.stopTimer(); this.stopServiceTimer(); this.clearProcesses(); this.disksExpanded = false; ++this.generation; this.projectId = null; this.connectionId = null; }
   dispose() { this.close(); this.listeners.forEach(({ element, event, listener }) => element.removeEventListener(event, listener)); this.listeners = []; }
   stopTimer() { if (this.timer !== null) this.window.clearTimeout(this.timer); this.timer = null; }
   stopServiceTimer() { if (this.serviceTimer !== null) this.window.clearTimeout(this.serviceTimer); this.serviceTimer = null; }
@@ -151,13 +224,33 @@ export class SystemHealthView {
   }
   temperatures(items) {
     if (!Array.isArray(items) || !items.length) return '<div class="muted-state">Temperature unavailable</div>';
-    return `<dl class="health-facts">${items.map((item) => `<div><dt>${escapeHtml(item.sensor)}</dt><dd class="tone-${tone(item.celsius, "temperature")}">${escapeHtml(formatNumber(item.celsius))}°C</dd></div>`).join("")}</dl>`;
+    return `<dl class="health-facts">${items.map((item) => `<div><dt class="health-sensor-name" title="${escapeHtml(item.sensor)}">${escapeHtml(item.sensor)}</dt><dd class="tone-${tone(item.celsius, "temperature")}">${escapeHtml(formatNumber(item.celsius))}°C</dd></div>`).join("")}</dl>`;
   }
   secondary(m) {
     const load = [m.loadAverage1m, m.loadAverage5m, m.loadAverage15m].every(number) ? [m.loadAverage1m, m.loadAverage5m, m.loadAverage15m].map(formatNumber).join(" · ") : "Unavailable";
-    const disks = Array.isArray(m.disks) && m.disks.length ? m.disks.map((d) => { const p = number(d.totalBytes) && d.totalBytes > 0 ? d.usedBytes / d.totalBytes * 100 : null; return `<div>${escapeHtml(d.mount)} — ${formatBytes(d.usedBytes)} / ${formatBytes(d.totalBytes)}${p === null ? "" : ` · <span class="tone-${tone(p, "disk")}">${formatPercent(p)}</span>`}</div>`; }).join("") : "Unavailable";
     const network = Array.isArray(m.network) && m.network.length ? m.network.map((n) => `<div>${escapeHtml(n.interfaceName)} — RX ${formatBytes(n.receivedBytes)} · TX ${formatBytes(n.transmittedBytes)}</div>`).join("") : "Unavailable";
-    return `<dl class="system-health-secondary"><div><dt>Load average</dt><dd>${load}</dd></div><div><dt>Uptime</dt><dd>${formatUptime(m.uptimeSeconds)}</dd></div><div><dt>Disks</dt><dd>${disks}</dd></div><div><dt>Network</dt><dd>${network}</dd></div></dl>`;
+    return `<dl class="system-health-secondary"><div><dt>Load average</dt><dd>${load}</dd></div><div><dt>Uptime</dt><dd>${formatUptime(m.uptimeSeconds)}</dd></div><div class="system-health-disks-fact"><dt>Disks</dt><dd>${this.disks(m.disks)}</dd></div><div><dt>Network</dt><dd>${network}</dd></div></dl>`;
+  }
+  disks(items) {
+    if (!Array.isArray(items) || !items.length) return "Unavailable";
+    const ephemeral = (mount) => mount === "/run" || mount.startsWith("/run/")
+      || mount === "/dev" || mount.startsWith("/dev/") || mount === "/tmp";
+    const measured = items.map((disk) => ({ disk,
+      percent: number(disk.totalBytes) && disk.totalBytes > 0 && number(disk.usedBytes)
+        ? disk.usedBytes / disk.totalBytes * 100 : null })).sort((a, b) => {
+      if (a.percent === null || b.percent === null) return a.percent === b.percent
+        ? a.disk.mount.localeCompare(b.disk.mount) : a.percent === null ? 1 : -1;
+      return b.percent - a.percent || a.disk.mount.localeCompare(b.disk.mount);
+    });
+    const shown = this.disksExpanded ? measured : measured.slice(0, 1);
+    const rows = shown.map(({ disk, percent }) => {
+      const bounded = percent === null ? null : Math.max(0, Math.min(100, percent));
+      const usage = bounded === null ? '<span class="muted-state">Unavailable</span>'
+        : `<span class="system-health-disk-bar" role="progressbar" aria-label="${escapeHtml(disk.mount)} disk usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(bounded)}"><i class="tone-${tone(percent, "disk")}" style="width:${bounded}%"></i></span><strong class="tone-${tone(percent, "disk")}">${formatPercent(percent)}</strong>`;
+      return `<div class="system-health-disk-row${ephemeral(disk.mount) ? " is-ephemeral" : ""}"><strong class="system-health-disk-mount" title="${escapeHtml(disk.mount)}">${escapeHtml(disk.mount)}</strong><span class="system-health-disk-capacity">${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</span><span class="system-health-disk-usage">${usage}</span></div>`;
+    }).join("");
+    const toggle = measured.length > 1 ? `<button id="systemHealthDisksToggle" type="button" class="secondary-button">${this.disksExpanded ? "Show less" : `Show all (${measured.length})`}</button>` : "";
+    return `<div class="system-health-disks"><div class="system-health-disk-header"><span>Mount</span><span>Used / Total</span><span>Usage</span></div>${rows}</div>${toggle}`;
   }
   serviceMetrics(host) {
     if (!this.serviceSnapshot) return `<div class="muted-state">${escapeHtml(this.serviceError || "Loading service resource usage…")}</div>`;
@@ -172,12 +265,33 @@ export class SystemHealthView {
     rows.sort(this.serviceSort === "name" ? (a, b) => a.unit.localeCompare(b.unit)
       : this.serviceSort === "ram" ? (a, b) => availableLast(a, b, "memoryBytes")
       : (a, b) => availableLast(a, b, "cpuPercent"));
-    const shown = this.servicesExpanded ? rows : rows.slice(0, 3);
-    const body = shown.map((s) => `<tr class="service-metrics-row"><td><strong>${escapeHtml(s.unit)}</strong>${s.description ? `<small>${escapeHtml(s.description)}</small>` : ""}</td><td>${number(s.cpuPercent) ? formatPercent(s.cpuPercent) : "—"}</td><td>${serviceRam(s.memoryBytes, host.ramTotalBytes)}</td><td>${number(s.tasks) ? escapeHtml(s.tasks) : "—"}</td></tr>`).join("");
+    let shown = this.servicesExpanded ? rows : rows.slice(0, 3);
+    if (!this.servicesExpanded && this.expandedServiceUnit
+        && !shown.some((service) => service.unit === this.expandedServiceUnit)) {
+      const expanded = rows.find((service) => service.unit === this.expandedServiceUnit);
+      if (expanded) shown = [...shown, expanded];
+    }
+    const body = shown.map((s) => {
+      const expanded = this.expandedServiceUnit === s.unit;
+      const service = `<tr class="service-metrics-row${expanded ? " is-expanded" : ""}" data-service-unit="${escapeHtml(s.unit)}" aria-expanded="${expanded}"><td><strong>${escapeHtml(s.unit)}</strong>${s.description ? `<small>${escapeHtml(s.description)}</small>` : ""}</td><td>${number(s.cpuPercent) ? formatPercent(s.cpuPercent) : "—"}</td><td>${serviceRam(s.memoryBytes, host.ramTotalBytes)}</td><td>${number(s.tasks) ? escapeHtml(s.tasks) : "—"}</td></tr>`;
+      return service + (expanded ? this.processDetails() : "");
+    }).join("");
     return `${this.serviceError ? `<div class="system-health-error">${escapeHtml(this.serviceError)}${this.serviceStale ? " · stale" : ""}</div>` : ""}
       ${this.servicesExpanded ? `<label class="service-metrics-sort">Sort by <select id="serviceMetricsSort"><option value="cpu"${this.serviceSort === "cpu" ? " selected" : ""}>CPU</option><option value="ram"${this.serviceSort === "ram" ? " selected" : ""}>RAM</option><option value="name"${this.serviceSort === "name" ? " selected" : ""}>Name</option></select></label>` : ""}
       <div class="service-metrics-table-wrap"><table class="service-metrics-table"><thead><tr><th>Service</th><th>CPU</th><th>RAM</th><th>Tasks</th></tr></thead><tbody>${body || '<tr><td colspan="4">No running services</td></tr>'}</tbody></table></div>
       ${rows.length > 3 ? `<button id="serviceMetricsToggle" type="button" class="secondary-button">${this.servicesExpanded ? "Show less" : "Show more"}</button>` : ""}`;
+  }
+  processDetails() {
+    let content;
+    if (this.processLoading && !this.processSnapshot) content = '<div class="muted-state">Loading service processes…</div>';
+    else if (this.processError) content = `<div class="system-health-error">${escapeHtml(this.processError)}</div>`;
+    else {
+      const processes = (this.processSnapshot?.processes || []).slice(0, 5);
+      const rows = processes.map((p) => `<tr class="service-process-row"><td>${escapeHtml(p.pid)}</td><td>${p.process ? escapeHtml(p.process) : "—"}</td><td>${number(p.cpuPercent) ? formatPercent(p.cpuPercent) : "—"}</td><td>${number(p.rssBytes) ? formatBytes(p.rssBytes) : "—"}</td><td>${number(p.threads) ? escapeHtml(p.threads) : "—"}</td></tr>`).join("");
+      content = rows ? `<table class="service-process-table"><thead><tr><th>PID</th><th>Process</th><th>CPU</th><th>RAM</th><th>Threads</th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<div class="muted-state">No processes in this service</div>';
+    }
+    return `<tr class="service-process-detail-row"><td colspan="4"><div class="service-process-detail"><label>Top by: <select class="service-process-sort"><option value="cpu"${this.processSort === "cpu" ? " selected" : ""}>CPU</option><option value="ram"${this.processSort === "ram" ? " selected" : ""}>RAM</option></select></label>${content}</div></td></tr>`;
   }
   byId(id) { return this.document.getElementById(id); }
   on(id, event, listener) { const element = this.byId(id); if (!element) return; element.addEventListener(event, listener); this.listeners.push({ element, event, listener }); }

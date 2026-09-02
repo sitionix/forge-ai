@@ -25,4 +25,7 @@ public class AgentProjectSshConnectionsUseCase implements ManageAgentProjectSshC
   public AgentServiceMetricsSnapshot serviceMetrics(UUID projectId, UUID connectionId) {
     return client.getProjectSshConnectionServiceMetrics(projectId, connectionId);
   }
+  public AgentServiceProcessMetricsSnapshot serviceProcesses(UUID projectId, UUID connectionId, String unit, String sort) {
+    return client.getProjectSshConnectionServiceProcesses(projectId, connectionId, unit, sort);
+  }
 }

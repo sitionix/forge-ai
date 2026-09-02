@@ -434,6 +434,17 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
             .toList());
     }
 
+    @Override
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentServiceProcessMetricsSnapshot
+        getProjectSshConnectionServiceProcesses(UUID projectId, UUID connectionId, String unit, String sort) {
+        var response = clientCallExecutor.execute(
+            () -> httpClient.getProjectSshConnectionServiceProcesses(projectId, connectionId, unit, sort));
+        return new com.sitionix.forgeai.domain.model.agentproxy.AgentServiceProcessMetricsSnapshot(
+            response.unit(), response.sort(), response.sampledAt(), response.processes().stream()
+                .map(p -> new com.sitionix.forgeai.domain.model.agentproxy.AgentServiceProcessMetrics(
+                    p.pid(), p.process(), p.cpuPercent(), p.rssBytes(), p.threads())).toList());
+    }
+
     private com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics assetMetrics(
             com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMetricsResponse response) {
         return new com.sitionix.forgeai.domain.model.agentproxy.AgentAssetMetrics(
