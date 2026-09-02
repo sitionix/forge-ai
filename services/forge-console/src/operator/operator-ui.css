@@ -5747,7 +5747,9 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .health-value { margin-top: .5rem; font-size: .85rem; }
 .health-facts, .system-health-secondary { margin: 0; }
 .health-facts > div, .system-health-secondary > div { display: grid; grid-template-columns: minmax(0, 8rem) minmax(0, 1fr); gap: .6rem; padding: .2rem 0; }
-.health-facts dt { min-width: 0; overflow-wrap: anywhere; }
+.health-facts > div { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.health-facts dt { min-width: 0; }
+.health-sensor-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .health-facts dd, .system-health-secondary dd { min-width: 0; margin: 0; }
 .health-facts dd { text-align: right; white-space: nowrap; }
 .system-health-secondary { display: grid; grid-template-columns: repeat(2, minmax(14rem, 1fr)); gap: .35rem 1rem; margin-top: .8rem; font-size: .84rem; }
@@ -5767,6 +5769,7 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .system-health-disk-bar .tone-normal { background: #36a65c; }
 .system-health-disk-bar .tone-warning { background: #e4aa20; }
 .system-health-disk-bar .tone-critical { background: #d64545; }
+#systemHealthDisksToggle { margin-top: .45rem; }
 .system-health-additional { margin-top: .8rem; }
 .system-health-additional p { margin: 0; color: var(--muted, #687385); }
 .service-metrics-table-wrap { overflow-x: auto; }
