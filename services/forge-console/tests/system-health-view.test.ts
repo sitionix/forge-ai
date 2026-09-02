@@ -55,4 +55,23 @@ describe("SystemHealthView", () => {
     await vi.waitFor(() => expect(dom.window.document.body.textContent).toContain("Temperature unavailable"));
     expect(dom.window.document.body.textContent).not.toContain("0°C"); view.dispose();
   });
+
+  it("ignores a completed connection refresh after the view is disposed", async () => {
+    let resolveConnections!: (value: any[]) => void;
+    const refreshedConnections = new Promise<any[]>((resolve) => { resolveConnections = resolve; });
+    const listSshConnections = vi.fn()
+      .mockResolvedValueOnce([connection])
+      .mockReturnValueOnce(refreshedConnections);
+    const { dom, api, view } = setup({ listSshConnections });
+    await view.load("project-1");
+
+    const created = { ...connection, id: "ssh-new", name: "New SSH" };
+    const pending = view.connectionCreated(created);
+    view.dispose();
+    resolveConnections([connection, created]);
+    await pending;
+
+    expect(dom.window.document.getElementById("systemHealthSource")?.textContent).not.toContain("New SSH");
+    expect(api.getSshConnectionMetrics).not.toHaveBeenCalled();
+  });
 });

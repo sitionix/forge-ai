@@ -46,7 +46,11 @@ export class SystemHealthView {
 
   async connectionCreated(created) {
     if (!this.projectId) return;
-    this.connections = await this.api.listSshConnections(this.projectId);
+    const projectId = this.projectId;
+    const generation = this.generation;
+    const connections = await this.api.listSshConnections(projectId);
+    if (projectId !== this.projectId || generation !== this.generation) return;
+    this.connections = connections;
     this.renderConnections();
     this.select(created.id);
   }
