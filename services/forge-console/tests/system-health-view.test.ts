@@ -32,6 +32,27 @@ function setup(overrides: any = {}, options: any = {}) {
 }
 
 describe("SystemHealthView", () => {
+  it("renders readable disk rows with primary mounts first and usage bars", async () => {
+    const diskMetrics = { ...metrics, disks: [
+      { mount: "/run", totalBytes: 1_000, usedBytes: 10 },
+      { mount: "/boot", totalBytes: 1_000, usedBytes: 220 },
+      { mount: "/", totalBytes: 1_000, usedBytes: 880 },
+      { mount: "/run/user/1000", totalBytes: 1_000, usedBytes: 0 },
+    ] };
+    const { dom, view } = setup({ getSshConnectionMetrics: vi.fn().mockResolvedValue(diskMetrics) });
+
+    await view.load("project-1"); view.select("ssh-1");
+    await vi.waitFor(() => expect(dom.window.document.querySelectorAll(".system-health-disk-row")).toHaveLength(4));
+    const rows = [...dom.window.document.querySelectorAll(".system-health-disk-row")];
+    expect(rows.map((row) => row.querySelector(".system-health-disk-mount")?.textContent))
+      .toEqual(["/", "/boot", "/run", "/run/user/1000"]);
+    expect(rows[0].textContent).toContain("88%");
+    expect(rows[0].querySelector(".system-health-disk-bar")?.getAttribute("aria-valuenow")).toBe("88");
+    expect(rows[2].classList).toContain("is-ephemeral");
+    expect(rows[0].classList).not.toContain("is-ephemeral");
+    view.dispose();
+  });
+
   it("requests processes only after expanding the selected service and collapses on second click", async () => {
     const request = vi.fn().mockResolvedValue(processSample);
     const { dom, view } = setup({ getSshConnectionServiceProcesses: request });

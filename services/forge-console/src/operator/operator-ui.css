@@ -5752,6 +5752,21 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .health-facts dd { text-align: right; white-space: nowrap; }
 .system-health-secondary { display: grid; grid-template-columns: repeat(2, minmax(14rem, 1fr)); gap: .35rem 1rem; margin-top: .8rem; font-size: .84rem; }
 .system-health-secondary dt { font-weight: 600; }
+.system-health-secondary .system-health-disks-fact { grid-column: 1 / -1; grid-template-columns: minmax(0, 8rem) minmax(0, 1fr); }
+.system-health-disks { display: grid; min-width: 0; border: 1px solid var(--border, #dce2ea); border-radius: .45rem; overflow: hidden; }
+.system-health-disk-header, .system-health-disk-row { display: grid; grid-template-columns: minmax(5rem, 1fr) minmax(9rem, 1.25fr) minmax(10rem, 1.5fr); gap: .75rem; align-items: center; padding: .38rem .55rem; }
+.system-health-disk-header { color: var(--muted, #687385); background: color-mix(in srgb, var(--border, #dce2ea) 28%, transparent); font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.system-health-disk-row + .system-health-disk-row { border-top: 1px solid var(--border, #dce2ea); }
+.system-health-disk-row.is-ephemeral { color: var(--muted, #687385); background: color-mix(in srgb, var(--border, #dce2ea) 12%, transparent); }
+.system-health-disk-mount { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.system-health-disk-capacity { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.system-health-disk-usage { display: grid; grid-template-columns: minmax(4rem, 1fr) 3.5rem; gap: .5rem; align-items: center; }
+.system-health-disk-usage > strong { text-align: right; font-variant-numeric: tabular-nums; }
+.system-health-disk-bar { height: .5rem; overflow: hidden; background: #e5e9ef; border-radius: 999px; }
+.system-health-disk-bar i { display: block; height: 100%; border-radius: inherit; }
+.system-health-disk-bar .tone-normal { background: #36a65c; }
+.system-health-disk-bar .tone-warning { background: #e4aa20; }
+.system-health-disk-bar .tone-critical { background: #d64545; }
 .system-health-additional { margin-top: .8rem; }
 .system-health-additional p { margin: 0; color: var(--muted, #687385); }
 .service-metrics-table-wrap { overflow-x: auto; }
@@ -5769,6 +5784,12 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 #serviceMetricsToggle { margin-top: .6rem; }
 .system-health-error { display: grid; gap: .2rem; margin-bottom: .6rem; color: #b42318; }
 @media (max-width: 900px) { .system-health-primary, .system-health-secondary { grid-template-columns: 1fr; } }
+@media (max-width: 620px) {
+  .system-health-secondary .system-health-disks-fact { grid-template-columns: 1fr; }
+  .system-health-disk-header { display: none; }
+  .system-health-disk-row { grid-template-columns: minmax(4rem, .75fr) minmax(8rem, 1fr); }
+  .system-health-disk-usage { grid-column: 1 / -1; }
+}
 
 .project-log-sources-label { position: relative; flex: 1 1 20rem; min-width: 16rem; max-width: 32rem; align-self: flex-start; }
 .project-log-sources-dropdown { position: relative; width: 100%; margin-top: .25rem; }

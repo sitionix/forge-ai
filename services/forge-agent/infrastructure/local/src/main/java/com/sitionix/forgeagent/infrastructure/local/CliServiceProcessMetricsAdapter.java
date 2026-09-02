@@ -45,6 +45,35 @@ public class CliServiceProcessMetricsAdapter implements ServiceProcessMetricsPor
         [ -n "${12}" ] && [ -n "${13}" ] || return 1
         printf '%s\n' "$(( ${12} + ${13} ))"
       }
+      display_name() {
+        display_pid="$1"
+        display_fallback="$2"
+        cmdline="$work/cmdline-$display_pid"
+        tr '\\000' '\\n' < "$proc_root/$display_pid/cmdline" > "$cmdline" 2>/dev/null || {
+          printf '%s\n' "$display_fallback"
+          return
+        }
+        IFS= read -r executable < "$cmdline" || {
+          printf '%s\n' "$display_fallback"
+          return
+        }
+        executable="${executable##*/}"
+        case "$executable" in
+          python|python[0-9]|python[0-9].*)
+            sed '1d' "$cmdline" | while IFS= read -r argument; do
+              case "$argument" in
+                -m)
+                  IFS= read -r module || exit 0
+                  printf '%s\n' "$module"
+                  exit 0
+                  ;;
+                -*) ;;
+                *) printf '%s\n' "${argument##*/}"; exit 0 ;;
+              esac
+            done
+            ;;
+        esac
+      }
       before_host="$(total_ticks)" || exit $?
       pids > "$work/before-pids" || exit $?
       while IFS= read -r pid; do
@@ -62,6 +91,8 @@ public class CliServiceProcessMetricsAdapter implements ServiceProcessMetricsPor
         stat="$(cat "$proc_root/$pid/stat" 2>/dev/null)" || stat=
         if [ -n "$stat" ]; then
           name="${stat%)*}"; name="${name#*(}"
+          display="$(display_name "$pid" "$name")"
+          [ -n "$display" ] && name="$display"
           encoded="$(printf '%s' "$name" | base64 | tr -d '\n')"
           rest="${stat##*) }"; set -- $rest; threads="${18}"
           [ -n "$threads" ] || threads=-

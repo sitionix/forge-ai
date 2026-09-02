@@ -101,6 +101,41 @@ class CliServiceProcessMetricsAdapterTest {
   }
 
   @Test
+  void fixedProbeUsesPythonEntrypointAsDisplayNameWithoutExposingArguments(
+      @TempDir java.nio.file.Path temp) throws Exception {
+    var proc = temp.resolve("proc"); var cgroups = temp.resolve("cgroup"); var bin = temp.resolve("bin");
+    java.nio.file.Files.createDirectories(proc); java.nio.file.Files.createDirectories(bin);
+    java.nio.file.Files.createDirectories(cgroups.resolve("selected"));
+    java.nio.file.Files.writeString(cgroups.resolve("selected/cgroup.procs"), "41\n");
+    writeProcess(proc, 41, "python3", 100, 10, 7, 2048);
+    java.nio.file.Files.write(proc.resolve("41/cmdline"),
+        "python3\0/opt/jobs/worker.py\0--token\0secret-value\0"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    java.nio.file.Files.writeString(proc.resolve("stat"), "cpu 100 100 100 100 100 100 100 100\n");
+    var systemctl = bin.resolve("systemctl");
+    java.nio.file.Files.writeString(systemctl,
+        "#!/bin/sh\nprintf 'LoadState=loaded\\nActiveState=active\\nSubState=running\\nControlGroup=/selected\\n'\n");
+    systemctl.toFile().setExecutable(true);
+    var sleep = bin.resolve("sleep");
+    java.nio.file.Files.writeString(sleep, "#!/bin/sh\n" +
+        "printf 'cpu 200 200 200 200 200 200 200 200\\n' > \"$FORGE_PROC_ROOT/stat\"\n");
+    sleep.toFile().setExecutable(true);
+    var process = new ProcessBuilder("sh", "-c", CliServiceProcessMetricsAdapter.PROCESS_PROBE,
+        "forge-process-probe", "alpha.service");
+    process.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+    process.environment().put("FORGE_PROC_ROOT", proc.toString());
+    process.environment().put("FORGE_CGROUP_ROOT", cgroups.toString());
+    var executed = process.start();
+
+    assertThat(executed.waitFor()).isZero();
+    var output = new String(executed.getInputStream().readAllBytes());
+    var worker = Base64.getEncoder().encodeToString("worker.py".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    var python = Base64.getEncoder().encodeToString("python3".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    assertThat(output).contains("FORGE_PROCESS\t41\t" + worker + "\t").doesNotContain("\t" + python + "\t")
+        .doesNotContain("secret-value");
+  }
+
+  @Test
   void fixedProbeReturnsEmptyForRunningServiceWithoutControlGroup(@TempDir java.nio.file.Path temp) throws Exception {
     var bin = temp.resolve("bin"); java.nio.file.Files.createDirectories(bin);
     var systemctl = bin.resolve("systemctl");

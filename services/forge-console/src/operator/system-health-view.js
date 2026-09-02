@@ -208,9 +208,24 @@ export class SystemHealthView {
   }
   secondary(m) {
     const load = [m.loadAverage1m, m.loadAverage5m, m.loadAverage15m].every(number) ? [m.loadAverage1m, m.loadAverage5m, m.loadAverage15m].map(formatNumber).join(" · ") : "Unavailable";
-    const disks = Array.isArray(m.disks) && m.disks.length ? m.disks.map((d) => { const p = number(d.totalBytes) && d.totalBytes > 0 ? d.usedBytes / d.totalBytes * 100 : null; return `<div>${escapeHtml(d.mount)} — ${formatBytes(d.usedBytes)} / ${formatBytes(d.totalBytes)}${p === null ? "" : ` · <span class="tone-${tone(p, "disk")}">${formatPercent(p)}</span>`}</div>`; }).join("") : "Unavailable";
     const network = Array.isArray(m.network) && m.network.length ? m.network.map((n) => `<div>${escapeHtml(n.interfaceName)} — RX ${formatBytes(n.receivedBytes)} · TX ${formatBytes(n.transmittedBytes)}</div>`).join("") : "Unavailable";
-    return `<dl class="system-health-secondary"><div><dt>Load average</dt><dd>${load}</dd></div><div><dt>Uptime</dt><dd>${formatUptime(m.uptimeSeconds)}</dd></div><div><dt>Disks</dt><dd>${disks}</dd></div><div><dt>Network</dt><dd>${network}</dd></div></dl>`;
+    return `<dl class="system-health-secondary"><div><dt>Load average</dt><dd>${load}</dd></div><div><dt>Uptime</dt><dd>${formatUptime(m.uptimeSeconds)}</dd></div><div class="system-health-disks-fact"><dt>Disks</dt><dd>${this.disks(m.disks)}</dd></div><div><dt>Network</dt><dd>${network}</dd></div></dl>`;
+  }
+  disks(items) {
+    if (!Array.isArray(items) || !items.length) return "Unavailable";
+    const ephemeral = (mount) => mount === "/run" || mount.startsWith("/run/")
+      || mount === "/dev" || mount.startsWith("/dev/") || mount === "/tmp";
+    const rank = (mount) => mount === "/" ? 0
+      : mount === "/boot" || mount.startsWith("/boot/") ? 1 : ephemeral(mount) ? 3 : 2;
+    const rows = [...items].sort((a, b) => rank(a.mount) - rank(b.mount)).map((disk) => {
+      const percent = number(disk.totalBytes) && disk.totalBytes > 0 && number(disk.usedBytes)
+        ? disk.usedBytes / disk.totalBytes * 100 : null;
+      const bounded = percent === null ? null : Math.max(0, Math.min(100, percent));
+      const usage = bounded === null ? '<span class="muted-state">Unavailable</span>'
+        : `<span class="system-health-disk-bar" role="progressbar" aria-label="${escapeHtml(disk.mount)} disk usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(bounded)}"><i class="tone-${tone(percent, "disk")}" style="width:${bounded}%"></i></span><strong class="tone-${tone(percent, "disk")}">${formatPercent(percent)}</strong>`;
+      return `<div class="system-health-disk-row${ephemeral(disk.mount) ? " is-ephemeral" : ""}"><strong class="system-health-disk-mount" title="${escapeHtml(disk.mount)}">${escapeHtml(disk.mount)}</strong><span class="system-health-disk-capacity">${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</span><span class="system-health-disk-usage">${usage}</span></div>`;
+    }).join("");
+    return `<div class="system-health-disks"><div class="system-health-disk-header"><span>Mount</span><span>Used / Total</span><span>Usage</span></div>${rows}</div>`;
   }
   serviceMetrics(host) {
     if (!this.serviceSnapshot) return `<div class="muted-state">${escapeHtml(this.serviceError || "Loading service resource usage…")}</div>`;
