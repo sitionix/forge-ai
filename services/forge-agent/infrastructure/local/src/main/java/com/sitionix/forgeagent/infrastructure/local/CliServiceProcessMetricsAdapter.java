@@ -62,10 +62,14 @@ public class CliServiceProcessMetricsAdapter implements ServiceProcessMetricsPor
           python|python[0-9]|python[0-9].*)
             sed '1d' "$cmdline" | while IFS= read -r argument; do
               case "$argument" in
+                -c|-) exit 0 ;;
                 -m)
                   IFS= read -r module || exit 0
                   printf '%s\n' "$module"
                   exit 0
+                  ;;
+                -W|-X|--check-hash-based-pycs)
+                  IFS= read -r ignored || exit 0
                   ;;
                 -*) ;;
                 *) printf '%s\n' "${argument##*/}"; exit 0 ;;

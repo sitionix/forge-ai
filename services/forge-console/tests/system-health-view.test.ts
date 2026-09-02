@@ -218,6 +218,72 @@ describe("SystemHealthView", () => {
     expect(dom.window.document.body.textContent).not.toContain("worker");
     view.close(); expect(view.processSnapshot).toBeNull(); view.dispose();
   });
+
+  it.each(["collapse", "project", "close", "dispose"])(
+    "drops queued process work and stale output on %s",
+    async (action) => {
+      let resolveCpu!: (value: any) => void;
+      const cpu = new Promise((done) => { resolveCpu = done; });
+      const request = vi.fn().mockReturnValue(cpu);
+      const { dom, view } = setup({ getSshConnectionServiceProcesses: request });
+      await view.load("project-1"); view.select("ssh-1");
+      await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+      (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+      const sort = dom.window.document.querySelector(".service-process-sort") as HTMLSelectElement;
+      sort.value = "ram"; sort.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      expect(request).toHaveBeenCalledOnce();
+
+      if (action === "collapse") {
+        (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+      } else if (action === "project") {
+        await view.load("project-2");
+      } else if (action === "close") {
+        view.close();
+      } else {
+        view.dispose();
+      }
+      resolveCpu(processSample); await Promise.resolve(); await Promise.resolve();
+      expect(request).toHaveBeenCalledOnce();
+      expect(view.processSnapshot).toBeNull();
+      expect(dom.window.document.body.textContent).not.toContain("worker");
+      view.dispose();
+    },
+  );
+
+  it.each(["connection", "project"])(
+    "keeps a new %s selection behind the old active process request",
+    async (change) => {
+      let resolveOld!: (value: any) => void;
+      const oldRequest = new Promise((done) => { resolveOld = done; });
+      let active = 0, maxActive = 0;
+      const fresh = { ...processSample, processes: [{ ...processSample.processes[0], process: "fresh-selection" }] };
+      const request = vi.fn(() => {
+        active++; maxActive = Math.max(maxActive, active);
+        const result = request.mock.calls.length === 1 ? oldRequest : Promise.resolve(fresh);
+        return result.finally(() => { active--; });
+      });
+      const connections = [connection, { ...connection, id: "ssh-2" }];
+      const { dom, view } = setup({ listSshConnections: vi.fn().mockResolvedValue(connections),
+        getSshConnectionServiceProcesses: request });
+      await view.load("project-1"); view.select("ssh-1");
+      await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+      (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+
+      if (change === "connection") view.select("ssh-2");
+      else await view.load("project-2");
+      await vi.waitFor(() => expect(dom.window.document.querySelector('[data-service-unit="a.service"]')).not.toBeNull());
+      (dom.window.document.querySelector('[data-service-unit="a.service"]') as HTMLElement).click();
+      expect(request).toHaveBeenCalledOnce();
+
+      resolveOld(processSample);
+      await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(dom.window.document.body.textContent).toContain("fresh-selection"));
+      expect(request).toHaveBeenLastCalledWith(change === "project" ? "project-2" : "project-1",
+        change === "connection" ? "ssh-2" : "ssh-1", "a.service", "cpu");
+      expect(dom.window.document.body.textContent).not.toContain("worker");
+      expect(maxActive).toBe(1); view.dispose();
+    },
+  );
   it("normalizes service CPU delta against total host capacity", () => {
     expect(calculateServiceCpuPercent(1_000_000_000, 5_000_000_000, 4_000, 8_000, 4)).toBe(25);
     expect(calculateServiceCpuPercent(null, 5, 1, 2, 4)).toBeNull();

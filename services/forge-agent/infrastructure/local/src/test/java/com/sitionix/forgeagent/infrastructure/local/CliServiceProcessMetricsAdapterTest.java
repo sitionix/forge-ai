@@ -106,10 +106,22 @@ class CliServiceProcessMetricsAdapterTest {
     var proc = temp.resolve("proc"); var cgroups = temp.resolve("cgroup"); var bin = temp.resolve("bin");
     java.nio.file.Files.createDirectories(proc); java.nio.file.Files.createDirectories(bin);
     java.nio.file.Files.createDirectories(cgroups.resolve("selected"));
-    java.nio.file.Files.writeString(cgroups.resolve("selected/cgroup.procs"), "41\n");
+    java.nio.file.Files.writeString(cgroups.resolve("selected/cgroup.procs"), "41\n42\n43\n44\n");
     writeProcess(proc, 41, "python3", 100, 10, 7, 2048);
+    writeProcess(proc, 42, "python3", 50, 5, 2, 512);
+    writeProcess(proc, 43, "python3", 50, 5, 2, 512);
+    writeProcess(proc, 44, "python3", 50, 5, 2, 512);
     java.nio.file.Files.write(proc.resolve("41/cmdline"),
         "python3\0/opt/jobs/worker.py\0--token\0secret-value\0"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    java.nio.file.Files.write(proc.resolve("42/cmdline"),
+        "python3\0-c\0print('inline-secret')\0"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    java.nio.file.Files.write(proc.resolve("43/cmdline"),
+        "python3\0-W\0ignore\0/opt/jobs/scheduled.py\0"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    java.nio.file.Files.write(proc.resolve("44/cmdline"),
+        "python3\0-\0stdin-secret\0"
             .getBytes(java.nio.charset.StandardCharsets.UTF_8));
     java.nio.file.Files.writeString(proc.resolve("stat"), "cpu 100 100 100 100 100 100 100 100\n");
     var systemctl = bin.resolve("systemctl");
@@ -130,9 +142,13 @@ class CliServiceProcessMetricsAdapterTest {
     assertThat(executed.waitFor()).isZero();
     var output = new String(executed.getInputStream().readAllBytes());
     var worker = Base64.getEncoder().encodeToString("worker.py".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    var scheduled = Base64.getEncoder().encodeToString("scheduled.py".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     var python = Base64.getEncoder().encodeToString("python3".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-    assertThat(output).contains("FORGE_PROCESS\t41\t" + worker + "\t").doesNotContain("\t" + python + "\t")
-        .doesNotContain("secret-value");
+    assertThat(output).contains("FORGE_PROCESS\t41\t" + worker + "\t")
+        .contains("FORGE_PROCESS\t42\t" + python + "\t")
+        .contains("FORGE_PROCESS\t43\t" + scheduled + "\t")
+        .contains("FORGE_PROCESS\t44\t" + python + "\t")
+        .doesNotContain("secret-value").doesNotContain("inline-secret").doesNotContain("stdin-secret");
   }
 
   @Test
