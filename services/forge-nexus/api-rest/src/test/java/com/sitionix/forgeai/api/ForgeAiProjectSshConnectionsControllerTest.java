@@ -31,9 +31,16 @@ class ForgeAiProjectSshConnectionsControllerTest {
     when(ssh.metrics(projectId, connectionId)).thenReturn(metrics); when(mapper.toResponse(metrics)).thenReturn(metricsResponse);
     when(ssh.serviceMetrics(projectId, connectionId)).thenReturn(serviceSnapshot);
     when(mapper.toResponse(serviceSnapshot)).thenReturn(serviceResponse);
+    var processSnapshot = new AgentServiceProcessMetricsSnapshot("alpha.service", "CPU", Instant.EPOCH,
+        List.of(new AgentServiceProcessMetrics(42L, "worker", 12.5, 2048L, 3L)));
+    var processResponse = new AgentServiceProcessMetricsResponse("alpha.service", "CPU", Instant.EPOCH,
+        List.of(new AgentServiceProcessMetricsItemResponse(42L, "worker", 12.5, 2048L, 3L)));
+    when(ssh.serviceProcesses(projectId, connectionId, "alpha.service", "ram")).thenReturn(processSnapshot);
+    when(mapper.toResponse(processSnapshot)).thenReturn(processResponse);
     assertThat(controller.list(projectId)).containsExactly(response); assertThat(controller.create(projectId, request)).isEqualTo(response);
     controller.test(projectId, request); assertThat(controller.metrics(projectId, connectionId)).isSameAs(metricsResponse);
     assertThat(controller.serviceMetrics(projectId, connectionId)).isSameAs(serviceResponse);
+    assertThat(controller.serviceProcesses(projectId, connectionId, "alpha.service", "ram")).isSameAs(processResponse);
     verify(ssh).test(projectId, command);
   }
 }

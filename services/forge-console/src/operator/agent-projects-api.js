@@ -88,6 +88,9 @@ export function createAgentProjectsApi(http) {
     getSshConnectionServiceMetrics(projectId, connectionId) {
       return http.get(`${root}/projects/${encodeURIComponent(projectId)}/ssh-connections/${encodeURIComponent(connectionId)}/service-metrics`);
     },
+    getSshConnectionServiceProcesses(projectId, connectionId, unit, sort = "cpu") {
+      return http.get(`${root}/projects/${encodeURIComponent(projectId)}/ssh-connections/${encodeURIComponent(connectionId)}/service-metrics/${encodeURIComponent(unit)}/processes?sort=${encodeURIComponent(sort)}`);
+    },
     logStreamUrl(projectId, sourceIds, lines = 100) {
       const query = new URLSearchParams({ lines: String(lines) });
       sourceIds.forEach((id) => query.append("sourceId", id));

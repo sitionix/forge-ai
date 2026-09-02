@@ -1,0 +1,1 @@
+{"unit":"alpha.service","sort":"RAM","sampledAt":"2026-09-02T10:00:05Z","processes":[{"pid":42,"process":"worker","cpuPercent":12.5,"rssBytes":2048,"threads":3},{"pid":43,"process":null,"cpuPercent":null,"rssBytes":null,"threads":null}]}

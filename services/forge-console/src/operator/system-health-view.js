@@ -17,16 +17,29 @@ export class SystemHealthView {
     this.servicePollIntervalMs = servicePollIntervalMs; this.serviceSnapshot = null; this.previousServiceSnapshot = null;
     this.serviceError = ""; this.serviceStale = false; this.serviceTimer = null; this.serviceInFlightGeneration = null;
     this.servicesExpanded = false; this.serviceSort = "cpu";
+    this.expandedServiceUnit = null; this.processSort = "cpu"; this.processSnapshot = null;
+    this.processError = ""; this.processLoading = false; this.processRequestId = 0; this.processInFlight = null;
   }
 
   bind() {
     this.on("systemHealthSource", "change", (event) => this.select(event.target.value || null));
     this.on("systemHealthAddConnection", "click", () => this.sshProfileFlow.open(this.projectId, (created) => this.connectionCreated(created)));
-    this.on("systemHealthContent", "click", (event) => { if (event.target.closest?.("#serviceMetricsToggle")) { this.servicesExpanded = !this.servicesExpanded; this.render(); } });
-    this.on("systemHealthContent", "change", (event) => { if (event.target.id === "serviceMetricsSort") { this.serviceSort = event.target.value; this.render(); } });
+    this.on("systemHealthContent", "click", (event) => {
+      if (event.target.closest?.("#serviceMetricsToggle")) { this.servicesExpanded = !this.servicesExpanded; this.render(); return; }
+      const row = event.target.closest?.(".service-metrics-row[data-service-unit]");
+      if (row) this.toggleServiceProcesses(row.dataset.serviceUnit);
+    });
+    this.on("systemHealthContent", "change", (event) => {
+      if (event.target.id === "serviceMetricsSort") { this.serviceSort = event.target.value; this.render(); }
+      if (event.target.classList?.contains("service-process-sort")) {
+        this.processSort = event.target.value; this.processSnapshot = null; this.processError = "";
+        this.refreshProcesses(); this.render();
+      }
+    });
   }
 
   async load(projectId) {
+    if (projectId !== this.projectId) this.clearProcesses();
     this.projectId = projectId;
     const generation = ++this.generation;
     let connections, asset;
@@ -65,6 +78,7 @@ export class SystemHealthView {
     this.connectionId = connectionId;
     this.metrics = null; this.error = ""; this.stale = false; this.loading = Boolean(connectionId);
     this.stopServiceTimer(); this.serviceSnapshot = null; this.previousServiceSnapshot = null; this.serviceError = ""; this.serviceStale = false; this.servicesExpanded = false; this.serviceSort = "cpu";
+    this.clearProcesses();
     ++this.generation;
     this.byId("systemHealthSource").value = connectionId || "";
     this.render();
@@ -91,6 +105,45 @@ export class SystemHealthView {
     }
   }
 
+  toggleServiceProcesses(unit) {
+    if (this.expandedServiceUnit === unit) { this.clearProcesses(); this.render(); return; }
+    this.clearProcesses(); this.expandedServiceUnit = unit; this.processSort = "cpu";
+    this.refreshProcesses(); this.render();
+  }
+
+  async refreshProcesses() {
+    if (!this.projectId || !this.connectionId || !this.expandedServiceUnit) return;
+    const generation = this.generation, projectId = this.projectId, connectionId = this.connectionId;
+    const unit = this.expandedServiceUnit, sort = this.processSort;
+    if (this.processInFlight?.generation === generation && this.processInFlight.unit === unit
+        && this.processInFlight.sort === sort) return;
+    const requestId = ++this.processRequestId;
+    this.processInFlight = { requestId, generation, unit, sort };
+    this.processLoading = true; this.processError = "";
+    try {
+      const snapshot = await this.api.getSshConnectionServiceProcesses(projectId, connectionId, unit, sort);
+      if (requestId !== this.processRequestId || generation !== this.generation
+          || projectId !== this.projectId || connectionId !== this.connectionId
+          || unit !== this.expandedServiceUnit || sort !== this.processSort) return;
+      this.processSnapshot = snapshot; this.processError = "";
+    } catch (error) {
+      if (requestId !== this.processRequestId || generation !== this.generation
+          || unit !== this.expandedServiceUnit || sort !== this.processSort) return;
+      this.processSnapshot = null; this.processError = error.message || "Unable to read service processes.";
+    } finally {
+      if (this.processInFlight?.requestId === requestId) this.processInFlight = null;
+      if (requestId === this.processRequestId && generation === this.generation
+          && unit === this.expandedServiceUnit && sort === this.processSort) {
+        this.processLoading = false; this.render();
+      }
+    }
+  }
+
+  clearProcesses() {
+    ++this.processRequestId; this.expandedServiceUnit = null; this.processSort = "cpu";
+    this.processSnapshot = null; this.processError = ""; this.processLoading = false; this.processInFlight = null;
+  }
+
   async refresh() {
     if (!this.projectId || !this.connectionId || this.inFlightGeneration === this.generation) return;
     const generation = this.generation, projectId = this.projectId, connectionId = this.connectionId;
@@ -112,7 +165,7 @@ export class SystemHealthView {
     }
   }
 
-  close() { this.stopTimer(); this.stopServiceTimer(); ++this.generation; this.projectId = null; this.connectionId = null; }
+  close() { this.stopTimer(); this.stopServiceTimer(); this.clearProcesses(); ++this.generation; this.projectId = null; this.connectionId = null; }
   dispose() { this.close(); this.listeners.forEach(({ element, event, listener }) => element.removeEventListener(event, listener)); this.listeners = []; }
   stopTimer() { if (this.timer !== null) this.window.clearTimeout(this.timer); this.timer = null; }
   stopServiceTimer() { if (this.serviceTimer !== null) this.window.clearTimeout(this.serviceTimer); this.serviceTimer = null; }
@@ -173,11 +226,27 @@ export class SystemHealthView {
       : this.serviceSort === "ram" ? (a, b) => availableLast(a, b, "memoryBytes")
       : (a, b) => availableLast(a, b, "cpuPercent"));
     const shown = this.servicesExpanded ? rows : rows.slice(0, 3);
-    const body = shown.map((s) => `<tr class="service-metrics-row"><td><strong>${escapeHtml(s.unit)}</strong>${s.description ? `<small>${escapeHtml(s.description)}</small>` : ""}</td><td>${number(s.cpuPercent) ? formatPercent(s.cpuPercent) : "—"}</td><td>${serviceRam(s.memoryBytes, host.ramTotalBytes)}</td><td>${number(s.tasks) ? escapeHtml(s.tasks) : "—"}</td></tr>`).join("");
+    const body = shown.map((s) => {
+      const expanded = this.expandedServiceUnit === s.unit;
+      const service = `<tr class="service-metrics-row${expanded ? " is-expanded" : ""}" data-service-unit="${escapeHtml(s.unit)}" aria-expanded="${expanded}"><td><strong>${escapeHtml(s.unit)}</strong>${s.description ? `<small>${escapeHtml(s.description)}</small>` : ""}</td><td>${number(s.cpuPercent) ? formatPercent(s.cpuPercent) : "—"}</td><td>${serviceRam(s.memoryBytes, host.ramTotalBytes)}</td><td>${number(s.tasks) ? escapeHtml(s.tasks) : "—"}</td></tr>`;
+      return service + (expanded ? this.processDetails() : "");
+    }).join("");
     return `${this.serviceError ? `<div class="system-health-error">${escapeHtml(this.serviceError)}${this.serviceStale ? " · stale" : ""}</div>` : ""}
       ${this.servicesExpanded ? `<label class="service-metrics-sort">Sort by <select id="serviceMetricsSort"><option value="cpu"${this.serviceSort === "cpu" ? " selected" : ""}>CPU</option><option value="ram"${this.serviceSort === "ram" ? " selected" : ""}>RAM</option><option value="name"${this.serviceSort === "name" ? " selected" : ""}>Name</option></select></label>` : ""}
       <div class="service-metrics-table-wrap"><table class="service-metrics-table"><thead><tr><th>Service</th><th>CPU</th><th>RAM</th><th>Tasks</th></tr></thead><tbody>${body || '<tr><td colspan="4">No running services</td></tr>'}</tbody></table></div>
       ${rows.length > 3 ? `<button id="serviceMetricsToggle" type="button" class="secondary-button">${this.servicesExpanded ? "Show less" : "Show more"}</button>` : ""}`;
+  }
+  processDetails() {
+    let content;
+    if (this.processLoading && !this.processSnapshot) content = '<div class="muted-state">Loading service processes…</div>';
+    else if (this.processError) content = `<div class="system-health-error">${escapeHtml(this.processError)}</div>`;
+    else {
+      const processes = (this.processSnapshot?.processes || []).slice(0, 5);
+      const rows = processes.map((p) => `<tr class="service-process-row"><td>${escapeHtml(p.pid)}</td><td>${p.process ? escapeHtml(p.process) : "—"}</td><td>${number(p.cpuPercent) ? formatPercent(p.cpuPercent) : "—"}</td><td>${number(p.rssBytes) ? formatBytes(p.rssBytes) : "—"}</td><td>${number(p.threads) ? escapeHtml(p.threads) : "—"}</td></tr>`).join("");
+      content = rows ? `<table class="service-process-table"><thead><tr><th>PID</th><th>Process</th><th>CPU</th><th>RAM</th><th>Threads</th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<div class="muted-state">No processes in this service</div>';
+    }
+    return `<tr class="service-process-detail-row"><td colspan="4"><div class="service-process-detail"><label>Top by: <select class="service-process-sort"><option value="cpu"${this.processSort === "cpu" ? " selected" : ""}>CPU</option><option value="ram"${this.processSort === "ram" ? " selected" : ""}>RAM</option></select></label>${content}</div></td></tr>`;
   }
   byId(id) { return this.document.getElementById(id); }
   on(id, event, listener) { const element = this.byId(id); if (!element) return; element.addEventListener(event, listener); this.listeners.push({ element, event, listener }); }

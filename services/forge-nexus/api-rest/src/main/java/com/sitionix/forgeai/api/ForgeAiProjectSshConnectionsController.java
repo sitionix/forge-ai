@@ -36,4 +36,10 @@ public class ForgeAiProjectSshConnectionsController {
   public AgentServiceMetricsResponse serviceMetrics(@PathVariable UUID projectId, @PathVariable UUID connectionId) {
     return mapper.toResponse(ssh.serviceMetrics(projectId, connectionId));
   }
+  @GetMapping("/{connectionId}/service-metrics/{unit}/processes")
+  public AgentServiceProcessMetricsResponse serviceProcesses(
+      @PathVariable UUID projectId, @PathVariable UUID connectionId, @PathVariable String unit,
+      @RequestParam(defaultValue = "cpu") String sort) {
+    return mapper.toResponse(ssh.serviceProcesses(projectId, connectionId, unit, sort));
+  }
 }

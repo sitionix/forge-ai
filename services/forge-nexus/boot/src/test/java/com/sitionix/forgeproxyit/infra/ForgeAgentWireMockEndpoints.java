@@ -20,6 +20,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMetricsResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetCapabilitiesResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceMetricsResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceProcessMetricsResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMonitoringRequest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
@@ -62,6 +63,12 @@ public final class ForgeAgentWireMockEndpoints {
         return assetEndpoint("/api/v1/projects/{projectId}/ssh-connections/{connectionId}/service-metrics",
                 HttpMethod.GET, Void.class, ServiceMetricsResponse.class, HttpStatus.OK,
                 "agent-service-metrics-response.json", null);
+    }
+
+    public static Endpoint<Void, ServiceProcessMetricsResponse> serviceProcesses() {
+        return assetEndpoint("/api/v1/projects/{projectId}/ssh-connections/{connectionId}/service-metrics/{unit}/processes",
+                HttpMethod.GET, Void.class, ServiceProcessMetricsResponse.class, HttpStatus.OK,
+                "agent-service-process-metrics-response.json", null);
     }
 
     public static Endpoint<AssetMonitoringRequest, AgentLogSourceResponse> createAssetMonitoring() {

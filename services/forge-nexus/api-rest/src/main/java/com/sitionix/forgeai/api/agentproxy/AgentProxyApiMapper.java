@@ -639,4 +639,11 @@ public class AgentProxyApiMapper {
             .map(s -> new AgentServiceResourceMetricsResponse(s.unit(), s.description(), s.cpuUsageNanos(), s.memoryBytes(), s.tasks()))
             .toList());
     }
+
+    public AgentServiceProcessMetricsResponse toResponse(
+            com.sitionix.forgeai.domain.model.agentproxy.AgentServiceProcessMetricsSnapshot snapshot) {
+        return new AgentServiceProcessMetricsResponse(snapshot.unit(), snapshot.sort(), snapshot.sampledAt(),
+            snapshot.processes().stream().map(p -> new AgentServiceProcessMetricsItemResponse(
+                p.pid(), p.process(), p.cpuPercent(), p.rssBytes(), p.threads())).toList());
+    }
 }

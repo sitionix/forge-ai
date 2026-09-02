@@ -17,11 +17,17 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 public class SshConnectionUseCases {
   private static final Pattern SSH_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,253}");
+  private static final String UNIT_ESCAPE = "\\\\x[0-9A-Fa-f]{2}";
+  private static final String UNIT_FIRST = "(?:[A-Za-z0-9_:]|" + UNIT_ESCAPE + ")";
+  private static final String UNIT_CHAR = "(?:[A-Za-z0-9_:.-]|" + UNIT_ESCAPE + ")";
+  private static final Pattern SERVICE_UNIT = Pattern.compile(
+      UNIT_FIRST + UNIT_CHAR + "*(?:@" + UNIT_CHAR + "*)?\\.service");
   private final ProjectRepository projects;
   private final SshConnectionRepository connections;
   private final SshConnectionProbePort probe;
   private final AssetInspectionPort inspection;
   private final ServiceMetricsPort serviceMetrics;
+  private final ServiceProcessMetricsPort serviceProcesses;
   private final Clock clock;
 
   @Transactional(readOnly = true)
@@ -57,6 +63,17 @@ public class SshConnectionUseCases {
   public com.sitionix.forgeagent.domain.model.ServiceMetricsSnapshot serviceMetrics(
       UUID projectId, UUID connectionId) {
     return serviceMetrics.collect(ownedConnection(projectId, connectionId));
+  }
+
+  @Transactional(readOnly = true)
+  public com.sitionix.forgeagent.domain.model.ServiceProcessMetricsSnapshot serviceProcesses(
+      UUID projectId, UUID connectionId, String unit,
+      com.sitionix.forgeagent.domain.model.ProcessMetricsSort sort) {
+    var connection = ownedConnection(projectId, connectionId);
+    if (unit == null || unit.length() > 255 || !SERVICE_UNIT.matcher(unit).matches())
+      throw new ValidationException("Systemd service unit is invalid");
+    if (sort == null) throw new ValidationException("Process metric sort is required");
+    return serviceProcesses.collect(connection, unit, sort);
   }
 
   private SshConnection ownedConnection(UUID projectId, UUID connectionId) {

@@ -135,6 +135,8 @@ public interface ForgeAgentClient {
 
   AgentAssetMetrics getProjectSshConnectionMetrics(UUID projectId, UUID connectionId);
   AgentServiceMetricsSnapshot getProjectSshConnectionServiceMetrics(UUID projectId, UUID connectionId);
+  com.sitionix.forgeai.domain.model.agentproxy.AgentServiceProcessMetricsSnapshot
+      getProjectSshConnectionServiceProcesses(UUID projectId, UUID connectionId, String unit, String sort);
 
   AgentLogStream openProjectLogsStream(UUID projectId, List<UUID> sourceIds, int lines);
 }

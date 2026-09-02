@@ -5759,6 +5759,13 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .service-metrics-table th, .service-metrics-table td { padding: .45rem .55rem; text-align: left; border-bottom: 1px solid var(--border, #dce2ea); }
 .service-metrics-table td small { display: block; margin-top: .15rem; color: var(--muted, #687385); }
 .service-metrics-sort { display: flex; justify-content: flex-end; align-items: center; gap: .4rem; margin-bottom: .45rem; font-size: .82rem; }
+.service-metrics-row { cursor: pointer; }
+.service-metrics-row:hover, .service-metrics-row.is-expanded { background: color-mix(in srgb, var(--accent, #3578e5) 7%, transparent); }
+.service-process-detail-row > td { padding: 0 .55rem .65rem 1.2rem; }
+.service-process-detail { border-left: 3px solid var(--accent, #3578e5); padding: .55rem .7rem; }
+.service-process-detail > label { display: flex; justify-content: flex-end; align-items: center; gap: .4rem; margin-bottom: .4rem; font-size: .82rem; }
+.service-process-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.service-process-table th, .service-process-table td { padding: .35rem .45rem; text-align: left; border-bottom: 1px solid var(--border, #dce2ea); }
 #serviceMetricsToggle { margin-top: .6rem; }
 .system-health-error { display: grid; gap: .2rem; margin-bottom: .6rem; color: #b42318; }
 @media (max-width: 900px) { .system-health-primary, .system-health-secondary { grid-template-columns: 1fr; } }
