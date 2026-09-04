@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
+import com.sitionix.forgeagent.api.dto.AgentExecutionContextResponse;
 import com.sitionix.forgeagent.api.dto.AgentModelSelectionRequest;
 import com.sitionix.forgeagent.api.dto.AgentModelSelectionResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
@@ -106,6 +107,15 @@ import org.springframework.stereotype.Component;
 class ForgeAgentApiMapper {
 
     private final ObjectMapper objectMapper;
+
+    AgentExecutionContextResponse toResponse(final com.sitionix.forgeagent.domain.model.AgentExecutionAllocation allocation) {
+        final var session = allocation.session();
+        final var turn = allocation.turn();
+        return new AgentExecutionContextResponse(session.id(), turn.id(), turn.nodeRunId(), session.sourceNodeId(),
+                session.repositoryId(), session.contextMode().name(), turn.sequence(), session.status().name(), turn.status().name(),
+                session.providerId(), session.providerConversationId(), turn.providerTurnId(), session.providerVersion(),
+                turn.failureCode(), turn.failureMessage(), session.createdAt(), turn.startedAt(), turn.finishedAt());
+    }
 
     CreateProjectCommand toCommand(final CreateProjectRequest request) {
         return new CreateProjectCommand(request.name());

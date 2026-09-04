@@ -46,7 +46,8 @@ public class NodeRunWorker {
     private void submit(final NodeExecutionClaim claim) {
         this.executorService.submit(() -> {
             final AgentSessionHeartbeat heartbeat = claim.agentSessionClaim() == null ? null
-                    : new AgentSessionHeartbeat(this.sessionLeaseService, claim.agentSessionClaim(), this.heartbeatExecutor);
+                    : new AgentSessionHeartbeat(this.sessionLeaseService, claim.agentSessionClaim(), this.heartbeatExecutor,
+                            () -> this.agentExecutor.cancel(claim));
             final AgentExecutionResult result;
             try {
                 result = this.agentExecutor.execute(claim);

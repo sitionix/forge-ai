@@ -193,6 +193,28 @@ class CodexJsonRpcTransportTest {
     }
 
     @Test
+    void closeTerminatesTheExternalProcessTree() throws Exception {
+        final Process process = new ProcessBuilder("/bin/sh", "-c", "sleep 30 & wait").start();
+        final long discoveryDeadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+        List<ProcessHandle> children = List.of();
+        while (children.isEmpty() && System.nanoTime() < discoveryDeadline) {
+            children = process.descendants().toList();
+            Thread.onSpinWait();
+        }
+        assertThat(children).isNotEmpty();
+        final CodexAppServerProperties properties = new CodexAppServerProperties();
+        properties.setGracefulTerminateTimeout(Duration.ofMillis(100));
+        properties.setForceKillTimeout(Duration.ofSeconds(1));
+        final CodexJsonRpcTransport transport = new CodexJsonRpcTransport(this.objectMapper,
+                new StartedCodexAppServer(process, List.of("test-process-tree"), Instant.now()), properties);
+
+        transport.close();
+
+        assertThat(process.isAlive()).isFalse();
+        assertThat(children).noneMatch(ProcessHandle::isAlive);
+    }
+
+    @Test
     void processStillAliveAfterForceKillTimeoutFailsCleanup() {
         final FakeCodexProcess process = new FakeCodexProcess(false, false);
         final CodexJsonRpcTransport transport = this.transport(process);

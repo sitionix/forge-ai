@@ -773,7 +773,7 @@ export class TaskExecutionView {
     try {
       const [workflowRun, contexts] = await Promise.all([
         this.api.getWorkflowRun(runId),
-        this.api.getAgentExecutionContexts ? this.api.getAgentExecutionContexts(runId).catch(() => []) : Promise.resolve([])
+        this.api.getAgentExecutionContexts ? this.api.getAgentExecutionContexts(runId) : Promise.resolve([])
       ]);
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         return;
@@ -876,7 +876,7 @@ export class TaskExecutionView {
     const runSequence = this.runLoadSequence;
     const request = Promise.all([
       this.api.getWorkflowRun(runId),
-      this.api.getAgentExecutionContexts ? this.api.getAgentExecutionContexts(runId).catch(() => []) : Promise.resolve([])
+      this.api.getAgentExecutionContexts ? this.api.getAgentExecutionContexts(runId) : Promise.resolve([])
     ]);
     this.pollInFlight = request;
     try {

@@ -3355,6 +3355,53 @@ describe('Agent projects page', () => {
     expect(dom.window.document.querySelector('[data-execution-node-id="node-a"]')?.textContent).toContain('SUCCEEDED');
   });
 
+  it('reports an initial context API failure instead of rendering fake empty context data', async () => {
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [nodeRun('node-a', 'Analyzer', 'RUNNING')]))),
+      getAgentExecutionContexts: vi.fn(() => Promise.reject(new Error('Context API unavailable')))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionError')?.textContent)
+      .toContain('Context API unavailable');
+    expect(page.taskExecutionView.state.workflowRun).toBeNull();
+  });
+
+  it('context refresh failure preserves the last valid run and context state', async () => {
+    vi.useFakeTimers();
+    const dom = agentProjectsDom();
+    useFakeWindowTimers(dom);
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
+    const run = workflowRunDetail('run-new', 'RUNNING', [
+      { ...modernNodeRun('impl-1', 'implementer', 'RUNNING', '2026-08-13T10:00:00Z'), contextTrackingVersion: 1 }
+    ], 'Context Board', graph);
+    const contexts = [{ sessionId: 'session-a', turnId: 'turn-a', nodeRunId: 'impl-1', sourceNodeId: 'implementer',
+      repositoryId: null, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', sequence: 1, sessionStatus: 'ACTIVE',
+      turnStatus: 'ACTIVE', provider: 'codex', providerConversationId: 'thread-a', providerTurnId: 'provider-turn-a' }];
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(run)),
+      getAgentExecutionContexts: vi.fn()
+        .mockResolvedValueOnce(contexts)
+        .mockRejectedValueOnce(new Error('Context refresh unavailable'))
+    });
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi,
+      runtimeConfig: { activeJobPollIntervalMs: 1000 } });
+    page.mount(); await flushAsync(); await page.openProject(project().id); await flushAsync();
+    await page.openTaskExecution('task-1'); await flushAsync();
+
+    await vi.advanceTimersByTimeAsync(1000); await flushAsync();
+
+    expect(page.taskExecutionView.state.workflowRun).toBe(run);
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual(contexts);
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionRefreshError')?.textContent)
+      .toContain('Context refresh unavailable');
+  });
+
   it('WorkflowRun polling does not overlap and leaving Task stops execution polling', async () => {
     vi.useFakeTimers();
     const dom = agentProjectsDom();

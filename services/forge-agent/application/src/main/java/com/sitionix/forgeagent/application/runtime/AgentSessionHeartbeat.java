@@ -11,9 +11,13 @@ final class AgentSessionHeartbeat implements AutoCloseable {
     private final AtomicReference<RuntimeException> failure = new AtomicReference<>();
 
     AgentSessionHeartbeat(final AgentSessionLeaseService leases, final AgentSessionExecutionClaim claim,
-                          final ScheduledExecutorService scheduler) {
+                          final ScheduledExecutorService scheduler, final Runnable ownershipLost) {
         this.future = scheduler.scheduleAtFixedRate(() -> {
-            try { leases.renew(claim); } catch (RuntimeException exception) { this.failure.compareAndSet(null, exception); }
+            try {
+                leases.renew(claim);
+            } catch (RuntimeException exception) {
+                if (this.failure.compareAndSet(null, exception)) ownershipLost.run();
+            }
         }, AgentSessionLeaseService.HEARTBEAT_SECONDS, AgentSessionLeaseService.HEARTBEAT_SECONDS, TimeUnit.SECONDS);
     }
 

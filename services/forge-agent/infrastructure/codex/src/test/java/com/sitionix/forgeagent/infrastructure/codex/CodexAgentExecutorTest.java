@@ -9,6 +9,10 @@ import com.sitionix.forgeagent.application.runtime.ExecutionWorkspace;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
+import com.sitionix.forgeagent.domain.exception.ConflictException;
+import java.time.Instant;
 import com.sitionix.forgeagent.domain.model.NodeInputContribution;
 import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
@@ -419,6 +423,52 @@ class CodexAgentExecutorTest {
         assertThat(this.client.request).isNull();
     }
 
+    @Test
+    void resumedThreadFollowedByTurnFailureIsNotClassifiedAsResumeFailure() {
+        this.client.durableFailure = new CodexExecutionException(
+                CodexExecutionFailurePhase.TURN_EXECUTION, "model failed");
+
+        assertThatThrownBy(() -> this.executor.execute(this.trackedClaim("thread-existing")))
+                .isInstanceOf(CodexExecutionException.class)
+                .hasMessage("model failed");
+    }
+
+    @Test
+    void typedContextFailuresMapWithoutInspectingMessages() {
+        this.client.durableFailure = new CodexExecutionException(
+                CodexExecutionFailurePhase.THREAD_RESUME, "arbitrary provider wording");
+        assertThatThrownBy(() -> this.executor.execute(this.trackedClaim("thread-existing")))
+                .isInstanceOf(ConflictException.class)
+                .extracting("code").isEqualTo("AGENT_CONTEXT_RESUME_FAILED");
+
+        this.client.durableFailure = new CodexExecutionException(
+                CodexExecutionFailurePhase.IDENTITY, "another arbitrary message");
+        assertThatThrownBy(() -> this.executor.execute(this.trackedClaim("thread-existing")))
+                .isInstanceOf(ConflictException.class)
+                .extracting("code").isEqualTo("AGENT_CONTEXT_IDENTITY_MISMATCH");
+    }
+
+    @Test
+    void leaseCancellationReachesTheActiveProviderExecutionBoundary() {
+        final NodeExecutionClaim claim = this.trackedClaim("thread-existing");
+        final java.util.concurrent.atomic.AtomicBoolean providerCancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        this.client.onExecutionStarted = () -> this.executor.cancel(claim);
+        this.client.providerCancellation = () -> providerCancelled.set(true);
+
+        this.executor.execute(claim);
+
+        assertThat(providerCancelled).isTrue();
+    }
+
+    private NodeExecutionClaim trackedClaim(final String conversationId) {
+        final NodeExecutionClaim base = this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", null), OUTPUT_SCHEMA);
+        return new NodeExecutionClaim(base.workflowRunId(), base.nodeRunId(), base.sourceAgentId(), base.workflowInput(),
+                base.agentName(), base.agentInstructions(), base.outputSchema(), base.executionModel(), base.inputEnvelope(),
+                base.availableOutputs(), base.executionWorkspace(), new AgentSessionExecutionClaim(
+                UUID.randomUUID(), UUID.randomUUID(), base.nodeRunId(), "owner", 1, Instant.now().plusSeconds(30),
+                conversationId, "codex", NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE, "0.153.2"));
+    }
+
     private NodeExecutionClaim claim(final NodeRunExecutionModel executionModel, final AgentOutputSchema outputSchema) {
         return new NodeExecutionClaim(
                 WORKFLOW_RUN_ID,
@@ -462,11 +512,25 @@ class CodexAgentExecutorTest {
         private CodexTurnRequest request;
         private String outputText = "{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}";
         private int executeCount;
+        private RuntimeException durableFailure;
+        private Runnable onExecutionStarted;
+        private Runnable providerCancellation;
 
         @Override
         public String execute(final CodexTurnRequest request) {
             this.executeCount++;
             this.request = request;
+            return this.outputText;
+        }
+
+        @Override
+        public String executeDurable(final CodexTurnRequest request, final String existingThreadId,
+                                     final String expectedProviderVersion,
+                                     final CodexExecutionIdentityCallbacks callbacks) {
+            this.request = request;
+            if (this.providerCancellation != null) callbacks.executionStarted(this.providerCancellation);
+            if (this.onExecutionStarted != null) this.onExecutionStarted.run();
+            if (this.durableFailure != null) throw this.durableFailure;
             return this.outputText;
         }
 

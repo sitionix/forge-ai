@@ -15,6 +15,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
+import com.sitionix.forgeagent.application.runtime.AgentExecutor;
 import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionPersistence;
@@ -70,6 +71,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -150,6 +152,8 @@ class ForgeAgentPortAwareExecutionIT {
     private AgentExecutionSessionRepository agentExecutionSessionRepository;
     @Autowired
     private AgentSessionLeaseService agentSessionLeaseService;
+    @Autowired
+    private AgentExecutor agentExecutor;
     @Autowired
     private EntityManager entityManager;
     @Autowired
@@ -284,6 +288,64 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(stored).extracting(allocation -> allocation.turn().id()).doesNotHaveDuplicates();
         assertThat(stored).extracting(allocation -> allocation.turn().providerTurnId())
                 .containsExactlyInAnyOrder("provider-turn-1", "provider-turn-2");
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "forge.codex.live-session-e2e", matches = "true")
+    void liveCodexResumesTheForgeImplementerSessionAcrossReviewerFeedback() {
+        this.seed();
+        final String fact = "forge-integrated-session-" + UUID.randomUUID();
+        final String model = System.getProperty("forge.codex.live-model", "gpt-5.6-sol");
+        this.agentUseCases.updateAgent(AGENT_A_ID, new SaveAgentCommand(
+                "Agent A",
+                "Remember private facts from the task. When review feedback asks for the fact, return it verbatim in JSON.",
+                AgentOutputSchema.ofCanonicalJsonObject("""
+                        {"type":"object","properties":{"answer":{"type":"string"}},
+                         "required":["answer"],"additionalProperties":false}
+                        """),
+                new AgentModelSelection("codex", model, null)
+        ));
+        this.saveReusableReviewerWorkflow();
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_RETURN);
+
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID,
+                new CreateWorkflowRunCommand("Remember this private fact for the later review turn: " + fact));
+        final NodeRun implementerOne = this.onlyPending(run.id(), IMPLEMENTER);
+        final NodeExecutionClaim firstClaim = this.lifecycle.tryStart(implementerOne.id()).orElseThrow();
+        final AgentExecutionResult firstResult = this.agentExecutor.execute(firstClaim);
+        this.lifecycle.succeed(implementerOne.id(), firstResult, firstClaim.agentSessionClaim());
+
+        this.complete(this.onlyPending(run.id(), STRATEGY), "{\"strategy\":\"approved\"}");
+        this.complete(this.onlyPending(run.id(), CODE),
+                "{\"feedback\":\"Return the exact private fact remembered during Implementer invocation #1.\"}");
+
+        final NodeRun implementerTwo = this.nodeRuns(run.id(), IMPLEMENTER).get(1);
+        final NodeExecutionClaim secondClaim = this.lifecycle.tryStart(implementerTwo.id()).orElseThrow();
+        assertThat(secondClaim.inputEnvelope().contributions()).singleElement()
+                .satisfies(contribution -> assertThat(contribution.payload().jsonValue()).contains("invocation #1"));
+        final AgentExecutionResult secondResult = this.agentExecutor.execute(secondClaim);
+        this.lifecycle.succeed(implementerTwo.id(), secondResult, secondClaim.agentSessionClaim());
+
+        assertThat(secondResult.output().jsonValue()).contains(fact);
+        assertThat(secondClaim.agentSessionClaim().sessionId()).isEqualTo(firstClaim.agentSessionClaim().sessionId());
+        assertThat(secondClaim.agentSessionClaim().providerConversationId())
+                .isEqualTo(firstClaim.agentSessionClaim().providerConversationId());
+        final var implementerAllocations = this.agentExecutionSessionRepository.findByWorkflowRunId(run.id()).stream()
+                .filter(allocation -> allocation.session().sourceNodeId().equals(IMPLEMENTER)).toList();
+        assertThat(implementerAllocations).hasSize(2);
+        assertThat(implementerAllocations).extracting(allocation -> allocation.turn().providerTurnId())
+                .doesNotContainNull().doesNotHaveDuplicates();
+        assertThat(this.agentExecutionSessionRepository.findByWorkflowRunId(run.id()).stream()
+                .filter(allocation -> allocation.session().sourceNodeId().equals(CODE))
+                .map(allocation -> allocation.session().id()))
+                .doesNotContain(firstClaim.agentSessionClaim().sessionId());
+
+        final WorkflowRun isolatedRun = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID,
+                new CreateWorkflowRunCommand("An unrelated run must start clean."));
+        final NodeExecutionClaim isolatedClaim = this.lifecycle.tryStart(
+                this.onlyPending(isolatedRun.id(), IMPLEMENTER).id()).orElseThrow();
+        assertThat(isolatedClaim.agentSessionClaim().sessionId()).isNotEqualTo(firstClaim.agentSessionClaim().sessionId());
+        assertThat(isolatedClaim.agentSessionClaim().providerConversationId()).isNull();
     }
 
     @Test

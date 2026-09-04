@@ -16,11 +16,49 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class CodexAppServerTurnClientTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Test
+    void leaseCancellationSendsExactInterruptWithoutWaitingForResponseAndKillsProcess() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final AtomicReference<Runnable> cancellation = new AtomicReference<>();
+        final AtomicInteger registrations = new AtomicInteger();
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeTrackedFresh(
+                new CodexTurnRequest("Analyze auth.", "Instructions.", "model-a", null,
+                        this.schemaUnchecked(), this.workspace()),
+                new CodexExecutionIdentityCallbacks() {
+                    public void executionStarted(final Runnable action) {
+                        cancellation.set(action);
+                        registrations.incrementAndGet();
+                    }
+                    public void conversationStarted(final String id, final String version) { }
+                    public void turnStarted(final String id) { }
+                }
+        ));
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+        this.replyTurn(process, turnStart, "turn-1");
+        final long registrationDeadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+        while (registrations.get() < 2 && System.nanoTime() < registrationDeadline) Thread.onSpinWait();
+        assertThat(registrations.get()).isEqualTo(2);
+
+        cancellation.get().run();
+
+        final JsonNode interrupt = this.readRequest(process);
+        this.assertInterrupt(interrupt, "thread-1", "turn-1");
+        assertThat(interrupt.has("id")).isFalse();
+        assertThat(process.destroyed()).isTrue();
+        assertExecutionFailure(result);
+    }
 
     @Test
     void durableExecutionPersistsThreadBeforeTurnStartAndTurnBeforeNotifications() throws Exception {
@@ -106,8 +144,34 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
 
         assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
-                .hasRootCauseMessage("Codex durable context version changed from 0.152.0 to 0.153.2");
+                .hasRootCauseMessage("Codex durable context version changed from 0.152.0 to 0.153.2")
+                .hasRootCauseInstanceOf(CodexExecutionException.class);
         assertThat(process.pendingClientRequestBytes()).isZero();
+        client.close();
+    }
+
+    @Test
+    void durableTurnStartRejectsMalformedProviderTurnIdentityAsIdentityFailure() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeDurable(
+                new CodexTurnRequest("Continue.", "Instructions.", "model-a", null,
+                        this.schemaUnchecked(), this.workspace()),
+                null,
+                new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(final String id, final String version) { }
+                    public void turnStarted(final String id) { }
+                }
+        ));
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + turnStart.path("id").asText() + "\",\"result\":{\"turn\":{}}}");
+
+        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
+                .hasRootCauseMessage("Codex turn response did not include a valid turn.id")
+                .hasRootCauseInstanceOf(CodexExecutionException.class);
         client.close();
     }
 

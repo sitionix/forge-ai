@@ -115,7 +115,7 @@ class CodexTurnStateTrackerTest {
     }
 
     @Test
-    void failedCompletedItemFailsTheExactTurn() throws Exception {
+    void failedCommandItemDoesNotFailTheTurnAndAgentMayRecover() throws Exception {
         final CodexTurnStateTracker tracker = new CodexTurnStateTracker();
         final CodexExecutionState state = tracker.register("thread-1");
         tracker.bindTurnId(state, "turn-1");
@@ -124,7 +124,15 @@ class CodexTurnStateTrackerTest {
                 {"threadId":"thread-1","turnId":"turn-1","item":{"id":"tool-1","type":"commandExecution","status":"failed","error":{"message":"command failed"}}}
                 """));
 
-        assertThatThrownBy(state.result()::join).hasRootCauseMessage("command failed");
+        assertThat(state.result()).isNotDone();
+        tracker.handleNotification("turn/started", this.json.readTree(
+                "{\"threadId\":\"thread-1\",\"turn\":{\"id\":\"turn-1\"}}"));
+        tracker.handleNotification("item/completed", this.json.readTree("""
+                {"threadId":"thread-1","turnId":"turn-1","item":{"id":"message-1","type":"agentMessage","phase":"final_answer","text":"fixed"}}
+                """));
+        tracker.handleNotification("thread/status/changed", this.json.readTree(
+                "{\"threadId\":\"thread-1\",\"status\":{\"type\":\"idle\"}}"));
+        assertThat(state.result()).isCompletedWithValue("fixed");
     }
 
     @Test

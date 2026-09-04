@@ -116,10 +116,6 @@ final class CodexTurnStateTracker {
 
         final JsonNode item = params.path("item");
         this.requireObject(item);
-        if (captureAgentMessage && "failed".equals(this.nonBlank(item.path("status")))) {
-            execution.fail(this.executionFailed(this.nonBlank(item.path("error").path("message"))));
-            return;
-        }
         final String itemType = this.nonBlank(item.path("type"));
         final RuntimeException violation = this.generationPolicy.violationFor(itemType);
         if (violation != null) {
