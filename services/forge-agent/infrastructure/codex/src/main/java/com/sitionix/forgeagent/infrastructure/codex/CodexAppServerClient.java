@@ -47,13 +47,34 @@ final class CodexAppServerClient implements CodexClient {
 
     @Override
     public String execute(final CodexTurnRequest request) {
+        return this.executeInternal(request, null, null);
+    }
+
+    @Override
+    public String executeDurable(final CodexTurnRequest request, final String existingThreadId,
+                                 final CodexExecutionIdentityCallbacks callbacks) {
+        if (callbacks == null) throw new IllegalArgumentException("identity callbacks are required");
+        return this.executeInternal(request, existingThreadId, callbacks, true);
+    }
+
+    @Override public String executeTrackedFresh(final CodexTurnRequest request, final CodexExecutionIdentityCallbacks callbacks) {
+        return this.executeInternal(request, null, callbacks, false);
+    }
+
+    private String executeInternal(final CodexTurnRequest request, final String existingThreadId,
+                                   final CodexExecutionIdentityCallbacks callbacks) {
+        return this.executeInternal(request,existingThreadId,callbacks,false);
+    }
+
+    private String executeInternal(final CodexTurnRequest request, final String existingThreadId,
+                                   final CodexExecutionIdentityCallbacks callbacks, final boolean durable) {
         final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
         final CodexJsonRpcTransport transport = this.startWorkspaceTransport(
                 request.executionWorkspace().cwd(), turnStateTracker);
         CodexExecution execution = null;
         try {
-            this.initialize(transport);
-            execution = this.startExecution(transport, turnStateTracker, request);
+            final String providerVersion = this.initialize(transport);
+            execution = this.startExecution(transport, turnStateTracker, request, existingThreadId, callbacks, providerVersion, durable);
             return this.awaitExecution(execution);
         } finally {
             if (execution != null) {
@@ -120,12 +141,24 @@ final class CodexAppServerClient implements CodexClient {
 
     private CodexExecution startExecution(final CodexJsonRpcTransport current,
                                           final CodexTurnStateTracker turnStateTracker,
-                                          final CodexTurnRequest request) {
+                                          final CodexTurnRequest request,
+                                          final String existingThreadId,
+                                          final CodexExecutionIdentityCallbacks callbacks,
+                                          final String providerVersion, final boolean durable) {
         CodexExecutionState state = null;
         try {
-            final String threadId = this.startThread(current, turnStateTracker, request);
+            final CodexSessionProtocol sessionProtocol = new CodexSessionProtocol(this.objectMapper);
+            final String threadId = callbacks == null
+                    ? this.startThread(current, turnStateTracker, request)
+                    : existingThreadId == null && durable
+                        ? sessionProtocol.startDurableThread(current, this.threadStartParams(request), this.properties.getRequestTimeout())
+                        : existingThreadId != null
+                            ? sessionProtocol.resumeThread(current, existingThreadId, this.properties.getRequestTimeout())
+                            : this.startThread(current, turnStateTracker, request);
+            if (callbacks != null && existingThreadId == null) callbacks.conversationStarted(threadId, providerVersion);
             state = turnStateTracker.register(threadId);
             final String turnId = this.startTurn(current, turnStateTracker, threadId, request);
+            if (callbacks != null) callbacks.turnStarted(turnId);
             turnStateTracker.bindTurnId(state, turnId);
             this.verifyTransportStillHealthy(current, state);
             return new CodexExecution(current, turnStateTracker, state);
@@ -147,6 +180,7 @@ final class CodexAppServerClient implements CodexClient {
             throw e;
         }
     }
+
 
     private String startThread(final CodexJsonRpcTransport transport,
                                final CodexTurnStateTracker turnStateTracker,

@@ -13,12 +13,14 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
+import com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
 public class NodeRunCompletionPersistence {
 
     private final NodeRunRepository nodeRunRepository;
@@ -26,14 +28,43 @@ public class NodeRunCompletionPersistence {
     private final WorkflowCompletionPolicy completionPolicy;
     private final WorkflowExecutionCoordinator coordinator;
     private final Clock clock;
+    private final AgentSessionLeaseService sessionLeaseService;
+
+    @Autowired
+    public NodeRunCompletionPersistence(NodeRunRepository nodeRunRepository, WorkflowRunRepository workflowRunRepository,
+                                        WorkflowCompletionPolicy completionPolicy, WorkflowExecutionCoordinator coordinator,
+                                        Clock clock, AgentSessionLeaseService sessionLeaseService) {
+        this.nodeRunRepository=nodeRunRepository; this.workflowRunRepository=workflowRunRepository;
+        this.completionPolicy=completionPolicy; this.coordinator=coordinator; this.clock=clock;
+        this.sessionLeaseService=sessionLeaseService;
+    }
+
+    NodeRunCompletionPersistence(NodeRunRepository nodeRunRepository, WorkflowRunRepository workflowRunRepository,
+                                 WorkflowCompletionPolicy completionPolicy, WorkflowExecutionCoordinator coordinator,
+                                 Clock clock) {
+        this(nodeRunRepository, workflowRunRepository, completionPolicy, coordinator, clock, null);
+    }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean markBusinessSucceeded(final UUID nodeRunId, final AgentExecutionResult result) {
+        return this.markBusinessSucceeded(nodeRunId, result, null);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean markBusinessSucceeded(final UUID nodeRunId, final AgentExecutionResult result,
+                                         final AgentSessionExecutionClaim claim) {
+        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         final CompletionTarget target = this.lockCompletionTarget(nodeRunId);
         if (target == null) {
             return false;
         }
         final NodeRun nodeRun = target.nodeRun();
+        if (nodeRun.contextTrackingVersion() != null && claim == null) {
+            throw new ConflictException(
+                    "STALE_AGENT_SESSION_LEASE",
+                    "Tracked agent execution completion requires the current session lease."
+            );
+        }
         if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
             return false;
         }
@@ -49,6 +80,7 @@ public class NodeRunCompletionPersistence {
             throw this.conflict("Only RUNNING node runs can succeed.");
         }
         this.nodeRunRepository.saveAndFlush(this.withSucceeded(nodeRun, result, Instant.now(this.clock)));
+        if (claim != null) this.sessionLeaseService.finish(claim, AgentExecutionTurnStatus.SUCCEEDED, null, null, false);
         return true;
     }
 

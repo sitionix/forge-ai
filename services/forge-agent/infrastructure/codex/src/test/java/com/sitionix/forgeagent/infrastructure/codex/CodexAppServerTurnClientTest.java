@@ -23,6 +23,50 @@ class CodexAppServerTurnClientTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
+    void durableExecutionPersistsThreadBeforeTurnStartAndTurnBeforeNotifications() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final List<String> ordering = new ArrayList<>();
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeDurable(
+                new CodexTurnRequest("Analyze auth.", "Instructions.", "model-a", null, this.schemaUnchecked(), this.workspace()),
+                null, new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(String id, String version) { ordering.add("thread:" + id); }
+                    public void turnStarted(String id) { ordering.add("turn:" + id); }
+                }));
+        this.initialize(process);
+        final JsonNode threadStart=this.readRequest(process);
+        assertThat(threadStart.path("params").path("ephemeral").asBoolean()).isFalse();
+        this.replyThread(process,threadStart,"thread-durable");
+        final JsonNode turnStart=this.readRequest(process);
+        assertThat(ordering).containsExactly("thread:thread-durable");
+        this.replyTurn(process,turnStart,"turn-1");
+        this.complete(process,"thread-durable","turn-1","{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
+        assertThat(result.get(1,TimeUnit.SECONDS)).contains("OK");
+        assertThat(ordering).containsExactly("thread:thread-durable","turn:turn-1");
+        client.close();
+    }
+
+    @Test
+    void durableResumeNeverStartsReplacementThread() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<String> result=CompletableFuture.supplyAsync(() -> client.executeDurable(
+                new CodexTurnRequest("Continue.","Instructions.","model-a",null,this.schemaUnchecked(),this.workspace()),
+                "thread-existing", new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(String id,String version) { throw new AssertionError(); }
+                    public void turnStarted(String id) { }
+                }));
+        this.initialize(process);
+        final JsonNode resume=this.readRequest(process);
+        assertThat(resume.path("method").asText()).isEqualTo("thread/resume");
+        assertThat(resume.path("params").path("excludeTurns").asBoolean()).isTrue();
+        process.writeStdout("{\"id\":\""+resume.path("id").asText()+"\",\"error\":{\"code\":-32600,\"message\":\"missing\"}}");
+        assertThatThrownBy(() -> result.get(1,TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
+        assertThat(process.pendingClientRequestBytes()).isZero();
+        client.close();
+    }
+
+    @Test
     void executeTurnSendsExactThreadAndTurnProtocolWithNativeOutputSchema() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
@@ -157,6 +201,18 @@ class CodexAppServerTurnClientTest {
         this.agentMessage(harness.process(), "thread-1", "turn-1", "commentary", "{\"summary\":\"Commentary\",\"riskLevel\":\"HIGH\"}");
         this.agentMessage(harness.process(), "thread-1", "turn-1", "final_answer", "{\"summary\":\"Final\",\"riskLevel\":\"LOW\"}");
         this.turnCompleted(harness.process(), "thread-1", "turn-1", "completed");
+
+        assertThat(harness.result().get(1, TimeUnit.SECONDS)).isEqualTo("{\"summary\":\"Final\",\"riskLevel\":\"LOW\"}");
+        harness.client().close();
+    }
+
+    @Test
+    void live01532IdleSequenceCompletesWithoutTurnCompleted() throws Exception {
+        final TurnHarness harness = this.startedTurn();
+
+        this.agentMessage(harness.process(), "thread-1", "turn-1", "commentary", "{\"summary\":\"Intermediate\",\"riskLevel\":\"HIGH\"}");
+        this.agentMessage(harness.process(), "thread-1", "turn-1", "final_answer", "{\"summary\":\"Final\",\"riskLevel\":\"LOW\"}");
+        harness.process().writeStdout("{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-1\",\"status\":{\"type\":\"idle\"}}}");
 
         assertThat(harness.result().get(1, TimeUnit.SECONDS)).isEqualTo("{\"summary\":\"Final\",\"riskLevel\":\"LOW\"}");
         harness.client().close();

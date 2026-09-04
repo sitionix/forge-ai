@@ -6,6 +6,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
+import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
@@ -13,11 +14,10 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
-@RequiredArgsConstructor
 public class WorkflowExecutionCoordinator {
 
     private final WorkflowRunRepository workflowRunRepository;
@@ -25,6 +25,30 @@ public class WorkflowExecutionCoordinator {
     private final NodeRunRepository nodeRunRepository;
     private final WorkflowCompletionPolicy completionPolicy;
     private final Clock clock;
+    private final AgentExecutionSessionRepository sessionRepository;
+
+    @Autowired
+    public WorkflowExecutionCoordinator(final WorkflowRunRepository workflowRunRepository,
+                                        final WorkflowRunGraphRepository graphRepository,
+                                        final NodeRunRepository nodeRunRepository,
+                                        final WorkflowCompletionPolicy completionPolicy,
+                                        final Clock clock,
+                                        final AgentExecutionSessionRepository sessionRepository) {
+        this.workflowRunRepository = workflowRunRepository;
+        this.graphRepository = graphRepository;
+        this.nodeRunRepository = nodeRunRepository;
+        this.completionPolicy = completionPolicy;
+        this.clock = clock;
+        this.sessionRepository = sessionRepository;
+    }
+
+    WorkflowExecutionCoordinator(final WorkflowRunRepository workflowRunRepository,
+                                 final WorkflowRunGraphRepository graphRepository,
+                                 final NodeRunRepository nodeRunRepository,
+                                 final WorkflowCompletionPolicy completionPolicy,
+                                 final Clock clock) {
+        this(workflowRunRepository, graphRepository, nodeRunRepository, completionPolicy, clock, null);
+    }
 
     public WorkflowCompletionDecisionHandler completionDecisionHandler(final WorkflowRun workflowRun) {
         return new CompletionDecisionHandler(workflowRun);
@@ -99,8 +123,13 @@ public class WorkflowExecutionCoordinator {
         final Instant now = Instant.now(this.clock);
         this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
                 .filter(nodeRun -> nodeRun.status() == NodeRunStatus.PENDING || nodeRun.status() == NodeRunStatus.RUNNING)
-                .map(nodeRun -> this.withCancelled(nodeRun, now))
-                .forEach(this.nodeRunRepository::save);
+                .forEach(nodeRun -> {
+                    if (nodeRun.contextTrackingVersion() != null) {
+                        this.sessionRepository.cancel(nodeRun.id());
+                    } else {
+                        this.nodeRunRepository.save(this.withCancelled(nodeRun, now));
+                    }
+                });
     }
 
     private NodeRun withCancelled(final NodeRun nodeRun, final Instant now) {

@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
+import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataNodeRunRepository;
 import java.util.Collection;
 import java.util.List;
@@ -10,6 +11,7 @@ import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @RequiredArgsConstructor
@@ -21,6 +23,7 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     );
 
     private final SpringDataNodeRunRepository repository;
+    private final AgentExecutionSessionRepository sessionRepository;
 
     @Override
     public List<UUID> findPendingIds() {
@@ -72,13 +75,23 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     }
 
     @Override
+    @Transactional
     public NodeRun save(final NodeRun nodeRun) {
-        return PostgresNodeRunMapper.toDomain(this.repository.save(PostgresNodeRunMapper.toEntity(nodeRun)));
+        final boolean allocate = nodeRun.contextTrackingVersion() != null
+                && this.sessionRepository.findByNodeRunId(nodeRun.id()).isEmpty();
+        final NodeRun saved = PostgresNodeRunMapper.toDomain(this.repository.save(PostgresNodeRunMapper.toEntity(nodeRun)));
+        if (allocate) this.sessionRepository.allocate(saved, saved.executionModel().providerId());
+        return saved;
     }
 
     @Override
+    @Transactional
     public NodeRun saveAndFlush(final NodeRun nodeRun) {
-        return PostgresNodeRunMapper.toDomain(this.repository.saveAndFlush(PostgresNodeRunMapper.toEntity(nodeRun)));
+        final boolean allocate = nodeRun.contextTrackingVersion() != null
+                && this.sessionRepository.findByNodeRunId(nodeRun.id()).isEmpty();
+        final NodeRun saved = PostgresNodeRunMapper.toDomain(this.repository.saveAndFlush(PostgresNodeRunMapper.toEntity(nodeRun)));
+        if (allocate) this.sessionRepository.allocate(saved, saved.executionModel().providerId());
+        return saved;
     }
 
     @Override
