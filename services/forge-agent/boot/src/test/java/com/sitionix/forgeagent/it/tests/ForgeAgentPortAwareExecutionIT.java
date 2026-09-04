@@ -265,7 +265,9 @@ class ForgeAgentPortAwareExecutionIT {
 
         final NodeRun implementerTwo = this.nodeRuns(run.id(), IMPLEMENTER).get(1);
         final NodeExecutionClaim secondClaim = this.lifecycle.tryStart(implementerTwo.id()).orElseThrow();
-        assertThat(secondClaim.agentSessionClaim().sessionId()).isEqualTo(firstClaim.agentSessionClaim().sessionId());
+        assertThat(secondClaim.agentSessionClaim().sessionId())
+                .as("stored allocations: %s", this.agentExecutionSessionRepository.findByWorkflowRunId(run.id()))
+                .isEqualTo(firstClaim.agentSessionClaim().sessionId());
         assertThat(secondClaim.agentSessionClaim().turnId()).isNotEqualTo(firstClaim.agentSessionClaim().turnId());
         assertThat(secondClaim.agentSessionClaim().providerConversationId()).isEqualTo("thread-cobalt-17");
         assertThat(secondClaim.inputEnvelope().contributions()).singleElement()
@@ -469,7 +471,8 @@ class ForgeAgentPortAwareExecutionIT {
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Build feature."));
         final NodeRun runningA = this.start(this.onlyPending(run.id(), A));
-        this.completionPersistence.markBusinessSucceeded(runningA.id(), this.result(runningA, "{\"step\":\"A\"}"));
+        this.completionPersistence.markBusinessSucceeded(runningA.id(), this.result(runningA, "{\"step\":\"A\"}"),
+                this.sessionClaims.get(runningA.id()).agentSessionClaim());
         this.entityManager.clear();
 
         assertThat(this.nodeRunRepository.findById(runningA.id()).orElseThrow()).satisfies(nodeRun -> {
@@ -501,7 +504,8 @@ class ForgeAgentPortAwareExecutionIT {
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Implement feature."));
         this.complete(this.onlyPending(run.id(), IMPLEMENTER), "{\"patch\":\"v1\"}");
         final NodeRun strategy = this.start(this.onlyPending(run.id(), STRATEGY));
-        this.completionPersistence.markBusinessSucceeded(strategy.id(), this.result(strategy, "{\"strategy\":\"pass\"}"));
+        this.completionPersistence.markBusinessSucceeded(strategy.id(), this.result(strategy, "{\"strategy\":\"pass\"}"),
+                this.sessionClaims.get(strategy.id()).agentSessionClaim());
 
         this.completionProcessor.process(strategy.id());
 
@@ -518,7 +522,8 @@ class ForgeAgentPortAwareExecutionIT {
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Route once."));
         final NodeRun runningA = this.start(this.onlyPending(run.id(), A));
         this.completionPersistence.markBusinessSucceeded(runningA.id(),
-                new AgentExecutionResult(new NodeRunOutput("{\"route\":\"return\"}"), A_RETURN));
+                new AgentExecutionResult(new NodeRunOutput("{\"route\":\"return\"}"), A_RETURN),
+                this.sessionClaims.get(runningA.id()).agentSessionClaim());
 
         try (var executor = Executors.newFixedThreadPool(2)) {
             final var first = executor.submit(() -> this.completionProcessor.process(runningA.id()));
@@ -548,7 +553,8 @@ class ForgeAgentPortAwareExecutionIT {
 
         final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Terminal."));
         final NodeRun runningA = this.start(this.onlyPending(run.id(), A));
-        this.completionPersistence.markBusinessSucceeded(runningA.id(), this.result(runningA, "{\"done\":true}"));
+        this.completionPersistence.markBusinessSucceeded(runningA.id(), this.result(runningA, "{\"done\":true}"),
+                this.sessionClaims.get(runningA.id()).agentSessionClaim());
         this.coordinator.reconcile(this.workflowRunRepository.findById(run.id()).orElseThrow());
 
         assertThat(this.nodeRunRepository.findById(runningA.id()).orElseThrow().routingCompletedAt()).isNull();
@@ -573,12 +579,12 @@ class ForgeAgentPortAwareExecutionIT {
                 INSERT INTO node_runs (
                     id, workflow_run_id, source_node_id, source_agent_id, agent_name, agent_instructions,
                     agent_output_schema, input_mode, position_x, position_y, status,
-                    execution_model_provider_id, execution_model_id, execution_model_effort_id, created_at
+                    execution_model_provider_id, execution_model_id, execution_model_effort_id, context_mode, created_at
                 )
                 VALUES (
                     :nodeRunId, :runId, :sourceNodeId, :agentId, 'Legacy Agent', 'Legacy instructions.',
                     CAST(:schema AS jsonb), 'DEPENDENCIES_ONLY', 0, 0, 'PENDING',
-                    'codex', 'discovered-model', 'medium', CURRENT_TIMESTAMP
+                    'codex', 'discovered-model', 'medium', 'FRESH_EACH_NODE_RUN', CURRENT_TIMESTAMP
                 )
                 """)
                 .setParameter("nodeRunId", legacyNodeRunId)
@@ -644,7 +650,7 @@ class ForgeAgentPortAwareExecutionIT {
 
     private Path projectWorkspace() {
         Path current = Path.of("").toAbsolutePath().normalize();
-        while (current != null && !Files.isDirectory(current.resolve(".git"))) {
+        while (current != null && !Files.exists(current.resolve(".git"))) {
             current = current.getParent();
         }
         if (current == null) {
@@ -840,7 +846,11 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private void complete(final NodeRun nodeRun, final String output) {
-        final NodeExecutionClaim claim = this.lifecycle.tryStart(nodeRun.id()).orElseThrow();
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(nodeRun.id()).orElseThrow(() -> new AssertionError(
+                "Could not claim " + this.nodeRunRepository.findById(nodeRun.id())
+                        + "; allocation=" + this.agentExecutionSessionRepository.findByNodeRunId(nodeRun.id())
+                        + "; workflow=" + this.workflowRunRepository.findById(nodeRun.workflowRunId())
+        ));
         final NodeRunOutput businessOutput = new NodeRunOutput(output);
         final UUID selected = claim.availableOutputs().size() > 1
                 ? this.outputSelector.selectOutput(businessOutput, claim.availableOutputs(), claim.executionModel())

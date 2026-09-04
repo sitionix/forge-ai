@@ -113,4 +113,41 @@ class CodexTurnStateTrackerTest {
 
         assertThatThrownBy(state.result()::join).hasRootCauseMessage("model failed");
     }
+
+    @Test
+    void failedCompletedItemFailsTheExactTurn() throws Exception {
+        final CodexTurnStateTracker tracker = new CodexTurnStateTracker();
+        final CodexExecutionState state = tracker.register("thread-1");
+        tracker.bindTurnId(state, "turn-1");
+
+        tracker.handleNotification("item/completed", this.json.readTree("""
+                {"threadId":"thread-1","turnId":"turn-1","item":{"id":"tool-1","type":"commandExecution","status":"failed","error":{"message":"command failed"}}}
+                """));
+
+        assertThatThrownBy(state.result()::join).hasRootCauseMessage("command failed");
+    }
+
+    @Test
+    void targetScopedProviderErrorFailsTheExactTurn() throws Exception {
+        final CodexTurnStateTracker tracker = new CodexTurnStateTracker();
+        final CodexExecutionState state = tracker.register("thread-1");
+        tracker.bindTurnId(state, "turn-1");
+
+        tracker.handleNotification("error", this.json.readTree("""
+                {"threadId":"thread-1","turnId":"turn-1","error":{"message":"provider failed"}}
+                """));
+
+        assertThatThrownBy(state.result()::join).hasRootCauseMessage("provider failed");
+    }
+
+    @Test
+    void unscopedProviderErrorIsNotMisattributedToAnActiveTurn() throws Exception {
+        final CodexTurnStateTracker tracker = new CodexTurnStateTracker();
+        final CodexExecutionState state = tracker.register("thread-1");
+        tracker.bindTurnId(state, "turn-1");
+
+        tracker.handleNotification("error", this.json.readTree("{\"message\":\"global diagnostic\"}"));
+
+        assertThat(state.result()).isNotDone();
+    }
 }

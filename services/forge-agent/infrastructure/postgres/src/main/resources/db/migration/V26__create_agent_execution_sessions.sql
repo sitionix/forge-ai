@@ -22,7 +22,7 @@ CREATE TABLE agent_execution_sessions (
     CONSTRAINT fk_agent_sessions_run_node FOREIGN KEY (workflow_run_id, source_node_id)
         REFERENCES workflow_run_nodes(workflow_run_id, source_node_id) ON DELETE CASCADE,
     CONSTRAINT fk_agent_sessions_repository FOREIGN KEY (workflow_run_id, repository_id)
-        REFERENCES workflow_run_repositories(workflow_run_id, repository_id),
+        REFERENCES workflow_run_repositories(workflow_run_id, repository_id) ON DELETE CASCADE,
     CONSTRAINT chk_agent_sessions_context_mode CHECK (context_mode IN ('FRESH_EACH_NODE_RUN', 'REUSE_WITHIN_WORKFLOW_NODE')),
     CONSTRAINT chk_agent_sessions_status CHECK (status IN ('WAITING','CREATING','RESUMING','IDLE','ACTIVE','FAILED','CLOSED')),
     CONSTRAINT chk_agent_sessions_outcome CHECK (terminal_outcome IS NULL OR terminal_outcome IN ('SUCCEEDED','FAILED','CANCELLED')),
@@ -69,7 +69,7 @@ CREATE UNIQUE INDEX uq_agent_turns_active_writer ON agent_execution_turns(agent_
     WHERE status IN ('STARTING','ACTIVE');
 
 ALTER TABLE agent_execution_sessions ADD CONSTRAINT fk_agent_sessions_active_node_run
-    FOREIGN KEY (active_node_run_id) REFERENCES node_runs(id);
+    FOREIGN KEY (active_node_run_id) REFERENCES node_runs(id) ON DELETE CASCADE;
 
 CREATE FUNCTION enforce_fresh_agent_session_turn() RETURNS TRIGGER AS $$
 DECLARE session_mode VARCHAR(48); turn_count BIGINT;

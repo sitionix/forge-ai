@@ -13,6 +13,7 @@ final class CodexProtocol {
     static final String TURN_INTERRUPT = "turn/interrupt";
     static final String ITEM_STARTED = "item/started";
     static final String ITEM_COMPLETED = "item/completed";
+    static final String ERROR = "error";
     static final String COMMAND_APPROVAL = "item/commandExecution/requestApproval";
     static final String FILE_CHANGE_APPROVAL = "item/fileChange/requestApproval";
 

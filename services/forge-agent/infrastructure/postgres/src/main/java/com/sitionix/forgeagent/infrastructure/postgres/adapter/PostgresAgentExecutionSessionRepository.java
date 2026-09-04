@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -30,7 +31,8 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         final UUID turnId = UUID.randomUUID();
         final Instant now = Instant.now();
         this.jdbc.update("INSERT INTO agent_execution_turns(id,agent_session_id,node_run_id,sequence,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
-                turnId, session.id(), nodeRun.id(), sequence, AgentExecutionTurnStatus.QUEUED.name(), now, now);
+                turnId, session.id(), nodeRun.id(), sequence, AgentExecutionTurnStatus.QUEUED.name(),
+                Timestamp.from(now), Timestamp.from(now));
         return this.findByNodeRunId(nodeRun.id()).orElseThrow();
     }
 
@@ -53,7 +55,8 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         final Instant now = Instant.now();
         this.jdbc.update("INSERT INTO agent_execution_sessions(id,workflow_run_id,source_node_id,source_agent_id,repository_id,provider_id,context_mode,status,lease_token,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,0,?,?)",
                 id, nodeRun.workflowRunId(), nodeRun.sourceNodeId(), nodeRun.sourceAgentId(), nodeRun.repositoryId(), providerId,
-                nodeRun.contextMode().name(), AgentExecutionSessionStatus.WAITING.name(), now, now);
+                nodeRun.contextMode().name(), AgentExecutionSessionStatus.WAITING.name(),
+                Timestamp.from(now), Timestamp.from(now));
         return this.jdbc.queryForObject("SELECT * FROM agent_execution_sessions WHERE id=?", this::session, id);
     }
 
@@ -152,7 +155,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     @Transactional
     public int recoverExpired(final String ownerId) {
         final List<RecoveryCandidate> expired = this.jdbc.query(
-                "SELECT id,workflow_run_id,active_node_run_id FROM agent_execution_sessions WHERE lease_owner_id IS NOT NULL AND lease_expires_at<=CURRENT_TIMESTAMP AND status IN ('CREATING','RESUMING','ACTIVE')",
+                "SELECT id,workflow_run_id,active_node_run_id FROM agent_execution_sessions WHERE lease_owner_id IS NOT NULL AND lease_expires_at<=CURRENT_TIMESTAMP AND status IN ('CREATING','RESUMING','ACTIVE') ORDER BY workflow_run_id,id LIMIT 1",
                 (rs, row) -> new RecoveryCandidate(
                         rs.getObject("id", UUID.class),
                         rs.getObject("workflow_run_id", UUID.class),

@@ -40,7 +40,9 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
 
     @Override
     public void saveSnapshot(final WorkflowRunGraph graph) {
-        this.nodeRepository.saveAll(graph.nodes().stream().map(this::toEntity).toList());
+        // Session allocation uses JDBC immediately after the first NodeRun is
+        // flushed and is protected by a FK to this snapshot identity.
+        this.nodeRepository.saveAllAndFlush(graph.nodes().stream().map(this::toEntity).toList());
         this.portRepository.saveAll(graph.ports().stream().map(this::toEntity).toList());
         this.connectionRepository.saveAll(graph.connections().stream().map(this::toEntity).toList());
     }

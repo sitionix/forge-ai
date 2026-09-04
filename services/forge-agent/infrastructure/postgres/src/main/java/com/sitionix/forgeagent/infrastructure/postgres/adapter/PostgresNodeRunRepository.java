@@ -79,7 +79,9 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     public NodeRun save(final NodeRun nodeRun) {
         final boolean allocate = nodeRun.contextTrackingVersion() != null
                 && this.sessionRepository.findByNodeRunId(nodeRun.id()).isEmpty();
-        final NodeRun saved = PostgresNodeRunMapper.toDomain(this.repository.save(PostgresNodeRunMapper.toEntity(nodeRun)));
+        // Agent turn allocation is performed through JDBC and has a foreign key
+        // to this row, so the NodeRun must be visible before allocating it.
+        final NodeRun saved = PostgresNodeRunMapper.toDomain(this.repository.saveAndFlush(PostgresNodeRunMapper.toEntity(nodeRun)));
         if (allocate) this.sessionRepository.allocate(saved, saved.executionModel().providerId());
         return saved;
     }

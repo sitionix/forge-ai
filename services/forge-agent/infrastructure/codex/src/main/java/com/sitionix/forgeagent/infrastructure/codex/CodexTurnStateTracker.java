@@ -52,6 +52,10 @@ final class CodexTurnStateTracker {
             this.handleGenerationItem(params, method, true);
             return;
         }
+        if (CodexProtocol.ERROR.equals(method)) {
+            this.handleProviderError(params);
+            return;
+        }
         if (CodexProtocol.TURN_COMPLETED.equals(method)) {
             this.handleTurnCompleted(params);
             return;
@@ -112,6 +116,10 @@ final class CodexTurnStateTracker {
 
         final JsonNode item = params.path("item");
         this.requireObject(item);
+        if (captureAgentMessage && "failed".equals(this.nonBlank(item.path("status")))) {
+            execution.fail(this.executionFailed(this.nonBlank(item.path("error").path("message"))));
+            return;
+        }
         final String itemType = this.nonBlank(item.path("type"));
         final RuntimeException violation = this.generationPolicy.violationFor(itemType);
         if (violation != null) {
@@ -128,6 +136,30 @@ final class CodexTurnStateTracker {
         if (captureAgentMessage && CodexGenerationPolicy.capturesFinalOutput(itemType)) {
             this.extractText(item).ifPresent(text -> execution.addAgentMessage(text, this.resolvePhase(item)));
         }
+    }
+
+    private void handleProviderError(final JsonNode params) {
+        this.requireObject(params);
+        final String threadId = this.notificationThreadId(params);
+        final String turnId = this.notificationTurnId(params);
+        // The installed protocol also emits unscoped diagnostic errors. Only an
+        // exact thread+turn pair is execution-terminal; global diagnostics must
+        // not be attributed to whichever turn happens to be active.
+        if (threadId == null || turnId == null) {
+            return;
+        }
+        final CodexExecutionState execution = this.execution(threadId);
+        if (execution == null || execution.done()) {
+            return;
+        }
+        if (!execution.hasTurnId()) {
+            this.pendingByThreadId.computeIfAbsent(threadId, ignored -> new ArrayList<>())
+                    .add(new PendingNotification(CodexProtocol.ERROR, params.deepCopy()));
+            return;
+        }
+        execution.bindTurnId(turnId);
+        final String message = this.nonBlank(params.path("error").path("message"));
+        execution.fail(this.executionFailed(message == null ? this.nonBlank(params.path("message")) : message));
     }
 
     private void handleTurnCompleted(final JsonNode params) {

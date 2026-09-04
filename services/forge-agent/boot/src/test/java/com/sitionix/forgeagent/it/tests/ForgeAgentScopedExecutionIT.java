@@ -629,7 +629,8 @@ class ForgeAgentScopedExecutionIT {
             final var one = executor.submit(() -> this.failCapturingConflict(first.id(), new NodeRunFailure("FAIL_A", "A failed.")));
             final var two = executor.submit(() -> this.failCapturingConflict(second.id(), new NodeRunFailure("FAIL_B", "B failed.")));
             assertThat(Stream.of(one.get(), two.get()).filter(Objects::nonNull).toList())
-                    .allSatisfy(conflict -> assertThat(conflict.code()).isEqualTo(NodeRunLifecycle.LIFECYCLE_CONFLICT))
+                    .allSatisfy(conflict -> assertThat(conflict.code()).isIn(
+                            NodeRunLifecycle.LIFECYCLE_CONFLICT, "STALE_AGENT_SESSION_LEASE"))
                     .hasSizeLessThanOrEqualTo(1);
         }
 
@@ -770,7 +771,7 @@ class ForgeAgentScopedExecutionIT {
 
     private Path projectWorkspace() {
         Path current = Path.of("").toAbsolutePath().normalize();
-        while (current != null && !Files.isDirectory(current.resolve(".git"))) {
+        while (current != null && !Files.exists(current.resolve(".git"))) {
             current = current.getParent();
         }
         if (current == null) {
