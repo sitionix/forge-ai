@@ -58,6 +58,14 @@ final class FakeCodexProcess extends Process {
         }
     }
 
+    int pendingClientRequestBytes() {
+        try {
+            return this.stdinReader.available();
+        } catch (final IOException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
     void writeStdout(final String frame) {
         this.write(this.serverStdout, frame + "\n");
     }
