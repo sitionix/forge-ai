@@ -463,4 +463,16 @@ describe('task execution visual projection', () => {
     expect(history).toContain('context-history-expanded');
     expect(history).toContain('#8 Continued');
   });
+
+  it('maps every persisted context lifecycle without treating closed sessions as idle', async () => {
+    const taskExecutionModule = await import('../src/operator/task-execution-view.js') as any;
+    const view = Object.create(taskExecutionModule.TaskExecutionView.prototype);
+
+    expect(view.contextLifecycle({ sessionStatus: 'WAITING', turnStatus: 'QUEUED' })).toBe('Waiting');
+    expect(view.contextLifecycle({ sessionStatus: 'ACTIVE', turnStatus: 'ACTIVE' })).toBe('Active');
+    expect(view.contextLifecycle({ sessionStatus: 'IDLE', turnStatus: 'SUCCEEDED' })).toBe('Idle');
+    expect(view.contextLifecycle({ sessionStatus: 'CLOSED', turnStatus: 'CANCELLED' })).toBe('Closed');
+    expect(view.contextLifecycle({ sessionStatus: 'FAILED', turnStatus: 'FAILED' })).toBe('Failed');
+    expect(view.contextLifecycle({ sessionStatus: 'UNKNOWN', turnStatus: 'UNKNOWN' })).toBe('Unavailable');
+  });
 });

@@ -1314,24 +1314,23 @@ export class TaskExecutionView {
       return '<section class="node-run-context"><h3>CONTEXT</h3><strong>Unavailable</strong><p>Context information was not recorded for this execution.</p></section>';
     }
     if (nodeRun.contextMode === 'FRESH_EACH_NODE_RUN') {
+      if (!context || context.contextMode !== 'FRESH_EACH_NODE_RUN') {
+        return '<section class="node-run-context"><h3>CONTEXT</h3><strong>Unavailable</strong><p>Verified context information is unavailable.</p></section>';
+      }
       const projection = this.modernProjection();
-      const runs = projection.nodeRunsByUnit.get(this.state.selectedVisualUnitKey) || [];
-      const history = this.renderContextHistory(runs.map((run) => ({
-        nodeRunId: run.id,
-        label: `#${projection.invocationNumberById.get(run.id) || 1} Fresh`,
+      const verifiedFresh = (this.state.agentExecutionContexts || []).filter((item) => item.contextMode === 'FRESH_EACH_NODE_RUN'
+        && item.sourceNodeId === context.sourceNodeId && item.repositoryId === context.repositoryId);
+      const history = this.renderContextHistory(verifiedFresh.map((item) => ({
+        nodeRunId: item.nodeRunId,
+        label: `#${projection.invocationNumberById.get(item.nodeRunId) || item.sequence} Fresh`,
       })), nodeRun.id, false);
-      return `<section class="node-run-context"><h3>CONTEXT</h3><strong>Fresh</strong><p>Context is not reused</p><nav aria-label="Independent invocation history" class="context-history independent">${history}</nav>${context ? this.renderTechnicalDetails(context) : ''}</section>`;
+      return `<section class="node-run-context"><h3>CONTEXT</h3><strong>Fresh</strong><p>Context is not reused</p>${this.detailRow('Status', this.contextLifecycle(context))}<nav aria-label="Independent invocation history" class="context-history independent">${history}</nav>${this.renderTechnicalDetails(context)}</section>`;
     }
     if (!context) {
       return '<section class="node-run-context"><h3>CONTEXT</h3><strong>Unavailable</strong><p>Verified context information is unavailable.</p></section>';
     }
     const relation = context.sequence === 1 ? 'New' : 'Continued';
-    const status = context.sessionStatus === 'WAITING' || context.turnStatus === 'QUEUED'
-      ? 'Waiting for this context'
-      : ['CREATING', 'RESUMING', 'ACTIVE'].includes(context.sessionStatus)
-      ? (context.turnStatus === 'QUEUED' ? 'Waiting for this context' : 'Active')
-      : context.sessionStatus === 'FAILED' || context.turnStatus === 'FAILED' ? 'Failed'
-        : 'Idle';
+    const status = this.contextLifecycle(context);
     const projection = this.modernProjection();
     const startedRun = (this.state.agentExecutionContexts || []).find((item) => item.sessionId === context.sessionId && item.sequence === 1);
     const startedNumber = projection.invocationNumberById.get(startedRun?.nodeRunId) || 1;
@@ -1362,6 +1361,17 @@ export class TaskExecutionView {
     const visible = visibleIndexes.map((index) => button(items[index])).join(joiner);
     const hiddenCount = items.length - visibleIndexes.length;
     return `${visible}<details class="context-history-more"><summary>+${hiddenCount} earlier</summary><div class="context-history-expanded">${items.map(button).join('')}</div></details>`;
+  }
+
+  contextLifecycle(context) {
+    if (!context) return 'Unavailable';
+    if (context.sessionStatus === 'FAILED' || context.turnStatus === 'FAILED') return 'Failed';
+    if (context.turnStatus === 'CANCELLED') return 'Closed';
+    if (context.sessionStatus === 'CLOSED') return 'Closed';
+    if (context.sessionStatus === 'WAITING' || ['QUEUED', 'STARTING'].includes(context.turnStatus)) return 'Waiting';
+    if (context.sessionStatus === 'ACTIVE') return 'Active';
+    if (context.sessionStatus === 'IDLE') return 'Idle';
+    return 'Unavailable';
   }
 
   renderTechnicalDetails(context) {

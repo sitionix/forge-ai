@@ -59,7 +59,7 @@ class CodexDurableSessionE2ETest {
             secondOutput = secondClient.executeDurable(new CodexTurnRequest(
                     "Return the exact private fact supplied in the previous turn in the answer field.",
                     "Return only JSON matching the supplied schema.", model, null, schema, workspace
-            ), threadOne.get(), new CodexExecutionIdentityCallbacks() {
+            ), threadOne.get(), versionOne.get(), new CodexExecutionIdentityCallbacks() {
                 @Override
                 public void conversationStarted(final String threadId, final String providerVersion) {
                     throw new AssertionError("Resume must not create a replacement conversation");

@@ -78,7 +78,8 @@ public final class CodexAgentExecutor implements AgentExecutor {
                         };
                 outputText = claim.agentSessionClaim().contextMode() == com.sitionix.forgeagent.domain.model.NodeContextMode.FRESH_EACH_NODE_RUN
                         ? this.client.executeTrackedFresh(request, callbacks)
-                        : this.client.executeDurable(request, claim.agentSessionClaim().providerConversationId(), callbacks);
+                        : this.client.executeDurable(request, claim.agentSessionClaim().providerConversationId(),
+                                claim.agentSessionClaim().providerVersion(), callbacks);
             } catch (ConflictException exception) {
                 throw exception;
             } catch (RuntimeException exception) {

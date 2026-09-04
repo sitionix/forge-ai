@@ -8,6 +8,11 @@ interface CodexClient extends AutoCloseable {
 
     default String executeDurable(CodexTurnRequest request, String existingThreadId,
                                   CodexExecutionIdentityCallbacks callbacks) {
+        return this.executeDurable(request, existingThreadId, null, callbacks);
+    }
+
+    default String executeDurable(CodexTurnRequest request, String existingThreadId, String expectedProviderVersion,
+                                  CodexExecutionIdentityCallbacks callbacks) {
         throw new UnsupportedOperationException("Durable Codex execution is not supported.");
     }
 

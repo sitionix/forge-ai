@@ -31,6 +31,7 @@ import com.sitionix.forgeagent.domain.model.ConnectionResolution;
 import com.sitionix.forgeagent.domain.model.ConnectionResolutionType;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputContribution;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodePort;
@@ -44,6 +45,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.ConnectionResolutionRepository;
+import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import com.sitionix.forgeagent.domain.port.ExecutionFrameRepository;
 import com.sitionix.forgeagent.domain.port.InputActivationResolutionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
@@ -138,11 +140,36 @@ class ForgeAgentScopedExecutionIT {
     private InputActivationResolutionRepository activationResolutionRepository;
     @Autowired
     private InputParticipationResolver participationResolver;
+    @Autowired
+    private AgentExecutionSessionRepository agentExecutionSessionRepository;
 
     @MockBean
     private OutputSelector outputSelector;
 
     private final java.util.Map<UUID, NodeExecutionClaim> sessionClaims = new ConcurrentHashMap<>();
+
+    @Test
+    void reusablePerScopeNodeAllocatesIndependentRepositorySessions() {
+        this.seed();
+        this.save(List.of(
+                new Node(A, AGENT_A_ID, NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Output")),
+                        new NodePosition(0.0, 0.0), NodeScopeMode.PER_SCOPE,
+                        NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE),
+                this.node(C, AGENT_C_ID, C_IN, C_OUT, 1, NodeScopeMode.GLOBAL)
+        ), List.of(this.connection(91, A_OUT, C_IN)), A_IN, C_OUT);
+        final UUID runId = this.createTask(List.of(REPOSITORY_A, REPOSITORY_B));
+
+        final var scoped = this.agentExecutionSessionRepository.findByWorkflowRunId(runId).stream()
+                .filter(allocation -> allocation.session().sourceNodeId().equals(A))
+                .toList();
+
+        assertThat(scoped).hasSize(2);
+        assertThat(scoped).extracting(allocation -> allocation.session().repositoryId())
+                .containsExactlyInAnyOrder(REPOSITORY_A, REPOSITORY_B);
+        assertThat(scoped).extracting(allocation -> allocation.session().id()).doesNotHaveDuplicates();
+        assertThat(scoped).extracting(allocation -> allocation.turn().sequence()).containsOnly(1);
+    }
 
     @AfterEach
     void removeRepositoryWorkspaceFixtures() throws IOException {

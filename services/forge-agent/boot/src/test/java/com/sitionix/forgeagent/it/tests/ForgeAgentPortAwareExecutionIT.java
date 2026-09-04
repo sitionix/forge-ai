@@ -10,6 +10,7 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT_REPOSITORY;
 import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -73,6 +74,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 @IntegrationTest
 class ForgeAgentPortAwareExecutionIT {
@@ -150,6 +152,8 @@ class ForgeAgentPortAwareExecutionIT {
     private AgentSessionLeaseService agentSessionLeaseService;
     @Autowired
     private EntityManager entityManager;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @MockBean
     private OutputSelector outputSelector;
@@ -278,6 +282,45 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(stored).extracting(allocation -> allocation.turn().id()).doesNotHaveDuplicates();
         assertThat(stored).extracting(allocation -> allocation.turn().providerTurnId())
                 .containsExactlyInAnyOrder("provider-turn-1", "provider-turn-2");
+    }
+
+    @Test
+    void concurrentClaimsForOneReusableSessionStartExactlyOneNodeRun() throws Exception {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Run once."));
+        final NodeRun pending = this.onlyPending(run.id(), A);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            final var first = executor.submit(() -> this.lifecycle.tryStart(pending.id()));
+            final var second = executor.submit(() -> this.lifecycle.tryStart(pending.id()));
+            assertThat(List.of(first.get(), second.get())).filteredOn(java.util.Optional::isPresent).hasSize(1);
+        }
+        assertThat(this.nodeRunRepository.findById(pending.id()).orElseThrow().status()).isEqualTo(NodeRunStatus.RUNNING);
+    }
+
+    @Test
+    void expiredOwnerResultIsRejectedAfterRecoveryTakesNextFenceToken() {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Run once."));
+        final NodeRun pending = this.onlyPending(run.id(), A);
+        final NodeExecutionClaim staleClaim = this.lifecycle.tryStart(pending.id()).orElseThrow();
+        this.agentSessionLeaseService.persistConversation(staleClaim.agentSessionClaim(), "thread-stale", "0.153.2");
+        this.agentSessionLeaseService.persistTurn(staleClaim.agentSessionClaim(), "provider-turn-stale");
+        this.jdbcTemplate.update(
+                "UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id=?",
+                staleClaim.agentSessionClaim().sessionId()
+        );
+
+        assertThat(this.lifecycle.recoverExpiredSessions()).isEqualTo(1);
+        assertThatThrownBy(() -> this.lifecycle.succeed(
+                pending.id(), this.result(pending, "{\"late\":true}"), staleClaim.agentSessionClaim()
+        )).isInstanceOf(com.sitionix.forgeagent.domain.exception.ConflictException.class)
+                .extracting("code").isEqualTo("STALE_AGENT_SESSION_LEASE");
+        assertThat(this.nodeRunRepository.findById(pending.id()).orElseThrow().status()).isEqualTo(NodeRunStatus.FAILED);
     }
 
     @Test
@@ -660,6 +703,17 @@ class ForgeAgentPortAwareExecutionIT {
                 List.of(),
                 A_IN,
                 A_OUT
+        ));
+    }
+
+    private void saveReusableTerminalWorkflow() {
+        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
+                "Full Testing",
+                List.of(new Node(A, AGENT_A_ID, NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Done")),
+                        new NodePosition(0.0, 0.0), NodeScopeMode.GLOBAL,
+                        NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE)),
+                List.of(), A_IN, A_OUT
         ));
     }
 

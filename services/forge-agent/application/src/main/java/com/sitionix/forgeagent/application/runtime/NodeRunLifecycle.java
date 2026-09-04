@@ -212,12 +212,12 @@ public class NodeRunLifecycle {
 
     @Transactional
     public void fail(final UUID nodeRunId, final NodeRunFailure failure, final AgentSessionExecutionClaim claim) {
-        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         final NodeRunFailure normalized = this.normalizeFailure(failure);
         final CompletionTarget target = this.lockCompletionTarget(nodeRunId);
         if (target == null) {
             return;
         }
+        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         final NodeRun nodeRun = target.nodeRun();
         if (nodeRun.contextTrackingVersion() != null && claim == null) {
             throw new ConflictException(

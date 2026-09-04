@@ -56,6 +56,10 @@ final class CodexTurnStateTracker {
             this.handleTurnCompleted(params);
             return;
         }
+        if (CodexProtocol.TURN_STARTED.equals(method)) {
+            this.handleTurnStarted(params);
+            return;
+        }
         if (CodexProtocol.THREAD_STATUS_CHANGED.equals(method)) {
             this.handleThreadStatusChanged(params);
         }
@@ -146,6 +150,25 @@ final class CodexTurnStateTracker {
         this.complete(execution, this.resolveStatus(params), this.providerFailure(params));
     }
 
+    private void handleTurnStarted(final JsonNode params) {
+        this.requireObject(params);
+        final String threadId = this.notificationThreadId(params);
+        final String turnId = this.value(params.path("turn"), "id");
+        if (threadId == null || turnId == null) {
+            throw this.executionFailed();
+        }
+        final CodexExecutionState execution = this.execution(threadId);
+        if (execution == null || execution.done()) {
+            return;
+        }
+        if (!execution.hasTurnId()) {
+            this.pendingByThreadId.computeIfAbsent(threadId, ignored -> new ArrayList<>())
+                    .add(new PendingNotification(CodexProtocol.TURN_STARTED, params.deepCopy()));
+            return;
+        }
+        execution.observeTurnStarted(turnId);
+    }
+
     private void handleThreadStatusChanged(final JsonNode params) {
         this.requireObject(params);
         final String threadId = this.notificationThreadId(params);
@@ -156,6 +179,12 @@ final class CodexTurnStateTracker {
         if (!execution.hasTurnId()) {
             this.pendingByThreadId.computeIfAbsent(threadId, ignored -> new ArrayList<>())
                     .add(new PendingNotification(CodexProtocol.THREAD_STATUS_CHANGED, params.deepCopy()));
+            return;
+        }
+        if (!execution.turnStarted()) {
+            execution.fail(new CodexTransportException(
+                    "Codex thread became idle before the target turn started."
+            ));
             return;
         }
         this.complete(execution, "completed", null);

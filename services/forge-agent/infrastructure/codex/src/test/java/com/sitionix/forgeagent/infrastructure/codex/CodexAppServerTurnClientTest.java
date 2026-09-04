@@ -67,6 +67,51 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
+    void durableExecutionFailsClosedOnUnauditedCliVersionBeforeThreadStart() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeDurable(
+                new CodexTurnRequest("Continue.", "Instructions.", "model-a", null,
+                        this.schemaUnchecked(), this.workspace()),
+                null,
+                new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(final String id, final String version) { }
+                    public void turnStarted(final String id) { }
+                }
+        ));
+        final JsonNode initialize = this.readRequest(process);
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText()
+                + "\",\"result\":{\"userAgent\":\"codex/0.154.0\"}}");
+        this.readRequest(process);
+
+        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
+                .hasRootCauseMessage("Codex durable context requires audited CLI version 0.153.2; found 0.154.0");
+        assertThat(process.pendingClientRequestBytes()).isZero();
+        client.close();
+    }
+
+    @Test
+    void durableResumeRejectsProviderVersionChangeBeforeResumeRequest() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeDurable(
+                new CodexTurnRequest("Continue.", "Instructions.", "model-a", null,
+                        this.schemaUnchecked(), this.workspace()),
+                "thread-existing", "0.152.0",
+                new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(final String id, final String version) { }
+                    public void turnStarted(final String id) { }
+                }
+        ));
+        this.initialize(process);
+
+        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
+                .hasRootCauseMessage("Codex durable context version changed from 0.152.0 to 0.153.2");
+        assertThat(process.pendingClientRequestBytes()).isZero();
+        client.close();
+    }
+
+    @Test
     void executeTurnSendsExactThreadAndTurnProtocolWithNativeOutputSchema() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
@@ -210,6 +255,7 @@ class CodexAppServerTurnClientTest {
     void live01532IdleSequenceCompletesWithoutTurnCompleted() throws Exception {
         final TurnHarness harness = this.startedTurn();
 
+        harness.process().writeStdout("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-1\",\"turn\":{\"id\":\"turn-1\"}}}");
         this.agentMessage(harness.process(), "thread-1", "turn-1", "commentary", "{\"summary\":\"Intermediate\",\"riskLevel\":\"HIGH\"}");
         this.agentMessage(harness.process(), "thread-1", "turn-1", "final_answer", "{\"summary\":\"Final\",\"riskLevel\":\"LOW\"}");
         harness.process().writeStdout("{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-1\",\"status\":{\"type\":\"idle\"}}}");
@@ -315,13 +361,13 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
-    void mcpToolCallGenerationItemFailsExactTurnAndInterrupts() throws Exception {
+    void mcpToolCallGenerationItemIsAcceptedAsNormalStructuredWork() throws Exception {
         final TurnHarness harness = this.startedTurn();
 
         harness.process().writeStdout(this.itemStartedNotification("thread-1", "turn-1", "mcpToolCall"));
-        this.assertInterrupt(harness.process(), "thread-1", "turn-1");
+        this.complete(harness.process(), "thread-1", "turn-1", "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
 
-        assertExecutionFailure(harness.result(), "Unsupported Codex generation item type: mcpToolCall");
+        assertThat(harness.result().get(1, TimeUnit.SECONDS)).contains("OK");
         harness.client().close();
     }
 
@@ -593,7 +639,7 @@ class CodexAppServerTurnClientTest {
     private void initialize(final FakeCodexProcess process) throws Exception {
         final JsonNode initialize = this.readRequest(process);
         assertThat(initialize.path("method").asText()).isEqualTo("initialize");
-        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex/0.147.0\"}}");
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex/0.153.2\"}}");
         final JsonNode initialized = this.readRequest(process);
         assertThat(initialized.path("method").asText()).isEqualTo("initialized");
     }

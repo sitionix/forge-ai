@@ -53,11 +53,11 @@ public class NodeRunCompletionPersistence {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean markBusinessSucceeded(final UUID nodeRunId, final AgentExecutionResult result,
                                          final AgentSessionExecutionClaim claim) {
-        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         final CompletionTarget target = this.lockCompletionTarget(nodeRunId);
         if (target == null) {
             return false;
         }
+        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         final NodeRun nodeRun = target.nodeRun();
         if (nodeRun.contextTrackingVersion() != null && claim == null) {
             throw new ConflictException(

@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 final class CodexAppServerClient implements CodexClient {
 
     private static final Pattern USER_AGENT_VERSION = Pattern.compile("^[^/]+/([^\\s]+).*");
+    private static final String SUPPORTED_DURABLE_VERSION = "0.153.2";
 
     private final ObjectMapper objectMapper;
     private final CodexAppServerProcessStarter processStarter;
@@ -53,20 +54,28 @@ final class CodexAppServerClient implements CodexClient {
     @Override
     public String executeDurable(final CodexTurnRequest request, final String existingThreadId,
                                  final CodexExecutionIdentityCallbacks callbacks) {
+        return this.executeDurable(request, existingThreadId, null, callbacks);
+    }
+
+    @Override
+    public String executeDurable(final CodexTurnRequest request, final String existingThreadId,
+                                 final String expectedProviderVersion,
+                                 final CodexExecutionIdentityCallbacks callbacks) {
         if (callbacks == null) throw new IllegalArgumentException("identity callbacks are required");
-        return this.executeInternal(request, existingThreadId, callbacks, true);
+        return this.executeInternal(request, existingThreadId, expectedProviderVersion, callbacks, true);
     }
 
     @Override public String executeTrackedFresh(final CodexTurnRequest request, final CodexExecutionIdentityCallbacks callbacks) {
-        return this.executeInternal(request, null, callbacks, false);
+        return this.executeInternal(request, null, null, callbacks, false);
     }
 
     private String executeInternal(final CodexTurnRequest request, final String existingThreadId,
                                    final CodexExecutionIdentityCallbacks callbacks) {
-        return this.executeInternal(request,existingThreadId,callbacks,false);
+        return this.executeInternal(request,existingThreadId,null,callbacks,false);
     }
 
     private String executeInternal(final CodexTurnRequest request, final String existingThreadId,
+                                   final String expectedProviderVersion,
                                    final CodexExecutionIdentityCallbacks callbacks, final boolean durable) {
         final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
         final CodexJsonRpcTransport transport = this.startWorkspaceTransport(
@@ -74,6 +83,9 @@ final class CodexAppServerClient implements CodexClient {
         CodexExecution execution = null;
         try {
             final String providerVersion = this.initialize(transport);
+            if (durable) {
+                this.validateDurableVersion(providerVersion, expectedProviderVersion);
+            }
             execution = this.startExecution(transport, turnStateTracker, request, existingThreadId, callbacks, providerVersion, durable);
             return this.awaitExecution(execution);
         } finally {
@@ -81,6 +93,22 @@ final class CodexAppServerClient implements CodexClient {
                 this.releaseExecution(execution);
             }
             transport.close();
+        }
+    }
+
+    private void validateDurableVersion(final String providerVersion, final String expectedProviderVersion) {
+        if (!SUPPORTED_DURABLE_VERSION.equals(providerVersion)) {
+            throw new CodexTransportException(
+                    "Codex durable context requires audited CLI version " + SUPPORTED_DURABLE_VERSION
+                            + "; found " + providerVersion
+            );
+        }
+        if (expectedProviderVersion != null && !expectedProviderVersion.isBlank()
+                && !expectedProviderVersion.equals(providerVersion)) {
+            throw new CodexTransportException(
+                    "Codex durable context version changed from " + expectedProviderVersion
+                            + " to " + providerVersion
+            );
         }
     }
 
