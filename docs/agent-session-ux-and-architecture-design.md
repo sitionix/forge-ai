@@ -13,11 +13,11 @@ Forge calls the node property **Context**. Its two values are:
 | Domain value | Builder label | Meaning |
 | --- | --- | --- |
 | `FRESH_EACH_NODE_RUN` | **Fresh each invocation** | Every NodeRun starts an independent provider conversation. |
-| `REUSE_WITHIN_WORKFLOW_NODE` | **Continue in this workflow** | NodeRuns for the same snapshotted logical node and scope in one WorkflowRun share one Forge-owned session. |
+| `REUSE_WITHIN_WORKFLOW_NODE` | **Keep context during execution** | NodeRuns for the same snapshotted logical node and scope in one WorkflowRun share one Forge-owned session. A new WorkflowRun starts clean. |
 
 `FRESH_EACH_NODE_RUN` is the database, domain, API, and Console default for existing and new nodes. Runtime identity never belongs to a reusable Workflow. The policy is copied through `Node -> RunNode -> NodeRun`; concrete sessions and turns exist only under a WorkflowRun.
 
-The Builder uses two radio rows in a dedicated Context section below Execution. Only continued-context nodes receive a quiet `↻ Context` badge, in both Builder and modern runtime graphs. Runtime details use `Fresh`, `New`, and `Continued` for an invocation's relationship to context and use `Waiting`, `Active`, `Idle`, `Failed`, and `Unavailable` for session lifecycle. Provider identifiers appear only in a collapsed **Technical details** disclosure.
+The Builder uses two radio rows in a dedicated Context section below Execution. Only continued-context nodes receive a quiet `↻ Context` badge, in both Builder and modern runtime graphs. Runtime details use `Fresh`, `New`, and `Continued` for an invocation's relationship to context and use `Waiting`, `Active`, `Idle`, `Closed`, `Failed`, and `Unavailable` for session lifecycle. Provider identifiers appear only in a collapsed **Technical details** disclosure.
 
 ## 1. Current UX and implementation audit
 
@@ -91,11 +91,11 @@ Users configure **context**, not threads, memory, or database sessions.
 - **Fresh** means an invocation has an independent, non-reusable conversation.
 - **New** means the first invocation created a reusable context.
 - **Continued** means an invocation used the reusable context created by an earlier invocation.
-- **Turn N** is the sequence number within a reusable context, not the graph-wide invocation number. They normally match for a GLOBAL node, but must remain separate concepts because legacy data, failed pre-turn setup, and future reset/fork behavior can make them differ.
+- **Turn N** is the sequence number within a reusable context, not the graph-wide invocation number. They normally match for a GLOBAL node, but must remain separate concepts because legacy data, failed pre-turn setup, and future reset/fork behavior can make them differ. Every fresh one-shot session has its own Turn 1 even when its graph invocation is #2 or later.
 
 The primary UI may use “session” only in explanatory prose if necessary; headings and actions use Context. Domain code uses `AgentExecutionSession` because it represents Forge ownership and lifecycle.
 
-Context retention is bounded by one WorkflowRun. It does not survive into a later execution of the same reusable Workflow. It never crosses nodes, repositories, or workflows in Phase 1B.
+Context retention is bounded by one WorkflowRun, which the UI calls one workflow execution. It does not survive into a later execution of the same reusable Workflow. It never crosses nodes, repositories, or workflows in Phase 1B. Every new execution creates new Forge session identity, including when the node policy is continued context.
 
 ## 3. Workflow Builder design
 
@@ -111,8 +111,9 @@ CONTEXT                                      [?]
 (o) Fresh each invocation
     Starts this agent with clean context every time this node runs.
 
-( ) Continue in this workflow
-    Reuses this node's context when the workflow returns to it.
+( ) Keep context during execution
+    If this execution returns to this node, the agent continues its existing context.
+    A new execution starts clean.
     Each repository keeps its own independent context.   [PER_SCOPE only]
 ```
 
@@ -123,17 +124,19 @@ Exact copy:
 - Section label: `Context`
 - Option 1: `Fresh each invocation`
 - Option 1 description: `Starts this agent with clean context every time this node runs.`
-- Option 2: `Continue in this workflow`
-- Option 2 description: `Reuses this node's context when the workflow returns to it.`
+- Option 2: `Keep context during execution`
+- Option 2 description: `If this execution returns to this node, the agent continues its existing context. A new execution starts clean.`
 - Conditional PER_SCOPE note: `Each repository keeps its own independent context.`
-- Help tooltip: `Context is kept only for this node during one workflow execution.`
+- Help tooltip: `Context is kept only for this node during this workflow execution. A new execution starts clean.`
 
-The radio group is always enabled for an editable Workflow node. There is no provider-specific disabled state in Phase 1B: unsupported provider behavior must be rejected by server validation on save or run creation with a clear error, not shown as a control Forge cannot reliably evaluate from the Builder. While saving, the existing dialog and workflow Save behavior disables mutation consistently; no separate context loading state is introduced.
+The radio group is always enabled for an editable Workflow node because reusable Workflow definitions are provider-neutral. Workflow save accepts either Context policy without resolving provider capability. Capability validation occurs exactly once during WorkflowRun creation, after `WorkflowRunSnapshotBuilder` resolves each snapshotted agent and execution provider and before the WorkflowRun, runtime graph, root NodeRuns, or any provider work become executable. If any `REUSE_WITHIN_WORKFLOW_NODE` node resolves to a provider without durable-context support, creation fails atomically with typed validation failure `AGENT_CONTEXT_MODE_UNSUPPORTED`; its safe message identifies the node/agent and says that its provider cannot keep context during an execution. No NodeRun begins, no session or turn is allocated, and no partial runnable WorkflowRun is returned. The application-layer WorkflowRun creation/snapshot use case owns this validation through a provider-capability port; the reusable Workflow repository and Builder do not depend on provider capabilities.
+
+While saving, the existing dialog and workflow Save behavior disables mutation consistently; no separate context loading state is introduced.
 
 ### Selected, focus, keyboard, and responsive behavior
 
 - The selected row has the current green border, faint green background, and checked native radio. Color is not the only cue.
-- Hover changes only the border/background. Disabled rows, if introduced with later capability negotiation, use `disabled`, reduced opacity, `cursor: not-allowed`, and inline reason text.
+- Hover changes only the border/background. Neither choice has a provider-capability disabled state in Phase 1B because the definition is provider-neutral. The whole group is disabled only with the rest of the editor during an in-progress save or when the Workflow is opened read-only; native `disabled`, reduced opacity, and `cursor: not-allowed` apply, with the page-level save/read-only reason already shown by the surrounding view.
 - Tab enters the radio group; arrow keys move between choices; Space selects, following native browser behavior. The entire row label is clickable.
 - A visible `:focus-visible` ring uses the Console focus color and is not clipped by the row.
 - Labels and descriptions are programmatically associated through `<fieldset>`, `<legend>`, `<label>`, and described-by IDs. The help icon is a keyboard-focusable button with the full tooltip in accessible text.
@@ -158,7 +161,7 @@ Only `REUSE_WITHIN_WORKFLOW_NODE` nodes display a badge:
 ↻ Context
 ```
 
-Use a small circular-arrow SVG or CSS mask from the Console's icon treatment with `aria-hidden="true"`; do not rely on a Unicode glyph for accessible naming. Visible text remains `Context`. Tooltip and accessible label are exactly: `Continues context when this node runs again in this workflow.`
+Use a small circular-arrow SVG or CSS mask from the Console's icon treatment with `aria-hidden="true"`; do not rely on a Unicode glyph for accessible naming. Visible text remains `Context`. Tooltip and accessible label are exactly: `Keeps context if this execution returns to this node. A new execution starts clean.`
 
 The badge sits beneath the agent instruction excerpt in the Builder card's center column. It is visually secondary: muted green text, faint green background, one-pixel border, compact mono type. It does not increase card width. Node height may increase only when the badge exists; port/layout bounds must use measured/computed height as they do for variable port rows.
 
@@ -178,7 +181,7 @@ Invocation
 
 CONTEXT
 ● Continued                              Turn 3
-  Keeps context in this workflow
+  Keeps context during this execution
 
   Status       Active
   Scope        forge-agent
@@ -210,7 +213,7 @@ Do not combine invocation relationship and session lifecycle into one ambiguous 
 | Label | When shown | Supporting copy |
 | --- | --- | --- |
 | `Fresh` | `FRESH_EACH_NODE_RUN`; each NodeRun is independent | `Started with clean context` |
-| `New` | First turn of a reusable session | `Started reusable context for this workflow` |
+| `New` | First turn of a reusable session | `Started context for this execution` |
 | `Continued` | Sequence greater than 1 in a reusable session | `Continued context from an earlier invocation` |
 | `Unavailable` | Legacy/incomplete metadata prevents a truthful classification | `Context information was not recorded` |
 
@@ -218,19 +221,20 @@ Do not combine invocation relationship and session lifecycle into one ambiguous 
 
 | Label | Domain state | UI meaning |
 | --- | --- | --- |
-| `Waiting` | `CREATING` or `RESUMING` | Forge is establishing the context; no active provider turn is accepted yet. |
+| `Waiting` | session `WAITING`/`CREATING`/`RESUMING`, or selected turn `QUEUED`/`STARTING` | The invocation is queued for this context or Forge is establishing it; no active provider turn exists for the selected invocation yet. |
 | `Active` | `ACTIVE` | This session owns exactly one in-progress turn, linked to the selected/running NodeRun. |
 | `Idle` | `IDLE` | Reusable context exists and has no active turn; it may be continued later in this WorkflowRun. |
-| `Failed` | `FAILED` | Context creation/resume/identity/persistence failed. Show the safe human message and a link/selection to the failed invocation. |
+| `Closed` | `CLOSED` | A one-shot fresh session reached a terminal turn and cannot be continued. |
+| `Failed` | session `FAILED`, or one-shot session `CLOSED` with failed terminal outcome | Context creation/resume/identity/persistence or the selected one-shot invocation failed. Show the safe human message and a link/selection to the failed invocation. |
 | `Unavailable` | no session metadata, unsupported legacy record, or redacted/inaccessible runtime metadata | Forge cannot determine lifecycle; never infer `Idle` or `Fresh`. |
 
-A fresh invocation does not have a reusable context lifecycle. Its card shows `Fresh`, its NodeRun status, and `Context is not reused`; it does not misleadingly show `Idle` after completion.
+A fresh invocation has the same Forge session lifecycle and turn linkage as a continued invocation, but its session is one-shot. Its card shows `Fresh`, `Context is not reused`, and the one-shot session lifecycle. While it runs the lifecycle may be `Waiting` or `Active`; success/cancellation shows `Closed`, while failure shows `Failed` backed by technical lifecycle CLOSED plus failed outcome. It never becomes `Idle` because it cannot accept another turn. Fresh sessions remain independent and unconnected in normal UX.
 
 For a reusable session, a completed selected turn may show `New` or `Continued` while the session itself shows `Idle`. If a later invocation is Active, selecting an earlier turn still reports the current session lifecycle as `Active` and names `Current Invocation #N`; the selected turn remains visually identified in history.
 
 ### Context policy while viewing an execution
 
-Context policy is read-only in Task Execution, whether the execution is queued, active, or complete. The user can inspect `Fresh each invocation` or `Continue in this workflow`, but cannot edit it there. “Edit workflow” may navigate to the reusable Workflow in a later general UX change, but any edit affects future WorkflowRuns only. Phase 1B adds no active-run policy control and no reset action.
+Context policy is read-only in Task Execution, whether the execution is queued, active, or complete. The user can inspect `Fresh each invocation` or `Keep context during execution`, but cannot edit it there. “Edit workflow” may navigate to the reusable Workflow in a later general UX change, but any edit affects future WorkflowRuns only. Phase 1B adds no active-run policy control and no reset action.
 
 ### Technical details
 
@@ -272,22 +276,25 @@ Independent invocations
 Each invocation started with clean context.
 ```
 
-No connector line appears. This is the primary visual distinction between three turns sharing one context and three independent conversations. Chips still select the existing NodeRun.
+No connector line appears. This is the primary visual distinction between three turns sharing one context and three independent conversations. Chips still select the existing NodeRun. Each chip's Technical details shows a different Forge session and `Turn 1`; the visible `#N` remains the projected-node invocation number.
 
 ### Missing or partial linkage
 
-If a reusable NodeRun has `contextMode=REUSE_WITHIN_WORKFLOW_NODE` but lacks a session/turn link, show `Unavailable — Context information was not recorded` for that invocation and exclude it from a fabricated connected chain. If some turns are present, show the verified chain plus a warning row naming the unlinked invocation numbers. Never infer membership from provider IDs, timestamps, or adjacency alone.
+If a Phase 1B NodeRun has `contextTrackingVersion=1` but lacks its required session/turn link, show `Unavailable — Context information was not recorded` for that invocation. For continued mode, exclude it from a fabricated connected chain and show the verified chain plus a warning row naming unlinked invocation numbers. For fresh mode, keep its independent invocation chip but mark that chip Unavailable rather than claiming a verified fresh provider start. Never infer membership from provider IDs, timestamps, or adjacency alone.
 
 ## 7. GLOBAL and PER_SCOPE semantics
 
 Session scope is deterministic from the snapshotted RunNode and NodeRun repository:
 
 ```text
-GLOBAL:
+Continued + GLOBAL:
 (workflowRunId, sourceNodeId, repositoryId = null) -> one reusable context
 
-PER_SCOPE:
+Continued + PER_SCOPE:
 (workflowRunId, sourceNodeId, repositoryId) -> one reusable context per repository
+
+Fresh + either scope:
+nodeRunId -> one new one-shot session; repositoryId is metadata, never a sharing key
 ```
 
 `sourceAgentId` is snapshotted/session metadata, not part of the identity key: the logical workflow node owns context. It is still stored to audit which agent definition was snapshotted.
@@ -334,6 +341,12 @@ Migration rules:
 
 The API must return snapshotted `RunNode.contextMode` in the runtime graph and `NodeRun.contextMode` with each invocation. Builder responses return `Node.contextMode`. No session or provider identity is included in Workflow node DTOs.
 
+### Provider capability validation boundary
+
+Workflow definitions remain provider-neutral: create/update validation checks only that `contextMode` is a known enum and Workflow save accepts both values. The application layer defines port `AgentExecutionProviderCapabilities` with operation `boolean supports(String providerId, AgentExecutionProviderCapability capability)` and capability `DURABLE_CONTEXT`; provider adapters supply the implementation. During WorkflowRun creation, the application use case resolves every agent and its execution provider as part of snapshot construction, queries that port for continued-context nodes, and validates the complete proposed snapshot before persisting or scheduling executable runtime state.
+
+If any snapshotted node requests `REUSE_WITHIN_WORKFLOW_NODE` and its resolved provider lacks durable-context support, WorkflowRun creation fails atomically with `ValidationException(code="AGENT_CONTEXT_MODE_UNSUPPORTED", message="<agent> cannot keep context during an execution because its provider does not support durable context.")`. The API returns the existing typed validation-error shape. No NodeRun transitions to PENDING/RUNNING, no provider call occurs, and no session/turn is allocated. Fresh mode requires only the existing one-shot execution capability. Provider capability changes after successful snapshot validation do not rewrite the snapshot; an execution-time provider regression fails through normal typed session/start handling rather than silently changing policy.
+
 ### Forge-owned runtime records
 
 ```text
@@ -346,8 +359,13 @@ AgentExecutionSession
   providerId                 string, required opaque provider key
   providerConversationId     string, nullable until durable start is persisted
   providerVersion            string, nullable technical metadata
-  status                     CREATING | RESUMING | IDLE | ACTIVE | FAILED | CLOSED
+  contextMode                FRESH_EACH_NODE_RUN | REUSE_WITHIN_WORKFLOW_NODE
+  status                     WAITING | CREATING | RESUMING | IDLE | ACTIVE | FAILED | CLOSED
+  terminalOutcome            SUCCEEDED | FAILED | CANCELLED, nullable; set when CLOSED
   activeNodeRunId            UUID, nullable; required while CREATING, RESUMING, or ACTIVE
+  leaseOwnerId               string, nullable worker-instance identity
+  leaseToken                 long, required monotonically increasing fencing token
+  leaseExpiresAt             instant, nullable
   failureCode                string, nullable
   failureMessage             string, nullable safe human text
   createdAt                  instant, required
@@ -360,7 +378,7 @@ AgentExecutionTurn
   nodeRunId                  UUID, required and unique
   providerTurnId             string, nullable until turn/start is persisted
   sequence                   positive integer, unique within session
-  status                     WAITING | ACTIVE | SUCCEEDED | FAILED | CANCELLED
+  status                     QUEUED | STARTING | ACTIVE | SUCCEEDED | FAILED | CANCELLED
   failureCode                string, nullable
   failureMessage             string, nullable safe human text
   startedAt                  instant, nullable
@@ -369,35 +387,57 @@ AgentExecutionTurn
   updatedAt                  instant, required
 ```
 
-`NodeRun` references its Forge turn through the unique `AgentExecutionTurn.nodeRunId`; APIs may expose `agentSessionId` and `agentTurnId` as read-only runtime fields for convenient rendering. The normalized relational source of truth remains the turn row, avoiding two writable relationship columns. Fresh NodeRuns do not create `AgentExecutionSession`/`AgentExecutionTurn` records in Phase 1B; their policy plus normal NodeRun lifecycle is sufficient. This avoids calling ephemeral provider conversations durable “sessions” and keeps persistence focused on resumable state.
+Every agent `NodeRun`, regardless of context mode, has exactly one `AgentExecutionTurn`, and every turn belongs to exactly one Forge-owned `AgentExecutionSession`. `NodeRun` references its Forge turn through the unique `AgentExecutionTurn.nodeRunId`; APIs may expose `agentSessionId` and `agentTurnId` as read-only runtime fields for convenient rendering. The normalized relational source of truth remains the turn row, avoiding two writable relationship columns.
+
+For `FRESH_EACH_NODE_RUN`, NodeRun creation always creates a new one-shot WAITING session and sequence-1 QUEUED turn in the same transaction. The provider conversation may remain ephemeral, but Forge still records its opaque conversation/turn IDs, lifecycle, failures, correlation, and technical metadata. The session transitions to CLOSED with `terminalOutcome` after the turn reaches any terminal status and can never accept another turn. A failed one-shot invocation therefore remains structurally closed while primary UI truthfully projects `Failed`; Technical details may show `Session lifecycle: CLOSED` and `Outcome: FAILED`. Repeated fresh NodeRuns have different Forge session IDs and remain independent in the UI.
+
+For `REUSE_WITHIN_WORKFLOW_NODE`, the first NodeRun atomically creates the scoped reusable session and its QUEUED Turn 1. Later NodeRun creation atomically allocates the next QUEUED sequence on that same session, even if an earlier turn is still active. The session returns to IDLE after a non-session-corrupting terminal turn and may be resumed by the earliest queued turn. Session/turn creation is therefore total for every persisted agent NodeRun; provider execution remains serialized.
 
 ### Constraints and indexes
 
-- Unique session scope with null-safe semantics:
-  - GLOBAL partial unique index on `(workflow_run_id, source_node_id)` where `repository_id IS NULL`;
-  - PER_SCOPE partial unique index on `(workflow_run_id, source_node_id, repository_id)` where `repository_id IS NOT NULL`.
+- Reusable-session scope is unique with null-safe semantics:
+  - GLOBAL partial unique index on `(workflow_run_id, source_node_id)` where `context_mode='REUSE_WITHIN_WORKFLOW_NODE' AND repository_id IS NULL`;
+  - PER_SCOPE partial unique index on `(workflow_run_id, source_node_id, repository_id)` where `context_mode='REUSE_WITHIN_WORKFLOW_NODE' AND repository_id IS NOT NULL`.
+- Fresh sessions are not scope-unique. Each has exactly one turn, sequence `1`, and a unique `nodeRunId`. A PostgreSQL constraint trigger on `agent_execution_turns` rejects a fresh-session turn whose sequence is not `1` or whose session already has a turn; repository tests cover the same rule.
 - Foreign key session `(workflow_run_id, source_node_id)` references the snapshotted run node.
 - Repository presence is validated against snapshotted `RunNode.scopeMode`: GLOBAL requires null; PER_SCOPE requires a repository in `workflow_run_repositories`.
 - Unique turn `(agent_session_id, sequence)` and unique turn `node_run_id`.
-- At most one nonterminal writer turn per session via a partial unique index on `agent_session_id WHERE status IN ('WAITING', 'ACTIVE')` plus transactional/leased ownership.
-- `activeNodeRunId` must identify that session's WAITING or ACTIVE turn throughout CREATING, RESUMING, and ACTIVE session states. Updates to session state and turn ownership occur in one transaction.
+- At most one writer turn per session via a partial unique index on `agent_session_id WHERE status IN ('STARTING', 'ACTIVE')` plus the fenced lease defined below. Multiple QUEUED continued turns are allowed and ordered by sequence.
+- `activeNodeRunId` must identify that session's STARTING or ACTIVE turn throughout CREATING, RESUMING, and ACTIVE session states. Updates to session state and turn ownership occur in one transaction.
 - Provider conversation ID is unique within `(provider_id, provider_conversation_id)` when non-null so Forge cannot accidentally assign one provider conversation to two sessions.
 - Provider turn ID is unique within `(agent_session_id, provider_turn_id)` when non-null.
+- `terminalOutcome` is non-null exactly when session status is CLOSED; CLOSED/FAILED sessions have no lease owner, lease expiry, or active NodeRun.
 
 ### Allocation and execution rules
 
-For `REUSE_WITHIN_WORKFLOW_NODE`, session lookup/create uses only the deterministic scope key from the NodeRun and snapshotted RunNode. The algorithm is transactional and idempotent:
+NodeRun/session/turn allocation and provider claiming are separate short transactions. For `FRESH_EACH_NODE_RUN`, NodeRun creation creates a new one-shot session. For `REUSE_WITHIN_WORKFLOW_NODE`, NodeRun creation uses only the deterministic scope key to find/create its session. Both modes use the same orchestration:
 
-1. Lock or atomically create the scope's Forge session.
-2. Reject/leave waiting if another turn owns it; never start a concurrent writer.
-3. Allocate the next sequence and Forge turn linked to the NodeRun.
-4. For a new session, durable-start the provider conversation, validate the nonblank ID, and persist it before `turn/start`.
-5. For an existing session, resume the exact persisted conversation, require the returned ID to match, and persist failure without calling start on any error/mismatch.
+1. In the NodeRun-creation transaction, create the fresh session or lock/find-or-create the continued session, allocate sequence `1` or the next sequence, and persist the NodeRun plus its QUEUED Forge turn. A new session starts WAITING. Commit without provider work.
+2. A worker considers only the session's lowest-sequence QUEUED turn. It acquires the writer lease only when the session has no active writer. If an earlier turn owns an unexpired lease, leave later NodeRuns PENDING; never start concurrent provider work.
+3. In that lease-acquisition transaction, set the chosen turn to STARTING, set `activeNodeRunId`, set session status CREATING when it has no provider conversation ID or RESUMING otherwise, and mark the NodeRun RUNNING. Provider work starts only after commit.
+4. For any new session, start the provider conversation, validate the nonblank ID, and persist it before `turn/start`. Continued mode uses a durable provider conversation; fresh mode uses the existing provider freshness/ephemeral policy but records the returned identity.
+5. For an existing continued session, resume the exact persisted conversation, require the returned ID to match, and persist failure without calling start on any error/mismatch.
 6. Start the provider turn, validate and persist its ID before waiting, interrupting, or correlating notifications.
 7. Correlate provider notifications by exact provider conversation/turn pair; never attach an event to “latest”.
-8. Finish the Forge turn and transition the session to IDLE, or mark both appropriately failed. `CLOSED` is reserved for terminal WorkflowRun cleanup/retention semantics; Phase 1B need not call a provider close API.
+8. Finish the Forge turn. A fresh session always transitions to CLOSED after success, failure, or cancellation. A continued session transitions to IDLE when the conversation remains valid, or FAILED on a session-corrupting failure. `CLOSED` is a Forge lifecycle state and does not require a provider close API.
 
-Creation/resume work must not hold the WorkflowRun coordination database lock across a provider call. Single-writer ownership needs a database lease/lock with fencing or an equivalent cross-worker mechanism, not only an in-process mutex. A failed persistence step halts provider progress because continuing would lose the recovery identity.
+Creation/resume work must not hold the WorkflowRun coordination database lock or an open database transaction across a provider call. A failed persistence step halts provider progress because continuing would lose the recovery identity.
+
+### Exact writer lease and fencing contract
+
+The database row is the cross-process authority. An in-process mutex may reduce contention but provides no correctness guarantee. Each worker process has a stable random `leaseOwnerId` for its process lifetime. Lease duration is 30 seconds and the owning worker renews every 10 seconds while provider setup or a turn is nonterminal. All expiry comparisons use database time, not worker clocks.
+
+**Acquire.** Normal claim locks the session row, requires `leaseOwnerId` and `activeNodeRunId` to be null, then locks its lowest-sequence QUEUED turn. In that one transaction a new owner sets `leaseOwnerId`, increments `leaseToken` by exactly one, sets `leaseExpiresAt = database_now() + 30 seconds`, changes the selected turn QUEUED-to-STARTING, sets `activeNodeRunId`, and performs the NodeRun PENDING-to-RUNNING transition. Session creation initializes `leaseToken=0`; its first provider claim grants token `1`. A same-owner call is renewal, not acquisition: it must present the current token and an unexpired lease and does not increment the token. If an owner/active NodeRun exists with an expired lease, normal claim does not select a queued turn; the takeover path first acquires the existing STARTING/ACTIVE turn by replacing the owner and incrementing the token. Provider work starts only after commit.
+
+**Renew.** Every 10 seconds, the worker issues a short transaction equivalent to `UPDATE ... SET lease_expires_at = database_now() + 30 seconds WHERE id=? AND lease_owner_id=? AND lease_token=? AND lease_expires_at > database_now()`. Updating exactly one row renews ownership. Zero rows means ownership is lost; the worker must stop issuing provider mutations/interrupts, discard subsequent local results, and may only submit them to the stale-result rejection path. Renewal never changes `leaseToken`.
+
+**Guard every mutation.** Every state-changing repository operation owned by a session includes `(sessionId, leaseOwnerId, leaseToken)` in its compare-and-set predicate and verifies one affected session row. This includes session/turn writes, NodeRun status/output/failure writes, persistence of provider conversation/turn IDs, lifecycle transitions, `activeNodeRunId` changes, interrupt state, and all future Activity/event writes. Every asynchronous provider callback/result captures the token held when the provider operation began. Applying the result and updating its session, turn, and NodeRun occur in one short transaction guarded by the same current owner/token and unexpired lease. A zero-row guard is `STALE_AGENT_SESSION_LEASE`; the payload is rejected, logged/metriced outside session state, and cannot mutate session, turn, NodeRun, output, or future event records.
+
+**Release.** The guarded completion transaction writes the terminal turn/NodeRun outcome, clears `activeNodeRunId`, sets the session to IDLE (continued) or CLOSED with `terminalOutcome` (fresh), and clears `leaseOwnerId`/`leaseExpiresAt` atomically using the same owner/token/unexpired predicate. `leaseToken` is never decremented or reset. A zero-row completion/release means ownership was already lost; the worker must not retry any part as an unguarded write.
+
+**Expiration and takeover.** A worker acquires an expired lease in one row-locking transaction, replaces `leaseOwnerId`, increments `leaseToken`, and extends expiry. It reloads the existing `activeNodeRunId` and turn and never allocates a second turn for them. Phase 1B deliberately uses conservative crash recovery because the Phase 0 audit did not prove safe adoption of an in-flight provider turn: if the turn and NodeRun already have a durably committed terminal outcome, takeover only performs the missing guarded session transition/release; otherwise it marks that turn and NodeRun FAILED and the session FAILED (continued) or CLOSED with FAILED outcome (fresh), then releases the lease. It does not call provider start/resume/turn-start for the uncertain in-flight operation. A later continued invocation cannot use a FAILED session automatically. No takeover operation silently creates a provider conversation or treats a missing provider ID as proof that no provider-side operation occurred.
+
+**Crash and restart.** Forge restart grants no special ownership: process-local owner IDs disappear, database leases remain until expiry, and restarted workers generate new owner IDs. Recovery scans nonterminal sessions/turns, waits until the recorded lease expires, acquires with an incremented token, and applies the conservative takeover rule above. There is no lease deletion/reset on startup. Idle continued sessions have no owner and need no recovery; their next invocation acquires a new token and resumes the exact durable provider identity normally. Any late result from worker A carries its old token and is rejected after worker B acquires the incremented token.
 
 ### Snapshot/edit invariants
 
@@ -412,14 +452,16 @@ Creation/resume work must not hold the WorkflowRun coordination database lock ac
 
 ```text
 No session
-  allocate first reusable invocation -> CREATING / turn WAITING
+  fresh NodeRun creation -> new one-shot session WAITING / Turn 1 QUEUED
+  first continued NodeRun creation -> new reusable session WAITING / Turn 1 QUEUED
+
+WAITING or IDLE
+  claim earliest queued turn + acquire lease -> CREATING or RESUMING / turn STARTING
 
 CREATING
   durable identity persisted -> ACTIVE after turn identity persisted
-  provider/persistence error -> FAILED / turn FAILED
-
-IDLE
-  allocate next invocation -> RESUMING / turn WAITING
+  fresh provider/persistence error -> CLOSED with FAILED outcome / turn FAILED
+  continued provider/persistence error -> FAILED / turn FAILED
 
 RESUMING
   exact identity resumed and turn persisted -> ACTIVE
@@ -427,10 +469,12 @@ RESUMING
   (never -> CREATING as fallback)
 
 ACTIVE
-  successful turn -> IDLE / turn SUCCEEDED
-  turn failure -> IDLE / turn FAILED when conversation remains valid
-  session-corrupting or identity failure -> FAILED / turn FAILED
-  workflow cancellation -> IDLE or CLOSED / turn CANCELLED per cleanup policy
+  fresh terminal turn -> CLOSED / turn SUCCEEDED, FAILED, or CANCELLED
+  continued successful turn -> IDLE / turn SUCCEEDED
+  continued turn failure -> IDLE / turn FAILED when conversation remains valid
+  fresh session-corrupting or identity failure -> CLOSED with FAILED outcome / turn FAILED
+  continued session-corrupting or identity failure -> FAILED / turn FAILED
+  continued workflow cancellation -> CLOSED / turn CANCELLED
 
 FAILED
   terminal for automatic Phase 1B execution; no implicit retry or replacement
@@ -439,9 +483,9 @@ CLOSED
   terminal retained metadata; no further turns
 ```
 
-`Waiting` is a UI projection of CREATING/RESUMING before a provider turn becomes active. A NodeRun waiting behind another writer remains PENDING and has no allocated turn; details derive `Waiting for this context` from the scoped session's nonterminal writer. When ownership becomes available, one transaction acquires the fenced writer lease, allocates the WAITING turn, sets `activeNodeRunId`, and marks the NodeRun RUNNING. Provider start/resume happens only after that commit. A setup failure then marks the turn, session, and NodeRun FAILED with a context-specific failure code. This boundary prevents a RUNNING NodeRun without an owned setup operation.
+`Waiting` covers a QUEUED turn and CREATING/RESUMING before a provider turn becomes active. A continued NodeRun waiting behind another writer remains PENDING with its already allocated QUEUED turn; details derive `Waiting for this context` from that turn and the session's current writer. A fresh NodeRun never waits behind a prior invocation because it owns a new session, though its new-session setup itself may be Waiting. When ownership becomes available, the acquisition transaction promotes the turn to STARTING, sets `activeNodeRunId`, and marks the NodeRun RUNNING. Provider start/resume happens only after that commit. A setup failure uses the current fencing token to mark the turn and NodeRun FAILED and to set the session FAILED (continued) or CLOSED with FAILED outcome (fresh). This boundary guarantees total NodeRun-to-turn linkage without allowing a RUNNING NodeRun that lacks an owned setup operation.
 
-Recommended error codes include `AGENT_CONTEXT_START_FAILED`, `AGENT_CONTEXT_RESUME_FAILED`, `AGENT_CONTEXT_IDENTITY_MISMATCH`, `AGENT_CONTEXT_PERSISTENCE_FAILED`, and `AGENT_CONTEXT_BUSY`. Error messages must say whether existing context could not be continued and explicitly state that no fresh context was started.
+Phase 1B uses typed codes `AGENT_CONTEXT_START_FAILED`, `AGENT_CONTEXT_RESUME_FAILED`, `AGENT_CONTEXT_IDENTITY_MISMATCH`, `AGENT_CONTEXT_PERSISTENCE_FAILED`, and `STALE_AGENT_SESSION_LEASE`, in addition to creation-time `AGENT_CONTEXT_MODE_UNSUPPORTED`. Resume error messages explicitly say that existing context could not be continued and that no fresh context was started.
 
 ## 10. Failure, unavailable, and historical states
 
@@ -463,7 +507,7 @@ The NodeRun is FAILED, the graph uses its existing failure treatment, and the ta
 
 ### Session busy or waiting
 
-If another invocation owns the session, the later invocation shows `Waiting for this context` and remains queued/pending according to the chosen worker transition boundary. This is serialization, not failure. `AGENT_CONTEXT_BUSY` is used only if a lease cannot be recovered or a configured wait policy expires; Phase 1B does not expose a manual takeover control.
+If another invocation owns a continued session, the later invocation shows `Waiting for this context` and remains PENDING without starting provider work. This is serialization, not failure. Phase 1B adds no separate context-wait timeout: normal claim polling continues while the WorkflowRun is active. If the owning lease expires, recovery acquires it with a new fencing token and resolves the existing active turn before any waiting invocation is considered. Under the conservative crash rule, an uncertain nonterminal turn fails the continued session, so the waiting invocation cannot start provider work on it and follows normal workflow failure reconciliation. Phase 1B exposes no manual takeover control.
 
 ### Old historical executions
 
@@ -485,7 +529,7 @@ Overview | Activity | Result
 ```
 
 - **Overview** owns invocation selection, Context, core status/timing, and configuration snapshot.
-- **Activity** will own a chronological execution ledger: plans, commands, file changes, tests, MCP/tool calls, warnings, token usage, and compaction. It is keyed by Forge turn and exact provider identities; Phase 1B does not create the event ledger.
+- **Activity** will own a chronological execution ledger for both fresh and continued sessions: plans, commands, file changes, tests, MCP/tool calls, warnings, token usage, and compaction. It is keyed by the Forge session/turn and exact provider identities; Phase 1B creates the unified identity foundation but not the event ledger.
 - **Result** will own final output, schema-rendered results, and failure summary; existing Output can migrate here later.
 
 Future context controls—interrupt, steering, reset/start fresh, and fork—belong in the Context card action area, gated by lifecycle and permissions. They are not Builder policy options. Context compaction belongs as an Activity event plus Context metadata/action. Shared context groups, cross-node context, and cross-workflow memory would expand the Builder Context choices and replace the deterministic scope key with an explicit group/memory reference; the two-value `NodeContextMode` remains unambiguous and can be extended or paired with a separate grouping property without reinterpreting existing values.
@@ -500,9 +544,10 @@ No Phase 1B UI reserves empty buttons or tabs. It uses component boundaries, sta
 - Backward-compatible migrations for `workflow_nodes`, `workflow_run_nodes`, and `node_runs`.
 - Snapshot propagation `Node -> RunNode -> NodeRun`.
 - Builder radio-row Context control, defaults, validation, responsive/accessibility behavior, and `↻ Context` badge.
-- Forge `AgentExecutionSession` and `AgentExecutionTurn` persistence, repositories, constraints, deterministic GLOBAL/PER_SCOPE allocation, and NodeRun linkage.
-- Single-writer ownership with cross-worker fencing/locking and ordered identity persistence.
-- Explicit durable provider start and exact resume orchestration for supported/pinned provider version, without modifying the fresh execution path's semantics.
+- Forge `AgentExecutionSession` and `AgentExecutionTurn` persistence for every agent NodeRun, including one-shot fresh sessions, repositories, constraints, deterministic continued GLOBAL/PER_SCOPE allocation, and NodeRun linkage.
+- Exact 30-second cross-worker writer leases, 10-second renewal, monotonically increasing fencing tokens, expiry takeover/restart recovery, stale-result rejection, and ordered identity persistence.
+- WorkflowRun creation-time provider capability validation with typed `AGENT_CONTEXT_MODE_UNSUPPORTED` failure before execution state begins.
+- Provider orchestration that records session/turn identity for the existing fresh one-shot behavior, plus explicit durable start and exact resume for continued behavior on a supported/pinned provider version.
 - Resolution and contract testing of Codex `0.153.2` completion detection before enabling durable execution.
 - Runtime API fields required for the Context card/history and technical disclosure.
 - Runtime graph opt-in badge, details Context card, invocation/history relationship, PER_SCOPE presentation, failure, waiting, and legacy/unavailable states.
@@ -526,7 +571,7 @@ No Phase 1B UI reserves empty buttons or tabs. It uses component boundaries, sta
 3. **Builder control:** dedicated full-width fieldset with two descriptive native radio rows below Execution.
 4. **Graph badge:** yes, only for continued-context nodes.
 5. **Badge:** `↻ Context`; circular-arrow icon is decorative, visible label is text, tooltip explains reuse.
-6. **First reusable invocation:** `New` with `Started reusable context for this workflow`.
+6. **First reusable invocation:** `New` with `Started context for this execution`.
 7. **Resumed invocation:** `Continued` with `Continued context from an earlier invocation`.
 8. **Shared repeated invocations:** connected, selectable Context history chips ordered by Forge turn sequence.
 9. **Fresh repeated invocations:** unconnected `Independent invocations` chips, each labeled Fresh, plus explicit clean-context copy.
@@ -534,7 +579,7 @@ No Phase 1B UI reserves empty buttons or tabs. It uses component boundaries, sta
 11. **Technical IDs:** collapsed Technical details in Node details, never primary graph/UI.
 12. **Editing during execution:** runtime view is read-only; reusable Workflow edits affect future WorkflowRuns only.
 13. **Old NodeRuns:** remain readable; context is absent or marked Unavailable/legacy, never inferred.
-14. **Boundary:** Phase 1B includes policy/snapshot/session/turn foundation and compact runtime representation; event observability and controls are later.
+14. **Boundary:** Phase 1B includes policy/snapshot, unified fresh/continued session-turn foundation, exact fenced ownership, capability validation, and compact runtime representation; event observability and controls are later.
 
 ## 14. Acceptance scenarios
 
@@ -550,7 +595,7 @@ Independent invocations
 Each invocation started with clean context.
 ```
 
-No Forge durable session/turn records exist. Each NodeRun uses the existing fresh execution path.
+Each NodeRun creates a different one-shot Forge session and its sequence-1 turn. Session A/Turn A1 closes after Implementer #1; session B/Turn B1 closes after Implementer #2. Both provider conversation and turn identities are recorded for correlation and Technical details, but the UI shows no connector because the invocations share no context.
 
 ### Scenario B — persistent feedback loop
 
@@ -590,11 +635,27 @@ Invocation #3 shows `Continued · Turn 3`, session `Failed`, the context-specifi
 
 ### Scenario E — workflow edited after execution starts
 
-WorkflowRun R1 snapshots `Continue in this workflow`. Editing the reusable node to `Fresh each invocation` does not alter R1, its graph badge, allocation, or later feedback-loop NodeRuns. WorkflowRun R2, created after the edit, snapshots Fresh and creates no reusable session. Task Execution exposes both as read-only snapshotted policy.
+WorkflowRun R1 snapshots `Keep context during execution`. Editing the reusable node to `Fresh each invocation` does not alter R1, its graph badge, allocation, or later feedback-loop NodeRuns. WorkflowRun R2, created after the edit, snapshots Fresh, creates new one-shot session identity for every NodeRun, and never reuses R1's session. Task Execution exposes both as read-only snapshotted policy.
 
 ### Scenario F — historical execution
 
 An old execution retains its graph, invocation selection, Prompt, Output, Failure, and timestamps. It has no context badge. Node details says `Context information was not recorded for this execution.` It does not label old repeated invocations New, Continued, or verified Fresh and never exposes guessed provider/session IDs.
+
+### Scenario G — concurrent same-session invocation
+
+Implementer #1 owns reusable session C with `(leaseOwnerId=A, leaseToken=7)`. Implementer #2 remains PENDING with its already allocated QUEUED turn and shows `Waiting for this context`; it has not started provider work. After #1 completes and atomically releases, #2 may acquire the session with token 8, promote its turn to STARTING, become RUNNING, and call the provider. If #1 instead loses an expired lease while nonterminal, recovery owns token 8 and fails the uncertain turn/session; #2 never starts provider work on that failed session. A process-local mutex is not part of the correctness proof.
+
+### Scenario H — worker crash and stale result
+
+Worker A crashes while holding token 7. The database lease expires after 30 seconds. Worker B atomically acquires the row, changes owner, increments the token to 8, and loads the persisted active turn. If its terminal outcome was already committed, B finishes the missing session transition/release; otherwise B fails the uncertain turn/NodeRun and closes or fails the session without issuing provider work. A late callback from A carries token 7; its guarded update affects zero rows, returns `STALE_AGENT_SESSION_LEASE`, and cannot change the session, turn, NodeRun, output, or future Activity records.
+
+### Scenario I — unsupported provider
+
+A saved Workflow may contain `Keep context during execution` regardless of its current agent provider. WorkflowRun creation resolves the snapshotted provider and discovers that it lacks durable-context support. Creation returns typed `AGENT_CONTEXT_MODE_UNSUPPORTED` before any NodeRun begins, provider call occurs, or session/turn is allocated. The user must change the policy or provider and start a new WorkflowRun.
+
+### Scenario J — new WorkflowRun
+
+WorkflowRun R1's continued node owns reusable session C. Starting R2 from the same unchanged Workflow creates a new session D because `workflowRunId` is part of the deterministic scope. R2 starts at Turn 1 and has no access to C. Fresh nodes likewise create new one-shot session identity for every NodeRun in both runs.
 
 ## 15. Major alternatives rejected
 
@@ -614,11 +675,12 @@ An old execution retains its graph, invocation selection, Prompt, Output, Failur
 Phase 1B is ready to plan when reviewers agree that:
 
 - `Context`, radio copy, `↻ Context`, `Fresh`/`New`/`Continued`, and lifecycle labels are final;
-- fresh records do not create Forge durable session rows;
+- every agent NodeRun has one Forge session and one Forge turn; fresh sessions are one-shot and close after their only invocation;
 - policy is snapshotted through all three node layers;
 - session uniqueness and repository nullability enforce the declared scope;
 - each reusable NodeRun has exactly one Forge turn and sequence;
-- single-writer ownership works across workers/processes;
+- 30-second leases, 10-second renewal, token-incrementing takeover, and token-guarded writes reject stale owners across workers/processes and restarts;
+- unsupported continued context fails WorkflowRun snapshot validation with `AGENT_CONTEXT_MODE_UNSUPPORTED` before any NodeRun or session begins;
 - start/resume/turn identity persistence order matches the Phase 0 audit;
 - resume failure is terminal with no start fallback;
 - Codex `0.153.2` completion behavior is contract-tested before production enablement;
