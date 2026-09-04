@@ -294,6 +294,7 @@ function runtimeGraph(nodes: any[], connections: any[] = [], taskInputPortId: st
       sourceNodeId: item.id,
       agentName: item.agentName,
       scopeMode: item.scopeMode || 'GLOBAL',
+      contextMode: item.contextMode,
       position: item.position || { x: 10, y: 20 }
     })),
     ports: nodes.flatMap((item) => [
@@ -2637,6 +2638,37 @@ describe('Agent projects page', () => {
     page.taskExecutionView.render();
     expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-3');
     expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('reviewer-3');
+  });
+
+  it('renders verified continued context history, technical details, and runtime badge', async () => {
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
+    const first = { ...modernNodeRun('impl-1', 'implementer', 'SUCCEEDED', '2026-08-13T10:00:00Z'), contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', contextTrackingVersion: 1 };
+    const second = { ...modernNodeRun('impl-2', 'implementer', 'RUNNING', '2026-08-13T10:01:00Z'), contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', contextTrackingVersion: 1 };
+    const contexts = [
+      { sessionId: 'session-a', turnId: 'turn-a', nodeRunId: 'impl-1', sourceNodeId: 'implementer', repositoryId: null, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', sequence: 1, sessionStatus: 'ACTIVE', turnStatus: 'SUCCEEDED', provider: 'codex', providerConversationId: 'thread-a', providerTurnId: 'provider-turn-a', providerVersion: '0.153.2' },
+      { sessionId: 'session-a', turnId: 'turn-b', nodeRunId: 'impl-2', sourceNodeId: 'implementer', repositoryId: null, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', sequence: 2, sessionStatus: 'ACTIVE', turnStatus: 'ACTIVE', provider: 'codex', providerConversationId: 'thread-a', providerTurnId: 'provider-turn-b', providerVersion: '0.153.2' }
+    ];
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', [first, second], 'Context Board', graph))),
+      getAgentExecutionContexts: vi.fn(() => Promise.resolve(contexts))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1'); await flushAsync();
+    const card=dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="implementer"]')!;
+    expect(card.textContent).toContain('↻ Context');
+    card.click();
+    const details=dom.window.document.getElementById('agentsV2NodeRunDetails')!;
+    expect(details.textContent).toContain('Continued');
+    expect(details.textContent).toContain('Turn 2');
+    expect(details.textContent).toContain('#1 New');
+    expect(details.textContent).toContain('#2 Continued');
+    expect(details.textContent).toContain('Technical details');
+    expect(details.textContent).toContain('thread-a');
+    dom.window.document.querySelector<HTMLButtonElement>('[data-context-node-run="impl-1"]')!.click();
+    expect(details.textContent).toContain('New');
+    expect(details.textContent).toContain('Active');
+    expect(details.textContent).toContain('Invocation #2');
   });
 
   it('an unexecuted card follows its first invocation when it appears', async () => {
@@ -5026,6 +5058,7 @@ describe('Agent projects page', () => {
         targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         inputMode: 'DEPENDENCIES_ONLY',
         scopeMode: 'GLOBAL',
+        contextMode: 'FRESH_EACH_NODE_RUN',
         inputs: [
           { id: 'input-a', name: 'First input', description: 'First.', order: 0 },
           { id: 'input-b', name: 'Second input', description: 'Second.', order: 1 }
@@ -5507,6 +5540,7 @@ describe('Agent projects page', () => {
         targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         inputMode: 'DEPENDENCIES_ONLY',
         scopeMode: 'GLOBAL',
+        contextMode: 'FRESH_EACH_NODE_RUN',
         inputs: [{ id: 'node-1-input', name: 'Input', description: 'Default workflow input.', order: 0 }],
         outputs: [{ id: 'node-1-output', name: 'Output', description: 'Default workflow output.', order: 0 }],
         position: { x: 80, y: 90 }
@@ -5559,7 +5593,15 @@ describe('Agent projects page', () => {
     expect([...scopeSelect.options].map((option) => option.textContent)).toEqual(['Once', 'Per repository']);
     expect(scopeSelect.value).toBe('GLOBAL');
     scopeSelect.value = 'PER_SCOPE';
+    scopeSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    const radios = [...dom.window.document.querySelectorAll<HTMLInputElement>('[data-node-editor-context-mode]')];
+    expect(radios).toHaveLength(2);
+    expect(radios[0].checked).toBe(true);
+    expect(dom.window.document.getElementById('agentsV2NodeEditorBody')?.textContent)
+      .toContain('Each repository keeps its own independent context.');
+    radios[1].checked = true;
     dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
+    expect(dom.window.document.querySelector('[data-node-id="node-2"]')?.textContent).toContain('↻ Context');
     await page.workflowBuilder.save();
 
     expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', {
@@ -5570,6 +5612,7 @@ describe('Agent projects page', () => {
           targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
           inputMode: 'DEPENDENCIES_ONLY',
           scopeMode: 'GLOBAL',
+          contextMode: 'FRESH_EACH_NODE_RUN',
           inputs: [{ id: 'node-1-input', name: 'Input', description: 'Default workflow input.', order: 0 }],
           outputs: [{ id: 'node-1-output', name: 'Output', description: 'Default workflow output.', order: 0 }],
           position: { x: 10, y: 20 }
@@ -5579,6 +5622,7 @@ describe('Agent projects page', () => {
           targetId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
           inputMode: 'TASK_AND_DEPENDENCIES',
           scopeMode: 'PER_SCOPE',
+          contextMode: 'REUSE_WITHIN_WORKFLOW_NODE',
           inputs: [{ id: 'node-2-input', name: 'Input', description: 'Default workflow input.', order: 0 }],
           outputs: [{ id: 'node-2-output', name: 'Output', description: 'Default workflow output.', order: 0 }],
           position: { x: 260, y: 20 }

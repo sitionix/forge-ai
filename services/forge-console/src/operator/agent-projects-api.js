@@ -195,6 +195,9 @@ export function createAgentProjectsApi(http) {
     getWorkflowRun(runId) {
       return http.get(`${root}/workflow-runs/${encodeURIComponent(runId)}`);
     },
+    getAgentExecutionContexts(runId) {
+      return http.get(`${root}/workflow-runs/${encodeURIComponent(runId)}/agent-execution-contexts`);
+    },
   };
 }
 

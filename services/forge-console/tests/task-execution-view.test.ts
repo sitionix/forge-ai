@@ -447,4 +447,20 @@ describe('task execution visual projection', () => {
     expect(route.some((point: any) => point.y > 120)).toBe(true);
     expect(routesSharePositiveLengthSegment(route, occupiedRoute.points)).toBe(false);
   });
+
+  it('compacts histories longer than five turns and expands them in place', async () => {
+    const taskExecutionModule = await import('../src/operator/task-execution-view.js') as any;
+    const view = Object.create(taskExecutionModule.TaskExecutionView.prototype);
+    const items = Array.from({ length: 8 }, (_unused, index) => ({
+      nodeRunId: `run-${index + 1}`,
+      label: `#${index + 1} ${index === 0 ? 'New' : 'Continued'}`,
+    }));
+
+    const history = view.renderContextHistory(items, 'run-4', true);
+
+    expect(history).toContain('<summary>+3 earlier</summary>');
+    expect(history).toContain('aria-current="true"');
+    expect(history).toContain('context-history-expanded');
+    expect(history).toContain('#8 Continued');
+  });
 });

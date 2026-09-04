@@ -26,6 +26,8 @@ const DEFAULT_INPUT_MODE = 'DEPENDENCIES_ONLY';
 const TASK_AND_DEPENDENCIES_INPUT_MODE = 'TASK_AND_DEPENDENCIES';
 const GLOBAL_SCOPE_MODE = 'GLOBAL';
 const PER_SCOPE_MODE = 'PER_SCOPE';
+const FRESH_CONTEXT_MODE = 'FRESH_EACH_NODE_RUN';
+const REUSE_CONTEXT_MODE = 'REUSE_WITHIN_WORKFLOW_NODE';
 const NODE_DRAG_THRESHOLD = 3;
 const EDGE_CORNER_RADIUS = 12;
 const EDGE_ROUTE_CLEARANCE = 32;
@@ -170,6 +172,7 @@ export class WorkflowBuilder {
       targetId: agentId,
       inputMode: DEFAULT_INPUT_MODE,
       scopeMode: GLOBAL_SCOPE_MODE,
+      contextMode: FRESH_CONTEXT_MODE,
       inputs: [{ id: inputPortId, ...DEFAULT_INPUT_PORT }],
       outputs: [{ id: outputPortId, ...DEFAULT_OUTPUT_PORT }],
       position: {
@@ -286,6 +289,7 @@ export class WorkflowBuilder {
         <div class="workflow-node-content">
           <strong>${escapeHtml(agent?.name || 'Unknown agent')}</strong>
           <span>${escapeHtml(agent?.instructions || 'Reusable agent')}</span>
+          ${this.nodeContextMode(node) === REUSE_CONTEXT_MODE ? '<small class="workflow-node-context-badge">↻ Context</small>' : ''}
         </div>
         <button class="node-delete" type="button" title="Remove node" data-node-remove="${escapeHtml(node.id)}" aria-label="Remove node">×</button>
         <div class="workflow-node-port-list output" aria-label="Configured outputs">
@@ -752,6 +756,15 @@ export class WorkflowBuilder {
         <label class="field-label" for="agentsV2NodeEditorInputMode">Input content</label>
         ${this.renderNodeEditorInputMode(node)}
       </div>
+      <fieldset class="node-editor-context-mode">
+        <legend>CONTEXT</legend>
+        <label><input type="radio" name="node-context-mode" value="${FRESH_CONTEXT_MODE}" data-node-editor-context-mode ${this.nodeContextMode(node) === FRESH_CONTEXT_MODE ? 'checked' : ''}>
+          <span><strong>Fresh each invocation</strong><small>Starts this agent with clean context every time this node runs.</small></span>
+        </label>
+        <label><input type="radio" name="node-context-mode" value="${REUSE_CONTEXT_MODE}" data-node-editor-context-mode ${this.nodeContextMode(node) === REUSE_CONTEXT_MODE ? 'checked' : ''}>
+          <span><strong>Keep context during execution</strong><small>If this execution returns to this node, the agent continues its existing context. A new execution starts clean.${this.nodeScopeMode(node) === PER_SCOPE_MODE ? ' Each repository keeps its own independent context.' : ''}</small></span>
+        </label>
+      </fieldset>
       <div class="node-editor-input-mode">
         <label class="field-label" for="agentsV2NodeEditorScopeMode">Execution</label>
         <select id="agentsV2NodeEditorScopeMode" class="text-input" data-node-editor-scope-mode>
@@ -760,6 +773,10 @@ export class WorkflowBuilder {
         </select>
       </div>
     `;
+    this.byId('agentsV2NodeEditorScopeMode')?.addEventListener('change', () => {
+      this.syncNodeEditorDraftFromDom();
+      this.renderNodeEditor();
+    });
   }
 
   renderNodeEditorPorts(direction, title, addLabel) {
@@ -919,6 +936,8 @@ export class WorkflowBuilder {
     if (scopeMode) {
       this.nodeEditorDraft.scopeMode = this.normalizeScopeMode(scopeMode);
     }
+    const contextMode = this.byId('agentsV2NodeEditorBody').querySelector('[data-node-editor-context-mode]:checked')?.value;
+    if (contextMode) this.nodeEditorDraft.contextMode = this.normalizeContextMode(contextMode);
   }
 
   saveNodeEditor() {
@@ -935,6 +954,7 @@ export class WorkflowBuilder {
       ...this.nodeEditorDraft,
       inputMode: this.nodeInputMode(this.nodeEditorDraft),
       scopeMode: this.nodeScopeMode(this.nodeEditorDraft),
+      contextMode: this.nodeContextMode(this.nodeEditorDraft),
       inputs: this.reindexPorts(this.nodeEditorDraft.inputs).map((port) => this.normalizedPort(port)),
       outputs: this.reindexPorts(this.nodeEditorDraft.outputs).map((port) => this.normalizedPort(port))
     };
@@ -1369,6 +1389,7 @@ export class WorkflowBuilder {
         targetId: node.targetId,
         inputMode: this.nodeInputMode(node),
         scopeMode: this.nodeScopeMode(node),
+        contextMode: this.nodeContextMode(node),
         inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
         outputs: this.reindexPorts(node.outputs).map((port) => this.normalizedPort(port)),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1430,6 +1451,7 @@ export class WorkflowBuilder {
         targetId: node.targetId,
         inputMode: this.nodeInputMode(node),
         scopeMode: this.nodeScopeMode(node),
+        contextMode: this.nodeContextMode(node),
         inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
         outputs: this.reindexPorts(node.outputs).map((port) => this.normalizedPort(port)),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1450,6 +1472,7 @@ export class WorkflowBuilder {
       targetId: node.targetId,
       inputMode: this.nodeInputMode(node),
       scopeMode: this.nodeScopeMode(node),
+      contextMode: this.nodeContextMode(node),
       inputs: this.reindexPorts(node.inputs).map((port) => ({ ...port })),
       outputs: this.reindexPorts(node.outputs).map((port) => ({ ...port })),
       position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1473,6 +1496,16 @@ export class WorkflowBuilder {
       return scopeMode;
     }
     throw new Error('Workflow node scope mode is invalid.');
+  }
+
+  nodeContextMode(node) {
+    return this.normalizeContextMode(node?.contextMode);
+  }
+
+  normalizeContextMode(contextMode) {
+    if (contextMode == null || contextMode === FRESH_CONTEXT_MODE) return FRESH_CONTEXT_MODE;
+    if (contextMode === REUSE_CONTEXT_MODE) return REUSE_CONTEXT_MODE;
+    throw new Error('Workflow node context mode is invalid.');
   }
 
   nodePorts(ports) {
