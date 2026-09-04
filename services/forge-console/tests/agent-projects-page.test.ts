@@ -5596,10 +5596,10 @@ describe('Agent projects page', () => {
     scopeSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     const radios = [...dom.window.document.querySelectorAll<HTMLInputElement>('[data-node-editor-context-mode]')];
     expect(radios).toHaveLength(2);
-    expect(radios[0].checked).toBe(true);
+    expect(radios[0]!.checked).toBe(true);
     expect(dom.window.document.getElementById('agentsV2NodeEditorBody')?.textContent)
       .toContain('Each repository keeps its own independent context.');
-    radios[1].checked = true;
+    radios[1]!.checked = true;
     dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
     expect(dom.window.document.querySelector('[data-node-id="node-2"]')?.textContent).toContain('↻ Context');
     await page.workflowBuilder.save();
