@@ -66,7 +66,8 @@ public class WorkflowRunSnapshotBuilder {
                 this.executionModel(agent.model()),
                 node.inputMode(),
                 node.position(),
-                node.scopeMode()
+                node.scopeMode(),
+                node.contextMode()
         );
     }
 

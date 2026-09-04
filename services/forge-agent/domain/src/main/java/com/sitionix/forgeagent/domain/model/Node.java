@@ -11,10 +11,22 @@ public record Node(
         List<NodePort> inputs,
         List<NodePort> outputs,
         NodePosition position,
-        NodeScopeMode scopeMode
+        NodeScopeMode scopeMode,
+        NodeContextMode contextMode
 ) {
     public Node {
         Objects.requireNonNull(scopeMode, "scopeMode must not be null");
+        contextMode = NodeContextMode.legacyDefault(contextMode);
+    }
+
+    public Node(final UUID id,
+                final UUID targetId,
+                final NodeInputMode inputMode,
+                final List<NodePort> inputs,
+                final List<NodePort> outputs,
+                final NodePosition position,
+                final NodeScopeMode scopeMode) {
+        this(id, targetId, inputMode, inputs, outputs, position, scopeMode, NodeContextMode.FRESH_EACH_NODE_RUN);
     }
 
 }

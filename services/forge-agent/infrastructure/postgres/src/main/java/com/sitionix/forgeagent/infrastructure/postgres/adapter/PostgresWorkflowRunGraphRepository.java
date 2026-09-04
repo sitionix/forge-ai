@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
@@ -105,7 +106,8 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
                 new NodeRunExecutionModel(entity.getExecutionModelProviderId(), entity.getExecutionModelId(), entity.getExecutionModelEffortId()),
                 NodeInputMode.valueOf(entity.getInputMode()),
                 new NodePosition(entity.getPositionX(), entity.getPositionY()),
-                NodeScopeMode.valueOf(entity.getScopeMode())
+                NodeScopeMode.valueOf(entity.getScopeMode()),
+                contextMode(entity.getContextMode())
         );
     }
 
@@ -143,9 +145,16 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
         entity.setExecutionModelEffortId(node.executionModel().effortId());
         entity.setInputMode(node.inputMode().name());
         entity.setScopeMode(node.scopeMode().name());
+        entity.setContextMode(node.contextMode().name());
         entity.setPositionX(node.position().x());
         entity.setPositionY(node.position().y());
         return entity;
+    }
+
+    private NodeContextMode contextMode(final String value) {
+        return value == null || value.isBlank()
+                ? NodeContextMode.FRESH_EACH_NODE_RUN
+                : NodeContextMode.valueOf(value);
     }
 
     private WorkflowRunPortEntity toEntity(final RunPort port) {

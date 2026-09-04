@@ -32,6 +32,9 @@ public class WorkflowNodeEntity {
     @Column(name = "scope_mode", nullable = false, length = 32)
     private String scopeMode;
 
+    @Column(name = "context_mode", nullable = false, length = 48)
+    private String contextMode;
+
     @Column(name = "position_x", nullable = false)
     private double positionX;
 

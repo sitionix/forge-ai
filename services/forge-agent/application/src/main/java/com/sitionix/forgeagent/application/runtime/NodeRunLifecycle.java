@@ -259,7 +259,9 @@ public class NodeRunLifecycle {
                 nodeRun.createdAt(),
                 nodeRun.startedAt() == null ? now : nodeRun.startedAt(),
                 nodeRun.finishedAt(),
-                nodeRun.repositoryId()
+                nodeRun.repositoryId(),
+                nodeRun.contextMode(),
+                nodeRun.contextTrackingVersion()
         );
     }
 
@@ -286,7 +288,9 @@ public class NodeRunLifecycle {
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
                 nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
-                nodeRun.repositoryId()
+                nodeRun.repositoryId(),
+                nodeRun.contextMode(),
+                nodeRun.contextTrackingVersion()
         );
     }
 

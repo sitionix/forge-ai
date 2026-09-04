@@ -75,6 +75,7 @@ import com.sitionix.forgeagent.domain.model.LogSource;
 import com.sitionix.forgeagent.domain.model.LogTargetCandidate;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodePosition;
@@ -370,7 +371,8 @@ class ForgeAgentApiMapper {
                 node.sourceNodeId(),
                 node.agentName(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
-                node.scopeMode().name()
+                node.scopeMode().name(),
+                node.contextMode().name()
         );
     }
 
@@ -454,7 +456,8 @@ class ForgeAgentApiMapper {
                 request.inputs() == null ? List.of() : request.inputs().stream().map(this::toNodePort).toList(),
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toNodePort).toList(),
                 position,
-                this.scopeMode(request.scopeMode())
+                this.scopeMode(request.scopeMode()),
+                this.contextMode(request.contextMode())
         );
     }
 
@@ -466,7 +469,8 @@ class ForgeAgentApiMapper {
                 node.inputs() == null ? List.of() : node.inputs().stream().map(this::toResponse).toList(),
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
-                node.scopeMode().name()
+                node.scopeMode().name(),
+                node.contextMode().name()
         );
     }
 
@@ -513,7 +517,9 @@ class ForgeAgentApiMapper {
                     nodeRun.createdAt(),
                     nodeRun.startedAt(),
                     nodeRun.finishedAt(),
-                    nodeRun.repositoryId()
+                    nodeRun.repositoryId(),
+                    nodeRun.contextMode().name(),
+                    nodeRun.contextTrackingVersion()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored node run JSON is invalid.", exception);
@@ -603,6 +609,17 @@ class ForgeAgentApiMapper {
             return NodeScopeMode.valueOf(scopeMode);
         } catch (final IllegalArgumentException exception) {
             throw new ValidationException("INVALID_NODE_SCOPE_MODE", "Workflow node scope mode is invalid.");
+        }
+    }
+
+    private NodeContextMode contextMode(final String contextMode) {
+        if (contextMode == null || contextMode.isBlank()) {
+            return NodeContextMode.FRESH_EACH_NODE_RUN;
+        }
+        try {
+            return NodeContextMode.valueOf(contextMode);
+        } catch (final IllegalArgumentException exception) {
+            throw new ValidationException("INVALID_NODE_CONTEXT_MODE", "Workflow node context mode is invalid.");
         }
     }
 }

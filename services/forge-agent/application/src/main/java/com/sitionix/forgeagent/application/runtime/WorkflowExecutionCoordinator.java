@@ -110,7 +110,8 @@ public class WorkflowExecutionCoordinator {
                 nodeRun.position(), nodeRun.executionFrameId(), nodeRun.enteredViaInputPortId(), nodeRun.activationFrameId(),
                 nodeRun.selectedOutputPortId(), nodeRun.routingCompletedAt(), NodeRunStatus.CANCELLED, nodeRun.output(),
                 nodeRun.failure(), nodeRun.executionModel(), nodeRun.createdAt(), nodeRun.startedAt(),
-                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(), nodeRun.repositoryId()
+                nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(), nodeRun.repositoryId(),
+                nodeRun.contextMode(), nodeRun.contextTrackingVersion()
         );
     }
 
