@@ -439,7 +439,8 @@ public class ForgeAgentClientMapper {
                 response.sourceNodeId(),
                 response.agentName(),
                 response.position() == null ? null : new NodePosition(response.position().x(), response.position().y()),
-                response.scopeMode()
+                response.scopeMode(),
+                response.contextMode()
         );
     }
 
@@ -531,7 +532,8 @@ public class ForgeAgentClientMapper {
                 node.inputs() == null ? null : node.inputs().stream().map(this::toRequest).toList(),
                 node.outputs() == null ? null : node.outputs().stream().map(this::toRequest).toList(),
                 node.position() == null ? null : new NodePositionRequest(node.position().x(), node.position().y()),
-                node.scopeMode()
+                node.scopeMode(),
+                node.contextMode()
         );
     }
 
@@ -544,7 +546,8 @@ public class ForgeAgentClientMapper {
                 response.inputs() == null ? null : response.inputs().stream().map(this::toDomain).toList(),
                 response.outputs() == null ? null : response.outputs().stream().map(this::toDomain).toList(),
                 position == null ? null : new NodePosition(position.x(), position.y()),
-                response.scopeMode()
+                response.scopeMode(),
+                response.contextMode()
         );
     }
 
@@ -596,7 +599,9 @@ public class ForgeAgentClientMapper {
                     response.createdAt(),
                     response.startedAt(),
                     response.finishedAt(),
-                    response.repositoryId()
+                    response.repositoryId(),
+                    response.contextMode(),
+                    response.contextTrackingVersion()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Forge Agent node run JSON was invalid.", exception);

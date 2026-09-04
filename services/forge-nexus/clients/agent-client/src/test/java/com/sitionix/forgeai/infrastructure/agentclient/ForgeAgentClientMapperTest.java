@@ -286,7 +286,7 @@ class ForgeAgentClientMapperTest {
         assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand(
                 "Opaque workflow", List.of(nodeWithoutAgentDefaults), List.of(), null, null
         )).nodes().getFirst()).isEqualTo(new NodeRequest(
-                NODE_ID, AGENT_ID, null, List.of(), List.of(), null, null
+                NODE_ID, AGENT_ID, null, List.of(), List.of(), null, null, "FRESH_EACH_NODE_RUN"
         ));
         final var nullCollections = this.mapper.toRequest(new SaveAgentWorkflowCommand(
                 "Opaque workflow", null, null, null, null
@@ -303,7 +303,8 @@ class ForgeAgentClientMapperTest {
                                 List.of(new NodePortRequest(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                                 List.of(new NodePortRequest(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
                                 new NodePositionRequest(1.0, 2.0),
-                                "GLOBAL"
+                                "GLOBAL",
+                                "FRESH_EACH_NODE_RUN"
                         )),
                         List.of(new WorkflowConnectionRequest(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
                         INPUT_ID,
