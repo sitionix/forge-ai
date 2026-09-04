@@ -54,6 +54,12 @@ public class NodeRunEntity {
     @Column(name = "repository_id")
     private UUID repositoryId;
 
+    @Column(name = "context_mode", nullable = false, length = 48)
+    private String contextMode;
+
+    @Column(name = "context_tracking_version")
+    private Integer contextTrackingVersion;
+
     @Column(name = "entered_via_input_port_id")
     private UUID enteredViaInputPortId;
 

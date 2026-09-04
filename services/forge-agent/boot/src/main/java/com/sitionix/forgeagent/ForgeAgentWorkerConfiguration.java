@@ -7,6 +7,9 @@ import com.sitionix.forgeagent.application.runtime.NodeRunLifecycle;
 import com.sitionix.forgeagent.application.runtime.NodeRunWorker;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
 import java.util.concurrent.Executors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -26,13 +29,21 @@ class ForgeAgentWorkerConfiguration {
         return Executors.newVirtualThreadPerTaskExecutor();
     }
 
+    @Bean(destroyMethod = "shutdown")
+    ScheduledExecutorService agentSessionHeartbeatExecutor() {
+        return Executors.newScheduledThreadPool(2);
+    }
+
     @Bean
     @ConditionalOnBean(AgentExecutor.class)
     NodeRunWorker nodeRunWorker(final NodeRunRepository nodeRunRepository,
                                 final NodeRunLifecycle lifecycle,
                                 final AgentExecutor agentExecutor,
-                                final ExecutorService nodeRunExecutorService) {
-        return new NodeRunWorker(nodeRunRepository, lifecycle, agentExecutor, nodeRunExecutorService);
+                                final ExecutorService nodeRunExecutorService,
+                                final ScheduledExecutorService agentSessionHeartbeatExecutor,
+                                final AgentSessionLeaseService sessionLeaseService) {
+        return new NodeRunWorker(nodeRunRepository, lifecycle, agentExecutor, nodeRunExecutorService,
+                agentSessionHeartbeatExecutor, sessionLeaseService);
     }
 
     @Bean

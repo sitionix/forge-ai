@@ -25,7 +25,7 @@ final class CodexSessionProtocol {
         params.put("excludeTurns", true);
         final String resumedThreadId = requireThreadId(transport.request(CodexProtocol.THREAD_RESUME, params, timeout));
         if (!threadId.equals(resumedThreadId)) {
-            throw new CodexTransportException(
+            throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY,
                     "Codex resume returned thread.id " + resumedThreadId + " for requested " + threadId
             );
         }
@@ -52,11 +52,11 @@ final class CodexSessionProtocol {
                                                   final String envelope,
                                                   final String message) {
         if (payload == null || !payload.isObject()) {
-            throw new CodexTransportException(message);
+            throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY, message);
         }
         final JsonNode identity = payload.path(envelope).path("id");
         if (!identity.isTextual() || identity.asText().isBlank()) {
-            throw new CodexTransportException(message);
+            throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY, message);
         }
         return identity.asText();
     }

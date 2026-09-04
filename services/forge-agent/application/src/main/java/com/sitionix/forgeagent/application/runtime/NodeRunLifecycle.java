@@ -7,6 +7,8 @@ import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
+import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
+import com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus;
 import com.sitionix.forgeagent.domain.port.ConnectionResolutionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
@@ -18,6 +20,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Service
 public class NodeRunLifecycle {
@@ -37,7 +40,10 @@ public class NodeRunLifecycle {
     private final NodeRunCompletionProcessor completionProcessor;
     private final ExecutionWorkspaceResolver executionWorkspaceResolver;
     private final WorkflowRunGraphRepository graphRepository;
+    private final AgentSessionLeaseService sessionLeaseService;
+    private final String leaseOwnerId = UUID.randomUUID().toString();
 
+    @Autowired
     public NodeRunLifecycle(final NodeRunRepository nodeRunRepository,
                             final WorkflowRunRepository workflowRunRepository,
                             final ConnectionResolutionRepository resolutionRepository,
@@ -48,7 +54,8 @@ public class NodeRunLifecycle {
                             final NodeRunCompletionPersistence completionPersistence,
                             final NodeRunCompletionProcessor completionProcessor,
                             final ExecutionWorkspaceResolver executionWorkspaceResolver,
-                            final WorkflowRunGraphRepository graphRepository) {
+                            final WorkflowRunGraphRepository graphRepository,
+                            final AgentSessionLeaseService sessionLeaseService) {
         this.nodeRunRepository = nodeRunRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.resolutionRepository = resolutionRepository;
@@ -60,6 +67,23 @@ public class NodeRunLifecycle {
         this.completionProcessor = completionProcessor;
         this.executionWorkspaceResolver = executionWorkspaceResolver;
         this.graphRepository = graphRepository;
+        this.sessionLeaseService = sessionLeaseService;
+    }
+
+    NodeRunLifecycle(final NodeRunRepository nodeRunRepository,
+                     final WorkflowRunRepository workflowRunRepository,
+                     final ConnectionResolutionRepository resolutionRepository,
+                     final NodeInputContentPolicyRegistry inputContentPolicyRegistry,
+                     final WorkflowExecutionCoordinator coordinator,
+                     final WorkflowCompletionPolicy completionPolicy,
+                     final Clock clock,
+                     final NodeRunCompletionPersistence completionPersistence,
+                     final NodeRunCompletionProcessor completionProcessor,
+                     final ExecutionWorkspaceResolver executionWorkspaceResolver,
+                     final WorkflowRunGraphRepository graphRepository) {
+        this(nodeRunRepository, workflowRunRepository, resolutionRepository, inputContentPolicyRegistry,
+                coordinator, completionPolicy, clock, completionPersistence, completionProcessor,
+                executionWorkspaceResolver, graphRepository, null);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -109,7 +133,17 @@ public class NodeRunLifecycle {
         }
 
         final Instant now = Instant.now(this.clock);
-        final NodeRun running = this.nodeRunRepository.save(this.withRunning(nodeRun, now));
+        final AgentSessionExecutionClaim sessionClaim;
+        final NodeRun running;
+        if (nodeRun.contextTrackingVersion() != null) {
+            final Optional<AgentSessionExecutionClaim> acquired = this.sessionLeaseService.claim(nodeRun.id(), this.leaseOwnerId);
+            if (acquired.isEmpty()) return Optional.empty();
+            sessionClaim = acquired.get();
+            running = this.nodeRunRepository.findById(nodeRun.id()).orElseThrow();
+        } else {
+            sessionClaim = null;
+            running = this.nodeRunRepository.save(this.withRunning(nodeRun, now));
+        }
         if (workflowRun.status() == WorkflowRunStatus.QUEUED) {
             this.workflowRunRepository.saveLifecycle(new WorkflowRun(
                     workflowRun.id(),
@@ -148,15 +182,24 @@ public class NodeRunLifecycle {
                 running.executionModel(),
                 input.envelope(),
                 this.graphRepository.findOutputPortsByNode(workflowRun.id(), running.sourceNodeId()),
-                executionWorkspace
+                executionWorkspace,
+                sessionClaim
         ));
     }
 
+    public int recoverExpiredSessions() {
+        return this.sessionLeaseService.recoverExpired(this.leaseOwnerId);
+    }
+
     public void succeed(final UUID nodeRunId, final AgentExecutionResult result) {
+        this.succeed(nodeRunId, result, null);
+    }
+
+    public void succeed(final UUID nodeRunId, final AgentExecutionResult result, final AgentSessionExecutionClaim claim) {
         if (result == null || result.output() == null) {
             throw new ConflictException(LIFECYCLE_CONFLICT, "Node run success output is required.");
         }
-        if (!this.completionPersistence.markBusinessSucceeded(nodeRunId, result)) {
+        if (!this.completionPersistence.markBusinessSucceeded(nodeRunId, result, claim)) {
             return;
         }
         this.completionProcessor.process(nodeRunId);
@@ -164,12 +207,24 @@ public class NodeRunLifecycle {
 
     @Transactional
     public void fail(final UUID nodeRunId, final NodeRunFailure failure) {
+        this.fail(nodeRunId, failure, null);
+    }
+
+    @Transactional
+    public void fail(final UUID nodeRunId, final NodeRunFailure failure, final AgentSessionExecutionClaim claim) {
         final NodeRunFailure normalized = this.normalizeFailure(failure);
         final CompletionTarget target = this.lockCompletionTarget(nodeRunId);
         if (target == null) {
             return;
         }
+        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         final NodeRun nodeRun = target.nodeRun();
+        if (nodeRun.contextTrackingVersion() != null && claim == null) {
+            throw new ConflictException(
+                    "STALE_AGENT_SESSION_LEASE",
+                    "Tracked agent execution failure requires the current session lease."
+            );
+        }
         if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
             return;
         }
@@ -183,7 +238,14 @@ public class NodeRunLifecycle {
             throw this.conflict("Only RUNNING node runs can fail.");
         }
         this.nodeRunRepository.save(this.withFailed(nodeRun, normalized, Instant.now(this.clock)));
+        if (claim != null) this.sessionLeaseService.finish(claim, AgentExecutionTurnStatus.FAILED,
+                normalized.code(), normalized.message(), this.sessionCorrupting(normalized.code()));
         this.reconcileWorkflowRun(target.workflowRun());
+    }
+
+    private boolean sessionCorrupting(final String code) {
+        return "AGENT_CONTEXT_START_FAILED".equals(code) || "AGENT_CONTEXT_RESUME_FAILED".equals(code)
+                || "AGENT_CONTEXT_IDENTITY_MISMATCH".equals(code) || "AGENT_CONTEXT_PERSISTENCE_FAILED".equals(code);
     }
 
     private CompletionTarget lockCompletionTarget(final UUID nodeRunId) {
@@ -259,7 +321,9 @@ public class NodeRunLifecycle {
                 nodeRun.createdAt(),
                 nodeRun.startedAt() == null ? now : nodeRun.startedAt(),
                 nodeRun.finishedAt(),
-                nodeRun.repositoryId()
+                nodeRun.repositoryId(),
+                nodeRun.contextMode(),
+                nodeRun.contextTrackingVersion()
         );
     }
 
@@ -286,7 +350,9 @@ public class NodeRunLifecycle {
                 nodeRun.createdAt(),
                 nodeRun.startedAt(),
                 nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
-                nodeRun.repositoryId()
+                nodeRun.repositoryId(),
+                nodeRun.contextMode(),
+                nodeRun.contextTrackingVersion()
         );
     }
 

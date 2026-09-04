@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.application.runtime;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.AgentDefinition;
+import com.sitionix.forgeagent.domain.model.AgentExecutionProviderCapability;
 import com.sitionix.forgeagent.domain.model.AgentModelSelection;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodePort;
@@ -14,6 +15,8 @@ import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowConnection;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
+import com.sitionix.forgeagent.domain.port.AgentExecutionProviderCapabilities;
+import com.sitionix.forgeagent.domain.exception.ValidationException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +31,7 @@ import org.springframework.stereotype.Component;
 public class WorkflowRunSnapshotBuilder {
 
     private final AgentDefinitionRepository agentDefinitionRepository;
+    private final AgentExecutionProviderCapabilities providerCapabilities;
 
     public WorkflowRunGraph build(final UUID workflowRunId, final Workflow workflow) {
         final Map<UUID, AgentDefinition> agentsById = this.agentDefinitionRepository.findByIds(this.agentIds(workflow.nodes())).stream()
@@ -56,6 +60,15 @@ public class WorkflowRunSnapshotBuilder {
         if (agent == null) {
             throw new ConflictException("SOURCE_AGENT_NOT_FOUND", "Source agent was not found.");
         }
+        final NodeRunExecutionModel executionModel = this.executionModel(agent.model());
+        if (node.contextMode() == com.sitionix.forgeagent.domain.model.NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE
+                && !this.providerCapabilities.supports(
+                        executionModel.providerId(), AgentExecutionProviderCapability.DURABLE_CONTEXT)) {
+            throw new ValidationException(
+                    "AGENT_CONTEXT_MODE_UNSUPPORTED",
+                    agent.name() + " cannot keep context during an execution because its provider does not support durable context."
+            );
+        }
         return new RunNode(
                 workflowRunId,
                 node.id(),
@@ -63,10 +76,11 @@ public class WorkflowRunSnapshotBuilder {
                 agent.name(),
                 agent.instructions(),
                 agent.outputSchema(),
-                this.executionModel(agent.model()),
+                executionModel,
                 node.inputMode(),
                 node.position(),
-                node.scopeMode()
+                node.scopeMode(),
+                node.contextMode()
         );
     }
 

@@ -12,6 +12,7 @@ import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
@@ -191,6 +192,32 @@ class NodeRunLifecycleTest {
     }
 
     @Test
+    void trackedSuccessWithoutSessionLeaseIsRejected() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.RUNNING, NOW, null);
+        this.nodeRuns.put(NODE_RUN_ID, this.trackedNodeRun(NodeRunStatus.RUNNING));
+
+        assertThatThrownBy(() -> this.lifecycle.succeed(
+                NODE_RUN_ID,
+                new AgentExecutionResult(new NodeRunOutput("{\"ok\":true}"), null)
+        )).isInstanceOf(ConflictException.class)
+                .extracting("code")
+                .isEqualTo("STALE_AGENT_SESSION_LEASE");
+    }
+
+    @Test
+    void trackedFailureWithoutSessionLeaseIsRejected() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.RUNNING, NOW, null);
+        this.nodeRuns.put(NODE_RUN_ID, this.trackedNodeRun(NodeRunStatus.RUNNING));
+
+        assertThatThrownBy(() -> this.lifecycle.fail(
+                NODE_RUN_ID,
+                new NodeRunFailure("EXECUTION_FAILED", "Executor failed.")
+        )).isInstanceOf(ConflictException.class)
+                .extracting("code")
+                .isEqualTo("STALE_AGENT_SESSION_LEASE");
+    }
+
+    @Test
     void terminalWorkflowMakesLateSuccessForCancelledNodeRunANoOp() {
         this.workflowRun = this.workflowRun(WorkflowRunStatus.FAILED, NOW, NOW);
         this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.CANCELLED, MODEL));
@@ -318,6 +345,19 @@ class NodeRunLifecycleTest {
                 null,
                 null,
                 null
+        );
+    }
+
+    private NodeRun trackedNodeRun(final NodeRunStatus status) {
+        final NodeRun legacy = this.nodeRun(status, MODEL);
+        return new NodeRun(
+                legacy.id(), legacy.workflowRunId(), legacy.sourceNodeId(), legacy.sourceAgentId(),
+                legacy.agentName(), legacy.agentInstructions(), legacy.agentOutputSchema(), legacy.inputMode(),
+                legacy.position(), legacy.executionFrameId(), legacy.enteredViaInputPortId(),
+                legacy.activationFrameId(), legacy.selectedOutputPortId(), legacy.routingCompletedAt(),
+                legacy.status(), legacy.output(), legacy.failure(), legacy.executionModel(), legacy.createdAt(),
+                legacy.startedAt(), legacy.finishedAt(), legacy.repositoryId(),
+                NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE, 1
         );
     }
 

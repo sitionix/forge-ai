@@ -19,6 +19,7 @@ import com.sitionix.forgeagent.domain.model.AgentModelSelection;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.ExecutionFrame;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeRun;
@@ -31,6 +32,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.port.AgentDefinitionRepository;
+import com.sitionix.forgeagent.domain.port.AgentExecutionProviderCapabilities;
 import com.sitionix.forgeagent.domain.port.ExecutionFrameRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRepository;
@@ -82,6 +84,8 @@ class WorkflowRunUseCasesTest {
     @Mock
     private AgentDefinitionRepository agentDefinitionRepository;
     @Mock
+    private AgentExecutionProviderCapabilities providerCapabilities;
+    @Mock
     private ExecutionBudgetPolicy executionBudgetPolicy;
 
     private WorkflowRunUseCases useCases;
@@ -94,12 +98,34 @@ class WorkflowRunUseCasesTest {
                 this.graphRepository,
                 this.executionFrameRepository,
                 this.nodeRunRepository,
-                new WorkflowRunSnapshotBuilder(this.agentDefinitionRepository),
+                new WorkflowRunSnapshotBuilder(this.agentDefinitionRepository, this.providerCapabilities),
                 new NodeRunFactory(CLOCK, new ScopeProjectionPolicy()),
                 this.executionBudgetPolicy,
                 new ScopeProjectionPolicy(),
                 CLOCK
         );
+    }
+
+    @Test
+    void continuedContextOnUnsupportedProviderFailsBeforeRuntimePersistence() {
+        final Workflow base = this.workflow();
+        final Node continued = new Node(base.nodes().getFirst().id(), base.nodes().getFirst().targetId(),
+                base.nodes().getFirst().inputMode(), base.nodes().getFirst().inputs(), base.nodes().getFirst().outputs(),
+                base.nodes().getFirst().position(), base.nodes().getFirst().scopeMode(),
+                NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
+        final Workflow workflow = new Workflow(base.id(), base.projectId(), base.name(), base.normalizedName(),
+                List.of(continued), base.connections(), base.taskInputPortId(), base.taskOutputPortId(),
+                base.createdAt(), base.updatedAt());
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
+
+        assertThatThrownBy(() -> this.useCases.createWorkflowRun(
+                this.workflowId, new CreateWorkflowRunCommand("Run it")))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code").isEqualTo("AGENT_CONTEXT_MODE_UNSUPPORTED");
+        verify(this.workflowRunRepository, never()).save(any());
+        verify(this.graphRepository, never()).saveSnapshot(any());
+        verify(this.nodeRunRepository, never()).save(any());
     }
 
     @Test

@@ -10,6 +10,12 @@ public record NodeResponse(
         List<NodePortResponse> inputs,
         List<NodePortResponse> outputs,
         NodePositionResponse position,
-        String scopeMode
+        String scopeMode,
+        String contextMode
 ) {
+    public NodeResponse(final UUID id, final UUID targetId, final String inputMode,
+                        final List<NodePortResponse> inputs, final List<NodePortResponse> outputs,
+                        final NodePositionResponse position, final String scopeMode) {
+        this(id, targetId, inputMode, inputs, outputs, position, scopeMode, "FRESH_EACH_NODE_RUN");
+    }
 }

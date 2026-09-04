@@ -15,11 +15,16 @@ import com.sitionix.forgeagent.domain.model.RunPort;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
+import com.sitionix.forgeagent.domain.exception.ConflictException;
 import org.springframework.stereotype.Component;
 
 @Component
-@RequiredArgsConstructor
 public final class CodexAgentExecutor implements AgentExecutor {
 
     private static final String PROVIDER_ID = "codex";
@@ -28,6 +33,20 @@ public final class CodexAgentExecutor implements AgentExecutor {
 
     private final ObjectMapper objectMapper;
     private final CodexClient client;
+    private final AgentSessionLeaseService sessionLeaseService;
+    private final ConcurrentHashMap<UUID, ExecutionCancellation> activeExecutions = new ConcurrentHashMap<>();
+
+    @Autowired
+    public CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client,
+                              final AgentSessionLeaseService sessionLeaseService) {
+        this.objectMapper = objectMapper;
+        this.client = client;
+        this.sessionLeaseService = sessionLeaseService;
+    }
+
+    CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client) {
+        this(objectMapper, client, null);
+    }
 
     @Override
     public AgentExecutionResult execute(final NodeExecutionClaim claim) {
@@ -39,15 +58,109 @@ public final class CodexAgentExecutor implements AgentExecutor {
         final JsonNode effectiveOutputSchema = selectionRequired
                 ? this.effectiveOutputSchema(userOutputSchema, claim.availableOutputs())
                 : userOutputSchema;
-        final String outputText = this.client.execute(new CodexTurnRequest(
+        final CodexTurnRequest request = new CodexTurnRequest(
                 this.userInput(claim),
                 WorkflowExecutionDeveloperInstructions.compose(claim.agentInstructions()),
                 claim.executionModel().modelId(),
                 claim.executionModel().effortId(),
                 effectiveOutputSchema,
                 claim.executionWorkspace()
-        ));
+        );
+        final String outputText;
+        if (claim.agentSessionClaim() == null) {
+            outputText = this.client.execute(request);
+        } else {
+            final ExecutionCancellation cancellation = new ExecutionCancellation();
+            this.activeExecutions.put(claim.nodeRunId(), cancellation);
+            try {
+                final CodexExecutionIdentityCallbacks callbacks =
+                        new CodexExecutionIdentityCallbacks() {
+                        @Override public void executionStarted(final Runnable cancel) {
+                            cancellation.register(cancel);
+                        }
+                        @Override public void conversationStarted(String threadId, String version) {
+                            CodexAgentExecutor.this.persistConversationIdentity(claim, threadId, version);
+                        }
+                        @Override public void turnStarted(String turnId) {
+                            CodexAgentExecutor.this.persistTurnIdentity(claim, turnId);
+                        }
+                        };
+                outputText = claim.agentSessionClaim().contextMode() == com.sitionix.forgeagent.domain.model.NodeContextMode.FRESH_EACH_NODE_RUN
+                        ? this.client.executeTrackedFresh(request, callbacks)
+                        : this.client.executeDurable(request, claim.agentSessionClaim().providerConversationId(),
+                                claim.agentSessionClaim().providerVersion(), callbacks);
+            } catch (ConflictException exception) {
+                throw exception;
+            } catch (CodexExecutionException exception) {
+                if (exception.phase() == CodexExecutionFailurePhase.TURN_EXECUTION) throw exception;
+                final String code = switch (exception.phase()) {
+                    case THREAD_START -> "AGENT_CONTEXT_START_FAILED";
+                    case THREAD_RESUME -> "AGENT_CONTEXT_RESUME_FAILED";
+                    case IDENTITY -> "AGENT_CONTEXT_IDENTITY_MISMATCH";
+                    case TURN_EXECUTION -> throw exception;
+                };
+                final String message = exception.phase() == CodexExecutionFailurePhase.THREAD_RESUME
+                        ? "Could not continue the existing context. No fresh context was started."
+                        : exception.phase() == CodexExecutionFailurePhase.THREAD_START
+                            ? "Could not start the agent context."
+                            : "Provider execution identity did not match the Forge session.";
+                throw new ConflictException(code, message);
+            } catch (RuntimeException exception) {
+                throw exception;
+            } finally {
+                this.activeExecutions.remove(claim.nodeRunId(), cancellation);
+            }
+        }
         return this.parseExecutionResult(outputText, claim.availableOutputs(), selectionRequired);
+    }
+
+    @Override
+    public void cancel(final NodeExecutionClaim claim) {
+        final ExecutionCancellation cancellation = this.activeExecutions.get(claim.nodeRunId());
+        if (cancellation != null) cancellation.cancel();
+    }
+
+    private static final class ExecutionCancellation {
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final AtomicReference<Runnable> action = new AtomicReference<>();
+
+        void register(final Runnable cancellation) {
+            this.action.set(cancellation);
+            if (this.cancelled.get()) cancellation.run();
+        }
+
+        void cancel() {
+            if (!this.cancelled.compareAndSet(false, true)) return;
+            final Runnable cancellation = this.action.get();
+            if (cancellation != null) cancellation.run();
+        }
+    }
+
+    private void persistConversationIdentity(final NodeExecutionClaim claim, final String threadId,
+                                             final String providerVersion) {
+        try {
+            this.sessionLeaseService.persistConversation(claim.agentSessionClaim(), threadId, providerVersion);
+        } catch (final ConflictException exception) {
+            throw exception;
+        } catch (final RuntimeException exception) {
+            throw new ConflictException(
+                    "AGENT_CONTEXT_PERSISTENCE_FAILED",
+                    "Could not persist the provider conversation identity."
+            );
+        }
+    }
+
+    private void persistTurnIdentity(final NodeExecutionClaim claim, final String turnId) {
+        try {
+            this.sessionLeaseService.persistTurn(claim.agentSessionClaim(), turnId);
+        } catch (final ConflictException exception) {
+            throw exception;
+        } catch (final RuntimeException exception) {
+            throw new ConflictException(
+                    "AGENT_CONTEXT_PERSISTENCE_FAILED",
+                    "Could not persist the provider turn identity."
+            );
+        }
     }
 
     private String userInput(final NodeExecutionClaim claim) {

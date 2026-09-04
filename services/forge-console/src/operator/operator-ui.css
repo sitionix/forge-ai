@@ -5801,3 +5801,58 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .project-log-sources-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; padding-bottom: .65rem; }
 .project-log-sources-list { max-height: 20rem; overflow-y: auto; display: grid; gap: .35rem; }
 @media (max-width: 700px) { .project-log-sources-label { min-width: 100%; max-width: none; } }
+.workflow-node-context-badge,
+.execution-context-badge {
+  color: var(--accent, #5f7cff);
+  font-weight: 700;
+}
+
+.node-editor-context-mode {
+  border: 0;
+  margin: 18px 0 0;
+  padding: 0;
+}
+
+.node-editor-context-mode label {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.node-editor-context-mode label span,
+.node-editor-context-mode label small {
+  display: block;
+}
+
+.node-run-context {
+  border-top: 1px solid var(--border, #303849);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+
+.node-run-context > div,
+.context-history {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.context-history {
+  justify-content: flex-start;
+  margin: 12px 0;
+  overflow-x: auto;
+}
+
+.context-history-more summary {
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.context-history-expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}

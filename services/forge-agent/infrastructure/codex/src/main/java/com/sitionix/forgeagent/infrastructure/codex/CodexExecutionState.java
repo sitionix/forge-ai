@@ -8,6 +8,7 @@ final class CodexExecutionState {
     private final String threadId;
     private final CompletableFuture<String> result = new CompletableFuture<>();
     private volatile String turnId;
+    private boolean turnStarted;
     private String latestFinalAnswer;
     private String latestCompatibilityAnswer;
     private volatile boolean providerInterruptRequired;
@@ -53,6 +54,15 @@ final class CodexExecutionState {
         if (phase == null) {
             this.latestCompatibilityAnswer = message;
         }
+    }
+
+    void observeTurnStarted(final String candidate) {
+        this.bindTurnId(candidate);
+        this.turnStarted = true;
+    }
+
+    boolean turnStarted() {
+        return this.turnStarted;
     }
 
     Optional<String> finalAgentMessage() {

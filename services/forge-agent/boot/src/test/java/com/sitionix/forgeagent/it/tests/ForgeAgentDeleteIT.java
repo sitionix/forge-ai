@@ -354,6 +354,7 @@ class ForgeAgentDeleteIT {
         entity.setAgentInstructions("Do work.");
         entity.setAgentOutputSchema("{\"type\":\"object\"}");
         entity.setInputMode("DEPENDENCIES_ONLY");
+        entity.setContextMode("FRESH_EACH_NODE_RUN");
         entity.setExecutionFrameId(frame.getId());
         entity.setPositionX(0.0);
         entity.setPositionY(0.0);

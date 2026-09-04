@@ -6,12 +6,15 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 final class CodexTurnStateTracker {
 
     private final Map<String, CodexExecutionState> executionsByThreadId = new HashMap<>();
+    private final Map<String, List<PendingNotification>> pendingByThreadId = new HashMap<>();
     private final CodexGenerationPolicy generationPolicy = new CodexGenerationPolicy();
 
     synchronized CodexExecutionState register(final String threadId) {
@@ -25,15 +28,19 @@ final class CodexTurnStateTracker {
             return;
         }
         state.bindTurnId(turnId);
+        final List<PendingNotification> pending=this.pendingByThreadId.remove(state.threadId());
+        if (pending != null) pending.forEach(notification -> this.handleNotification(notification.method(), notification.params()));
     }
 
     synchronized void remove(final CodexExecutionState state) {
         this.executionsByThreadId.remove(state.threadId(), state);
+        this.pendingByThreadId.remove(state.threadId());
     }
 
     synchronized void failAll(final RuntimeException exception) {
         this.executionsByThreadId.values().forEach(active -> active.fail(exception));
         this.executionsByThreadId.clear();
+        this.pendingByThreadId.clear();
     }
 
     synchronized void handleNotification(final String method, final JsonNode params) {
@@ -45,8 +52,20 @@ final class CodexTurnStateTracker {
             this.handleGenerationItem(params, method, true);
             return;
         }
+        if (CodexProtocol.ERROR.equals(method)) {
+            this.handleProviderError(params);
+            return;
+        }
         if (CodexProtocol.TURN_COMPLETED.equals(method)) {
             this.handleTurnCompleted(params);
+            return;
+        }
+        if (CodexProtocol.TURN_STARTED.equals(method)) {
+            this.handleTurnStarted(params);
+            return;
+        }
+        if (CodexProtocol.THREAD_STATUS_CHANGED.equals(method)) {
+            this.handleThreadStatusChanged(params);
         }
     }
 
@@ -88,6 +107,11 @@ final class CodexTurnStateTracker {
         if (execution == null || execution.done()) {
             return;
         }
+        if (!execution.hasTurnId()) {
+            this.pendingByThreadId.computeIfAbsent(threadId, ignored -> new ArrayList<>())
+                    .add(new PendingNotification(method, params.deepCopy()));
+            return;
+        }
         execution.bindTurnId(turnId);
 
         final JsonNode item = params.path("item");
@@ -110,6 +134,30 @@ final class CodexTurnStateTracker {
         }
     }
 
+    private void handleProviderError(final JsonNode params) {
+        this.requireObject(params);
+        final String threadId = this.notificationThreadId(params);
+        final String turnId = this.notificationTurnId(params);
+        // The installed protocol also emits unscoped diagnostic errors. Only an
+        // exact thread+turn pair is execution-terminal; global diagnostics must
+        // not be attributed to whichever turn happens to be active.
+        if (threadId == null || turnId == null) {
+            return;
+        }
+        final CodexExecutionState execution = this.execution(threadId);
+        if (execution == null || execution.done()) {
+            return;
+        }
+        if (!execution.hasTurnId()) {
+            this.pendingByThreadId.computeIfAbsent(threadId, ignored -> new ArrayList<>())
+                    .add(new PendingNotification(CodexProtocol.ERROR, params.deepCopy()));
+            return;
+        }
+        execution.bindTurnId(turnId);
+        final String message = this.nonBlank(params.path("error").path("message"));
+        execution.fail(this.executionFailed(message == null ? this.nonBlank(params.path("message")) : message));
+    }
+
     private void handleTurnCompleted(final JsonNode params) {
         this.requireObject(params);
         final String threadId = this.notificationThreadId(params);
@@ -121,8 +169,53 @@ final class CodexTurnStateTracker {
         if (execution == null || execution.done()) {
             return;
         }
+        if (!execution.hasTurnId()) {
+            this.pendingByThreadId.computeIfAbsent(threadId, ignored -> new ArrayList<>())
+                    .add(new PendingNotification(CodexProtocol.TURN_COMPLETED, params.deepCopy()));
+            return;
+        }
         execution.bindTurnId(turnId);
         this.complete(execution, this.resolveStatus(params), this.providerFailure(params));
+    }
+
+    private void handleTurnStarted(final JsonNode params) {
+        this.requireObject(params);
+        final String threadId = this.notificationThreadId(params);
+        final String turnId = this.value(params.path("turn"), "id");
+        if (threadId == null || turnId == null) {
+            throw this.executionFailed();
+        }
+        final CodexExecutionState execution = this.execution(threadId);
+        if (execution == null || execution.done()) {
+            return;
+        }
+        if (!execution.hasTurnId()) {
+            this.pendingByThreadId.computeIfAbsent(threadId, ignored -> new ArrayList<>())
+                    .add(new PendingNotification(CodexProtocol.TURN_STARTED, params.deepCopy()));
+            return;
+        }
+        execution.observeTurnStarted(turnId);
+    }
+
+    private void handleThreadStatusChanged(final JsonNode params) {
+        this.requireObject(params);
+        final String threadId = this.notificationThreadId(params);
+        final String status = this.value(params.path("status"), "type");
+        if (threadId == null || status == null) throw this.executionFailed();
+        final CodexExecutionState execution = this.execution(threadId);
+        if (execution == null || execution.done() || !"idle".equals(status)) return;
+        if (!execution.hasTurnId()) {
+            this.pendingByThreadId.computeIfAbsent(threadId, ignored -> new ArrayList<>())
+                    .add(new PendingNotification(CodexProtocol.THREAD_STATUS_CHANGED, params.deepCopy()));
+            return;
+        }
+        if (!execution.turnStarted()) {
+            execution.fail(new CodexTransportException(
+                    "Codex thread became idle before the target turn started."
+            ));
+            return;
+        }
+        this.complete(execution, "completed", null);
     }
 
     private void complete(final CodexExecutionState execution, final String status, final String providerFailure) {
@@ -226,4 +319,6 @@ final class CodexTurnStateTracker {
     private CodexTransportException executionFailed(final String message) {
         return new CodexTransportException(message == null || message.isBlank() ? "Codex execution failed." : message);
     }
+
+    private record PendingNotification(String method, JsonNode params) { }
 }

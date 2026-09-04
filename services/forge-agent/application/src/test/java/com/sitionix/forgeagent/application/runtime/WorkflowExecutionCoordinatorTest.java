@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
@@ -15,6 +16,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
+import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
@@ -53,6 +55,8 @@ class WorkflowExecutionCoordinatorTest {
     private NodeRunRepository nodeRunRepository;
     @Mock
     private WorkflowCompletionPolicy completionPolicy;
+    @Mock
+    private AgentExecutionSessionRepository sessionRepository;
 
     private WorkflowExecutionCoordinator coordinator;
 
@@ -63,7 +67,8 @@ class WorkflowExecutionCoordinatorTest {
                 this.graphRepository,
                 this.nodeRunRepository,
                 this.completionPolicy,
-                CLOCK
+                CLOCK,
+                this.sessionRepository
         );
     }
 
@@ -178,6 +183,17 @@ class WorkflowExecutionCoordinatorTest {
         assertThat(saved.resultSourceNodeRunId()).isEqualTo(selected.id());
     }
 
+    @Test
+    void failedWorkflowFencesAndCancelsTrackedNodeRunThroughItsSession() {
+        final NodeRun tracked = this.trackedNodeRun(NodeRunStatus.RUNNING);
+        when(this.nodeRunRepository.findByWorkflowRunId(WORKFLOW_RUN_ID)).thenReturn(List.of(tracked));
+
+        this.coordinator.completionDecisionHandler(this.workflowRun(null)).handle(new FailedWorkflowDecision());
+
+        verify(this.sessionRepository).cancel(tracked.id());
+        assertThat(this.savedWorkflowRun().status()).isEqualTo(WorkflowRunStatus.FAILED);
+    }
+
     private WorkflowRun savedWorkflowRun() {
         final ArgumentCaptor<WorkflowRun> captor = ArgumentCaptor.forClass(WorkflowRun.class);
         verify(this.workflowRunRepository).saveLifecycle(captor.capture());
@@ -239,6 +255,19 @@ class WorkflowExecutionCoordinatorTest {
                 createdAt,
                 status == NodeRunStatus.SUCCEEDED ? createdAt.plusSeconds(1) : null,
                 null
+        );
+    }
+
+    private NodeRun trackedNodeRun(final NodeRunStatus status) {
+        final NodeRun legacy = this.nodeRun(UUID.randomUUID(), null, NOW, null, status, null);
+        return new NodeRun(
+                legacy.id(), legacy.workflowRunId(), legacy.sourceNodeId(), legacy.sourceAgentId(),
+                legacy.agentName(), legacy.agentInstructions(), legacy.agentOutputSchema(), legacy.inputMode(),
+                legacy.position(), legacy.executionFrameId(), legacy.enteredViaInputPortId(),
+                legacy.activationFrameId(), legacy.selectedOutputPortId(), legacy.routingCompletedAt(),
+                legacy.status(), legacy.output(), legacy.failure(), legacy.executionModel(), legacy.createdAt(),
+                legacy.startedAt(), legacy.finishedAt(), legacy.repositoryId(),
+                NodeContextMode.FRESH_EACH_NODE_RUN, 1
         );
     }
 }

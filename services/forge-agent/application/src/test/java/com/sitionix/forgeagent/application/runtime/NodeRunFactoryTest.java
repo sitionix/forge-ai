@@ -7,7 +7,9 @@ import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.ExecutionFrame;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodePosition;
+import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.RunNode;
@@ -21,6 +23,22 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class NodeRunFactoryTest {
+
+    @Test
+    void absentLegacyContextPolicyNormalizesToFresh() {
+        assertThat(NodeContextMode.legacyDefault(null)).isEqualTo(NodeContextMode.FRESH_EACH_NODE_RUN);
+    }
+
+    @Test
+    void copiesSnapshottedContextPolicyAndMarksRuntimeTracking() {
+        final WorkflowRun workflowRun = this.workflowRun();
+        final RunNode runNode = this.node(NodeScopeMode.GLOBAL, NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
+
+        final NodeRun nodeRun = this.factory.root(workflowRun, this.frame, runNode, UUID.randomUUID(), null);
+
+        assertThat(nodeRun.contextMode()).isEqualTo(NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
+        assertThat(nodeRun.contextTrackingVersion()).isEqualTo(1);
+    }
 
     private static final Instant NOW = Instant.parse("2026-08-20T12:00:00Z");
     private static final UUID RUN_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
@@ -53,10 +71,14 @@ class NodeRunFactoryTest {
     }
 
     private RunNode node(final NodeScopeMode mode) {
+        return this.node(mode, NodeContextMode.FRESH_EACH_NODE_RUN);
+    }
+
+    private RunNode node(final NodeScopeMode mode, final NodeContextMode contextMode) {
         return new RunNode(RUN_ID, UUID.randomUUID(), UUID.randomUUID(), "Agent", "Work.",
                 AgentOutputSchema.ofCanonicalJsonObject("{\"type\":\"object\"}"),
                 new NodeRunExecutionModel("codex", "model", null), NodeInputMode.DEPENDENCIES_ONLY,
-                new NodePosition(0, 0), mode);
+                new NodePosition(0, 0), mode, contextMode);
     }
 
     private WorkflowRun workflowRun() {
