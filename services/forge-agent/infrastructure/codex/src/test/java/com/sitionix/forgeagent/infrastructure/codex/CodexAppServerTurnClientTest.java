@@ -2,13 +2,24 @@ package com.sitionix.forgeagent.infrastructure.codex;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionEventRecorder;
 import com.sitionix.forgeagent.application.runtime.ExecutionWorkspace;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
+import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
+import com.sitionix.forgeagent.domain.port.AgentExecutionEventRepository;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -17,8 +28,11 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -725,6 +739,141 @@ class CodexAppServerTurnClientTest {
         this.assertInterrupt(process, "thread-1", "turn-1");
 
         assertExecutionFailure(result);
+        client.close();
+    }
+
+    @Test
+    void trackedTurnTimeoutProducesOneFailedTerminalEventWithoutChangingTimeoutFailure() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerProperties properties = this.properties();
+        properties.setTurnTimeout(Duration.ofMillis(40));
+        final CodexAppServerClient client = this.client(new FakeStarter(process), properties);
+        final List<AgentExecutionEventCandidate> terminalEvents = new ArrayList<>();
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeTrackedFresh(
+                new CodexTurnRequest("Slow.", "Instructions.", "model-a", null,
+                        this.schemaUnchecked(), this.workspace()),
+                new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(final String id, final String version) { }
+                    public void turnStarted(final String id) { }
+                    public void eventCaptureCompleted(final AgentExecutionEventCandidate event) {
+                        terminalEvents.add(event);
+                    }
+                }));
+
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+        this.replyTurn(process, turnStart, "turn-1");
+        this.assertInterrupt(process, "thread-1", "turn-1");
+
+        assertExecutionFailure(result, "Codex execution timed out.");
+        assertThat(terminalEvents).singleElement().satisfies(event -> {
+            assertThat(event.type()).isEqualTo(AgentExecutionEventType.TURN);
+            assertThat(event.status()).isEqualTo(AgentExecutionEventStatus.FAILED);
+            assertThat(event.providerEventKey()).isEqualTo("turn:turn-1:failed");
+        });
+        assertThat(terminalEvents).noneMatch(event -> event.status() == AgentExecutionEventStatus.COMPLETED);
+        client.close();
+    }
+
+    @Test
+    void failedTimeoutTerminalWriteDegradesCaptureWithoutChangingTimeoutFailure() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerProperties properties = this.properties();
+        properties.setTurnTimeout(Duration.ofMillis(40));
+        final CodexAppServerClient client = this.client(new FakeStarter(process), properties);
+        final AgentExecutionEventRepository repository = mock(AgentExecutionEventRepository.class);
+        final AgentSessionExecutionClaim claim = new AgentSessionExecutionClaim(
+                UUID.fromString("11111111-1111-4111-8111-111111111111"),
+                UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                UUID.fromString("33333333-3333-4333-8333-333333333333"),
+                "worker-a", 7L, Instant.parse("2026-09-07T10:00:00Z"),
+                "thread-1", "codex", NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE, "0.153.2");
+        final AgentExecutionEventRecorder recorder = new AgentExecutionEventRecorder(repository);
+        when(repository.activate(claim)).thenReturn(true);
+        doThrow(new IllegalStateException("terminal event unavailable"))
+                .when(repository).append(any(), argThat(event -> event.type() == AgentExecutionEventType.TURN
+                        && event.status() == AgentExecutionEventStatus.FAILED));
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeTrackedFresh(
+                new CodexTurnRequest("Slow.", "Instructions.", "model-a", null,
+                        this.schemaUnchecked(), this.workspace()),
+                new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(final String id, final String version) { }
+                    public void turnStarted(final String id) { recorder.activate(claim); }
+                    public void executionEvent(final AgentExecutionEventCandidate event) {
+                        recorder.record(claim, event);
+                    }
+                    public void eventCaptureCompleted(final AgentExecutionEventCandidate event) {
+                        recorder.complete(claim, event);
+                    }
+                }));
+
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+        this.replyTurn(process, turnStart, "turn-1");
+        this.assertInterrupt(process, "thread-1", "turn-1");
+
+        assertExecutionFailure(result, "Codex execution timed out.");
+        verify(repository).markDegraded(claim);
+        verify(repository, never()).markComplete(claim);
+        client.close();
+    }
+
+    @Test
+    void interruptedTrackedTurnProducesOneFailedTerminalEventAndPreservesInterruptStatus() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final List<AgentExecutionEventCandidate> terminalEvents = new ArrayList<>();
+        final CountDownLatch captureActive = new CountDownLatch(1);
+        final AtomicReference<RuntimeException> failure = new AtomicReference<>();
+        final AtomicBoolean interrupted = new AtomicBoolean();
+        final Thread executionThread = Thread.ofPlatform().start(() -> {
+            try {
+                client.executeTrackedFresh(new CodexTurnRequest("Wait.", "Instructions.", "model-a", null,
+                                this.schemaUnchecked(), this.workspace()),
+                        new CodexExecutionIdentityCallbacks() {
+                            public void conversationStarted(final String id, final String version) { }
+                            public void turnStarted(final String id) { }
+                            public void executionEvent(final AgentExecutionEventCandidate event) {
+                                if (event.type() == AgentExecutionEventType.TURN
+                                        && event.status() == AgentExecutionEventStatus.STARTED) {
+                                    captureActive.countDown();
+                                }
+                            }
+                            public void eventCaptureCompleted(final AgentExecutionEventCandidate event) {
+                                terminalEvents.add(event);
+                            }
+                        });
+            } catch (final RuntimeException exception) {
+                failure.set(exception);
+                interrupted.set(Thread.currentThread().isInterrupted());
+            }
+        });
+
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+        this.replyTurn(process, turnStart, "turn-1");
+        assertThat(captureActive.await(1, TimeUnit.SECONDS)).isTrue();
+
+        executionThread.interrupt();
+        this.assertInterrupt(process, "thread-1", "turn-1");
+        executionThread.join(1_000);
+
+        assertThat(executionThread.isAlive()).isFalse();
+        assertThat(failure.get()).isInstanceOf(CodexTransportException.class)
+                .hasMessage("Codex app-server cleanup interrupted");
+        assertThat(interrupted.get()).isTrue();
+        assertThat(terminalEvents).singleElement().satisfies(event -> {
+            assertThat(event.type()).isEqualTo(AgentExecutionEventType.TURN);
+            assertThat(event.status()).isEqualTo(AgentExecutionEventStatus.FAILED);
+            assertThat(event.providerEventKey()).isEqualTo("turn:turn-1:failed");
+        });
+        assertThat(terminalEvents).noneMatch(event -> event.status() == AgentExecutionEventStatus.COMPLETED);
         client.close();
     }
 
