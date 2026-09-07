@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionEventRecorder;
 import com.sitionix.forgeagent.application.runtime.ExecutionWorkspace;
+import com.sitionix.forgeagent.domain.model.AgentExecutionEventAppendResult;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
@@ -749,14 +750,24 @@ class CodexAppServerTurnClientTest {
         properties.setTurnTimeout(Duration.ofMillis(40));
         final CodexAppServerClient client = this.client(new FakeStarter(process), properties);
         final List<AgentExecutionEventCandidate> terminalEvents = new ArrayList<>();
+        final AgentExecutionEventRepository repository = mock(AgentExecutionEventRepository.class);
+        final AgentSessionExecutionClaim claim = eventClaim();
+        final AgentExecutionEventRecorder recorder = new AgentExecutionEventRecorder(repository);
+        when(repository.activate(claim)).thenReturn(true);
+        when(repository.append(any(), any())).thenReturn(AgentExecutionEventAppendResult.APPENDED);
+        when(repository.markComplete(claim)).thenReturn(true);
         final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeTrackedFresh(
                 new CodexTurnRequest("Slow.", "Instructions.", "model-a", null,
                         this.schemaUnchecked(), this.workspace()),
                 new CodexExecutionIdentityCallbacks() {
                     public void conversationStarted(final String id, final String version) { }
-                    public void turnStarted(final String id) { }
+                    public void turnStarted(final String id) { recorder.activate(claim); }
+                    public void executionEvent(final AgentExecutionEventCandidate event) {
+                        recorder.record(claim, event);
+                    }
                     public void eventCaptureCompleted(final AgentExecutionEventCandidate event) {
                         terminalEvents.add(event);
+                        recorder.complete(claim, event);
                     }
                 }));
 
@@ -774,6 +785,8 @@ class CodexAppServerTurnClientTest {
             assertThat(event.providerEventKey()).isEqualTo("turn:turn-1:failed");
         });
         assertThat(terminalEvents).noneMatch(event -> event.status() == AgentExecutionEventStatus.COMPLETED);
+        verify(repository).markComplete(claim);
+        verify(repository, never()).markDegraded(claim);
         client.close();
     }
 
@@ -784,12 +797,7 @@ class CodexAppServerTurnClientTest {
         properties.setTurnTimeout(Duration.ofMillis(40));
         final CodexAppServerClient client = this.client(new FakeStarter(process), properties);
         final AgentExecutionEventRepository repository = mock(AgentExecutionEventRepository.class);
-        final AgentSessionExecutionClaim claim = new AgentSessionExecutionClaim(
-                UUID.fromString("11111111-1111-4111-8111-111111111111"),
-                UUID.fromString("22222222-2222-4222-8222-222222222222"),
-                UUID.fromString("33333333-3333-4333-8333-333333333333"),
-                "worker-a", 7L, Instant.parse("2026-09-07T10:00:00Z"),
-                "thread-1", "codex", NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE, "0.153.2");
+        final AgentSessionExecutionClaim claim = eventClaim();
         final AgentExecutionEventRecorder recorder = new AgentExecutionEventRecorder(repository);
         when(repository.activate(claim)).thenReturn(true);
         doThrow(new IllegalStateException("terminal event unavailable"))
@@ -1263,6 +1271,15 @@ class CodexAppServerTurnClientTest {
         properties.setGracefulTerminateTimeout(Duration.ofMillis(10));
         properties.setForceKillTimeout(Duration.ofMillis(100));
         return properties;
+    }
+
+    private static AgentSessionExecutionClaim eventClaim() {
+        return new AgentSessionExecutionClaim(
+                UUID.fromString("11111111-1111-4111-8111-111111111111"),
+                UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                UUID.fromString("33333333-3333-4333-8333-333333333333"),
+                "worker-a", 7L, Instant.parse("2026-09-07T10:00:00Z"),
+                "thread-1", "codex", NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE, "0.153.2");
     }
 
     private JsonNode readRequest(final FakeCodexProcess process) throws Exception {
