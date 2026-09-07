@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
@@ -38,6 +39,42 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class PostgresWorkflowRepositoryTest {
+
+    @Test
+    void persistsExplicitContinuedContextMode() {
+        when(this.nodeRepository.findByWorkflowId(WORKFLOW_ID)).thenReturn(List.of());
+        final Node continued = new Node(NODE_A, AGENT_ID, NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(), List.of(), new NodePosition(0, 0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL,
+                NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
+
+        this.repository.save(this.workflow(List.of(continued), List.of()));
+
+        assertThat(this.savedNodes()).singleElement()
+                .extracting(WorkflowNodeEntity::getContextMode)
+                .isEqualTo("REUSE_WITHIN_WORKFLOW_NODE");
+    }
+
+    @Test
+    void absentLegacyPersistedContextModeLoadsAsFresh() {
+        final WorkflowEntity workflowEntity = new WorkflowEntity();
+        workflowEntity.setId(WORKFLOW_ID);
+        workflowEntity.setProjectId(PROJECT_ID);
+        workflowEntity.setName("Legacy");
+        workflowEntity.setNormalizedName("legacy");
+        workflowEntity.setCreatedAt(NOW);
+        workflowEntity.setUpdatedAt(NOW);
+        final WorkflowNodeEntity legacyNode = this.nodeEntity(NODE_A);
+        legacyNode.setContextMode(null);
+        when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(workflowEntity));
+        when(this.nodeRepository.findByWorkflowIdOrderByIdAsc(WORKFLOW_ID)).thenReturn(List.of(legacyNode));
+
+        final Workflow loaded = this.repository.findById(WORKFLOW_ID).orElseThrow();
+
+        assertThat(loaded.nodes()).singleElement()
+                .extracting(Node::contextMode)
+                .isEqualTo(NodeContextMode.FRESH_EACH_NODE_RUN);
+    }
 
     private static final UUID WORKFLOW_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID OTHER_WORKFLOW_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");

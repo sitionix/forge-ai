@@ -14,7 +14,8 @@ final class CodexGenerationPolicy {
             "plan",
             "contextCompaction",
             "commandExecution",
-            "fileChange"
+            "fileChange",
+            "mcpToolCall"
     );
 
     RuntimeException violationFor(final String itemType) {

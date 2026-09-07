@@ -3,6 +3,7 @@ package com.sitionix.forgeai.infrastructure.agentclient;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionContext;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDockerLogConfiguration;
@@ -55,6 +56,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionContextResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogDiscoveryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceResponse;
@@ -122,6 +124,28 @@ public class ForgeAgentClientMapper {
     }
 
     private final ObjectMapper objectMapper;
+
+    AgentExecutionContext toDomain(final AgentExecutionContextResponse response) {
+        return new AgentExecutionContext(
+                response.sessionId(),
+                response.turnId(),
+                response.nodeRunId(),
+                response.sourceNodeId(),
+                response.repositoryId(),
+                response.contextMode(),
+                response.sequence(),
+                response.sessionStatus(),
+                response.turnStatus(),
+                response.provider(),
+                response.providerConversationId(),
+                response.providerTurnId(),
+                response.providerVersion(),
+                response.failureCode(),
+                response.failureMessage(),
+                response.createdAt(),
+                response.startedAt(),
+                response.finishedAt());
+    }
 
     AgentLogSourceRequest toRequest(final SaveAgentLogSourceCommand command) {
         return new AgentLogSourceRequest(
@@ -439,7 +463,8 @@ public class ForgeAgentClientMapper {
                 response.sourceNodeId(),
                 response.agentName(),
                 response.position() == null ? null : new NodePosition(response.position().x(), response.position().y()),
-                response.scopeMode()
+                response.scopeMode(),
+                response.contextMode()
         );
     }
 
@@ -531,7 +556,8 @@ public class ForgeAgentClientMapper {
                 node.inputs() == null ? null : node.inputs().stream().map(this::toRequest).toList(),
                 node.outputs() == null ? null : node.outputs().stream().map(this::toRequest).toList(),
                 node.position() == null ? null : new NodePositionRequest(node.position().x(), node.position().y()),
-                node.scopeMode()
+                node.scopeMode(),
+                node.contextMode()
         );
     }
 
@@ -544,7 +570,8 @@ public class ForgeAgentClientMapper {
                 response.inputs() == null ? null : response.inputs().stream().map(this::toDomain).toList(),
                 response.outputs() == null ? null : response.outputs().stream().map(this::toDomain).toList(),
                 position == null ? null : new NodePosition(position.x(), position.y()),
-                response.scopeMode()
+                response.scopeMode(),
+                response.contextMode()
         );
     }
 
@@ -596,7 +623,9 @@ public class ForgeAgentClientMapper {
                     response.createdAt(),
                     response.startedAt(),
                     response.finishedAt(),
-                    response.repositoryId()
+                    response.repositoryId(),
+                    response.contextMode(),
+                    response.contextTrackingVersion()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Forge Agent node run JSON was invalid.", exception);

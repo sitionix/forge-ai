@@ -62,6 +62,21 @@ class ForgeAgentRuntimeMigrationIT {
     private DataSource dataSource;
 
     @Test
+    void v26CreatesFencedAgentSessionAndTurnContract() {
+        final String schema = "agent_sessions_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, null).migrate();
+            assertThat(this.count(jdbc, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=? AND table_name IN ('agent_execution_sessions','agent_execution_turns')", schema)).isEqualTo(2);
+            assertThat(this.count(jdbc, "SELECT COUNT(*) FROM pg_indexes WHERE schemaname=? AND indexname IN ('uq_agent_sessions_reusable_global','uq_agent_sessions_reusable_scope','uq_agent_turns_active_writer')", schema)).isEqualTo(3);
+            assertThat(this.count(jdbc, "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=? AND table_name='agent_execution_sessions' AND column_name IN ('lease_owner_id','lease_token','lease_expires_at')", schema)).isEqualTo(3);
+        } finally {
+            jdbc.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    @Test
     void v11ActiveLegacyRunsAreCancelledWhileHistoricalEdgesRemainReadable() {
         final String schema = "runtime_migration_" + UUID.randomUUID().toString().replace("-", "");
         final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);

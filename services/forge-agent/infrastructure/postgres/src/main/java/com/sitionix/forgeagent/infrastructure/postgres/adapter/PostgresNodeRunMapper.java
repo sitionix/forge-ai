@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
@@ -40,7 +41,9 @@ final class PostgresNodeRunMapper {
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
                 entity.getFinishedAt(),
-                entity.getRepositoryId()
+                entity.getRepositoryId(),
+                contextMode(entity.getContextMode()),
+                entity.getContextTrackingVersion()
         );
     }
 
@@ -58,6 +61,8 @@ final class PostgresNodeRunMapper {
         entity.setPositionY(nodeRun.position().y());
         entity.setExecutionFrameId(nodeRun.executionFrameId());
         entity.setRepositoryId(nodeRun.repositoryId());
+        entity.setContextMode(nodeRun.contextMode().name());
+        entity.setContextTrackingVersion(nodeRun.contextTrackingVersion());
         entity.setEnteredViaInputPortId(nodeRun.enteredViaInputPortId());
         entity.setActivationFrameId(nodeRun.activationFrameId());
         entity.setSelectedOutputPortId(nodeRun.selectedOutputPortId());
@@ -97,5 +102,11 @@ final class PostgresNodeRunMapper {
             return NodeInputMode.TASK_AND_DEPENDENCIES;
         }
         return NodeInputMode.valueOf(inputMode);
+    }
+
+    private static NodeContextMode contextMode(final String contextMode) {
+        return contextMode == null || contextMode.isBlank()
+                ? NodeContextMode.FRESH_EACH_NODE_RUN
+                : NodeContextMode.valueOf(contextMode);
     }
 }

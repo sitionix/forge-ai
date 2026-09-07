@@ -10,6 +10,7 @@ import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.WorkflowConnection;
@@ -54,6 +55,21 @@ class WorkflowGraphValidatorTest {
         );
 
         assertThat(graph.connections()).containsExactly(this.connection(this.connectionAB, this.outputA, this.inputB));
+    }
+
+    @Test
+    void normalizationPreservesReusableContextPolicy() {
+        final Node reusable = new Node(
+                this.nodeA, this.agentA, NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(this.port(this.inputA, "Input", "Input description.", 0)),
+                List.of(this.port(this.outputA, "Output", "Output description.", 0)),
+                new NodePosition(0, 0),
+                com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL,
+                NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE
+        );
+
+        assertThat(this.validate(List.of(reusable), List.of()).nodes().getFirst().contextMode())
+                .isEqualTo(NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
     }
 
     @Test

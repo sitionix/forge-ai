@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 final class CodexAppServerClient implements CodexClient {
 
     private static final Pattern USER_AGENT_VERSION = Pattern.compile("^[^/]+/([^\\s]+).*");
+    private static final String SUPPORTED_DURABLE_VERSION = "0.153.2";
 
     private final ObjectMapper objectMapper;
     private final CodexAppServerProcessStarter processStarter;
@@ -47,19 +48,84 @@ final class CodexAppServerClient implements CodexClient {
 
     @Override
     public String execute(final CodexTurnRequest request) {
+        return this.executeInternal(request, null, null);
+    }
+
+    @Override
+    public String executeDurable(final CodexTurnRequest request, final String existingThreadId,
+                                 final CodexExecutionIdentityCallbacks callbacks) {
+        return this.executeDurable(request, existingThreadId, null, callbacks);
+    }
+
+    @Override
+    public String executeDurable(final CodexTurnRequest request, final String existingThreadId,
+                                 final String expectedProviderVersion,
+                                 final CodexExecutionIdentityCallbacks callbacks) {
+        if (callbacks == null) throw new IllegalArgumentException("identity callbacks are required");
+        return this.executeInternal(request, existingThreadId, expectedProviderVersion, callbacks, true);
+    }
+
+    @Override public String executeTrackedFresh(final CodexTurnRequest request, final CodexExecutionIdentityCallbacks callbacks) {
+        return this.executeInternal(request, null, null, callbacks, false);
+    }
+
+    private String executeInternal(final CodexTurnRequest request, final String existingThreadId,
+                                   final CodexExecutionIdentityCallbacks callbacks) {
+        return this.executeInternal(request,existingThreadId,null,callbacks,false);
+    }
+
+    private String executeInternal(final CodexTurnRequest request, final String existingThreadId,
+                                   final String expectedProviderVersion,
+                                   final CodexExecutionIdentityCallbacks callbacks, final boolean durable) {
         final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
         final CodexJsonRpcTransport transport = this.startWorkspaceTransport(
                 request.executionWorkspace().cwd(), turnStateTracker);
+        if (callbacks != null) callbacks.executionStarted(transport::close);
         CodexExecution execution = null;
         try {
-            this.initialize(transport);
-            execution = this.startExecution(transport, turnStateTracker, request);
-            return this.awaitExecution(execution);
+            final String providerVersion = this.initialize(transport);
+            if (durable) {
+                this.validateDurableVersion(providerVersion, expectedProviderVersion);
+            }
+            execution = this.startExecution(transport, turnStateTracker, request, existingThreadId, callbacks, providerVersion, durable);
+            if (callbacks != null) {
+                final CodexExecution activeExecution = execution;
+                callbacks.executionStarted(() -> {
+                    try {
+                        this.interruptWithoutWaiting(activeExecution);
+                    } finally {
+                        activeExecution.transport().close();
+                    }
+                });
+            }
+            try {
+                return this.awaitExecution(execution);
+            } catch (final CodexExecutionException exception) {
+                throw exception;
+            } catch (final RuntimeException exception) {
+                throw this.executionFailure(CodexExecutionFailurePhase.TURN_EXECUTION, exception);
+            }
         } finally {
             if (execution != null) {
                 this.releaseExecution(execution);
             }
             transport.close();
+        }
+    }
+
+    private void validateDurableVersion(final String providerVersion, final String expectedProviderVersion) {
+        if (!SUPPORTED_DURABLE_VERSION.equals(providerVersion)) {
+            throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY,
+                    "Codex durable context requires audited CLI version " + SUPPORTED_DURABLE_VERSION
+                            + "; found " + providerVersion
+            );
+        }
+        if (expectedProviderVersion != null && !expectedProviderVersion.isBlank()
+                && !expectedProviderVersion.equals(providerVersion)) {
+            throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY,
+                    "Codex durable context version changed from " + expectedProviderVersion
+                            + " to " + providerVersion
+            );
         }
     }
 
@@ -120,15 +186,50 @@ final class CodexAppServerClient implements CodexClient {
 
     private CodexExecution startExecution(final CodexJsonRpcTransport current,
                                           final CodexTurnStateTracker turnStateTracker,
-                                          final CodexTurnRequest request) {
+                                          final CodexTurnRequest request,
+                                          final String existingThreadId,
+                                          final CodexExecutionIdentityCallbacks callbacks,
+                                          final String providerVersion, final boolean durable) {
         CodexExecutionState state = null;
         try {
-            final String threadId = this.startThread(current, turnStateTracker, request);
+            final CodexSessionProtocol sessionProtocol = new CodexSessionProtocol(this.objectMapper);
+            final String threadId;
+            try {
+                threadId = callbacks == null
+                        ? this.startThread(current, turnStateTracker, request)
+                        : existingThreadId == null && durable
+                            ? sessionProtocol.startDurableThread(current, this.threadStartParams(request), this.properties.getRequestTimeout())
+                            : existingThreadId != null
+                                ? sessionProtocol.resumeThread(current, existingThreadId, this.properties.getRequestTimeout())
+                                : this.startThread(current, turnStateTracker, request);
+            } catch (final CodexExecutionException exception) {
+                throw exception;
+            } catch (final RuntimeException exception) {
+                throw this.executionFailure(existingThreadId == null
+                        ? CodexExecutionFailurePhase.THREAD_START
+                        : CodexExecutionFailurePhase.THREAD_RESUME, exception);
+            }
+            if (callbacks != null && existingThreadId == null) callbacks.conversationStarted(threadId, providerVersion);
             state = turnStateTracker.register(threadId);
-            final String turnId = this.startTurn(current, turnStateTracker, threadId, request);
+            final String turnId;
+            try {
+                turnId = sessionProtocol.startTurn(current, this.turnStartParams(threadId, request),
+                        this.properties.getRequestTimeout());
+            } catch (final CodexExecutionException exception) {
+                throw exception;
+            } catch (final RuntimeException exception) {
+                throw this.executionFailure(CodexExecutionFailurePhase.TURN_EXECUTION, exception);
+            }
+            if (callbacks != null) callbacks.turnStarted(turnId);
             turnStateTracker.bindTurnId(state, turnId);
             this.verifyTransportStillHealthy(current, state);
             return new CodexExecution(current, turnStateTracker, state);
+        } catch (final CodexExecutionException e) {
+            if (state != null) {
+                turnStateTracker.remove(state);
+            }
+            this.invalidate(current);
+            throw e;
         } catch (final CodexTransportException e) {
             if (state != null) {
                 turnStateTracker.remove(state);
@@ -147,6 +248,7 @@ final class CodexAppServerClient implements CodexClient {
             throw e;
         }
     }
+
 
     private String startThread(final CodexJsonRpcTransport transport,
                                final CodexTurnStateTracker turnStateTracker,
@@ -207,6 +309,13 @@ final class CodexAppServerClient implements CodexClient {
         return new CodexTransportException(message == null || message.isBlank() ? "Codex execution failed." : message, cause);
     }
 
+    private CodexExecutionException executionFailure(final CodexExecutionFailurePhase phase,
+                                                      final RuntimeException cause) {
+        final String message = cause.getMessage();
+        return new CodexExecutionException(phase,
+                message == null || message.isBlank() ? "Codex execution failed." : message, cause);
+    }
+
     private void interrupt(final CodexExecution execution) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         params.put("threadId", execution.threadId());
@@ -223,6 +332,18 @@ final class CodexAppServerClient implements CodexClient {
             if (interrupted) {
                 Thread.currentThread().interrupt();
             }
+        }
+    }
+
+    private void interruptWithoutWaiting(final CodexExecution execution) {
+        final ObjectNode params = this.objectMapper.createObjectNode();
+        params.put("threadId", execution.threadId());
+        params.put("turnId", execution.turnId());
+        try {
+            execution.transport().notify(CodexProtocol.TURN_INTERRUPT, params);
+        } catch (final RuntimeException exception) {
+            log.debug("Codex turn interrupt notification failed threadId={} turnId={} exceptionClass={}",
+                    execution.threadId(), execution.turnId(), exception.getClass().getName());
         }
     }
 

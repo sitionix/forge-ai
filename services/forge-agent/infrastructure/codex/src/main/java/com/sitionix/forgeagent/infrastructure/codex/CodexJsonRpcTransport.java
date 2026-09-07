@@ -313,9 +313,22 @@ final class CodexJsonRpcTransport implements AutoCloseable {
             this.cleanupStarted = true;
             try {
                 this.closeStdin();
+                java.util.List<ProcessHandle> descendants = java.util.List.of();
+                try {
+                    descendants = process.descendants().toList();
+                } catch (final UnsupportedOperationException exception) {
+                    // Synthetic Process implementations used by protocol tests do not expose handles.
+                }
+                final java.util.List<ProcessHandle> childProcesses = descendants;
                 if (process.isAlive()) {
                     process.destroy();
+                    childProcesses.forEach(child -> {
+                        if (child.isAlive()) child.destroy();
+                    });
                     if (!process.waitFor(this.properties.getGracefulTerminateTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
+                        childProcesses.forEach(child -> {
+                            if (child.isAlive()) child.destroyForcibly();
+                        });
                         process.destroyForcibly();
                         if (!process.waitFor(this.properties.getForceKillTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
                             throw new CodexTransportException("Codex app-server process remained alive after force kill timeout");
@@ -324,6 +337,20 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 }
                 if (process.isAlive()) {
                     throw new CodexTransportException("Codex app-server process cleanup incomplete");
+                }
+                childProcesses.forEach(child -> {
+                    if (child.isAlive()) child.destroyForcibly();
+                });
+                for (final ProcessHandle child : childProcesses) {
+                    if (child.isAlive()) {
+                        try {
+                            child.onExit().get(this.properties.getForceKillTimeout().toMillis(), TimeUnit.MILLISECONDS);
+                        } catch (final java.util.concurrent.TimeoutException exception) {
+                            throw new CodexTransportException("Codex child process remained alive after force kill timeout", exception);
+                        } catch (final java.util.concurrent.ExecutionException exception) {
+                            throw new CodexTransportException("Codex child process cleanup failed", exception.getCause());
+                        }
+                    }
                 }
                 this.completeCleanup(process);
             } catch (final InterruptedException e) {

@@ -6,6 +6,8 @@ public record RunNodeResponse(
         UUID sourceNodeId,
         String agentName,
         NodePositionResponse position,
-        String scopeMode
+        String scopeMode,
+        String contextMode
 ) {
+    public RunNodeResponse(UUID sourceNodeId,String agentName,NodePositionResponse position,String scopeMode) { this(sourceNodeId,agentName,position,scopeMode,null); }
 }

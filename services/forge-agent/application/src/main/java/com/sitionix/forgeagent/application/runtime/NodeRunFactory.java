@@ -62,7 +62,9 @@ public class NodeRunFactory {
                 Instant.now(this.clock),
                 null,
                 null,
-                repositoryId
+                repositoryId,
+                runNode.contextMode(),
+                1
         );
     }
 

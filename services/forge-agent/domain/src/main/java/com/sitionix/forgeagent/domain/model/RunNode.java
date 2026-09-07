@@ -13,10 +13,20 @@ public record RunNode(
         NodeRunExecutionModel executionModel,
         NodeInputMode inputMode,
         NodePosition position,
-        NodeScopeMode scopeMode
+        NodeScopeMode scopeMode,
+        NodeContextMode contextMode
 ) {
     public RunNode {
         Objects.requireNonNull(scopeMode, "scopeMode must not be null");
+        contextMode = NodeContextMode.legacyDefault(contextMode);
+    }
+
+    public RunNode(final UUID workflowRunId, final UUID sourceNodeId, final UUID sourceAgentId,
+                   final String agentName, final String agentInstructions,
+                   final AgentOutputSchema agentOutputSchema, final NodeRunExecutionModel executionModel,
+                   final NodeInputMode inputMode, final NodePosition position, final NodeScopeMode scopeMode) {
+        this(workflowRunId, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema,
+                executionModel, inputMode, position, scopeMode, NodeContextMode.FRESH_EACH_NODE_RUN);
     }
 
 }

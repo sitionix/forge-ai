@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeScopeMode;
@@ -156,6 +157,7 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
             entity.setTargetId(node.targetId());
             entity.setInputMode(inputMode(node.inputMode()).name());
             entity.setScopeMode(node.scopeMode().name());
+            entity.setContextMode(node.contextMode().name());
             entity.setPositionX(node.position().x());
             entity.setPositionY(node.position().y());
             desiredEntities.add(entity);
@@ -270,7 +272,8 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
                 this.toPorts(inputPortsByNode.getOrDefault(entity.getId(), List.of())),
                 this.toPorts(outputPortsByNode.getOrDefault(entity.getId(), List.of())),
                 new NodePosition(entity.getPositionX(), entity.getPositionY()),
-                NodeScopeMode.valueOf(entity.getScopeMode())
+                NodeScopeMode.valueOf(entity.getScopeMode()),
+                contextMode(entity.getContextMode())
         );
     }
 
@@ -294,6 +297,13 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
             return NodeInputMode.DEPENDENCIES_ONLY;
         }
         return NodeInputMode.valueOf(inputMode);
+    }
+
+    private static NodeContextMode contextMode(final String contextMode) {
+        if (contextMode == null || contextMode.isBlank()) {
+            return NodeContextMode.FRESH_EACH_NODE_RUN;
+        }
+        return NodeContextMode.valueOf(contextMode);
     }
 
     private static List<NodePort> portsOrEmpty(final List<NodePort> ports) {

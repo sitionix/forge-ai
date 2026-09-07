@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionContext;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentModelSelection;
@@ -42,6 +43,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionContextResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentModelSelectionDto;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentProjectResponse;
@@ -286,7 +288,7 @@ class ForgeAgentClientMapperTest {
         assertThat(this.mapper.toRequest(new SaveAgentWorkflowCommand(
                 "Opaque workflow", List.of(nodeWithoutAgentDefaults), List.of(), null, null
         )).nodes().getFirst()).isEqualTo(new NodeRequest(
-                NODE_ID, AGENT_ID, null, List.of(), List.of(), null, null
+                NODE_ID, AGENT_ID, null, List.of(), List.of(), null, null, "FRESH_EACH_NODE_RUN"
         ));
         final var nullCollections = this.mapper.toRequest(new SaveAgentWorkflowCommand(
                 "Opaque workflow", null, null, null, null
@@ -303,7 +305,8 @@ class ForgeAgentClientMapperTest {
                                 List.of(new NodePortRequest(INPUT_ID, "Review feedback", "Feedback produced by review.", 0)),
                                 List.of(new NodePortRequest(OUTPUT_ID, "Approved", "Continue when accepted.", 0)),
                                 new NodePositionRequest(1.0, 2.0),
-                                "GLOBAL"
+                                "GLOBAL",
+                                "FRESH_EACH_NODE_RUN"
                         )),
                         List.of(new WorkflowConnectionRequest(CONNECTION_ID, OUTPUT_ID, INPUT_ID)),
                         INPUT_ID,
@@ -694,4 +697,34 @@ class ForgeAgentClientMapperTest {
                 UPDATED
         );
     }
+    @Test
+    void executionContextMappingPreservesEveryFieldExactly() {
+        final UUID sessionId = UUID.randomUUID();
+        final UUID turnId = UUID.randomUUID();
+        final Instant startedAt = CREATED.plusSeconds(1);
+        final Instant finishedAt = CREATED.plusSeconds(2);
+        final var response = new AgentExecutionContextResponse(
+                sessionId, turnId, NODE_RUN_ID, NODE_ID, REPOSITORY_ID,
+                " opaque-context ", 7, " opaque-session ", " opaque-turn ",
+                " provider ", " conversation ", " provider-turn ", " version ",
+                " failure-code ", " failure message ", CREATED, startedAt, finishedAt);
+
+        assertThat(this.mapper.toDomain(response)).isEqualTo(new AgentExecutionContext(
+                sessionId, turnId, NODE_RUN_ID, NODE_ID, REPOSITORY_ID,
+                " opaque-context ", 7, " opaque-session ", " opaque-turn ",
+                " provider ", " conversation ", " provider-turn ", " version ",
+                " failure-code ", " failure message ", CREATED, startedAt, finishedAt));
+    }
+
+    @Test
+    void executionContextMappingPreservesNullFieldsWithoutDefaults() {
+        final var response = new AgentExecutionContextResponse(
+                null, null, null, null, null, null, 0, null, null,
+                null, null, null, null, null, null, null, null, null);
+
+        assertThat(this.mapper.toDomain(response)).isEqualTo(new AgentExecutionContext(
+                null, null, null, null, null, null, 0, null, null,
+                null, null, null, null, null, null, null, null, null));
+    }
+
 }

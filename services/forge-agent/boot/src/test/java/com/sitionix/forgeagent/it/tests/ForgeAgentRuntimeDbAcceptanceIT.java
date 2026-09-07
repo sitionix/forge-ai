@@ -154,10 +154,11 @@ class ForgeAgentRuntimeDbAcceptanceIT {
                     id, workflow_run_id, source_node_id, source_agent_id, agent_name, agent_instructions,
                     agent_output_schema, input_mode, position_x, position_y, status,
                     execution_model_provider_id, execution_model_id, execution_model_effort_id,
-                    execution_frame_id, created_at, repository_id
+                    execution_frame_id, created_at, repository_id, context_mode
                 )
                 VALUES (?, ?, ?, ?, 'Agent', 'Do work.', CAST(? AS jsonb), 'DEPENDENCIES_ONLY',
-                        0, 0, 'PENDING', 'codex', 'discovered-model', 'medium', ?, CURRENT_TIMESTAMP, ?)
+                        0, 0, 'PENDING', 'codex', 'discovered-model', 'medium', ?, CURRENT_TIMESTAMP, ?,
+                        'FRESH_EACH_NODE_RUN')
                 """, nodeRunId, rows.runId(), sourceNodeId, rows.agentId(), "{\"type\":\"object\"}",
                 rows.frameId(), repositoryId);
     }

@@ -496,7 +496,8 @@ public class AgentProxyApiMapper {
                 node.sourceNodeId(),
                 node.agentName(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
-                node.scopeMode()
+                node.scopeMode(),
+                node.contextMode()
         );
     }
 
@@ -545,7 +546,8 @@ public class AgentProxyApiMapper {
                 request.inputs() == null ? null : request.inputs().stream().map(this::toDomain).toList(),
                 request.outputs() == null ? null : request.outputs().stream().map(this::toDomain).toList(),
                 request.position() == null ? null : new NodePosition(request.position().x(), request.position().y()),
-                request.scopeMode()
+                request.scopeMode(),
+                request.contextMode()
         );
     }
 
@@ -557,7 +559,8 @@ public class AgentProxyApiMapper {
                 node.inputs() == null ? null : node.inputs().stream().map(this::toResponse).toList(),
                 node.outputs() == null ? null : node.outputs().stream().map(this::toResponse).toList(),
                 node.position() == null ? null : new NodePositionResponse(node.position().x(), node.position().y()),
-                node.scopeMode()
+                node.scopeMode(),
+                node.contextMode()
         );
     }
 
@@ -604,7 +607,9 @@ public class AgentProxyApiMapper {
                     nodeRun.createdAt(),
                     nodeRun.startedAt(),
                     nodeRun.finishedAt(),
-                    nodeRun.repositoryId()
+                    nodeRun.repositoryId(),
+                    nodeRun.contextMode(),
+                    nodeRun.contextTrackingVersion()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Agent workflow run JSON is not valid JSON.", exception);

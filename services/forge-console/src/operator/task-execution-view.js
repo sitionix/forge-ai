@@ -771,11 +771,15 @@ export class TaskExecutionView {
     this.state.refreshError = '';
     this.render();
     try {
-      const workflowRun = await this.api.getWorkflowRun(runId);
+      const [workflowRun, contexts] = await Promise.all([
+        this.api.getWorkflowRun(runId),
+        this.api.getAgentExecutionContexts ? this.api.getAgentExecutionContexts(runId) : Promise.resolve([])
+      ]);
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         return;
       }
       this.applyWorkflowRun(workflowRun);
+      this.state.agentExecutionContexts = contexts || [];
       this.state.loadingRun = false;
       this.render();
       this.syncPolling();
@@ -870,14 +874,18 @@ export class TaskExecutionView {
     const taskSequence = this.taskLoadSequence;
     const runId = this.state.selectedRunId;
     const runSequence = this.runLoadSequence;
-    const request = this.api.getWorkflowRun(runId);
+    const request = Promise.all([
+      this.api.getWorkflowRun(runId),
+      this.api.getAgentExecutionContexts ? this.api.getAgentExecutionContexts(runId) : Promise.resolve([])
+    ]);
     this.pollInFlight = request;
     try {
-      const workflowRun = await request;
+      const [workflowRun, contexts] = await request;
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         return;
       }
       this.applyWorkflowRun(workflowRun);
+      this.state.agentExecutionContexts = contexts || [];
       this.render();
     } catch (error) {
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
@@ -1109,6 +1117,7 @@ export class TaskExecutionView {
           </div>
           <div class="execution-board-card-main">
             <strong>${escapeHtml(node.agentName || 'Unknown agent')}</strong>
+            ${node.contextMode === 'REUSE_WITHIN_WORKFLOW_NODE' ? '<small class="execution-context-badge">↻ Context</small>' : ''}
             ${node.repositoryName ? `<small class="execution-board-repository">${escapeHtml(node.repositoryName)}</small>` : ''}
             ${latest ? `<span>#${latestNumber} ${escapeHtml(latest.status)}</span>` : ''}
             <div class="execution-board-runline">
@@ -1261,6 +1270,7 @@ export class TaskExecutionView {
     }
     const failure = nodeRun.failure;
     const invocationSelector = this.renderInvocationSelector();
+    const context = this.contextForNodeRun(nodeRun.id);
     panel.innerHTML = `
       ${invocationSelector}
       <div class="node-run-details-grid">
@@ -1270,6 +1280,7 @@ export class TaskExecutionView {
         ${this.detailRow('Started', this.formatDate(nodeRun.startedAt))}
         ${this.detailRow('Finished', this.formatDate(nodeRun.finishedAt))}
       </div>
+      ${this.renderContextDetails(nodeRun, context)}
       <details class="node-run-prompt-details">
         <summary>Prompt</summary>
         <pre>${escapeHtml(nodeRun.agentInstructions || '-')}</pre>
@@ -1289,6 +1300,93 @@ export class TaskExecutionView {
     panel.querySelector('[data-node-run-invocation-select]')?.addEventListener('change', (event) => {
       this.selectNodeRun(event.target.value);
     });
+    panel.querySelectorAll('[data-context-node-run]').forEach((button) => button.addEventListener('click', () => {
+      this.selectNodeRun(button.dataset.contextNodeRun);
+    }));
+  }
+
+  contextForNodeRun(nodeRunId) {
+    return (this.state.agentExecutionContexts || []).find((context) => context.nodeRunId === nodeRunId) || null;
+  }
+
+  renderContextDetails(nodeRun, context) {
+    if (nodeRun.contextTrackingVersion == null) {
+      return '<section class="node-run-context"><h3>CONTEXT</h3><strong>Unavailable</strong><p>Context information was not recorded for this execution.</p></section>';
+    }
+    if (nodeRun.contextMode === 'FRESH_EACH_NODE_RUN') {
+      if (!context || context.contextMode !== 'FRESH_EACH_NODE_RUN') {
+        return '<section class="node-run-context"><h3>CONTEXT</h3><strong>Unavailable</strong><p>Verified context information is unavailable.</p></section>';
+      }
+      const projection = this.modernProjection();
+      const verifiedFresh = (this.state.agentExecutionContexts || []).filter((item) => item.contextMode === 'FRESH_EACH_NODE_RUN'
+        && item.sourceNodeId === context.sourceNodeId && item.repositoryId === context.repositoryId);
+      const history = this.renderContextHistory(verifiedFresh.map((item) => ({
+        nodeRunId: item.nodeRunId,
+        label: `#${projection.invocationNumberById.get(item.nodeRunId) || item.sequence} Fresh`,
+      })), nodeRun.id, false);
+      return `<section class="node-run-context"><h3>CONTEXT</h3><strong>Fresh</strong><p>Context is not reused</p>${this.detailRow('Status', this.contextLifecycle(context))}<nav aria-label="Independent invocation history" class="context-history independent">${history}</nav>${this.renderTechnicalDetails(context)}</section>`;
+    }
+    if (!context) {
+      return '<section class="node-run-context"><h3>CONTEXT</h3><strong>Unavailable</strong><p>Verified context information is unavailable.</p></section>';
+    }
+    const relation = context.sequence === 1 ? 'New' : 'Continued';
+    const status = this.contextLifecycle(context);
+    const projection = this.modernProjection();
+    const startedRun = (this.state.agentExecutionContexts || []).find((item) => item.sessionId === context.sessionId && item.sequence === 1);
+    const startedNumber = projection.invocationNumberById.get(startedRun?.nodeRunId) || 1;
+    const currentTurn = (this.state.agentExecutionContexts || []).find((item) => item.sessionId === context.sessionId
+      && ['STARTING', 'ACTIVE'].includes(item.turnStatus));
+    const currentNumber = projection.invocationNumberById.get(currentTurn?.nodeRunId || nodeRun.id) || context.sequence;
+    const history = this.renderContextHistory((this.state.agentExecutionContexts || []).filter((item) => item.sessionId === context.sessionId)
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((item) => ({
+        nodeRunId: item.nodeRunId,
+        label: `#${projection.invocationNumberById.get(item.nodeRunId) || item.sequence} ${item.sequence === 1 ? 'New' : 'Continued'}`,
+      })), nodeRun.id, true);
+    return `<section class="node-run-context"><h3>CONTEXT</h3><div><strong>${relation}</strong><span>Turn ${context.sequence}</span></div>
+      ${this.detailRow('Status', status)}${this.detailRow('Scope', context.repositoryId ? this.repositoryName(context.repositoryId) : 'Global')}
+      ${this.detailRow('Started', `Invocation #${startedNumber}`)}${context.sequence > 1 || currentTurn?.nodeRunId !== startedRun?.nodeRunId ? this.detailRow('Current', `Invocation #${currentNumber}`) : ''}
+      <nav aria-label="Context invocation history" class="context-history">${history}</nav>${this.renderTechnicalDetails(context)}</section>`;
+  }
+
+  renderContextHistory(items, selectedNodeRunId, connected) {
+    const button = (item) => `<button type="button" data-context-node-run="${escapeHtml(item.nodeRunId)}"${item.nodeRunId === selectedNodeRunId ? ' aria-current="true"' : ''}>${escapeHtml(item.label)}</button>`;
+    const joiner = connected ? '<span aria-hidden="true"> → </span>' : ' ';
+    if (items.length <= 5) {
+      return items.map(button).join(joiner);
+    }
+    const selected = Math.max(0, items.findIndex((item) => item.nodeRunId === selectedNodeRunId));
+    const visibleIndexes = [...new Set([0, selected - 1, selected, selected + 1, items.length - 1]
+      .filter((index) => index >= 0 && index < items.length))].sort((left, right) => left - right);
+    const visible = visibleIndexes.map((index) => button(items[index])).join(joiner);
+    const hiddenCount = items.length - visibleIndexes.length;
+    return `${visible}<details class="context-history-more"><summary>+${hiddenCount} earlier</summary><div class="context-history-expanded">${items.map(button).join('')}</div></details>`;
+  }
+
+  contextLifecycle(context) {
+    if (!context) return 'Unavailable';
+    if (context.sessionStatus === 'FAILED' || context.turnStatus === 'FAILED') return 'Failed';
+    if (context.turnStatus === 'CANCELLED') return 'Closed';
+    if (context.sessionStatus === 'CLOSED') return 'Closed';
+    if (context.sessionStatus === 'WAITING' || ['QUEUED', 'STARTING'].includes(context.turnStatus)) return 'Waiting';
+    if (context.sessionStatus === 'ACTIVE') return 'Active';
+    if (context.sessionStatus === 'IDLE') return 'Idle';
+    return 'Unavailable';
+  }
+
+  renderTechnicalDetails(context) {
+    return `<details class="node-run-technical-details"><summary>Technical details</summary>
+      ${this.detailRow('Forge session ID', context.sessionId)}${this.detailRow('Forge turn ID', context.turnId)}
+      ${context.provider ? this.detailRow('Provider', context.provider) : ''}${context.providerConversationId ? this.detailRow('Provider conversation ID', context.providerConversationId) : ''}
+      ${context.providerTurnId ? this.detailRow('Provider turn ID', context.providerTurnId) : ''}${context.providerVersion ? this.detailRow('Provider / CLI version', context.providerVersion) : ''}
+      ${context.repositoryId ? this.detailRow('Repository ID', context.repositoryId) : ''}
+      ${context.createdAt ? this.detailRow('Created', this.formatDate(context.createdAt)) : ''}
+      ${context.startedAt ? this.detailRow('Started', this.formatDate(context.startedAt)) : ''}
+      ${context.finishedAt ? this.detailRow('Finished', this.formatDate(context.finishedAt)) : ''}</details>`;
+  }
+
+  repositoryName(repositoryId) {
+    return (this.state.repositories || []).find((repository) => repository.id === repositoryId)?.name || UNAVAILABLE_REPOSITORY_LABEL;
   }
 
   renderInvocationSelector() {
@@ -1937,7 +2035,8 @@ export class TaskExecutionView {
       loadingRun: false,
       taskError: '',
       executionError: '',
-      refreshError: ''
+      refreshError: '',
+      agentExecutionContexts: []
     };
   }
 }

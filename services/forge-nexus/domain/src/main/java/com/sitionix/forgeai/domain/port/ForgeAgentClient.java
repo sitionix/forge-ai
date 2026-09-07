@@ -28,6 +28,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentLogSourceCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import java.util.List;
 import java.util.UUID;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionContext;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectService;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentServiceRuntime;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentProjectServiceCommand;
@@ -111,6 +112,8 @@ public interface ForgeAgentClient {
   List<AgentWorkflowRunSummary> listWorkflowRuns(UUID workflowId);
 
   AgentWorkflowRun getWorkflowRun(UUID runId);
+
+  List<AgentExecutionContext> getAgentExecutionContexts(UUID runId);
 
   List<AgentLogSource> listProjectLogSources(UUID projectId);
 
