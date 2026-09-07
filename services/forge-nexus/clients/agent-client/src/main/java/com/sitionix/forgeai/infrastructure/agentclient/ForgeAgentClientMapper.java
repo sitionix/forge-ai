@@ -3,6 +3,7 @@ package com.sitionix.forgeai.infrastructure.agentclient;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionContext;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionListItem;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentConnectionResolution;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDockerLogConfiguration;
@@ -55,6 +56,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.WorkflowConnection;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionListResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentDefinitionResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionContextResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogDiscoveryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceResponse;
@@ -122,6 +124,28 @@ public class ForgeAgentClientMapper {
     }
 
     private final ObjectMapper objectMapper;
+
+    AgentExecutionContext toDomain(final AgentExecutionContextResponse response) {
+        return new AgentExecutionContext(
+                response.sessionId(),
+                response.turnId(),
+                response.nodeRunId(),
+                response.sourceNodeId(),
+                response.repositoryId(),
+                response.contextMode(),
+                response.sequence(),
+                response.sessionStatus(),
+                response.turnStatus(),
+                response.provider(),
+                response.providerConversationId(),
+                response.providerTurnId(),
+                response.providerVersion(),
+                response.failureCode(),
+                response.failureMessage(),
+                response.createdAt(),
+                response.startedAt(),
+                response.finishedAt());
+    }
 
     AgentLogSourceRequest toRequest(final SaveAgentLogSourceCommand command) {
         return new AgentLogSourceRequest(
