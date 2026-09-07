@@ -3,8 +3,10 @@ package com.sitionix.forgeagent.infrastructure.codex;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -491,6 +493,46 @@ class CodexAgentExecutorTest {
         verify(events, atLeastOnce()).markDegraded(claim.agentSessionClaim());
     }
 
+    @Test
+    void failedProviderTurnCompletesCaptureWithoutChangingTheProviderFailure() {
+        final AgentSessionLeaseService leases = mock(AgentSessionLeaseService.class);
+        final AgentExecutionEventRepository events = mock(AgentExecutionEventRepository.class);
+        final CodexAgentExecutor capturingExecutor = new CodexAgentExecutor(
+                this.objectMapper, this.client, leases, new AgentExecutionEventRecorder(events));
+        this.client.emitFailedCapture = true;
+        this.client.durableFailure = new CodexExecutionException(
+                CodexExecutionFailurePhase.TURN_EXECUTION, "provider turn failed");
+        final NodeExecutionClaim claim = this.trackedClaim("thread-existing");
+
+        assertThatThrownBy(() -> capturingExecutor.execute(claim))
+                .isInstanceOf(CodexExecutionException.class)
+                .hasMessage("provider turn failed");
+        verify(events).append(any(), argThat(event -> event.type() == AgentExecutionEventType.TURN
+                && event.status() == AgentExecutionEventStatus.FAILED));
+        verify(events).markComplete(claim.agentSessionClaim());
+    }
+
+    @Test
+    void failedTerminalEventPersistenceDegradesCaptureWithoutChangingTheProviderFailure() {
+        final AgentSessionLeaseService leases = mock(AgentSessionLeaseService.class);
+        final AgentExecutionEventRepository events = mock(AgentExecutionEventRepository.class);
+        when(events.append(any(), argThat(event -> event.type() == AgentExecutionEventType.TURN
+                && event.status() == AgentExecutionEventStatus.FAILED)))
+                .thenThrow(new IllegalStateException("terminal event unavailable"));
+        final CodexAgentExecutor capturingExecutor = new CodexAgentExecutor(
+                this.objectMapper, this.client, leases, new AgentExecutionEventRecorder(events));
+        this.client.emitFailedCapture = true;
+        this.client.durableFailure = new CodexExecutionException(
+                CodexExecutionFailurePhase.TURN_EXECUTION, "provider turn failed");
+        final NodeExecutionClaim claim = this.trackedClaim("thread-existing");
+
+        assertThatThrownBy(() -> capturingExecutor.execute(claim))
+                .isInstanceOf(CodexExecutionException.class)
+                .hasMessage("provider turn failed");
+        verify(events).markDegraded(claim.agentSessionClaim());
+        verify(events, never()).markComplete(claim.agentSessionClaim());
+    }
+
     private NodeExecutionClaim trackedClaim(final String conversationId) {
         final NodeExecutionClaim base = this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", null), OUTPUT_SCHEMA);
         return this.tracked(base, conversationId);
@@ -551,6 +593,7 @@ class CodexAgentExecutorTest {
         private Runnable onExecutionStarted;
         private Runnable providerCancellation;
         private boolean emitCapture;
+        private boolean emitFailedCapture;
 
         @Override
         public String execute(final CodexTurnRequest request) {
@@ -566,7 +609,17 @@ class CodexAgentExecutorTest {
             this.request = request;
             if (this.providerCancellation != null) callbacks.executionStarted(this.providerCancellation);
             if (this.onExecutionStarted != null) this.onExecutionStarted.run();
-            if (this.durableFailure != null) throw this.durableFailure;
+            if (this.durableFailure != null && !this.emitFailedCapture) throw this.durableFailure;
+            if (this.emitFailedCapture) {
+                callbacks.turnStarted("provider-turn-1");
+                callbacks.executionEvent(new AgentExecutionEventCandidate(
+                        AgentExecutionEventType.ERROR, AgentExecutionEventStatus.FAILED, null,
+                        null, "{\"message\":\"provider turn failed\"}", Instant.now()));
+                callbacks.eventCaptureCompleted(new AgentExecutionEventCandidate(
+                        AgentExecutionEventType.TURN, AgentExecutionEventStatus.FAILED, null,
+                        "turn:provider-turn-1:failed", "{}", Instant.now()));
+                throw this.durableFailure;
+            }
             if (this.emitCapture) {
                 callbacks.turnStarted("provider-turn-1");
                 callbacks.executionEvent(new AgentExecutionEventCandidate(

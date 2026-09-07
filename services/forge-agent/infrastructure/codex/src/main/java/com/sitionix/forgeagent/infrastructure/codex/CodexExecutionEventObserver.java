@@ -9,7 +9,7 @@ import java.util.List;
 final class CodexExecutionEventObserver {
     private final CodexAgentExecutionEventMapper mapper;
     private final CodexExecutionIdentityCallbacks callbacks;
-    private final List<AgentExecutionEventCandidate> pending = new ArrayList<>();
+    private final List<PendingObservedEvent> pending = new ArrayList<>();
     private String threadId;
     private String turnId;
     private boolean active;
@@ -32,7 +32,7 @@ final class CodexExecutionEventObserver {
         try {
             this.mapper.map(method, params, Instant.now()).ifPresent(candidate -> {
                 if (this.active) this.callbacks.executionEvent(candidate);
-                else this.pending.add(candidate);
+                else this.pending.add(new PendingObservedEvent(candidateTurn, candidate));
             });
         } catch (final RuntimeException failure) {
             try {
@@ -48,7 +48,10 @@ final class CodexExecutionEventObserver {
         this.turnId = turnId;
         this.active = true;
         this.callbacks.executionEvent(this.mapper.turnStarted(turnId, Instant.now()));
-        this.pending.forEach(this.callbacks::executionEvent);
+        this.pending.stream()
+                .filter(observed -> turnId.equals(observed.providerTurnId()))
+                .map(PendingObservedEvent::candidate)
+                .forEach(this.callbacks::executionEvent);
         this.pending.clear();
     }
 
@@ -56,6 +59,12 @@ final class CodexExecutionEventObserver {
         if (this.callbacks == null || !this.active || this.completed) return;
         this.completed = true;
         this.callbacks.eventCaptureCompleted(this.mapper.turnCompleted(this.turnId, Instant.now()));
+    }
+
+    synchronized void fail(final RuntimeException failure) {
+        if (this.callbacks == null || !this.active || this.completed) return;
+        this.completed = true;
+        this.callbacks.eventCaptureCompleted(this.mapper.turnFailed(this.turnId, failure.getMessage(), Instant.now()));
     }
 
     synchronized void discard() {
@@ -73,4 +82,6 @@ final class CodexExecutionEventObserver {
                 ? params.path("turn").path("id") : params.path("turnId");
         return value.isTextual() && !value.asText().isBlank() ? value.asText() : null;
     }
+
+    private record PendingObservedEvent(String providerTurnId, AgentExecutionEventCandidate candidate) { }
 }

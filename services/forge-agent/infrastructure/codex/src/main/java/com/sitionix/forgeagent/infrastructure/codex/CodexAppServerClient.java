@@ -106,8 +106,10 @@ final class CodexAppServerClient implements CodexClient {
                 eventObserver.complete();
                 return result;
             } catch (final CodexExecutionException exception) {
+                if (execution.state().failed()) eventObserver.fail(exception);
                 throw exception;
             } catch (final RuntimeException exception) {
+                if (execution.state().failed()) eventObserver.fail(exception);
                 throw this.executionFailure(CodexExecutionFailurePhase.TURN_EXECUTION, exception);
             }
         } finally {

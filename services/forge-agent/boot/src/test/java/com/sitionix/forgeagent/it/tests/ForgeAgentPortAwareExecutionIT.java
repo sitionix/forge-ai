@@ -531,6 +531,33 @@ class ForgeAgentPortAwareExecutionIT {
                 .orElseThrow().captureStatus()).isEqualTo(AgentExecutionEventCaptureStatus.UNAVAILABLE);
     }
 
+    @Test
+    void failedTurnTerminalEventLeavesCaptureComplete() {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Capture failed turn."));
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow();
+        this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), "thread-failed", "0.153.2");
+        this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "turn-failed");
+        assertThat(this.agentExecutionEventRepository.activate(claim.agentSessionClaim())).isTrue();
+        assertThat(this.agentExecutionEventRepository.append(claim.agentSessionClaim(), event(
+                AgentExecutionEventType.TURN, AgentExecutionEventStatus.STARTED, "turn:turn-failed:started")))
+                .isEqualTo(AgentExecutionEventAppendResult.APPENDED);
+        assertThat(this.agentExecutionEventRepository.append(claim.agentSessionClaim(), event(
+                AgentExecutionEventType.TURN, AgentExecutionEventStatus.FAILED, "turn:turn-failed:failed")))
+                .isEqualTo(AgentExecutionEventAppendResult.APPENDED);
+        assertThat(this.agentExecutionEventRepository.markComplete(claim.agentSessionClaim())).isTrue();
+
+        assertThat(this.agentExecutionEventRepository.findPage(claim.agentSessionClaim().turnId(), 0, 10).orElseThrow())
+                .satisfies(page -> {
+                    assertThat(page.captureStatus()).isEqualTo(AgentExecutionEventCaptureStatus.COMPLETE);
+                    assertThat(page.events()).extracting(
+                                    com.sitionix.forgeagent.domain.model.AgentExecutionEvent::status)
+                            .containsExactly(AgentExecutionEventStatus.STARTED, AgentExecutionEventStatus.FAILED);
+                });
+    }
+
     private static AgentExecutionEventCandidate event(final AgentExecutionEventType type,
                                                        final AgentExecutionEventStatus status,
                                                        final String providerEventKey) {

@@ -78,13 +78,17 @@ class CodexAgentExecutionEventMapperTest {
 
         final AgentExecutionEventCandidate tool = map("item/completed", """
                 {"threadId":"t","turnId":"u","item":{"id":"m1","type":"mcpToolCall","server":"drive",
-                 "tool":"search","status":"completed","arguments":{"AWS_SECRET_ACCESS_KEY":"request-secret"},
+                 "tool":"search","operation":"files.search","status":"completed",
+                 "arguments":{"password":"do-not-store","task":"private input"},
                  "result":{"access_token":"secret","summary":"found"}}}
                 """);
         assertThat(tool.type()).isEqualTo(AgentExecutionEventType.TOOL_CALL);
         assertThat(this.payload(tool).path("toolKind").asText()).isEqualTo("MCP");
+        assertThat(this.payload(tool).path("tool").asText()).isEqualTo("search");
+        assertThat(this.payload(tool).path("server").asText()).isEqualTo("drive");
+        assertThat(this.payload(tool).path("operation").asText()).isEqualTo("files.search");
         assertThat(this.payload(tool).toString()).contains("[REDACTED]", "found")
-                .doesNotContain("request-secret", "\"secret\"");
+                .doesNotContain("do-not-store", "private input", "arguments", "requestSummary", "\"secret\"");
 
         final AgentExecutionEventCandidate message = map("item/completed", """
                 {"threadId":"t","turnId":"u","item":{"id":"a1","type":"agentMessage","phase":"final_answer","text":"done"}}

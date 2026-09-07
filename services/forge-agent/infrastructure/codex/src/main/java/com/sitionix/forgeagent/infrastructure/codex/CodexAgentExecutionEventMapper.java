@@ -42,6 +42,14 @@ final class CodexAgentExecutionEventMapper {
         return this.turnEvent(turnId, AgentExecutionEventStatus.COMPLETED, "completed", observedAt);
     }
 
+    AgentExecutionEventCandidate turnFailed(final String turnId, final String message, final Instant observedAt) {
+        final ObjectNode payload = this.objectMapper.createObjectNode();
+        payload.put("providerTurnId", turnId);
+        if (message != null && !message.isBlank()) this.putBounded(payload, "message", message);
+        return this.event(AgentExecutionEventType.TURN, AgentExecutionEventStatus.FAILED, null,
+                "turn:" + turnId + ":failed", payload, observedAt);
+    }
+
     private AgentExecutionEventCandidate turnEvent(final String turnId,
                                                     final AgentExecutionEventStatus status,
                                                     final String stage,
@@ -169,12 +177,6 @@ final class CodexAgentExecutionEventMapper {
         this.copyText(item, payload, "name", "tool");
         this.copyText(item, payload, "server", "server");
         this.copyText(item, payload, "operation", "operation");
-        for (final String field : new String[]{"arguments", "input", "request"}) {
-            if (item.has(field)) {
-                payload.set("requestSummary", this.sanitizer.sanitize(item.path(field)));
-                break;
-            }
-        }
         final JsonNode result = item.path("result");
         if (!result.isMissingNode() && !result.isNull()) payload.set("responseSummary", this.sanitizer.sanitize(result));
         return this.event(AgentExecutionEventType.TOOL_CALL,

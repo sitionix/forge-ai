@@ -42,6 +42,27 @@ class CodexExecutionEventObserverTest {
     }
 
     @Test
+    void flushesOnlyBufferedEventsForTheAuthoritativeProviderTurn() throws Exception {
+        final RecordingCallbacks callbacks = new RecordingCallbacks();
+        final CodexExecutionEventObserver observer = new CodexExecutionEventObserver(
+                new CodexAgentExecutionEventMapper(this.json), callbacks);
+        observer.bindThread("thread-1");
+        observer.observe("item/started", this.json.readTree("""
+                {"threadId":"thread-1","turnId":"turn-old","item":{"id":"cmd-old","type":"commandExecution","command":"old"}}
+                """));
+        observer.observe("item/started", this.json.readTree("""
+                {"threadId":"thread-1","turnId":"turn-new","item":{"id":"cmd-new","type":"commandExecution","command":"new"}}
+                """));
+
+        observer.activate("turn-new");
+
+        assertThat(callbacks.events).extracting(AgentExecutionEventCandidate::providerEventKey)
+                .containsExactly("turn:turn-new:started", "item:cmd-new:started");
+        assertThat(callbacks.events).extracting(AgentExecutionEventCandidate::payload)
+                .allSatisfy(payload -> assertThat(payload).doesNotContain("old", "cmd-old", "turn-old"));
+    }
+
+    @Test
     void ignoresOtherCorrelationAndCompletesExactlyOnce() throws Exception {
         final RecordingCallbacks callbacks = new RecordingCallbacks();
         final CodexExecutionEventObserver observer = new CodexExecutionEventObserver(

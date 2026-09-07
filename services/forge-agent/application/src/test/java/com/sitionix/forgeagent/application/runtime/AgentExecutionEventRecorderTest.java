@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.application.runtime;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
@@ -54,6 +55,22 @@ class AgentExecutionEventRecorderTest {
         final AgentExecutionEventRecorder recorder = new AgentExecutionEventRecorder(this.repository);
 
         assertThatCode(() -> recorder.record(claim, event)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void terminalEventFailureDegradesCaptureInsteadOfMarkingItComplete() {
+        final AgentSessionExecutionClaim claim = claim();
+        final AgentExecutionEventCandidate event = new AgentExecutionEventCandidate(
+                AgentExecutionEventType.TURN, AgentExecutionEventStatus.FAILED, null,
+                "turn:turn-1:failed", "{\"message\":\"provider failed\"}",
+                Instant.parse("2026-09-07T09:00:02Z"));
+        doThrow(new IllegalStateException("terminal append failed")).when(this.repository).append(claim, event);
+        final AgentExecutionEventRecorder recorder = new AgentExecutionEventRecorder(this.repository);
+
+        assertThatCode(() -> recorder.complete(claim, event)).doesNotThrowAnyException();
+
+        verify(this.repository).markDegraded(claim);
+        verify(this.repository, never()).markComplete(claim);
     }
 
     private static AgentSessionExecutionClaim claim() {

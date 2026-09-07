@@ -12,6 +12,7 @@ final class CodexExecutionState {
     private String latestFinalAnswer;
     private String latestCompatibilityAnswer;
     private volatile boolean providerInterruptRequired;
+    private volatile boolean failed;
 
     CodexExecutionState(final String threadId) {
         this.threadId = threadId;
@@ -69,12 +70,18 @@ final class CodexExecutionState {
         return Optional.ofNullable(this.latestFinalAnswer == null ? this.latestCompatibilityAnswer : this.latestFinalAnswer);
     }
 
-    void complete(final String output) {
+    synchronized void complete(final String output) {
         this.result.complete(output);
     }
 
-    void fail(final RuntimeException exception) {
+    synchronized void fail(final RuntimeException exception) {
+        if (this.result.isDone()) return;
+        this.failed = true;
         this.result.completeExceptionally(exception);
+    }
+
+    boolean failed() {
+        return this.failed;
     }
 
     void failPolicyViolation(final RuntimeException exception) {
