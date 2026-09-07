@@ -22,6 +22,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetCapabilitiesResp
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceMetricsResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceProcessMetricsResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMonitoringRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionEventPageResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
@@ -30,6 +31,15 @@ import org.springframework.http.HttpStatus;
 public final class ForgeAgentWireMockEndpoints {
 
     private ForgeAgentWireMockEndpoints() {
+    }
+
+    public static Endpoint<Void, AgentExecutionEventPageResponse> agentExecutionEvents() {
+        return Endpoint.createContract(
+                "/api/v1/agent-execution-turns/{turnId}/events", HttpMethod.GET,
+                Void.class, AgentExecutionEventPageResponse.class,
+                (WiremockDefault) context -> context.plainUrl()
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("agent-execution-events-response.json"));
     }
 
     public static Endpoint<ProjectAssetRequest, ProjectAssetResponse> createAsset() {

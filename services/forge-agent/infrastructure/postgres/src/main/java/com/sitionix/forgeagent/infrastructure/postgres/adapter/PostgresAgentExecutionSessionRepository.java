@@ -30,7 +30,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
                 : this.jdbc.queryForObject("SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_execution_turns WHERE agent_session_id = ?", Integer.class, session.id());
         final UUID turnId = UUID.randomUUID();
         final Instant now = Instant.now();
-        this.jdbc.update("INSERT INTO agent_execution_turns(id,agent_session_id,node_run_id,sequence,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+        this.jdbc.update("INSERT INTO agent_execution_turns(id,agent_session_id,node_run_id,sequence,status,event_capture_status,created_at,updated_at) VALUES (?,?,?,?,?,'NOT_STARTED',?,?)",
                 turnId, session.id(), nodeRun.id(), sequence, AgentExecutionTurnStatus.QUEUED.name(),
                 Timestamp.from(now), Timestamp.from(now));
         return this.findByNodeRunId(nodeRun.id()).orElseThrow();

@@ -137,6 +137,12 @@ public interface ForgeAgentHttpClient {
     @GetExchange("/api/v1/workflow-runs/{runId}/agent-execution-contexts")
     List<com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionContextResponse> getAgentExecutionContexts(@PathVariable UUID runId);
 
+    @GetExchange("/api/v1/agent-execution-turns/{turnId}/events")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionEventPageResponse getAgentExecutionEvents(
+            @PathVariable UUID turnId,
+            @RequestParam long afterSequence,
+            @RequestParam int limit);
+
     @GetExchange("/api/v1/projects/{projectId}/log-sources")
     List<AgentLogSourceResponse> listProjectLogSources(@PathVariable UUID projectId);
 

@@ -719,4 +719,22 @@ class ForgeAgentClientAdapterTest {
         inOrder.verify(this.mapper).toDomain(second);
     }
 
+    @Test
+    void getAgentExecutionEventsExecutesTypedPagedClientCallAndMapsResponse() {
+        final UUID turnId = UUID.randomUUID();
+        final var upstream = new com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionEventPageResponse(
+                turnId, "UNAVAILABLE", List.of(), 7, 7, false);
+        final var expected = new com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage(
+                turnId, "UNAVAILABLE", List.of(), 7, 7, false);
+        when(this.httpClient.getAgentExecutionEvents(turnId, 7, 25)).thenReturn(upstream);
+        when(this.mapper.toDomain(upstream)).thenReturn(expected);
+
+        assertThat(this.adapter.getAgentExecutionEvents(turnId, 7, 25)).isSameAs(expected);
+
+        final InOrder inOrder = inOrder(this.executor, this.httpClient, this.mapper);
+        inOrder.verify(this.executor).execute(any());
+        inOrder.verify(this.httpClient).getAgentExecutionEvents(turnId, 7, 25);
+        inOrder.verify(this.mapper).toDomain(upstream);
+    }
+
 }

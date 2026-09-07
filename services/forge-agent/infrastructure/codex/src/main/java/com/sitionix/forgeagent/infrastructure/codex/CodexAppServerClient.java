@@ -78,8 +78,10 @@ final class CodexAppServerClient implements CodexClient {
                                    final String expectedProviderVersion,
                                    final CodexExecutionIdentityCallbacks callbacks, final boolean durable) {
         final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
+        final CodexExecutionEventObserver eventObserver = new CodexExecutionEventObserver(
+                new CodexAgentExecutionEventMapper(this.objectMapper), callbacks);
         final CodexJsonRpcTransport transport = this.startWorkspaceTransport(
-                request.executionWorkspace().cwd(), turnStateTracker);
+                request.executionWorkspace().cwd(), turnStateTracker, eventObserver);
         if (callbacks != null) callbacks.executionStarted(transport::close);
         CodexExecution execution = null;
         try {
@@ -87,7 +89,8 @@ final class CodexAppServerClient implements CodexClient {
             if (durable) {
                 this.validateDurableVersion(providerVersion, expectedProviderVersion);
             }
-            execution = this.startExecution(transport, turnStateTracker, request, existingThreadId, callbacks, providerVersion, durable);
+            execution = this.startExecution(transport, turnStateTracker, eventObserver, request,
+                    existingThreadId, callbacks, providerVersion, durable);
             if (callbacks != null) {
                 final CodexExecution activeExecution = execution;
                 callbacks.executionStarted(() -> {
@@ -99,13 +102,16 @@ final class CodexAppServerClient implements CodexClient {
                 });
             }
             try {
-                return this.awaitExecution(execution);
+                final String result = this.awaitExecution(execution);
+                eventObserver.complete();
+                return result;
             } catch (final CodexExecutionException exception) {
                 throw exception;
             } catch (final RuntimeException exception) {
                 throw this.executionFailure(CodexExecutionFailurePhase.TURN_EXECUTION, exception);
             }
         } finally {
+            eventObserver.discard();
             if (execution != null) {
                 this.releaseExecution(execution);
             }
@@ -155,7 +161,8 @@ final class CodexAppServerClient implements CodexClient {
     }
 
     private CodexJsonRpcTransport startWorkspaceTransport(final Path workingDirectory,
-                                                           final CodexTurnStateTracker turnStateTracker) {
+                                                           final CodexTurnStateTracker turnStateTracker,
+                                                           final CodexExecutionEventObserver eventObserver) {
         final StartedCodexAppServer started = this.processStarter.start(workingDirectory);
         return new CodexJsonRpcTransport(
                 this.objectMapper,
@@ -166,6 +173,7 @@ final class CodexAppServerClient implements CodexClient {
                     @Override
                     public void handleNotification(final String method, final JsonNode params) {
                         turnStateTracker.handleNotification(method, params);
+                        eventObserver.observe(method, params);
                     }
 
                     @Override
@@ -186,6 +194,7 @@ final class CodexAppServerClient implements CodexClient {
 
     private CodexExecution startExecution(final CodexJsonRpcTransport current,
                                           final CodexTurnStateTracker turnStateTracker,
+                                          final CodexExecutionEventObserver eventObserver,
                                           final CodexTurnRequest request,
                                           final String existingThreadId,
                                           final CodexExecutionIdentityCallbacks callbacks,
@@ -209,6 +218,7 @@ final class CodexAppServerClient implements CodexClient {
                         ? CodexExecutionFailurePhase.THREAD_START
                         : CodexExecutionFailurePhase.THREAD_RESUME, exception);
             }
+            eventObserver.bindThread(threadId);
             if (callbacks != null && existingThreadId == null) callbacks.conversationStarted(threadId, providerVersion);
             state = turnStateTracker.register(threadId);
             final String turnId;
@@ -221,9 +231,10 @@ final class CodexAppServerClient implements CodexClient {
                 throw this.executionFailure(CodexExecutionFailurePhase.TURN_EXECUTION, exception);
             }
             if (callbacks != null) callbacks.turnStarted(turnId);
+            eventObserver.activate(turnId);
             turnStateTracker.bindTurnId(state, turnId);
             this.verifyTransportStillHealthy(current, state);
-            return new CodexExecution(current, turnStateTracker, state);
+            return new CodexExecution(current, turnStateTracker, state, eventObserver);
         } catch (final CodexExecutionException e) {
             if (state != null) {
                 turnStateTracker.remove(state);
@@ -455,7 +466,8 @@ final class CodexAppServerClient implements CodexClient {
 
     private record CodexExecution(CodexJsonRpcTransport transport,
                                   CodexTurnStateTracker turnStateTracker,
-                                  CodexExecutionState state) {
+                                  CodexExecutionState state,
+                                  CodexExecutionEventObserver eventObserver) {
 
         private String threadId() {
             return this.state.threadId();

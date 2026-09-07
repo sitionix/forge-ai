@@ -6,6 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.runtime.ExecutionWorkspace;
+import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
+import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
+import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -23,6 +26,122 @@ import org.junit.jupiter.api.Test;
 class CodexAppServerTurnClientTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Test
+    void bufferedActivityFlushesAfterTurnIdentityAndIdleCompletionLeavesResultUnchanged() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final List<String> ordering = new ArrayList<>();
+        final List<AgentExecutionEventCandidate> events = new ArrayList<>();
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeTrackedFresh(
+                new CodexTurnRequest("Run tests.", "Instructions.", "model-a", null,
+                        this.schemaUnchecked(), this.workspace()),
+                new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(final String id, final String version) { ordering.add("thread"); }
+                    public void turnStarted(final String id) { ordering.add("turn"); }
+                    public void executionEvent(final AgentExecutionEventCandidate event) {
+                        ordering.add("event:" + event.type());
+                        events.add(event);
+                    }
+                    public void eventCaptureCompleted(final AgentExecutionEventCandidate event) {
+                        ordering.add("terminal");
+                        events.add(event);
+                    }
+                }));
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+
+        process.writeStdout(this.compactJson("""
+                {"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1"}}}
+                """));
+        process.writeStdout(this.compactJson("""
+                {"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1",
+                 "item":{"id":"cmd-failed","type":"commandExecution","command":"tests","status":"failed","exitCode":1}}}
+                """));
+        process.writeStdout(this.compactJson("""
+                {"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1",
+                 "item":{"id":"cmd-ok","type":"commandExecution","command":"tests","status":"completed","exitCode":0}}}
+                """));
+        this.agentMessage(process, "thread-1", "turn-1", "final_answer",
+                "{\"summary\":\"Recovered\",\"riskLevel\":\"LOW\"}");
+        process.writeStdout(this.compactJson("""
+                {"method":"thread/status/changed","params":{"threadId":"thread-1","status":{"type":"idle"}}}
+                """));
+        assertThat(events).isEmpty();
+
+        this.replyTurn(process, turnStart, "turn-1");
+
+        assertThat(result.get(1, TimeUnit.SECONDS))
+                .isEqualTo("{\"summary\":\"Recovered\",\"riskLevel\":\"LOW\"}");
+        assertThat(ordering).startsWith("thread", "turn", "event:TURN").endsWith("terminal");
+        assertThat(events).extracting(AgentExecutionEventCandidate::type)
+                .containsExactly(AgentExecutionEventType.TURN, AgentExecutionEventType.COMMAND,
+                        AgentExecutionEventType.COMMAND, AgentExecutionEventType.AGENT_MESSAGE,
+                        AgentExecutionEventType.TURN);
+        assertThat(events).extracting(AgentExecutionEventCandidate::status)
+                .containsExactly(AgentExecutionEventStatus.STARTED, AgentExecutionEventStatus.FAILED,
+                        AgentExecutionEventStatus.SUCCEEDED, AgentExecutionEventStatus.COMPLETED,
+                        AgentExecutionEventStatus.COMPLETED);
+        client.close();
+    }
+
+    @Test
+    void schemaTurnCompletedStillProducesOneSemanticTerminalEvent() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final List<AgentExecutionEventCandidate> events = new ArrayList<>();
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeTrackedFresh(
+                new CodexTurnRequest("Finish.", "Instructions.", "model-a", null,
+                        this.schemaUnchecked(), this.workspace()),
+                new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(final String id, final String version) { }
+                    public void turnStarted(final String id) { }
+                    public void executionEvent(final AgentExecutionEventCandidate event) { events.add(event); }
+                    public void eventCaptureCompleted(final AgentExecutionEventCandidate event) { events.add(event); }
+                }));
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+        this.replyTurn(process, turnStart, "turn-1");
+        this.complete(process, "thread-1", "turn-1", "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
+
+        assertThat(result.get(1, TimeUnit.SECONDS)).contains("OK");
+        assertThat(events).filteredOn(event -> event.type() == AgentExecutionEventType.TURN
+                        && event.status() == AgentExecutionEventStatus.COMPLETED)
+                .singleElement();
+        client.close();
+    }
+
+    @Test
+    void bufferedActivityIsDiscardedWhenTurnIdentityPersistenceFails() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final List<AgentExecutionEventCandidate> events = new ArrayList<>();
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeTrackedFresh(
+                new CodexTurnRequest("Race.", "Instructions.", "model-a", null,
+                        this.schemaUnchecked(), this.workspace()),
+                new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(final String id, final String version) { }
+                    public void turnStarted(final String id) { throw new IllegalStateException("identity write failed"); }
+                    public void executionEvent(final AgentExecutionEventCandidate event) { events.add(event); }
+                }));
+        this.initialize(process);
+        final JsonNode threadStart = this.readRequest(process);
+        this.replyThread(process, threadStart, "thread-1");
+        final JsonNode turnStart = this.readRequest(process);
+        process.writeStdout(this.compactJson("""
+                {"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-1",
+                 "item":{"id":"cmd-1","type":"commandExecution","command":"pwd"}}}
+                """));
+        this.replyTurn(process, turnStart, "turn-1");
+
+        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS)).hasRootCauseMessage("identity write failed");
+        assertThat(events).isEmpty();
+        client.close();
+    }
 
     @Test
     void leaseCancellationSendsExactInterruptWithoutWaitingForResponseAndKillsProcess() throws Exception {

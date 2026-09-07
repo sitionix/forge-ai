@@ -115,6 +115,9 @@ public interface ForgeAgentClient {
 
   List<AgentExecutionContext> getAgentExecutionContexts(UUID runId);
 
+  com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage getAgentExecutionEvents(
+      UUID turnId, long afterSequence, int limit);
+
   List<AgentLogSource> listProjectLogSources(UUID projectId);
 
   AgentLogSource createProjectLogSource(UUID projectId, SaveAgentLogSourceCommand command);

@@ -29,6 +29,12 @@ public class DeterministicCodexRuntimePort implements CodexRuntimePort {
         this.provider.set(new CodexRuntimeProvider("codex", "Codex", RuntimeProviderStatus.UNAVAILABLE, null, List.of()));
     }
 
+    public void readyWithModel(final String modelId) {
+        this.provider.set(new CodexRuntimeProvider(
+                "codex", "Codex", RuntimeProviderStatus.READY, "codex-it/live",
+                List.of(new CodexRuntimeModel(modelId, modelId, "Live E2E model", List.of()))));
+    }
+
     private static CodexRuntimeProvider readyProvider() {
         return new CodexRuntimeProvider(
                 "codex",

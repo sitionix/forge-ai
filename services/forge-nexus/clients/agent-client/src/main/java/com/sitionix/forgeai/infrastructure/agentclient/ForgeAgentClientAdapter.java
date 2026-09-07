@@ -342,6 +342,13 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     }
 
     @Override
+    public com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage getAgentExecutionEvents(
+            final UUID turnId, final long afterSequence, final int limit) {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(
+                () -> this.httpClient.getAgentExecutionEvents(turnId, afterSequence, limit)));
+    }
+
+    @Override
     public List<AgentLogSource> listProjectLogSources(final UUID projectId) {
       final var response =
           clientCallExecutor.execute(() -> httpClient.listProjectLogSources(projectId));
