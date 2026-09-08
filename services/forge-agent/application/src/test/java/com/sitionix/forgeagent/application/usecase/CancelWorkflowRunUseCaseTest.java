@@ -63,6 +63,7 @@ class CancelWorkflowRunUseCaseTest {
         when(this.workflowRuns.findByIdForUpdate(RUN_ID)).thenReturn(Optional.of(run));
         when(this.nodeRuns.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(running, pending));
         when(this.executor.secureCancellation(running.id())).thenReturn(Optional.of(cancellations::incrementAndGet));
+        when(this.coordinator.cancelActiveNodeRuns(run)).thenReturn(true);
 
         this.useCase.execute(RUN_ID);
 
@@ -72,6 +73,25 @@ class CancelWorkflowRunUseCaseTest {
                 saved.status() == WorkflowRunStatus.CANCELLED && NOW.equals(saved.finishedAt())));
         TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
         assertThat(cancellations).hasValue(1);
+    }
+
+    @Test
+    void failsClosedWhenAuthoritativeLifecycleCancellationCannotTransitionEveryNode() {
+        final WorkflowRun run = this.run(WorkflowRunStatus.RUNNING, null);
+        final NodeRun running = this.nodeRun(NodeRunStatus.RUNNING, 1);
+        final AtomicInteger cancellations = new AtomicInteger();
+        when(this.workflowRuns.findByIdForUpdate(RUN_ID)).thenReturn(Optional.of(run));
+        when(this.nodeRuns.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(running));
+        when(this.executor.secureCancellation(running.id())).thenReturn(Optional.of(cancellations::incrementAndGet));
+        when(this.coordinator.cancelActiveNodeRuns(run)).thenReturn(false);
+
+        assertThatThrownBy(() -> this.useCase.execute(RUN_ID))
+                .isInstanceOfSatisfying(ConflictException.class, failure ->
+                        assertThat(failure.code()).isEqualTo("WORKFLOW_RUN_CANCELLATION_CONFLICT"));
+
+        verify(this.workflowRuns, never()).saveLifecycle(org.mockito.ArgumentMatchers.any());
+        assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
+        assertThat(cancellations).hasValue(0);
     }
 
     @Test

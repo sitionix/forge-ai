@@ -29,6 +29,7 @@ public class CancelWorkflowRunUseCase {
 
     public static final String INTERRUPT_UNAVAILABLE = "AGENT_EXECUTION_INTERRUPT_UNAVAILABLE";
     public static final String NOT_CANCELLABLE = "WORKFLOW_RUN_NOT_CANCELLABLE";
+    public static final String CANCELLATION_CONFLICT = "WORKFLOW_RUN_CANCELLATION_CONFLICT";
 
     private final WorkflowRunRepository workflowRunRepository;
     private final NodeRunRepository nodeRunRepository;
@@ -63,7 +64,12 @@ public class CancelWorkflowRunUseCase {
                     )));
         }
 
-        this.coordinator.cancelActiveNodeRuns(run);
+        if (!this.coordinator.cancelActiveNodeRuns(run)) {
+            throw new ConflictException(
+                    CANCELLATION_CONFLICT,
+                    "The workflow run changed while it was being stopped. No cancellation was committed."
+            );
+        }
         this.workflowRunRepository.saveLifecycle(this.cancelled(run));
         this.afterCommit(cancellations);
     }
