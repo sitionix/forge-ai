@@ -218,7 +218,8 @@ public class NodeRunLifecycle {
             return;
         }
         final NodeRun nodeRun = target.nodeRun();
-        if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
+        if (nodeRun.status() == NodeRunStatus.CANCELLED
+                && target.workflowRun().status() == WorkflowRunStatus.CANCELLED) {
             return;
         }
         if (claim != null) this.sessionLeaseService.lockCurrent(claim);
@@ -227,6 +228,9 @@ public class NodeRunLifecycle {
                     "STALE_AGENT_SESSION_LEASE",
                     "Tracked agent execution failure requires the current session lease."
             );
+        }
+        if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
+            return;
         }
         if (nodeRun.status() == NodeRunStatus.FAILED && normalized.equals(nodeRun.failure())) {
             return;
