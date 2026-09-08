@@ -14,6 +14,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.RunPort;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -141,8 +142,13 @@ public final class CodexAgentExecutor implements AgentExecutor {
 
     @Override
     public void cancel(final NodeExecutionClaim claim) {
-        final ExecutionCancellation cancellation = this.activeExecutions.get(claim.nodeRunId());
-        if (cancellation != null) cancellation.cancel();
+        this.secureCancellation(claim.nodeRunId()).ifPresent(Runnable::run);
+    }
+
+    @Override
+    public Optional<Runnable> secureCancellation(final UUID nodeRunId) {
+        return Optional.ofNullable(this.activeExecutions.get(nodeRunId))
+                .map(cancellation -> cancellation::cancel);
     }
 
     private static final class ExecutionCancellation {

@@ -1454,6 +1454,35 @@ body.sidebar-collapsed .sidebar-link {
   margin: 0 0 16px;
 }
 
+.task-execution-run-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.task-execution-stop-confirmation {
+  align-items: center;
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--border));
+  border-radius: 10px;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.task-execution-stop-confirmation span {
+  display: block;
+  margin-top: 2px;
+}
+
+.task-execution-stop-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
 .task-execution-summary-grid {
   display: grid;
   grid-template-columns: minmax(220px, 1.35fr) minmax(180px, 0.8fr) minmax(140px, 0.45fr);

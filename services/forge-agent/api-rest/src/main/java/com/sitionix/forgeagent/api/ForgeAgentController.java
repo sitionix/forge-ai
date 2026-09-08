@@ -19,6 +19,7 @@ import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
+import com.sitionix.forgeagent.application.usecase.CancelWorkflowRunUseCase;
 import com.sitionix.forgeagent.application.usecase.GetAiRuntime;
 import com.sitionix.forgeagent.application.usecase.ProjectRepositoryUseCases;
 import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
@@ -50,6 +51,7 @@ public class ForgeAgentController {
     private final GetAiRuntime getAiRuntime;
     private final WorkflowUseCases workflowUseCases;
     private final WorkflowRunUseCases workflowRunUseCases;
+    private final CancelWorkflowRunUseCase cancelWorkflowRun;
     private final ProjectTaskUseCases projectTaskUseCases;
     private final ForgeAgentApiMapper mapper;
 
@@ -219,5 +221,11 @@ public class ForgeAgentController {
     @GetMapping("/api/v1/workflow-runs/{runId}")
     public ResponseEntity<WorkflowRunResponse> getWorkflowRun(@PathVariable final UUID runId) {
         return ResponseEntity.ok(this.mapper.toResponse(this.workflowRunUseCases.getWorkflowRun(runId)));
+    }
+
+    @PostMapping("/api/v1/workflow-runs/{runId}/cancel")
+    public ResponseEntity<Void> cancelWorkflowRun(@PathVariable final UUID runId) {
+        this.cancelWorkflowRun.execute(runId);
+        return ResponseEntity.noContent().build();
     }
 }

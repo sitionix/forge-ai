@@ -474,6 +474,28 @@ class CodexAgentExecutorTest {
     }
 
     @Test
+    void securedOperatorCancellationUsesTheActiveExecutionExactlyOnce() {
+        final NodeExecutionClaim claim = this.trackedClaim("thread-existing");
+        final java.util.concurrent.atomic.AtomicInteger providerCancellations = new java.util.concurrent.atomic.AtomicInteger();
+        this.client.providerCancellation = providerCancellations::incrementAndGet;
+        this.client.onExecutionStarted = () -> {
+            final Runnable cancellation = this.executor.secureCancellation(claim.nodeRunId()).orElseThrow();
+            cancellation.run();
+            cancellation.run();
+        };
+
+        this.executor.execute(claim);
+
+        assertThat(providerCancellations).hasValue(1);
+        assertThat(this.executor.secureCancellation(claim.nodeRunId())).isEmpty();
+    }
+
+    @Test
+    void operatorCancellationIsUnavailableWithoutAnActiveExecution() {
+        assertThat(this.executor.secureCancellation(NODE_RUN_ID)).isEmpty();
+    }
+
+    @Test
     void eventPersistenceFailureDoesNotChangeStructuredResultOrOutputRouting() {
         final AgentSessionLeaseService leases = mock(AgentSessionLeaseService.class);
         final AgentExecutionEventRepository events = mock(AgentExecutionEventRepository.class);

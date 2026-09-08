@@ -53,6 +53,7 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
+import com.sitionix.forgeai.domain.usecase.CancelAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.CloneAgentProjectRepository;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentProject;
@@ -148,6 +149,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
     @Mock
     private GetAgentWorkflowRun getAgentWorkflowRun;
     @Mock
+    private CancelAgentWorkflowRun cancelAgentWorkflowRun;
+    @Mock
     private AgentProxyApiMapper mapper;
 
     private ForgeAiInfrastructureAgentsController controller;
@@ -181,6 +184,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 this.createAgentWorkflowRun,
                 this.listAgentWorkflowRuns,
                 this.getAgentWorkflowRun,
+                this.cancelAgentWorkflowRun,
                 this.mapper
         );
     }
@@ -554,6 +558,15 @@ class ForgeAiInfrastructureAgentsControllerTest {
         assertThat(actual.getBody()).isSameAs(response);
         verify(this.getAgentWorkflowRun).execute(RUN_ID);
         verify(this.mapper).toResponse(run);
+    }
+
+    @Test
+    void cancelWorkflowRun() {
+        final var actual = this.controller.cancelWorkflowRun(RUN_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(actual.getBody()).isNull();
+        verify(this.cancelAgentWorkflowRun).execute(RUN_ID);
     }
 
     private AgentProject project() {
