@@ -59,7 +59,7 @@ describe('agent execution activity presentation', () => {
       event(4, 'COMMAND', { command: 'printf "a\\n b"', cwd: '/workspace', output: 'a\n b', exitCode: 1, durationMs: 12700, truncated: true, originalBytes: 100, storedBytes: 20 }, { status: 'FAILED' }),
       event(5, 'FILE_CHANGE', { changes: [{ path: 'src/App.java', operation: 'UPDATE', summary: 'Mapper' }], paths: ['src/Test.java'] }),
       event(6, 'TOOL_CALL', { toolKind: 'MCP', tool: 'search', server: 'drive', operation: 'files.search', providerStatus: 'completed', responseSummary: { result: 'found' }, requestBody: 'must-not-render' }, { status: 'SUCCEEDED' }),
-      event(7, 'AGENT_MESSAGE', { text: 'Implementation complete.' }, { phase: 'FINAL' }),
+      event(7, 'AGENT_MESSAGE', { message: 'Implementation complete.' }, { phase: 'FINAL' }),
       event(8, 'WARNING', { message: 'Context was compacted.' }),
       event(9, 'ERROR', { message: 'Provider returned an execution error.' }),
       event(10, 'TOKEN_USAGE', { total: { input: 2 } }),
@@ -109,6 +109,9 @@ describe('agent execution activity presentation', () => {
     expect(rendered[6]).toContain('Agent message');
     expect(rendered[6]).toContain('Implementation complete.');
     expect(rendered[6]).toContain('agent-activity-event-final');
+    expect(renderAgentExecutionActivityEvent(
+      event(13, 'AGENT_MESSAGE', { text: 'Legacy message.' }, { phase: 'FINAL' })
+    )).toContain('Legacy message.');
 
     expect(rendered[7]).toContain('Warning');
     expect(rendered[7]).toContain('Context was compacted.');

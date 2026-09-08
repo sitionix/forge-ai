@@ -205,7 +205,7 @@ function renderToolCall(event, payload) {
 
 function renderAgentMessage(event, payload) {
   const finalClass = String(event.phase ?? '').toUpperCase() === 'FINAL' ? 'agent-activity-event-final' : '';
-  return eventRow(event, 'Agent message', paragraph(payload.text), finalClass);
+  return eventRow(event, 'Agent message', paragraph(payload.message ?? payload.text), finalClass);
 }
 
 function renderMessage(event, payload, title) {
