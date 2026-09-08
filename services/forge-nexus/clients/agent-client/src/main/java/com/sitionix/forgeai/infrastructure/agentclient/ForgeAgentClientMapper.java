@@ -147,6 +147,27 @@ public class ForgeAgentClientMapper {
                 response.finishedAt());
     }
 
+    com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage toDomain(
+            final com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionEventPageResponse response) {
+        return new com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage(
+                response.turnId(), response.captureStatus(),
+                response.events().stream().map(this::toDomain).toList(),
+                response.lastSequence(), response.nextAfterSequence(), response.hasMore());
+    }
+
+    private com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEvent toDomain(
+            final com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionEventResponse response) {
+        try {
+            return new com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEvent(
+                    response.id(), response.agentSessionId(), response.agentTurnId(), response.nodeRunId(),
+                    response.sequence(), response.type(), response.status(), response.phase(),
+                    response.providerEventKey(), this.objectMapper.writeValueAsString(response.payload()),
+                    response.occurredAt(), response.createdAt());
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalArgumentException("Agent execution event payload must be valid JSON.", exception);
+        }
+    }
+
     AgentLogSourceRequest toRequest(final SaveAgentLogSourceCommand command) {
         return new AgentLogSourceRequest(
                 command.name(),

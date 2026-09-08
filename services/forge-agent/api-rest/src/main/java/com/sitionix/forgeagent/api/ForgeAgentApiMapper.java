@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.api.dto.AgentListResponse;
 import com.sitionix.forgeagent.api.dto.AgentExecutionContextResponse;
+import com.sitionix.forgeagent.api.dto.AgentExecutionEventPageResponse;
+import com.sitionix.forgeagent.api.dto.AgentExecutionEventResponse;
 import com.sitionix.forgeagent.api.dto.AgentModelSelectionRequest;
 import com.sitionix.forgeagent.api.dto.AgentModelSelectionResponse;
 import com.sitionix.forgeagent.api.dto.AgentResponse;
@@ -107,6 +109,27 @@ import org.springframework.stereotype.Component;
 class ForgeAgentApiMapper {
 
     private final ObjectMapper objectMapper;
+
+    AgentExecutionEventPageResponse toResponse(
+            final com.sitionix.forgeagent.domain.model.AgentExecutionEventPage page) {
+        return new AgentExecutionEventPageResponse(
+                page.turnId(), page.captureStatus().name(),
+                page.events().stream().map(this::toResponse).toList(),
+                page.lastSequence(), page.nextAfterSequence(), page.hasMore());
+    }
+
+    private AgentExecutionEventResponse toResponse(
+            final com.sitionix.forgeagent.domain.model.AgentExecutionEvent event) {
+        try {
+            return new AgentExecutionEventResponse(
+                    event.id(), event.agentSessionId(), event.agentTurnId(), event.nodeRunId(),
+                    event.sequence(), event.type().name(), event.status() == null ? null : event.status().name(),
+                    event.phase(), event.providerEventKey(), this.objectMapper.readTree(event.payload()),
+                    event.occurredAt(), event.createdAt());
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalStateException("Stored agent execution event payload was invalid.", exception);
+        }
+    }
 
     AgentExecutionContextResponse toResponse(final com.sitionix.forgeagent.domain.model.AgentExecutionAllocation allocation) {
         final var session = allocation.session();

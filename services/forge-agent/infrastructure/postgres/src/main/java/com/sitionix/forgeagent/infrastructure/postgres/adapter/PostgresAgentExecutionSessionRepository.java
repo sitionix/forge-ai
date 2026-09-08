@@ -30,7 +30,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
                 : this.jdbc.queryForObject("SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_execution_turns WHERE agent_session_id = ?", Integer.class, session.id());
         final UUID turnId = UUID.randomUUID();
         final Instant now = Instant.now();
-        this.jdbc.update("INSERT INTO agent_execution_turns(id,agent_session_id,node_run_id,sequence,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+        this.jdbc.update("INSERT INTO agent_execution_turns(id,agent_session_id,node_run_id,sequence,status,event_capture_status,created_at,updated_at) VALUES (?,?,?,?,?,'NOT_STARTED',?,?)",
                 turnId, session.id(), nodeRun.id(), sequence, AgentExecutionTurnStatus.QUEUED.name(),
                 Timestamp.from(now), Timestamp.from(now));
         return this.findByNodeRunId(nodeRun.id()).orElseThrow();
@@ -191,7 +191,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
             final String message="Agent execution ownership expired after a worker stopped. The uncertain provider operation was not resumed.";
             this.jdbc.update("UPDATE node_runs SET status='FAILED',failure_code=?,failure_message=?,finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='RUNNING'",
                     code,message,session.activeNodeRunId());
-            this.jdbc.update("UPDATE agent_execution_turns SET status='FAILED',failure_code=?,failure_message=?,finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            this.jdbc.update("UPDATE agent_execution_turns SET status='FAILED',failure_code=?,failure_message=?,event_capture_status=CASE WHEN event_capture_status='ACTIVE' THEN 'DEGRADED' ELSE event_capture_status END,finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                     code,message,turns.getFirst());
             final boolean fresh=session.contextMode()==NodeContextMode.FRESH_EACH_NODE_RUN;
             this.jdbc.update("UPDATE agent_execution_sessions SET status=?,terminal_outcome=?,active_node_run_id=NULL,lease_owner_id=NULL,lease_expires_at=NULL,failure_code=?,failure_message=?,closed_at=CASE WHEN ?='CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND lease_owner_id=? AND lease_token=?",
@@ -209,7 +209,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
             default -> "FAILED";
         };
         this.jdbc.update(
-                "UPDATE agent_execution_turns SET status=?,failure_code=?,failure_message=?,finished_at=COALESCE(finished_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                "UPDATE agent_execution_turns SET status=?,failure_code=?,failure_message=?,event_capture_status=CASE WHEN event_capture_status='ACTIVE' THEN 'DEGRADED' ELSE event_capture_status END,finished_at=COALESCE(finished_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 turnStatus, node.failureCode(), node.failureMessage(), turnId
         );
         final boolean fresh = session.contextMode() == NodeContextMode.FRESH_EACH_NODE_RUN;
@@ -250,7 +250,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
             return false;
         }
         this.jdbc.update(
-                "UPDATE agent_execution_turns SET status='CANCELLED',finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN ('QUEUED','STARTING','ACTIVE')",
+                "UPDATE agent_execution_turns SET status='CANCELLED',event_capture_status=CASE WHEN event_capture_status='ACTIVE' THEN 'DEGRADED' ELSE event_capture_status END,finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN ('QUEUED','STARTING','ACTIVE')",
                 allocation.turn().id()
         );
         this.jdbc.update(

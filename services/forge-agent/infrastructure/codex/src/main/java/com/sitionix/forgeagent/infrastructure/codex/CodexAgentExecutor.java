@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionEventRecorder;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import org.springframework.stereotype.Component;
 
@@ -34,18 +35,21 @@ public final class CodexAgentExecutor implements AgentExecutor {
     private final ObjectMapper objectMapper;
     private final CodexClient client;
     private final AgentSessionLeaseService sessionLeaseService;
+    private final AgentExecutionEventRecorder eventRecorder;
     private final ConcurrentHashMap<UUID, ExecutionCancellation> activeExecutions = new ConcurrentHashMap<>();
 
     @Autowired
     public CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client,
-                              final AgentSessionLeaseService sessionLeaseService) {
+                              final AgentSessionLeaseService sessionLeaseService,
+                              final AgentExecutionEventRecorder eventRecorder) {
         this.objectMapper = objectMapper;
         this.client = client;
         this.sessionLeaseService = sessionLeaseService;
+        this.eventRecorder = eventRecorder;
     }
 
     CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client) {
-        this(objectMapper, client, null);
+        this(objectMapper, client, null, null);
     }
 
     @Override
@@ -83,6 +87,27 @@ public final class CodexAgentExecutor implements AgentExecutor {
                         }
                         @Override public void turnStarted(String turnId) {
                             CodexAgentExecutor.this.persistTurnIdentity(claim, turnId);
+                            if (CodexAgentExecutor.this.eventRecorder != null) {
+                                CodexAgentExecutor.this.eventRecorder.activate(claim.agentSessionClaim());
+                            }
+                        }
+                        @Override public void executionEvent(
+                                com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate event) {
+                            if (CodexAgentExecutor.this.eventRecorder != null) {
+                                CodexAgentExecutor.this.eventRecorder.record(claim.agentSessionClaim(), event);
+                            }
+                        }
+                        @Override public void eventCaptureCompleted(
+                                com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate event) {
+                            if (CodexAgentExecutor.this.eventRecorder != null) {
+                                CodexAgentExecutor.this.eventRecorder.complete(claim.agentSessionClaim(), event);
+                            }
+                        }
+                        @Override public void eventCaptureDegraded(final RuntimeException failure) {
+                            if (CodexAgentExecutor.this.eventRecorder != null) {
+                                CodexAgentExecutor.this.eventRecorder.degrade(
+                                        claim.agentSessionClaim(), "normalize", failure);
+                            }
                         }
                         };
                 outputText = claim.agentSessionClaim().contextMode() == com.sitionix.forgeagent.domain.model.NodeContextMode.FRESH_EACH_NODE_RUN

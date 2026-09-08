@@ -22,6 +22,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentAssetCapabilitiesResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentServiceMetricsResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentServiceProcessMetricsResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentAssetMonitoringRequest;
+import com.sitionix.forgeai.api.agentproxy.AgentExecutionEventPageResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
@@ -30,6 +31,14 @@ import org.springframework.http.HttpStatus;
 public final class NexusAgentMockMvcEndpoints {
 
     private NexusAgentMockMvcEndpoints() {
+    }
+
+    public static Endpoint<Void, AgentExecutionEventPageResponse> agentExecutionEvents() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/agent-execution-turns/{turnId}/events", HttpMethod.GET,
+                Void.class, AgentExecutionEventPageResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(HttpStatus.OK.value())
+                        .expectResponse("agent-execution-events-response.json"));
     }
 
     public static Endpoint<AgentProjectAssetRequest, AgentProjectAssetResponse> createAsset() {

@@ -38,9 +38,28 @@ class NexusAgentProxyIT {
     private static final UUID SERVICE_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
     private static final UUID ASSET_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID CONNECTION_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
+    private static final UUID TURN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
 
     @Autowired
     private NexusProxyTestManager testManager;
+
+    @Test
+    void executionEventsForwardCursorAndLimitThroughTheTypedThinProxy() {
+        final var upstream = this.testManager.wiremock()
+                .createMapping(ForgeAgentWireMockEndpoints.agentExecutionEvents())
+                .pathPattern(WireMockPathParams.create().add("turnId", equalTo(TURN_ID.toString())))
+                .urlWithQueryParam(WireMockQueryParams.create()
+                        .add("afterSequence", equalTo("7"))
+                        .add("limit", equalTo("25")))
+                .createDefault();
+
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.agentExecutionEvents())
+                .withPathParameters(PathParams.create().add("turnId", TURN_ID))
+                .withQueryParameters(QueryParams.create().add("afterSequence", "7").add("limit", "25"))
+                .assertDefault();
+
+        upstream.verify();
+    }
 
     @Test
     void assetCrudInspectionAndMonitoringFlowThroughTheFullTypedProxy() {

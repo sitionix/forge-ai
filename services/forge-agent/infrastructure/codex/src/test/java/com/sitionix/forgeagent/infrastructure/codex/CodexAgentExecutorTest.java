@@ -2,13 +2,25 @@ package com.sitionix.forgeagent.infrastructure.codex;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.runtime.ExecutionWorkspace;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionEventRecorder;
+import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
+import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
+import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
 import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
@@ -19,6 +31,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunPort;
+import com.sitionix.forgeagent.domain.port.AgentExecutionEventRepository;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
@@ -460,8 +473,72 @@ class CodexAgentExecutorTest {
         assertThat(providerCancelled).isTrue();
     }
 
+    @Test
+    void eventPersistenceFailureDoesNotChangeStructuredResultOrOutputRouting() {
+        final AgentSessionLeaseService leases = mock(AgentSessionLeaseService.class);
+        final AgentExecutionEventRepository events = mock(AgentExecutionEventRepository.class);
+        when(events.append(any(), any())).thenThrow(new IllegalStateException("observability unavailable"));
+        final CodexAgentExecutor capturingExecutor = new CodexAgentExecutor(
+                this.objectMapper, this.client, leases, new AgentExecutionEventRecorder(events));
+        this.client.emitCapture = true;
+        this.client.outputText = """
+                {"payload":{"summary":"Done","riskLevel":"LOW"},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_B_ID);
+        final NodeExecutionClaim claim = this.tracked(this.multiOutputClaim(), "thread-existing");
+
+        final AgentExecutionResult result = capturingExecutor.execute(claim);
+
+        assertThat(result.output()).isEqualTo(new NodeRunOutput("{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}"));
+        assertThat(result.selectedOutputPortId()).isEqualTo(OUTPUT_B_ID);
+        verify(events, atLeastOnce()).markDegraded(claim.agentSessionClaim());
+    }
+
+    @Test
+    void failedProviderTurnCompletesCaptureWithoutChangingTheProviderFailure() {
+        final AgentSessionLeaseService leases = mock(AgentSessionLeaseService.class);
+        final AgentExecutionEventRepository events = mock(AgentExecutionEventRepository.class);
+        final CodexAgentExecutor capturingExecutor = new CodexAgentExecutor(
+                this.objectMapper, this.client, leases, new AgentExecutionEventRecorder(events));
+        this.client.emitFailedCapture = true;
+        this.client.durableFailure = new CodexExecutionException(
+                CodexExecutionFailurePhase.TURN_EXECUTION, "provider turn failed");
+        final NodeExecutionClaim claim = this.trackedClaim("thread-existing");
+
+        assertThatThrownBy(() -> capturingExecutor.execute(claim))
+                .isInstanceOf(CodexExecutionException.class)
+                .hasMessage("provider turn failed");
+        verify(events).append(any(), argThat(event -> event.type() == AgentExecutionEventType.TURN
+                && event.status() == AgentExecutionEventStatus.FAILED));
+        verify(events).markComplete(claim.agentSessionClaim());
+    }
+
+    @Test
+    void failedTerminalEventPersistenceDegradesCaptureWithoutChangingTheProviderFailure() {
+        final AgentSessionLeaseService leases = mock(AgentSessionLeaseService.class);
+        final AgentExecutionEventRepository events = mock(AgentExecutionEventRepository.class);
+        when(events.append(any(), argThat(event -> event.type() == AgentExecutionEventType.TURN
+                && event.status() == AgentExecutionEventStatus.FAILED)))
+                .thenThrow(new IllegalStateException("terminal event unavailable"));
+        final CodexAgentExecutor capturingExecutor = new CodexAgentExecutor(
+                this.objectMapper, this.client, leases, new AgentExecutionEventRecorder(events));
+        this.client.emitFailedCapture = true;
+        this.client.durableFailure = new CodexExecutionException(
+                CodexExecutionFailurePhase.TURN_EXECUTION, "provider turn failed");
+        final NodeExecutionClaim claim = this.trackedClaim("thread-existing");
+
+        assertThatThrownBy(() -> capturingExecutor.execute(claim))
+                .isInstanceOf(CodexExecutionException.class)
+                .hasMessage("provider turn failed");
+        verify(events).markDegraded(claim.agentSessionClaim());
+        verify(events, never()).markComplete(claim.agentSessionClaim());
+    }
+
     private NodeExecutionClaim trackedClaim(final String conversationId) {
         final NodeExecutionClaim base = this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", null), OUTPUT_SCHEMA);
+        return this.tracked(base, conversationId);
+    }
+
+    private NodeExecutionClaim tracked(final NodeExecutionClaim base, final String conversationId) {
         return new NodeExecutionClaim(base.workflowRunId(), base.nodeRunId(), base.sourceAgentId(), base.workflowInput(),
                 base.agentName(), base.agentInstructions(), base.outputSchema(), base.executionModel(), base.inputEnvelope(),
                 base.availableOutputs(), base.executionWorkspace(), new AgentSessionExecutionClaim(
@@ -515,6 +592,8 @@ class CodexAgentExecutorTest {
         private RuntimeException durableFailure;
         private Runnable onExecutionStarted;
         private Runnable providerCancellation;
+        private boolean emitCapture;
+        private boolean emitFailedCapture;
 
         @Override
         public String execute(final CodexTurnRequest request) {
@@ -530,7 +609,26 @@ class CodexAgentExecutorTest {
             this.request = request;
             if (this.providerCancellation != null) callbacks.executionStarted(this.providerCancellation);
             if (this.onExecutionStarted != null) this.onExecutionStarted.run();
-            if (this.durableFailure != null) throw this.durableFailure;
+            if (this.durableFailure != null && !this.emitFailedCapture) throw this.durableFailure;
+            if (this.emitFailedCapture) {
+                callbacks.turnStarted("provider-turn-1");
+                callbacks.executionEvent(new AgentExecutionEventCandidate(
+                        AgentExecutionEventType.ERROR, AgentExecutionEventStatus.FAILED, null,
+                        null, "{\"message\":\"provider turn failed\"}", Instant.now()));
+                callbacks.eventCaptureCompleted(new AgentExecutionEventCandidate(
+                        AgentExecutionEventType.TURN, AgentExecutionEventStatus.FAILED, null,
+                        "turn:provider-turn-1:failed", "{}", Instant.now()));
+                throw this.durableFailure;
+            }
+            if (this.emitCapture) {
+                callbacks.turnStarted("provider-turn-1");
+                callbacks.executionEvent(new AgentExecutionEventCandidate(
+                        AgentExecutionEventType.COMMAND, AgentExecutionEventStatus.SUCCEEDED, null,
+                        "item:cmd-1:completed", "{\"command\":\"pwd\",\"exitCode\":0}", Instant.now()));
+                callbacks.eventCaptureCompleted(new AgentExecutionEventCandidate(
+                        AgentExecutionEventType.TURN, AgentExecutionEventStatus.COMPLETED, null,
+                        "turn:provider-turn-1:completed", "{}", Instant.now()));
+            }
             return this.outputText;
         }
 

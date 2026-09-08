@@ -29,7 +29,12 @@ final class CodexTurnStateTracker {
         }
         state.bindTurnId(turnId);
         final List<PendingNotification> pending=this.pendingByThreadId.remove(state.threadId());
-        if (pending != null) pending.forEach(notification -> this.handleNotification(notification.method(), notification.params()));
+        if (pending != null) pending.stream()
+                .filter(notification -> {
+                    final String observedTurnId = this.pendingTurnId(notification);
+                    return observedTurnId == null || turnId.equals(observedTurnId);
+                })
+                .forEach(notification -> this.handleNotification(notification.method(), notification.params()));
     }
 
     synchronized void remove(final CodexExecutionState state) {
@@ -257,6 +262,14 @@ final class CodexTurnStateTracker {
 
     private String notificationTurnId(final JsonNode params) {
         return this.value(params, "turnId");
+    }
+
+    private String pendingTurnId(final PendingNotification notification) {
+        if (CodexProtocol.TURN_STARTED.equals(notification.method())
+                || CodexProtocol.TURN_COMPLETED.equals(notification.method())) {
+            return this.value(notification.params().path("turn"), "id");
+        }
+        return this.notificationTurnId(notification.params());
     }
 
     private String resolveStatus(final JsonNode params) {

@@ -72,6 +72,25 @@ public class AgentProxyApiMapper {
 
     private final ObjectMapper objectMapper;
 
+    public AgentExecutionEventPageResponse toResponse(
+            final com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage page) {
+        return new AgentExecutionEventPageResponse(
+                page.turnId(), page.captureStatus(), page.events().stream().map(this::toResponse).toList(),
+                page.lastSequence(), page.nextAfterSequence(), page.hasMore());
+    }
+
+    private AgentExecutionEventResponse toResponse(
+            final com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEvent event) {
+        try {
+            return new AgentExecutionEventResponse(
+                    event.id(), event.agentSessionId(), event.agentTurnId(), event.nodeRunId(), event.sequence(),
+                    event.type(), event.status(), event.phase(), event.providerEventKey(),
+                    this.objectMapper.readTree(event.payload()), event.occurredAt(), event.createdAt());
+        } catch (final JsonProcessingException exception) {
+            throw new IllegalArgumentException("Agent execution event payload must be valid JSON.", exception);
+        }
+    }
+
     public CreateAgentProjectAssetCommand toCommand(final AgentProjectAssetRequest request) {
         return new CreateAgentProjectAssetCommand(request.name(), request.sshConnectionId());
     }
