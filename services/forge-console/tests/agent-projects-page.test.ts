@@ -5733,6 +5733,7 @@ describe('Agent projects page', () => {
     client.getProjectTask('55555555-5555-4555-8555-555555555555');
     client.deleteProjectTask('55555555-5555-4555-8555-555555555555');
     client.getWorkflowRun('66666666-6666-4666-8666-666666666666');
+    client.getAgentExecutionEvents('turn/T value', 17, 200);
     const sshRequest = { name: 'Ancestor', host: '192.168.0.108', port: 22,
       username: 'ancestor', authType: 'PASSWORD', privateKeyPath: null, password: 'secret' };
     client.testSshConnection(project().id, sshRequest);
@@ -5748,6 +5749,8 @@ describe('Agent projects page', () => {
       `/agents/projects/${project().id}/ssh-connections/55555555-5555-4555-8555-555555555555/service-metrics`);
     expect(http.get).toHaveBeenCalledWith(
       `/agents/projects/${project().id}/ssh-connections/55555555-5555-4555-8555-555555555555/service-metrics/alpha%401.service/processes?sort=ram`);
+    expect(http.get).toHaveBeenCalledWith(
+      '/agents/agent-execution-turns/turn%2FT%20value/events?afterSequence=17&limit=200');
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`, {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });

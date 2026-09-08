@@ -198,6 +198,15 @@ export function createAgentProjectsApi(http) {
     getAgentExecutionContexts(runId) {
       return http.get(`${root}/workflow-runs/${encodeURIComponent(runId)}/agent-execution-contexts`);
     },
+    getAgentExecutionEvents(turnId, afterSequence = 0, limit = 200) {
+      const query = new URLSearchParams({
+        afterSequence: String(afterSequence),
+        limit: String(limit),
+      });
+      return http.get(
+        `${root}/agent-execution-turns/${encodeURIComponent(turnId)}/events?${query.toString()}`,
+      );
+    },
   };
 }
 
