@@ -455,7 +455,7 @@ function activityPage(turnId: string, message: string, captureStatus = 'COMPLETE
   return { turnId, captureStatus, events: [{ ...activityEvent(1, message), agentTurnId: turnId }], lastSequence: 1, nextAfterSequence: 1, hasMore: false };
 }
 
-async function openedActivity(getAgentExecutionEvents: ReturnType<typeof vi.fn>, options: { tracked?: boolean; contexts?: any[]; runtimeConfig?: object } = {}) {
+async function openedActivity(getAgentExecutionEvents: ReturnType<typeof vi.fn>, options: { tracked?: boolean; contexts?: any[]; runtimeConfig?: object; workflowStatus?: string } = {}) {
   const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
   const runs = [
     modernNodeRun('impl-1', 'implementer', 'SUCCEEDED', '2026-08-13T10:00:00Z'),
@@ -467,8 +467,8 @@ async function openedActivity(getAgentExecutionEvents: ReturnType<typeof vi.fn>,
     sequence: index + 1, sessionStatus: 'IDLE', turnStatus: 'SUCCEEDED', provider: 'codex'
   }));
   const fakeApi = api({
-    getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'SUCCEEDED', '2026-08-13T10:00:00Z')]))),
-    getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'SUCCEEDED', runs, 'Activity Board', graph))),
+    getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', options.workflowStatus ?? 'SUCCEEDED', '2026-08-13T10:00:00Z')]))),
+    getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', options.workflowStatus ?? 'SUCCEEDED', runs, 'Activity Board', graph))),
     getAgentExecutionContexts: vi.fn(() => Promise.resolve(contexts)),
     getAgentExecutionEvents
   });
@@ -2686,6 +2686,53 @@ describe('Agent projects page', () => {
     page.taskExecutionView.render();
     expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-3');
     expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('reviewer-3');
+  });
+
+  it.each([
+    { following: true, workflowFails: false },
+    { following: false, workflowFails: false },
+    { following: true, workflowFails: true },
+    { following: false, workflowFails: true }
+  ])('Activity preserves scroll, disclosures, and focus across alternating RUNNING workflow polls (following=$following, failure=$workflowFails)', async ({ following, workflowFails }) => {
+    const eventsApi = vi.fn().mockResolvedValueOnce({ ...activityPage('turn-a', 'First', 'ACTIVE'), events: [{ ...activityEvent(1), type: 'COMMAND', payload: { command: 'git status', output: 'clean' } }] })
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'ACTIVE', events: [activityEvent(2)], lastSequence: 2, nextAfterSequence: 2, hasMore: false })
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'ACTIVE', events: [activityEvent(3)], lastSequence: 3, nextAfterSequence: 3, hasMore: false });
+    const { dom, page, fakeApi } = await openedActivity(eventsApi, { workflowStatus: 'RUNNING' });
+    const scroll = stubActivityScroll(dom);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    await flushAsync();
+    const document = dom.window.document;
+    const originalScroller = scroll();
+    const disclosure = document.querySelector<HTMLDetailsElement>('.agent-activity-output')!;
+    const summary = disclosure.querySelector('summary')!;
+    disclosure.open = true;
+    summary.focus();
+    if (!following) {
+      scroll().scrollTop = 120;
+      scroll().dispatchEvent(new dom.window.Event('scroll'));
+    }
+    for (const sequence of [2, 3]) {
+      if (workflowFails) fakeApi.getWorkflowRun.mockRejectedValueOnce(new Error('Workflow refresh unavailable'));
+      else fakeApi.getWorkflowRun.mockResolvedValueOnce({
+        ...view.state.workflowRun,
+        nodeRuns: view.state.workflowRun.nodeRuns.map((run: any) => run.id === 'impl-1' ? { ...run, output: `Workflow refresh ${sequence}` } : run)
+      });
+      await view.pollSelectedRun();
+      expect(scroll().scrollTop).toBe(following ? 500 + (sequence - 1) * 100 : 120);
+      expect(scroll() === originalScroller).toBe(true);
+      expect(document.activeElement === summary).toBe(true);
+      expect(disclosure.isConnected && disclosure.open).toBe(true);
+      if (!workflowFails) expect(document.querySelector('.node-run-output')?.textContent).toContain(`Workflow refresh ${sequence}`);
+      await view.pollActivity();
+      expect(scroll().scrollTop).toBe(following ? 500 + sequence * 100 : 120);
+      expect(view.state.activityFollowLatest).toBe(following);
+      expect(view.state.activityNewEventCount).toBe(following ? 0 : sequence - 1);
+      expect(document.activeElement === summary).toBe(true);
+      expect(disclosure.isConnected && disclosure.open).toBe(true);
+    }
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(3);
+    page.dispose();
   });
 
   it('Activity follows the bottom and near-bottom position when new events arrive', async () => {

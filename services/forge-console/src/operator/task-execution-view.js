@@ -1282,7 +1282,10 @@ export class TaskExecutionView {
     const failure = nodeRun.failure;
     const invocationSelector = this.renderInvocationSelector();
     const context = this.contextForNodeRun(nodeRun.id);
-    panel.innerHTML = `
+    const activity = panel.querySelector('.node-run-activity');
+    const preserveActivity = this.activityIdentity && this.isCurrentActivity(this.activityIdentity)
+      && activity?.dataset.activityGeneration === String(this.activityLoadSequence);
+    const markup = `
       ${invocationSelector}
       <div class="node-run-details-grid">
         ${this.detailRow('Agent', nodeRun.agentName || 'Unknown agent')}
@@ -1309,6 +1312,25 @@ export class TaskExecutionView {
         </section>
       ` : ''}
     `;
+    if (preserveActivity) {
+      // Workflow refreshes own the surrounding details, while the same activity
+      // generation keeps its scroller, disclosures, and focused controls in place.
+      const scrollTop = panel.scrollTop;
+      const template = this.document.createElement('template');
+      template.innerHTML = markup;
+      for (const child of [...panel.childNodes]) {
+        if (child !== activity) child.remove();
+      }
+      let afterActivity = false;
+      for (const child of [...template.content.childNodes]) {
+        if (child.nodeType === 1 && child.classList.contains('node-run-activity')) afterActivity = true;
+        else if (afterActivity) panel.append(child);
+        else panel.insertBefore(child, activity);
+      }
+      panel.scrollTop = scrollTop;
+    } else {
+      panel.innerHTML = markup;
+    }
     panel.querySelector('[data-node-run-invocation-select]')?.addEventListener('change', (event) => {
       this.selectNodeRun(event.target.value);
     });
@@ -1532,7 +1554,7 @@ export class TaskExecutionView {
     }
     const presentation = captureStatusPresentation(this.state.activityCaptureStatus);
     const usage = latestTokenUsage(this.state.activityEvents);
-    return `<section class="node-run-activity"><h3>Activity</h3>
+    return `<section class="node-run-activity" data-activity-generation="${this.activityLoadSequence}"><h3>Activity</h3>
       <span class="agent-activity-capture agent-activity-capture-${presentation.tone}">${escapeHtml(presentation.label)}</span>
       ${usage.length ? `<div class="agent-activity-usage">${usage.map(escapeHtml).join(' · ')}</div>` : ''}
       ${this.state.activityLoading ? '<p>Loading activity...</p>' : ''}
