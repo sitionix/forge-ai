@@ -918,6 +918,7 @@ export class TaskExecutionView {
     return Boolean(
       !this.disposed
       && this.opened
+      && !this.state.cancellationInFlight
       && this.state.selectedRunId
       && ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)
     );
@@ -1063,7 +1064,89 @@ export class TaskExecutionView {
       state.innerHTML = '<div class="muted-state compact">No executions yet.</div>';
       return;
     }
-    state.innerHTML = '';
+    const cancellationError = this.state.cancellationError
+      ? `<div class="error-box" data-stop-run-error>${escapeHtml(this.state.cancellationError)}</div>`
+      : '';
+    if (!ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)) {
+      state.innerHTML = cancellationError;
+      return;
+    }
+    state.innerHTML = `${cancellationError}<div class="task-execution-run-controls">
+      ${this.state.stopConfirmation ? `
+        <div class="task-execution-stop-confirmation" data-stop-run-confirmation>
+          <div><strong>Stop this run?</strong><span>Active agent execution will be interrupted.</span></div>
+          <div class="task-execution-stop-actions">
+            <button type="button" class="button small danger" data-confirm-stop-run ${this.state.cancellationInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Stopping…' : 'Stop run'}</button>
+            <button type="button" class="button small secondary" data-keep-running ${this.state.cancellationInFlight ? 'disabled' : ''}>Keep running</button>
+          </div>
+        </div>
+      ` : '<button type="button" class="button small danger" data-stop-run>Stop run</button>'}
+    </div>`;
+    state.querySelector('[data-stop-run]')?.addEventListener('click', () => {
+      this.state.stopConfirmation = true;
+      this.state.cancellationError = '';
+      this.renderExecutionState();
+    });
+    state.querySelector('[data-keep-running]')?.addEventListener('click', () => {
+      this.state.stopConfirmation = false;
+      this.renderExecutionState();
+    });
+    state.querySelector('[data-confirm-stop-run]')?.addEventListener('click', () => this.stopSelectedRun());
+  }
+
+  async stopSelectedRun() {
+    if (this.state.cancellationInFlight || !ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)) {
+      return;
+    }
+    const taskId = this.state.taskId;
+    const taskSequence = this.taskLoadSequence;
+    const runId = this.state.selectedRunId;
+    const runSequence = this.runLoadSequence;
+    this.state.cancellationInFlight = true;
+    this.state.cancellationError = '';
+    this.stopPolling();
+    this.renderExecutionState();
+    try {
+      if (this.pollInFlight) {
+        try {
+          await this.pollInFlight;
+        } catch (_ignored) {
+          // The explicit cancellation refresh below remains authoritative.
+        }
+      }
+      await this.api.cancelWorkflowRun(runId);
+      await this.refreshAfterCancellation(taskId, taskSequence, runId, runSequence);
+    } catch (error) {
+      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+        return;
+      }
+      this.state.cancellationError = `Could not stop this run.${error?.message ? ` ${error.message}` : ''}`;
+      try {
+        await this.refreshAfterCancellation(taskId, taskSequence, runId, runSequence);
+      } catch (_ignored) {
+        // Keep the cancellation error separate and preserve the current execution UI.
+      }
+    } finally {
+      if (this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+        this.state.cancellationInFlight = false;
+        this.state.stopConfirmation = ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)
+          && Boolean(this.state.cancellationError);
+        this.render();
+        this.syncPolling();
+      }
+    }
+  }
+
+  async refreshAfterCancellation(taskId, taskSequence, runId, runSequence) {
+    const [workflowRun, contexts] = await Promise.all([
+      this.api.getWorkflowRun(runId),
+      this.api.getAgentExecutionContexts ? this.api.getAgentExecutionContexts(runId) : Promise.resolve([])
+    ]);
+    if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+      return;
+    }
+    this.state.agentExecutionContexts = contexts || [];
+    this.applyWorkflowRun(workflowRun);
   }
 
   renderGraph() {
@@ -2313,6 +2396,9 @@ export class TaskExecutionView {
       taskError: '',
       executionError: '',
       refreshError: '',
+      stopConfirmation: false,
+      cancellationInFlight: false,
+      cancellationError: '',
       agentExecutionContexts: []
     };
   }
