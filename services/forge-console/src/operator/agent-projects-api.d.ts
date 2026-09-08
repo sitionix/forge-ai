@@ -5,8 +5,8 @@ export interface AgentExecutionEvent {
   nodeRunId: string | null;
   sequence: number;
   type: string;
-  status: string;
-  phase: string;
+  status: string | null;
+  phase: string | null;
   providerEventKey: string | null;
   payload: unknown;
   occurredAt: string;
