@@ -28,6 +28,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -57,22 +59,29 @@ class CancelWorkflowRunUseCaseTest {
     @Test
     void cancelsAllWorkAndInvokesSecuredExecutionOnlyAfterCommit() {
         final WorkflowRun run = this.run(WorkflowRunStatus.RUNNING, null);
-        final NodeRun running = this.nodeRun(NodeRunStatus.RUNNING, 1);
+        final NodeRun firstRunning = this.nodeRun(NodeRunStatus.RUNNING, 1);
+        final NodeRun secondRunning = this.nodeRun(NodeRunStatus.RUNNING, 1);
         final NodeRun pending = this.nodeRun(NodeRunStatus.PENDING, 1);
-        final AtomicInteger cancellations = new AtomicInteger();
+        final AtomicInteger firstCancellations = new AtomicInteger();
+        final AtomicInteger secondCancellations = new AtomicInteger();
         when(this.workflowRuns.findByIdForUpdate(RUN_ID)).thenReturn(Optional.of(run));
-        when(this.nodeRuns.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(running, pending));
-        when(this.executor.secureCancellation(running.id())).thenReturn(Optional.of(cancellations::incrementAndGet));
+        when(this.nodeRuns.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(firstRunning, pending, secondRunning));
+        when(this.executor.secureCancellation(firstRunning.id()))
+                .thenReturn(Optional.of(firstCancellations::incrementAndGet));
+        when(this.executor.secureCancellation(secondRunning.id()))
+                .thenReturn(Optional.of(secondCancellations::incrementAndGet));
         when(this.coordinator.cancelActiveNodeRuns(run)).thenReturn(true);
 
         this.useCase.execute(RUN_ID);
 
-        assertThat(cancellations).hasValue(0);
+        assertThat(firstCancellations).hasValue(0);
+        assertThat(secondCancellations).hasValue(0);
         verify(this.coordinator).cancelActiveNodeRuns(run);
         verify(this.workflowRuns).saveLifecycle(org.mockito.ArgumentMatchers.argThat(saved ->
                 saved.status() == WorkflowRunStatus.CANCELLED && NOW.equals(saved.finishedAt())));
         TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
-        assertThat(cancellations).hasValue(1);
+        assertThat(firstCancellations).hasValue(1);
+        assertThat(secondCancellations).hasValue(1);
     }
 
     @Test
@@ -111,20 +120,34 @@ class CancelWorkflowRunUseCaseTest {
     }
 
     @Test
-    void alreadyCancelledRunIsAnIdempotentSuccess() {
+    void duplicateStopAfterCommittedCancellationIsAnIdempotentSuccess() {
+        final WorkflowRun running = this.run(WorkflowRunStatus.RUNNING, null);
         final WorkflowRun cancelled = this.run(WorkflowRunStatus.CANCELLED, NOW.minusSeconds(1));
-        when(this.workflowRuns.findByIdForUpdate(RUN_ID)).thenReturn(Optional.of(cancelled));
+        final NodeRun active = this.nodeRun(NodeRunStatus.RUNNING, 1);
+        final AtomicInteger cancellations = new AtomicInteger();
+        when(this.workflowRuns.findByIdForUpdate(RUN_ID))
+                .thenReturn(Optional.of(running), Optional.of(cancelled));
+        when(this.nodeRuns.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(active));
+        when(this.executor.secureCancellation(active.id())).thenReturn(Optional.of(cancellations::incrementAndGet));
+        when(this.coordinator.cancelActiveNodeRuns(running)).thenReturn(true);
 
         this.useCase.execute(RUN_ID);
+        TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+        TransactionSynchronizationManager.clearSynchronization();
+        TransactionSynchronizationManager.initSynchronization();
+        this.useCase.execute(RUN_ID);
 
-        verify(this.nodeRuns, never()).findByWorkflowRunId(RUN_ID);
+        assertThat(cancellations).hasValue(1);
+        verify(this.nodeRuns).findByWorkflowRunId(RUN_ID);
+        verify(this.coordinator).cancelActiveNodeRuns(running);
         verify(this.coordinator, never()).cancelActiveNodeRuns(cancelled);
     }
 
-    @Test
-    void naturalTerminalOutcomeIsNeverRewritten() {
-        final WorkflowRun succeeded = this.run(WorkflowRunStatus.SUCCEEDED, NOW.minusSeconds(1));
-        when(this.workflowRuns.findByIdForUpdate(RUN_ID)).thenReturn(Optional.of(succeeded));
+    @ParameterizedTest
+    @EnumSource(value = WorkflowRunStatus.class, names = { "SUCCEEDED", "FAILED" })
+    void naturalTerminalOutcomeIsNeverRewritten(final WorkflowRunStatus status) {
+        final WorkflowRun terminal = this.run(status, NOW.minusSeconds(1));
+        when(this.workflowRuns.findByIdForUpdate(RUN_ID)).thenReturn(Optional.of(terminal));
 
         assertThatThrownBy(() -> this.useCase.execute(RUN_ID))
                 .isInstanceOfSatisfying(ConflictException.class, failure ->
