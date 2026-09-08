@@ -422,6 +422,7 @@ function api(overrides = {}) {
     getProjectTask: vi.fn((taskId: string) => Promise.resolve({ ...task(taskId), input: 'Count the letters.', runs: [] })),
     deleteProjectTask: vi.fn(() => Promise.resolve({})),
     getWorkflowRun: vi.fn((runId: string) => Promise.resolve(workflowRunDetail(runId, 'SUCCEEDED'))),
+    getAgentExecutionContexts: vi.fn(() => Promise.resolve([])),
     cancelWorkflowRun: vi.fn(() => Promise.resolve()),
     createWorkflowRun: vi.fn(() => Promise.resolve({})),
     ...overrides
@@ -2536,7 +2537,10 @@ describe('Agent projects page', () => {
   it('confirms Stop once, refreshes backend truth, and preserves the pinned invocation', async () => {
     const cancellation = deferred<void>();
     const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
-    const running = { ...modernNodeRun('impl-1', 'implementer', 'RUNNING'), contextTrackingVersion: 1 };
+    const running = {
+      ...modernNodeRun('impl-1', 'implementer', 'RUNNING', '2026-08-13T10:00:00Z'),
+      contextTrackingVersion: 1
+    };
     const cancelled = { ...running, status: 'CANCELLED', finishedAt: '2026-08-13T10:03:00Z' };
     const context = { sessionId: 'session-a', turnId: 'turn-a', nodeRunId: 'impl-1', sourceNodeId: 'implementer',
       repositoryId: null, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', sequence: 1,
