@@ -442,6 +442,42 @@ async function openedProject(fakeApi = api()) {
   return context;
 }
 
+function activityEvent(sequence: number, message = `Event ${sequence}`) {
+  return {
+    id: `event-${sequence}`, agentSessionId: 'session-a', agentTurnId: 'turn-a', nodeRunId: 'impl-1', sequence,
+    type: 'AGENT_MESSAGE', phase: 'COMMENTARY', status: 'COMPLETED',
+    occurredAt: '2026-09-08T10:00:00Z', createdAt: '2026-09-08T10:00:00Z', providerEventKey: null,
+    payload: { message }
+  };
+}
+
+function activityPage(turnId: string, message: string, captureStatus = 'COMPLETE') {
+  return { turnId, captureStatus, events: [{ ...activityEvent(1, message), agentTurnId: turnId }], lastSequence: 1, nextAfterSequence: 1, hasMore: false };
+}
+
+async function openedActivity(getAgentExecutionEvents: ReturnType<typeof vi.fn>, options: { tracked?: boolean; contexts?: any[] } = {}) {
+  const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
+  const runs = [
+    modernNodeRun('impl-1', 'implementer', 'SUCCEEDED', '2026-08-13T10:00:00Z'),
+    modernNodeRun('impl-2', 'implementer', 'SUCCEEDED', '2026-08-13T10:01:00Z')
+  ].map((run) => ({ ...run, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', contextTrackingVersion: options.tracked === false ? undefined : 1 }));
+  const contexts = options.contexts ?? runs.map((run, index) => ({
+    sessionId: 'session-a', turnId: index === 0 ? 'turn-a' : 'turn-b', nodeRunId: run.id,
+    sourceNodeId: 'implementer', repositoryId: null, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE',
+    sequence: index + 1, sessionStatus: 'IDLE', turnStatus: 'SUCCEEDED', provider: 'codex'
+  }));
+  const fakeApi = api({
+    getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'SUCCEEDED', '2026-08-13T10:00:00Z')]))),
+    getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'SUCCEEDED', runs, 'Activity Board', graph))),
+    getAgentExecutionContexts: vi.fn(() => Promise.resolve(contexts)),
+    getAgentExecutionEvents
+  });
+  const result = await openedProject(fakeApi);
+  await result.page.openTaskExecution('task-1');
+  await flushAsync();
+  return result;
+}
+
 async function openedRepository(fakeApi = api(), repositoryId = repository().id) {
   const context = await openedProject(fakeApi);
   await context.page.openRepositoryWorkspace(project().id, repositoryId);
@@ -2638,6 +2674,158 @@ describe('Agent projects page', () => {
     page.taskExecutionView.render();
     expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-3');
     expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('reviewer-3');
+  });
+
+  it('Activity follows existing context invocation navigation and discards the previous turn response', async () => {
+    const turnA = deferred<any>();
+    const turnB = deferred<any>();
+    const eventsApi = vi.fn((turnId: string) => turnId === 'turn-a' ? turnA.promise : turnB.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    page.taskExecutionView.selectNodeRun('impl-2');
+    expect(eventsApi.mock.calls).toEqual([['turn-b', 0, 200]]);
+    dom.window.document.querySelector<HTMLButtonElement>('[data-context-node-run="impl-1"]')!.click();
+    expect(eventsApi.mock.calls).toEqual([['turn-b', 0, 200], ['turn-a', 0, 200]]);
+    expect(page.taskExecutionView.state.activityEvents).toEqual([]);
+    expect(page.taskExecutionView.state.activityCursor).toBe(0);
+    turnA.resolve(activityPage('turn-a', 'Turn A content'));
+    await flushAsync();
+    turnB.resolve(activityPage('turn-b', 'Turn B content'));
+    await flushAsync();
+    const activity = dom.window.document.querySelector('.node-run-activity')!;
+    expect(activity.textContent).toContain('Turn A content');
+    expect(activity.textContent).not.toContain('Turn B content');
+    expect(activity.previousElementSibling?.classList.contains('node-run-context')).toBe(true);
+    expect(activity.nextElementSibling?.classList.contains('node-run-prompt-details')).toBe(true);
+    expect(page.taskExecutionView.state.nodeRunSelectionMode).toBe('PINNED_INVOCATION');
+  });
+
+  it.each([
+    { name: 'legacy invocation', tracked: false },
+    { name: 'missing verified context', contexts: [] },
+    { name: 'blank turn ID', contexts: [{ nodeRunId: 'impl-1', turnId: '  ', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }] }
+  ])('Activity is unavailable without a real verified turn: $name', async (options) => {
+    const eventsApi = vi.fn();
+    const { dom, page } = await openedActivity(eventsApi, options);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    expect(eventsApi).not.toHaveBeenCalled();
+    const activity = dom.window.document.querySelector('.node-run-activity');
+    expect(activity?.textContent).toContain('Unavailable');
+    expect(activity?.textContent).toContain('Activity was not recorded for this invocation.');
+  });
+
+  it('Activity loads incremental pages using the exact cursor and deduplicates IDs and sequences', async () => {
+    const secondPage = deferred<any>();
+    const firstEvents = Array.from({ length: 200 }, (_, index) => activityEvent(index + 1));
+    const finalEvents = Array.from({ length: 25 }, (_, index) => activityEvent(index + 201));
+    const eventsApi = vi.fn()
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'ACTIVE', events: firstEvents, lastSequence: 225, nextAfterSequence: 200, hasMore: true })
+      .mockImplementationOnce(() => secondPage.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 200, 200]]);
+    expect(page.taskExecutionView.state.activityCursor).toBe(200);
+    expect(dom.window.document.querySelectorAll('.agent-activity-event')).toHaveLength(200);
+    secondPage.resolve({
+      turnId: 'turn-a', captureStatus: 'COMPLETE', lastSequence: 225, nextAfterSequence: 225, hasMore: false,
+      events: [activityEvent(200), { ...activityEvent(226), id: 'event-1' }, { ...activityEvent(200), id: 'duplicate-sequence' }, ...finalEvents]
+    });
+    await flushAsync();
+    const expectedSequences = Array.from({ length: 225 }, (_, index) => index + 1);
+    expect(page.taskExecutionView.state.activityEvents.map((event: any) => event.sequence)).toEqual(expectedSequences);
+    expect([...dom.window.document.querySelectorAll('.agent-activity-event')].map((row) => Number(row.getAttribute('data-sequence')))).toEqual(expectedSequences);
+    expect(page.taskExecutionView.state.activityCursor).toBe(225);
+    expect(page.taskExecutionView.state.activityCaptureStatus).toBe('COMPLETE');
+    expect(eventsApi).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['resolve', 'reject'])('Activity prevents overlapping polls and ignores a stale turn %s', async (settlement) => {
+    const turnA = deferred<any>();
+    const turnB = deferred<any>();
+    const eventsApi = vi.fn((turnId: string) => turnId === 'turn-a' ? turnA.promise : turnB.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    void view.pollActivity();
+    void view.pollActivity();
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200]]);
+    view.selectNodeRun('impl-2');
+    turnB.resolve(activityPage('turn-b', 'Current B', 'ACTIVE'));
+    await flushAsync();
+    if (settlement === 'resolve') turnA.resolve({ ...activityPage('turn-a', 'Stale A', 'DEGRADED'), hasMore: true });
+    else turnA.reject(new Error('Stale failure'));
+    await flushAsync();
+    expect(view.state.activityEvents.map((event: any) => event.payload.message)).toEqual(['Current B']);
+    expect(view.state.activityCaptureStatus).toBe('ACTIVE');
+    expect(view.state.activityError).toBe('');
+    expect(view.state.activityPollInFlight).toBeNull();
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).not.toContain('Stale');
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-b', 0, 200]]);
+  });
+
+  it.each(['close', 'dispose', 'run', 'task'])('Activity invalidates pending pages and clears its timer on %s', async (change) => {
+    const pendingPage = deferred<any>();
+    const eventsApi = vi.fn(() => pendingPage.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    const sequence = view.activityLoadSequence;
+    const timer = dom.window.setTimeout(() => {}, 60_000);
+    view.activityPollTimer = timer;
+    const clearTimer = vi.spyOn(dom.window, 'clearTimeout');
+    if (change === 'run') await view.selectRun('run-new');
+    else if (change === 'task') await view.open('task-1', project());
+    else view[change]();
+    expect(view.activityLoadSequence).toBeGreaterThan(sequence);
+    expect(clearTimer).toHaveBeenCalledWith(timer);
+    expect(view.activityPollTimer).toBeNull();
+    expect(view.state.activityTurnId).toBeNull();
+    expect(view.state.activityPollInFlight).toBeNull();
+    pendingPage.resolve({ ...activityPage('turn-a', 'Closed selection'), hasMore: true });
+    await flushAsync();
+    expect(view.state.activityEvents).toEqual([]);
+    expect(view.state.activityCaptureStatus).toBeNull();
+    expect(view.state.activityError).toBe('');
+    expect(eventsApi).toHaveBeenCalledTimes(1);
+  });
+
+  it('Activity follows workflow selection updates while preserving pinned invocation selection', async () => {
+    const eventsApi = vi.fn((turnId: string) => Promise.resolve(activityPage(turnId, turnId)));
+    const { page } = await openedActivity(eventsApi);
+    const view = page.taskExecutionView;
+    const original = view.state.workflowRun;
+    view.applyWorkflowRun({ ...original, nodeRuns: original.nodeRuns.slice(0, 1) });
+    view.selectVisualUnit('implementer::__global__');
+    await flushAsync();
+    expect(view.state.activityTurnId).toBe('turn-a');
+    view.applyWorkflowRun(original);
+    await flushAsync();
+    expect(view.state.selectedNodeRunId).toBe('impl-2');
+    expect(view.state.activityTurnId).toBe('turn-b');
+    expect(view.state.activityEvents[0].payload.message).toBe('turn-b');
+    view.selectNodeRun('impl-1');
+    await flushAsync();
+    view.applyWorkflowRun(original);
+    await flushAsync();
+    expect(view.state.activityTurnId).toBe('turn-a');
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-b', 0, 200], ['turn-a', 0, 200]]);
+  });
+
+  it('Activity polling and retry resume from the last applied response cursor', async () => {
+    const eventsApi = vi.fn()
+      .mockResolvedValueOnce(activityPage('turn-a', 'First', 'ACTIVE'))
+      .mockRejectedValueOnce(new Error('Temporary connection failure'))
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [activityEvent(2, 'Second')], lastSequence: 2, nextAfterSequence: 2, hasMore: false });
+    const { page } = await openedActivity(eventsApi);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    await flushAsync();
+    await view.pollActivity();
+    expect(view.state.activityEvents.map((event: any) => event.payload.message)).toEqual(['First']);
+    await view.retryActivity();
+    expect(view.state.activityEvents.map((event: any) => event.payload.message)).toEqual(['First', 'Second']);
+    expect(view.state.activityError).toBe('');
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 1, 200], ['turn-a', 1, 200]]);
   });
 
   it('renders verified continued context history, technical details, and runtime badge', async () => {

@@ -1,4 +1,5 @@
 import { escapeHtml } from './dom-render-helpers.js';
+import { captureStatusPresentation, latestTokenUsage, renderAgentExecutionActivityEvents } from './agent-execution-activity.js';
 
 const ACTIVE_RUN_STATUSES = new Set(['QUEUED', 'RUNNING']);
 const NODE_WIDTH = 204;
@@ -661,6 +662,9 @@ export class TaskExecutionView {
     this.opened = false;
     this.taskLoadSequence = 0;
     this.runLoadSequence = 0;
+    this.activityLoadSequence = 0;
+    this.activityPollTimer = null;
+    this.activityIdentity = null;
     this.pollTimer = null;
     this.pollInFlight = null;
     this.canvasPan = null;
@@ -698,6 +702,7 @@ export class TaskExecutionView {
 
   close() {
     this.opened = false;
+    this.invalidateActivity();
     this.taskLoadSequence += 1;
     this.runLoadSequence += 1;
     this.stopPolling();
@@ -711,6 +716,7 @@ export class TaskExecutionView {
   }
 
   async open(taskId, project, repositories = []) {
+    this.invalidateActivity();
     const taskSequence = this.taskLoadSequence + 1;
     this.taskLoadSequence = taskSequence;
     this.runLoadSequence += 1;
@@ -754,6 +760,7 @@ export class TaskExecutionView {
     if (!this.state.task || !runId) {
       return;
     }
+    this.invalidateActivity();
     const taskId = this.state.taskId;
     const taskSequence = this.taskLoadSequence;
     const runSequence = this.runLoadSequence + 1;
@@ -778,8 +785,8 @@ export class TaskExecutionView {
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         return;
       }
-      this.applyWorkflowRun(workflowRun);
       this.state.agentExecutionContexts = contexts || [];
+      this.applyWorkflowRun(workflowRun);
       this.state.loadingRun = false;
       this.render();
       this.syncPolling();
@@ -805,12 +812,14 @@ export class TaskExecutionView {
         this.state.selectedSourceNodeId = null;
         this.state.selectedNodeRunId = null;
         this.state.nodeRunSelectionMode = null;
+        this.syncSelectedActivity();
         return;
       }
       const nodeRuns = workflowRun?.nodeRuns || [];
       const selectedUnit = projection.nodeByUnit.get(this.state.selectedVisualUnitKey);
       const pinnedRunExists = nodeRuns.some((nodeRun) => nodeRun.id === this.state.selectedNodeRunId);
       if (this.state.nodeRunSelectionMode === SELECTION_PINNED_INVOCATION && pinnedRunExists) {
+        this.syncSelectedActivity();
         return;
       }
       this.state.nodeRunSelectionMode = SELECTION_FOLLOW_LATEST;
@@ -819,6 +828,7 @@ export class TaskExecutionView {
         selectedUnit.repositoryId,
         nodeRuns
       )?.id || null;
+      this.syncSelectedActivity();
       return;
     }
     const nodeRuns = workflowRun?.nodeRuns || [];
@@ -827,6 +837,7 @@ export class TaskExecutionView {
     }
     this.state.selectedSourceNodeId = null;
     this.state.selectedVisualUnitKey = null;
+    this.syncSelectedActivity();
   }
 
   mergeRunSummary(workflowRun) {
@@ -884,8 +895,8 @@ export class TaskExecutionView {
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         return;
       }
-      this.applyWorkflowRun(workflowRun);
       this.state.agentExecutionContexts = contexts || [];
+      this.applyWorkflowRun(workflowRun);
       this.render();
     } catch (error) {
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
@@ -1281,6 +1292,7 @@ export class TaskExecutionView {
         ${this.detailRow('Finished', this.formatDate(nodeRun.finishedAt))}
       </div>
       ${this.renderContextDetails(nodeRun, context)}
+      ${this.renderActivity(nodeRun, context)}
       <details class="node-run-prompt-details">
         <summary>Prompt</summary>
         <pre>${escapeHtml(nodeRun.agentInstructions || '-')}</pre>
@@ -1307,6 +1319,116 @@ export class TaskExecutionView {
 
   contextForNodeRun(nodeRunId) {
     return (this.state.agentExecutionContexts || []).find((context) => context.nodeRunId === nodeRunId) || null;
+  }
+
+  hasVerifiedActivityTurn(nodeRun, context) {
+    return nodeRun?.contextTrackingVersion != null
+      && context?.nodeRunId === nodeRun.id
+      && (nodeRun.contextMode !== 'FRESH_EACH_NODE_RUN' || context.contextMode === 'FRESH_EACH_NODE_RUN')
+      && typeof context.turnId === 'string' && context.turnId.trim().length > 0;
+  }
+
+  syncSelectedActivity() {
+    const nodeRun = this.selectedNodeRun();
+    const context = this.contextForNodeRun(nodeRun?.id);
+    if (this.activityIdentity && this.isCurrentActivity(this.activityIdentity)) {
+      return;
+    }
+    this.invalidateActivity();
+    if (!this.opened || this.disposed || !this.hasVerifiedActivityTurn(nodeRun, context)) {
+      return;
+    }
+    const identity = {
+      taskId: this.state.taskId,
+      taskLoadSequence: this.taskLoadSequence,
+      workflowRunId: this.state.selectedRunId,
+      runLoadSequence: this.runLoadSequence,
+      nodeRunId: this.state.selectedNodeRunId,
+      turnId: context.turnId,
+      activityLoadSequence: this.activityLoadSequence
+    };
+    this.activityIdentity = identity;
+    this.state.activityTurnId = context.turnId;
+    this.state.activityLoading = true;
+    void this.loadActivityPage(identity);
+  }
+
+  async loadActivityPage(identity) {
+    if (!identity || !this.isCurrentActivity(identity) || this.state.activityPollInFlight) return;
+    let request;
+    try {
+      while (this.isCurrentActivity(identity)) {
+        request = this.api.getAgentExecutionEvents(identity.turnId, this.state.activityCursor, 200);
+        this.state.activityPollInFlight = request;
+        const page = await request;
+        if (!this.isCurrentActivity(identity)) return;
+        const ids = new Set(this.state.activityEvents.map((event) => event.id));
+        const sequences = new Set(this.state.activityEvents.map((event) => event.sequence));
+        for (const event of page.events || []) {
+          if (ids.has(event.id) || sequences.has(event.sequence)) continue;
+          ids.add(event.id);
+          sequences.add(event.sequence);
+          this.state.activityEvents.push(event);
+        }
+        this.state.activityEvents.sort((left, right) => left.sequence - right.sequence);
+        this.state.activityCursor = page.nextAfterSequence;
+        this.state.activityCaptureStatus = page.captureStatus;
+        this.state.activityLoading = false;
+        this.state.activityError = '';
+        this.renderNodeDetails();
+        if (!page.hasMore) break;
+      }
+    } catch (error) {
+      if (!this.isCurrentActivity(identity)) return;
+      this.state.activityLoading = false;
+      this.state.activityError = 'Activity could not be loaded.';
+      this.renderNodeDetails();
+    } finally {
+      if (this.isCurrentActivity(identity) && this.state.activityPollInFlight === request) {
+        this.state.activityPollInFlight = null;
+      }
+    }
+  }
+
+  async pollActivity() {
+    await this.loadActivityPage(this.activityIdentity);
+  }
+
+  async retryActivity() {
+    await this.pollActivity();
+  }
+
+  invalidateActivity() {
+    this.activityLoadSequence += 1;
+    if (this.activityPollTimer !== null) this.window.clearTimeout(this.activityPollTimer);
+    this.activityPollTimer = null;
+    this.activityIdentity = null;
+    Object.assign(this.state, this.emptyActivityState());
+  }
+
+  isCurrentActivity(identity) {
+    const nodeRun = this.selectedNodeRun();
+    const context = this.contextForNodeRun(nodeRun?.id);
+    return this.isCurrentRun(identity.taskId, identity.taskLoadSequence, identity.workflowRunId, identity.runLoadSequence)
+      && identity.nodeRunId === this.state.selectedNodeRunId
+      && identity.turnId === context?.turnId
+      && identity.activityLoadSequence === this.activityLoadSequence
+      && this.hasVerifiedActivityTurn(nodeRun, context);
+  }
+
+  renderActivity(nodeRun, context) {
+    if (!this.hasVerifiedActivityTurn(nodeRun, context)) {
+      return '<section class="node-run-activity"><h3>Activity</h3><strong>Unavailable</strong><p>Activity was not recorded for this invocation.</p></section>';
+    }
+    const presentation = captureStatusPresentation(this.state.activityCaptureStatus);
+    const usage = latestTokenUsage(this.state.activityEvents);
+    return `<section class="node-run-activity"><h3>Activity</h3>
+      <span class="agent-activity-capture agent-activity-capture-${presentation.tone}">${escapeHtml(presentation.label)}</span>
+      ${usage.length ? `<div class="agent-activity-usage">${usage.map(escapeHtml).join(' · ')}</div>` : ''}
+      ${this.state.activityLoading ? '<p>Loading activity...</p>' : ''}
+      ${this.state.activityError ? `<p class="agent-activity-error">${escapeHtml(this.state.activityError)}</p>` : ''}
+      <div class="agent-activity-scroll"><ol class="agent-activity-events">${renderAgentExecutionActivityEvents(this.state.activityEvents)}</ol></div>
+    </section>`;
   }
 
   renderContextDetails(nodeRun, context) {
@@ -1523,6 +1645,7 @@ export class TaskExecutionView {
       unit.repositoryId,
       this.state.workflowRun?.nodeRuns || []
     )?.id || null;
+    this.syncSelectedActivity();
     this.renderGraph();
     this.renderNodeDetails();
   }
@@ -1535,6 +1658,7 @@ export class TaskExecutionView {
       this.state.nodeRunSelectionMode = SELECTION_PINNED_INVOCATION;
     }
     this.state.selectedNodeRunId = nodeRunId;
+    this.syncSelectedActivity();
     this.renderGraph();
     this.renderNodeDetails();
   }
@@ -2019,8 +2143,23 @@ export class TaskExecutionView {
     return this.document.getElementById(id);
   }
 
+  emptyActivityState() {
+    return {
+      activityTurnId: null,
+      activityEvents: [],
+      activityCursor: 0,
+      activityCaptureStatus: null,
+      activityLoading: false,
+      activityError: '',
+      activityPollInFlight: null,
+      activityNewEventCount: 0,
+      activityFollowLatest: true
+    };
+  }
+
   emptyState() {
     return {
+      ...this.emptyActivityState(),
       taskId: null,
       project: null,
       task: null,
