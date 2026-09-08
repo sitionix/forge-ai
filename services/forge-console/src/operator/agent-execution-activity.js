@@ -91,6 +91,13 @@ function metadata(value, className = 'agent-activity-meta') {
 }
 
 function eventRow(event, title, body, extraClass = '') {
+  const payload = objectValue(event.payload);
+  if (payload.truncated && typeof payload.contentSummary === 'string') {
+    const byteCounts = payload.originalBytes !== undefined && payload.storedBytes !== undefined
+      ? ` (${payload.storedBytes} of ${payload.originalBytes} bytes shown)`
+      : '';
+    body = `${preformatted(payload.contentSummary)}${paragraph(`Content truncated${byteCounts}`, 'agent-activity-truncated')}`;
+  }
   const status = event.status ?? event.phase;
   const classes = [
     'agent-activity-event',

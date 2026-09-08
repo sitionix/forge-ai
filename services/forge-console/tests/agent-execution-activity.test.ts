@@ -51,6 +51,56 @@ describe('agent execution activity presentation', () => {
     ])).toEqual([]);
   });
 
+  it('selects token usage by greatest sequence despite shuffled input and opposing timestamps', () => {
+    const usage = latestTokenUsage([
+      event(9, 'TOKEN_USAGE', { total: { input: 9000 } }, { occurredAt: '2026-09-08T10:00:00.000Z' }),
+      event(2, 'TOKEN_USAGE', { total: { input: 2000 } }, { occurredAt: '2026-09-08T12:00:00.000Z' }),
+      event(12, 'COMMAND', { command: 'ls' }),
+      event(5, 'TOKEN_USAGE', { total: { input: 5000 } }, { occurredAt: '2026-09-08T11:00:00.000Z' })
+    ]);
+
+    expect(usage).toEqual(['Input 9k']);
+  });
+
+  it('renders sequence ASC despite shuffled input and opposing timestamps', () => {
+    const html = renderAgentExecutionActivityEvents([
+      event(9, 'COMMAND', { command: 'last' }, { occurredAt: '2026-09-08T10:00:00.000Z' }),
+      event(2, 'PLAN', { explanation: 'first' }, { occurredAt: '2026-09-08T12:00:00.000Z' }),
+      event(5, 'REASONING_SUMMARY', { summary: 'middle' }, { occurredAt: '2026-09-08T11:00:00.000Z' })
+    ]);
+
+    expect([...html.matchAll(/data-sequence="(\d+)"/g)].map((match) => match[1])).toEqual(['2', '5', '9']);
+  });
+
+  it.each([
+    ['PLAN', 'Plan'],
+    ['REASONING_SUMMARY', 'Reasoning summary'],
+    ['COMMAND', 'Command'],
+    ['FILE_CHANGE', 'File change'],
+    ['TOOL_CALL', 'Tool call']
+  ])('renders retained %s content safely with its title, status, and truncation', (type, title) => {
+    const html = renderAgentExecutionActivityEvent(event(1, type, {
+      contentSummary: '<script>alert("retained")</script>\n{"command":"ls","steps":[{"step":"Inspect"}]}',
+      truncated: true,
+      originalBytes: 140000,
+      storedBytes: 120000,
+      requestBody: 'private request body',
+      hiddenReasoning: 'private reasoning'
+    }, { status: 'SUCCEEDED' }));
+
+    expect(html).toContain('<pre>&lt;script&gt;alert(&quot;retained&quot;)&lt;/script&gt;\n{&quot;command&quot;:&quot;ls&quot;,&quot;steps&quot;:[{&quot;step&quot;:&quot;Inspect&quot;}]}</pre>');
+    expect(html).toContain(`<strong>${title}</strong>`);
+    expect(html).toContain('>SUCCEEDED</span>');
+    expect(html).toContain('Content truncated (120000 of 140000 bytes shown)');
+    expect(html.match(/class="agent-activity-truncated"/g)).toHaveLength(1);
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('class="agent-activity-command"');
+    expect(html).not.toContain('class="agent-activity-plan"');
+    expect(html).not.toContain('requestBody');
+    expect(html).not.toContain('private request body');
+    expect(html).not.toContain('private reasoning');
+  });
+
   it('renders every Forge activity event through provider-neutral semantic markup', () => {
     const cases = [
       event(1, 'TURN', {}, { status: 'STARTED' }),
