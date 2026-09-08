@@ -38,6 +38,8 @@ import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCaptureStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
+import com.sitionix.forgeagent.domain.model.AgentExecutionSessionStatus;
+import com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.ConnectionResolution;
@@ -82,6 +84,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -410,17 +414,152 @@ class ForgeAgentPortAwareExecutionIT {
         final NodeExecutionClaim staleClaim = this.lifecycle.tryStart(pending.id()).orElseThrow();
         this.agentSessionLeaseService.persistConversation(staleClaim.agentSessionClaim(), "thread-stale", "0.153.2");
         this.agentSessionLeaseService.persistTurn(staleClaim.agentSessionClaim(), "provider-turn-stale");
+        assertThat(this.agentExecutionEventRepository.activate(staleClaim.agentSessionClaim())).isTrue();
         this.jdbcTemplate.update(
                 "UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id=?",
                 staleClaim.agentSessionClaim().sessionId()
         );
 
         assertThat(this.lifecycle.recoverExpiredSessions()).isEqualTo(1);
+        assertThat(this.agentExecutionEventRepository.append(staleClaim.agentSessionClaim(), event(
+                AgentExecutionEventType.WARNING, null, null))).isEqualTo(AgentExecutionEventAppendResult.STALE);
         assertThatThrownBy(() -> this.lifecycle.succeed(
                 pending.id(), this.result(pending, "{\"late\":true}"), staleClaim.agentSessionClaim()
         )).isInstanceOf(com.sitionix.forgeagent.domain.exception.ConflictException.class)
                 .extracting("code").isEqualTo("STALE_AGENT_SESSION_LEASE");
-        assertThat(this.nodeRunRepository.findById(pending.id()).orElseThrow().status()).isEqualTo(NodeRunStatus.FAILED);
+        assertThat(this.nodeRunRepository.findById(pending.id()).orElseThrow()).satisfies(nodeRun -> {
+            assertThat(nodeRun.status()).isEqualTo(NodeRunStatus.FAILED);
+            assertThat(nodeRun.failure().code()).isEqualTo("AGENT_CONTEXT_PERSISTENCE_FAILED");
+        });
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(pending.id()).orElseThrow())
+                .satisfies(allocation -> {
+                    assertThat(allocation.turn().status()).isEqualTo(AgentExecutionTurnStatus.FAILED);
+                    assertThat(allocation.session().status()).isEqualTo(AgentExecutionSessionStatus.FAILED);
+                    assertThat(allocation.session().leaseOwnerId()).isNull();
+                    assertThat(allocation.session().leaseToken())
+                            .isEqualTo(staleClaim.agentSessionClaim().leaseToken() + 1);
+                });
+        assertThat(this.agentExecutionEventRepository.findPage(
+                staleClaim.agentSessionClaim().turnId(), 0, 10).orElseThrow()).satisfies(page -> {
+                    assertThat(page.captureStatus()).isEqualTo(AgentExecutionEventCaptureStatus.DEGRADED);
+                    assertThat(page.events()).isEmpty();
+                });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"NOT_STARTED", "COMPLETE", "DEGRADED", "NULL"})
+    void expiredRecoveryPreservesNonActiveCaptureStates(final String captureStatus) {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Recover preserved capture."));
+        final NodeRun pending = this.onlyPending(run.id(), A);
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(pending.id()).orElseThrow();
+        this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), "thread-expired-preserved", "0.153.2");
+        this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "provider-turn-expired-preserved");
+        this.jdbcTemplate.update("UPDATE agent_execution_turns SET event_capture_status=? WHERE id=?",
+                "NULL".equals(captureStatus) ? null : captureStatus, claim.agentSessionClaim().turnId());
+        this.jdbcTemplate.update(
+                "UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id=?",
+                claim.agentSessionClaim().sessionId());
+
+        assertThat(this.lifecycle.recoverExpiredSessions()).isEqualTo(1);
+
+        assertThat(this.captureStatus(claim.agentSessionClaim().turnId()))
+                .isEqualTo("NULL".equals(captureStatus) ? null : captureStatus);
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(pending.id()).orElseThrow().turn().status())
+                .isEqualTo(AgentExecutionTurnStatus.FAILED);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ACTIVE", "NOT_STARTED", "COMPLETE", "DEGRADED", "NULL"})
+    void terminalRecoveryDegradesActiveAndPreservesOtherCaptureStates(final String captureStatus) {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Reconcile terminal turn."));
+        final NodeRun pending = this.onlyPending(run.id(), A);
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(pending.id()).orElseThrow();
+        this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), "thread-terminal", "0.153.2");
+        this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "provider-turn-terminal");
+        this.jdbcTemplate.update("UPDATE agent_execution_turns SET event_capture_status=? WHERE id=?",
+                "NULL".equals(captureStatus) ? null : captureStatus, claim.agentSessionClaim().turnId());
+        this.jdbcTemplate.update("""
+                UPDATE node_runs
+                   SET status='FAILED',failure_code='AGENT_CONTEXT_PERSISTENCE_FAILED',
+                       failure_message='Persisted terminal failure.',finished_at=CURRENT_TIMESTAMP
+                 WHERE id=?
+                """, pending.id());
+        this.jdbcTemplate.update(
+                "UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id=?",
+                claim.agentSessionClaim().sessionId());
+
+        assertThat(this.lifecycle.recoverExpiredSessions()).isEqualTo(1);
+
+        assertThat(this.captureStatus(claim.agentSessionClaim().turnId()))
+                .isEqualTo(switch (captureStatus) {
+                    case "ACTIVE" -> "DEGRADED";
+                    case "NULL" -> null;
+                    default -> captureStatus;
+                });
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(pending.id()).orElseThrow())
+                .satisfies(allocation -> {
+                    assertThat(allocation.turn().status()).isEqualTo(AgentExecutionTurnStatus.FAILED);
+                    assertThat(allocation.session().status()).isEqualTo(AgentExecutionSessionStatus.FAILED);
+                });
+    }
+
+    @Test
+    void cancellationDegradesActiveCaptureAndFencesPreviousOwnerWithoutFabricatingEvents() {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Cancel active capture."));
+        final NodeRun pending = this.onlyPending(run.id(), A);
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(pending.id()).orElseThrow();
+        this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), "thread-cancel", "0.153.2");
+        this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "provider-turn-cancel");
+        assertThat(this.agentExecutionEventRepository.activate(claim.agentSessionClaim())).isTrue();
+
+        assertThat(this.agentExecutionSessionRepository.cancel(pending.id())).isTrue();
+
+        assertThat(this.nodeRunRepository.findById(pending.id()).orElseThrow().status())
+                .isEqualTo(NodeRunStatus.CANCELLED);
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(pending.id()).orElseThrow())
+                .satisfies(allocation -> {
+                    assertThat(allocation.turn().status()).isEqualTo(AgentExecutionTurnStatus.CANCELLED);
+                    assertThat(allocation.session().status()).isEqualTo(AgentExecutionSessionStatus.CLOSED);
+                    assertThat(allocation.session().leaseOwnerId()).isNull();
+                    assertThat(allocation.session().leaseToken())
+                            .isEqualTo(claim.agentSessionClaim().leaseToken() + 1);
+                });
+        assertThat(this.agentExecutionEventRepository.append(claim.agentSessionClaim(), event(
+                AgentExecutionEventType.WARNING, null, null))).isEqualTo(AgentExecutionEventAppendResult.STALE);
+        assertThat(this.agentExecutionEventRepository.findPage(
+                claim.agentSessionClaim().turnId(), 0, 10).orElseThrow()).satisfies(page -> {
+                    assertThat(page.captureStatus()).isEqualTo(AgentExecutionEventCaptureStatus.DEGRADED);
+                    assertThat(page.events()).isEmpty();
+                });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"NOT_STARTED", "COMPLETE", "DEGRADED", "NULL"})
+    void cancellationPreservesAlreadyTerminalOrHistoricalCaptureState(final String captureStatus) {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Cancel preserved capture."));
+        final NodeRun pending = this.onlyPending(run.id(), A);
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(pending.id()).orElseThrow();
+        this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), "thread-cancel-preserved", "0.153.2");
+        this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "provider-turn-cancel-preserved");
+        this.jdbcTemplate.update("UPDATE agent_execution_turns SET event_capture_status=? WHERE id=?",
+                "NULL".equals(captureStatus) ? null : captureStatus, claim.agentSessionClaim().turnId());
+
+        assertThat(this.agentExecutionSessionRepository.cancel(pending.id())).isTrue();
+
+        assertThat(this.captureStatus(claim.agentSessionClaim().turnId()))
+                .isEqualTo("NULL".equals(captureStatus) ? null : captureStatus);
     }
 
     @Test
@@ -562,6 +701,11 @@ class ForgeAgentPortAwareExecutionIT {
                                                        final AgentExecutionEventStatus status,
                                                        final String providerEventKey) {
         return new AgentExecutionEventCandidate(type, status, null, providerEventKey, "{}", Instant.now());
+    }
+
+    private String captureStatus(final UUID turnId) {
+        return this.jdbcTemplate.queryForObject(
+                "SELECT event_capture_status FROM agent_execution_turns WHERE id=?", String.class, turnId);
     }
 
     @Test
