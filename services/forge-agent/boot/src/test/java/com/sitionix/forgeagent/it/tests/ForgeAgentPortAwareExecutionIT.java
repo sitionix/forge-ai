@@ -25,6 +25,7 @@ import com.sitionix.forgeagent.application.runtime.NodeRunLifecycle;
 import com.sitionix.forgeagent.application.runtime.SelectedOutputRoutingPolicy;
 import com.sitionix.forgeagent.application.runtime.WorkflowExecutionCoordinator;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
+import com.sitionix.forgeagent.application.usecase.CancelWorkflowRunUseCase;
 import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
@@ -39,6 +40,7 @@ import com.sitionix.forgeagent.domain.model.AgentExecutionEventCaptureStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
 import com.sitionix.forgeagent.domain.model.AgentExecutionSessionStatus;
+import com.sitionix.forgeagent.domain.model.AgentExecutionTerminalOutcome;
 import com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
@@ -78,6 +80,7 @@ import java.util.List;
 import java.util.UUID;
 import java.time.Instant;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -140,6 +143,8 @@ class ForgeAgentPortAwareExecutionIT {
     private ProjectTaskUseCases projectTaskUseCases;
     @Autowired
     private AgentUseCases agentUseCases;
+    @Autowired
+    private CancelWorkflowRunUseCase cancelWorkflowRun;
     @Autowired
     private NodeRunLifecycle lifecycle;
     @Autowired
@@ -386,6 +391,72 @@ class ForgeAgentPortAwareExecutionIT {
                 this.onlyPending(isolatedRun.id(), IMPLEMENTER).id()).orElseThrow();
         assertThat(isolatedClaim.agentSessionClaim().sessionId()).isNotEqualTo(firstClaim.agentSessionClaim().sessionId());
         assertThat(isolatedClaim.agentSessionClaim().providerConversationId()).isNull();
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "forge.codex.live-cancellation-e2e", matches = "true")
+    void liveCodexActiveTurnIsStoppedAndAnUnrelatedRunStillCompletes() throws Exception {
+        this.seed();
+        final String liveModel = System.getProperty("forge.codex.live-model", "gpt-5.6-sol");
+        this.codexRuntimePort.readyWithModel(liveModel);
+        this.agentUseCases.updateAgent(AGENT_A_ID, new SaveAgentCommand(
+                "Agent A",
+                "Follow the requested shell command before returning the required JSON object.",
+                AgentOutputSchema.ofCanonicalJsonObject("""
+                        {"type":"object","properties":{"answer":{"type":"string"}},
+                         "required":["answer"],"additionalProperties":false}
+                        """),
+                new AgentModelSelection("codex", liveModel, null)
+        ));
+        this.saveReusableTerminalWorkflow();
+
+        final WorkflowRun cancelledRun = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID,
+                new CreateWorkflowRunCommand(
+                        "Use the shell tool to run `sleep 30`, then inspect the current directory, then return JSON."));
+        final NodeRun activeNode = this.onlyPending(cancelledRun.id(), A);
+        final NodeExecutionClaim cancelledClaim = this.lifecycle.tryStart(activeNode.id()).orElseThrow();
+        final CompletableFuture<AgentExecutionResult> execution = CompletableFuture.supplyAsync(
+                () -> this.executeLiveWithHeartbeat(cancelledClaim));
+        this.awaitLiveCommand(cancelledClaim);
+
+        this.cancelWorkflowRun.execute(cancelledRun.id());
+
+        assertThatThrownBy(() -> execution.get(10, TimeUnit.SECONDS))
+                .isInstanceOf(java.util.concurrent.ExecutionException.class);
+        assertThat(this.workflowRunRepository.findById(cancelledRun.id()).orElseThrow().status())
+                .isEqualTo(WorkflowRunStatus.CANCELLED);
+        assertThat(this.nodeRunRepository.findByWorkflowRunId(cancelledRun.id()))
+                .singleElement()
+                .satisfies(nodeRun -> assertThat(nodeRun.status()).isEqualTo(NodeRunStatus.CANCELLED));
+        final var allocation = this.agentExecutionSessionRepository.findByWorkflowRunId(cancelledRun.id())
+                .getFirst();
+        assertThat(allocation.turn().providerTurnId()).isNotBlank();
+        assertThat(allocation.turn().status()).isEqualTo(AgentExecutionTurnStatus.CANCELLED);
+        assertThat(allocation.session().status()).isEqualTo(AgentExecutionSessionStatus.CLOSED);
+        assertThat(allocation.session().terminalOutcome()).isEqualTo(AgentExecutionTerminalOutcome.CANCELLED);
+        assertThat(allocation.session().leaseOwnerId()).isNull();
+        assertThat(allocation.session().leaseToken()).isGreaterThan(cancelledClaim.agentSessionClaim().leaseToken());
+        final var interruptedEvents = this.agentExecutionEventRepository.findPage(
+                cancelledClaim.agentSessionClaim().turnId(), 0, 200).orElseThrow();
+        assertThat(interruptedEvents.captureStatus()).isEqualTo(AgentExecutionEventCaptureStatus.DEGRADED);
+        assertThat(interruptedEvents.events()).noneSatisfy(event -> {
+            assertThat(event.type()).isEqualTo(AgentExecutionEventType.TURN);
+            assertThat(event.status()).isEqualTo(AgentExecutionEventStatus.FAILED);
+        });
+        final int recordedEventCount = interruptedEvents.events().size();
+        Thread.sleep(500);
+        assertThat(this.agentExecutionEventRepository.findPage(
+                cancelledClaim.agentSessionClaim().turnId(), 0, 200).orElseThrow().events())
+                .hasSize(recordedEventCount);
+
+        final WorkflowRun unrelatedRun = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID,
+                new CreateWorkflowRunCommand("Return JSON with answer set to normal execution."));
+        final NodeExecutionClaim unrelatedClaim = this.lifecycle.tryStart(
+                this.onlyPending(unrelatedRun.id(), A).id()).orElseThrow();
+        final AgentExecutionResult unrelatedResult = this.executeLiveWithHeartbeat(unrelatedClaim);
+        this.lifecycle.succeed(unrelatedClaim.nodeRunId(), unrelatedResult, unrelatedClaim.agentSessionClaim());
+        assertThat(this.workflowRunRepository.findById(unrelatedRun.id()).orElseThrow().status())
+                .isEqualTo(WorkflowRunStatus.SUCCEEDED);
     }
 
     @Test
@@ -1055,6 +1126,27 @@ class ForgeAgentPortAwareExecutionIT {
             heartbeat.cancel(false);
             scheduler.shutdownNow();
         }
+    }
+
+    private void awaitLiveCommand(final NodeExecutionClaim claim) throws InterruptedException {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
+        while (System.nanoTime() < deadline) {
+            final boolean exactTurnKnown = this.agentExecutionSessionRepository
+                    .findByWorkflowRunId(claim.workflowRunId()).stream()
+                    .anyMatch(allocation -> allocation.turn().nodeRunId().equals(claim.nodeRunId())
+                            && allocation.turn().providerTurnId() != null
+                            && !allocation.turn().providerTurnId().isBlank());
+            final boolean commandRecorded = this.agentExecutionEventRepository
+                    .findPage(claim.agentSessionClaim().turnId(), 0, 200)
+                    .map(page -> page.events().stream()
+                            .anyMatch(event -> event.type() == AgentExecutionEventType.COMMAND))
+                    .orElse(false);
+            if (exactTurnKnown && commandRecorded && this.agentExecutor.secureCancellation(claim.nodeRunId()).isPresent()) {
+                return;
+            }
+            Thread.sleep(100);
+        }
+        throw new AssertionError("Live Codex command did not become cancellable before the acceptance deadline.");
     }
 
     private ProjectRepositoryEntity projectRepositoryEntity() {
