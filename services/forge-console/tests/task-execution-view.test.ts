@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 
 import {
   buildExecutionProjection,
@@ -15,6 +17,33 @@ const REPOSITORIES = [
   { id: 'repo-c', name: 'repo-C' }
 ];
 const MODERN_EXECUTION_CARD_WIDTH = 288;
+
+describe('Activity layout', () => {
+  it('bounds the timeline and wraps event content while only preformatted content scrolls horizontally', () => {
+    const css = readFileSync('src/operator/operator-ui.css', 'utf8');
+    const dom = new JSDOM(`<style>${css}</style><div class="node-run-details-panel"><section class="node-run-activity">
+      <div class="agent-activity-scroll"><ol class="agent-activity-events"><li class="agent-activity-event">
+        <p>${'long/path/'.repeat(100)}</p><pre class="agent-activity-command">${'command '.repeat(100)}</pre>
+        <details class="agent-activity-output"><summary>Output</summary><pre>output</pre></details>
+      </li></ol></div></section></div>`);
+    const style = (selector: string) => dom.window.getComputedStyle(dom.window.document.querySelector(selector)!);
+    expect(style('.node-run-activity').minWidth).toBe('0');
+    expect(style('.node-run-activity').maxWidth).toBe('100%');
+    expect(style('.agent-activity-scroll').maxHeight).not.toMatch(/^(|none)$/);
+    expect(style('.agent-activity-scroll').overflowY).toBe('auto');
+    expect(style('.agent-activity-scroll').overflowX).toBe('hidden');
+    expect(style('.agent-activity-event p').overflowWrap).toBe('anywhere');
+    for (const selector of ['.agent-activity-command', '.agent-activity-output pre']) {
+      expect(style(selector).overflowX).toBe('auto');
+      expect(style(selector).maxWidth).toBe('100%');
+    }
+    for (const selector of ['body', '.node-run-activity', '.agent-activity-scroll', '.agent-activity-events', '.agent-activity-event', '.agent-activity-event p']) {
+      expect(style(selector).overflowX).not.toMatch(/^(auto|scroll)$/);
+    }
+    expect(style('.node-run-details-panel').overflow).toBe('auto');
+    dom.window.close();
+  });
+});
 
 function graph(
   nodes: Array<{ id: string; scopeMode: string }>,

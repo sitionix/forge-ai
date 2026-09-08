@@ -1367,18 +1367,21 @@ export class TaskExecutionView {
         if (!this.isCurrentActivity(identity)) return;
         const ids = new Set(this.state.activityEvents.map((event) => event.id));
         const sequences = new Set(this.state.activityEvents.map((event) => event.sequence));
+        const initialPage = this.state.activityCursor === 0;
+        let newEventCount = 0;
         for (const event of page.events || []) {
           if (ids.has(event.id) || sequences.has(event.sequence)) continue;
           ids.add(event.id);
           sequences.add(event.sequence);
           this.state.activityEvents.push(event);
+          if (event.type !== 'TOKEN_USAGE') newEventCount += 1;
         }
         this.state.activityEvents.sort((left, right) => left.sequence - right.sequence);
         this.state.activityCursor = page.nextAfterSequence;
         this.state.activityCaptureStatus = page.captureStatus;
         this.state.activityLoading = false;
         this.state.activityError = '';
-        this.renderSelectedActivity();
+        this.renderSelectedActivity(newEventCount, initialPage);
         if (!page.hasMore) break;
       }
     } catch (error) {
@@ -1435,19 +1438,92 @@ export class TaskExecutionView {
       && this.hasVerifiedActivityTurn(nodeRun, context);
   }
 
-  renderSelectedActivity() {
+  renderSelectedActivity(newEventCount = 0, initialPage = false) {
     const section = this.byId('agentsV2NodeRunDetails')?.querySelector('.node-run-activity');
     const nodeRun = this.selectedNodeRun();
     if (section && nodeRun) {
-      section.outerHTML = this.renderActivity(nodeRun, this.contextForNodeRun(nodeRun.id));
+      const scroll = section.querySelector('.agent-activity-scroll');
+      const scrollTop = scroll?.scrollTop || 0;
+      const focused = this.document.activeElement;
+      const hadFocus = section.contains(focused);
+      this.state.activityFollowLatest = initialPage || !scroll || this.activityIsNearBottom(scroll);
+      this.state.activityNewEventCount = this.state.activityFollowLatest
+        ? 0 : this.state.activityNewEventCount + newEventCount;
+      const template = this.document.createElement('template');
+      template.innerHTML = this.renderActivity(nodeRun, this.contextForNodeRun(nodeRun.id));
+      const next = template.content.firstElementChild;
+      const nextScroll = next.querySelector('.agent-activity-scroll');
+      if (scroll && nextScroll) {
+        // Event records are immutable. Keep their DOM so disclosures, selection,
+        // and keyboard focus survive incremental pages and capture-status updates.
+        const list = scroll.querySelector('.agent-activity-events');
+        const existing = new Map([...list.children].map((row) => [row.dataset.sequence, row]));
+        let position = list.firstElementChild;
+        for (const row of [...nextScroll.querySelector('.agent-activity-events').children]) {
+          const retained = existing.get(row.dataset.sequence) || row;
+          if (retained === position) position = position.nextElementSibling;
+          else list.insertBefore(retained, position);
+        }
+        for (const selector of ['[data-activity-retry]', '[data-activity-follow-latest]']) {
+          const previous = section.querySelector(selector);
+          const replacement = next.querySelector(selector);
+          if (previous && replacement) {
+            previous.textContent = replacement.textContent;
+            replacement.replaceWith(previous);
+          }
+        }
+        for (const child of [...section.childNodes]) {
+          if (child !== scroll) child.remove();
+        }
+        let afterScroll = false;
+        for (const child of [...next.childNodes]) {
+          if (child === nextScroll) afterScroll = true;
+          else if (afterScroll) section.append(child);
+          else section.insertBefore(child, scroll);
+        }
+      } else {
+        section.replaceWith(next);
+      }
       this.bindActivityControls();
+      const currentScroll = this.byId('agentsV2NodeRunDetails')?.querySelector('.agent-activity-scroll');
+      if (hadFocus && focused.isConnected && this.document.activeElement !== focused) focused.focus({ preventScroll: true });
+      if (currentScroll) {
+        if (this.state.activityFollowLatest) this.scrollActivityToLatest(currentScroll);
+        else currentScroll.scrollTop = scrollTop;
+      }
     }
   }
 
+  activityIsNearBottom(scroll) {
+    return scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <= 48;
+  }
+
+  scrollActivityToLatest(scroll) {
+    const top = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    if (typeof scroll.scrollTo === 'function') scroll.scrollTo({ top, behavior: 'instant' });
+    else scroll.scrollTop = top;
+  }
+
   bindActivityControls() {
-    this.byId('agentsV2NodeRunDetails')?.querySelector('[data-activity-retry]')?.addEventListener('click', () => {
-      void this.retryActivity();
-    });
+    const section = this.byId('agentsV2NodeRunDetails')?.querySelector('.node-run-activity');
+    const retry = section?.querySelector('[data-activity-retry]');
+    if (retry) retry.onclick = () => { void this.retryActivity(); };
+    const scroll = section?.querySelector('.agent-activity-scroll');
+    if (scroll) scroll.onscroll = () => {
+      this.state.activityFollowLatest = this.activityIsNearBottom(scroll);
+      if (this.state.activityFollowLatest) {
+        this.state.activityNewEventCount = 0;
+        section.querySelector('[data-activity-follow-latest]')?.remove();
+      }
+    };
+    const follow = section?.querySelector('[data-activity-follow-latest]');
+    if (follow && scroll) follow.onclick = () => {
+      this.state.activityFollowLatest = true;
+      this.state.activityNewEventCount = 0;
+      if (this.document.activeElement === follow) scroll.focus({ preventScroll: true });
+      follow.remove();
+      this.scrollActivityToLatest(scroll);
+    };
   }
 
   renderActivity(nodeRun, context) {
@@ -1465,8 +1541,9 @@ export class TaskExecutionView {
       ${this.state.activityCaptureStatus === 'COMPLETE' && !this.state.activityEvents.length ? '<p>No activity events were recorded.</p>' : ''}
       ${this.state.activityCaptureStatus === 'DEGRADED' ? '<p>Some agent activity may be missing.</p>' : ''}
       ${this.state.activityCaptureStatus === 'UNAVAILABLE' ? '<p>Activity was not recorded for this invocation.</p>' : ''}
-      ${this.state.activityError ? `<p class="agent-activity-error">${escapeHtml(this.state.activityError)}</p><button type="button" data-activity-retry>Retry</button>` : ''}
-      <div class="agent-activity-scroll"><ol class="agent-activity-events">${renderAgentExecutionActivityEvents(this.state.activityEvents)}</ol></div>
+      ${this.state.activityError ? `<p class="agent-activity-error">${escapeHtml(this.state.activityError)}</p><button type="button" class="button small secondary" data-activity-retry>Retry</button>` : ''}
+      ${this.state.activityNewEventCount ? `<button type="button" class="button small secondary" data-activity-follow-latest>${this.state.activityNewEventCount} new event${this.state.activityNewEventCount === 1 ? '' : 's'}</button>` : ''}
+      <div class="agent-activity-scroll" tabindex="0" role="region" aria-label="Agent activity timeline"><ol class="agent-activity-events">${renderAgentExecutionActivityEvents(this.state.activityEvents)}</ol></div>
     </section>`;
   }
 
