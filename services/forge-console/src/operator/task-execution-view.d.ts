@@ -1,3 +1,40 @@
+import type { AgentExecutionEvent, AgentExecutionEventPage } from './agent-projects-api.js';
+
+export interface ActivityIdentity {
+  taskId: string;
+  taskLoadSequence: number;
+  workflowRunId: string;
+  runLoadSequence: number;
+  nodeRunId: string;
+  turnId: string;
+  activityLoadSequence: number;
+}
+
+export interface ActivityState {
+  activityTurnId: string | null;
+  activityEvents: AgentExecutionEvent[];
+  activityCursor: number;
+  activityCaptureStatus: string | null;
+  activityLoading: boolean;
+  activityError: string;
+  activityPollInFlight: Promise<AgentExecutionEventPage> | null;
+  activityNewEventCount: number;
+  activityFollowLatest: boolean;
+}
+
+export interface TaskExecutionActivity {
+  state: ActivityState;
+  activityLoadSequence: number;
+  activityPollTimer: number | null;
+  activityIdentity: ActivityIdentity | null;
+  syncSelectedActivity(): void;
+  loadActivityPage(identity: ActivityIdentity | null): Promise<void>;
+  pollActivity(): Promise<void>;
+  retryActivity(): Promise<void>;
+  invalidateActivity(): void;
+  isCurrentActivity(identity: ActivityIdentity): boolean;
+}
+
 export interface ExecutionVisualUnit {
   sourceNodeId: string;
   scopeMode: string;

@@ -427,19 +427,67 @@ function api(overrides = {}) {
   };
 }
 
-async function mountedPage(fakeApi = api()) {
+async function mountedPage(fakeApi = api(), runtimeConfig = {}) {
   const dom = agentProjectsDom();
-  const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+  const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi, runtimeConfig });
   page.mount();
   await flushAsync();
   return { dom, page, fakeApi };
 }
 
-async function openedProject(fakeApi = api()) {
-  const context = await mountedPage(fakeApi);
+async function openedProject(fakeApi = api(), runtimeConfig = {}) {
+  const context = await mountedPage(fakeApi, runtimeConfig);
   await context.page.openProject(project().id);
   await flushAsync();
   return context;
+}
+
+function activityEvent(sequence: number, message = `Event ${sequence}`) {
+  return {
+    id: `event-${sequence}`, agentSessionId: 'session-a', agentTurnId: 'turn-a', nodeRunId: 'impl-1', sequence,
+    type: 'AGENT_MESSAGE', phase: 'COMMENTARY', status: 'COMPLETED',
+    occurredAt: '2026-09-08T10:00:00Z', createdAt: '2026-09-08T10:00:00Z', providerEventKey: null,
+    payload: { message }
+  };
+}
+
+function activityPage(turnId: string, message: string, captureStatus = 'COMPLETE') {
+  return { turnId, captureStatus, events: [{ ...activityEvent(1, message), agentTurnId: turnId }], lastSequence: 1, nextAfterSequence: 1, hasMore: false };
+}
+
+async function openedActivity(getAgentExecutionEvents: ReturnType<typeof vi.fn>, options: { tracked?: boolean; contexts?: any[]; runtimeConfig?: object; workflowStatus?: string } = {}) {
+  const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
+  const runs = [
+    modernNodeRun('impl-1', 'implementer', 'SUCCEEDED', '2026-08-13T10:00:00Z'),
+    modernNodeRun('impl-2', 'implementer', 'SUCCEEDED', '2026-08-13T10:01:00Z')
+  ].map((run) => ({ ...run, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', contextTrackingVersion: options.tracked === false ? undefined : 1 }));
+  const contexts = options.contexts ?? runs.map((run, index) => ({
+    sessionId: 'session-a', turnId: index === 0 ? 'turn-a' : 'turn-b', nodeRunId: run.id,
+    sourceNodeId: 'implementer', repositoryId: null, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE',
+    sequence: index + 1, sessionStatus: 'IDLE', turnStatus: 'SUCCEEDED', provider: 'codex'
+  }));
+  const fakeApi = api({
+    getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', options.workflowStatus ?? 'SUCCEEDED', '2026-08-13T10:00:00Z')]))),
+    getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', options.workflowStatus ?? 'SUCCEEDED', runs, 'Activity Board', graph))),
+    getAgentExecutionContexts: vi.fn(() => Promise.resolve(contexts)),
+    getAgentExecutionEvents
+  });
+  const result = await openedProject(fakeApi, options.runtimeConfig);
+  await result.page.openTaskExecution('task-1');
+  await flushAsync();
+  return result;
+}
+
+function stubActivityScroll(dom: JSDOM) {
+  const prototype = dom.window.HTMLElement.prototype;
+  Object.defineProperty(prototype, 'scrollHeight', { configurable: true, get() {
+    return this.classList.contains('agent-activity-scroll') ? 800 + this.querySelectorAll('.agent-activity-event').length * 100 : 0;
+  } });
+  Object.defineProperty(prototype, 'clientHeight', { configurable: true, get() {
+    return this.classList.contains('agent-activity-scroll') ? 300 : 0;
+  } });
+  prototype.scrollTo = function (options: any) { this.scrollTop = Math.max(0, Math.min(options.top, this.scrollHeight - this.clientHeight)); };
+  return () => dom.window.document.querySelector<HTMLElement>('.agent-activity-scroll')!;
 }
 
 async function openedRepository(fakeApi = api(), repositoryId = repository().id) {
@@ -2638,6 +2686,559 @@ describe('Agent projects page', () => {
     page.taskExecutionView.render();
     expect(page.taskExecutionView.state.selectedNodeRunId).toBe('reviewer-3');
     expect(dom.window.document.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')?.value).toBe('reviewer-3');
+  });
+
+  it.each([
+    { following: true, workflowFails: false },
+    { following: false, workflowFails: false },
+    { following: true, workflowFails: true },
+    { following: false, workflowFails: true }
+  ])('Activity preserves scroll, disclosures, and focus across alternating RUNNING workflow polls (following=$following, failure=$workflowFails)', async ({ following, workflowFails }) => {
+    const eventsApi = vi.fn().mockResolvedValueOnce({ ...activityPage('turn-a', 'First', 'ACTIVE'), events: [{ ...activityEvent(1), type: 'COMMAND', payload: { command: 'git status', output: 'clean' } }] })
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'ACTIVE', events: [activityEvent(2)], lastSequence: 2, nextAfterSequence: 2, hasMore: false })
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'ACTIVE', events: [activityEvent(3)], lastSequence: 3, nextAfterSequence: 3, hasMore: false });
+    const { dom, page, fakeApi } = await openedActivity(eventsApi, { workflowStatus: 'RUNNING' });
+    const scroll = stubActivityScroll(dom);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    await flushAsync();
+    const document = dom.window.document;
+    const originalScroller = scroll();
+    const disclosure = document.querySelector<HTMLDetailsElement>('.agent-activity-output')!;
+    const summary = disclosure.querySelector('summary')!;
+    disclosure.open = true;
+    summary.focus();
+    if (!following) {
+      scroll().scrollTop = 120;
+      scroll().dispatchEvent(new dom.window.Event('scroll'));
+    }
+    for (const sequence of [2, 3]) {
+      if (workflowFails) fakeApi.getWorkflowRun.mockRejectedValueOnce(new Error('Workflow refresh unavailable'));
+      else fakeApi.getWorkflowRun.mockResolvedValueOnce({
+        ...view.state.workflowRun,
+        nodeRuns: view.state.workflowRun.nodeRuns.map((run: any) => run.id === 'impl-1' ? { ...run, output: `Workflow refresh ${sequence}` } : run)
+      });
+      await view.pollSelectedRun();
+      expect(scroll().scrollTop).toBe(following ? 500 + (sequence - 1) * 100 : 120);
+      expect(scroll() === originalScroller).toBe(true);
+      expect(document.activeElement === summary).toBe(true);
+      expect(disclosure.isConnected && disclosure.open).toBe(true);
+      if (!workflowFails) expect(document.querySelector('.node-run-output')?.textContent).toContain(`Workflow refresh ${sequence}`);
+      await view.pollActivity();
+      expect(scroll().scrollTop).toBe(following ? 500 + sequence * 100 : 120);
+      expect(view.state.activityFollowLatest).toBe(following);
+      expect(view.state.activityNewEventCount).toBe(following ? 0 : sequence - 1);
+      expect(document.activeElement === summary).toBe(true);
+      expect(disclosure.isConnected && disclosure.open).toBe(true);
+    }
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(3);
+    page.dispose();
+  });
+
+  it('Activity follows the bottom and near-bottom position when new events arrive', async () => {
+    const eventsApi = vi.fn().mockResolvedValueOnce(activityPage('turn-a', 'First', 'ACTIVE'))
+      .mockResolvedValueOnce({ ...activityPage('turn-a', 'Second', 'ACTIVE'), events: [activityEvent(2)], nextAfterSequence: 2 });
+    const { dom, page } = await openedActivity(eventsApi);
+    const scroll = stubActivityScroll(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    expect(scroll().scrollTop).toBe(600);
+    scroll().scrollTop = 575;
+    scroll().dispatchEvent(new dom.window.Event('scroll'));
+    await page.taskExecutionView.pollActivity();
+    expect(scroll().scrollTop).toBe(700);
+    expect(dom.window.document.querySelector('[data-activity-follow-latest]')).toBeNull();
+    page.dispose();
+  });
+
+  it('Activity preserves a reader position, counts accepted primary events, and resumes from the actual new-events button', async () => {
+    const eventsApi = vi.fn().mockResolvedValueOnce(activityPage('turn-a', 'First', 'ACTIVE'))
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'ACTIVE', events: [activityEvent(1), ...[2, 3, 4, 5].map((sequence) => activityEvent(sequence)), { ...activityEvent(6), type: 'TOKEN_USAGE', payload: { total: { input: 20 } } }], lastSequence: 6, nextAfterSequence: 6, hasMore: false })
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'ACTIVE', events: [], lastSequence: 6, nextAfterSequence: 6, hasMore: false })
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [activityEvent(7)], lastSequence: 7, nextAfterSequence: 7, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi);
+    const scroll = stubActivityScroll(dom);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    await flushAsync();
+    scroll().scrollTop = 120;
+    scroll().dispatchEvent(new dom.window.Event('scroll'));
+    await view.pollActivity();
+    expect(scroll().scrollTop).toBe(120);
+    const button = dom.window.document.querySelector<HTMLButtonElement>('[data-activity-follow-latest]');
+    expect(button?.textContent).toBe('4 new events');
+    expect(button?.type).toBe('button');
+    button!.focus();
+    await view.pollActivity();
+    expect(dom.window.document.activeElement === button).toBe(true);
+    expect(dom.window.document.querySelector('[data-activity-follow-latest]')?.textContent).toBe('4 new events');
+    dom.window.document.querySelector<HTMLButtonElement>('[data-activity-follow-latest]')!.click();
+    expect(scroll().scrollTop).toBe(1000);
+    expect(view.state.activityNewEventCount).toBe(0);
+    expect(view.state.activityFollowLatest).toBe(true);
+    expect(dom.window.document.querySelector('[data-activity-follow-latest]')).toBeNull();
+    expect(dom.window.document.activeElement === scroll()).toBe(true);
+    await view.pollActivity();
+    expect(scroll().scrollTop).toBe(1100);
+    page.dispose();
+  });
+
+  it('Activity resets follow mode for a new invocation and catches up completed multi-page history', async () => {
+    const finalPage = deferred<any>();
+    const eventsApi = vi.fn().mockResolvedValueOnce(activityPage('turn-a', 'First', 'ACTIVE'))
+      .mockResolvedValueOnce({ ...activityPage('turn-b', 'First history'), hasMore: true })
+      .mockImplementationOnce(() => finalPage.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    const scroll = stubActivityScroll(dom);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    await flushAsync();
+    scroll().scrollTop = 80;
+    scroll().dispatchEvent(new dom.window.Event('scroll'));
+    view.selectNodeRun('impl-2');
+    await flushAsync();
+    finalPage.resolve({ turnId: 'turn-b', captureStatus: 'COMPLETE', events: [{ ...activityEvent(2), agentTurnId: 'turn-b' }], lastSequence: 2, nextAfterSequence: 2, hasMore: false });
+    await flushAsync();
+    expect(scroll().scrollTop).toBe(700);
+    expect(view.state.activityFollowLatest).toBe(true);
+    expect(view.state.activityNewEventCount).toBe(0);
+    page.dispose();
+  });
+
+  it('Activity keeps native disclosures open and preserves the focused summary during a background update', async () => {
+    const eventsApi = vi.fn().mockResolvedValueOnce({ ...activityPage('turn-a', 'First', 'ACTIVE'), events: [{ ...activityEvent(1), type: 'COMMAND', payload: { command: 'git status', output: 'clean' } }] })
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [activityEvent(2)], lastSequence: 2, nextAfterSequence: 2, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    const document = dom.window.document;
+    expect(document.querySelector('.node-run-activity h3')?.textContent).toBe('Activity');
+    expect(document.querySelector('.agent-activity-events')?.tagName).toBe('OL');
+    const disclosure = document.querySelector<HTMLDetailsElement>('.agent-activity-output')!;
+    const summary = disclosure.querySelector('summary')!;
+    disclosure.open = true;
+    summary.focus();
+    expect(document.activeElement === summary).toBe(true);
+    await page.taskExecutionView.pollActivity();
+    expect(document.activeElement === summary).toBe(true);
+    expect(document.querySelector<HTMLDetailsElement>('.agent-activity-output')?.open).toBe(true);
+    page.dispose();
+  });
+
+  it('Activity capture progresses Waiting -> Live -> Complete at the configured interval and stops', async () => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn()
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'NOT_STARTED', events: [], lastSequence: 0, nextAfterSequence: 0, hasMore: false })
+      .mockResolvedValueOnce(activityPage('turn-a', 'Live event', 'ACTIVE'))
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [activityEvent(2, 'Final event')], lastSequence: 2, nextAfterSequence: 2, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi, { runtimeConfig: { activeJobPollIntervalMs: 1234 } });
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    expect(dom.window.document.querySelector('.agent-activity-capture')?.textContent).toBe('Waiting');
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Waiting for agent activity.');
+    await vi.advanceTimersByTimeAsync(1233);
+    expect(eventsApi).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(dom.window.document.querySelector('.agent-activity-capture')?.textContent).toBe('Live');
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Live event');
+    await vi.advanceTimersByTimeAsync(1234);
+    expect(dom.window.document.querySelector('.agent-activity-capture')?.textContent).toBe('Complete');
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Final event');
+    await vi.advanceTimersByTimeAsync(3702);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 0, 200], ['turn-a', 1, 200]]);
+    page.dispose();
+  });
+
+  it.each([
+    { status: 'DEGRADED', label: 'Incomplete', copy: 'Some agent activity may be missing.' },
+    { status: 'UNAVAILABLE', label: 'Unavailable', copy: 'Activity was not recorded for this invocation.' }
+  ])('Activity capture stops at $status while preserving recorded events', async ({ status, label, copy }) => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn()
+      .mockResolvedValueOnce(activityPage('turn-a', 'Recorded event', 'ACTIVE'))
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: status, events: [], lastSequence: 1, nextAfterSequence: 1, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(dom.window.document.querySelector('.agent-activity-capture')?.textContent).toBe(label);
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain(copy);
+    expect(dom.window.document.querySelector('.agent-activity-event')?.textContent).toContain('Recorded event');
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 1, 200]]);
+    page.dispose();
+  });
+
+  it('Activity capture keeps polling after WorkflowRun becomes terminal without overlapping requests', async () => {
+    vi.useFakeTimers();
+    const finalPage = deferred<any>();
+    const eventsApi = vi.fn()
+      .mockResolvedValueOnce(activityPage('turn-a', 'Still capturing', 'ACTIVE'))
+      .mockImplementationOnce(() => finalPage.promise);
+    const { dom, page, fakeApi } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    const view = page.taskExecutionView;
+    view.applyWorkflowRun({ ...view.state.workflowRun, status: 'RUNNING' });
+    view.syncPolling();
+    view.selectNodeRun('impl-1');
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(view.state.workflowRun.status).toBe('SUCCEEDED');
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(2);
+    expect(eventsApi).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi).toHaveBeenCalledTimes(2);
+    finalPage.resolve({ turnId: 'turn-a', captureStatus: 'ACTIVE', events: [], lastSequence: 1, nextAfterSequence: 1, hasMore: false });
+    await flushAsync();
+    eventsApi.mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [activityEvent(2, 'Captured after completion')], lastSequence: 2, nextAfterSequence: 2, hasMore: false });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Captured after completion');
+    expect(dom.window.document.querySelector('.agent-activity-capture')?.textContent).toBe('Complete');
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 1, 200], ['turn-a', 1, 200]]);
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(2);
+    page.dispose();
+  });
+
+  it.each([
+    { status: 'ACTIVE', label: 'Live', copy: 'Agent is active. Waiting for its first activity event.' },
+    { status: 'COMPLETE', label: 'Complete', copy: 'No activity events were recorded.' }
+  ])('Activity capture explains an empty $status page', async ({ status, label, copy }) => {
+    const eventsApi = vi.fn().mockResolvedValue({ turnId: 'turn-a', captureStatus: status, events: [], lastSequence: 0, nextAfterSequence: 0, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    expect(dom.window.document.querySelector('.agent-activity-capture')?.textContent).toBe(label);
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain(copy);
+    page.dispose();
+  });
+
+  it.each([
+    { phase: 'initial', cursor: 0, error: 'Activity could not be loaded.', rerender: true },
+    { phase: 'refresh', cursor: 1, error: 'Activity refresh failed.', rerender: false }
+  ])('Activity $phase failure remains local and Retry uses its current cursor with a fresh timer', async ({ phase, cursor, error, rerender }) => {
+    vi.useFakeTimers();
+    const retryPage = deferred<any>();
+    const eventsApi = vi.fn();
+    if (phase === 'refresh') eventsApi.mockResolvedValueOnce(activityPage('turn-a', 'Preserved event', 'ACTIVE'));
+    eventsApi.mockRejectedValueOnce(new Error('Events endpoint is unavailable'))
+      .mockImplementationOnce(() => retryPage.promise)
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [], lastSequence: 2, nextAfterSequence: 2, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    const details = dom.window.document.getElementById('agentsV2NodeRunDetails')!;
+    const context = details.querySelector('.node-run-context')!;
+    const output = details.querySelector('.node-run-output')!;
+    const contextHtml = context.outerHTML;
+    const outputHtml = output.outerHTML;
+    await flushAsync();
+    if (phase === 'refresh') await vi.advanceTimersByTimeAsync(2000);
+    expect(details.querySelector('.agent-activity-error')?.textContent).toBe(error);
+    expect(details.querySelector('.node-run-context')).toBe(context);
+    expect(details.querySelector('.node-run-output')).toBe(output);
+    expect(context.outerHTML).toBe(contextHtml);
+    expect(output.outerHTML).toBe(outputHtml);
+    if (phase === 'refresh') expect(details.querySelector('.agent-activity-event')?.textContent).toContain('Preserved event');
+    expect(view.state.executionError).toBe('');
+    expect(view.state.refreshError).toBe('');
+    await vi.advanceTimersByTimeAsync(1000);
+    if (rerender) view.render();
+    const retry = details.querySelector<HTMLButtonElement>('button[data-activity-retry]');
+    expect(retry?.textContent).toBe('Retry');
+    expect(retry?.type).toBe('button');
+    retry!.click();
+    expect(details.querySelector('.agent-activity-error')).toBeNull();
+    expect(eventsApi.mock.calls).toEqual(phase === 'initial'
+      ? [['turn-a', 0, 200], ['turn-a', cursor, 200]]
+      : [['turn-a', 0, 200], ['turn-a', 1, 200], ['turn-a', cursor, 200]]);
+    retryPage.resolve({ turnId: 'turn-a', captureStatus: 'ACTIVE', events: [activityEvent(2, 'Retry recovered')], lastSequence: 2, nextAfterSequence: 2, hasMore: false });
+    await flushAsync();
+    expect(details.querySelector('.node-run-activity')?.textContent).toContain('Retry recovered');
+    expect(details.querySelector('.node-run-context')?.outerHTML).toBe(contextHtml);
+    expect(details.querySelector('.node-run-output')?.outerHTML).toBe(outputHtml);
+    const callsAfterRetry = eventsApi.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(eventsApi).toHaveBeenCalledTimes(callsAfterRetry);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(eventsApi).toHaveBeenLastCalledWith('turn-a', 2, 200);
+    expect(eventsApi).toHaveBeenCalledTimes(callsAfterRetry + 1);
+    expect(details.querySelector('.agent-activity-capture')?.textContent).toBe('Complete');
+    page.dispose();
+  });
+
+  it('Activity does not retry a failed initial page automatically', async () => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn().mockRejectedValue(new Error('Temporary Activity error'));
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    expect(dom.window.document.querySelector('.agent-activity-error')?.textContent).toBe('Activity could not be loaded.');
+    expect(dom.window.document.querySelector('button[data-activity-retry]')).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200]]);
+    page.dispose();
+  });
+
+  it('Activity manual Retry recovers an initial failure and starts polling after ACTIVE is known', async () => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn()
+      .mockRejectedValueOnce(new Error('Temporary Activity error'))
+      .mockResolvedValueOnce(activityPage('turn-a', 'Manual recovery', 'ACTIVE'))
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [], lastSequence: 1, nextAfterSequence: 1, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200]]);
+
+    dom.window.document.querySelector<HTMLButtonElement>('button[data-activity-retry]')!.click();
+    await flushAsync();
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Manual recovery');
+    expect(dom.window.document.querySelector('.agent-activity-capture')?.textContent).toBe('Live');
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 0, 200]]);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 0, 200], ['turn-a', 1, 200]]);
+    page.dispose();
+  });
+
+  it('Activity manual Retry remains manual when capture status is still unknown', async () => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn().mockRejectedValue(new Error('Temporary Activity error'));
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    dom.window.document.querySelector<HTMLButtonElement>('button[data-activity-retry]')!.click();
+    await flushAsync();
+    expect(dom.window.document.querySelector('.agent-activity-error')?.textContent).toBe('Activity could not be loaded.');
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 0, 200]]);
+    page.dispose();
+  });
+
+  it.each(['COMPLETE', 'DEGRADED', 'UNAVAILABLE'])('Activity manual Retry does not poll after terminal %s is learned', async (captureStatus) => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn()
+      .mockRejectedValueOnce(new Error('Temporary Activity error'))
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus, events: [], lastSequence: 0, nextAfterSequence: 0, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    dom.window.document.querySelector<HTMLButtonElement>('button[data-activity-retry]')!.click();
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 0, 200]]);
+    page.dispose();
+  });
+
+  it.each(['ACTIVE', 'NOT_STARTED'])('Activity retries a failed refresh automatically after %s was learned', async (captureStatus) => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn()
+      .mockResolvedValueOnce(activityPage('turn-a', 'Preserved event', captureStatus))
+      .mockRejectedValueOnce(new Error('Temporary Activity error'))
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [activityEvent(2, 'Automatic recovery')], lastSequence: 2, nextAfterSequence: 2, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(dom.window.document.querySelector('.agent-activity-event')?.textContent).toContain('Preserved event');
+    expect(dom.window.document.querySelector('.agent-activity-error')?.textContent).toBe('Activity refresh failed.');
+    expect(dom.window.document.querySelector('button[data-activity-retry]')).not.toBeNull();
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 1, 200]]);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Automatic recovery');
+    expect(dom.window.document.querySelector('.agent-activity-error')).toBeNull();
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 1, 200], ['turn-a', 1, 200]]);
+    page.dispose();
+  });
+
+  it('Activity follows existing context invocation navigation and discards the previous turn response', async () => {
+    const turnA = deferred<any>();
+    const turnB = deferred<any>();
+    const eventsApi = vi.fn((turnId: string) => turnId === 'turn-a' ? turnA.promise : turnB.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    page.taskExecutionView.selectNodeRun('impl-2');
+    expect(eventsApi.mock.calls).toEqual([['turn-b', 0, 200]]);
+    dom.window.document.querySelector<HTMLButtonElement>('[data-context-node-run="impl-1"]')!.click();
+    expect(eventsApi.mock.calls).toEqual([['turn-b', 0, 200], ['turn-a', 0, 200]]);
+    expect(page.taskExecutionView.state.activityEvents).toEqual([]);
+    expect(page.taskExecutionView.state.activityCursor).toBe(0);
+    turnA.resolve(activityPage('turn-a', 'Turn A content'));
+    await flushAsync();
+    turnB.resolve(activityPage('turn-b', 'Turn B content'));
+    await flushAsync();
+    const activity = dom.window.document.querySelector('.node-run-activity')!;
+    expect(activity.textContent).toContain('Turn A content');
+    expect(activity.textContent).not.toContain('Turn B content');
+    expect(activity.previousElementSibling?.classList.contains('node-run-context')).toBe(true);
+    expect(activity.nextElementSibling?.classList.contains('node-run-prompt-details')).toBe(true);
+    expect(page.taskExecutionView.state.nodeRunSelectionMode).toBe('PINNED_INVOCATION');
+  });
+
+  it.each([
+    { name: 'legacy invocation', tracked: false },
+    { name: 'missing verified context', contexts: [] },
+    { name: 'blank turn ID', contexts: [{ nodeRunId: 'impl-1', turnId: '  ', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }] }
+  ])('Activity is unavailable without a real verified turn: $name', async (options) => {
+    const eventsApi = vi.fn();
+    const { dom, page } = await openedActivity(eventsApi, options);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    expect(eventsApi).not.toHaveBeenCalled();
+    const activity = dom.window.document.querySelector('.node-run-activity');
+    expect(activity?.textContent).toContain('Unavailable');
+    expect(activity?.textContent).toContain('Activity was not recorded for this invocation.');
+  });
+
+  it('Activity loads incremental pages using the exact cursor and deduplicates IDs and sequences', async () => {
+    const secondPage = deferred<any>();
+    const firstEvents = Array.from({ length: 200 }, (_, index) => activityEvent(index + 1));
+    const finalEvents = Array.from({ length: 25 }, (_, index) => activityEvent(index + 201));
+    const eventsApi = vi.fn()
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'ACTIVE', events: firstEvents, lastSequence: 225, nextAfterSequence: 200, hasMore: true })
+      .mockImplementationOnce(() => secondPage.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 200, 200]]);
+    expect(page.taskExecutionView.state.activityCursor).toBe(200);
+    expect(dom.window.document.querySelectorAll('.agent-activity-event')).toHaveLength(200);
+    secondPage.resolve({
+      turnId: 'turn-a', captureStatus: 'COMPLETE', lastSequence: 225, nextAfterSequence: 225, hasMore: false,
+      events: [activityEvent(200), { ...activityEvent(226), id: 'event-1' }, { ...activityEvent(200), id: 'duplicate-sequence' }, ...finalEvents]
+    });
+    await flushAsync();
+    const expectedSequences = Array.from({ length: 225 }, (_, index) => index + 1);
+    expect(page.taskExecutionView.state.activityEvents.map((event: any) => event.sequence)).toEqual(expectedSequences);
+    expect([...dom.window.document.querySelectorAll('.agent-activity-event')].map((row) => Number(row.getAttribute('data-sequence')))).toEqual(expectedSequences);
+    expect(page.taskExecutionView.state.activityCursor).toBe(225);
+    expect(page.taskExecutionView.state.activityCaptureStatus).toBe('COMPLETE');
+    expect(eventsApi).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['resolve', 'reject'])('Activity preserves open Prompt and Context details after page %s', async (settlement) => {
+    const pendingPage = deferred<any>();
+    const eventsApi = vi.fn(() => pendingPage.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    const details = dom.window.document.getElementById('agentsV2NodeRunDetails')!;
+    const prompt = details.querySelector<HTMLDetailsElement>('.node-run-prompt-details')!;
+    const technical = details.querySelector<HTMLDetailsElement>('.node-run-technical-details')!;
+    const selectedControl = details.querySelector<HTMLSelectElement>('[data-node-run-invocation-select]')!;
+    selectedControl.focus();
+    prompt.open = true;
+    technical.open = true;
+
+    if (settlement === 'resolve') pendingPage.resolve(activityPage('turn-a', 'New activity message'));
+    else pendingPage.reject(new Error('Activity connection failed'));
+    await flushAsync();
+
+    expect(details.querySelector<HTMLDetailsElement>('.node-run-prompt-details')?.open).toBe(true);
+    expect(details.querySelector<HTMLDetailsElement>('.node-run-technical-details')?.open).toBe(true);
+    expect(details.querySelector('.node-run-prompt-details')).toBe(prompt);
+    expect(details.querySelector('.node-run-technical-details')).toBe(technical);
+    expect(dom.window.document.activeElement).toBe(selectedControl);
+    expect(details.querySelector('.node-run-activity')?.textContent).toContain(
+      settlement === 'resolve' ? 'New activity message' : 'Activity could not be loaded.'
+    );
+  });
+
+  it.each(['resolve', 'reject'])('Activity prevents overlapping polls and ignores a stale turn %s', async (settlement) => {
+    const turnA = deferred<any>();
+    const turnB = deferred<any>();
+    const eventsApi = vi.fn((turnId: string) => turnId === 'turn-a' ? turnA.promise : turnB.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    void view.pollActivity();
+    void view.pollActivity();
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200]]);
+    view.selectNodeRun('impl-2');
+    turnB.resolve(activityPage('turn-b', 'Current B', 'ACTIVE'));
+    await flushAsync();
+    if (settlement === 'resolve') turnA.resolve({ ...activityPage('turn-a', 'Stale A', 'DEGRADED'), hasMore: true });
+    else turnA.reject(new Error('Stale failure'));
+    await flushAsync();
+    expect(view.state.activityEvents.map((event: any) => event.payload.message)).toEqual(['Current B']);
+    expect(view.state.activityCaptureStatus).toBe('ACTIVE');
+    expect(view.state.activityError).toBe('');
+    expect(view.state.activityPollInFlight).toBeNull();
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).not.toContain('Stale');
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-b', 0, 200]]);
+  });
+
+  it.each(['close', 'dispose', 'run', 'task'])('Activity invalidates pending pages and clears its timer on %s', async (change) => {
+    const pendingPage = deferred<any>();
+    const eventsApi = vi.fn(() => pendingPage.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    const sequence = view.activityLoadSequence;
+    const timer = dom.window.setTimeout(() => {}, 60_000);
+    view.activityPollTimer = timer;
+    const clearTimer = vi.spyOn(dom.window, 'clearTimeout');
+    if (change === 'run') await view.selectRun('run-new');
+    else if (change === 'task') await view.open('task-1', project());
+    else view[change]();
+    expect(view.activityLoadSequence).toBeGreaterThan(sequence);
+    expect(clearTimer).toHaveBeenCalledWith(timer);
+    expect(view.activityPollTimer).toBeNull();
+    expect(view.state.activityTurnId).toBeNull();
+    expect(view.state.activityPollInFlight).toBeNull();
+    pendingPage.resolve({ ...activityPage('turn-a', 'Closed selection'), hasMore: true });
+    await flushAsync();
+    expect(view.state.activityEvents).toEqual([]);
+    expect(view.state.activityCaptureStatus).toBeNull();
+    expect(view.state.activityError).toBe('');
+    expect(eventsApi).toHaveBeenCalledTimes(1);
+  });
+
+  it('Activity follows workflow selection updates while preserving pinned invocation selection', async () => {
+    const eventsApi = vi.fn((turnId: string) => Promise.resolve(activityPage(turnId, turnId)));
+    const { page } = await openedActivity(eventsApi);
+    const view = page.taskExecutionView;
+    const original = view.state.workflowRun;
+    view.applyWorkflowRun({ ...original, nodeRuns: original.nodeRuns.slice(0, 1) });
+    view.selectVisualUnit('implementer::__global__');
+    await flushAsync();
+    expect(view.state.activityTurnId).toBe('turn-a');
+    view.applyWorkflowRun(original);
+    await flushAsync();
+    expect(view.state.selectedNodeRunId).toBe('impl-2');
+    expect(view.state.activityTurnId).toBe('turn-b');
+    expect(view.state.activityEvents[0].payload.message).toBe('turn-b');
+    view.selectNodeRun('impl-1');
+    await flushAsync();
+    view.applyWorkflowRun(original);
+    await flushAsync();
+    expect(view.state.activityTurnId).toBe('turn-a');
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-b', 0, 200], ['turn-a', 0, 200]]);
+  });
+
+  it('Activity polling and retry resume from the last applied response cursor', async () => {
+    const eventsApi = vi.fn()
+      .mockResolvedValueOnce(activityPage('turn-a', 'First', 'ACTIVE'))
+      .mockRejectedValueOnce(new Error('Temporary connection failure'))
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [activityEvent(2, 'Second')], lastSequence: 2, nextAfterSequence: 2, hasMore: false });
+    const { page } = await openedActivity(eventsApi);
+    const view = page.taskExecutionView;
+    view.selectNodeRun('impl-1');
+    await flushAsync();
+    await view.pollActivity();
+    expect(view.state.activityEvents.map((event: any) => event.payload.message)).toEqual(['First']);
+    await view.retryActivity();
+    expect(view.state.activityEvents.map((event: any) => event.payload.message)).toEqual(['First', 'Second']);
+    expect(view.state.activityError).toBe('');
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 1, 200], ['turn-a', 1, 200]]);
   });
 
   it('renders verified continued context history, technical details, and runtime badge', async () => {
@@ -5733,6 +6334,7 @@ describe('Agent projects page', () => {
     client.getProjectTask('55555555-5555-4555-8555-555555555555');
     client.deleteProjectTask('55555555-5555-4555-8555-555555555555');
     client.getWorkflowRun('66666666-6666-4666-8666-666666666666');
+    client.getAgentExecutionEvents('turn/T value', 17, 200);
     const sshRequest = { name: 'Ancestor', host: '192.168.0.108', port: 22,
       username: 'ancestor', authType: 'PASSWORD', privateKeyPath: null, password: 'secret' };
     client.testSshConnection(project().id, sshRequest);
@@ -5748,6 +6350,8 @@ describe('Agent projects page', () => {
       `/agents/projects/${project().id}/ssh-connections/55555555-5555-4555-8555-555555555555/service-metrics`);
     expect(http.get).toHaveBeenCalledWith(
       `/agents/projects/${project().id}/ssh-connections/55555555-5555-4555-8555-555555555555/service-metrics/alpha%401.service/processes?sort=ram`);
+    expect(http.get).toHaveBeenCalledWith(
+      '/agents/agent-execution-turns/turn%2FT%20value/events?afterSequence=17&limit=200');
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`, {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });

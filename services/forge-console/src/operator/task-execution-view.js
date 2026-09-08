@@ -1,4 +1,5 @@
 import { escapeHtml } from './dom-render-helpers.js';
+import { captureStatusPresentation, latestTokenUsage, renderAgentExecutionActivityEvents } from './agent-execution-activity.js';
 
 const ACTIVE_RUN_STATUSES = new Set(['QUEUED', 'RUNNING']);
 const NODE_WIDTH = 204;
@@ -661,6 +662,9 @@ export class TaskExecutionView {
     this.opened = false;
     this.taskLoadSequence = 0;
     this.runLoadSequence = 0;
+    this.activityLoadSequence = 0;
+    this.activityPollTimer = null;
+    this.activityIdentity = null;
     this.pollTimer = null;
     this.pollInFlight = null;
     this.canvasPan = null;
@@ -698,6 +702,7 @@ export class TaskExecutionView {
 
   close() {
     this.opened = false;
+    this.invalidateActivity();
     this.taskLoadSequence += 1;
     this.runLoadSequence += 1;
     this.stopPolling();
@@ -711,6 +716,7 @@ export class TaskExecutionView {
   }
 
   async open(taskId, project, repositories = []) {
+    this.invalidateActivity();
     const taskSequence = this.taskLoadSequence + 1;
     this.taskLoadSequence = taskSequence;
     this.runLoadSequence += 1;
@@ -754,6 +760,7 @@ export class TaskExecutionView {
     if (!this.state.task || !runId) {
       return;
     }
+    this.invalidateActivity();
     const taskId = this.state.taskId;
     const taskSequence = this.taskLoadSequence;
     const runSequence = this.runLoadSequence + 1;
@@ -778,8 +785,8 @@ export class TaskExecutionView {
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         return;
       }
-      this.applyWorkflowRun(workflowRun);
       this.state.agentExecutionContexts = contexts || [];
+      this.applyWorkflowRun(workflowRun);
       this.state.loadingRun = false;
       this.render();
       this.syncPolling();
@@ -805,12 +812,14 @@ export class TaskExecutionView {
         this.state.selectedSourceNodeId = null;
         this.state.selectedNodeRunId = null;
         this.state.nodeRunSelectionMode = null;
+        this.syncSelectedActivity();
         return;
       }
       const nodeRuns = workflowRun?.nodeRuns || [];
       const selectedUnit = projection.nodeByUnit.get(this.state.selectedVisualUnitKey);
       const pinnedRunExists = nodeRuns.some((nodeRun) => nodeRun.id === this.state.selectedNodeRunId);
       if (this.state.nodeRunSelectionMode === SELECTION_PINNED_INVOCATION && pinnedRunExists) {
+        this.syncSelectedActivity();
         return;
       }
       this.state.nodeRunSelectionMode = SELECTION_FOLLOW_LATEST;
@@ -819,6 +828,7 @@ export class TaskExecutionView {
         selectedUnit.repositoryId,
         nodeRuns
       )?.id || null;
+      this.syncSelectedActivity();
       return;
     }
     const nodeRuns = workflowRun?.nodeRuns || [];
@@ -827,6 +837,7 @@ export class TaskExecutionView {
     }
     this.state.selectedSourceNodeId = null;
     this.state.selectedVisualUnitKey = null;
+    this.syncSelectedActivity();
   }
 
   mergeRunSummary(workflowRun) {
@@ -884,8 +895,8 @@ export class TaskExecutionView {
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         return;
       }
-      this.applyWorkflowRun(workflowRun);
       this.state.agentExecutionContexts = contexts || [];
+      this.applyWorkflowRun(workflowRun);
       this.render();
     } catch (error) {
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
@@ -1271,7 +1282,10 @@ export class TaskExecutionView {
     const failure = nodeRun.failure;
     const invocationSelector = this.renderInvocationSelector();
     const context = this.contextForNodeRun(nodeRun.id);
-    panel.innerHTML = `
+    const activity = panel.querySelector('.node-run-activity');
+    const preserveActivity = this.activityIdentity && this.isCurrentActivity(this.activityIdentity)
+      && activity?.dataset.activityGeneration === String(this.activityLoadSequence);
+    const markup = `
       ${invocationSelector}
       <div class="node-run-details-grid">
         ${this.detailRow('Agent', nodeRun.agentName || 'Unknown agent')}
@@ -1281,6 +1295,7 @@ export class TaskExecutionView {
         ${this.detailRow('Finished', this.formatDate(nodeRun.finishedAt))}
       </div>
       ${this.renderContextDetails(nodeRun, context)}
+      ${this.renderActivity(nodeRun, context)}
       <details class="node-run-prompt-details">
         <summary>Prompt</summary>
         <pre>${escapeHtml(nodeRun.agentInstructions || '-')}</pre>
@@ -1297,16 +1312,261 @@ export class TaskExecutionView {
         </section>
       ` : ''}
     `;
+    if (preserveActivity) {
+      // Workflow refreshes own the surrounding details, while the same activity
+      // generation keeps its scroller, disclosures, and focused controls in place.
+      const scrollTop = panel.scrollTop;
+      const template = this.document.createElement('template');
+      template.innerHTML = markup;
+      for (const child of [...panel.childNodes]) {
+        if (child !== activity) child.remove();
+      }
+      let afterActivity = false;
+      for (const child of [...template.content.childNodes]) {
+        if (child.nodeType === 1 && child.classList.contains('node-run-activity')) afterActivity = true;
+        else if (afterActivity) panel.append(child);
+        else panel.insertBefore(child, activity);
+      }
+      panel.scrollTop = scrollTop;
+    } else {
+      panel.innerHTML = markup;
+    }
     panel.querySelector('[data-node-run-invocation-select]')?.addEventListener('change', (event) => {
       this.selectNodeRun(event.target.value);
     });
     panel.querySelectorAll('[data-context-node-run]').forEach((button) => button.addEventListener('click', () => {
       this.selectNodeRun(button.dataset.contextNodeRun);
     }));
+    this.bindActivityControls();
   }
 
   contextForNodeRun(nodeRunId) {
     return (this.state.agentExecutionContexts || []).find((context) => context.nodeRunId === nodeRunId) || null;
+  }
+
+  hasVerifiedActivityTurn(nodeRun, context) {
+    return nodeRun?.contextTrackingVersion != null
+      && context?.nodeRunId === nodeRun.id
+      && (nodeRun.contextMode !== 'FRESH_EACH_NODE_RUN' || context.contextMode === 'FRESH_EACH_NODE_RUN')
+      && typeof context.turnId === 'string' && context.turnId.trim().length > 0;
+  }
+
+  syncSelectedActivity() {
+    const nodeRun = this.selectedNodeRun();
+    const context = this.contextForNodeRun(nodeRun?.id);
+    if (this.activityIdentity && this.isCurrentActivity(this.activityIdentity)) {
+      return;
+    }
+    this.invalidateActivity();
+    if (!this.opened || this.disposed || !this.hasVerifiedActivityTurn(nodeRun, context)) {
+      return;
+    }
+    const identity = {
+      taskId: this.state.taskId,
+      taskLoadSequence: this.taskLoadSequence,
+      workflowRunId: this.state.selectedRunId,
+      runLoadSequence: this.runLoadSequence,
+      nodeRunId: this.state.selectedNodeRunId,
+      turnId: context.turnId,
+      activityLoadSequence: this.activityLoadSequence
+    };
+    this.activityIdentity = identity;
+    this.state.activityTurnId = context.turnId;
+    this.state.activityLoading = true;
+    void this.loadActivityPage(identity);
+  }
+
+  async loadActivityPage(identity) {
+    if (!identity || !this.isCurrentActivity(identity) || this.state.activityPollInFlight) return;
+    if (this.activityPollTimer !== null) this.window.clearTimeout(this.activityPollTimer);
+    this.activityPollTimer = null;
+    let request = null;
+    try {
+      while (this.isCurrentActivity(identity)) {
+        request = this.api.getAgentExecutionEvents(identity.turnId, this.state.activityCursor, 200);
+        this.state.activityPollInFlight = request;
+        const page = await request;
+        if (!this.isCurrentActivity(identity)) return;
+        const ids = new Set(this.state.activityEvents.map((event) => event.id));
+        const sequences = new Set(this.state.activityEvents.map((event) => event.sequence));
+        const initialPage = this.state.activityCursor === 0;
+        let newEventCount = 0;
+        for (const event of page.events || []) {
+          if (ids.has(event.id) || sequences.has(event.sequence)) continue;
+          ids.add(event.id);
+          sequences.add(event.sequence);
+          this.state.activityEvents.push(event);
+          if (event.type !== 'TOKEN_USAGE') newEventCount += 1;
+        }
+        this.state.activityEvents.sort((left, right) => left.sequence - right.sequence);
+        this.state.activityCursor = page.nextAfterSequence;
+        this.state.activityCaptureStatus = page.captureStatus;
+        this.state.activityLoading = false;
+        this.state.activityError = '';
+        this.renderSelectedActivity(newEventCount, initialPage);
+        if (!page.hasMore) break;
+      }
+    } catch (error) {
+      if (!this.isCurrentActivity(identity)) return;
+      this.state.activityLoading = false;
+      this.state.activityError = this.state.activityEvents.length
+        ? 'Activity refresh failed.' : 'Activity could not be loaded.';
+      this.renderSelectedActivity();
+    } finally {
+      if (this.isCurrentActivity(identity) && this.state.activityPollInFlight === request) {
+        this.state.activityPollInFlight = null;
+        this.scheduleActivityPolling(identity);
+      }
+    }
+  }
+
+  scheduleActivityPolling(identity) {
+    if (!identity || !this.isCurrentActivity(identity)
+      || this.activityPollTimer !== null || this.state.activityPollInFlight
+      || !['NOT_STARTED', 'ACTIVE'].includes(this.state.activityCaptureStatus)) return;
+    this.activityPollTimer = this.window.setTimeout(() => {
+      this.activityPollTimer = null;
+      void this.loadActivityPage(identity);
+    }, this.pollIntervalMs);
+  }
+
+  async pollActivity() {
+    await this.loadActivityPage(this.activityIdentity);
+  }
+
+  async retryActivity() {
+    if (!this.activityIdentity || !this.isCurrentActivity(this.activityIdentity) || this.state.activityPollInFlight) return;
+    this.state.activityError = '';
+    this.state.activityLoading = true;
+    this.renderSelectedActivity();
+    await this.pollActivity();
+  }
+
+  invalidateActivity() {
+    this.activityLoadSequence += 1;
+    if (this.activityPollTimer !== null) this.window.clearTimeout(this.activityPollTimer);
+    this.activityPollTimer = null;
+    this.activityIdentity = null;
+    Object.assign(this.state, this.emptyActivityState());
+  }
+
+  isCurrentActivity(identity) {
+    const nodeRun = this.selectedNodeRun();
+    const context = this.contextForNodeRun(nodeRun?.id);
+    return this.isCurrentRun(identity.taskId, identity.taskLoadSequence, identity.workflowRunId, identity.runLoadSequence)
+      && identity.nodeRunId === this.state.selectedNodeRunId
+      && identity.turnId === context?.turnId
+      && identity.activityLoadSequence === this.activityLoadSequence
+      && this.hasVerifiedActivityTurn(nodeRun, context);
+  }
+
+  renderSelectedActivity(newEventCount = 0, initialPage = false) {
+    const section = this.byId('agentsV2NodeRunDetails')?.querySelector('.node-run-activity');
+    const nodeRun = this.selectedNodeRun();
+    if (section && nodeRun) {
+      const scroll = section.querySelector('.agent-activity-scroll');
+      const scrollTop = scroll?.scrollTop || 0;
+      const focused = this.document.activeElement;
+      const hadFocus = section.contains(focused);
+      this.state.activityFollowLatest = initialPage || !scroll || this.activityIsNearBottom(scroll);
+      this.state.activityNewEventCount = this.state.activityFollowLatest
+        ? 0 : this.state.activityNewEventCount + newEventCount;
+      const template = this.document.createElement('template');
+      template.innerHTML = this.renderActivity(nodeRun, this.contextForNodeRun(nodeRun.id));
+      const next = template.content.firstElementChild;
+      const nextScroll = next.querySelector('.agent-activity-scroll');
+      if (scroll && nextScroll) {
+        // Event records are immutable. Keep their DOM so disclosures, selection,
+        // and keyboard focus survive incremental pages and capture-status updates.
+        const list = scroll.querySelector('.agent-activity-events');
+        const existing = new Map([...list.children].map((row) => [row.dataset.sequence, row]));
+        let position = list.firstElementChild;
+        for (const row of [...nextScroll.querySelector('.agent-activity-events').children]) {
+          const retained = existing.get(row.dataset.sequence) || row;
+          if (retained === position) position = position.nextElementSibling;
+          else list.insertBefore(retained, position);
+        }
+        for (const selector of ['[data-activity-retry]', '[data-activity-follow-latest]']) {
+          const previous = section.querySelector(selector);
+          const replacement = next.querySelector(selector);
+          if (previous && replacement) {
+            previous.textContent = replacement.textContent;
+            replacement.replaceWith(previous);
+          }
+        }
+        for (const child of [...section.childNodes]) {
+          if (child !== scroll) child.remove();
+        }
+        let afterScroll = false;
+        for (const child of [...next.childNodes]) {
+          if (child === nextScroll) afterScroll = true;
+          else if (afterScroll) section.append(child);
+          else section.insertBefore(child, scroll);
+        }
+      } else {
+        section.replaceWith(next);
+      }
+      this.bindActivityControls();
+      const currentScroll = this.byId('agentsV2NodeRunDetails')?.querySelector('.agent-activity-scroll');
+      if (hadFocus && focused.isConnected && this.document.activeElement !== focused) focused.focus({ preventScroll: true });
+      if (currentScroll) {
+        if (this.state.activityFollowLatest) this.scrollActivityToLatest(currentScroll);
+        else currentScroll.scrollTop = scrollTop;
+      }
+    }
+  }
+
+  activityIsNearBottom(scroll) {
+    return scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <= 48;
+  }
+
+  scrollActivityToLatest(scroll) {
+    const top = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    if (typeof scroll.scrollTo === 'function') scroll.scrollTo({ top, behavior: 'instant' });
+    else scroll.scrollTop = top;
+  }
+
+  bindActivityControls() {
+    const section = this.byId('agentsV2NodeRunDetails')?.querySelector('.node-run-activity');
+    const retry = section?.querySelector('[data-activity-retry]');
+    if (retry) retry.onclick = () => { void this.retryActivity(); };
+    const scroll = section?.querySelector('.agent-activity-scroll');
+    if (scroll) scroll.onscroll = () => {
+      this.state.activityFollowLatest = this.activityIsNearBottom(scroll);
+      if (this.state.activityFollowLatest) {
+        this.state.activityNewEventCount = 0;
+        section.querySelector('[data-activity-follow-latest]')?.remove();
+      }
+    };
+    const follow = section?.querySelector('[data-activity-follow-latest]');
+    if (follow && scroll) follow.onclick = () => {
+      this.state.activityFollowLatest = true;
+      this.state.activityNewEventCount = 0;
+      if (this.document.activeElement === follow) scroll.focus({ preventScroll: true });
+      follow.remove();
+      this.scrollActivityToLatest(scroll);
+    };
+  }
+
+  renderActivity(nodeRun, context) {
+    if (!this.hasVerifiedActivityTurn(nodeRun, context)) {
+      return '<section class="node-run-activity"><h3>Activity</h3><strong>Unavailable</strong><p>Activity was not recorded for this invocation.</p></section>';
+    }
+    const presentation = captureStatusPresentation(this.state.activityCaptureStatus);
+    const usage = latestTokenUsage(this.state.activityEvents);
+    return `<section class="node-run-activity" data-activity-generation="${this.activityLoadSequence}"><h3>Activity</h3>
+      <span class="agent-activity-capture agent-activity-capture-${presentation.tone}">${escapeHtml(presentation.label)}</span>
+      ${usage.length ? `<div class="agent-activity-usage">${usage.map(escapeHtml).join(' · ')}</div>` : ''}
+      ${this.state.activityLoading ? '<p>Loading activity...</p>' : ''}
+      ${this.state.activityCaptureStatus === 'NOT_STARTED' && !this.state.activityEvents.length ? '<p>Waiting for agent activity.</p>' : ''}
+      ${this.state.activityCaptureStatus === 'ACTIVE' && !this.state.activityEvents.length ? '<p>Agent is active. Waiting for its first activity event.</p>' : ''}
+      ${this.state.activityCaptureStatus === 'COMPLETE' && !this.state.activityEvents.length ? '<p>No activity events were recorded.</p>' : ''}
+      ${this.state.activityCaptureStatus === 'DEGRADED' ? '<p>Some agent activity may be missing.</p>' : ''}
+      ${this.state.activityCaptureStatus === 'UNAVAILABLE' ? '<p>Activity was not recorded for this invocation.</p>' : ''}
+      ${this.state.activityError ? `<p class="agent-activity-error">${escapeHtml(this.state.activityError)}</p><button type="button" class="button small secondary" data-activity-retry>Retry</button>` : ''}
+      ${this.state.activityNewEventCount ? `<button type="button" class="button small secondary" data-activity-follow-latest>${this.state.activityNewEventCount} new event${this.state.activityNewEventCount === 1 ? '' : 's'}</button>` : ''}
+      <div class="agent-activity-scroll" tabindex="0" role="region" aria-label="Agent activity timeline"><ol class="agent-activity-events">${renderAgentExecutionActivityEvents(this.state.activityEvents)}</ol></div>
+    </section>`;
   }
 
   renderContextDetails(nodeRun, context) {
@@ -1523,6 +1783,7 @@ export class TaskExecutionView {
       unit.repositoryId,
       this.state.workflowRun?.nodeRuns || []
     )?.id || null;
+    this.syncSelectedActivity();
     this.renderGraph();
     this.renderNodeDetails();
   }
@@ -1535,6 +1796,7 @@ export class TaskExecutionView {
       this.state.nodeRunSelectionMode = SELECTION_PINNED_INVOCATION;
     }
     this.state.selectedNodeRunId = nodeRunId;
+    this.syncSelectedActivity();
     this.renderGraph();
     this.renderNodeDetails();
   }
@@ -2019,8 +2281,23 @@ export class TaskExecutionView {
     return this.document.getElementById(id);
   }
 
+  emptyActivityState() {
+    return {
+      activityTurnId: null,
+      activityEvents: [],
+      activityCursor: 0,
+      activityCaptureStatus: null,
+      activityLoading: false,
+      activityError: '',
+      activityPollInFlight: null,
+      activityNewEventCount: 0,
+      activityFollowLatest: true
+    };
+  }
+
   emptyState() {
     return {
+      ...this.emptyActivityState(),
       taskId: null,
       project: null,
       task: null,
