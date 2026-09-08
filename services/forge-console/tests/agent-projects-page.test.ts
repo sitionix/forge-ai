@@ -2970,24 +2970,95 @@ describe('Agent projects page', () => {
     page.dispose();
   });
 
-  it.each(['initial', 'refresh'])('Activity retries a failed %s page automatically at the configured interval', async (phase) => {
+  it('Activity does not retry a failed initial page automatically', async () => {
     vi.useFakeTimers();
-    const eventsApi = vi.fn();
-    if (phase === 'refresh') eventsApi.mockResolvedValueOnce(activityPage('turn-a', 'Preserved event', 'ACTIVE'));
-    eventsApi.mockRejectedValueOnce(new Error('Temporary Activity error'))
+    const eventsApi = vi.fn().mockRejectedValue(new Error('Temporary Activity error'));
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    expect(dom.window.document.querySelector('.agent-activity-error')?.textContent).toBe('Activity could not be loaded.');
+    expect(dom.window.document.querySelector('button[data-activity-retry]')).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200]]);
+    page.dispose();
+  });
+
+  it('Activity manual Retry recovers an initial failure and starts polling after ACTIVE is known', async () => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn()
+      .mockRejectedValueOnce(new Error('Temporary Activity error'))
+      .mockResolvedValueOnce(activityPage('turn-a', 'Manual recovery', 'ACTIVE'))
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [], lastSequence: 1, nextAfterSequence: 1, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200]]);
+
+    dom.window.document.querySelector<HTMLButtonElement>('button[data-activity-retry]')!.click();
+    await flushAsync();
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Manual recovery');
+    expect(dom.window.document.querySelector('.agent-activity-capture')?.textContent).toBe('Live');
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 0, 200]]);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 0, 200], ['turn-a', 1, 200]]);
+    page.dispose();
+  });
+
+  it('Activity manual Retry remains manual when capture status is still unknown', async () => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn().mockRejectedValue(new Error('Temporary Activity error'));
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    dom.window.document.querySelector<HTMLButtonElement>('button[data-activity-retry]')!.click();
+    await flushAsync();
+    expect(dom.window.document.querySelector('.agent-activity-error')?.textContent).toBe('Activity could not be loaded.');
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 0, 200]]);
+    page.dispose();
+  });
+
+  it.each(['COMPLETE', 'DEGRADED', 'UNAVAILABLE'])('Activity manual Retry does not poll after terminal %s is learned', async (captureStatus) => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn()
+      .mockRejectedValueOnce(new Error('Temporary Activity error'))
+      .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus, events: [], lastSequence: 0, nextAfterSequence: 0, hasMore: false });
+    const { dom, page } = await openedActivity(eventsApi);
+    useFakeWindowTimers(dom);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    dom.window.document.querySelector<HTMLButtonElement>('button[data-activity-retry]')!.click();
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 0, 200]]);
+    page.dispose();
+  });
+
+  it.each(['ACTIVE', 'NOT_STARTED'])('Activity retries a failed refresh automatically after %s was learned', async (captureStatus) => {
+    vi.useFakeTimers();
+    const eventsApi = vi.fn()
+      .mockResolvedValueOnce(activityPage('turn-a', 'Preserved event', captureStatus))
+      .mockRejectedValueOnce(new Error('Temporary Activity error'))
       .mockResolvedValueOnce({ turnId: 'turn-a', captureStatus: 'COMPLETE', events: [activityEvent(2, 'Automatic recovery')], lastSequence: 2, nextAfterSequence: 2, hasMore: false });
     const { dom, page } = await openedActivity(eventsApi);
     useFakeWindowTimers(dom);
     page.taskExecutionView.selectNodeRun('impl-1');
     await flushAsync();
-    if (phase === 'refresh') await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(dom.window.document.querySelector('.agent-activity-event')?.textContent).toContain('Preserved event');
+    expect(dom.window.document.querySelector('.agent-activity-error')?.textContent).toBe('Activity refresh failed.');
     expect(dom.window.document.querySelector('button[data-activity-retry]')).not.toBeNull();
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 1, 200]]);
+
     await vi.advanceTimersByTimeAsync(2000);
     expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Automatic recovery');
     expect(dom.window.document.querySelector('.agent-activity-error')).toBeNull();
-    expect(eventsApi.mock.calls).toEqual(phase === 'initial'
-      ? [['turn-a', 0, 200], ['turn-a', 0, 200]]
-      : [['turn-a', 0, 200], ['turn-a', 1, 200], ['turn-a', 1, 200]]);
+    expect(eventsApi.mock.calls).toEqual([['turn-a', 0, 200], ['turn-a', 1, 200], ['turn-a', 1, 200]]);
     page.dispose();
   });
 

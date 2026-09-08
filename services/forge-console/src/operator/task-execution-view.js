@@ -1423,7 +1423,7 @@ export class TaskExecutionView {
   scheduleActivityPolling(identity) {
     if (!identity || !this.isCurrentActivity(identity)
       || this.activityPollTimer !== null || this.state.activityPollInFlight
-      || ![null, undefined, 'NOT_STARTED', 'ACTIVE'].includes(this.state.activityCaptureStatus)) return;
+      || !['NOT_STARTED', 'ACTIVE'].includes(this.state.activityCaptureStatus)) return;
     this.activityPollTimer = this.window.setTimeout(() => {
       this.activityPollTimer = null;
       void this.loadActivityPage(identity);
