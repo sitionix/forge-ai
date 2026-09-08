@@ -119,7 +119,7 @@ public class WorkflowExecutionCoordinator {
         );
     }
 
-    private void cancelActiveNodeRuns(final WorkflowRun workflowRun) {
+    public void cancelActiveNodeRuns(final WorkflowRun workflowRun) {
         final Instant now = Instant.now(this.clock);
         this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
                 .filter(nodeRun -> nodeRun.status() == NodeRunStatus.PENDING || nodeRun.status() == NodeRunStatus.RUNNING)
