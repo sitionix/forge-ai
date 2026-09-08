@@ -1315,6 +1315,7 @@ export class TaskExecutionView {
     panel.querySelectorAll('[data-context-node-run]').forEach((button) => button.addEventListener('click', () => {
       this.selectNodeRun(button.dataset.contextNodeRun);
     }));
+    this.bindActivityControls();
   }
 
   contextForNodeRun(nodeRunId) {
@@ -1355,7 +1356,9 @@ export class TaskExecutionView {
 
   async loadActivityPage(identity) {
     if (!identity || !this.isCurrentActivity(identity) || this.state.activityPollInFlight) return;
-    let request;
+    if (this.activityPollTimer !== null) this.window.clearTimeout(this.activityPollTimer);
+    this.activityPollTimer = null;
+    let request = null;
     try {
       while (this.isCurrentActivity(identity)) {
         request = this.api.getAgentExecutionEvents(identity.turnId, this.state.activityCursor, 200);
@@ -1381,13 +1384,25 @@ export class TaskExecutionView {
     } catch (error) {
       if (!this.isCurrentActivity(identity)) return;
       this.state.activityLoading = false;
-      this.state.activityError = 'Activity could not be loaded.';
+      this.state.activityError = this.state.activityEvents.length
+        ? 'Activity refresh failed.' : 'Activity could not be loaded.';
       this.renderSelectedActivity();
     } finally {
       if (this.isCurrentActivity(identity) && this.state.activityPollInFlight === request) {
         this.state.activityPollInFlight = null;
+        this.scheduleActivityPolling(identity);
       }
     }
+  }
+
+  scheduleActivityPolling(identity) {
+    if (!identity || !this.isCurrentActivity(identity)
+      || this.activityPollTimer !== null || this.state.activityPollInFlight
+      || ![null, undefined, 'NOT_STARTED', 'ACTIVE'].includes(this.state.activityCaptureStatus)) return;
+    this.activityPollTimer = this.window.setTimeout(() => {
+      this.activityPollTimer = null;
+      void this.loadActivityPage(identity);
+    }, this.pollIntervalMs);
   }
 
   async pollActivity() {
@@ -1395,6 +1410,10 @@ export class TaskExecutionView {
   }
 
   async retryActivity() {
+    if (!this.activityIdentity || !this.isCurrentActivity(this.activityIdentity) || this.state.activityPollInFlight) return;
+    this.state.activityError = '';
+    this.state.activityLoading = true;
+    this.renderSelectedActivity();
     await this.pollActivity();
   }
 
@@ -1421,7 +1440,14 @@ export class TaskExecutionView {
     const nodeRun = this.selectedNodeRun();
     if (section && nodeRun) {
       section.outerHTML = this.renderActivity(nodeRun, this.contextForNodeRun(nodeRun.id));
+      this.bindActivityControls();
     }
+  }
+
+  bindActivityControls() {
+    this.byId('agentsV2NodeRunDetails')?.querySelector('[data-activity-retry]')?.addEventListener('click', () => {
+      void this.retryActivity();
+    });
   }
 
   renderActivity(nodeRun, context) {
@@ -1434,7 +1460,12 @@ export class TaskExecutionView {
       <span class="agent-activity-capture agent-activity-capture-${presentation.tone}">${escapeHtml(presentation.label)}</span>
       ${usage.length ? `<div class="agent-activity-usage">${usage.map(escapeHtml).join(' · ')}</div>` : ''}
       ${this.state.activityLoading ? '<p>Loading activity...</p>' : ''}
-      ${this.state.activityError ? `<p class="agent-activity-error">${escapeHtml(this.state.activityError)}</p>` : ''}
+      ${this.state.activityCaptureStatus === 'NOT_STARTED' && !this.state.activityEvents.length ? '<p>Waiting for agent activity.</p>' : ''}
+      ${this.state.activityCaptureStatus === 'ACTIVE' && !this.state.activityEvents.length ? '<p>Agent is active. Waiting for its first activity event.</p>' : ''}
+      ${this.state.activityCaptureStatus === 'COMPLETE' && !this.state.activityEvents.length ? '<p>No activity events were recorded.</p>' : ''}
+      ${this.state.activityCaptureStatus === 'DEGRADED' ? '<p>Some agent activity may be missing.</p>' : ''}
+      ${this.state.activityCaptureStatus === 'UNAVAILABLE' ? '<p>Activity was not recorded for this invocation.</p>' : ''}
+      ${this.state.activityError ? `<p class="agent-activity-error">${escapeHtml(this.state.activityError)}</p><button type="button" data-activity-retry>Retry</button>` : ''}
       <div class="agent-activity-scroll"><ol class="agent-activity-events">${renderAgentExecutionActivityEvents(this.state.activityEvents)}</ol></div>
     </section>`;
   }
