@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
+import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
 import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeContextMode;
@@ -71,6 +72,8 @@ class NodeRunLifecycleTest {
     private ExecutionWorkspaceResolver executionWorkspaceResolver;
     @Mock
     private WorkflowRunGraphRepository graphRepository;
+    @Mock
+    private AgentSessionLeaseService sessionLeaseService;
 
     private final Map<UUID, NodeRun> nodeRuns = new LinkedHashMap<>();
     private WorkflowRun workflowRun;
@@ -91,11 +94,13 @@ class NodeRunLifecycleTest {
                         this.workflowRunRepository,
                         this.completionPolicy,
                         this.coordinator,
-                        CLOCK
+                        CLOCK,
+                        this.sessionLeaseService
                 ),
                 this.completionProcessor,
                 this.executionWorkspaceResolver,
-                this.graphRepository
+                this.graphRepository,
+                this.sessionLeaseService
         );
         this.workflowRun = this.workflowRun(WorkflowRunStatus.QUEUED, null, null);
         this.stubRepositories();
@@ -239,6 +244,36 @@ class NodeRunLifecycleTest {
     }
 
     @Test
+    void cancelledWorkflowAbsorbsLateTrackedSuccessBeforeCheckingFencedLease() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.CANCELLED, NOW, NOW);
+        this.nodeRuns.put(NODE_RUN_ID, this.trackedNodeRun(NodeRunStatus.CANCELLED));
+
+        this.lifecycle.succeed(
+                NODE_RUN_ID,
+                new AgentExecutionResult(new NodeRunOutput("{\"late\":true}"), null),
+                this.sessionClaim()
+        );
+
+        assertThat(this.nodeRuns.get(NODE_RUN_ID).status()).isEqualTo(NodeRunStatus.CANCELLED);
+        verifyNoInteractions(this.sessionLeaseService, this.completionProcessor);
+    }
+
+    @Test
+    void cancelledWorkflowAbsorbsLateTrackedFailureBeforeCheckingFencedLease() {
+        this.workflowRun = this.workflowRun(WorkflowRunStatus.CANCELLED, NOW, NOW);
+        this.nodeRuns.put(NODE_RUN_ID, this.trackedNodeRun(NodeRunStatus.CANCELLED));
+
+        this.lifecycle.fail(
+                NODE_RUN_ID,
+                new NodeRunFailure("LATE_FAILURE", "Late failure."),
+                this.sessionClaim()
+        );
+
+        assertThat(this.nodeRuns.get(NODE_RUN_ID).status()).isEqualTo(NodeRunStatus.CANCELLED);
+        verifyNoInteractions(this.sessionLeaseService);
+    }
+
+    @Test
     void activeWorkflowRejectsSuccessForCancelledNodeRun() {
         this.workflowRun = this.workflowRun(WorkflowRunStatus.RUNNING, NOW, null);
         this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.CANCELLED, MODEL));
@@ -358,6 +393,14 @@ class NodeRunLifecycleTest {
                 legacy.status(), legacy.output(), legacy.failure(), legacy.executionModel(), legacy.createdAt(),
                 legacy.startedAt(), legacy.finishedAt(), legacy.repositoryId(),
                 NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE, 1
+        );
+    }
+
+    private AgentSessionExecutionClaim sessionClaim() {
+        return new AgentSessionExecutionClaim(
+                UUID.randomUUID(), UUID.randomUUID(), NODE_RUN_ID, "worker-a", 1,
+                NOW.plusSeconds(30), "thread-1", "codex",
+                NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE, "0.153.2"
         );
     }
 

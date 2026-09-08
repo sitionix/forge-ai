@@ -57,16 +57,16 @@ public class NodeRunCompletionPersistence {
         if (target == null) {
             return false;
         }
-        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         final NodeRun nodeRun = target.nodeRun();
+        if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
+            return false;
+        }
+        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         if (nodeRun.contextTrackingVersion() != null && claim == null) {
             throw new ConflictException(
                     "STALE_AGENT_SESSION_LEASE",
                     "Tracked agent execution completion requires the current session lease."
             );
-        }
-        if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
-            return false;
         }
         if (nodeRun.status() == NodeRunStatus.SUCCEEDED
                 && result.output().equals(nodeRun.output())

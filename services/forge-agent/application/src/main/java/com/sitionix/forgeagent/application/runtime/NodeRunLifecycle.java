@@ -217,16 +217,16 @@ public class NodeRunLifecycle {
         if (target == null) {
             return;
         }
-        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         final NodeRun nodeRun = target.nodeRun();
+        if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
+            return;
+        }
+        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         if (nodeRun.contextTrackingVersion() != null && claim == null) {
             throw new ConflictException(
                     "STALE_AGENT_SESSION_LEASE",
                     "Tracked agent execution failure requires the current session lease."
             );
-        }
-        if (nodeRun.status() == NodeRunStatus.CANCELLED && this.isTerminal(target.workflowRun().status())) {
-            return;
         }
         if (nodeRun.status() == NodeRunStatus.FAILED && normalized.equals(nodeRun.failure())) {
             return;
