@@ -649,6 +649,14 @@ class ForgeAgentClientAdapterTest {
     }
 
     @Test
+    void cancelWorkflowRunExecutesExactTypedClientCall() {
+        this.adapter.cancelWorkflowRun(RUN_ID);
+
+        verify(this.executor).execute(any());
+        verify(this.httpClient).cancelWorkflowRun(RUN_ID);
+    }
+
+    @Test
     void testSshConnectionExecutesTypedClientCallWithoutCreatingAProfile() {
         final var command = new CreateAgentSshConnectionCommand(
                 "Ancestor", "192.168.0.108", 22, "ancestor",
