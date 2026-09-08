@@ -2739,6 +2739,30 @@ describe('Agent projects page', () => {
     expect(eventsApi).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['resolve', 'reject'])('Activity preserves open Prompt and Context details after page %s', async (settlement) => {
+    const pendingPage = deferred<any>();
+    const eventsApi = vi.fn(() => pendingPage.promise);
+    const { dom, page } = await openedActivity(eventsApi);
+    page.taskExecutionView.selectNodeRun('impl-1');
+    const details = dom.window.document.getElementById('agentsV2NodeRunDetails')!;
+    const prompt = details.querySelector<HTMLDetailsElement>('.node-run-prompt-details')!;
+    const technical = details.querySelector<HTMLDetailsElement>('.node-run-technical-details')!;
+    prompt.open = true;
+    technical.open = true;
+
+    if (settlement === 'resolve') pendingPage.resolve(activityPage('turn-a', 'New activity message'));
+    else pendingPage.reject(new Error('Activity connection failed'));
+    await flushAsync();
+
+    expect(details.querySelector<HTMLDetailsElement>('.node-run-prompt-details')?.open).toBe(true);
+    expect(details.querySelector<HTMLDetailsElement>('.node-run-technical-details')?.open).toBe(true);
+    expect(details.querySelector('.node-run-prompt-details')).toBe(prompt);
+    expect(details.querySelector('.node-run-technical-details')).toBe(technical);
+    expect(details.querySelector('.node-run-activity')?.textContent).toContain(
+      settlement === 'resolve' ? 'New activity message' : 'Activity could not be loaded.'
+    );
+  });
+
   it.each(['resolve', 'reject'])('Activity prevents overlapping polls and ignores a stale turn %s', async (settlement) => {
     const turnA = deferred<any>();
     const turnB = deferred<any>();

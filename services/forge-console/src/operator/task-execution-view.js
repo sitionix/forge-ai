@@ -1375,14 +1375,14 @@ export class TaskExecutionView {
         this.state.activityCaptureStatus = page.captureStatus;
         this.state.activityLoading = false;
         this.state.activityError = '';
-        this.renderNodeDetails();
+        this.renderSelectedActivity();
         if (!page.hasMore) break;
       }
     } catch (error) {
       if (!this.isCurrentActivity(identity)) return;
       this.state.activityLoading = false;
       this.state.activityError = 'Activity could not be loaded.';
-      this.renderNodeDetails();
+      this.renderSelectedActivity();
     } finally {
       if (this.isCurrentActivity(identity) && this.state.activityPollInFlight === request) {
         this.state.activityPollInFlight = null;
@@ -1414,6 +1414,14 @@ export class TaskExecutionView {
       && identity.turnId === context?.turnId
       && identity.activityLoadSequence === this.activityLoadSequence
       && this.hasVerifiedActivityTurn(nodeRun, context);
+  }
+
+  renderSelectedActivity() {
+    const section = this.byId('agentsV2NodeRunDetails')?.querySelector('.node-run-activity');
+    const nodeRun = this.selectedNodeRun();
+    if (section && nodeRun) {
+      section.outerHTML = this.renderActivity(nodeRun, this.contextForNodeRun(nodeRun.id));
+    }
   }
 
   renderActivity(nodeRun, context) {
