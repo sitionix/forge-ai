@@ -408,7 +408,7 @@ class ForgeAgentPortAwareExecutionIT {
                         """),
                 new AgentModelSelection("codex", liveModel, null)
         ));
-        this.saveReusableTerminalWorkflow();
+        this.saveTerminalWorkflow();
 
         final WorkflowRun cancelledRun = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID,
                 new CreateWorkflowRunCommand(
@@ -417,7 +417,7 @@ class ForgeAgentPortAwareExecutionIT {
         final NodeExecutionClaim cancelledClaim = this.lifecycle.tryStart(activeNode.id()).orElseThrow();
         final CompletableFuture<AgentExecutionResult> execution = CompletableFuture.supplyAsync(
                 () -> this.executeLiveWithHeartbeat(cancelledClaim));
-        this.awaitLiveCommand(cancelledClaim);
+        this.awaitLiveCommand(cancelledClaim, execution);
 
         this.cancelWorkflowRun.execute(cancelledRun.id());
 
@@ -1128,25 +1128,41 @@ class ForgeAgentPortAwareExecutionIT {
         }
     }
 
-    private void awaitLiveCommand(final NodeExecutionClaim claim) throws InterruptedException {
+    private void awaitLiveCommand(final NodeExecutionClaim claim,
+                                  final CompletableFuture<AgentExecutionResult> execution) throws InterruptedException {
         final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
+        boolean exactTurnKnown = false;
+        boolean commandRecorded = false;
+        boolean cancellationAvailable = false;
         while (System.nanoTime() < deadline) {
-            final boolean exactTurnKnown = this.agentExecutionSessionRepository
+            if (execution.isDone()) {
+                try {
+                    execution.join();
+                    throw new AssertionError("Live Codex execution completed before the cancellation boundary.");
+                } catch (final java.util.concurrent.CompletionException failure) {
+                    throw new AssertionError("Live Codex execution failed before the cancellation boundary.",
+                            failure.getCause());
+                }
+            }
+            exactTurnKnown = this.agentExecutionSessionRepository
                     .findByWorkflowRunId(claim.workflowRunId()).stream()
                     .anyMatch(allocation -> allocation.turn().nodeRunId().equals(claim.nodeRunId())
                             && allocation.turn().providerTurnId() != null
                             && !allocation.turn().providerTurnId().isBlank());
-            final boolean commandRecorded = this.agentExecutionEventRepository
+            commandRecorded = this.agentExecutionEventRepository
                     .findPage(claim.agentSessionClaim().turnId(), 0, 200)
                     .map(page -> page.events().stream()
                             .anyMatch(event -> event.type() == AgentExecutionEventType.COMMAND))
                     .orElse(false);
-            if (exactTurnKnown && commandRecorded && this.agentExecutor.secureCancellation(claim.nodeRunId()).isPresent()) {
+            cancellationAvailable = this.agentExecutor.secureCancellation(claim.nodeRunId()).isPresent();
+            if (exactTurnKnown && commandRecorded && cancellationAvailable) {
                 return;
             }
             Thread.sleep(100);
         }
-        throw new AssertionError("Live Codex command did not become cancellable before the acceptance deadline.");
+        throw new AssertionError("Live Codex command did not become cancellable before the acceptance deadline: "
+                + "exactTurnKnown=" + exactTurnKnown + ", commandRecorded=" + commandRecorded
+                + ", cancellationAvailable=" + cancellationAvailable);
     }
 
     private ProjectRepositoryEntity projectRepositoryEntity() {
