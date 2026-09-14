@@ -8,11 +8,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 class CodexJsonRpcTransportTest {
@@ -20,6 +22,50 @@ class CodexJsonRpcTransportTest {
     private static final String MODEL_LIST = "model/list";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Test
+    void exhaustedDeadlineRejectsWriteWhileAnotherThreadOwnsExpiryBeforePublication() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        // Suppress the automatic watchdog so the exact CAS-before-publication gap is deterministic.
+        final var transport = new CodexJsonRpcTransport(this.objectMapper,
+                new StartedCodexAppServer(process, List.of("test"), Instant.now()),
+                new CodexAppServerProperties(), Clock.systemUTC(), Instant.now().plusSeconds(5));
+        final Class<?> deadlineType = Class.forName(CodexJsonRpcTransport.class.getName() + "$RequestDeadline");
+        final var constructor = deadlineType.getDeclaredConstructor(
+                CodexJsonRpcTransport.class, Duration.class, Runnable.class);
+        constructor.setAccessible(true);
+        final Object deadline = constructor.newInstance(transport, Duration.ZERO, (Runnable) () -> {
+            throw new AssertionError("the caller must not steal the watchdog's expiry ownership");
+        });
+        final var resolvedField = deadlineType.getDeclaredField("resolved");
+        final var expiredField = deadlineType.getDeclaredField("expired");
+        resolvedField.setAccessible(true);
+        expiredField.setAccessible(true);
+        final AtomicBoolean resolved = (AtomicBoolean) resolvedField.get(deadline);
+        final AtomicBoolean expired = (AtomicBoolean) expiredField.get(deadline);
+        final var requireTime = deadlineType.getDeclaredMethod("requireTime");
+        requireTime.setAccessible(true);
+        final var ownershipAcquired = new CompletableFuture<Boolean>();
+        final var publishExpiry = new CompletableFuture<Void>();
+        final Thread expiryOwner = Thread.ofVirtual().start(() -> {
+            ownershipAcquired.complete(resolved.compareAndSet(false, true));
+            publishExpiry.join();
+            expired.set(true);
+        });
+        try {
+            assertThat(ownershipAcquired.get(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(expired).isFalse();
+            assertThatThrownBy(() -> requireTime.invoke(deadline))
+                    .hasCauseInstanceOf(CodexTransportException.class)
+                    .hasRootCauseMessage("Codex request deadline exhausted before write");
+        } finally {
+            publishExpiry.complete(null);
+            expiryOwner.join(1000);
+            ((AutoCloseable) deadline).close();
+            transport.close();
+        }
+        assertThat(expiryOwner.isAlive()).isFalse();
+    }
 
     @Test
     void correlatesConcurrentResponsesByRequestId() throws Exception {

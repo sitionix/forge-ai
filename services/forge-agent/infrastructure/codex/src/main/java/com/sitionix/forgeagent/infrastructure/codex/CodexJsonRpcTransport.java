@@ -581,7 +581,11 @@ final class CodexJsonRpcTransport implements AutoCloseable {
         }
 
         void requireTime() {
-            if (System.nanoTime() >= this.deadlineNanos) this.expire();
+            if (System.nanoTime() >= this.deadlineNanos) {
+                this.expire();
+                // Another expiry owner may not have published expired yet; elapsed time still forbids a write.
+                throw new CodexTransportException("Codex request deadline exhausted before write");
+            }
             if (this.expired()) throw new CodexTransportException("Codex request deadline exhausted before write");
         }
 
