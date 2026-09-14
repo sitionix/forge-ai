@@ -39,6 +39,7 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     private final AtomicLong requestIds = new AtomicLong(1L);
     private final Map<String, PendingRequest> pending = new ConcurrentHashMap<>();
     private final AtomicBoolean invalid = new AtomicBoolean();
+    private final AtomicBoolean deadlineKillIssued = new AtomicBoolean();
     private final Object lifecycleLock = new Object();
     private volatile boolean cleanupStarted;
     private volatile boolean cleanupComplete;
@@ -113,19 +114,31 @@ final class CodexJsonRpcTransport implements AutoCloseable {
         final String requestId = Long.toString(this.requestIds.getAndIncrement());
         final CompletableFuture<JsonNode> future = new CompletableFuture<>();
         this.pending.put(requestId, new PendingRequest(method, future));
+        final String timeoutMessage = "Codex request timed out method=" + method + " requestId=" + requestId;
+        final AtomicBoolean dispatching = new AtomicBoolean(true);
+        final RequestDeadline deadline = new RequestDeadline(timeout, () -> {
+            if (this.cleanupDeadline == null && dispatching.get() && this.deadlineKillIssued.compareAndSet(false, true)) {
+                CodexProcessTree.capture(this.server.process()).terminateTree();
+            }
+            future.completeExceptionally(new CodexTransportException(timeoutMessage));
+        });
         try {
             dispatch.accept(() -> {
                 try {
-                    this.send(this.requestMessage(method, requestId, params));
+                    this.send(this.requestMessage(method, requestId, params), deadline);
                 } catch (IOException exception) {
                     throw new CodexTransportException("Codex request write failed method=" + method, exception);
                 }
             });
+            dispatching.set(false);
             // Dispatch fencing has ended before waiting for any provider response.
-            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            final JsonNode response = future.get(deadline.remainingNanos(), TimeUnit.NANOSECONDS);
+            if (!deadline.complete()) throw new TimeoutException(timeoutMessage);
+            return response;
         } catch (final TimeoutException e) {
+            deadline.expire();
             this.invalidate("request timeout method=" + method + " requestId=" + requestId, e);
-            throw new CodexTransportException("Codex request timed out method=" + method + " requestId=" + requestId, e);
+            throw new CodexTransportException(timeoutMessage, e);
         } catch (final ExecutionException e) {
             final Throwable cause = e.getCause();
             if (cause instanceof RuntimeException runtimeException) {
@@ -134,9 +147,12 @@ final class CodexJsonRpcTransport implements AutoCloseable {
             throw new CodexTransportException("Codex request failed method=" + method + " requestId=" + requestId, cause);
         } catch (final Exception e) {
             this.invalidate("request failed method=" + method + " requestId=" + requestId, e);
+            if (deadline.expired()) throw new CodexTransportException(timeoutMessage, e);
             throw new CodexTransportException("Codex request failed method=" + method + " requestId=" + requestId, e);
         } finally {
             this.pending.remove(requestId);
+            deadline.close();
+            if (deadline.expired()) this.close();
         }
     }
 
@@ -166,8 +182,15 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     }
 
     private void send(final JsonNode message) throws IOException {
+        this.send(message, null);
+    }
+
+    private void send(final JsonNode message, final RequestDeadline deadline) throws IOException {
         synchronized (this.writer) {
-            this.writer.write(this.objectMapper.writeValueAsString(message));
+            final String encoded = this.objectMapper.writeValueAsString(message);
+            if (deadline != null) deadline.requireTime();
+            this.requireHealthy("write");
+            this.writer.write(encoded);
             this.writer.write('\n');
             this.writer.flush();
         }
@@ -353,7 +376,6 @@ final class CodexJsonRpcTransport implements AutoCloseable {
             final Map<Long, OwnedHandle> childProcesses = new HashMap<>();
             captureDescendants(rootHandle, childProcesses);
             try {
-                this.closeStdin();
                 if (process.isAlive()) {
                     captureDescendants(rootHandle, childProcesses);
                     terminateChildFirst(childProcesses, false);
@@ -385,6 +407,8 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                         }
                     }
                 }
+                // A blocked native write owns this monitor. Killing its pipe owners first unblocks it.
+                this.closeStdin();
                 this.completeCleanup(process);
             } catch (final InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -514,6 +538,82 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     }
 
     private record PendingRequest(String method, CompletableFuture<JsonNode> future) {
+    }
+
+    private final class RequestDeadline implements AutoCloseable {
+        private final long deadlineNanos;
+        private final AtomicBoolean resolved = new AtomicBoolean();
+        private final AtomicBoolean expired = new AtomicBoolean();
+        private final CompletableFuture<Void> finished = new CompletableFuture<>();
+        private final Runnable abort;
+        private final Thread watchdog;
+
+        RequestDeadline(final Duration timeout, final Runnable abort) {
+            this.deadlineNanos = System.nanoTime() + timeout.toNanos();
+            this.abort = abort;
+            // Recovery transports already have one authoritative outer lifecycle watchdog.
+            if (cleanupDeadline != null) {
+                this.watchdog = null;
+                return;
+            }
+            this.watchdog = Thread.ofVirtual().name("forge-agent-codex-deadline-" + server.process().pid()).start(() -> {
+                try {
+                    this.finished.get(this.remainingNanos(), TimeUnit.NANOSECONDS);
+                } catch (TimeoutException exception) {
+                    this.expire();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException exception) {
+                    throw new IllegalStateException(exception);
+                }
+            });
+        }
+
+        long remainingNanos() throws TimeoutException {
+            final long remaining = this.deadlineNanos - System.nanoTime();
+            if (remaining <= 0) throw new TimeoutException("Codex request deadline exhausted");
+            return remaining;
+        }
+
+        boolean complete() {
+            if (System.nanoTime() >= this.deadlineNanos) this.expire();
+            return this.resolved.compareAndSet(false, true);
+        }
+
+        void requireTime() {
+            if (System.nanoTime() >= this.deadlineNanos) this.expire();
+            if (this.expired()) throw new CodexTransportException("Codex request deadline exhausted before write");
+        }
+
+        void expire() {
+            if (this.resolved.compareAndSet(false, true)) {
+                this.expired.set(true);
+                this.abort.run();
+            }
+        }
+
+        boolean expired() { return this.expired.get(); }
+
+        @Override public void close() {
+            this.resolved.set(true);
+            this.finished.complete(null);
+            if (this.watchdog == null) return;
+            boolean interrupted = Thread.interrupted();
+            final long cleanupEnd = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(
+                    Math.max(1, cleanupWaitMillis(properties.getForceKillTimeout())));
+            try {
+                while (this.watchdog.isAlive() && System.nanoTime() < cleanupEnd) {
+                    try {
+                        this.watchdog.join(Math.max(1, TimeUnit.NANOSECONDS.toMillis(cleanupEnd - System.nanoTime())));
+                    } catch (InterruptedException exception) {
+                        interrupted = true;
+                    }
+                }
+                if (this.watchdog.isAlive()) throw new CodexTransportException("Codex request deadline watchdog did not terminate");
+            } finally {
+                if (interrupted) Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private record OwnedHandle(ProcessHandle handle, int depth) {

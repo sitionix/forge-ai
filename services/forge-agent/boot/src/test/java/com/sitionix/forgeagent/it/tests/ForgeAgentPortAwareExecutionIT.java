@@ -92,6 +92,7 @@ import com.sitionix.forgeagent.it.DeterministicCodexRuntimePort;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
 import com.sitionix.forgeagent.infrastructure.codex.LiveCodexRecoveryFixture;
 import com.sitionix.forgeagent.infrastructure.codex.RecoveryDispatchFixture;
+import com.sitionix.forgeagent.infrastructure.codex.UnreadCodexDispatchFixture;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import jakarta.persistence.EntityManager;
 import java.io.IOException;
@@ -925,6 +926,38 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.jdbcTemplate.queryForObject("SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database())", Integer.class)).isZero();
         this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp() WHERE id=?", claim.agentSessionClaim().sessionId());
         assertThat(this.agentExecutionSessionRepository.claimExpiredRecovery("after-failed-write")).isPresent();
+    }
+
+    @Test
+    void unreadProviderStdinTimesOutReleasesConnectionAndAllowsRecoveryWithoutDelayedSend() throws Exception {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Timeout unread provider stdin."));
+        final var claim = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow();
+        try (var worker = Executors.newSingleThreadExecutor()) {
+            try (var provider = new UnreadCodexDispatchFixture(this.agentSessionLeaseService, this.dispatchGuard)) {
+                final var execution = worker.submit(() -> provider.execute(claim));
+                assertThat(provider.awaitWrite()).isTrue();
+                final var children = provider.process().descendants().toList();
+                assertThat(children).isNotEmpty();
+                assertThatThrownBy(() -> execution.get(2, TimeUnit.SECONDS)).hasCauseInstanceOf(RuntimeException.class);
+
+                assertThat(provider.guardReleased()).isTrue();
+                assertThat(provider.writeInTransaction()).isFalse();
+                assertThat(provider.writeCompleted()).isFalse();
+                assertThat(provider.process().isAlive()).isFalse();
+                assertThat(children).noneMatch(ProcessHandle::isAlive);
+                final var pool = this.jdbcTemplate.getDataSource().unwrap(com.zaxxer.hikari.HikariDataSource.class);
+                assertThat(pool.getHikariPoolMXBean().getActiveConnections()).isZero();
+                this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp() WHERE id=?", claim.agentSessionClaim().sessionId());
+                assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+                final var allocation = this.agentExecutionSessionRepository.findByNodeRunId(claim.nodeRunId()).orElseThrow();
+                assertThat(allocation.turn().providerTurnId()).isNull();
+                assertThat(allocation.turn().providerRecoveryState()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+                assertThat(allocation.session().status()).isEqualTo(AgentExecutionSessionStatus.FAILED);
+                assertThat(provider.writeCompleted()).isFalse();
+            }
+        }
     }
 
     private void awaitLatch(final java.util.concurrent.CountDownLatch latch) {

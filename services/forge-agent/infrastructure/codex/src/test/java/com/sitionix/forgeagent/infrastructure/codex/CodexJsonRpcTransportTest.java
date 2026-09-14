@@ -184,6 +184,85 @@ class CodexJsonRpcTransportTest {
     }
 
     @Test
+    void requestDeadlineKillsUnreadStdinTreeAndWaitsForDispatchFinally() throws Exception {
+        final Process process = new ProcessBuilder("/bin/sh", "-c", "sleep 30 <&0 & wait").start();
+        final ProcessHandle child = awaitChild(process, Duration.ofSeconds(1));
+        final var properties = new CodexAppServerProperties();
+        properties.setGracefulTerminateTimeout(Duration.ofMillis(100));
+        properties.setForceKillTimeout(Duration.ofSeconds(1));
+        final var transport = new CodexJsonRpcTransport(this.objectMapper,
+                new StartedCodexAppServer(process, List.of("unread-stdin"), Instant.now()), properties);
+        final var guardExited = new java.util.concurrent.atomic.AtomicBoolean();
+        final var sent = new java.util.concurrent.atomic.AtomicBoolean();
+        final var result = new CompletableFuture<JsonNode>();
+        final Thread caller = Thread.ofVirtual().start(() -> {
+            try {
+                result.complete(transport.request("turn/start", this.objectMapper.createObjectNode().put("input", "x".repeat(8 * 1024 * 1024)),
+                        Duration.ofMillis(200), write -> {
+                            try { write.run(); sent.set(true); }
+                            finally { guardExited.set(true); }
+                        }));
+            } catch (Throwable failure) { result.completeExceptionally(failure); }
+        });
+        try {
+            assertThatThrownBy(() -> result.get(2, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
+            caller.join(1000);
+            assertThat(caller.isAlive()).isFalse();
+            assertThat(guardExited).isTrue();
+            assertThat(sent).isFalse();
+            assertThat(awaitExit(process.toHandle(), Duration.ofSeconds(1))).isTrue();
+            assertThat(awaitExit(child, Duration.ofSeconds(1))).isTrue();
+            assertThat(transport.cleanupComplete()).isTrue();
+            assertThatThrownBy(() -> transport.request("late", null, Duration.ofMillis(100)))
+                    .isInstanceOf(CodexTransportException.class).hasMessageContaining("not healthy");
+        } finally {
+            child.destroyForcibly();
+            process.toHandle().destroyForcibly();
+            caller.join(2000);
+            transport.close();
+        }
+    }
+
+    @Test
+    void closeKillsUnreadStdinBeforeWaitingForWriterLock() throws Exception {
+        final Process process = new ProcessBuilder("/bin/sh", "-c", "sleep 30 <&0 & wait").start();
+        final ProcessHandle child = awaitChild(process, Duration.ofSeconds(1));
+        final var properties = new CodexAppServerProperties();
+        properties.setGracefulTerminateTimeout(Duration.ofMillis(100));
+        properties.setForceKillTimeout(Duration.ofSeconds(1));
+        final var transport = new CodexJsonRpcTransport(this.objectMapper,
+                new StartedCodexAppServer(process, List.of("cancel-unread-stdin"), Instant.now()), properties);
+        final var entered = new java.util.concurrent.CountDownLatch(1);
+        final var result = new CompletableFuture<Void>();
+        final Thread caller = Thread.ofVirtual().start(() -> {
+            try {
+                transport.request("turn/start", this.objectMapper.createObjectNode().put("input", "x".repeat(8 * 1024 * 1024)),
+                        Duration.ofSeconds(10), write -> { entered.countDown(); write.run(); });
+                result.complete(null);
+            } catch (Throwable failure) { result.completeExceptionally(failure); }
+        });
+        final var closed = new CompletableFuture<Void>();
+        Thread closer = null;
+        try {
+            assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(() -> result.get(100, TimeUnit.MILLISECONDS)).isInstanceOf(java.util.concurrent.TimeoutException.class);
+            closer = Thread.ofVirtual().start(() -> {
+                try { transport.close(); closed.complete(null); }
+                catch (Throwable failure) { closed.completeExceptionally(failure); }
+            });
+            closed.get(2, TimeUnit.SECONDS);
+            assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
+            assertThat(awaitExit(child, Duration.ofSeconds(1))).isTrue();
+        } finally {
+            child.destroyForcibly();
+            process.toHandle().destroyForcibly();
+            caller.join(2000);
+            if (closer != null) closer.join(2000);
+            transport.close();
+        }
+    }
+
+    @Test
     void closeForcesProcessAfterGracefulTimeout() {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexJsonRpcTransport transport = this.transport(process);
