@@ -12,6 +12,7 @@ import com.sitionix.forgeagent.domain.model.NodeInputContribution;
 import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.RunPort;
+import com.sitionix.forgeagent.domain.port.AgentExecutionDispatchGuard;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.Optional;
@@ -35,16 +36,24 @@ public final class CodexAgentExecutor implements AgentExecutor {
     private final CodexClient client;
     private final AgentSessionLeaseService sessionLeaseService;
     private final AgentExecutionEventRecorder eventRecorder;
+    private final AgentExecutionDispatchGuard dispatchGuard;
     private final ConcurrentHashMap<UUID, ExecutionCancellation> activeExecutions = new ConcurrentHashMap<>();
 
     @Autowired
     public CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client,
                               final AgentSessionLeaseService sessionLeaseService,
-                              final AgentExecutionEventRecorder eventRecorder) {
+                              final AgentExecutionEventRecorder eventRecorder,
+                              final AgentExecutionDispatchGuard dispatchGuard) {
         this.objectMapper = objectMapper;
         this.client = client;
         this.sessionLeaseService = sessionLeaseService;
         this.eventRecorder = eventRecorder;
+        this.dispatchGuard = dispatchGuard;
+    }
+
+    CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client,
+                       final AgentSessionLeaseService leases, final AgentExecutionEventRecorder events) {
+        this(objectMapper, client, leases, events, null);
     }
 
     CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client) {
@@ -89,6 +98,12 @@ public final class CodexAgentExecutor implements AgentExecutor {
                             if (CodexAgentExecutor.this.eventRecorder != null) {
                                 CodexAgentExecutor.this.eventRecorder.activate(claim.agentSessionClaim());
                             }
+                        }
+                        @Override public void dispatchTurnStart(final Runnable writeRequest) {
+                            if (CodexAgentExecutor.this.dispatchGuard == null) {
+                                throw new IllegalStateException("Tracked execution requires a dispatch guard.");
+                            }
+                            CodexAgentExecutor.this.dispatchGuard.dispatch(claim.agentSessionClaim(), writeRequest);
                         }
                         @Override public void executionEvent(
                                 com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate event) {

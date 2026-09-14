@@ -78,12 +78,24 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     }
 
     JsonNode request(final String method, final JsonNode params, final Duration timeout) {
+        return this.request(method, params, timeout, Runnable::run);
+    }
+
+    JsonNode request(final String method, final JsonNode params, final Duration timeout,
+                     final java.util.function.Consumer<Runnable> dispatch) {
         this.requireHealthy(method);
         final String requestId = Long.toString(this.requestIds.getAndIncrement());
         final CompletableFuture<JsonNode> future = new CompletableFuture<>();
         this.pending.put(requestId, new PendingRequest(method, future));
         try {
-            this.send(this.requestMessage(method, requestId, params));
+            dispatch.accept(() -> {
+                try {
+                    this.send(this.requestMessage(method, requestId, params));
+                } catch (IOException exception) {
+                    throw new CodexTransportException("Codex request write failed method=" + method, exception);
+                }
+            });
+            // Dispatch fencing has ended before waiting for any provider response.
             return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (final TimeoutException e) {
             this.invalidate("request timeout method=" + method + " requestId=" + requestId, e);

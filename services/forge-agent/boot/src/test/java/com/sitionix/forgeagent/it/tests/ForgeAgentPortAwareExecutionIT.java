@@ -89,6 +89,7 @@ import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeagent.it.DeterministicCodexRuntimePort;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
 import com.sitionix.forgeagent.infrastructure.codex.LiveCodexRecoveryFixture;
+import com.sitionix.forgeagent.infrastructure.codex.RecoveryDispatchFixture;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import jakarta.persistence.EntityManager;
 import java.io.IOException;
@@ -208,6 +209,10 @@ class ForgeAgentPortAwareExecutionIT {
     private EntityManager entityManager;
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+    @Autowired
+    private com.sitionix.forgeagent.domain.port.AgentExecutionDispatchGuard dispatchGuard;
 
     @MockBean
     private OutputSelector outputSelector;
@@ -690,6 +695,170 @@ class ForgeAgentPortAwareExecutionIT {
                     blocker.rollback();
                 }
             }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"conversation", "turn", "renew", "lock", "eventActivate", "eventAppend", "eventComplete", "eventDegraded"})
+    void recoveryClaimRejectsNormalCallbackFromTransactionOpenedBeforeExpiry(final String operation) throws Exception {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Fence stale callback."));
+        final var normal = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow().agentSessionClaim();
+        if (operation.startsWith("event")) {
+            this.agentSessionLeaseService.persistConversation(normal, "thread-before-recovery", "0.154.0");
+            this.agentSessionLeaseService.persistTurn(normal, "turn-before-recovery");
+            assertThat(this.agentExecutionEventRepository.activate(normal)).isTrue();
+        }
+        final var transactionStarted = new java.util.concurrent.CountDownLatch(1);
+        final var resumeCallback = new java.util.concurrent.CountDownLatch(1);
+        try (var worker = Executors.newSingleThreadExecutor()) {
+            final var callback = worker.submit(() -> new org.springframework.transaction.support.TransactionTemplate(this.transactionManager)
+                    .execute(status -> {
+                        this.jdbcTemplate.queryForObject("SELECT CURRENT_TIMESTAMP", java.sql.Timestamp.class);
+                        transactionStarted.countDown();
+                        this.awaitLatch(resumeCallback);
+                        return this.normalCallback(normal, operation);
+                    }));
+            try {
+                assertThat(transactionStarted.await(5, TimeUnit.SECONDS)).isTrue();
+                this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp() WHERE id=?", normal.sessionId());
+                assertThat(this.agentExecutionSessionRepository.claimExpiredRecovery("recovery")).isPresent();
+                final var sessionBefore = this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_sessions WHERE id=?", normal.sessionId());
+                final var turnBefore = this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_turns WHERE id=?", normal.turnId());
+                resumeCallback.countDown();
+
+                assertThat(callback.get(5, TimeUnit.SECONDS)).isFalse();
+                assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_sessions WHERE id=?", normal.sessionId())).isEqualTo(sessionBefore);
+                assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_turns WHERE id=?", normal.turnId())).isEqualTo(turnBefore);
+            } finally {
+                resumeCallback.countDown();
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"conversation", "turn", "renew", "lock", "eventActivate", "eventAppend", "eventComplete", "eventDegraded"})
+    void recoveryOwnershipRejectsNormalCallbacksEvenWithFutureNormalExpiry(final String operation) {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var normal = this.expiredRecoveryExecution();
+        assertThat(this.agentExecutionSessionRepository.claimExpiredRecovery("recovery")).isPresent();
+        this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp()+INTERVAL '30 seconds' WHERE id=?", normal.sessionId());
+        this.jdbcTemplate.update("UPDATE agent_execution_turns SET status='STARTING' WHERE id=?", normal.turnId());
+
+        assertThat(this.normalCallback(normal, operation)).isFalse();
+    }
+
+    private boolean normalCallback(final AgentSessionExecutionClaim normal, final String operation) {
+        return switch (operation) {
+            case "conversation" -> this.agentExecutionSessionRepository.persistProviderConversation(
+                    normal.sessionId(), normal.leaseOwnerId(), normal.leaseToken(), "late-thread", "0.154.0");
+            case "turn" -> this.agentExecutionSessionRepository.persistProviderTurn(
+                    normal.sessionId(), normal.turnId(), normal.leaseOwnerId(), normal.leaseToken(), "late-turn");
+            case "renew" -> this.agentExecutionSessionRepository.renew(normal.sessionId(), normal.leaseOwnerId(), normal.leaseToken());
+            case "lock" -> this.agentExecutionSessionRepository.lockCurrentLease(normal.sessionId(), normal.leaseOwnerId(), normal.leaseToken());
+            case "eventActivate" -> this.agentExecutionEventRepository.activate(normal);
+            case "eventAppend" -> this.agentExecutionEventRepository.append(normal, event(AgentExecutionEventType.WARNING, null, null)) == AgentExecutionEventAppendResult.APPENDED;
+            case "eventComplete" -> this.agentExecutionEventRepository.markComplete(normal);
+            case "eventDegraded" -> this.agentExecutionEventRepository.markDegraded(normal);
+            default -> throw new IllegalArgumentException(operation);
+        };
+    }
+
+    @Test
+    void recoveryClaimBetweenConversationCommitAndWireDispatchPreventsTurnStart() throws Exception {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Claim before wire send."));
+        final var claim = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow();
+        final var conversationPersisted = new java.util.concurrent.CountDownLatch(1);
+        final var continueToSend = new java.util.concurrent.CountDownLatch(1);
+        try (var worker = Executors.newSingleThreadExecutor()) {
+            try (var provider = new RecoveryDispatchFixture(this.agentSessionLeaseService, this.dispatchGuard,
+                    () -> { conversationPersisted.countDown(); this.awaitLatch(continueToSend); }, () -> { })) {
+                final var execution = worker.submit(() -> provider.execute(claim));
+                try {
+                    assertThat(conversationPersisted.await(5, TimeUnit.SECONDS)).isTrue();
+                    this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp() WHERE id=?", claim.agentSessionClaim().sessionId());
+                    final var recovery = this.agentExecutionSessionRepository.claimExpiredRecovery("claim-wins").orElseThrow();
+                    assertThat(recovery.providerConversationId()).isEqualTo("thread-fence");
+                    assertThat(recovery.providerTurnId()).isNull();
+                    continueToSend.countDown();
+                    org.awaitility.Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> execution.isDone() || provider.methods().contains("turn/start"));
+
+                    assertThat(provider.methods()).contains("thread/start").doesNotContain("turn/start");
+                    assertThatThrownBy(() -> execution.get(5, TimeUnit.SECONDS)).isInstanceOf(java.util.concurrent.ExecutionException.class);
+                    assertThat(this.agentExecutionSessionRepository.findByNodeRunId(claim.nodeRunId()).orElseThrow().turn().providerTurnId()).isNull();
+                } finally {
+                    continueToSend.countDown();
+                }
+            }
+        }
+    }
+
+    @Test
+    void recoveryWaitsForWireDispatchThenFailsClosedWithoutWaitingForProviderReply() throws Exception {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Send before recovery claim."));
+        final var claim = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow();
+        final var beforeWire = new java.util.concurrent.CountDownLatch(1);
+        final var flushWire = new java.util.concurrent.CountDownLatch(1);
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            try (var provider = new RecoveryDispatchFixture(this.agentSessionLeaseService, this.dispatchGuard, () -> { },
+                    () -> { beforeWire.countDown(); this.awaitLatch(flushWire); })) {
+                final var execution = workers.submit(() -> provider.execute(claim));
+                try {
+                    assertThat(beforeWire.await(5, TimeUnit.SECONDS)).isTrue();
+                    assertThat(provider.turnWriteInTransaction()).isFalse();
+                    this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp() WHERE id=?", claim.agentSessionClaim().sessionId());
+                    final var recovery = workers.submit(this.recoveryService::reconcileExpired);
+                    org.awaitility.Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> recovery.isDone() || Boolean.TRUE.equals(
+                            this.jdbcTemplate.queryForObject("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE query LIKE '%pg_advisory_xact_lock%' AND cardinality(pg_blocking_pids(pid))>0)", Boolean.class)));
+                    assertThat(recovery.isDone()).isFalse();
+                    flushWire.countDown();
+
+                    assertThat(recovery.get(5, TimeUnit.SECONDS)).isEqualTo(1);
+                    assertThat(provider.methods().stream().filter("turn/start"::equals)).hasSize(1);
+                    assertThat(execution.isDone()).isFalse();
+                    final var allocation = this.agentExecutionSessionRepository.findByNodeRunId(claim.nodeRunId()).orElseThrow();
+                    assertThat(allocation.turn().providerTurnId()).isNull();
+                    assertThat(allocation.turn().providerRecoveryState()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+                    assertThat(allocation.session().status()).isEqualTo(AgentExecutionSessionStatus.FAILED);
+                    provider.replyTurn();
+                    assertThatThrownBy(() -> execution.get(5, TimeUnit.SECONDS)).isInstanceOf(java.util.concurrent.ExecutionException.class);
+                } finally {
+                    flushWire.countDown();
+                }
+            }
+        }
+    }
+
+    @Test
+    void failedWireWriteReleasesAdvisoryOwnershipAndRunsOutsideAmbientTransaction() {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Release failed dispatch."));
+        final var claim = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow();
+
+        assertThatThrownBy(() -> new org.springframework.transaction.support.TransactionTemplate(this.transactionManager)
+                .executeWithoutResult(status -> this.dispatchGuard.dispatch(claim.agentSessionClaim(), () -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                    throw new IllegalStateException("Local write failed.");
+                }))).isInstanceOf(IllegalStateException.class).hasMessage("Local write failed.");
+
+        assertThat(this.jdbcTemplate.queryForObject("SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database())", Integer.class)).isZero();
+        this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp() WHERE id=?", claim.agentSessionClaim().sessionId());
+        assertThat(this.agentExecutionSessionRepository.claimExpiredRecovery("after-failed-write")).isPresent();
+    }
+
+    private void awaitLatch(final java.util.concurrent.CountDownLatch latch) {
+        try {
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(exception);
         }
     }
 

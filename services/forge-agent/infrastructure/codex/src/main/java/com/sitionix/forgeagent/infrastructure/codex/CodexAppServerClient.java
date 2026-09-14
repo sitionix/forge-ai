@@ -227,7 +227,7 @@ final class CodexAppServerClient implements CodexClient {
             final String turnId;
             try {
                 turnId = sessionProtocol.startTurn(current, this.turnStartParams(threadId, request),
-                        this.properties.getRequestTimeout());
+                        this.properties.getRequestTimeout(), callbacks == null ? Runnable::run : callbacks::dispatchTurnStart);
             } catch (final CodexExecutionException exception) {
                 throw exception;
             } catch (final RuntimeException exception) {

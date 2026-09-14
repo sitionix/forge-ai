@@ -101,23 +101,23 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     @Override
     @Transactional
     public boolean renew(final UUID sessionId, final String ownerId, final long token) {
-        return this.jdbc.update("UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP + INTERVAL '30 seconds',updated_at=CURRENT_TIMESTAMP WHERE id=? AND lease_owner_id=? AND lease_token=? AND lease_expires_at>CURRENT_TIMESTAMP",
-                sessionId, ownerId, token) == 1;
+        if (!this.lockCurrentLease(sessionId, ownerId, token)) return false;
+        return this.jdbc.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp() + INTERVAL '30 seconds',updated_at=clock_timestamp() WHERE id=?",
+                sessionId) == 1;
     }
 
     @Override
     @Transactional
     public boolean persistProviderConversation(final UUID sessionId, final String ownerId, final long token, final String conversationId, final String providerVersion) {
-        return this.jdbc.update("UPDATE agent_execution_sessions SET provider_conversation_id=?,provider_version=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND lease_owner_id=? AND lease_token=? AND lease_expires_at>CURRENT_TIMESTAMP",
-                conversationId, providerVersion, sessionId, ownerId, token) == 1;
+        if (!this.lockCurrentLease(sessionId, ownerId, token)) return false;
+        return this.jdbc.update("UPDATE agent_execution_sessions SET provider_conversation_id=?,provider_version=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                conversationId, providerVersion, sessionId) == 1;
     }
 
     @Override
     @Transactional
     public boolean persistProviderTurn(final UUID sessionId, final UUID turnId, final String ownerId, final long token, final String providerTurnId) {
-        final List<UUID> guarded = this.jdbc.query("SELECT id FROM agent_execution_sessions WHERE id=? AND lease_owner_id=? AND lease_token=? AND lease_expires_at>CURRENT_TIMESTAMP FOR UPDATE",
-                (rs,row) -> rs.getObject(1, UUID.class), sessionId, ownerId, token);
-        if (guarded.size() != 1) return false;
+        if (!this.lockCurrentLease(sessionId, ownerId, token)) return false;
         final int changed = this.jdbc.update("UPDATE agent_execution_turns SET provider_turn_id=?,status='ACTIVE',updated_at=CURRENT_TIMESTAMP WHERE id=? AND agent_session_id=? AND status='STARTING'",
                 providerTurnId, turnId, sessionId);
         if (changed != 1) return false;
@@ -127,8 +127,17 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     @Override
     @Transactional
     public boolean lockCurrentLease(final UUID sessionId, final String ownerId, final long token) {
-        return this.jdbc.query("SELECT id FROM agent_execution_sessions WHERE id=? AND lease_owner_id=? AND lease_token=? AND lease_expires_at>CURRENT_TIMESTAMP FOR UPDATE",
-                (rs,row) -> rs.getObject(1, UUID.class), sessionId, ownerId, token).size() == 1;
+        final List<UUID> locked = this.jdbc.query("SELECT id FROM agent_execution_sessions WHERE id=? FOR UPDATE",
+                (rs, row) -> rs.getObject(1, UUID.class), sessionId);
+        if (locked.isEmpty()) return false;
+        // Recovery owns the active turn independently of the old normal token. Check after the lock wait.
+        return Boolean.TRUE.equals(this.jdbc.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM agent_execution_sessions s
+                 WHERE s.id=? AND s.lease_owner_id=? AND s.lease_token=? AND s.lease_expires_at>clock_timestamp()
+                   AND NOT EXISTS(SELECT 1 FROM agent_execution_turns t
+                       WHERE t.agent_session_id=s.id AND t.node_run_id=s.active_node_run_id
+                         AND t.recovery_lease_owner_id IS NOT NULL))
+                """, Boolean.class, sessionId, ownerId, token));
     }
 
     @Override
@@ -167,6 +176,9 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
                 rs.getObject("turn_id", UUID.class)));
         if (candidates.isEmpty()) return Optional.empty();
         final RecoveryTarget target = candidates.getFirst();
+        // Serialize ownership transfer with the local provider turn dispatch, before taking row locks.
+        this.jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", Object.class,
+                PostgresAgentExecutionDispatchGuard.lockKey(target.sessionId()));
         final RecoveryNode node = this.lockRecoveryNode(target.workflowRunId(), target.nodeRunId());
         if (node == null) return Optional.empty();
         final Optional<AgentExecutionSession> session = this.lockExpiredRecoverySession(

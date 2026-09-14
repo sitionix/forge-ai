@@ -9,6 +9,7 @@ import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
 import com.sitionix.forgeagent.domain.port.AgentExecutionEventRepository;
+import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -25,10 +26,12 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class PostgresAgentExecutionEventRepository implements AgentExecutionEventRepository {
     private final JdbcTemplate jdbc;
+    private final AgentExecutionSessionRepository sessions;
 
     @Override
     @Transactional
     public boolean activate(final AgentSessionExecutionClaim claim) {
+        if (!this.lockCurrent(claim)) return false;
         return this.jdbc.update("""
                 UPDATE agent_execution_turns t
                    SET event_capture_status=CASE
@@ -49,6 +52,7 @@ public class PostgresAgentExecutionEventRepository implements AgentExecutionEven
     @Transactional
     public AgentExecutionEventAppendResult append(final AgentSessionExecutionClaim claim,
                                                    final AgentExecutionEventCandidate candidate) {
+        if (!this.lockCurrent(claim)) return AgentExecutionEventAppendResult.STALE;
         final List<Long> sequences = this.jdbc.query("""
                 SELECT t.next_event_sequence
                   FROM agent_execution_turns t
@@ -94,6 +98,7 @@ public class PostgresAgentExecutionEventRepository implements AgentExecutionEven
     @Override
     @Transactional
     public boolean markDegraded(final AgentSessionExecutionClaim claim) {
+        if (!this.lockCurrent(claim)) return false;
         return this.jdbc.update("""
                 UPDATE agent_execution_turns t SET event_capture_status='DEGRADED',updated_at=CURRENT_TIMESTAMP
                   FROM agent_execution_sessions s
@@ -107,6 +112,7 @@ public class PostgresAgentExecutionEventRepository implements AgentExecutionEven
 
     private boolean captureStatus(final AgentSessionExecutionClaim claim, final String target,
                                   final String expected) {
+        if (!this.lockCurrent(claim)) return false;
         return this.jdbc.update("""
                 UPDATE agent_execution_turns t SET event_capture_status=?,updated_at=CURRENT_TIMESTAMP
                   FROM agent_execution_sessions s
@@ -116,6 +122,10 @@ public class PostgresAgentExecutionEventRepository implements AgentExecutionEven
                    AND t.event_capture_status=?
                 """, target, claim.turnId(), claim.nodeRunId(), claim.sessionId(), claim.leaseOwnerId(),
                 claim.leaseToken(), expected) == 1;
+    }
+
+    private boolean lockCurrent(final AgentSessionExecutionClaim claim) {
+        return this.sessions.lockCurrentLease(claim.sessionId(), claim.leaseOwnerId(), claim.leaseToken());
     }
 
     @Override

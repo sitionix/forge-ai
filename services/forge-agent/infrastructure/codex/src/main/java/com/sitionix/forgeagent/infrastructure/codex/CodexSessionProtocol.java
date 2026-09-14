@@ -33,10 +33,15 @@ final class CodexSessionProtocol {
     }
 
     String startTurn(final CodexJsonRpcTransport transport, final JsonNode turnStartParams, final Duration timeout) {
+        return this.startTurn(transport, turnStartParams, timeout, Runnable::run);
+    }
+
+    String startTurn(final CodexJsonRpcTransport transport, final JsonNode turnStartParams, final Duration timeout,
+                     final java.util.function.Consumer<Runnable> dispatch) {
         return requireTurnId(transport.request(
                 CodexProtocol.TURN_START,
                 this.requireParams(turnStartParams),
-                timeout
+                timeout, dispatch
         ));
     }
 
