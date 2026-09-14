@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -348,26 +349,20 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 return;
             }
             this.cleanupStarted = true;
+            final ProcessHandle rootHandle = nativeHandle(process);
+            final Map<Long, OwnedHandle> childProcesses = new HashMap<>();
+            captureDescendants(rootHandle, childProcesses);
             try {
                 this.closeStdin();
-                java.util.List<ProcessHandle> descendants = java.util.List.of();
-                try {
-                    descendants = process.descendants().toList();
-                } catch (final UnsupportedOperationException exception) {
-                    // Synthetic Process implementations used by protocol tests do not expose handles.
-                }
-                final java.util.List<ProcessHandle> childProcesses = descendants;
                 if (process.isAlive()) {
-                    process.destroy();
-                    childProcesses.forEach(child -> {
-                        if (child.isAlive()) child.destroy();
-                    });
+                    captureDescendants(rootHandle, childProcesses);
+                    terminateChildFirst(childProcesses, false);
+                    destroyRoot(process, rootHandle, false);
                     if (!process.waitFor(this.cleanupWaitMillis(this.properties.getGracefulTerminateTimeout()),
                             TimeUnit.MILLISECONDS)) {
-                        childProcesses.forEach(child -> {
-                            if (child.isAlive()) child.destroyForcibly();
-                        });
-                        process.destroyForcibly();
+                        captureDescendants(rootHandle, childProcesses);
+                        terminateChildFirst(childProcesses, true);
+                        destroyRoot(process, rootHandle, true);
                         if (!process.waitFor(this.cleanupWaitMillis(this.properties.getForceKillTimeout()),
                                 TimeUnit.MILLISECONDS)) {
                             throw new CodexTransportException("Codex app-server process remained alive after force kill timeout");
@@ -377,13 +372,11 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 if (process.isAlive()) {
                     throw new CodexTransportException("Codex app-server process cleanup incomplete");
                 }
-                childProcesses.forEach(child -> {
-                    if (child.isAlive()) child.destroyForcibly();
-                });
-                for (final ProcessHandle child : childProcesses) {
-                    if (child.isAlive()) {
+                terminateChildFirst(childProcesses, true);
+                for (final OwnedHandle child : childProcesses.values()) {
+                    if (child.handle().isAlive()) {
                         try {
-                            child.onExit().get(this.cleanupWaitMillis(this.properties.getForceKillTimeout()),
+                            child.handle().onExit().get(this.cleanupWaitMillis(this.properties.getForceKillTimeout()),
                                     TimeUnit.MILLISECONDS);
                         } catch (final java.util.concurrent.TimeoutException exception) {
                             throw new CodexTransportException("Codex child process remained alive after force kill timeout", exception);
@@ -395,13 +388,79 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 this.completeCleanup(process);
             } catch (final InterruptedException e) {
                 Thread.currentThread().interrupt();
-                process.destroyForcibly();
+                terminateChildFirst(childProcesses, true);
+                destroyRoot(process, rootHandle, true);
                 this.cleanupFailure = new CodexTransportException("Codex app-server cleanup interrupted", e);
                 throw this.cleanupFailure;
             } catch (final CodexTransportException e) {
                 this.cleanupFailure = e;
                 throw e;
             }
+        }
+    }
+
+    private static ProcessHandle nativeHandle(final Process process) {
+        try {
+            return process.toHandle();
+        } catch (final UnsupportedOperationException exception) {
+            // Synthetic Process implementations in unit tests use the Process API fallback below.
+            return null;
+        }
+    }
+
+    private static void captureDescendants(final ProcessHandle root,
+                                           final Map<Long, OwnedHandle> descendants) {
+        if (root == null || !root.isAlive()) {
+            return;
+        }
+        try {
+            root.descendants().forEach(handle -> descendants.merge(
+                    handle.pid(), new OwnedHandle(handle, depthFromRoot(handle, root)),
+                    (known, discovered) -> known.depth() >= discovered.depth() ? known : discovered));
+        } catch (final UnsupportedOperationException ignored) {
+            // Root termination remains available even when descendant enumeration is unsupported.
+        }
+    }
+
+    private static int depthFromRoot(final ProcessHandle handle, final ProcessHandle root) {
+        int depth = 1;
+        ProcessHandle ancestor = handle;
+        while (depth < 64) {
+            final var parent = ancestor.parent();
+            if (parent.isEmpty() || parent.get().pid() == root.pid()) {
+                return depth;
+            }
+            ancestor = parent.get();
+            depth++;
+        }
+        return depth;
+    }
+
+    private static void terminateChildFirst(final Map<Long, OwnedHandle> descendants, final boolean force) {
+        descendants.values().stream()
+                .sorted((left, right) -> Integer.compare(right.depth(), left.depth()))
+                .map(OwnedHandle::handle)
+                .filter(ProcessHandle::isAlive)
+                .forEach(handle -> {
+                    if (force) {
+                        handle.destroyForcibly();
+                    } else {
+                        handle.destroy();
+                    }
+                });
+    }
+
+    private static void destroyRoot(final Process process, final ProcessHandle root, final boolean force) {
+        if (root != null) {
+            if (force) {
+                root.destroyForcibly();
+            } else {
+                root.destroy();
+            }
+        } else if (force) {
+            process.destroyForcibly();
+        } else {
+            process.destroy();
         }
     }
 
@@ -455,5 +514,8 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     }
 
     private record PendingRequest(String method, CompletableFuture<JsonNode> future) {
+    }
+
+    private record OwnedHandle(ProcessHandle handle, int depth) {
     }
 }

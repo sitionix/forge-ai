@@ -125,7 +125,11 @@ no repository callback and cannot mutate reconciliation state.
 
 The Codex adapter supervises its complete fresh-process lifecycle on a dedicated virtual thread. It subtracts its
 configured graceful-plus-force cleanup reserve from the provider phase, atomically owns any process returned by the
-starter, and force-terminates a process that is registered after cancellation. Initialize and every
+starter, and force-terminates a process that is registered after cancellation. Before terminating a native launcher,
+the owner snapshots its descendant handles, terminates descendants child-first, terminates the root through the
+nonblocking `ProcessHandle` API, and repeats termination on the saved handles. Transport cleanup likewise captures
+the tree before closing stdin, so a wrapper that exits on EOF cannot hide a child that retains inherited stdio.
+Initialize and every
 `thread/turns/list` page cap their individual timeout to the remaining request budget. If synchronous start,
 JSON-RPC write/flush, or stdin close blocks, the supervising thread aborts the owned process to unblock its pipes and
 waits no later than the overall inspection deadline. Normal successful inspection does not issue the force path.
@@ -219,6 +223,8 @@ Using fresh fake app-server processes, cover:
   deadline; a process returned after cancellation is force-terminated;
 - process registration versus cancellation is linearizable, force termination is idempotent, and successful
   inspection does not issue an unnecessary force kill;
+- a real wrapper plus inherited-stdio child cannot block lifecycle abort or transport close, and neither root nor
+  captured child remains alive after the bounded cleanup;
 - unsupported version without launching a process;
 - identity mismatch and ambiguous response;
 - absence of `thread/read(includeTurns=true)`, `thread/start`, `thread/resume`, and `turn/start` during recovery;
