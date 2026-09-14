@@ -133,7 +133,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
                 throw exception;
             } finally {
                 cancellation.executionFinished();
-                this.activeExecutions.remove(claim.nodeRunId(), cancellation);
+                this.reconcileCancellation(claim.nodeRunId(), cancellation);
             }
         }
         return this.parseExecutionResult(outputText, claim.availableOutputs(), selectionRequired);
@@ -147,10 +147,29 @@ public final class CodexAgentExecutor implements AgentExecutor {
     @Override
     public Optional<Runnable> secureCancellation(final UUID nodeRunId) {
         return Optional.ofNullable(this.activeExecutions.get(nodeRunId))
-                .map(cancellation -> cancellation::cancel);
+                .map(cancellation -> () -> {
+                    try {
+                        cancellation.cancel();
+                    } finally {
+                        this.reconcileCancellation(nodeRunId, cancellation);
+                    }
+                });
+    }
+
+    private void reconcileCancellation(final UUID nodeRunId, final ExecutionCancellation cancellation) {
+        this.activeExecutions.compute(nodeRunId, (id, current) -> {
+            if (cancellation.isComplete()) {
+                return current == cancellation ? null : current;
+            }
+            if (cancellation.hasUnresolvedCancellation()) {
+                return current == null ? cancellation : current;
+            }
+            return current == cancellation ? null : current;
+        });
     }
 
     private static final class ExecutionCancellation {
+        private boolean requested;
         private boolean complete;
         private boolean executionFinished;
         private boolean inProgress;
@@ -165,6 +184,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
             final Runnable cancellation;
             boolean interrupted = false;
             synchronized (this) {
+                this.requested = true;
                 while (this.action == null && !this.executionFinished) {
                     try {
                         this.wait();
@@ -208,6 +228,14 @@ public final class CodexAgentExecutor implements AgentExecutor {
         synchronized void executionFinished() {
             this.executionFinished = true;
             this.notifyAll();
+        }
+
+        synchronized boolean isComplete() {
+            return this.complete;
+        }
+
+        synchronized boolean hasUnresolvedCancellation() {
+            return this.requested && this.action != null && !this.complete;
         }
     }
 
