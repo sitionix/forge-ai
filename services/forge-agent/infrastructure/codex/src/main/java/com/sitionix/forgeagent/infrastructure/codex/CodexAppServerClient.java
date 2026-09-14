@@ -20,7 +20,8 @@ import org.springframework.stereotype.Component;
 final class CodexAppServerClient implements CodexClient {
 
     private static final Pattern USER_AGENT_VERSION = Pattern.compile("^[^/]+/([^\\s]+).*");
-    private static final String SUPPORTED_DURABLE_VERSION = "0.153.2";
+    static final String SUPPORTED_DURABLE_VERSION = "0.154.0";
+    static final String SUPPORTED_RECOVERY_VERSION = SUPPORTED_DURABLE_VERSION;
 
     private final ObjectMapper objectMapper;
     private final CodexAppServerProcessStarter processStarter;
@@ -426,7 +427,7 @@ final class CodexAppServerClient implements CodexClient {
         return version;
     }
 
-    private String extractVersion(final JsonNode initializeResult) {
+    static String extractVersion(final JsonNode initializeResult) {
         if (initializeResult == null || !initializeResult.isObject()) {
             throw new CodexTransportException("Codex initialize response was not an object");
         }

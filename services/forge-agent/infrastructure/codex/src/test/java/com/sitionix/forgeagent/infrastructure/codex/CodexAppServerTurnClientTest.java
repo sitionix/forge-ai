@@ -355,11 +355,11 @@ class CodexAppServerTurnClientTest {
         ));
         final JsonNode initialize = this.readRequest(process);
         process.writeStdout("{\"id\":\"" + initialize.path("id").asText()
-                + "\",\"result\":{\"userAgent\":\"codex/0.154.0\"}}");
+                + "\",\"result\":{\"userAgent\":\"codex/0.155.0\"}}");
         this.readRequest(process);
 
         assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
-                .hasRootCauseMessage("Codex durable context requires audited CLI version 0.153.2; found 0.154.0");
+                .hasRootCauseMessage("Codex durable context requires audited CLI version 0.154.0; found 0.155.0");
         assertThat(process.pendingClientRequestBytes()).isZero();
         client.close();
     }
@@ -380,7 +380,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
 
         assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
-                .hasRootCauseMessage("Codex durable context version changed from 0.152.0 to 0.153.2")
+                .hasRootCauseMessage("Codex durable context version changed from 0.152.0 to 0.154.0")
                 .hasRootCauseInstanceOf(CodexExecutionException.class);
         assertThat(process.pendingClientRequestBytes()).isZero();
         client.close();
@@ -1081,7 +1081,7 @@ class CodexAppServerTurnClientTest {
     private void initialize(final FakeCodexProcess process) throws Exception {
         final JsonNode initialize = this.readRequest(process);
         assertThat(initialize.path("method").asText()).isEqualTo("initialize");
-        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex/0.153.2\"}}");
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex/0.154.0\"}}");
         final JsonNode initialized = this.readRequest(process);
         assertThat(initialized.path("method").asText()).isEqualTo("initialized");
     }

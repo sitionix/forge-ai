@@ -6,6 +6,9 @@ final class CodexProtocol {
     static final String INITIALIZED = "initialized";
     static final String THREAD_START = "thread/start";
     static final String THREAD_RESUME = "thread/resume";
+    static final String THREAD_READ = "thread/read";
+    static final String THREAD_TURNS_LIST = "thread/turns/list";
+    static final String THREAD_ITEMS_LIST = "thread/items/list";
     static final String TURN_START = "turn/start";
     static final String TURN_STARTED = "turn/started";
     static final String TURN_COMPLETED = "turn/completed";

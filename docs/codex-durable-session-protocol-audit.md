@@ -3,6 +3,48 @@
 Date: 2026-09-04  
 Scope: Forge Agent Codex app-server adapter only. No Forge session persistence, Node schema, UI, or production resume behavior is introduced by this audit.
 
+## Phase 5B recovery addendum (`0.154.0`, 2026-09-14)
+
+The installed binary reports `codex-cli 0.154.0`. Both gated live checks passed on that exact version:
+
+- normal durable execution created a durable thread, closed its first app-server process, resumed it from a second process, and recalled a first-turn-only fact;
+- recovery created a terminal durable turn, closed its original client/process, and found the exact persisted `(threadId, turnId)` from a fresh inspector process as `TERMINAL/SUCCEEDED`.
+
+The successful recovery process emitted only `initialize`, the `initialized` notification, and `thread/turns/list`. It emitted no `thread/start`, `thread/resume`, or `turn/start`. This evidence permits the shared durable/recovery version pin to move from `0.153.2` to `0.154.0`.
+
+### Exact recovery request and response
+
+After the standard initialization handshake, Forge sends the first page as:
+
+```json
+{"id":"2","method":"thread/turns/list","params":{"threadId":"<persisted-thread-id>","limit":100,"sortDirection":"desc","itemsView":"notLoaded"}}
+```
+
+When `nextCursor` is non-null, the next request adds only the returned cursor:
+
+```json
+{"id":"3","method":"thread/turns/list","params":{"threadId":"<persisted-thread-id>","cursor":"<next-cursor>","limit":100,"sortDirection":"desc","itemsView":"notLoaded"}}
+```
+
+Recovery never sends `includeTurns`, and it does not need `thread/read` or `thread/items/list` for the audited status-bearing response:
+
+```json
+{"data":[{"id":"<persisted-turn-id>","items":[],"status":"completed"}],"nextCursor":null}
+```
+
+The exact-turn classification contract is:
+
+| Exact turn status | Forge classification |
+| --- | --- |
+| `completed` | `TERMINAL/SUCCEEDED` |
+| `failed` | `TERMINAL/FAILED` |
+| `interrupted` | `TERMINAL/CANCELLED` |
+| `inProgress` | `ACTIVE`, terminal outcome `UNKNOWN` |
+
+The inspector returns `UNKNOWN` for missing, blank, mismatched, or duplicate turn identity; an absent target after the terminal page; repeated or malformed cursors; more than 100 pages; malformed `data`; malformed or unknown target status; unknown-thread JSON-RPC error; timeout; unsupported provider/version; persisted/live version mismatch; or process/transport failure. It always tears down the fresh process.
+
+The real gate proved fresh-process terminal inspection only. `ACTIVE` is contract-tested against the literal `inProgress` response, but active-turn reproduction and exact cross-process `turn/interrupt` were not proven. Production recovery therefore performs no interrupt and must fail closed when exact evidence says the provider turn remains active.
+
 ## Verdict
 
 Codex CLI `0.153.2` supports durable threads and successfully resumes them after the original app-server process exits. A real two-process smoke test preserved conversation continuity. Phase 1 may safely begin if Forge treats the protocol as version-pinned, persists identities before dependent operations, serializes writers per thread, and never replaces a failed resume with a new thread.
