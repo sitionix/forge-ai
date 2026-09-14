@@ -60,7 +60,8 @@ Add provider-neutral recovery types:
 - `ProviderTurnRecoveryState`: `TERMINAL`, `ACTIVE`, `UNKNOWN`;
 - `ProviderTurnRecoveryTerminalOutcome`: `SUCCEEDED`, `FAILED`, `CANCELLED`, `UNKNOWN`;
 - `ProviderTurnRecoveryResult`: classification plus optional terminal outcome and a concise diagnostic;
-- `AgentExecutionRecoveryInspection`: provider/version, exact conversation/turn IDs, and resolved execution workspace;
+- `AgentExecutionRecoveryInspection`: provider/version, exact conversation/turn IDs, resolved execution workspace,
+  and one provider-neutral absolute inspection deadline;
 - `AgentExecutionRecoveryInspector`: inspection port with no Codex JSON types;
 - `AgentExecutionRecoveryReconciliation`: the application-selected Forge outcome submitted for persistence.
 
@@ -110,12 +111,18 @@ For each bounded poll:
 2. if no claim exists, return zero;
 3. if the claim says the NodeRun is already `SUCCEEDED`, `FAILED`, or `CANCELLED`, skip provider inspection and request the existing terminal reconciliation semantics;
 4. validate persisted provider ID, version, conversation ID, and turn ID;
-5. resolve the execution workspace and invoke the provider-neutral inspector outside a transaction;
-6. map inspection exceptions, timeouts, unsupported contracts, malformed data, and identity contradictions to `UNKNOWN`;
-7. submit one fenced reconciliation command;
-8. report one recovered item only after an authoritative commit; a stale result is rejected and is not counted.
+5. derive the absolute inspection deadline as the earlier of recovery lease expiry minus a three-second
+   repository-commit reserve and application clock time plus the 27-second maximum inspection budget;
+6. resolve the execution workspace and invoke the provider-neutral inspector outside a transaction;
+7. map inspection exceptions, timeouts, unsupported contracts, malformed data, and identity contradictions to `UNKNOWN`;
+8. submit one fenced reconciliation command;
+9. report one recovered item only after an authoritative commit; a stale result is rejected and is not counted.
 
 The service contains no Codex JSON parsing. The worker contains no provider branching.
+The Codex adapter subtracts its configured process-cleanup reserve from that deadline. Initialize and every
+`thread/turns/list` page cap their individual timeout to the remaining request budget; cleanup uses the remaining
+overall budget. Deadline exhaustion fails closed as `UNKNOWN`, without extending the 30-second recovery lease or
+adding a heartbeat.
 
 ## Reconciliation semantics
 
@@ -200,6 +207,7 @@ Using fresh fake app-server processes, cover:
 - unknown thread;
 - unknown turn;
 - inspection failure and timeout;
+- slow multi-page inspection shares one deadline, and timeout plus process cleanup remains inside it;
 - unsupported version without launching a process;
 - identity mismatch and ambiguous response;
 - absence of `thread/read(includeTurns=true)`, `thread/start`, `thread/resume`, and `turn/start` during recovery;

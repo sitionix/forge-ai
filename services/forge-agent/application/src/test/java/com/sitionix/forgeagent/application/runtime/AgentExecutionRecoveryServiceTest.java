@@ -23,7 +23,9 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -45,6 +47,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 class AgentExecutionRecoveryServiceTest {
+    private static final Instant NOW = Instant.parse("2026-09-14T12:00:00Z");
+    private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
     private final AgentExecutionSessionRepository sessions = mock(AgentExecutionSessionRepository.class);
     private final WorkflowRunRepository workflows = mock(WorkflowRunRepository.class);
     private final ExecutionWorkspaceResolver workspaces = mock(ExecutionWorkspaceResolver.class);
@@ -56,7 +60,8 @@ class AgentExecutionRecoveryServiceTest {
 
     @BeforeEach
     void setUp() {
-        this.service = new AgentExecutionRecoveryService(this.sessions, List.of(this.inspector), this.workflows, this.workspaces);
+        this.service = new AgentExecutionRecoveryService(
+                this.sessions, List.of(this.inspector), this.workflows, this.workspaces, CLOCK);
         this.claim = this.claim(NodeRunStatus.RUNNING, "codex", "0.154.0", "thread-exact", "turn-exact");
         when(this.sessions.claimExpiredRecovery(anyString())).thenAnswer(call -> Optional.of(this.claim));
         when(this.sessions.reconcileRecovery(any(), any())).thenReturn(true);
@@ -83,7 +88,8 @@ class AgentExecutionRecoveryServiceTest {
             case UNKNOWN -> ProviderTurnRecoveryResult.unknown("unavailable");
         });
         assertThat(this.service.reconcileExpired()).isEqualTo(1);
-        verify(this.inspector).inspect(new AgentExecutionRecoveryInspection("codex", "0.154.0", "thread-exact", "turn-exact", this.workspace));
+        verify(this.inspector).inspect(new AgentExecutionRecoveryInspection(
+                "codex", "0.154.0", "thread-exact", "turn-exact", this.workspace, NOW.plusSeconds(27)));
         final var result = this.reconciliation();
         switch (state) {
             case TERMINAL -> {
@@ -165,11 +171,25 @@ class AgentExecutionRecoveryServiceTest {
     }
 
     @Test
+    void providerInspectionDeadlineReservesRepositoryCommitTimeFromClaimLease() {
+        this.claim = this.withLeaseExpiry(this.claim, NOW.plusSeconds(11));
+        this.inspectable();
+        when(this.inspector.inspect(any())).thenReturn(ProviderTurnRecoveryResult.unknown("deadline reached"));
+
+        assertThat(this.service.reconcileExpired()).isEqualTo(1);
+
+        final var inspection = ArgumentCaptor.forClass(AgentExecutionRecoveryInspection.class);
+        verify(this.inspector).inspect(inspection.capture());
+        assertThat(inspection.getValue().deadline()).isEqualTo(NOW.plusSeconds(8));
+    }
+
+    @Test
     void workerIdentityIsStablePerInstanceAndDistinctAcrossInstances() {
         when(this.sessions.claimExpiredRecovery(anyString())).thenReturn(Optional.empty());
         this.service.reconcileExpired();
         this.service.reconcileExpired();
-        new AgentExecutionRecoveryService(this.sessions, List.of(), this.workflows, this.workspaces).reconcileExpired();
+        new AgentExecutionRecoveryService(this.sessions, List.of(), this.workflows, this.workspaces, CLOCK)
+                .reconcileExpired();
         final var owners = ArgumentCaptor.forClass(String.class);
         verify(this.sessions, times(3)).claimExpiredRecovery(owners.capture());
         assertThat(owners.getAllValues().get(0)).isNotBlank().isEqualTo(owners.getAllValues().get(1)).isNotEqualTo(owners.getAllValues().get(2));
@@ -223,7 +243,16 @@ class AgentExecutionRecoveryServiceTest {
                                              final String thread, final String turn) {
         return new AgentExecutionRecoveryClaim(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
                 UUID.randomUUID(), provider, version, thread, turn, NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE,
-                status, "persisted-code", "persisted-message", "recovery-owner", 7, Instant.now().plusSeconds(30));
+                status, "persisted-code", "persisted-message", "recovery-owner", 7, NOW.plusSeconds(30));
+    }
+
+    private AgentExecutionRecoveryClaim withLeaseExpiry(final AgentExecutionRecoveryClaim value,
+                                                        final Instant leaseExpiresAt) {
+        return new AgentExecutionRecoveryClaim(
+                value.sessionId(), value.turnId(), value.nodeRunId(), value.workflowRunId(), value.repositoryId(),
+                value.providerId(), value.providerVersion(), value.providerConversationId(), value.providerTurnId(),
+                value.contextMode(), value.nodeRunStatus(), value.failureCode(), value.failureMessage(),
+                value.ownerId(), value.leaseToken(), leaseExpiresAt);
     }
 
     private String missing(final String scenario) { return scenario.endsWith("null") ? null : " "; }

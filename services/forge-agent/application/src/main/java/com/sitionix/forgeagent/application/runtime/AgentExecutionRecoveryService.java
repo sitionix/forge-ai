@@ -6,6 +6,9 @@ import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryReconciliation
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -17,10 +20,14 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class AgentExecutionRecoveryService {
+    static final Duration RECOVERY_COMMIT_RESERVE = Duration.ofSeconds(3);
+    static final Duration MAX_INSPECTION_BUDGET = Duration.ofSeconds(27);
+
     private final AgentExecutionSessionRepository sessions;
     private final List<AgentExecutionRecoveryInspector> inspectors;
     private final WorkflowRunRepository workflows;
     private final ExecutionWorkspaceResolver workspaces;
+    private final Clock clock;
     private final String ownerId = "agent-recovery-" + UUID.randomUUID();
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -55,8 +62,16 @@ public class AgentExecutionRecoveryService {
             final var run = workflow.get();
             final var workspace = this.workspaces.resolve(run.projectId(), claim.repositoryId(), run.repositoryIds());
             if (workspace == null) return ProviderTurnRecoveryResult.unknown("Execution workspace is unavailable.");
+            final Instant now = this.clock.instant();
+            final Instant leaseDeadline = claim.leaseExpiresAt().minus(RECOVERY_COMMIT_RESERVE);
+            final Instant localDeadline = now.plus(MAX_INSPECTION_BUDGET);
+            final Instant deadline = leaseDeadline.isBefore(localDeadline) ? leaseDeadline : localDeadline;
+            if (!deadline.isAfter(now)) {
+                return ProviderTurnRecoveryResult.unknown("Recovery lease does not permit provider inspection.");
+            }
             final var result = supported.getFirst().inspect(new AgentExecutionRecoveryInspection(
-                    claim.providerId(), claim.providerVersion(), claim.providerConversationId(), claim.providerTurnId(), workspace));
+                    claim.providerId(), claim.providerVersion(), claim.providerConversationId(), claim.providerTurnId(),
+                    workspace, deadline));
             return result == null ? ProviderTurnRecoveryResult.unknown("Provider inspection returned no evidence.") : result;
         } catch (final RuntimeException exception) {
             // Provider diagnostics may contain transport/workspace details: persist a bounded, neutral explanation.

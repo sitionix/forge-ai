@@ -15,6 +15,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -74,11 +75,13 @@ class CodexRecoveryE2ETest {
         final CodexAppServerProperties recoveryProperties = this.properties(workspacePath);
         final RecordingProcessStarter recoveryStarter = new RecordingProcessStarter(
                 new DefaultCodexAppServerProcessStarter(recoveryProperties), this.objectMapper);
+        final Clock clock = Clock.systemUTC();
         final CodexRecoveryInspector inspector = new CodexRecoveryInspector(
-                this.objectMapper, recoveryStarter, recoveryProperties, new CodexRecoveryProtocol(this.objectMapper));
+                this.objectMapper, recoveryStarter, recoveryProperties,
+                new CodexRecoveryProtocol(this.objectMapper, clock), clock);
 
         final ProviderTurnRecoveryResult result = inspector.inspect(new AgentExecutionRecoveryInspection(
-                "codex", version.get(), threadId.get(), turnId.get(), workspace));
+                "codex", version.get(), threadId.get(), turnId.get(), workspace, Instant.now().plusSeconds(30)));
 
         assertThat(result.state()).isEqualTo(ProviderTurnRecoveryState.TERMINAL);
         assertThat(result.terminalOutcome()).isEqualTo(ProviderTurnRecoveryTerminalOutcome.SUCCEEDED);

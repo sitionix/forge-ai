@@ -11,7 +11,9 @@ import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,6 +32,8 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     private final CodexAppServerProperties properties;
     private final CodexServerRequestHandler serverRequestHandler;
     private final CodexTransportEventHandler eventHandler;
+    private final Clock cleanupClock;
+    private final Instant cleanupDeadline;
     private final Writer writer;
     private final AtomicLong requestIds = new AtomicLong(1L);
     private final Map<String, PendingRequest> pending = new ConcurrentHashMap<>();
@@ -50,6 +54,15 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     CodexJsonRpcTransport(final ObjectMapper objectMapper,
                           final StartedCodexAppServer server,
                           final CodexAppServerProperties properties,
+                          final Clock cleanupClock,
+                          final Instant cleanupDeadline) {
+        this(objectMapper, server, properties, CodexServerRequestHandler.unsupported(),
+                CodexTransportEventHandler.noop(), cleanupClock, cleanupDeadline);
+    }
+
+    CodexJsonRpcTransport(final ObjectMapper objectMapper,
+                          final StartedCodexAppServer server,
+                          final CodexAppServerProperties properties,
                           final CodexServerRequestHandler serverRequestHandler) {
         this(objectMapper, server, properties, serverRequestHandler, CodexTransportEventHandler.noop());
     }
@@ -59,11 +72,23 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                           final CodexAppServerProperties properties,
                           final CodexServerRequestHandler serverRequestHandler,
                           final CodexTransportEventHandler eventHandler) {
+        this(objectMapper, server, properties, serverRequestHandler, eventHandler, null, null);
+    }
+
+    private CodexJsonRpcTransport(final ObjectMapper objectMapper,
+                                  final StartedCodexAppServer server,
+                                  final CodexAppServerProperties properties,
+                                  final CodexServerRequestHandler serverRequestHandler,
+                                  final CodexTransportEventHandler eventHandler,
+                                  final Clock cleanupClock,
+                                  final Instant cleanupDeadline) {
         this.objectMapper = objectMapper;
         this.server = server;
         this.properties = properties;
         this.serverRequestHandler = serverRequestHandler;
         this.eventHandler = eventHandler;
+        this.cleanupClock = cleanupClock;
+        this.cleanupDeadline = cleanupDeadline;
         this.writer = new OutputStreamWriter(server.process().getOutputStream(), StandardCharsets.UTF_8);
         this.stdoutReaderThread = Thread.ofVirtual().name("forge-agent-codex-stdout-" + server.process().pid()).start(this::readStdout);
         this.stderrReaderThread = Thread.ofVirtual().name("forge-agent-codex-stderr-" + server.process().pid()).start(this::drainStderr);
@@ -337,12 +362,14 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                     childProcesses.forEach(child -> {
                         if (child.isAlive()) child.destroy();
                     });
-                    if (!process.waitFor(this.properties.getGracefulTerminateTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
+                    if (!process.waitFor(this.cleanupWaitMillis(this.properties.getGracefulTerminateTimeout()),
+                            TimeUnit.MILLISECONDS)) {
                         childProcesses.forEach(child -> {
                             if (child.isAlive()) child.destroyForcibly();
                         });
                         process.destroyForcibly();
-                        if (!process.waitFor(this.properties.getForceKillTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
+                        if (!process.waitFor(this.cleanupWaitMillis(this.properties.getForceKillTimeout()),
+                                TimeUnit.MILLISECONDS)) {
                             throw new CodexTransportException("Codex app-server process remained alive after force kill timeout");
                         }
                     }
@@ -356,7 +383,8 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 for (final ProcessHandle child : childProcesses) {
                     if (child.isAlive()) {
                         try {
-                            child.onExit().get(this.properties.getForceKillTimeout().toMillis(), TimeUnit.MILLISECONDS);
+                            child.onExit().get(this.cleanupWaitMillis(this.properties.getForceKillTimeout()),
+                                    TimeUnit.MILLISECONDS);
                         } catch (final java.util.concurrent.TimeoutException exception) {
                             throw new CodexTransportException("Codex child process remained alive after force kill timeout", exception);
                         } catch (final java.util.concurrent.ExecutionException exception) {
@@ -406,10 +434,24 @@ final class CodexJsonRpcTransport implements AutoCloseable {
         if (thread == Thread.currentThread()) {
             return;
         }
-        thread.join(this.properties.getForceKillTimeout().toMillis());
+        final long waitMillis = this.cleanupWaitMillis(this.properties.getForceKillTimeout());
+        if (waitMillis > 0) {
+            thread.join(waitMillis);
+        }
         if (thread.isAlive()) {
             throw new CodexTransportException("Codex app-server " + streamName + " reader did not terminate");
         }
+    }
+
+    private long cleanupWaitMillis(final Duration maximum) {
+        if (this.cleanupClock == null || this.cleanupDeadline == null) {
+            return maximum.toMillis();
+        }
+        final Duration remaining = Duration.between(this.cleanupClock.instant(), this.cleanupDeadline);
+        if (remaining.isZero() || remaining.isNegative()) {
+            return 0L;
+        }
+        return Math.min(maximum.toMillis(), remaining.toMillis());
     }
 
     private record PendingRequest(String method, CompletableFuture<JsonNode> future) {

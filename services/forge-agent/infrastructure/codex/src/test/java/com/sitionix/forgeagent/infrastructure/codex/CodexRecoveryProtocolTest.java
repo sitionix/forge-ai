@@ -7,8 +7,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.runtime.ProviderTurnRecoveryResult;
 import com.sitionix.forgeagent.domain.model.ProviderTurnRecoveryState;
 import com.sitionix.forgeagent.domain.model.ProviderTurnRecoveryTerminalOutcome;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +19,7 @@ import org.junit.jupiter.api.Test;
 
 class CodexRecoveryProtocolTest {
 
+    private static final Instant NOW = Instant.parse("2026-09-14T12:00:00Z");
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
@@ -74,7 +78,8 @@ class CodexRecoveryProtocolTest {
     void blankRequestedOrResponseIdentityIsUnknown() throws Exception {
         final Harness blankRequestHarness = this.harness(Duration.ofSeconds(1));
         assertThat(blankRequestHarness.protocol().inspectTurn(
-                blankRequestHarness.transport(), " ", "turn-target", Duration.ofSeconds(1)).state())
+                blankRequestHarness.transport(), " ", "turn-target", Instant.now().plusSeconds(1),
+                Duration.ofSeconds(1)).state())
                 .isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
         assertThat(blankRequestHarness.process().pendingClientRequestBytes()).isZero();
         blankRequestHarness.transport().close();
@@ -183,9 +188,44 @@ class CodexRecoveryProtocolTest {
         final Harness harness = this.harness(Duration.ofMillis(30));
 
         final ProviderTurnRecoveryResult result = harness.protocol().inspectTurn(
-                harness.transport(), "thread-target", "turn-target", Duration.ofMillis(30));
+                harness.transport(), "thread-target", "turn-target", Instant.now().plusMillis(30),
+                Duration.ofMillis(30));
 
         assertThat(result.state()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+        harness.transport().close();
+    }
+
+    @Test
+    void slowPaginationConsumesOneAbsoluteDeadlineAcrossPages() throws Exception {
+        final MutableClock clock = new MutableClock(NOW);
+        final Harness harness = this.harness(Duration.ofSeconds(1), clock);
+        final CompletableFuture<ProviderTurnRecoveryResult> result = CompletableFuture.supplyAsync(
+                () -> harness.protocol().inspectTurn(harness.transport(), "thread-target", "turn-target",
+                        NOW.plusMillis(100), Duration.ofSeconds(1)));
+
+        final JsonNode first = this.readRequest(harness.process());
+        clock.advance(Duration.ofMillis(60));
+        this.reply(harness.process(), first, "{\"data\":[],\"nextCursor\":\"cursor-2\"}");
+        final JsonNode second = this.readRequest(harness.process());
+        clock.advance(Duration.ofMillis(41));
+        this.reply(harness.process(), second, "{\"data\":[],\"nextCursor\":\"cursor-3\"}");
+
+        assertThat(result.get(1, TimeUnit.SECONDS).state()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+        assertThat(harness.process().pendingClientRequestBytes()).isZero();
+        harness.transport().close();
+    }
+
+    @Test
+    void requestTimeoutIsCappedByAbsoluteRemainingBudget() throws Exception {
+        final Harness harness = this.harness(Duration.ofSeconds(1), Clock.systemUTC());
+        final long startedAt = System.nanoTime();
+
+        final ProviderTurnRecoveryResult result = harness.protocol().inspectTurn(
+                harness.transport(), "thread-target", "turn-target",
+                Instant.now().plusMillis(40), Duration.ofSeconds(1));
+
+        assertThat(result.state()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+        assertThat(Duration.ofNanos(System.nanoTime() - startedAt)).isLessThan(Duration.ofMillis(500));
         harness.transport().close();
     }
 
@@ -218,7 +258,7 @@ class CodexRecoveryProtocolTest {
     private CompletableFuture<ProviderTurnRecoveryResult> inspect(final Harness harness, final String threadId,
                                                                   final String turnId) {
         return CompletableFuture.supplyAsync(() -> harness.protocol().inspectTurn(
-                harness.transport(), threadId, turnId, Duration.ofSeconds(1)));
+                harness.transport(), threadId, turnId, Instant.now().plusSeconds(1), Duration.ofSeconds(1)));
     }
 
     private void assertTurnsListRequest(final JsonNode request, final String threadId, final String cursor)
@@ -233,6 +273,10 @@ class CodexRecoveryProtocolTest {
     }
 
     private Harness harness(final Duration requestTimeout) {
+        return this.harness(requestTimeout, Clock.systemUTC());
+    }
+
+    private Harness harness(final Duration requestTimeout, final Clock clock) {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerProperties properties = new CodexAppServerProperties();
         properties.setRequestTimeout(requestTimeout);
@@ -243,7 +287,7 @@ class CodexRecoveryProtocolTest {
                 new StartedCodexAppServer(process, List.of("codex", "app-server", "--stdio"), Instant.now()),
                 properties
         );
-        return new Harness(process, transport, new CodexRecoveryProtocol(this.objectMapper));
+        return new Harness(process, transport, new CodexRecoveryProtocol(this.objectMapper, clock));
     }
 
     private JsonNode readRequest(final FakeCodexProcess process) throws Exception {
@@ -256,5 +300,21 @@ class CodexRecoveryProtocolTest {
 
     private record Harness(FakeCodexProcess process, CodexJsonRpcTransport transport,
                            CodexRecoveryProtocol protocol) {
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant now;
+
+        private MutableClock(final Instant now) {
+            this.now = now;
+        }
+
+        void advance(final Duration duration) {
+            this.now = this.now.plus(duration);
+        }
+
+        @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+        @Override public Clock withZone(final ZoneId zone) { return this; }
+        @Override public Instant instant() { return this.now; }
     }
 }

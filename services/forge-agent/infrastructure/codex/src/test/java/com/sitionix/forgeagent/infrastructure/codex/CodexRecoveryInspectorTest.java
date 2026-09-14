@@ -12,6 +12,7 @@ import com.sitionix.forgeagent.domain.model.ProviderTurnRecoveryTerminalOutcome;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -91,7 +92,7 @@ class CodexRecoveryInspectorTest {
     void malformedIdentityReturnsUnknownWithoutStartingProcess() {
         final RecordingStarter starter = new RecordingStarter();
         final AgentExecutionRecoveryInspection inspection = new AgentExecutionRecoveryInspection(
-                "codex", "0.154.0", " ", "turn-target", this.workspace);
+                "codex", "0.154.0", " ", "turn-target", this.workspace, Instant.now().plusSeconds(5));
 
         assertThat(this.inspector(starter).inspect(inspection).state()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
         assertThat(starter.processes()).isEmpty();
@@ -134,6 +135,23 @@ class CodexRecoveryInspectorTest {
         }
     }
 
+    @Test
+    void initializeTimeoutUsesRemainingDeadlineAndTerminatesProcess() throws Exception {
+        final RecordingStarter starter = new RecordingStarter();
+        final long startedAt = System.nanoTime();
+
+        final ProviderTurnRecoveryResult result = this.inspector(starter).inspect(new AgentExecutionRecoveryInspection(
+                "codex", "0.154.0", "thread-target", "turn-target", this.workspace,
+                Instant.now().plusMillis(90)));
+
+        assertThat(result.state()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+        assertThat(Duration.ofNanos(System.nanoTime() - startedAt)).isLessThan(Duration.ofMillis(500));
+        assertThat(starter.processes()).singleElement().satisfies(process -> {
+            assertThat(process.destroyed()).isTrue();
+            assertThat(process.isAlive()).isFalse();
+        });
+    }
+
     private CodexRecoveryInspector inspector(final RecordingStarter starter) {
         return this.inspector((CodexAppServerProcessStarter) starter);
     }
@@ -143,13 +161,14 @@ class CodexRecoveryInspectorTest {
         properties.setRequestTimeout(Duration.ofSeconds(1));
         properties.setGracefulTerminateTimeout(Duration.ofMillis(20));
         properties.setForceKillTimeout(Duration.ofMillis(20));
+        final Clock clock = Clock.systemUTC();
         return new CodexRecoveryInspector(this.objectMapper, starter, properties,
-                new CodexRecoveryProtocol(this.objectMapper));
+                new CodexRecoveryProtocol(this.objectMapper, clock), clock);
     }
 
     private AgentExecutionRecoveryInspection inspection(final String version) {
         return new AgentExecutionRecoveryInspection(
-                "codex", version, "thread-target", "turn-target", this.workspace);
+                "codex", version, "thread-target", "turn-target", this.workspace, Instant.now().plusSeconds(5));
     }
 
     private JsonNode readRequest(final FakeCodexProcess process) throws Exception {

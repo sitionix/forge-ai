@@ -12,13 +12,14 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.AgentExecutor;
@@ -95,15 +96,19 @@ import jakarta.persistence.EntityManager;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
-import java.time.Instant;
-import java.util.concurrent.Executors;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -492,7 +497,7 @@ class ForgeAgentPortAwareExecutionIT {
             }
         };
         final var restartedRecovery = new AgentExecutionRecoveryService(this.agentExecutionSessionRepository,
-                List.of(checkedInspector), this.workflowRunRepository, this.workspaceResolver);
+                List.of(checkedInspector), this.workflowRunRepository, this.workspaceResolver, Clock.systemUTC());
         assertThat(restartedRecovery.reconcileExpired()).isEqualTo(1);
 
         final var recovered = this.agentExecutionSessionRepository.findByWorkflowRunId(orphanRun.id()).getFirst();
@@ -1177,6 +1182,46 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     @Test
+    void slowProviderDeadlinePersistsUnknownBeforeRecoveryLeaseExpiresAndPreventsReclaim() {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var normal = this.expiredRecoveryExecution("0.154.0");
+        final var claimed = this.agentExecutionSessionRepository.claimExpiredRecovery("deadline-integration").orElseThrow();
+        final Instant databaseNow = this.jdbcTemplate.queryForObject(
+                "SELECT clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        final Instant shortExpiry = databaseNow.plusSeconds(5);
+        this.jdbcTemplate.update("UPDATE agent_execution_turns SET recovery_lease_expires_at=? WHERE id=?",
+                java.sql.Timestamp.from(shortExpiry), claimed.turnId());
+        final var shortClaim = this.withRecoveryLeaseExpiry(claimed, shortExpiry);
+        final AgentExecutionSessionRepository deadlineRepository = mock(
+                AgentExecutionSessionRepository.class,
+                org.mockito.AdditionalAnswers.delegatesTo(this.agentExecutionSessionRepository));
+        doReturn(Optional.of(shortClaim)).when(deadlineRepository).claimExpiredRecovery(any());
+        final AgentExecutionRecoveryInspector deadlineInspector = mock(AgentExecutionRecoveryInspector.class);
+        when(deadlineInspector.supports("codex", "0.154.0")).thenReturn(true);
+        when(deadlineInspector.inspect(any())).thenAnswer(invocation -> {
+            final AgentExecutionRecoveryInspection inspection = invocation.getArgument(0);
+            assertThat(inspection.deadline()).isEqualTo(shortExpiry.minusSeconds(3));
+            while (Instant.now().isBefore(inspection.deadline())) {
+                final long remaining = Duration.between(Instant.now(), inspection.deadline()).toNanos();
+                LockSupport.parkNanos(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(50)));
+            }
+            return ProviderTurnRecoveryResult.unknown("Provider deadline reached.");
+        });
+        final var deadlineService = new AgentExecutionRecoveryService(
+                deadlineRepository, List.of(deadlineInspector), this.workflowRunRepository,
+                this.workspaceResolver, Clock.systemUTC());
+
+        assertThat(deadlineService.reconcileExpired()).isEqualTo(1);
+
+        assertThat(this.jdbcTemplate.queryForObject("SELECT clock_timestamp()", java.sql.Timestamp.class).toInstant())
+                .isBefore(shortExpiry);
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(normal.nodeRunId()).orElseThrow().turn()
+                .providerRecoveryState()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+        assertThat(this.agentExecutionSessionRepository.claimExpiredRecovery("deadline-reclaim")).isEmpty();
+    }
+
+    @Test
     void crashedRecoveryIsReinspectedAndStaleApplicationResultCannotOverwriteReplacementWhileWorkerStaysUsable() throws Exception {
         this.seed();
         this.saveReusableTerminalWorkflow();
@@ -1265,6 +1310,15 @@ class ForgeAgentPortAwareExecutionIT {
                 claim.repositoryId(), claim.providerId(), claim.providerVersion(), claim.providerConversationId(),
                 claim.providerTurnId(), claim.contextMode(), claim.nodeRunStatus(), claim.failureCode(), claim.failureMessage(),
                 ownerId, token, claim.leaseExpiresAt());
+    }
+
+    private AgentExecutionRecoveryClaim withRecoveryLeaseExpiry(final AgentExecutionRecoveryClaim claim,
+                                                                final Instant leaseExpiresAt) {
+        return new AgentExecutionRecoveryClaim(
+                claim.sessionId(), claim.turnId(), claim.nodeRunId(), claim.workflowRunId(), claim.repositoryId(),
+                claim.providerId(), claim.providerVersion(), claim.providerConversationId(), claim.providerTurnId(),
+                claim.contextMode(), claim.nodeRunStatus(), claim.failureCode(), claim.failureMessage(),
+                claim.ownerId(), claim.leaseToken(), leaseExpiresAt);
     }
 
     private AgentSessionExecutionClaim expiredRecoveryExecution() {

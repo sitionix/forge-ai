@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeagent.application.runtime.ProviderTurnRecoveryResult;
 import com.sitionix.forgeagent.domain.model.ProviderTurnRecoveryTerminalOutcome;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
 import org.springframework.stereotype.Component;
@@ -17,19 +19,22 @@ final class CodexRecoveryProtocol {
     private static final int MAX_PAGES = 100;
 
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
-    CodexRecoveryProtocol(final ObjectMapper objectMapper) {
+    CodexRecoveryProtocol(final ObjectMapper objectMapper, final Clock clock) {
         this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
     ProviderTurnRecoveryResult inspectTurn(final CodexJsonRpcTransport transport, final String threadId,
-                                           final String turnId, final Duration timeout) {
-        if (transport == null || isBlank(threadId) || isBlank(turnId) || timeout == null
-                || timeout.isZero() || timeout.isNegative()) {
+                                           final String turnId, final Instant deadline,
+                                           final Duration maxRequestTimeout) {
+        if (transport == null || isBlank(threadId) || isBlank(turnId) || deadline == null
+                || maxRequestTimeout == null || maxRequestTimeout.isZero() || maxRequestTimeout.isNegative()) {
             return ProviderTurnRecoveryResult.unknown("Codex recovery inspection identity or timeout is invalid");
         }
         try {
-            return this.inspectPages(transport, threadId, turnId, timeout);
+            return this.inspectPages(transport, threadId, turnId, deadline, maxRequestTimeout);
         } catch (final RuntimeException exception) {
             return ProviderTurnRecoveryResult.unknown("Codex recovery inspection failed: "
                     + exception.getClass().getSimpleName());
@@ -37,12 +42,17 @@ final class CodexRecoveryProtocol {
     }
 
     private ProviderTurnRecoveryResult inspectPages(final CodexJsonRpcTransport transport, final String threadId,
-                                                    final String turnId, final Duration timeout) {
+                                                    final String turnId, final Instant deadline,
+                                                    final Duration maxRequestTimeout) {
         final Set<String> observedCursors = new HashSet<>();
         String cursor = null;
         String targetStatus = null;
         int targetMatches = 0;
         for (int page = 0; page < MAX_PAGES; page++) {
+            final Duration timeout = this.remainingTimeout(deadline, maxRequestTimeout);
+            if (timeout == null) {
+                return ProviderTurnRecoveryResult.unknown("Codex recovery inspection deadline was exhausted");
+            }
             final JsonNode response = transport.request(
                     CodexProtocol.THREAD_TURNS_LIST, this.params(threadId, cursor), timeout);
             if (response == null || !response.isObject() || !response.path("data").isArray()) {
@@ -76,6 +86,14 @@ final class CodexRecoveryProtocol {
             }
         }
         return ProviderTurnRecoveryResult.unknown("Codex turns list exceeded the pagination bound");
+    }
+
+    private Duration remainingTimeout(final Instant deadline, final Duration maxRequestTimeout) {
+        final Duration remaining = Duration.between(this.clock.instant(), deadline);
+        if (remaining.isZero() || remaining.isNegative()) {
+            return null;
+        }
+        return remaining.compareTo(maxRequestTimeout) < 0 ? remaining : maxRequestTimeout;
     }
 
     private ObjectNode params(final String threadId, final String cursor) {

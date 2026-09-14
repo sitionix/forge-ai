@@ -12,6 +12,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -62,8 +63,9 @@ public final class LiveCodexRecoveryFixture {
     }
 
     public AgentExecutionRecoveryInspector inspector() {
+        final Clock clock = Clock.systemUTC();
         return new CodexRecoveryInspector(this.mapper, this.starter(this.inspectionProcesses), this.properties,
-                new CodexRecoveryProtocol(this.mapper));
+                new CodexRecoveryProtocol(this.mapper, clock), clock);
     }
 
     public List<RecordedProcess> executionProcesses() { return List.copyOf(this.executionProcesses); }
