@@ -5,10 +5,11 @@ Scope: Forge Agent Codex app-server adapter only. No Forge session persistence, 
 
 ## Phase 5B recovery addendum (`0.154.0`, 2026-09-14)
 
-The installed binary reports `codex-cli 0.154.0`. Both gated live checks passed on that exact version:
+The installed binary reports `codex-cli 0.154.0`. The gated live checks passed on that exact version:
 
 - normal durable execution created a durable thread, closed its first app-server process, resumed it from a second process, and recalled a first-turn-only fact;
-- recovery created a terminal durable turn, closed its original client/process, and found the exact persisted `(threadId, turnId)` from a fresh inspector process as `TERMINAL/SUCCEEDED`.
+- recovery created a terminal durable turn, closed its original client/process, and found the exact persisted `(threadId, turnId)` from a fresh inspector process as `TERMINAL/SUCCEEDED`;
+- the integrated PostgreSQL acceptance persisted real thread/turn/version callbacks for a tracked durable turn, withheld Forge completion/result persistence, expired Forge ownership, and reconciled through a new application recovery service and a fresh provider process. It persisted `TERMINAL/SUCCEEDED` evidence while failing the lost Forge NodeRun/turn with `AGENT_EXECUTION_RECOVERY_REQUIRED`, degrading active capture, and leaving the healthy reusable session `IDLE`. A separate WorkflowRun then completed through the normal real Codex executor.
 
 The successful recovery process emitted only `initialize`, the `initialized` notification, and `thread/turns/list`. It emitted no `thread/start`, `thread/resume`, or `turn/start`. This evidence permits the shared durable/recovery version pin to move from `0.153.2` to `0.154.0`.
 
@@ -44,6 +45,24 @@ The exact-turn classification contract is:
 The inspector returns `UNKNOWN` for missing, blank, mismatched, or duplicate turn identity; an absent target after the terminal page; repeated or malformed cursors; more than 100 pages; malformed `data`; malformed or unknown target status; unknown-thread JSON-RPC error; timeout; unsupported provider/version; persisted/live version mismatch; or process/transport failure. It always tears down the fresh process.
 
 The real gate proved fresh-process terminal inspection only. `ACTIVE` is contract-tested against the literal `inProgress` response, but active-turn reproduction and exact cross-process `turn/interrupt` were not proven. Production recovery therefore performs no interrupt and must fail closed when exact evidence says the provider turn remains active.
+
+### Integrated restart acceptance
+
+`ForgeAgentPortAwareExecutionIT.liveCodexRestartReconcilesPersistedExactTurnAndUnrelatedWorkflowStillSucceeds`
+is gated by `forge.codex.live-recovery-e2e=true`. Its initial provider execution is real; identity callbacks commit through the normal lease service and PostgreSQL repository before the turn can be inspected. The test models a Forge crash by withholding completion capture and NodeRun result/routing persistence, closing the original app-server process, stopping the normal heartbeat, and expiring the ownership lease. It constructs a new application recovery service with the real inspector and real repository, rather than supplying a canned provider classification.
+
+The acceptance records every outgoing JSON-RPC frame and both process IDs. It checks that the first process has exited before inspection, that the inspection PID differs, that the inspection process also exits, and that its complete method sequence is exactly `initialize`, `initialized`, `thread/turns/list`. The list request uses the persisted thread ID; the application passes the persisted turn ID unchanged for exact response correlation. No request contains `includeTurns`. There is exactly one initial `turn/start` and no recovery turn start, resume, or interrupt. A second recovery poll creates no provider process. The orphan never becomes scheduler-pending, receives no reconstructed output or synthetic provider event, and remains failed after the unrelated real execution succeeds.
+
+Run the live durable, provider recovery, and PostgreSQL recovery acceptance together:
+
+```bash
+mvn -B -ntp -Dapi.version=1.40 -pl services/forge-agent/boot -am \
+  -Dforge.codex.live-session-e2e=true -Dforge.codex.live-recovery-e2e=true \
+  -Dtest=CodexDurableSessionE2ETest,CodexRecoveryE2ETest,ForgeAgentPortAwareExecutionIT \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+```
+
+The `0.154.0` active-turn audit remains deliberately limited: a prompted long-running shell command is not proof that a second app-server owns or can safely interrupt the persisted turn. The existing Phase 5A live cancellation test proves interruption by the owning process only. No deterministic fresh-process active-turn/interrupt/post-interrupt sequence was established for Phase 5B, so cross-process interruption is unsupported. An explicit exact-turn `inProgress` response remains `ACTIVE` and fails Forge ownership closed; ambiguous or unavailable evidence remains `UNKNOWN`.
 
 ## Historical `0.153.2` audit (2026-09-04)
 

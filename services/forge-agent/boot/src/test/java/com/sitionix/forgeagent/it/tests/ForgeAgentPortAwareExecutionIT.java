@@ -28,6 +28,7 @@ import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryInspect
 import com.sitionix.forgeagent.application.runtime.ProviderTurnRecoveryResult;
 import com.sitionix.forgeagent.application.runtime.NodeRunWorker;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryInspector;
+import com.sitionix.forgeagent.application.runtime.ExecutionWorkspaceResolver;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionPersistence;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionProcessor;
@@ -49,6 +50,7 @@ import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryClaim;
 import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryDisposition;
 import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryReconciliation;
 import com.sitionix.forgeagent.domain.model.ProviderTurnRecoveryTerminalOutcome;
+import com.sitionix.forgeagent.domain.model.ProviderTurnRecoveryState;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventAppendResult;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCaptureStatus;
@@ -86,6 +88,7 @@ import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeagent.it.DeterministicCodexRuntimePort;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectRepositoryEntity;
+import com.sitionix.forgeagent.infrastructure.codex.LiveCodexRecoveryFixture;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import jakarta.persistence.EntityManager;
 import java.io.IOException;
@@ -195,6 +198,8 @@ class ForgeAgentPortAwareExecutionIT {
     private AgentSessionLeaseService agentSessionLeaseService;
     @Autowired
     private AgentExecutionRecoveryService recoveryService;
+    @Autowired
+    private ExecutionWorkspaceResolver workspaceResolver;
     @SpyBean
     private AgentExecutor agentExecutor;
     @SpyBean
@@ -413,6 +418,117 @@ class ForgeAgentPortAwareExecutionIT {
                 this.onlyPending(isolatedRun.id(), IMPLEMENTER).id()).orElseThrow();
         assertThat(isolatedClaim.agentSessionClaim().sessionId()).isNotEqualTo(firstClaim.agentSessionClaim().sessionId());
         assertThat(isolatedClaim.agentSessionClaim().providerConversationId()).isNull();
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "forge.codex.live-recovery-e2e", matches = "true")
+    void liveCodexRestartReconcilesPersistedExactTurnAndUnrelatedWorkflowStillSucceeds() throws Exception {
+        this.seed();
+        final String liveModel = System.getProperty("forge.codex.live-model", "gpt-5.6-sol");
+        this.codexRuntimePort.readyWithModel(liveModel);
+        this.agentUseCases.updateAgent(AGENT_A_ID, new SaveAgentCommand(
+                "Agent A", "Return only the requested JSON object.",
+                AgentOutputSchema.ofCanonicalJsonObject("""
+                        {"type":"object","properties":{"answer":{"type":"string"}},
+                         "required":["answer"],"additionalProperties":false}
+                        """), new AgentModelSelection("codex", liveModel, null)));
+        this.saveReusableTerminalWorkflow();
+        final var orphanRun = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID,
+                new CreateWorkflowRunCommand("Finish at the provider, then lose Forge ownership."));
+        final var claim = this.lifecycle.tryStart(this.onlyPending(orphanRun.id(), A).id()).orElseThrow();
+        final var provider = new LiveCodexRecoveryFixture(claim.executionWorkspace().cwd());
+        try (var heartbeat = Executors.newSingleThreadScheduledExecutor()) {
+            final var renewal = heartbeat.scheduleAtFixedRate(
+                    () -> this.agentSessionLeaseService.renew(claim.agentSessionClaim()),
+                    AgentSessionLeaseService.HEARTBEAT_SECONDS, AgentSessionLeaseService.HEARTBEAT_SECONDS,
+                    TimeUnit.SECONDS);
+            try {
+                provider.executeTrackedDurableTurn(claim, this.agentSessionLeaseService, this.agentExecutionEventRepository);
+            } finally {
+                renewal.cancel(false);
+                heartbeat.shutdownNow();
+            }
+        }
+
+        final var beforeRecovery = this.agentExecutionSessionRepository.findByWorkflowRunId(orphanRun.id()).getFirst();
+        assertThat(beforeRecovery.session().providerConversationId()).isNotBlank();
+        assertThat(beforeRecovery.session().providerVersion()).isEqualTo("0.154.0");
+        assertThat(beforeRecovery.turn().providerTurnId()).isNotBlank();
+        assertThat(beforeRecovery.turn().status()).isEqualTo(AgentExecutionTurnStatus.ACTIVE);
+        assertThat(beforeRecovery.turn().providerRecoveryState()).isNull();
+        assertThat(this.nodeRunRepository.findById(claim.nodeRunId()).orElseThrow()).satisfies(node -> {
+            assertThat(node.status()).isEqualTo(NodeRunStatus.RUNNING);
+            assertThat(node.output()).isNull();
+        });
+        assertThat(this.agentExecutionEventRepository.findPage(claim.agentSessionClaim().turnId(), 0, 10)
+                .orElseThrow().captureStatus()).isEqualTo(AgentExecutionEventCaptureStatus.ACTIVE);
+        final var executionProcess = provider.executionProcesses().getFirst();
+        assertThat(provider.executionProcesses()).hasSize(1);
+        assertThat(executionProcess.isAlive()).isFalse();
+        assertThat(executionProcess.requests().stream().filter(request -> "turn/start".equals(request.path("method").asText())))
+                .hasSize(1);
+
+        this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=?",
+                claim.agentSessionClaim().sessionId());
+        final var freshInspector = provider.inspector();
+        final AgentExecutionRecoveryInspector checkedInspector = new AgentExecutionRecoveryInspector() {
+            @Override
+            public boolean supports(final String providerId, final String version) {
+                return freshInspector.supports(providerId, version);
+            }
+
+            @Override
+            public ProviderTurnRecoveryResult inspect(final AgentExecutionRecoveryInspection inspection) {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                assertThat(executionProcess.isAlive()).isFalse();
+                assertThat(inspection.providerConversationId()).isEqualTo(beforeRecovery.session().providerConversationId());
+                assertThat(inspection.providerTurnId()).isEqualTo(beforeRecovery.turn().providerTurnId());
+                return freshInspector.inspect(inspection);
+            }
+        };
+        final var restartedRecovery = new AgentExecutionRecoveryService(this.agentExecutionSessionRepository,
+                List.of(checkedInspector), this.workflowRunRepository, this.workspaceResolver);
+        assertThat(restartedRecovery.reconcileExpired()).isEqualTo(1);
+
+        final var recovered = this.agentExecutionSessionRepository.findByWorkflowRunId(orphanRun.id()).getFirst();
+        assertThat(recovered.turn().providerRecoveryState()).isEqualTo(ProviderTurnRecoveryState.TERMINAL);
+        assertThat(recovered.turn().providerRecoveryTerminalOutcome()).isEqualTo(ProviderTurnRecoveryTerminalOutcome.SUCCEEDED);
+        assertThat(recovered.turn().providerRecoveryCheckedAt()).isNotNull();
+        assertThat(recovered.turn().status()).isEqualTo(AgentExecutionTurnStatus.FAILED);
+        assertThat(recovered.turn().failureCode()).isEqualTo("AGENT_EXECUTION_RECOVERY_REQUIRED");
+        assertThat(recovered.session().status()).isEqualTo(AgentExecutionSessionStatus.IDLE);
+        assertThat(recovered.session().leaseOwnerId()).isNull();
+        assertThat(recovered.session().providerConversationId()).isEqualTo(beforeRecovery.session().providerConversationId());
+        assertThat(recovered.turn().providerTurnId()).isEqualTo(beforeRecovery.turn().providerTurnId());
+        assertThat(this.nodeRunRepository.findById(claim.nodeRunId()).orElseThrow()).satisfies(node -> {
+            assertThat(node.status()).isEqualTo(NodeRunStatus.FAILED);
+            assertThat(node.failure().code()).isEqualTo("AGENT_EXECUTION_RECOVERY_REQUIRED");
+            assertThat(node.output()).isNull();
+        });
+        this.assertRecoveryCannotScheduleOrFabricateEvents(claim.agentSessionClaim());
+        assertThat(provider.inspectionProcesses()).singleElement().satisfies(process -> {
+            assertThat(process.pid()).isNotEqualTo(executionProcess.pid());
+            assertThat(process.isAlive()).isFalse();
+            assertThat(process.requests()).extracting(request -> request.path("method").asText())
+                    .containsExactly("initialize", "initialized", "thread/turns/list");
+            assertThat(process.requests()).allSatisfy(request -> assertThat(request.path("params").has("includeTurns")).isFalse());
+            assertThat(process.requests().getLast().path("params").path("threadId").asText())
+                    .isEqualTo(beforeRecovery.session().providerConversationId());
+        });
+        assertThat(restartedRecovery.reconcileExpired()).isZero();
+        assertThat(provider.inspectionProcesses()).hasSize(1);
+        verifyNoInteractions(this.agentExecutor);
+
+        final var unrelatedRun = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID,
+                new CreateWorkflowRunCommand("Return JSON with answer set to normal execution after restart."));
+        final var unrelatedClaim = this.lifecycle.tryStart(this.onlyPending(unrelatedRun.id(), A).id()).orElseThrow();
+        final var unrelatedResult = this.executeLiveWithHeartbeat(unrelatedClaim);
+        this.lifecycle.succeed(unrelatedClaim.nodeRunId(), unrelatedResult, unrelatedClaim.agentSessionClaim());
+        assertThat(this.workflowRunRepository.findById(unrelatedRun.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+        assertThat(this.agentExecutionSessionRepository.findByWorkflowRunId(unrelatedRun.id()).getFirst()
+                .session().providerConversationId()).isNotEqualTo(beforeRecovery.session().providerConversationId());
+        assertThat(this.nodeRunRepository.findById(claim.nodeRunId()).orElseThrow().failure().code())
+                .isEqualTo("AGENT_EXECUTION_RECOVERY_REQUIRED");
     }
 
     @Test
