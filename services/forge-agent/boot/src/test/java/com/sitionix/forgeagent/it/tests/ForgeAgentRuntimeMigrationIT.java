@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.it.tests;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
@@ -73,6 +74,45 @@ class ForgeAgentRuntimeMigrationIT {
             assertThat(this.count(jdbc, "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=? AND table_name='agent_execution_sessions' AND column_name IN ('lease_owner_id','lease_token','lease_expires_at')", schema)).isEqualTo(3);
         } finally {
             jdbc.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    @Test
+    void v29AddsNullableProviderRecoveryEvidenceAndFencingToHistoricalTurns() {
+        final String schema = "agent_turn_recovery_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        final UUID workflowRunId = UUID.randomUUID();
+        final UUID sourceNodeId = UUID.randomUUID();
+        final UUID nodeRunId = UUID.randomUUID();
+        final UUID sessionId = UUID.randomUUID();
+        final UUID turnId = UUID.randomUUID();
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, MigrationVersion.fromVersion("28")).migrate();
+            this.insertHistoricalTrackedTurn(jdbc, schema, workflowRunId, sourceNodeId, nodeRunId, sessionId, turnId);
+
+            this.flyway(schema, null).migrate();
+
+            final var recovery = jdbc.queryForMap("""
+                    SELECT provider_recovery_state, provider_recovery_terminal_outcome, provider_recovery_checked_at,
+                           recovery_lease_owner_id, recovery_lease_expires_at, recovery_lease_token
+                    FROM %s.agent_execution_turns WHERE id = ?
+                    """.formatted(schema), turnId);
+            assertThat(recovery.get("provider_recovery_state")).isNull();
+            assertThat(recovery.get("provider_recovery_terminal_outcome")).isNull();
+            assertThat(recovery.get("provider_recovery_checked_at")).isNull();
+            assertThat(recovery.get("recovery_lease_owner_id")).isNull();
+            assertThat(recovery.get("recovery_lease_expires_at")).isNull();
+            assertThat(recovery.get("recovery_lease_token")).isEqualTo(0L);
+
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_turns SET provider_recovery_state='INVALID' WHERE id=?".formatted(schema), turnId))
+                    .isInstanceOf(RuntimeException.class);
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_turns SET provider_recovery_terminal_outcome='INVALID' WHERE id=?".formatted(schema), turnId))
+                    .isInstanceOf(RuntimeException.class);
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_turns SET recovery_lease_token=-1 WHERE id=?".formatted(schema), turnId))
+                    .isInstanceOf(RuntimeException.class);
+        } finally {
+            jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
         }
     }
 
@@ -218,6 +258,54 @@ class ForgeAgentRuntimeMigrationIT {
             configuration.target(target);
         }
         return configuration.load();
+    }
+
+    private void insertHistoricalTrackedTurn(final JdbcTemplate jdbc, final String schema,
+                                             final UUID workflowRunId, final UUID sourceNodeId,
+                                             final UUID nodeRunId, final UUID sessionId, final UUID turnId) {
+        final UUID projectId = UUID.randomUUID();
+        final UUID agentId = UUID.randomUUID();
+        final UUID executionFrameId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO %s.agent_projects (id, name, normalized_name, created_at, updated_at)
+                VALUES (?, 'Recovery migration project', 'recovery migration project', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """.formatted(schema), projectId);
+        jdbc.update("""
+                INSERT INTO %s.workflow_runs (id, project_id, source_workflow_id, workflow_name, input, status, created_at)
+                VALUES (?, ?, ?, 'Recovery migration workflow', 'input', 'QUEUED', CURRENT_TIMESTAMP)
+                """.formatted(schema), workflowRunId, projectId, UUID.randomUUID());
+        jdbc.update("""
+                INSERT INTO %s.workflow_run_nodes (
+                    workflow_run_id, source_node_id, source_agent_id, agent_name, agent_instructions,
+                    agent_output_schema, execution_model_provider_id, execution_model_id, input_mode,
+                    position_x, position_y, scope_mode, context_mode
+                ) VALUES (?, ?, ?, 'Recovery migration agent', 'Instructions.', CAST(? AS jsonb),
+                    'codex', 'gpt-5', 'DEPENDENCIES_ONLY', 0, 0, 'GLOBAL', 'FRESH_EACH_NODE_RUN')
+                """.formatted(schema), workflowRunId, sourceNodeId, agentId, "{\"type\":\"object\"}");
+        jdbc.update("""
+                INSERT INTO %s.workflow_execution_frames (id, workflow_run_id, created_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """.formatted(schema), executionFrameId, workflowRunId);
+        jdbc.update("""
+                INSERT INTO %s.node_runs (
+                    id, workflow_run_id, source_node_id, source_agent_id, agent_name, agent_instructions,
+                    agent_output_schema, position_x, position_y, status, created_at, execution_frame_id,
+                    execution_model_provider_id, execution_model_id, input_mode, context_mode
+                ) VALUES (?, ?, ?, ?, 'Recovery migration agent', 'Instructions.', CAST(? AS jsonb),
+                    0, 0, 'PENDING', CURRENT_TIMESTAMP, ?, 'codex', 'gpt-5', 'DEPENDENCIES_ONLY', 'FRESH_EACH_NODE_RUN')
+                """.formatted(schema), nodeRunId, workflowRunId, sourceNodeId, agentId,
+                "{\"type\":\"object\"}", executionFrameId);
+        jdbc.update("""
+                INSERT INTO %s.agent_execution_sessions (
+                    id, workflow_run_id, source_node_id, source_agent_id, provider_id, context_mode, status,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'codex', 'FRESH_EACH_NODE_RUN', 'WAITING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """.formatted(schema), sessionId, workflowRunId, sourceNodeId, agentId);
+        jdbc.update("""
+                INSERT INTO %s.agent_execution_turns (
+                    id, agent_session_id, node_run_id, sequence, status, created_at, updated_at
+                ) VALUES (?, ?, ?, 1, 'QUEUED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """.formatted(schema), turnId, sessionId, nodeRunId);
     }
 
     private void insertLegacyRows(final JdbcTemplate jdbc, final String schema) {

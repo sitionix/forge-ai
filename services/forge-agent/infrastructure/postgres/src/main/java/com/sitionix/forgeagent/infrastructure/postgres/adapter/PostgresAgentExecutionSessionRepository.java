@@ -62,21 +62,21 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
 
     @Override
     public Optional<AgentExecutionAllocation> findByNodeRunId(final UUID nodeRunId) {
-        final List<AgentExecutionAllocation> rows = this.jdbc.query("SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id WHERE t.node_run_id=?",
+        final List<AgentExecutionAllocation> rows = this.jdbc.query("SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.provider_recovery_state turn_provider_recovery_state,t.provider_recovery_terminal_outcome turn_provider_recovery_terminal_outcome,t.provider_recovery_checked_at turn_provider_recovery_checked_at,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id WHERE t.node_run_id=?",
                 (rs, row) -> new AgentExecutionAllocation(this.session(rs, row), this.turn(rs)), nodeRunId);
         return rows.stream().findFirst();
     }
 
     @Override
     public List<AgentExecutionAllocation> findByWorkflowRunId(final UUID workflowRunId) {
-        return this.jdbc.query("SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id WHERE s.workflow_run_id=? ORDER BY s.created_at,t.sequence",
+        return this.jdbc.query("SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.provider_recovery_state turn_provider_recovery_state,t.provider_recovery_terminal_outcome turn_provider_recovery_terminal_outcome,t.provider_recovery_checked_at turn_provider_recovery_checked_at,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id WHERE s.workflow_run_id=? ORDER BY s.created_at,t.sequence",
                 (rs,row) -> new AgentExecutionAllocation(this.session(rs,row), this.turn(rs)), workflowRunId);
     }
 
     @Override
     @Transactional
     public Optional<AgentSessionExecutionClaim> acquire(final UUID nodeRunId, final String ownerId) {
-        final List<AgentExecutionAllocation> target = this.jdbc.query("SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id WHERE t.node_run_id=? FOR UPDATE OF s,t",
+        final List<AgentExecutionAllocation> target = this.jdbc.query("SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.provider_recovery_state turn_provider_recovery_state,t.provider_recovery_terminal_outcome turn_provider_recovery_terminal_outcome,t.provider_recovery_checked_at turn_provider_recovery_checked_at,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id WHERE t.node_run_id=? FOR UPDATE OF s,t",
                 (rs,row) -> new AgentExecutionAllocation(this.session(rs,row), this.turn(rs)), nodeRunId);
         if (target.isEmpty()) return Optional.empty();
         final AgentExecutionAllocation allocation = target.getFirst();
@@ -237,7 +237,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         this.jdbc.query("SELECT id FROM node_runs WHERE id=? FOR UPDATE",
                 (rs, row) -> rs.getObject(1, UUID.class), nodeRunId);
         final List<AgentExecutionAllocation> target = this.jdbc.query(
-                "SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id WHERE t.node_run_id=? FOR UPDATE OF s,t",
+                "SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.provider_recovery_state turn_provider_recovery_state,t.provider_recovery_terminal_outcome turn_provider_recovery_terminal_outcome,t.provider_recovery_checked_at turn_provider_recovery_checked_at,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id WHERE t.node_run_id=? FOR UPDATE OF s,t",
                 (rs, row) -> new AgentExecutionAllocation(this.session(rs, row), this.turn(rs)),
                 nodeRunId
         );
@@ -276,7 +276,10 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     private AgentExecutionTurn turn(final ResultSet rs) throws SQLException {
         return new AgentExecutionTurn(rs.getObject("turn_id", UUID.class), rs.getObject("id", UUID.class), rs.getObject("node_run_id", UUID.class),
                 rs.getString("provider_turn_id"), rs.getInt("turn_sequence"), AgentExecutionTurnStatus.valueOf(rs.getString("turn_status")),
-                rs.getString("turn_failure_code"), rs.getString("turn_failure_message"), instant(rs,"turn_started_at"), instant(rs,"turn_finished_at"), instant(rs,"turn_created_at"), instant(rs,"turn_updated_at"));
+                rs.getString("turn_failure_code"), rs.getString("turn_failure_message"),
+                enumValue(ProviderTurnRecoveryState.class, rs.getString("turn_provider_recovery_state")),
+                enumValue(ProviderTurnRecoveryTerminalOutcome.class, rs.getString("turn_provider_recovery_terminal_outcome")),
+                instant(rs, "turn_provider_recovery_checked_at"), instant(rs,"turn_started_at"), instant(rs,"turn_finished_at"), instant(rs,"turn_created_at"), instant(rs,"turn_updated_at"));
     }
 
     private static Instant instant(ResultSet rs, String name) throws SQLException { var value=rs.getTimestamp(name); return value == null ? null : value.toInstant(); }
