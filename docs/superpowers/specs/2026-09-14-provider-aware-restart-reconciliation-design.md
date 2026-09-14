@@ -1,7 +1,7 @@
 # Provider-Aware Restart Reconciliation Design
 
-Date: 2026-09-14  
-Phase: 5B  
+Date: 2026-09-14
+Phase: 5B
 Base: `main` at `c1dae2cb` (merged Phase 5A / PR #123)
 
 ## Goal
