@@ -13,11 +13,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.AgentExecutor;
 import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryService;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryInspection;
+import com.sitionix.forgeagent.application.runtime.ProviderTurnRecoveryResult;
+import com.sitionix.forgeagent.application.runtime.NodeRunWorker;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryInspector;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionPersistence;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionProcessor;
@@ -98,6 +108,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -184,8 +195,10 @@ class ForgeAgentPortAwareExecutionIT {
     private AgentSessionLeaseService agentSessionLeaseService;
     @Autowired
     private AgentExecutionRecoveryService recoveryService;
-    @Autowired
+    @SpyBean
     private AgentExecutor agentExecutor;
+    @SpyBean
+    private AgentExecutionRecoveryInspector recoveryInspector;
     @Autowired
     private EntityManager entityManager;
     @Autowired
@@ -766,6 +779,201 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.captureStatus(normal.turnId())).isEqualTo("NULL".equals(captureStatus) ? null : captureStatus);
     }
 
+    @ParameterizedTest
+    @CsvSource({
+            "SUCCEEDED,REUSE_WITHIN_WORKFLOW_NODE,IDLE", "FAILED,REUSE_WITHIN_WORKFLOW_NODE,IDLE",
+            "CANCELLED,REUSE_WITHIN_WORKFLOW_NODE,CLOSED", "SUCCEEDED,FRESH_EACH_NODE_RUN,CLOSED",
+            "FAILED,FRESH_EACH_NODE_RUN,CLOSED", "CANCELLED,FRESH_EACH_NODE_RUN,CLOSED"
+    })
+    void applicationRecoveryPreservesTerminalForgeTruthWithoutInspectingProvider(
+            final String status, final String contextMode, final String sessionStatus) {
+        this.seed();
+        this.saveRecoveryWorkflow(contextMode);
+        final var normal = this.expiredRecoveryExecution("0.154.0");
+        this.jdbcTemplate.update("""
+                UPDATE node_runs SET status=?,output='{"authoritative":true}'::jsonb,
+                    failure_code=?,failure_message=?,finished_at=CURRENT_TIMESTAMP-INTERVAL '1 hour'
+                WHERE id=?
+                """, status, "FAILED".equals(status) ? "EXECUTION_FAILED" : null,
+                "FAILED".equals(status) ? "Persisted execution failure." : null, normal.nodeRunId());
+        final var before = this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", normal.nodeRunId());
+
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+
+        verifyNoInteractions(this.recoveryInspector, this.agentExecutor);
+        assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", normal.nodeRunId())).isEqualTo(before);
+        final var allocation = this.agentExecutionSessionRepository.findByNodeRunId(normal.nodeRunId()).orElseThrow();
+        assertThat(allocation.turn().status().name()).isEqualTo(status);
+        assertThat(allocation.turn().failureCode()).isEqualTo(before.get("failure_code"));
+        assertThat(allocation.turn().failureMessage()).isEqualTo(before.get("failure_message"));
+        assertThat(allocation.session().status().name()).isEqualTo(sessionStatus);
+        assertThat(allocation.session().terminalOutcome()).isEqualTo("CLOSED".equals(sessionStatus)
+                ? AgentExecutionTerminalOutcome.valueOf(status) : null);
+        assertThat(allocation.turn().providerRecoveryState()).isNull();
+        assertThat(allocation.turn().providerRecoveryTerminalOutcome()).isNull();
+        assertThat(allocation.turn().providerRecoveryCheckedAt()).isNull();
+        this.assertRecoveryCannotScheduleOrFabricateEvents(normal);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "TERMINAL,REUSE_WITHIN_WORKFLOW_NODE,IDLE,AGENT_EXECUTION_RECOVERY_REQUIRED",
+            "TERMINAL,FRESH_EACH_NODE_RUN,CLOSED,AGENT_EXECUTION_RECOVERY_REQUIRED",
+            "ACTIVE,REUSE_WITHIN_WORKFLOW_NODE,FAILED,AGENT_EXECUTION_RECOVERY_PROVIDER_ACTIVE",
+            "ACTIVE,FRESH_EACH_NODE_RUN,CLOSED,AGENT_EXECUTION_RECOVERY_PROVIDER_ACTIVE",
+            "UNKNOWN,REUSE_WITHIN_WORKFLOW_NODE,FAILED,AGENT_EXECUTION_RECOVERY_UNKNOWN",
+            "UNKNOWN,FRESH_EACH_NODE_RUN,CLOSED,AGENT_EXECUTION_RECOVERY_UNKNOWN",
+            "MISSING_THREAD,REUSE_WITHIN_WORKFLOW_NODE,FAILED,AGENT_EXECUTION_RECOVERY_UNKNOWN",
+            "MISSING_THREAD,FRESH_EACH_NODE_RUN,CLOSED,AGENT_EXECUTION_RECOVERY_UNKNOWN",
+            "MISSING_TURN,REUSE_WITHIN_WORKFLOW_NODE,FAILED,AGENT_EXECUTION_RECOVERY_UNKNOWN",
+            "MISSING_TURN,FRESH_EACH_NODE_RUN,CLOSED,AGENT_EXECUTION_RECOVERY_UNKNOWN",
+            "UNSUPPORTED_VERSION,REUSE_WITHIN_WORKFLOW_NODE,FAILED,AGENT_EXECUTION_RECOVERY_UNKNOWN",
+            "UNSUPPORTED_VERSION,FRESH_EACH_NODE_RUN,CLOSED,AGENT_EXECUTION_RECOVERY_UNKNOWN"
+    })
+    void applicationRecoveryClassifiesExactPersistedTurnWithoutDuplicateExecution(
+            final String scenario, final String contextMode, final String sessionStatus, final String failureCode) {
+        this.seed();
+        this.saveRecoveryWorkflow(contextMode);
+        final var normal = this.expiredRecoveryExecution("UNSUPPORTED_VERSION".equals(scenario) ? "0.153.2" : "0.154.0");
+        if ("MISSING_THREAD".equals(scenario)) {
+            this.jdbcTemplate.update("UPDATE agent_execution_sessions SET provider_conversation_id=NULL WHERE id=?", normal.sessionId());
+        } else if ("MISSING_TURN".equals(scenario)) {
+            this.jdbcTemplate.update("UPDATE agent_execution_turns SET provider_turn_id=NULL WHERE id=?", normal.turnId());
+        }
+        final boolean inspectable = List.of("TERMINAL", "ACTIVE", "UNKNOWN").contains(scenario);
+        doAnswer(invocation -> {
+            final AgentExecutionRecoveryInspection inspection = invocation.getArgument(0);
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(inspection.providerId()).isEqualTo("codex");
+            assertThat(inspection.providerVersion()).isEqualTo("0.154.0");
+            assertThat(inspection.providerConversationId()).isEqualTo("thread-" + normal.nodeRunId());
+            assertThat(inspection.providerTurnId()).isEqualTo("turn-" + normal.nodeRunId());
+            assertThat(inspection.executionWorkspace().cwd()).isEqualTo(this.projectWorkspace());
+            assertThat(this.nodeRunRepository.findById(normal.nodeRunId()).orElseThrow().status()).isEqualTo(NodeRunStatus.RUNNING);
+            assertThat(this.nodeRunRepository.findPendingIds()).doesNotContain(normal.nodeRunId());
+            assertThat(this.lifecycle.tryStart(normal.nodeRunId())).isEmpty();
+            return switch (scenario) {
+                case "TERMINAL" -> ProviderTurnRecoveryResult.terminal(ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Exact completed turn.");
+                case "ACTIVE" -> ProviderTurnRecoveryResult.active("Exact running turn.");
+                default -> ProviderTurnRecoveryResult.unknown("No exact evidence.");
+            };
+        }).when(this.recoveryInspector).inspect(any());
+        final Instant before = this.jdbcTemplate.queryForObject("SELECT clock_timestamp()", java.sql.Timestamp.class).toInstant();
+
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+
+        if (inspectable) verify(this.recoveryInspector).inspect(any());
+        else verify(this.recoveryInspector, never()).inspect(any());
+        verifyNoInteractions(this.agentExecutor);
+        final var node = this.nodeRunRepository.findById(normal.nodeRunId()).orElseThrow();
+        assertThat(node.status()).isEqualTo(NodeRunStatus.FAILED);
+        assertThat(node.failure().code()).isEqualTo(failureCode);
+        assertThat(node.output()).isNull();
+        final var allocation = this.agentExecutionSessionRepository.findByNodeRunId(normal.nodeRunId()).orElseThrow();
+        assertThat(allocation.turn().status()).isEqualTo(AgentExecutionTurnStatus.FAILED);
+        assertThat(allocation.turn().failureCode()).isEqualTo(failureCode);
+        assertThat(allocation.turn().failureMessage()).isEqualTo(node.failure().message());
+        assertThat(allocation.turn().providerRecoveryState().name()).isEqualTo(inspectable ? scenario : "UNKNOWN");
+        assertThat(allocation.turn().providerRecoveryTerminalOutcome()).isEqualTo("TERMINAL".equals(scenario)
+                ? ProviderTurnRecoveryTerminalOutcome.SUCCEEDED : null);
+        assertThat(allocation.turn().providerRecoveryCheckedAt()).isAfterOrEqualTo(before);
+        assertThat(allocation.session().status().name()).isEqualTo(sessionStatus);
+        assertThat(allocation.session().terminalOutcome()).isEqualTo("CLOSED".equals(sessionStatus) ? AgentExecutionTerminalOutcome.FAILED : null);
+        assertThat(allocation.session().leaseOwnerId()).isNull();
+        assertThat(allocation.session().activeNodeRunId()).isNull();
+        if ("TERMINAL".equals(scenario)) {
+            assertThat(node.failure().message()).isEqualTo("The provider turn is terminal, but Forge restarted before execution result/routing was committed.");
+            assertThat(allocation.session().failureCode()).isNull();
+        } else {
+            assertThat(allocation.session().failureCode()).isEqualTo(failureCode);
+        }
+        this.assertRecoveryCannotScheduleOrFabricateEvents(normal);
+        assertThat(this.recoveryService.reconcileExpired()).isZero();
+    }
+
+    @Test
+    void crashedRecoveryIsReinspectedAndStaleApplicationResultCannotOverwriteReplacementWhileWorkerStaysUsable() throws Exception {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var normal = this.expiredRecoveryExecution("0.154.0");
+        final var inspected = new java.util.concurrent.CountDownLatch(1);
+        final var releaseOldInspection = new java.util.concurrent.CountDownLatch(1);
+        final var inspections = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            final AgentExecutionRecoveryInspection inspection = invocation.getArgument(0);
+            assertThat(inspection.providerConversationId()).isEqualTo("thread-" + normal.nodeRunId());
+            assertThat(inspection.providerTurnId()).isEqualTo("turn-" + normal.nodeRunId());
+            if (inspections.incrementAndGet() == 1) {
+                inspected.countDown();
+                assertThat(releaseOldInspection.await(20, TimeUnit.SECONDS)).isTrue();
+                return ProviderTurnRecoveryResult.terminal(ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Delayed terminal evidence.");
+            }
+            return ProviderTurnRecoveryResult.active("Replacement observed exact active turn.");
+        }).when(this.recoveryInspector).inspect(any());
+        final AgentExecutor scheduledExecutor = mock(AgentExecutor.class);
+        try (var recoverer = Executors.newSingleThreadExecutor();
+             var executor = Executors.newSingleThreadExecutor();
+             var heartbeat = Executors.newSingleThreadScheduledExecutor()) {
+            final var worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, scheduledExecutor,
+                    executor, heartbeat, this.agentSessionLeaseService, this.recoveryService);
+            final var oldRecovery = recoverer.submit(this.recoveryService::reconcileExpired);
+            try {
+                assertThat(inspected.await(10, TimeUnit.SECONDS)).isTrue();
+                final var oldFence = this.jdbcTemplate.queryForMap("SELECT recovery_lease_owner_id,recovery_lease_token FROM agent_execution_turns WHERE id=?", normal.turnId());
+                worker.poll();
+                verifyNoInteractions(scheduledExecutor);
+                assertThat(inspections).hasValue(1);
+                assertThat(this.nodeRunRepository.findById(normal.nodeRunId()).orElseThrow().status()).isEqualTo(NodeRunStatus.RUNNING);
+                assertThat(this.lifecycle.tryStart(normal.nodeRunId())).isEmpty();
+                this.jdbcTemplate.update("UPDATE agent_execution_turns SET recovery_lease_expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=?", normal.turnId());
+                assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+                assertThat(inspections).hasValue(2);
+                assertThat(this.jdbcTemplate.queryForObject("SELECT recovery_lease_token FROM agent_execution_turns WHERE id=?", Long.class, normal.turnId()))
+                        .isEqualTo(((Number) oldFence.get("recovery_lease_token")).longValue() + 1);
+                final var reconciled = this.agentExecutionSessionRepository.findByNodeRunId(normal.nodeRunId()).orElseThrow();
+                final var reconciledNode = this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", normal.nodeRunId());
+                assertThat(reconciled.turn().providerRecoveryState().name()).isEqualTo("ACTIVE");
+                releaseOldInspection.countDown();
+                assertThat(oldRecovery.get(10, TimeUnit.SECONDS)).isZero();
+                assertThat(this.agentExecutionSessionRepository.findByNodeRunId(normal.nodeRunId()).orElseThrow()).isEqualTo(reconciled);
+                assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", normal.nodeRunId())).isEqualTo(reconciledNode);
+                this.assertRecoveryCannotScheduleOrFabricateEvents(normal);
+
+                final var unrelated = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Unrelated execution after restart."));
+                final var pending = this.onlyPending(unrelated.id(), A);
+                when(scheduledExecutor.execute(any())).thenAnswer(invocation -> {
+                    final NodeExecutionClaim claim = invocation.getArgument(0);
+                    assertThat(claim.nodeRunId()).isEqualTo(pending.id());
+                    return new AgentExecutionResult(new NodeRunOutput("{\"unrelated\":true}"), null);
+                });
+                worker.poll();
+                executor.submit(() -> {}).get(10, TimeUnit.SECONDS);
+                verify(scheduledExecutor).execute(any());
+                verifyNoMoreInteractions(scheduledExecutor);
+                assertThat(this.workflowRunRepository.findById(unrelated.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+                assertThat(this.nodeRunRepository.findById(pending.id()).orElseThrow().status()).isEqualTo(NodeRunStatus.SUCCEEDED);
+                verifyNoInteractions(this.agentExecutor);
+            } finally {
+                releaseOldInspection.countDown();
+            }
+        }
+    }
+
+    private void saveRecoveryWorkflow(final String contextMode) {
+        if ("REUSE_WITHIN_WORKFLOW_NODE".equals(contextMode)) this.saveReusableTerminalWorkflow();
+        else this.saveTerminalWorkflow();
+    }
+
+    private void assertRecoveryCannotScheduleOrFabricateEvents(final AgentSessionExecutionClaim normal) {
+        assertThat(this.nodeRunRepository.findPendingIds()).doesNotContain(normal.nodeRunId());
+        assertThat(this.lifecycle.tryStart(normal.nodeRunId())).isEmpty();
+        assertThat(this.agentExecutionEventRepository.findPage(normal.turnId(), 0, 10).orElseThrow()).satisfies(page -> {
+            assertThat(page.captureStatus()).isEqualTo(AgentExecutionEventCaptureStatus.DEGRADED);
+            assertThat(page.events()).isEmpty();
+        });
+    }
+
     private AgentExecutionRecoveryClaim recoveryFence(final AgentExecutionRecoveryClaim claim, final UUID turnId,
                                                       final String ownerId, final long token) {
         return new AgentExecutionRecoveryClaim(claim.sessionId(), turnId, claim.nodeRunId(), claim.workflowRunId(),
@@ -775,9 +983,13 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private AgentSessionExecutionClaim expiredRecoveryExecution() {
+        return this.expiredRecoveryExecution("0.153.2");
+    }
+
+    private AgentSessionExecutionClaim expiredRecoveryExecution(final String providerVersion) {
         final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Recover exact execution."));
         final var normal = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow().agentSessionClaim();
-        this.agentSessionLeaseService.persistConversation(normal, "thread-" + normal.nodeRunId(), "0.153.2");
+        this.agentSessionLeaseService.persistConversation(normal, "thread-" + normal.nodeRunId(), providerVersion);
         this.agentSessionLeaseService.persistTurn(normal, "turn-" + normal.nodeRunId());
         assertThat(this.agentExecutionEventRepository.activate(normal)).isTrue();
         this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP-INTERVAL '1 second' WHERE id=?", normal.sessionId());
