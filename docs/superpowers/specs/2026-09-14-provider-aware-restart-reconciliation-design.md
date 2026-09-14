@@ -152,7 +152,7 @@ Reusable context becomes `FAILED` and cannot be automatically reused. Fresh cont
 
 ## Codex recovery protocol audit
 
-The implementation begins with contract and live audit work against pinned Codex CLI `0.153.2`.
+The implementation begins with contract and live audit work against installed Codex CLI `0.154.0`. Phase 5A still pins durable execution to the previously audited `0.153.2`; the shared pin may move to `0.154.0` only after the existing durable-session suite and the new fresh-process recovery audit pass for that exact version.
 
 The smallest candidate protocol is:
 
@@ -166,7 +166,7 @@ The audit treats exact turn state as authoritative when the response schema and 
 
 No implementation will use `thread/read(includeTurns=true)`. Inspection will not call `thread/start`, `thread/resume`, or `turn/start`.
 
-The audit will record the exact request/response shapes, pagination behavior, terminal status values, unknown-thread/turn behavior, and whether active-turn reproduction and cross-process exact-turn interrupt are reliable. If `0.153.2` cannot prove a classification deterministically, production returns `UNKNOWN`.
+The audit will record the exact request/response shapes, pagination behavior, terminal status values, unknown-thread/turn behavior, and whether active-turn reproduction and cross-process exact-turn interrupt are reliable. If `0.154.0` cannot prove a classification deterministically, production returns `UNKNOWN`.
 
 ## Duplicate-turn and scheduler protection
 
