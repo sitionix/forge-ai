@@ -3,7 +3,6 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
 import com.sitionix.forgeagent.domain.port.AgentExecutionDispatchGuard;
-import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.UUID;
@@ -17,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class PostgresAgentExecutionDispatchGuard implements AgentExecutionDispatchGuard {
     private final DataSource dataSource;
-    private final AgentExecutionSessionRepository sessions;
 
     static String lockKey(final UUID sessionId) { return "agent-execution-dispatch:" + sessionId; }
 
@@ -29,7 +27,7 @@ public class PostgresAgentExecutionDispatchGuard implements AgentExecutionDispat
         try (Connection connection = this.dataSource.getConnection()) {
             try {
                 this.advisory(connection, "pg_advisory_lock", claim.sessionId());
-                if (!this.sessions.lockCurrentLease(claim.sessionId(), claim.leaseOwnerId(), claim.leaseToken())) {
+                if (!this.validateLease(connection, claim)) {
                     throw new ConflictException("STALE_AGENT_SESSION_LEASE", "Agent context ownership was lost.");
                 }
                 // The lease-check transaction has committed. Never wait for a provider response here.
@@ -45,6 +43,26 @@ public class PostgresAgentExecutionDispatchGuard implements AgentExecutionDispat
             }
         } catch (SQLException exception) {
             throw new IllegalStateException("Could not fence provider request dispatch.", exception);
+        }
+    }
+
+    private boolean validateLease(final Connection connection, final AgentSessionExecutionClaim claim) throws SQLException {
+        final boolean autoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            final boolean current = PostgresAgentExecutionLeaseGuard.lockCurrent(
+                    connection, claim.sessionId(), claim.leaseOwnerId(), claim.leaseToken());
+            connection.commit();
+            return current;
+        } catch (SQLException | RuntimeException failure) {
+            try {
+                connection.rollback();
+            } catch (SQLException rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
+            }
+            throw failure;
+        } finally {
+            connection.setAutoCommit(autoCommit);
         }
     }
 

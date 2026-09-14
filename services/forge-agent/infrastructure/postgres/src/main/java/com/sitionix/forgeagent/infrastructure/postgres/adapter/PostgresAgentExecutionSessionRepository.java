@@ -127,17 +127,8 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     @Override
     @Transactional
     public boolean lockCurrentLease(final UUID sessionId, final String ownerId, final long token) {
-        final List<UUID> locked = this.jdbc.query("SELECT id FROM agent_execution_sessions WHERE id=? FOR UPDATE",
-                (rs, row) -> rs.getObject(1, UUID.class), sessionId);
-        if (locked.isEmpty()) return false;
-        // Recovery owns the active turn independently of the old normal token. Check after the lock wait.
-        return Boolean.TRUE.equals(this.jdbc.queryForObject("""
-                SELECT EXISTS(SELECT 1 FROM agent_execution_sessions s
-                 WHERE s.id=? AND s.lease_owner_id=? AND s.lease_token=? AND s.lease_expires_at>clock_timestamp()
-                   AND NOT EXISTS(SELECT 1 FROM agent_execution_turns t
-                       WHERE t.agent_session_id=s.id AND t.node_run_id=s.active_node_run_id
-                         AND t.recovery_lease_owner_id IS NOT NULL))
-                """, Boolean.class, sessionId, ownerId, token));
+        return Boolean.TRUE.equals(this.jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Boolean>) connection ->
+                PostgresAgentExecutionLeaseGuard.lockCurrent(connection, sessionId, ownerId, token)));
     }
 
     @Override
@@ -176,9 +167,9 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
                 rs.getObject("turn_id", UUID.class)));
         if (candidates.isEmpty()) return Optional.empty();
         final RecoveryTarget target = candidates.getFirst();
-        // Serialize ownership transfer with the local provider turn dispatch, before taking row locks.
-        this.jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", Object.class,
-                PostgresAgentExecutionDispatchGuard.lockKey(target.sessionId()));
+        // A busy local write must not hold up the worker poll. Retry this candidate on a later poll.
+        if (!Boolean.TRUE.equals(this.jdbc.queryForObject("SELECT pg_try_advisory_xact_lock(hashtextextended(?,0))", Boolean.class,
+                PostgresAgentExecutionDispatchGuard.lockKey(target.sessionId())))) return Optional.empty();
         final RecoveryNode node = this.lockRecoveryNode(target.workflowRunId(), target.nodeRunId());
         if (node == null) return Optional.empty();
         final Optional<AgentExecutionSession> session = this.lockExpiredRecoverySession(

@@ -803,7 +803,7 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     @Test
-    void recoveryWaitsForWireDispatchThenFailsClosedWithoutWaitingForProviderReply() throws Exception {
+    void recoverySkipsBusyWireDispatchThenFailsClosedOnNextPollWithoutWaitingForProviderReply() throws Exception {
         this.seed();
         this.saveReusableTerminalWorkflow();
         final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Send before recovery claim."));
@@ -819,12 +819,12 @@ class ForgeAgentPortAwareExecutionIT {
                     assertThat(provider.turnWriteInTransaction()).isFalse();
                     this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp() WHERE id=?", claim.agentSessionClaim().sessionId());
                     final var recovery = workers.submit(this.recoveryService::reconcileExpired);
-                    org.awaitility.Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> recovery.isDone() || Boolean.TRUE.equals(
-                            this.jdbcTemplate.queryForObject("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE query LIKE '%pg_advisory_xact_lock%' AND cardinality(pg_blocking_pids(pid))>0)", Boolean.class)));
-                    assertThat(recovery.isDone()).isFalse();
+                    assertThat(recovery.get(1, TimeUnit.SECONDS)).isZero();
                     flushWire.countDown();
 
-                    assertThat(recovery.get(5, TimeUnit.SECONDS)).isEqualTo(1);
+                    org.awaitility.Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> provider.methods().contains("turn/start"));
+                    org.awaitility.Awaitility.await().atMost(5, TimeUnit.SECONDS).untilAsserted(() ->
+                            assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1));
                     assertThat(provider.methods().stream().filter("turn/start"::equals)).hasSize(1);
                     assertThat(execution.isDone()).isFalse();
                     final var allocation = this.agentExecutionSessionRepository.findByNodeRunId(claim.nodeRunId()).orElseThrow();
@@ -836,6 +836,76 @@ class ForgeAgentPortAwareExecutionIT {
                 } finally {
                     flushWire.countDown();
                 }
+            }
+        }
+    }
+
+    @Test
+    void concurrentDispatchesUseOneConnectionEachAndLeaveSmallPoolAvailableToLeaseWork() throws Exception {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var firstRun = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("First dispatch."));
+        final var first = this.lifecycle.tryStart(this.onlyPending(firstRun.id(), A).id()).orElseThrow().agentSessionClaim();
+        final var secondRun = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Second dispatch."));
+        final var second = this.lifecycle.tryStart(this.onlyPending(secondRun.id(), A).id()).orElseThrow().agentSessionClaim();
+        final var source = this.jdbcTemplate.getDataSource().unwrap(com.zaxxer.hikari.HikariDataSource.class);
+        final var config = new com.zaxxer.hikari.HikariConfig();
+        config.setJdbcUrl(source.getJdbcUrl());
+        config.setUsername(source.getUsername());
+        config.setPassword(source.getPassword());
+        config.setMaximumPoolSize(2);
+        config.setMinimumIdle(0);
+        config.setConnectionTimeout(2000);
+        config.addDataSourceProperty("ApplicationName", "forge-dispatch-small-pool");
+        final var bothConnectionsHeld = new java.util.concurrent.CountDownLatch(2);
+        final var beginLeaseChecks = new java.util.concurrent.CountDownLatch(1);
+        final var checkouts = new java.util.concurrent.atomic.AtomicInteger();
+        final var checkoutPid = new ThreadLocal<Integer>();
+        final var sent = new java.util.concurrent.atomic.AtomicInteger();
+        try (var pool = new com.zaxxer.hikari.HikariDataSource(config); var workers = Executors.newFixedThreadPool(4)) {
+            final var limited = new org.springframework.jdbc.datasource.DelegatingDataSource(pool) {
+                @Override public java.sql.Connection getConnection() throws java.sql.SQLException {
+                    final var connection = super.getConnection();
+                    if (checkouts.incrementAndGet() <= 2) {
+                        bothConnectionsHeld.countDown();
+                        ForgeAgentPortAwareExecutionIT.this.awaitLatch(beginLeaseChecks);
+                    }
+                    try (var statement = connection.createStatement(); var row = statement.executeQuery("SELECT pg_backend_pid()")) {
+                        assertThat(row.next()).isTrue();
+                        checkoutPid.set(row.getInt(1));
+                    }
+                    return connection;
+                }
+            };
+            final var repositoryProxy = new org.springframework.aop.framework.ProxyFactory(
+                    new com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresAgentExecutionSessionRepository(new JdbcTemplate(limited)));
+            repositoryProxy.setProxyTargetClass(true);
+            repositoryProxy.addAdvice(new org.springframework.transaction.interceptor.TransactionInterceptor(
+                    new org.springframework.jdbc.datasource.DataSourceTransactionManager(limited),
+                    new org.springframework.transaction.annotation.AnnotationTransactionAttributeSource()));
+            final var sessions = (AgentExecutionSessionRepository) repositoryProxy.getProxy();
+            final var guard = new com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresAgentExecutionDispatchGuard(limited);
+            final Runnable write = () -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                assertThat(this.jdbcTemplate.queryForObject("SELECT xact_start IS NULL FROM pg_stat_activity WHERE pid=?", Boolean.class, checkoutPid.get())).isTrue();
+                sent.incrementAndGet();
+            };
+            final var firstSend = workers.submit(() -> guard.dispatch(first, write));
+            final var secondSend = workers.submit(() -> guard.dispatch(second, write));
+            try {
+                assertThat(bothConnectionsHeld.await(5, TimeUnit.SECONDS)).isTrue();
+                final var heartbeat = workers.submit(() -> sessions.renew(first.sessionId(), first.leaseOwnerId(), first.leaseToken()));
+                final var recovery = workers.submit(() -> sessions.claimExpiredRecovery("small-pool-recovery"));
+                beginLeaseChecks.countDown();
+
+                firstSend.get(5, TimeUnit.SECONDS);
+                secondSend.get(5, TimeUnit.SECONDS);
+                assertThat(sent.get()).isEqualTo(2);
+                assertThat(heartbeat.get(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(recovery.get(5, TimeUnit.SECONDS)).isEmpty();
+                assertThat(pool.getHikariPoolMXBean().getActiveConnections()).isZero();
+            } finally {
+                beginLeaseChecks.countDown();
             }
         }
     }
