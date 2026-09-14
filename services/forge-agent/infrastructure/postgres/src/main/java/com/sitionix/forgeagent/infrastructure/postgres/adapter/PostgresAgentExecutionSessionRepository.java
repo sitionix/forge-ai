@@ -172,13 +172,16 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         final Optional<AgentExecutionSession> session = this.lockExpiredRecoverySession(
                 target.sessionId(), target.workflowRunId(), target.nodeRunId());
         if (session.isEmpty()) return Optional.empty();
+        if (!this.lockRecoveryTurn(target.sessionId(), target.nodeRunId(), target.turnId())) return Optional.empty();
         return this.jdbc.query("""
-                UPDATE agent_execution_turns
+                WITH recovery_clock AS MATERIALIZED (SELECT clock_timestamp() checked_at)
+                UPDATE agent_execution_turns t
                    SET recovery_lease_owner_id=?,recovery_lease_token=recovery_lease_token+1,
-                       recovery_lease_expires_at=CURRENT_TIMESTAMP+INTERVAL '30 seconds',updated_at=CURRENT_TIMESTAMP
-                 WHERE id=? AND agent_session_id=? AND node_run_id=? AND status IN ('STARTING','ACTIVE')
-                   AND (recovery_lease_expires_at IS NULL OR recovery_lease_expires_at<=CURRENT_TIMESTAMP)
-                 RETURNING provider_turn_id,recovery_lease_token,recovery_lease_expires_at
+                       recovery_lease_expires_at=recovery_clock.checked_at+INTERVAL '30 seconds',updated_at=recovery_clock.checked_at
+                  FROM recovery_clock
+                 WHERE t.id=? AND t.agent_session_id=? AND t.node_run_id=? AND t.status IN ('STARTING','ACTIVE')
+                   AND (t.recovery_lease_expires_at IS NULL OR t.recovery_lease_expires_at<=recovery_clock.checked_at)
+                 RETURNING t.provider_turn_id,t.recovery_lease_token,t.recovery_lease_expires_at
                 """, (rs, row) -> new AgentExecutionRecoveryClaim(target.sessionId(), target.turnId(), target.nodeRunId(),
                 target.workflowRunId(), session.get().repositoryId(), session.get().providerId(), session.get().providerVersion(),
                 session.get().providerConversationId(), rs.getString("provider_turn_id"), session.get().contextMode(),
@@ -196,11 +199,12 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         final Optional<AgentExecutionSession> lockedSession = this.lockExpiredRecoverySession(
                 claim.sessionId(), claim.workflowRunId(), claim.nodeRunId());
         if (lockedSession.isEmpty()) return false;
+        if (!this.lockRecoveryTurn(claim.sessionId(), claim.nodeRunId(), claim.turnId())) return false;
+        // Evaluate the wall clock only after every potentially blocking row lock is held.
         final List<UUID> turns = this.jdbc.query("""
                 SELECT id FROM agent_execution_turns
                  WHERE id=? AND agent_session_id=? AND node_run_id=? AND status IN ('STARTING','ACTIVE')
-                   AND recovery_lease_owner_id=? AND recovery_lease_token=? AND recovery_lease_expires_at>CURRENT_TIMESTAMP
-                 FOR UPDATE
+                   AND recovery_lease_owner_id=? AND recovery_lease_token=? AND recovery_lease_expires_at>clock_timestamp()
                 """, (rs, row) -> rs.getObject(1, UUID.class), claim.turnId(), claim.sessionId(), claim.nodeRunId(),
                 claim.ownerId(), claim.leaseToken());
         if (turns.isEmpty()) return false;
@@ -272,6 +276,13 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
                    AND lease_owner_id IS NOT NULL AND lease_expires_at<=CURRENT_TIMESTAMP
                    AND status IN ('CREATING','RESUMING','ACTIVE') FOR UPDATE
                 """, this::session, sessionId, workflowRunId, nodeRunId).stream().findFirst();
+    }
+
+    private boolean lockRecoveryTurn(final UUID sessionId, final UUID nodeRunId, final UUID turnId) {
+        return !this.jdbc.query("""
+                SELECT id FROM agent_execution_turns
+                 WHERE id=? AND agent_session_id=? AND node_run_id=? AND status IN ('STARTING','ACTIVE') FOR UPDATE
+                """, (rs, row) -> rs.getObject(1, UUID.class), turnId, sessionId, nodeRunId).isEmpty();
     }
 
     @Override

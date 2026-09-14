@@ -523,6 +523,93 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     @Test
+    void recoveryThatWaitedForWorkflowLockCannotCommitAfterItsLeaseExpires() throws Exception {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var normal = this.expiredRecoveryExecution();
+        final var claim = this.agentExecutionSessionRepository.claimExpiredRecovery("waiting-recovery").orElseThrow();
+        final var reconciliation = new AgentExecutionRecoveryReconciliation(
+                AgentExecutionRecoveryDisposition.PROVIDER_UNKNOWN_FAIL_CLOSED, null,
+                "AGENT_EXECUTION_RECOVERY_UNKNOWN", "Unknown provider state.");
+        try (var worker = Executors.newSingleThreadExecutor()) {
+            try (var blocker = this.jdbcTemplate.getDataSource().getConnection()) {
+                blocker.setAutoCommit(false);
+                try {
+                    final int blockerPid = this.lockRecoveryWorkflow(blocker, claim.workflowRunId());
+                    final var waiting = worker.submit(() -> this.agentExecutionSessionRepository.reconcileRecovery(claim, reconciliation));
+                    this.awaitRecoveryLockWait(blockerPid);
+                    // Expire after the waiting transaction started; no 30-second sleep is needed.
+                    this.jdbcTemplate.update("UPDATE agent_execution_turns SET recovery_lease_expires_at=clock_timestamp() WHERE id=?", claim.turnId());
+                    assertThat(this.jdbcTemplate.queryForObject("""
+                            SELECT t.recovery_lease_expires_at>a.xact_start AND t.recovery_lease_expires_at<=clock_timestamp()
+                              FROM agent_execution_turns t,pg_stat_activity a
+                             WHERE t.id=? AND ?=ANY(pg_blocking_pids(a.pid))
+                            """, Boolean.class, claim.turnId(), blockerPid)).isTrue();
+                    final var nodeBefore = this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", normal.nodeRunId());
+                    final var turnBefore = this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_turns WHERE id=?", normal.turnId());
+                    final var sessionBefore = this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_sessions WHERE id=?", normal.sessionId());
+                    blocker.commit();
+
+                    assertThat(waiting.get(5, TimeUnit.SECONDS)).isFalse();
+                    assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", normal.nodeRunId())).isEqualTo(nodeBefore);
+                    assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_turns WHERE id=?", normal.turnId())).isEqualTo(turnBefore);
+                    assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_sessions WHERE id=?", normal.sessionId())).isEqualTo(sessionBefore);
+                } finally {
+                    blocker.rollback();
+                }
+            }
+        }
+    }
+
+    @Test
+    void recoveryClaimLeaseStartsAfterWaitingForWorkflowLock() throws Exception {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var normal = this.expiredRecoveryExecution();
+        final UUID workflowRunId = this.agentExecutionSessionRepository.findByNodeRunId(normal.nodeRunId()).orElseThrow().session().workflowRunId();
+        try (var worker = Executors.newSingleThreadExecutor()) {
+            try (var blocker = this.jdbcTemplate.getDataSource().getConnection()) {
+                blocker.setAutoCommit(false);
+                try {
+                    final int blockerPid = this.lockRecoveryWorkflow(blocker, workflowRunId);
+                    final var waiting = worker.submit(() -> this.agentExecutionSessionRepository.claimExpiredRecovery("waiting-claim"));
+                    this.awaitRecoveryLockWait(blockerPid);
+                    final Instant releaseTime = this.jdbcTemplate.queryForObject("SELECT clock_timestamp()", java.sql.Timestamp.class).toInstant();
+                    blocker.commit();
+
+                    final var claim = waiting.get(5, TimeUnit.SECONDS).orElseThrow();
+                    assertThat(claim.leaseExpiresAt()).isAfter(releaseTime.plusSeconds(30));
+                    assertThat(this.jdbcTemplate.queryForObject(
+                            "SELECT recovery_lease_expires_at=updated_at+INTERVAL '30 seconds' FROM agent_execution_turns WHERE id=?",
+                            Boolean.class, claim.turnId())).isTrue();
+                } finally {
+                    blocker.rollback();
+                }
+            }
+        }
+    }
+
+    private int lockRecoveryWorkflow(final java.sql.Connection blocker, final UUID workflowRunId) throws java.sql.SQLException {
+        try (var lock = blocker.prepareStatement("SELECT id FROM workflow_runs WHERE id=? FOR UPDATE")) {
+            lock.setObject(1, workflowRunId);
+            try (var result = lock.executeQuery()) {
+                assertThat(result.next()).isTrue();
+            }
+        }
+        try (var statement = blocker.createStatement(); var result = statement.executeQuery("SELECT pg_backend_pid()")) {
+            assertThat(result.next()).isTrue();
+            return result.getInt(1);
+        }
+    }
+
+    private void awaitRecoveryLockWait(final int blockerPid) {
+        org.awaitility.Awaitility.await().atMost(5, TimeUnit.SECONDS).untilAsserted(() ->
+                assertThat(this.jdbcTemplate.queryForObject(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE ?=ANY(pg_blocking_pids(pid)))",
+                        Boolean.class, blockerPid)).isTrue());
+    }
+
+    @Test
     void recoveryRaceAndCrashAllowOnlyTheCurrentUnexpiredExactClaimToCommit() throws Exception {
         this.seed();
         this.saveReusableTerminalWorkflow();
