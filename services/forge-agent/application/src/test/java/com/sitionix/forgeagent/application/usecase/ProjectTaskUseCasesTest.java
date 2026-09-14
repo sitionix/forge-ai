@@ -19,6 +19,7 @@ import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
 import com.sitionix.forgeagent.domain.model.Workflow;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
+import com.sitionix.forgeagent.domain.model.OperatorStopStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.ProjectRepository;
@@ -120,6 +121,30 @@ class ProjectTaskUseCasesTest {
         final ArgumentCaptor<CreateWorkflowRunCommand> runCommand = ArgumentCaptor.forClass(CreateWorkflowRunCommand.class);
         verify(this.workflowRunUseCases).createWorkflowRunForTask(org.mockito.Mockito.eq(WORKFLOW_ID), runCommand.capture(), org.mockito.Mockito.eq(TASK_ID), org.mockito.Mockito.eq(List.of(REPOSITORY_ID)));
         assertThat(runCommand.getValue().input()).isEqualTo("Find X and explain Y");
+    }
+
+    @Test
+    void preservesOperatorStopStateInInitialRunSummary() {
+        when(this.projectRepository.findById(PROJECT_ID)).thenReturn(Optional.of(this.project(PROJECT_ID)));
+        when(this.workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(this.workflow(PROJECT_ID)));
+        when(this.projectRepositoryLinkRepository.findById(REPOSITORY_ID))
+                .thenReturn(Optional.of(this.repository(REPOSITORY_ID, PROJECT_ID)));
+        when(this.projectTaskRepository.save(any())).thenReturn(this.task("Stopped task", "Input"));
+        final WorkflowRun stopped = new WorkflowRun(
+                RUN_ID, PROJECT_ID, WORKFLOW_ID, TASK_ID, "Full Testing", "Input",
+                WorkflowRunStatus.CANCELLED, List.of(), List.of(), List.of(), null, null, null,
+                NOW, NOW, NOW, List.of(), OperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED", List.of(RUN_ID), 1
+        );
+        when(this.workflowRunUseCases.createWorkflowRunForTask(any(), any(), any(), any())).thenReturn(stopped);
+
+        final ProjectTaskDetails created = this.useCases.createProjectTask(PROJECT_ID,
+                this.command("Stopped task", "Input", WORKFLOW_ID));
+
+        assertThat(created.runs()).singleElement().satisfies(run -> {
+            assertThat(run.operatorStopStatus()).isEqualTo(OperatorStopStatus.FAILED);
+            assertThat(run.operatorStopFailureCode()).isEqualTo("AGENT_EXECUTION_INTERRUPT_FAILED");
+        });
     }
 
     @Test

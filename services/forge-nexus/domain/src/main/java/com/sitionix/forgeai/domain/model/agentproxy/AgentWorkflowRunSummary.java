@@ -11,6 +11,15 @@ public record AgentWorkflowRunSummary(
         AgentWorkflowRunStatus status,
         Instant createdAt,
         Instant startedAt,
-        Instant finishedAt
+        Instant finishedAt,
+        AgentOperatorStopStatus operatorStopStatus,
+        String operatorStopFailureCode
 ) {
+    public AgentWorkflowRunSummary(
+            final UUID id, final UUID sourceWorkflowId, final UUID taskId, final String workflowName,
+            final AgentWorkflowRunStatus status, final Instant createdAt, final Instant startedAt,
+            final Instant finishedAt
+    ) {
+        this(id, sourceWorkflowId, taskId, workflowName, status, createdAt, startedAt, finishedAt, null, null);
+    }
 }

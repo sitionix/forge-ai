@@ -474,6 +474,49 @@ class CodexAgentExecutorTest {
     }
 
     @Test
+    void cancellationRequestedBeforeRegistrationReportsFailureAndCanBeRetried() {
+        final NodeExecutionClaim claim = this.trackedClaim("thread-existing");
+        final java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>> firstCancellation =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.CountDownLatch firstCallerStarted = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.ExecutorService caller = java.util.concurrent.Executors.newSingleThreadExecutor();
+        this.client.providerCancellation = () -> {
+            if (attempts.incrementAndGet() == 1) throw new IllegalStateException("cleanup failed");
+        };
+        this.client.beforeExecutionStarted = () -> {
+            final Runnable cancellation = this.executor.secureCancellation(claim.nodeRunId()).orElseThrow();
+            firstCancellation.set(caller.submit(() -> {
+                firstCallerStarted.countDown();
+                cancellation.run();
+            }));
+            try {
+                assertThat(firstCallerStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            } catch (final InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(exception);
+            }
+        };
+        this.client.onExecutionStarted = () -> {
+            assertThatThrownBy(() -> firstCancellation.get().get(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .isInstanceOf(java.util.concurrent.ExecutionException.class)
+                    .cause().isInstanceOf(IllegalStateException.class)
+                    .hasMessage("cleanup failed");
+            final Runnable retry = this.executor.secureCancellation(claim.nodeRunId()).orElseThrow();
+            retry.run();
+            retry.run();
+        };
+
+        try {
+            this.executor.execute(claim);
+        } finally {
+            caller.shutdownNow();
+        }
+
+        assertThat(attempts).hasValue(2);
+    }
+
+    @Test
     void securedOperatorCancellationUsesTheActiveExecutionExactlyOnce() {
         final NodeExecutionClaim claim = this.trackedClaim("thread-existing");
         final java.util.concurrent.atomic.AtomicInteger providerCancellations = new java.util.concurrent.atomic.AtomicInteger();
@@ -488,6 +531,79 @@ class CodexAgentExecutorTest {
 
         assertThat(providerCancellations).hasValue(1);
         assertThat(this.executor.secureCancellation(claim.nodeRunId())).isEmpty();
+    }
+
+    @Test
+    void failedOperatorCancellationCanBeRetriedUntilItCompletes() {
+        final NodeExecutionClaim claim = this.trackedClaim("thread-existing");
+        final java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+        this.client.providerCancellation = () -> {
+            if (attempts.incrementAndGet() == 1) {
+                throw new IllegalStateException("cleanup failed");
+            }
+        };
+        this.client.onExecutionStarted = () -> {
+            final Runnable cancellation = this.executor.secureCancellation(claim.nodeRunId()).orElseThrow();
+            assertThatThrownBy(cancellation::run)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("cleanup failed");
+            cancellation.run();
+            cancellation.run();
+        };
+
+        this.executor.execute(claim);
+
+        assertThat(attempts).hasValue(2);
+    }
+
+    @Test
+    void concurrentOperatorRetriesNeverRunProviderCancellationSimultaneously() {
+        final NodeExecutionClaim claim = this.trackedClaim("thread-existing");
+        final java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger maximumActive = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.CountDownLatch firstAttemptStarted = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.CountDownLatch releaseFirstAttempt = new java.util.concurrent.CountDownLatch(1);
+        this.client.providerCancellation = () -> {
+            final int attempt = attempts.incrementAndGet();
+            maximumActive.accumulateAndGet(active.incrementAndGet(), Math::max);
+            try {
+                if (attempt == 1) {
+                    firstAttemptStarted.countDown();
+                    if (!releaseFirstAttempt.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                        throw new AssertionError("first cancellation was not released");
+                    }
+                    throw new IllegalStateException("first cleanup failed");
+                }
+            } catch (final InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(exception);
+            } finally {
+                active.decrementAndGet();
+            }
+        };
+        this.client.onExecutionStarted = () -> {
+            final Runnable cancellation = this.executor.secureCancellation(claim.nodeRunId()).orElseThrow();
+            final java.util.concurrent.ExecutorService callers = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                final java.util.concurrent.Future<?> first = callers.submit(() -> assertThatThrownBy(cancellation::run)
+                        .isInstanceOf(IllegalStateException.class));
+                assertThat(firstAttemptStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                final java.util.concurrent.Future<?> second = callers.submit(cancellation);
+                releaseFirstAttempt.countDown();
+                first.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                second.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (final Exception exception) {
+                throw new AssertionError(exception);
+            } finally {
+                callers.shutdownNow();
+            }
+        };
+
+        this.executor.execute(claim);
+
+        assertThat(attempts).hasValue(2);
+        assertThat(maximumActive).hasValue(1);
     }
 
     @Test
@@ -612,6 +728,7 @@ class CodexAgentExecutorTest {
         private String outputText = "{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}";
         private int executeCount;
         private RuntimeException durableFailure;
+        private Runnable beforeExecutionStarted;
         private Runnable onExecutionStarted;
         private Runnable providerCancellation;
         private boolean emitCapture;
@@ -629,6 +746,7 @@ class CodexAgentExecutorTest {
                                      final String expectedProviderVersion,
                                      final CodexExecutionIdentityCallbacks callbacks) {
             this.request = request;
+            if (this.beforeExecutionStarted != null) this.beforeExecutionStarted.run();
             if (this.providerCancellation != null) callbacks.executionStarted(this.providerCancellation);
             if (this.onExecutionStarted != null) this.onExecutionStarted.run();
             if (this.durableFailure != null && !this.emitFailedCapture) throw this.durableFailure;

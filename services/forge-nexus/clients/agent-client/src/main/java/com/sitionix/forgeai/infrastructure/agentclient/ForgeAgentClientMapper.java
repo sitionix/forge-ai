@@ -428,7 +428,9 @@ public class ForgeAgentClientMapper {
                 response.status(),
                 response.createdAt(),
                 response.startedAt(),
-                response.finishedAt()
+                response.finishedAt(),
+                response.operatorStopStatus(),
+                response.operatorStopFailureCode()
         );
     }
 
@@ -456,7 +458,9 @@ public class ForgeAgentClientMapper {
                 response.createdAt(),
                 response.startedAt(),
                 response.finishedAt(),
-                response.repositoryIds()
+                response.repositoryIds(),
+                response.operatorStopStatus(),
+                response.operatorStopFailureCode()
         );
     }
 

@@ -1067,6 +1067,18 @@ export class TaskExecutionView {
     const cancellationError = this.state.cancellationError
       ? `<div class="error-box" data-stop-run-error>${escapeHtml(this.state.cancellationError)}</div>`
       : '';
+    if (this.hasUnresolvedOperatorStop()) {
+      state.innerHTML = `${cancellationError}<div class="task-execution-run-controls">
+        <div class="task-execution-stop-confirmation" data-provider-stop-unverified>
+          <div><strong>Provider stop could not be verified.</strong></div>
+          <div class="task-execution-stop-actions">
+            <button type="button" class="button small danger" data-retry-stop ${this.state.cancellationInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Retrying…' : 'Retry stop'}</button>
+          </div>
+        </div>
+      </div>`;
+      state.querySelector('[data-retry-stop]')?.addEventListener('click', () => this.stopSelectedRun());
+      return;
+    }
     if (!ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)) {
       state.innerHTML = cancellationError;
       return;
@@ -1095,41 +1107,57 @@ export class TaskExecutionView {
   }
 
   async stopSelectedRun() {
-    if (this.state.cancellationInFlight || !ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)) {
+    if (this.state.cancellationInFlight
+      || (!ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status) && !this.hasUnresolvedOperatorStop())) {
       return;
     }
     const taskId = this.state.taskId;
     const taskSequence = this.taskLoadSequence;
     const runId = this.state.selectedRunId;
-    const runSequence = this.runLoadSequence;
+    const activityIdentity = this.activityIdentity;
+    const preserveActivity = activityIdentity && this.isCurrentActivity(activityIdentity);
+    const runSequence = this.runLoadSequence + 1;
+    this.runLoadSequence = runSequence;
+    if (preserveActivity) {
+      activityIdentity.runLoadSequence = runSequence;
+    }
     this.state.cancellationInFlight = true;
     this.state.cancellationError = '';
     this.stopPolling();
+    this.pollInFlight = null;
     this.renderExecutionState();
+    let commandSucceeded = false;
     try {
-      if (this.pollInFlight) {
+      try {
+        await this.api.cancelWorkflowRun(runId);
+        commandSucceeded = true;
+      } catch (error) {
+        if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+          return;
+        }
+        this.state.cancellationError = `Could not stop this run.${error?.message ? ` ${error.message}` : ''}`;
         try {
-          await this.pollInFlight;
+          await this.refreshAfterCancellation(taskId, taskSequence, runId, runSequence);
         } catch (_ignored) {
-          // The explicit cancellation refresh below remains authoritative.
+          // Keep the cancellation error separate and preserve the current execution UI.
         }
       }
-      await this.api.cancelWorkflowRun(runId);
-      await this.refreshAfterCancellation(taskId, taskSequence, runId, runSequence);
-    } catch (error) {
-      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
-        return;
-      }
-      this.state.cancellationError = `Could not stop this run.${error?.message ? ` ${error.message}` : ''}`;
-      try {
-        await this.refreshAfterCancellation(taskId, taskSequence, runId, runSequence);
-      } catch (_ignored) {
-        // Keep the cancellation error separate and preserve the current execution UI.
+
+      if (commandSucceeded) {
+        try {
+          await this.refreshAfterCancellation(taskId, taskSequence, runId, runSequence);
+        } catch (error) {
+          if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+            return;
+          }
+          this.state.cancellationError = `Run was stopped, but the latest state could not be refreshed.${error?.message ? ` ${error.message}` : ''}`;
+        }
       }
     } finally {
       if (this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         this.state.cancellationInFlight = false;
-        this.state.stopConfirmation = ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)
+        this.state.stopConfirmation = !commandSucceeded
+          && ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)
           && Boolean(this.state.cancellationError);
         this.render();
         this.syncPolling();
@@ -1147,6 +1175,11 @@ export class TaskExecutionView {
     }
     this.state.agentExecutionContexts = contexts || [];
     this.applyWorkflowRun(workflowRun);
+  }
+
+  hasUnresolvedOperatorStop() {
+    return this.state.workflowRun?.status === 'CANCELLED'
+      && ['PENDING', 'FAILED'].includes(this.state.workflowRun?.operatorStopStatus);
   }
 
   renderGraph() {

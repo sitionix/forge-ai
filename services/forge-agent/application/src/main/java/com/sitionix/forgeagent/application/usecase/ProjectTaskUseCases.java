@@ -216,7 +216,9 @@ public class ProjectTaskUseCases {
                 run.status(),
                 run.createdAt(),
                 run.startedAt(),
-                run.finishedAt()
+                run.finishedAt(),
+                run.operatorStopStatus(),
+                run.operatorStopFailureCode()
         );
     }
 }

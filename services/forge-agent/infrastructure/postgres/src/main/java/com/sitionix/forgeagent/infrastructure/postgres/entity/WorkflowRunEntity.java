@@ -59,6 +59,19 @@ public class WorkflowRunEntity {
     @Column(name = "finished_at")
     private Instant finishedAt;
 
+    @Column(name = "operator_stop_status", length = 16)
+    private String operatorStopStatus;
+
+    @Column(name = "operator_stop_failure_code", length = 64)
+    private String operatorStopFailureCode;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "operator_stop_pending_node_run_ids", columnDefinition = "jsonb")
+    private List<UUID> operatorStopPendingNodeRunIds;
+
+    @Column(name = "operator_stop_attempt", nullable = false)
+    private long operatorStopAttempt;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String result;

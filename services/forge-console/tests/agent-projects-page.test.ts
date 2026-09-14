@@ -2545,6 +2545,9 @@ describe('Agent projects page', () => {
     const context = { sessionId: 'session-a', turnId: 'turn-a', nodeRunId: 'impl-1', sourceNodeId: 'implementer',
       repositoryId: null, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', sequence: 1,
       sessionStatus: 'ACTIVE', turnStatus: 'ACTIVE', provider: 'codex' };
+    const getAgentExecutionEvents = vi.fn(() => Promise.resolve(
+      activityPage('turn-a', 'Existing activity', 'ACTIVE')
+    ));
     const fakeApi = api({
       getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
       getWorkflowRun: vi.fn()
@@ -2553,7 +2556,7 @@ describe('Agent projects page', () => {
       getAgentExecutionContexts: vi.fn()
         .mockResolvedValueOnce([context])
         .mockResolvedValueOnce([{ ...context, sessionStatus: 'CLOSED', turnStatus: 'CANCELLED' }]),
-      getAgentExecutionEvents: vi.fn(() => Promise.resolve(activityPage('turn-a', 'Existing activity', 'ACTIVE'))),
+      getAgentExecutionEvents,
       cancelWorkflowRun: vi.fn(() => cancellation.promise)
     });
     const { dom, page } = await openedProject(fakeApi);
@@ -2561,6 +2564,7 @@ describe('Agent projects page', () => {
     await flushAsync();
     page.taskExecutionView.selectNodeRun('impl-1');
     await flushAsync();
+    const activity = dom.window.document.querySelector('.node-run-activity');
 
     dom.window.document.querySelector<HTMLButtonElement>('[data-stop-run]')?.click();
     dom.window.document.querySelector<HTMLButtonElement>('[data-confirm-stop-run]')?.click();
@@ -2576,7 +2580,113 @@ describe('Agent projects page', () => {
     expect(fakeApi.getAgentExecutionContexts).toHaveBeenCalledTimes(2);
     expect(page.taskExecutionView.state.workflowRun.status).toBe('CANCELLED');
     expect(page.taskExecutionView.state.selectedNodeRunId).toBe('impl-1');
-    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Existing activity');
+    expect(dom.window.document.querySelector('.node-run-activity')).toBe(activity);
+    expect(activity?.textContent).toContain('Existing activity');
+    expect(getAgentExecutionEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('posts Stop immediately and discards a stale unresolved pre-cancel poll', async () => {
+    const stalePoll = deferred<any>();
+    const initial = workflowRunDetail('run-new', 'RUNNING', [
+      nodeRun('node-a', 'Analyzer', 'RUNNING')
+    ]);
+    const cancelled = {
+      ...workflowRunDetail('run-new', 'CANCELLED', [
+        nodeRun('node-a', 'Analyzer', 'CANCELLED')
+      ]),
+      operatorStopStatus: 'COMPLETE'
+    };
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail(
+        'task-1',
+        [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]
+      ))),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(initial)
+        .mockReturnValueOnce(stalePoll.promise)
+        .mockResolvedValueOnce(cancelled),
+      cancelWorkflowRun: vi.fn(() => Promise.resolve())
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const oldPoll = page.taskExecutionView.pollSelectedRun();
+    await flushAsync();
+    dom.window.document.querySelector<HTMLButtonElement>('[data-stop-run]')?.click();
+    dom.window.document.querySelector<HTMLButtonElement>('[data-confirm-stop-run]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.cancelWorkflowRun).toHaveBeenCalledTimes(1);
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(3);
+    expect(page.taskExecutionView.state.workflowRun.status).toBe('CANCELLED');
+
+    stalePoll.resolve(initial);
+    await oldPoll;
+    await flushAsync();
+
+    expect(page.taskExecutionView.state.workflowRun.status).toBe('CANCELLED');
+    expect(page.taskExecutionView.state.workflowRun.operatorStopStatus).toBe('COMPLETE');
+  });
+
+  it('reports refresh failure after a successful Stop without claiming the command failed', async () => {
+    const running = workflowRunDetail('run-new', 'RUNNING', [
+      nodeRun('node-a', 'Analyzer', 'RUNNING')
+    ]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail(
+        'task-1',
+        [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]
+      ))),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(running)
+        .mockRejectedValueOnce(new Error('Refresh unavailable')),
+      cancelWorkflowRun: vi.fn(() => Promise.resolve())
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-stop-run]')?.click();
+    dom.window.document.querySelector<HTMLButtonElement>('[data-confirm-stop-run]')?.click();
+    await flushAsync();
+
+    const error = dom.window.document.querySelector('[data-stop-run-error]')?.textContent || '';
+    expect(error).toContain('Run was stopped, but the latest state could not be refreshed.');
+    expect(error).not.toContain('Could not stop this run.');
+  });
+
+  it.each(['PENDING', 'FAILED'])('shows Retry stop for unresolved operator status %s', async (operatorStopStatus) => {
+    const unresolved = {
+      ...workflowRunDetail('run-new', 'CANCELLED'),
+      operatorStopStatus,
+      operatorStopFailureCode: operatorStopStatus === 'FAILED'
+        ? 'AGENT_EXECUTION_INTERRUPT_FAILED'
+        : null
+    };
+    const complete = { ...unresolved, operatorStopStatus: 'COMPLETE', operatorStopFailureCode: null };
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail(
+        'task-1',
+        [taskRun('run-new', 'CANCELLED', '2026-08-13T10:00:00Z')]
+      ))),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(unresolved)
+        .mockResolvedValueOnce(complete),
+      cancelWorkflowRun: vi.fn(() => Promise.resolve())
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('agentsV2ExecutionState')?.textContent)
+      .toContain('Provider stop could not be verified.');
+    dom.window.document.querySelector<HTMLButtonElement>('[data-retry-stop]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.cancelWorkflowRun).toHaveBeenCalledTimes(1);
+    expect(page.taskExecutionView.state.workflowRun.operatorStopStatus).toBe('COMPLETE');
+    expect(dom.window.document.querySelector('[data-retry-stop]')).toBeNull();
   });
 
   it('keeps execution content and polling intact when Stop run fails', async () => {

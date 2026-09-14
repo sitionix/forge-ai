@@ -17,8 +17,6 @@ import java.util.Set;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
@@ -134,6 +132,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
             } catch (RuntimeException exception) {
                 throw exception;
             } finally {
+                cancellation.executionFinished();
                 this.activeExecutions.remove(claim.nodeRunId(), cancellation);
             }
         }
@@ -152,18 +151,63 @@ public final class CodexAgentExecutor implements AgentExecutor {
     }
 
     private static final class ExecutionCancellation {
-        private final AtomicBoolean cancelled = new AtomicBoolean();
-        private final AtomicReference<Runnable> action = new AtomicReference<>();
+        private boolean complete;
+        private boolean executionFinished;
+        private boolean inProgress;
+        private Runnable action;
 
-        void register(final Runnable cancellation) {
-            this.action.set(cancellation);
-            if (this.cancelled.get()) cancellation.run();
+        synchronized void register(final Runnable cancellation) {
+            this.action = cancellation;
+            this.notifyAll();
         }
 
         void cancel() {
-            if (!this.cancelled.compareAndSet(false, true)) return;
-            final Runnable cancellation = this.action.get();
-            if (cancellation != null) cancellation.run();
+            final Runnable cancellation;
+            boolean interrupted = false;
+            synchronized (this) {
+                while (this.action == null && !this.executionFinished) {
+                    try {
+                        this.wait();
+                    } catch (final InterruptedException exception) {
+                        interrupted = true;
+                    }
+                }
+                while (this.inProgress && !this.complete) {
+                    try {
+                        this.wait();
+                    } catch (final InterruptedException exception) {
+                        interrupted = true;
+                    }
+                }
+                if (this.complete) {
+                    if (interrupted) Thread.currentThread().interrupt();
+                    return;
+                }
+                if (this.action == null) {
+                    if (interrupted) Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Provider execution ended before cancellation became available.");
+                }
+                this.inProgress = true;
+                cancellation = this.action;
+            }
+
+            try {
+                cancellation.run();
+                synchronized (this) {
+                    this.complete = true;
+                }
+            } finally {
+                synchronized (this) {
+                    this.inProgress = false;
+                    this.notifyAll();
+                }
+                if (interrupted) Thread.currentThread().interrupt();
+            }
+        }
+
+        synchronized void executionFinished() {
+            this.executionFinished = true;
+            this.notifyAll();
         }
     }
 

@@ -11,6 +11,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentOperatorStopStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
@@ -379,7 +380,9 @@ class AgentProxyApiMapperTest {
                 AgentWorkflowRunStatus.QUEUED,
                 CREATED,
                 null,
-                null
+                null,
+                AgentOperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         ))).isEqualTo(new AgentWorkflowRunSummaryResponse(
                 RUN_ID,
                 WORKFLOW_ID,
@@ -388,7 +391,9 @@ class AgentProxyApiMapperTest {
                 AgentWorkflowRunStatus.QUEUED,
                 CREATED,
                 null,
-                null
+                null,
+                AgentOperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         ));
 
         final var run = new AgentWorkflowRun(
@@ -451,7 +456,9 @@ class AgentProxyApiMapperTest {
                 CREATED,
                 null,
                 null,
-                java.util.List.of()
+                java.util.List.of(),
+                AgentOperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         );
         assertThat(this.mapper.toResponse(run)).isEqualTo(new AgentWorkflowRunResponse(
                 RUN_ID,
@@ -513,7 +520,9 @@ class AgentProxyApiMapperTest {
                 CREATED,
                 null,
                 null,
-                java.util.List.of()
+                java.util.List.of(),
+                AgentOperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         ));
     }
 

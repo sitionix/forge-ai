@@ -356,7 +356,9 @@ class ForgeAgentApiMapper {
                 run.status(),
                 run.createdAt(),
                 run.startedAt(),
-                run.finishedAt()
+                run.finishedAt(),
+                run.operatorStopStatus(),
+                run.operatorStopFailureCode()
         );
     }
 
@@ -379,7 +381,9 @@ class ForgeAgentApiMapper {
                     run.createdAt(),
                     run.startedAt(),
                     run.finishedAt(),
-                    run.repositoryIds()
+                    run.repositoryIds(),
+                    run.operatorStopStatus(),
+                    run.operatorStopFailureCode()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored workflow run result JSON is invalid.", exception);

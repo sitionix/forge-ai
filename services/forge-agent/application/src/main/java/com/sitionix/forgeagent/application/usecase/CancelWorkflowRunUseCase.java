@@ -6,6 +6,7 @@ import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
+import com.sitionix.forgeagent.domain.model.OperatorStopStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
@@ -18,9 +19,7 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionOperations;
 
 @Slf4j
 @Service
@@ -28,6 +27,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class CancelWorkflowRunUseCase {
 
     public static final String INTERRUPT_UNAVAILABLE = "AGENT_EXECUTION_INTERRUPT_UNAVAILABLE";
+    public static final String INTERRUPT_FAILED = "AGENT_EXECUTION_INTERRUPT_FAILED";
     public static final String NOT_CANCELLABLE = "WORKFLOW_RUN_NOT_CANCELLABLE";
     public static final String CANCELLATION_CONFLICT = "WORKFLOW_RUN_CANCELLATION_CONFLICT";
 
@@ -36,13 +36,40 @@ public class CancelWorkflowRunUseCase {
     private final WorkflowExecutionCoordinator coordinator;
     private final AgentExecutor agentExecutor;
     private final Clock clock;
+    private final TransactionOperations transactions;
 
-    @Transactional
     public void execute(final UUID workflowRunId) {
+        final StopAttempt attempt = this.transactions.execute(status -> this.prepare(workflowRunId));
+        if (attempt == null || attempt.resolved()) {
+            return;
+        }
+
+        final List<UUID> failedNodeRunIds = new ArrayList<>();
+        for (final CancellationAction cancellation : attempt.cancellations()) {
+            try {
+                cancellation.action().run();
+            } catch (final RuntimeException exception) {
+                failedNodeRunIds.add(cancellation.nodeRunId());
+                log.warn("Committed workflow provider cancellation failed workflowRunId={} nodeRunId={}",
+                        workflowRunId, cancellation.nodeRunId(), exception);
+            }
+        }
+
+        this.transactions.executeWithoutResult(status ->
+                this.recordOutcome(workflowRunId, attempt.attempt(), failedNodeRunIds));
+        if (!failedNodeRunIds.isEmpty()) {
+            throw new ConflictException(
+                    INTERRUPT_FAILED,
+                    "The workflow run was cancelled, but provider interruption could not be verified. Retry stop."
+            );
+        }
+    }
+
+    private StopAttempt prepare(final UUID workflowRunId) {
         final WorkflowRun run = this.workflowRunRepository.findByIdForUpdate(workflowRunId)
                 .orElseThrow(() -> new NotFoundException("WORKFLOW_RUN_NOT_FOUND", "Workflow run was not found."));
         if (run.status() == WorkflowRunStatus.CANCELLED) {
-            return;
+            return this.prepareRetry(run);
         }
         if (run.status() == WorkflowRunStatus.SUCCEEDED || run.status() == WorkflowRunStatus.FAILED) {
             throw new ConflictException(NOT_CANCELLABLE, "The workflow run has already finished and cannot be stopped.");
@@ -52,16 +79,16 @@ public class CancelWorkflowRunUseCase {
                 .filter(nodeRun -> nodeRun.status() == NodeRunStatus.PENDING
                         || nodeRun.status() == NodeRunStatus.RUNNING)
                 .toList();
-        final List<Runnable> cancellations = new ArrayList<>();
+        final List<CancellationAction> cancellations = new ArrayList<>();
         for (final NodeRun nodeRun : active) {
             if (nodeRun.status() != NodeRunStatus.RUNNING) {
                 continue;
             }
-            cancellations.add(this.agentExecutor.secureCancellation(nodeRun.id())
-                    .orElseThrow(() -> new ConflictException(
-                            INTERRUPT_UNAVAILABLE,
-                            "The active agent execution cannot be interrupted safely. Try again after its state changes."
-                    )));
+            cancellations.add(new CancellationAction(
+                    nodeRun.id(),
+                    this.agentExecutor.secureCancellation(nodeRun.id())
+                            .orElseThrow(this::interruptUnavailable)
+            ));
         }
 
         if (!this.coordinator.cancelActiveNodeRuns(run)) {
@@ -70,32 +97,65 @@ public class CancelWorkflowRunUseCase {
                     "The workflow run changed while it was being stopped. No cancellation was committed."
             );
         }
-        this.workflowRunRepository.saveLifecycle(this.cancelled(run));
-        this.afterCommit(cancellations);
+        final long attempt = run.operatorStopAttempt() + 1;
+        this.workflowRunRepository.saveLifecycle(this.withOperatorStop(
+                this.cancelled(run),
+                OperatorStopStatus.PENDING,
+                null,
+                cancellations.stream().map(CancellationAction::nodeRunId).toList(),
+                attempt
+        ));
+        return new StopAttempt(false, attempt, List.copyOf(cancellations));
     }
 
-    private void afterCommit(final List<Runnable> cancellations) {
-        if (cancellations.isEmpty()) {
+    private StopAttempt prepareRetry(final WorkflowRun run) {
+        if (run.operatorStopStatus() == null || run.operatorStopStatus() == OperatorStopStatus.COMPLETE) {
+            return StopAttempt.resolvedAttempt();
+        }
+        if (run.operatorStopPendingNodeRunIds().isEmpty()) {
+            throw this.interruptUnavailable();
+        }
+
+        final List<CancellationAction> cancellations = run.operatorStopPendingNodeRunIds().stream()
+                .map(nodeRunId -> new CancellationAction(
+                        nodeRunId,
+                        this.agentExecutor.secureCancellation(nodeRunId)
+                                .orElseThrow(this::interruptUnavailable)
+                ))
+                .toList();
+        final long attempt = run.operatorStopAttempt() + 1;
+        this.workflowRunRepository.saveLifecycle(this.withOperatorStop(
+                run,
+                OperatorStopStatus.PENDING,
+                null,
+                run.operatorStopPendingNodeRunIds(),
+                attempt
+        ));
+        return new StopAttempt(false, attempt, cancellations);
+    }
+
+    private void recordOutcome(final UUID workflowRunId, final long attempt, final List<UUID> failedNodeRunIds) {
+        final WorkflowRun run = this.workflowRunRepository.findByIdForUpdate(workflowRunId)
+                .orElseThrow(() -> new NotFoundException("WORKFLOW_RUN_NOT_FOUND", "Workflow run was not found."));
+        if (run.status() != WorkflowRunStatus.CANCELLED
+                || run.operatorStopStatus() != OperatorStopStatus.PENDING
+                || run.operatorStopAttempt() != attempt) {
             return;
         }
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            throw new IllegalStateException("Workflow run cancellation requires transaction synchronization.");
-        }
-        final List<Runnable> secured = List.copyOf(cancellations);
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                secured.forEach(CancelWorkflowRunUseCase.this::invokeCancellation);
-            }
-        });
+        this.workflowRunRepository.saveLifecycle(this.withOperatorStop(
+                run,
+                failedNodeRunIds.isEmpty() ? OperatorStopStatus.COMPLETE : OperatorStopStatus.FAILED,
+                failedNodeRunIds.isEmpty() ? null : INTERRUPT_FAILED,
+                failedNodeRunIds,
+                attempt
+        ));
     }
 
-    private void invokeCancellation(final Runnable cancellation) {
-        try {
-            cancellation.run();
-        } catch (final RuntimeException exception) {
-            log.warn("Committed workflow cancellation action failed", exception);
-        }
+    private ConflictException interruptUnavailable() {
+        return new ConflictException(
+                INTERRUPT_UNAVAILABLE,
+                "The provider interruption handle is no longer available."
+        );
     }
 
     private WorkflowRun cancelled(final WorkflowRun run) {
@@ -103,7 +163,29 @@ public class CancelWorkflowRunUseCase {
                 run.id(), run.projectId(), run.sourceWorkflowId(), run.taskId(), run.workflowName(), run.input(),
                 WorkflowRunStatus.CANCELLED, run.nodeRuns(), run.connectionResolutions(), run.executionEdges(),
                 run.runtimeGraph(), run.result(), run.resultSourceNodeRunId(), run.createdAt(), run.startedAt(),
-                run.finishedAt() == null ? Instant.now(this.clock) : run.finishedAt(), run.repositoryIds()
+                run.finishedAt() == null ? Instant.now(this.clock) : run.finishedAt(), run.repositoryIds(),
+                run.operatorStopStatus(), run.operatorStopFailureCode(), run.operatorStopPendingNodeRunIds(),
+                run.operatorStopAttempt()
         );
+    }
+
+    private WorkflowRun withOperatorStop(final WorkflowRun run, final OperatorStopStatus status,
+                                         final String failureCode, final List<UUID> pendingNodeRunIds,
+                                         final long attempt) {
+        return new WorkflowRun(
+                run.id(), run.projectId(), run.sourceWorkflowId(), run.taskId(), run.workflowName(), run.input(),
+                run.status(), run.nodeRuns(), run.connectionResolutions(), run.executionEdges(), run.runtimeGraph(),
+                run.result(), run.resultSourceNodeRunId(), run.createdAt(), run.startedAt(), run.finishedAt(),
+                run.repositoryIds(), status, failureCode, pendingNodeRunIds, attempt
+        );
+    }
+
+    private record CancellationAction(UUID nodeRunId, Runnable action) {
+    }
+
+    private record StopAttempt(boolean resolved, long attempt, List<CancellationAction> cancellations) {
+        private static StopAttempt resolvedAttempt() {
+            return new StopAttempt(true, 0, List.of());
+        }
     }
 }

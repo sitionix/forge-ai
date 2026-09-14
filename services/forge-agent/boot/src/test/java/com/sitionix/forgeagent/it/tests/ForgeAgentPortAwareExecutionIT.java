@@ -54,6 +54,7 @@ import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
+import com.sitionix.forgeagent.domain.model.OperatorStopStatus;
 import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.ProjectTaskDetails;
 import com.sitionix.forgeagent.domain.model.WorkflowConnection;
@@ -423,8 +424,11 @@ class ForgeAgentPortAwareExecutionIT {
 
         assertThatThrownBy(() -> execution.get(10, TimeUnit.SECONDS))
                 .isInstanceOf(java.util.concurrent.ExecutionException.class);
-        assertThat(this.workflowRunRepository.findById(cancelledRun.id()).orElseThrow().status())
-                .isEqualTo(WorkflowRunStatus.CANCELLED);
+        assertThat(this.workflowRunRepository.findById(cancelledRun.id()).orElseThrow()).satisfies(stopped -> {
+            assertThat(stopped.status()).isEqualTo(WorkflowRunStatus.CANCELLED);
+            assertThat(stopped.operatorStopStatus()).isEqualTo(OperatorStopStatus.COMPLETE);
+            assertThat(stopped.operatorStopFailureCode()).isNull();
+        });
         assertThat(this.nodeRunRepository.findByWorkflowRunId(cancelledRun.id()))
                 .singleElement()
                 .satisfies(nodeRun -> assertThat(nodeRun.status()).isEqualTo(NodeRunStatus.CANCELLED));
