@@ -113,16 +113,23 @@ For each bounded poll:
 4. validate persisted provider ID, version, conversation ID, and turn ID;
 5. derive the absolute inspection deadline as the earlier of recovery lease expiry minus a three-second
    repository-commit reserve and application clock time plus the 27-second maximum inspection budget;
-6. resolve the execution workspace and invoke the provider-neutral inspector outside a transaction;
+6. resolve the execution workspace and invoke the provider-neutral inspector on a dedicated virtual thread outside
+   a transaction, waiting only until the absolute inspection deadline;
 7. map inspection exceptions, timeouts, unsupported contracts, malformed data, and identity contradictions to `UNKNOWN`;
 8. submit one fenced reconciliation command;
 9. report one recovered item only after an authoritative commit; a stale result is rejected and is not counted.
 
-The service contains no Codex JSON parsing. The worker contains no provider branching.
-The Codex adapter subtracts its configured process-cleanup reserve from that deadline. Initialize and every
-`thread/turns/list` page cap their individual timeout to the remaining request budget; cleanup uses the remaining
-overall budget. Deadline exhaustion fails closed as `UNKNOWN`, without extending the 30-second recovery lease or
-adding a heartbeat.
+The service contains no Codex JSON parsing. The worker contains no provider branching. If an inspector ignores
+interruption or produces a late result, the application commits `UNKNOWN` from the timed wait; that late result has
+no repository callback and cannot mutate reconciliation state.
+
+The Codex adapter supervises its complete fresh-process lifecycle on a dedicated virtual thread. It subtracts its
+configured graceful-plus-force cleanup reserve from the provider phase, atomically owns any process returned by the
+starter, and force-terminates a process that is registered after cancellation. Initialize and every
+`thread/turns/list` page cap their individual timeout to the remaining request budget. If synchronous start,
+JSON-RPC write/flush, or stdin close blocks, the supervising thread aborts the owned process to unblock its pipes and
+waits no later than the overall inspection deadline. Normal successful inspection does not issue the force path.
+Deadline exhaustion fails closed as `UNKNOWN`, without extending the 30-second recovery lease or adding a heartbeat.
 
 ## Reconciliation semantics
 
@@ -208,6 +215,10 @@ Using fresh fake app-server processes, cover:
 - unknown turn;
 - inspection failure and timeout;
 - slow multi-page inspection shares one deadline, and timeout plus process cleanup remains inside it;
+- blocking process start, JSON-RPC write/flush, and stdin close all return `UNKNOWN` within the total lifecycle
+  deadline; a process returned after cancellation is force-terminated;
+- process registration versus cancellation is linearizable, force termination is idempotent, and successful
+  inspection does not issue an unnecessary force kill;
 - unsupported version without launching a process;
 - identity mismatch and ambiguous response;
 - absence of `thread/read(includeTurns=true)`, `thread/start`, `thread/resume`, and `turn/start` during recovery;

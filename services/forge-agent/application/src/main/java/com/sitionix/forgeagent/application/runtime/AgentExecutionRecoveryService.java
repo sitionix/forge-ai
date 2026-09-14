@@ -11,6 +11,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -69,13 +73,45 @@ public class AgentExecutionRecoveryService {
             if (!deadline.isAfter(now)) {
                 return ProviderTurnRecoveryResult.unknown("Recovery lease does not permit provider inspection.");
             }
-            final var result = supported.getFirst().inspect(new AgentExecutionRecoveryInspection(
+            final var inspection = new AgentExecutionRecoveryInspection(
                     claim.providerId(), claim.providerVersion(), claim.providerConversationId(), claim.providerTurnId(),
-                    workspace, deadline));
+                    workspace, deadline);
+            final var result = this.inspectWithinDeadline(supported.getFirst(), inspection);
             return result == null ? ProviderTurnRecoveryResult.unknown("Provider inspection returned no evidence.") : result;
         } catch (final RuntimeException exception) {
             // Provider diagnostics may contain transport/workspace details: persist a bounded, neutral explanation.
             return ProviderTurnRecoveryResult.unknown("Provider inspection or execution workspace resolution failed.");
+        }
+    }
+
+    private ProviderTurnRecoveryResult inspectWithinDeadline(final AgentExecutionRecoveryInspector inspector,
+                                                              final AgentExecutionRecoveryInspection inspection) {
+        final CompletableFuture<ProviderTurnRecoveryResult> result = new CompletableFuture<>();
+        final Thread worker = Thread.ofVirtual()
+                .name("forge-agent-recovery-inspection-" + this.ownerId)
+                .start(() -> {
+                    try {
+                        result.complete(inspector.inspect(inspection));
+                    } catch (final RuntimeException exception) {
+                        result.completeExceptionally(exception);
+                    }
+                });
+        try {
+            final Duration remaining = Duration.between(this.clock.instant(), inspection.deadline());
+            if (remaining.isZero() || remaining.isNegative()) {
+                worker.interrupt();
+                return ProviderTurnRecoveryResult.unknown("Provider inspection exceeded the recovery deadline.");
+            }
+            return result.get(remaining.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (final TimeoutException exception) {
+            worker.interrupt();
+            return ProviderTurnRecoveryResult.unknown("Provider inspection exceeded the recovery deadline.");
+        } catch (final InterruptedException exception) {
+            worker.interrupt();
+            Thread.currentThread().interrupt();
+            return ProviderTurnRecoveryResult.unknown("Provider inspection was interrupted before the recovery deadline.");
+        } catch (final ExecutionException exception) {
+            return ProviderTurnRecoveryResult.unknown("Provider inspection failed before the recovery deadline.");
         }
     }
 

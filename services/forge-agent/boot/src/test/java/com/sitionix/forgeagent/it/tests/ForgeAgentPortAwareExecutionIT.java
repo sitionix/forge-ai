@@ -12,6 +12,7 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.WORKFLOW
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -97,7 +98,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
@@ -108,7 +108,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -1268,27 +1267,49 @@ class ForgeAgentPortAwareExecutionIT {
                 org.mockito.AdditionalAnswers.delegatesTo(this.agentExecutionSessionRepository));
         doReturn(Optional.of(shortClaim)).when(deadlineRepository).claimExpiredRecovery(any());
         final AgentExecutionRecoveryInspector deadlineInspector = mock(AgentExecutionRecoveryInspector.class);
+        final var inspectionStarted = new java.util.concurrent.CountDownLatch(1);
+        final var releaseInspection = new java.util.concurrent.CountDownLatch(1);
+        final var inspectionExited = new java.util.concurrent.CountDownLatch(1);
         when(deadlineInspector.supports("codex", "0.154.0")).thenReturn(true);
         when(deadlineInspector.inspect(any())).thenAnswer(invocation -> {
             final AgentExecutionRecoveryInspection inspection = invocation.getArgument(0);
             assertThat(inspection.deadline()).isEqualTo(shortExpiry.minusSeconds(3));
-            while (Instant.now().isBefore(inspection.deadline())) {
-                final long remaining = Duration.between(Instant.now(), inspection.deadline()).toNanos();
-                LockSupport.parkNanos(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(50)));
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            inspectionStarted.countDown();
+            boolean interrupted = false;
+            while (true) {
+                try {
+                    releaseInspection.await();
+                    break;
+                } catch (final InterruptedException exception) {
+                    interrupted = true;
+                }
             }
-            return ProviderTurnRecoveryResult.unknown("Provider deadline reached.");
+            inspectionExited.countDown();
+            if (interrupted) Thread.currentThread().interrupt();
+            return ProviderTurnRecoveryResult.terminal(
+                    ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Late result must be ignored.");
         });
         final var deadlineService = new AgentExecutionRecoveryService(
                 deadlineRepository, List.of(deadlineInspector), this.workflowRunRepository,
                 this.workspaceResolver, Clock.systemUTC());
 
-        assertThat(deadlineService.reconcileExpired()).isEqualTo(1);
-
-        assertThat(this.jdbcTemplate.queryForObject("SELECT clock_timestamp()", java.sql.Timestamp.class).toInstant())
-                .isBefore(shortExpiry);
+        try {
+            assertThat(deadlineService.reconcileExpired()).isEqualTo(1);
+            this.awaitLatch(inspectionStarted);
+            assertThat(this.jdbcTemplate.queryForObject(
+                    "SELECT clock_timestamp()", java.sql.Timestamp.class).toInstant()).isBefore(shortExpiry);
+            assertThat(this.agentExecutionSessionRepository.findByNodeRunId(normal.nodeRunId()).orElseThrow().turn()
+                    .providerRecoveryState()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+            assertThat(this.agentExecutionSessionRepository.claimExpiredRecovery("deadline-reclaim")).isEmpty();
+            verify(deadlineRepository).reconcileRecovery(eq(shortClaim), any());
+        } finally {
+            releaseInspection.countDown();
+        }
+        this.awaitLatch(inspectionExited);
         assertThat(this.agentExecutionSessionRepository.findByNodeRunId(normal.nodeRunId()).orElseThrow().turn()
                 .providerRecoveryState()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
-        assertThat(this.agentExecutionSessionRepository.claimExpiredRecovery("deadline-reclaim")).isEmpty();
+        verify(deadlineRepository).reconcileRecovery(eq(shortClaim), any());
     }
 
     @Test

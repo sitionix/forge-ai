@@ -29,7 +29,10 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -184,6 +187,38 @@ class AgentExecutionRecoveryServiceTest {
     }
 
     @Test
+    void deadlinePersistsUnknownAndIgnoresLateInspectorResultOutsideTransaction() throws Exception {
+        this.claim = this.withLeaseExpiry(this.claim, NOW.plusMillis(3_080));
+        this.inspectable();
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final CountDownLatch exited = new CountDownLatch(1);
+        when(this.inspector.inspect(any())).thenAnswer(call -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            entered.countDown();
+            awaitUninterruptibly(release);
+            exited.countDown();
+            return ProviderTurnRecoveryResult.terminal(
+                    ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "late terminal result");
+        });
+        final CompletableFuture<Integer> reconciliation = CompletableFuture.supplyAsync(this.service::reconcileExpired);
+
+        try {
+            assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(reconciliation.get(400, TimeUnit.MILLISECONDS)).isEqualTo(1);
+            this.assertUnknown(this.reconciliation());
+            verify(this.sessions, times(1)).reconcileRecovery(eq(this.claim), any());
+
+            release.countDown();
+            assertThat(exited.await(1, TimeUnit.SECONDS)).isTrue();
+            verify(this.sessions, times(1)).reconcileRecovery(eq(this.claim), any());
+        } finally {
+            release.countDown();
+            reconciliation.get(1, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void workerIdentityIsStablePerInstanceAndDistinctAcrossInstances() {
         when(this.sessions.claimExpiredRecovery(anyString())).thenReturn(Optional.empty());
         this.service.reconcileExpired();
@@ -268,6 +303,19 @@ class AgentExecutionRecoveryServiceTest {
         assertThat(result.failureCode()).isEqualTo("AGENT_EXECUTION_RECOVERY_UNKNOWN");
         assertThat(result.failureMessage()).isNotBlank();
         assertThat(result.providerTerminalOutcome()).isNull();
+    }
+
+    private static void awaitUninterruptibly(final CountDownLatch latch) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                latch.await();
+                break;
+            } catch (final InterruptedException exception) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
     private static final class TestTransactionManager extends AbstractPlatformTransactionManager {

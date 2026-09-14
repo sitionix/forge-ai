@@ -10,13 +10,18 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import org.springframework.stereotype.Component;
 
 @Component
 final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
 
     private static final String PROVIDER_ID = "codex";
+    private static final AtomicLong INSPECTION_IDS = new AtomicLong();
 
     private final ObjectMapper objectMapper;
     private final CodexAppServerProcessStarter processStarter;
@@ -53,36 +58,93 @@ final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
         if (!requestDeadline.isAfter(this.clock.instant())) {
             return ProviderTurnRecoveryResult.unknown("Codex recovery deadline does not permit process inspection");
         }
+        final Instant forceDeadline = inspection.deadline().minus(this.properties.getForceKillTimeout());
+        final CodexRecoveryLifecycle lifecycle = new CodexRecoveryLifecycle();
+        final CompletableFuture<Void> providerPhaseFinished = new CompletableFuture<>();
+        final CompletableFuture<ProviderTurnRecoveryResult> result = new CompletableFuture<>();
+        final CompletableFuture<Void> workerExited = new CompletableFuture<>();
+        final Thread worker = Thread.ofVirtual()
+                .name("forge-agent-codex-recovery-" + INSPECTION_IDS.incrementAndGet())
+                .start(() -> {
+                    try {
+                        result.complete(this.inspectOwned(inspection, requestDeadline, lifecycle, providerPhaseFinished));
+                    } catch (final RuntimeException exception) {
+                        result.complete(ProviderTurnRecoveryResult.unknown("Codex recovery lifecycle failed: "
+                                + exception.getClass().getSimpleName()));
+                    } finally {
+                        providerPhaseFinished.complete(null);
+                        workerExited.complete(null);
+                    }
+                });
+        try {
+            this.await(providerPhaseFinished, requestDeadline);
+        } catch (final TimeoutException exception) {
+            this.abortAndAwait(lifecycle, worker, workerExited, inspection.deadline());
+            return ProviderTurnRecoveryResult.unknown("Codex recovery provider phase exceeded its deadline");
+        } catch (final InterruptedException exception) {
+            lifecycle.abort();
+            worker.interrupt();
+            Thread.currentThread().interrupt();
+            return ProviderTurnRecoveryResult.unknown("Codex recovery inspection was interrupted");
+        } catch (final ExecutionException exception) {
+            this.abortAndAwait(lifecycle, worker, workerExited, inspection.deadline());
+            return ProviderTurnRecoveryResult.unknown("Codex recovery provider phase failed");
+        }
+        try {
+            return this.await(result, forceDeadline);
+        } catch (final TimeoutException exception) {
+            this.abortAndAwait(lifecycle, worker, workerExited, inspection.deadline());
+            return ProviderTurnRecoveryResult.unknown("Codex recovery cleanup exceeded its graceful deadline");
+        } catch (final InterruptedException exception) {
+            lifecycle.abort();
+            worker.interrupt();
+            Thread.currentThread().interrupt();
+            return ProviderTurnRecoveryResult.unknown("Codex recovery cleanup was interrupted");
+        } catch (final ExecutionException exception) {
+            this.abortAndAwait(lifecycle, worker, workerExited, inspection.deadline());
+            return ProviderTurnRecoveryResult.unknown("Codex recovery cleanup failed");
+        }
+    }
+
+    private ProviderTurnRecoveryResult inspectOwned(final AgentExecutionRecoveryInspection inspection,
+                                                    final Instant requestDeadline,
+                                                    final CodexRecoveryLifecycle lifecycle,
+                                                    final CompletableFuture<Void> providerPhaseFinished) {
         StartedCodexAppServer started = null;
         CodexJsonRpcTransport transport = null;
         ProviderTurnRecoveryResult result;
         try {
             started = this.processStarter.start(inspection.executionWorkspace().cwd());
-            transport = new CodexJsonRpcTransport(
-                    this.objectMapper,
-                    started,
-                    this.properties,
-                    this.clock,
-                    inspection.deadline()
-            );
-            final String liveVersion = this.initialize(transport, requestDeadline);
-            if (!CodexAppServerClient.SUPPORTED_RECOVERY_VERSION.equals(liveVersion)
-                    || !Objects.equals(inspection.providerVersion(), liveVersion)) {
-                result = ProviderTurnRecoveryResult.unknown(
-                        "Codex recovery live version did not match persisted version");
+            if (!lifecycle.register(started.process()) || lifecycle.aborted()) {
+                result = ProviderTurnRecoveryResult.unknown("Codex recovery process started after cancellation");
             } else {
-                result = this.recoveryProtocol.inspectTurn(
-                        transport,
-                        inspection.providerConversationId(),
-                        inspection.providerTurnId(),
-                        requestDeadline,
-                        this.properties.getRequestTimeout()
+                transport = new CodexJsonRpcTransport(
+                        this.objectMapper,
+                        started,
+                        this.properties,
+                        this.clock,
+                        inspection.deadline()
                 );
+                final String liveVersion = this.initialize(transport, requestDeadline);
+                if (!CodexAppServerClient.SUPPORTED_RECOVERY_VERSION.equals(liveVersion)
+                        || !Objects.equals(inspection.providerVersion(), liveVersion)) {
+                    result = ProviderTurnRecoveryResult.unknown(
+                            "Codex recovery live version did not match persisted version");
+                } else {
+                    result = this.recoveryProtocol.inspectTurn(
+                            transport,
+                            inspection.providerConversationId(),
+                            inspection.providerTurnId(),
+                            requestDeadline,
+                            this.properties.getRequestTimeout()
+                    );
+                }
             }
         } catch (final RuntimeException exception) {
             result = ProviderTurnRecoveryResult.unknown("Codex recovery process failed: "
                     + exception.getClass().getSimpleName());
         }
+        providerPhaseFinished.complete(null);
         try {
             if (transport != null) {
                 transport.close();
@@ -97,6 +159,28 @@ final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
             return ProviderTurnRecoveryResult.unknown("Codex recovery deadline was exhausted during cleanup");
         }
         return result;
+    }
+
+    private <T> T await(final CompletableFuture<T> future, final Instant deadline)
+            throws InterruptedException, ExecutionException, TimeoutException {
+        final Duration remaining = Duration.between(this.clock.instant(), deadline);
+        if (remaining.isZero() || remaining.isNegative()) {
+            throw new TimeoutException("Codex recovery lifecycle deadline exhausted");
+        }
+        return future.get(remaining.toNanos(), TimeUnit.NANOSECONDS);
+    }
+
+    private void abortAndAwait(final CodexRecoveryLifecycle lifecycle, final Thread worker,
+                               final CompletableFuture<Void> workerExited, final Instant deadline) {
+        lifecycle.abort();
+        worker.interrupt();
+        try {
+            this.await(workerExited, deadline);
+        } catch (final TimeoutException | ExecutionException ignored) {
+            // The process abort is already issued; never wait beyond the authoritative inspection deadline.
+        } catch (final InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void closeUnownedProcess(final Process process, final Instant deadline) {
