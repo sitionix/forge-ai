@@ -1,7 +1,9 @@
 package com.sitionix.forgeagent.application.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -23,6 +25,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -52,6 +55,43 @@ class NodeRunWorkerTest {
     void setUp() {
         this.executorService = Executors.newVirtualThreadPerTaskExecutor();
         this.worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, this.agentExecutor, this.executorService, this.recoveryService);
+    }
+
+    @Test
+    void reconcilesExpiredExecutionOnceBeforeScanningPendingNodeRuns() {
+        when(this.nodeRunRepository.findPendingIds()).thenReturn(List.of());
+
+        this.worker.poll();
+
+        final InOrder order = inOrder(this.recoveryService, this.nodeRunRepository);
+        order.verify(this.recoveryService, times(1)).reconcileExpired();
+        order.verify(this.nodeRunRepository, times(1)).findPendingIds();
+        order.verifyNoMoreInteractions();
+    }
+
+    @Test
+    void orphanReturnedByHostilePendingScanIsNotSubmittedWhileUnrelatedNodeRunsOnce() {
+        when(this.nodeRunRepository.findPendingIds()).thenReturn(List.of(NODE_RUN_A, NODE_RUN_B));
+        when(this.lifecycle.tryStart(NODE_RUN_A)).thenReturn(Optional.empty());
+        when(this.lifecycle.tryStart(NODE_RUN_B)).thenReturn(Optional.of(this.claim(NODE_RUN_B)));
+        when(this.agentExecutor.execute(this.claim(NODE_RUN_B)))
+                .thenReturn(new AgentExecutionResult(new NodeRunOutput("{\"ok\":true}"), null));
+
+        this.worker.poll();
+        this.executorService.close();
+
+        verify(this.lifecycle, times(1)).tryStart(NODE_RUN_A);
+        verify(this.lifecycle, times(1)).tryStart(NODE_RUN_B);
+        verify(this.agentExecutor, never()).execute(this.claim(NODE_RUN_A));
+        verify(this.agentExecutor, times(1)).execute(this.claim(NODE_RUN_B));
+        verify(this.lifecycle, never()).succeed(
+                org.mockito.ArgumentMatchers.eq(NODE_RUN_A),
+                org.mockito.ArgumentMatchers.any(AgentExecutionResult.class)
+        );
+        verify(this.lifecycle, times(1)).succeed(
+                NODE_RUN_B,
+                new AgentExecutionResult(new NodeRunOutput("{\"ok\":true}"), null)
+        );
     }
 
     @AfterEach
