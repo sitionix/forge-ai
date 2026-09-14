@@ -1,6 +1,8 @@
 package com.sitionix.forgeagent.domain.port;
 
 import com.sitionix.forgeagent.domain.model.AgentExecutionAllocation;
+import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryClaim;
+import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryReconciliation;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus;
 import com.sitionix.forgeagent.domain.model.NodeRun;
@@ -20,6 +22,10 @@ public interface AgentExecutionSessionRepository {
     boolean finish(UUID sessionId, UUID turnId, String ownerId, long token,
                    AgentExecutionTurnStatus turnStatus, String failureCode, String failureMessage,
                    boolean sessionCorrupting);
+    Optional<AgentExecutionRecoveryClaim> claimExpiredRecovery(String ownerId);
+    boolean reconcileRecovery(AgentExecutionRecoveryClaim claim, AgentExecutionRecoveryReconciliation reconciliation);
+    /** Temporary bridge until application recovery orchestration migrates to claim/reconcile. */
+    @Deprecated
     int recoverExpired(String ownerId);
     boolean cancel(UUID nodeRunId);
 }

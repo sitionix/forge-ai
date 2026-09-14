@@ -153,6 +153,130 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
 
     @Override
     @Transactional
+    public Optional<AgentExecutionRecoveryClaim> claimExpiredRecovery(final String ownerId) {
+        final List<RecoveryTarget> candidates = this.jdbc.query("""
+                SELECT s.id,s.workflow_run_id,s.active_node_run_id,t.id turn_id
+                  FROM agent_execution_sessions s
+                  JOIN agent_execution_turns t ON t.agent_session_id=s.id AND t.node_run_id=s.active_node_run_id
+                 WHERE s.lease_owner_id IS NOT NULL AND s.lease_expires_at<=CURRENT_TIMESTAMP
+                   AND s.status IN ('CREATING','RESUMING','ACTIVE') AND t.status IN ('STARTING','ACTIVE')
+                   AND (t.recovery_lease_expires_at IS NULL OR t.recovery_lease_expires_at<=CURRENT_TIMESTAMP)
+                 ORDER BY s.workflow_run_id,s.id LIMIT 1
+                """, (rs, row) -> new RecoveryTarget(rs.getObject("id", UUID.class),
+                rs.getObject("workflow_run_id", UUID.class), rs.getObject("active_node_run_id", UUID.class),
+                rs.getObject("turn_id", UUID.class)));
+        if (candidates.isEmpty()) return Optional.empty();
+        final RecoveryTarget target = candidates.getFirst();
+        final RecoveryNode node = this.lockRecoveryNode(target.workflowRunId(), target.nodeRunId());
+        if (node == null) return Optional.empty();
+        final Optional<AgentExecutionSession> session = this.lockExpiredRecoverySession(
+                target.sessionId(), target.workflowRunId(), target.nodeRunId());
+        if (session.isEmpty()) return Optional.empty();
+        return this.jdbc.query("""
+                UPDATE agent_execution_turns
+                   SET recovery_lease_owner_id=?,recovery_lease_token=recovery_lease_token+1,
+                       recovery_lease_expires_at=CURRENT_TIMESTAMP+INTERVAL '30 seconds',updated_at=CURRENT_TIMESTAMP
+                 WHERE id=? AND agent_session_id=? AND node_run_id=? AND status IN ('STARTING','ACTIVE')
+                   AND (recovery_lease_expires_at IS NULL OR recovery_lease_expires_at<=CURRENT_TIMESTAMP)
+                 RETURNING provider_turn_id,recovery_lease_token,recovery_lease_expires_at
+                """, (rs, row) -> new AgentExecutionRecoveryClaim(target.sessionId(), target.turnId(), target.nodeRunId(),
+                target.workflowRunId(), session.get().repositoryId(), session.get().providerId(), session.get().providerVersion(),
+                session.get().providerConversationId(), rs.getString("provider_turn_id"), session.get().contextMode(),
+                NodeRunStatus.valueOf(node.status()), node.failureCode(), node.failureMessage(), ownerId,
+                rs.getLong("recovery_lease_token"), instant(rs, "recovery_lease_expires_at")),
+                ownerId, target.turnId(), target.sessionId(), target.nodeRunId()).stream().findFirst();
+    }
+
+    @Override
+    @Transactional
+    public boolean reconcileRecovery(final AgentExecutionRecoveryClaim claim,
+                                     final AgentExecutionRecoveryReconciliation reconciliation) {
+        final RecoveryNode node = this.lockRecoveryNode(claim.workflowRunId(), claim.nodeRunId());
+        if (node == null) return false;
+        final Optional<AgentExecutionSession> lockedSession = this.lockExpiredRecoverySession(
+                claim.sessionId(), claim.workflowRunId(), claim.nodeRunId());
+        if (lockedSession.isEmpty()) return false;
+        final List<UUID> turns = this.jdbc.query("""
+                SELECT id FROM agent_execution_turns
+                 WHERE id=? AND agent_session_id=? AND node_run_id=? AND status IN ('STARTING','ACTIVE')
+                   AND recovery_lease_owner_id=? AND recovery_lease_token=? AND recovery_lease_expires_at>CURRENT_TIMESTAMP
+                 FOR UPDATE
+                """, (rs, row) -> rs.getObject(1, UUID.class), claim.turnId(), claim.sessionId(), claim.nodeRunId(),
+                claim.ownerId(), claim.leaseToken());
+        if (turns.isEmpty()) return false;
+
+        final boolean forgeTerminal = reconciliation.disposition() == AgentExecutionRecoveryDisposition.FORGE_TERMINAL;
+        // Terminal Forge truth may have changed while provider inspection ran outside the transaction.
+        if (forgeTerminal != node.terminal() || (!forgeTerminal && !"RUNNING".equals(node.status()))) return false;
+        final AgentExecutionSession session = lockedSession.get();
+        final boolean fresh = session.contextMode() == NodeContextMode.FRESH_EACH_NODE_RUN;
+        final String turnStatus = forgeTerminal ? switch (node.status()) {
+            case "SUCCEEDED" -> "SUCCEEDED";
+            case "CANCELLED" -> "CANCELLED";
+            default -> "FAILED";
+        } : "FAILED";
+        final String failureCode = forgeTerminal ? node.failureCode() : reconciliation.failureCode();
+        final String failureMessage = forgeTerminal ? node.failureMessage() : reconciliation.failureMessage();
+        final String providerState = switch (reconciliation.disposition()) {
+            case FORGE_TERMINAL -> null;
+            case PROVIDER_TERMINAL_RESULT_LOST -> "TERMINAL";
+            case PROVIDER_ACTIVE_FAIL_CLOSED -> "ACTIVE";
+            case PROVIDER_UNKNOWN_FAIL_CLOSED -> "UNKNOWN";
+        };
+        final String providerOutcome = "TERMINAL".equals(providerState) && reconciliation.providerTerminalOutcome() != null
+                ? reconciliation.providerTerminalOutcome().name() : null;
+        final boolean corrupting = forgeTerminal ? this.sessionCorrupting(failureCode)
+                : reconciliation.disposition() != AgentExecutionRecoveryDisposition.PROVIDER_TERMINAL_RESULT_LOST;
+        final String sessionStatus = fresh || "CANCELLED".equals(turnStatus) ? "CLOSED" : corrupting ? "FAILED" : "IDLE";
+        if (!forgeTerminal) {
+            this.jdbc.update("UPDATE node_runs SET status='FAILED',failure_code=?,failure_message=?,finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='RUNNING'",
+                    failureCode, failureMessage, claim.nodeRunId());
+        }
+        this.jdbc.update("""
+                UPDATE agent_execution_turns
+                   SET status=?,failure_code=?,failure_message=?,
+                       event_capture_status=CASE WHEN event_capture_status='ACTIVE' THEN 'DEGRADED' ELSE event_capture_status END,
+                       provider_recovery_state=?,provider_recovery_terminal_outcome=?,
+                       provider_recovery_checked_at=CASE WHEN ? THEN NULL ELSE CURRENT_TIMESTAMP END,
+                       recovery_lease_owner_id=NULL,recovery_lease_expires_at=NULL,
+                       finished_at=COALESCE(finished_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP
+                 WHERE id=?
+                """, turnStatus, failureCode, failureMessage, providerState, providerOutcome, forgeTerminal, claim.turnId());
+        this.jdbc.update("""
+                UPDATE agent_execution_sessions
+                   SET status=?,terminal_outcome=?,active_node_run_id=NULL,lease_owner_id=NULL,lease_expires_at=NULL,
+                       lease_token=lease_token+1,failure_code=?,failure_message=?,
+                       closed_at=CASE WHEN ?='CLOSED' THEN COALESCE(closed_at,CURRENT_TIMESTAMP) ELSE NULL END,
+                       updated_at=CURRENT_TIMESTAMP
+                 WHERE id=?
+                """, sessionStatus, "CLOSED".equals(sessionStatus) ? turnStatus : null,
+                corrupting ? failureCode : null, corrupting ? failureMessage : null, sessionStatus, claim.sessionId());
+        return true;
+    }
+
+    private RecoveryNode lockRecoveryNode(final UUID workflowRunId, final UUID nodeRunId) {
+        // Match normal completion: WorkflowRun -> NodeRun -> session -> exact turn.
+        final List<UUID> workflows = this.jdbc.query("SELECT id FROM workflow_runs WHERE id=? FOR UPDATE",
+                (rs, row) -> rs.getObject(1, UUID.class), workflowRunId);
+        if (workflows.isEmpty()) return null;
+        return this.jdbc.query("SELECT status,failure_code,failure_message FROM node_runs WHERE id=? AND workflow_run_id=? FOR UPDATE",
+                (rs, row) -> new RecoveryNode(rs.getString("status"), rs.getString("failure_code"), rs.getString("failure_message")),
+                nodeRunId, workflowRunId).stream().findFirst().orElse(null);
+    }
+
+    private Optional<AgentExecutionSession> lockExpiredRecoverySession(final UUID sessionId, final UUID workflowRunId,
+                                                                      final UUID nodeRunId) {
+        return this.jdbc.query("""
+                SELECT * FROM agent_execution_sessions
+                 WHERE id=? AND workflow_run_id=? AND active_node_run_id=?
+                   AND lease_owner_id IS NOT NULL AND lease_expires_at<=CURRENT_TIMESTAMP
+                   AND status IN ('CREATING','RESUMING','ACTIVE') FOR UPDATE
+                """, this::session, sessionId, workflowRunId, nodeRunId).stream().findFirst();
+    }
+
+    @Override
+    @Deprecated
+    @Transactional
     public int recoverExpired(final String ownerId) {
         final List<RecoveryCandidate> expired = this.jdbc.query(
                 "SELECT id,workflow_run_id,active_node_run_id FROM agent_execution_sessions WHERE lease_owner_id IS NOT NULL AND lease_expires_at<=CURRENT_TIMESTAMP AND status IN ('CREATING','RESUMING','ACTIVE') ORDER BY workflow_run_id,id LIMIT 1",
@@ -293,5 +417,8 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     }
 
     private record RecoveryCandidate(UUID sessionId, UUID workflowRunId, UUID nodeRunId) {
+    }
+
+    private record RecoveryTarget(UUID sessionId, UUID workflowRunId, UUID nodeRunId, UUID turnId) {
     }
 }
