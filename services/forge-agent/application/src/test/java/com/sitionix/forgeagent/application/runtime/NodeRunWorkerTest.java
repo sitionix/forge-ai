@@ -42,6 +42,8 @@ class NodeRunWorkerTest {
     private NodeRunLifecycle lifecycle;
     @Mock
     private AgentExecutor agentExecutor;
+    @Mock
+    private AgentExecutionRecoveryService recoveryService;
 
     private ExecutorService executorService;
     private NodeRunWorker worker;
@@ -49,7 +51,7 @@ class NodeRunWorkerTest {
     @BeforeEach
     void setUp() {
         this.executorService = Executors.newVirtualThreadPerTaskExecutor();
-        this.worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, this.agentExecutor, this.executorService);
+        this.worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, this.agentExecutor, this.executorService, this.recoveryService);
     }
 
     @AfterEach

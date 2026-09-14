@@ -187,10 +187,6 @@ public class NodeRunLifecycle {
         ));
     }
 
-    public int recoverExpiredSessions() {
-        return this.sessionLeaseService.recoverExpired(this.leaseOwnerId);
-    }
-
     public void succeed(final UUID nodeRunId, final AgentExecutionResult result) {
         this.succeed(nodeRunId, result, null);
     }

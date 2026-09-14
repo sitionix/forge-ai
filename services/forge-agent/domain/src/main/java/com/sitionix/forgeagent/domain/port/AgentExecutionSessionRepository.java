@@ -24,8 +24,5 @@ public interface AgentExecutionSessionRepository {
                    boolean sessionCorrupting);
     Optional<AgentExecutionRecoveryClaim> claimExpiredRecovery(String ownerId);
     boolean reconcileRecovery(AgentExecutionRecoveryClaim claim, AgentExecutionRecoveryReconciliation reconciliation);
-    /** Temporary bridge until application recovery orchestration migrates to claim/reconcile. */
-    @Deprecated
-    int recoverExpired(String ownerId);
     boolean cancel(UUID nodeRunId);
 }

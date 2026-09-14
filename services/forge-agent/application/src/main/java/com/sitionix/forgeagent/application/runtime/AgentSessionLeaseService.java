@@ -21,8 +21,6 @@ public class AgentSessionLeaseService {
         return this.repository.acquire(nodeRunId, ownerId);
     }
 
-    public int recoverExpired(final String ownerId) { return this.repository.recoverExpired(ownerId); }
-
     public void renew(final AgentSessionExecutionClaim claim) {
         if (!this.repository.renew(claim.sessionId(), claim.leaseOwnerId(), claim.leaseToken())) stale();
     }

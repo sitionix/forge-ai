@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.AgentExecutor;
 import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryService;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionPersistence;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionProcessor;
@@ -181,6 +182,8 @@ class ForgeAgentPortAwareExecutionIT {
     private DeterministicCodexRuntimePort codexRuntimePort;
     @Autowired
     private AgentSessionLeaseService agentSessionLeaseService;
+    @Autowired
+    private AgentExecutionRecoveryService recoveryService;
     @Autowired
     private AgentExecutor agentExecutor;
     @Autowired
@@ -797,7 +800,7 @@ class ForgeAgentPortAwareExecutionIT {
                 staleClaim.agentSessionClaim().sessionId()
         );
 
-        assertThat(this.lifecycle.recoverExpiredSessions()).isEqualTo(1);
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
         assertThat(this.agentExecutionEventRepository.append(staleClaim.agentSessionClaim(), event(
                 AgentExecutionEventType.WARNING, null, null))).isEqualTo(AgentExecutionEventAppendResult.STALE);
         assertThatThrownBy(() -> this.lifecycle.succeed(
@@ -806,7 +809,7 @@ class ForgeAgentPortAwareExecutionIT {
                 .extracting("code").isEqualTo("STALE_AGENT_SESSION_LEASE");
         assertThat(this.nodeRunRepository.findById(pending.id()).orElseThrow()).satisfies(nodeRun -> {
             assertThat(nodeRun.status()).isEqualTo(NodeRunStatus.FAILED);
-            assertThat(nodeRun.failure().code()).isEqualTo("AGENT_CONTEXT_PERSISTENCE_FAILED");
+            assertThat(nodeRun.failure().code()).isEqualTo("AGENT_EXECUTION_RECOVERY_UNKNOWN");
         });
         assertThat(this.agentExecutionSessionRepository.findByNodeRunId(pending.id()).orElseThrow())
                 .satisfies(allocation -> {
@@ -840,7 +843,7 @@ class ForgeAgentPortAwareExecutionIT {
                 "UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id=?",
                 claim.agentSessionClaim().sessionId());
 
-        assertThat(this.lifecycle.recoverExpiredSessions()).isEqualTo(1);
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
 
         assertThat(this.captureStatus(claim.agentSessionClaim().turnId()))
                 .isEqualTo("NULL".equals(captureStatus) ? null : captureStatus);
@@ -871,7 +874,7 @@ class ForgeAgentPortAwareExecutionIT {
                 "UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id=?",
                 claim.agentSessionClaim().sessionId());
 
-        assertThat(this.lifecycle.recoverExpiredSessions()).isEqualTo(1);
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
 
         assertThat(this.captureStatus(claim.agentSessionClaim().turnId()))
                 .isEqualTo(switch (captureStatus) {

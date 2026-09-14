@@ -22,22 +22,24 @@ public class NodeRunWorker {
     private final ExecutorService executorService;
     private final ScheduledExecutorService heartbeatExecutor;
     private final AgentSessionLeaseService sessionLeaseService;
+    private final AgentExecutionRecoveryService recoveryService;
 
     public NodeRunWorker(NodeRunRepository nodeRunRepository, NodeRunLifecycle lifecycle, AgentExecutor agentExecutor,
                          ExecutorService executorService, ScheduledExecutorService heartbeatExecutor,
-                         AgentSessionLeaseService sessionLeaseService) {
+                         AgentSessionLeaseService sessionLeaseService, AgentExecutionRecoveryService recoveryService) {
         this.nodeRunRepository=nodeRunRepository; this.lifecycle=lifecycle; this.agentExecutor=agentExecutor;
         this.executorService=executorService; this.heartbeatExecutor=heartbeatExecutor; this.sessionLeaseService=sessionLeaseService;
+        this.recoveryService=recoveryService;
     }
 
     NodeRunWorker(NodeRunRepository nodeRunRepository, NodeRunLifecycle lifecycle, AgentExecutor agentExecutor,
-                  ExecutorService executorService) {
+                  ExecutorService executorService, AgentExecutionRecoveryService recoveryService) {
         this(nodeRunRepository, lifecycle, agentExecutor, executorService,
-                Executors.newSingleThreadScheduledExecutor(r -> { var thread=new Thread(r,"agent-session-heartbeat-test"); thread.setDaemon(true); return thread; }), null);
+                Executors.newSingleThreadScheduledExecutor(r -> { var thread=new Thread(r,"agent-session-heartbeat-test"); thread.setDaemon(true); return thread; }), null, recoveryService);
     }
 
     public void poll() {
-        this.lifecycle.recoverExpiredSessions();
+        this.recoveryService.reconcileExpired();
         for (final UUID nodeRunId : this.nodeRunRepository.findPendingIds()) {
             this.lifecycle.tryStart(nodeRunId).ifPresent(this::submit);
         }

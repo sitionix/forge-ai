@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent;
 
 import com.sitionix.forgeagent.application.runtime.AgentExecutor;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryService;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionProcessor;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionWorker;
 import com.sitionix.forgeagent.application.runtime.NodeRunLifecycle;
@@ -41,9 +42,10 @@ class ForgeAgentWorkerConfiguration {
                                 final AgentExecutor agentExecutor,
                                 final ExecutorService nodeRunExecutorService,
                                 final ScheduledExecutorService agentSessionHeartbeatExecutor,
-                                final AgentSessionLeaseService sessionLeaseService) {
+                                final AgentSessionLeaseService sessionLeaseService,
+                                final AgentExecutionRecoveryService recoveryService) {
         return new NodeRunWorker(nodeRunRepository, lifecycle, agentExecutor, nodeRunExecutorService,
-                agentSessionHeartbeatExecutor, sessionLeaseService);
+                agentSessionHeartbeatExecutor, sessionLeaseService, recoveryService);
     }
 
     @Bean
