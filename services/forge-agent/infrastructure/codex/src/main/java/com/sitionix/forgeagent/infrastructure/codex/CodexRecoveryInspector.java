@@ -7,6 +7,7 @@ import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryInspect
 import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryInspector;
 import com.sitionix.forgeagent.application.runtime.ProviderTurnRecoveryResult;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -42,35 +43,68 @@ final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
                 || inspection.executionWorkspace() == null) {
             return ProviderTurnRecoveryResult.unknown("Codex recovery identity or workspace is invalid");
         }
+        StartedCodexAppServer started = null;
         CodexJsonRpcTransport transport = null;
+        ProviderTurnRecoveryResult result;
         try {
+            started = this.processStarter.start(inspection.executionWorkspace().cwd());
             transport = new CodexJsonRpcTransport(
                     this.objectMapper,
-                    this.processStarter.start(inspection.executionWorkspace().cwd()),
+                    started,
                     this.properties
             );
             final String liveVersion = this.initialize(transport);
             if (!CodexAppServerClient.SUPPORTED_RECOVERY_VERSION.equals(liveVersion)
                     || !Objects.equals(inspection.providerVersion(), liveVersion)) {
-                return ProviderTurnRecoveryResult.unknown("Codex recovery live version did not match persisted version");
+                result = ProviderTurnRecoveryResult.unknown(
+                        "Codex recovery live version did not match persisted version");
+            } else {
+                result = this.recoveryProtocol.inspectTurn(
+                        transport,
+                        inspection.providerConversationId(),
+                        inspection.providerTurnId(),
+                        this.properties.getRequestTimeout()
+                );
             }
-            return this.recoveryProtocol.inspectTurn(
-                    transport,
-                    inspection.providerConversationId(),
-                    inspection.providerTurnId(),
-                    this.properties.getRequestTimeout()
-            );
         } catch (final RuntimeException exception) {
-            return ProviderTurnRecoveryResult.unknown("Codex recovery process failed: "
+            result = ProviderTurnRecoveryResult.unknown("Codex recovery process failed: "
                     + exception.getClass().getSimpleName());
-        } finally {
+        }
+        try {
             if (transport != null) {
-                try {
-                    transport.close();
-                } catch (final RuntimeException ignored) {
-                    // Inspection is fail-closed and the transport already attempted process teardown.
+                transport.close();
+            } else if (started != null) {
+                this.closeUnownedProcess(started.process());
+            }
+        } catch (final RuntimeException cleanupFailure) {
+            return ProviderTurnRecoveryResult.unknown("Codex recovery process cleanup failed: "
+                    + cleanupFailure.getClass().getSimpleName());
+        }
+        return result;
+    }
+
+    private void closeUnownedProcess(final Process process) {
+        if (!process.isAlive()) {
+            return;
+        }
+        try {
+            process.destroy();
+            if (!process.waitFor(this.properties.getGracefulTerminateTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
+                process.destroyForcibly();
+                if (!process.waitFor(this.properties.getForceKillTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
+                    throw new CodexTransportException(
+                            "Codex app-server process remained alive after construction failure");
                 }
             }
+            if (process.isAlive()) {
+                throw new CodexTransportException(
+                        "Codex app-server process cleanup incomplete after construction failure");
+            }
+        } catch (final InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            process.destroyForcibly();
+            throw new CodexTransportException(
+                    "Codex app-server cleanup interrupted after construction failure", exception);
         }
     }
 

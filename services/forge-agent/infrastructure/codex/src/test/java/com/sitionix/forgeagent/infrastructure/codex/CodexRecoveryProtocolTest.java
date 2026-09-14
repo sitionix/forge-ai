@@ -136,6 +136,37 @@ class CodexRecoveryProtocolTest {
     }
 
     @Test
+    void exactTurnWithMissingOrWrongTypeRequiredFieldsIsUnknown() throws Exception {
+        for (final String response : List.of(
+                "{\"data\":[{\"id\":\"turn-target\",\"status\":\"completed\"}],\"nextCursor\":null}",
+                "{\"data\":[{\"id\":\"turn-target\",\"items\":{},\"status\":\"completed\"}],\"nextCursor\":null}",
+                "{\"data\":[{\"id\":\"turn-target\",\"items\":[]}],\"nextCursor\":null}",
+                "{\"data\":[{\"id\":\"turn-target\",\"items\":[],\"status\":{}}],\"nextCursor\":null}"
+        )) {
+            assertThat(this.singleResponse("thread-target", "turn-target", response).state())
+                    .as(response)
+                    .isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+        }
+    }
+
+    @Test
+    void malformedNonTargetTurnMakesExactTargetResultUnknown() throws Exception {
+        for (final String malformedTurn : List.of(
+                "{\"id\":\"turn-other\",\"status\":\"completed\"}",
+                "{\"id\":\"turn-other\",\"items\":{},\"status\":\"completed\"}",
+                "{\"id\":\"turn-other\",\"items\":[]}",
+                "{\"id\":\"turn-other\",\"items\":[],\"status\":{}}",
+                "{\"id\":\"turn-other\",\"items\":[],\"status\":\"mystery\"}"
+        )) {
+            final String response = "{\"data\":[" + malformedTurn
+                    + ",{\"id\":\"turn-target\",\"items\":[],\"status\":\"completed\"}],\"nextCursor\":null}";
+            assertThat(this.singleResponse("thread-target", "turn-target", response).state())
+                    .as(response)
+                    .isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+        }
+    }
+
+    @Test
     void unknownThreadRemoteErrorIsUnknown() throws Exception {
         final Harness harness = this.harness(Duration.ofSeconds(1));
         final CompletableFuture<ProviderTurnRecoveryResult> result = this.inspect(harness, "missing-thread", "turn-target");

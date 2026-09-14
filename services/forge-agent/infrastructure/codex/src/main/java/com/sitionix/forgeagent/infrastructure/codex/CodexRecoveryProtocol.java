@@ -52,11 +52,14 @@ final class CodexRecoveryProtocol {
                 if (!turn.isObject() || !turn.path("id").isTextual() || isBlank(turn.path("id").asText())) {
                     return ProviderTurnRecoveryResult.unknown("Codex turns list contained an invalid turn identity");
                 }
+                if (!turn.path("items").isArray()) {
+                    return ProviderTurnRecoveryResult.unknown("Codex turns list contained invalid turn items");
+                }
+                if (!turn.path("status").isTextual() || !isRecognizedStatus(turn.path("status").asText())) {
+                    return ProviderTurnRecoveryResult.unknown("Codex turns list contained an invalid turn status");
+                }
                 if (turnId.equals(turn.path("id").asText())) {
                     targetMatches++;
-                    if (!turn.path("status").isTextual() || isBlank(turn.path("status").asText())) {
-                        return ProviderTurnRecoveryResult.unknown("Codex target turn status was malformed");
-                    }
                     targetStatus = turn.path("status").asText();
                 }
             }
@@ -107,5 +110,12 @@ final class CodexRecoveryProtocol {
 
     private static boolean isBlank(final String value) {
         return value == null || value.isBlank();
+    }
+
+    private static boolean isRecognizedStatus(final String status) {
+        return "completed".equals(status)
+                || "failed".equals(status)
+                || "interrupted".equals(status)
+                || "inProgress".equals(status);
     }
 }
