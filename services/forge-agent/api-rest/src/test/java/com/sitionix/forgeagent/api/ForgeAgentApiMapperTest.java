@@ -75,6 +75,7 @@ import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
+import com.sitionix.forgeagent.domain.model.OperatorStopStatus;
 import com.sitionix.forgeagent.domain.model.NodePosition;
 import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.PortDirection;
@@ -611,7 +612,7 @@ class ForgeAgentApiMapperTest {
                 null,
                 "Full Testing",
                 "Review auth changes.",
-                WorkflowRunStatus.QUEUED,
+                WorkflowRunStatus.CANCELLED,
                 List.of(new NodeRun(
                         NODE_RUN_ID,
                         RUN_ID,
@@ -643,8 +644,12 @@ class ForgeAgentApiMapperTest {
                 NODE_RUN_ID,
                 CREATED,
                 null,
-                null,
-                java.util.List.of()
+                CREATED,
+                java.util.List.of(),
+                OperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED",
+                List.of(NODE_RUN_ID),
+                2
         );
 
         assertThat(this.mapper.toSummaryResponse(new WorkflowRunSummary(
@@ -652,19 +657,23 @@ class ForgeAgentApiMapperTest {
                 WORKFLOW_ID,
                 null,
                 "Full Testing",
-                WorkflowRunStatus.QUEUED,
+                WorkflowRunStatus.CANCELLED,
                 CREATED,
                 null,
-                null
+                CREATED,
+                OperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         ))).isEqualTo(new WorkflowRunSummaryResponse(
                 RUN_ID,
                 WORKFLOW_ID,
                 null,
                 "Full Testing",
-                WorkflowRunStatus.QUEUED,
+                WorkflowRunStatus.CANCELLED,
                 CREATED,
                 null,
-                null
+                CREATED,
+                OperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         ));
         assertThat(this.mapper.toResponse(run)).isEqualTo(new WorkflowRunResponse(
                 RUN_ID,
@@ -673,7 +682,7 @@ class ForgeAgentApiMapperTest {
                 null,
                 "Full Testing",
                 "Review auth changes.",
-                WorkflowRunStatus.QUEUED,
+                WorkflowRunStatus.CANCELLED,
                 List.of(new NodeRunResponse(
                         NODE_RUN_ID,
                         NODE_A,
@@ -702,8 +711,10 @@ class ForgeAgentApiMapperTest {
                 NODE_RUN_ID,
                 CREATED,
                 null,
-                null,
-                java.util.List.of()
+                CREATED,
+                java.util.List.of(),
+                OperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         ));
     }
 

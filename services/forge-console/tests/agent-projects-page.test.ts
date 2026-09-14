@@ -422,6 +422,8 @@ function api(overrides = {}) {
     getProjectTask: vi.fn((taskId: string) => Promise.resolve({ ...task(taskId), input: 'Count the letters.', runs: [] })),
     deleteProjectTask: vi.fn(() => Promise.resolve({})),
     getWorkflowRun: vi.fn((runId: string) => Promise.resolve(workflowRunDetail(runId, 'SUCCEEDED'))),
+    getAgentExecutionContexts: vi.fn(() => Promise.resolve([])),
+    cancelWorkflowRun: vi.fn(() => Promise.resolve()),
     createWorkflowRun: vi.fn(() => Promise.resolve({})),
     ...overrides
   };
@@ -2500,6 +2502,212 @@ describe('Agent projects page', () => {
     const summary = dom.window.document.getElementById('agentsV2TaskExecutionSummary')!;
     expect(summary.textContent).toContain('Result');
     expect(summary.querySelector('.task-result-section pre')?.textContent).toContain('"answer": "done"');
+  });
+
+  it.each(['QUEUED', 'RUNNING'])('shows Stop run with inline confirmation for %s runs', async (status) => {
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', status, '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', status)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const stop = dom.window.document.querySelector<HTMLButtonElement>('[data-stop-run]');
+    expect(stop?.textContent).toContain('Stop run');
+    stop?.click();
+
+    expect(fakeApi.cancelWorkflowRun).not.toHaveBeenCalled();
+    expect(dom.window.document.querySelector('[data-stop-run-confirmation]')?.textContent)
+      .toContain('Active agent execution will be interrupted.');
+  });
+
+  it.each(['SUCCEEDED', 'FAILED', 'CANCELLED'])('hides Stop run for terminal %s runs', async (status) => {
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', status, '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', status)))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('[data-stop-run]')).toBeNull();
+  });
+
+  it('confirms Stop once, refreshes backend truth, and preserves the pinned invocation', async () => {
+    const cancellation = deferred<void>();
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
+    const running = {
+      ...modernNodeRun('impl-1', 'implementer', 'RUNNING', '2026-08-13T10:00:00Z'),
+      contextTrackingVersion: 1
+    };
+    const cancelled = { ...running, status: 'CANCELLED', finishedAt: '2026-08-13T10:03:00Z' };
+    const context = { sessionId: 'session-a', turnId: 'turn-a', nodeRunId: 'impl-1', sourceNodeId: 'implementer',
+      repositoryId: null, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', sequence: 1,
+      sessionStatus: 'ACTIVE', turnStatus: 'ACTIVE', provider: 'codex' };
+    const getAgentExecutionEvents = vi.fn(() => Promise.resolve(
+      activityPage('turn-a', 'Existing activity', 'ACTIVE')
+    ));
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(workflowRunDetail('run-new', 'RUNNING', [running], 'Control Board', graph))
+        .mockResolvedValueOnce(workflowRunDetail('run-new', 'CANCELLED', [cancelled], 'Control Board', graph)),
+      getAgentExecutionContexts: vi.fn()
+        .mockResolvedValueOnce([context])
+        .mockResolvedValueOnce([{ ...context, sessionStatus: 'CLOSED', turnStatus: 'CANCELLED' }]),
+      getAgentExecutionEvents,
+      cancelWorkflowRun: vi.fn(() => cancellation.promise)
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    const activity = dom.window.document.querySelector('.node-run-activity');
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-stop-run]')?.click();
+    dom.window.document.querySelector<HTMLButtonElement>('[data-confirm-stop-run]')?.click();
+    dom.window.document.querySelector<HTMLButtonElement>('[data-confirm-stop-run]')?.click();
+
+    expect(fakeApi.cancelWorkflowRun).toHaveBeenCalledTimes(1);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-confirm-stop-run]')?.disabled).toBe(true);
+    expect(dom.window.document.querySelector('[data-stop-run-confirmation]')?.textContent).toContain('Stopping…');
+    cancellation.resolve();
+    await flushAsync();
+
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(2);
+    expect(fakeApi.getAgentExecutionContexts).toHaveBeenCalledTimes(2);
+    expect(page.taskExecutionView.state.workflowRun.status).toBe('CANCELLED');
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('impl-1');
+    expect(dom.window.document.querySelector('.node-run-activity')).toBe(activity);
+    expect(activity?.textContent).toContain('Existing activity');
+    expect(getAgentExecutionEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('posts Stop immediately and discards a stale unresolved pre-cancel poll', async () => {
+    const stalePoll = deferred<any>();
+    const initial = workflowRunDetail('run-new', 'RUNNING', [
+      nodeRun('node-a', 'Analyzer', 'RUNNING')
+    ]);
+    const cancelled = {
+      ...workflowRunDetail('run-new', 'CANCELLED', [
+        nodeRun('node-a', 'Analyzer', 'CANCELLED')
+      ]),
+      operatorStopStatus: 'COMPLETE'
+    };
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail(
+        'task-1',
+        [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]
+      ))),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(initial)
+        .mockReturnValueOnce(stalePoll.promise)
+        .mockResolvedValueOnce(cancelled),
+      cancelWorkflowRun: vi.fn(() => Promise.resolve())
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    const oldPoll = page.taskExecutionView.pollSelectedRun();
+    await flushAsync();
+    dom.window.document.querySelector<HTMLButtonElement>('[data-stop-run]')?.click();
+    dom.window.document.querySelector<HTMLButtonElement>('[data-confirm-stop-run]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.cancelWorkflowRun).toHaveBeenCalledTimes(1);
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(3);
+    expect(page.taskExecutionView.state.workflowRun.status).toBe('CANCELLED');
+
+    stalePoll.resolve(initial);
+    await oldPoll;
+    await flushAsync();
+
+    expect(page.taskExecutionView.state.workflowRun.status).toBe('CANCELLED');
+    expect(page.taskExecutionView.state.workflowRun.operatorStopStatus).toBe('COMPLETE');
+  });
+
+  it('reports refresh failure after a successful Stop without claiming the command failed', async () => {
+    const running = workflowRunDetail('run-new', 'RUNNING', [
+      nodeRun('node-a', 'Analyzer', 'RUNNING')
+    ]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail(
+        'task-1',
+        [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]
+      ))),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(running)
+        .mockRejectedValueOnce(new Error('Refresh unavailable')),
+      cancelWorkflowRun: vi.fn(() => Promise.resolve())
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-stop-run]')?.click();
+    dom.window.document.querySelector<HTMLButtonElement>('[data-confirm-stop-run]')?.click();
+    await flushAsync();
+
+    const error = dom.window.document.querySelector('[data-stop-run-error]')?.textContent || '';
+    expect(error).toContain('Run was stopped, but the latest state could not be refreshed.');
+    expect(error).not.toContain('Could not stop this run.');
+  });
+
+  it.each(['PENDING', 'FAILED'])('shows Retry stop for unresolved operator status %s', async (operatorStopStatus) => {
+    const unresolved = {
+      ...workflowRunDetail('run-new', 'CANCELLED'),
+      operatorStopStatus,
+      operatorStopFailureCode: operatorStopStatus === 'FAILED'
+        ? 'AGENT_EXECUTION_INTERRUPT_FAILED'
+        : null
+    };
+    const complete = { ...unresolved, operatorStopStatus: 'COMPLETE', operatorStopFailureCode: null };
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail(
+        'task-1',
+        [taskRun('run-new', 'CANCELLED', '2026-08-13T10:00:00Z')]
+      ))),
+      getWorkflowRun: vi.fn()
+        .mockResolvedValueOnce(unresolved)
+        .mockResolvedValueOnce(complete),
+      cancelWorkflowRun: vi.fn(() => Promise.resolve())
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('agentsV2ExecutionState')?.textContent)
+      .toContain('Provider stop could not be verified.');
+    dom.window.document.querySelector<HTMLButtonElement>('[data-retry-stop]')?.click();
+    await flushAsync();
+
+    expect(fakeApi.cancelWorkflowRun).toHaveBeenCalledTimes(1);
+    expect(page.taskExecutionView.state.workflowRun.operatorStopStatus).toBe('COMPLETE');
+    expect(dom.window.document.querySelector('[data-retry-stop]')).toBeNull();
+  });
+
+  it('keeps execution content and polling intact when Stop run fails', async () => {
+    const run = workflowRunDetail('run-new', 'RUNNING', [nodeRun('node-a', 'Analyzer', 'RUNNING')]);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(run)),
+      cancelWorkflowRun: vi.fn(() => Promise.reject(new Error('Interrupt handle unavailable')))
+    });
+    const { dom, page } = await openedProject(fakeApi, { activeJobPollIntervalMs: 1000 });
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+
+    dom.window.document.querySelector<HTMLButtonElement>('[data-stop-run]')?.click();
+    dom.window.document.querySelector<HTMLButtonElement>('[data-confirm-stop-run]')?.click();
+    await flushAsync();
+
+    expect(page.taskExecutionView.state.workflowRun).toBe(run);
+    expect(dom.window.document.querySelector('[data-stop-run-error]')?.textContent)
+      .toContain('Could not stop this run. Interrupt handle unavailable');
+    expect(page.taskExecutionView.pollTimer).not.toBeNull();
   });
 
   it('Execution history is newest first and selecting an older run loads that snapshot', async () => {
@@ -6334,6 +6542,7 @@ describe('Agent projects page', () => {
     client.getProjectTask('55555555-5555-4555-8555-555555555555');
     client.deleteProjectTask('55555555-5555-4555-8555-555555555555');
     client.getWorkflowRun('66666666-6666-4666-8666-666666666666');
+    client.cancelWorkflowRun('66666666-6666-4666-8666-666666666666');
     client.getAgentExecutionEvents('turn/T value', 17, 200);
     const sshRequest = { name: 'Ancestor', host: '192.168.0.108', port: 22,
       username: 'ancestor', authType: 'PASSWORD', privateKeyPath: null, password: 'secret' };
@@ -6352,6 +6561,7 @@ describe('Agent projects page', () => {
       `/agents/projects/${project().id}/ssh-connections/55555555-5555-4555-8555-555555555555/service-metrics/alpha%401.service/processes?sort=ram`);
     expect(http.get).toHaveBeenCalledWith(
       '/agents/agent-execution-turns/turn%2FT%20value/events?afterSequence=17&limit=200');
+    expect(http.post).toHaveBeenCalledWith('/agents/workflow-runs/66666666-6666-4666-8666-666666666666/cancel');
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`, {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });

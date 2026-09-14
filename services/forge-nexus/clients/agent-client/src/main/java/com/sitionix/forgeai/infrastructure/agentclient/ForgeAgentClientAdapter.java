@@ -335,6 +335,14 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     }
 
     @Override
+    public void cancelWorkflowRun(final UUID runId) {
+        this.clientCallExecutor.execute(() -> {
+            this.httpClient.cancelWorkflowRun(runId);
+            return null;
+        });
+    }
+
+    @Override
     public java.util.List<com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionContext> getAgentExecutionContexts(final UUID runId) {
         return this.clientCallExecutor.execute(() -> this.httpClient.getAgentExecutionContexts(runId)).stream()
                 .map(this.mapper::toDomain)

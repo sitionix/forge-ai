@@ -471,7 +471,9 @@ public class AgentProxyApiMapper {
                 run.status(),
                 run.createdAt(),
                 run.startedAt(),
-                run.finishedAt()
+                run.finishedAt(),
+                run.operatorStopStatus(),
+                run.operatorStopFailureCode()
         );
     }
 
@@ -493,7 +495,9 @@ public class AgentProxyApiMapper {
                 run.createdAt(),
                 run.startedAt(),
                 run.finishedAt(),
-                run.repositoryIds()
+                run.repositoryIds(),
+                run.operatorStopStatus(),
+                run.operatorStopFailureCode()
         );
     }
 

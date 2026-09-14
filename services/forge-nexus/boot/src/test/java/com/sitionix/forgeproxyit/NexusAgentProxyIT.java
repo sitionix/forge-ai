@@ -39,6 +39,7 @@ class NexusAgentProxyIT {
     private static final UUID ASSET_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID CONNECTION_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID TURN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
+    private static final UUID RUN_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
 
     @Autowired
     private NexusProxyTestManager testManager;
@@ -59,6 +60,24 @@ class NexusAgentProxyIT {
                 .assertDefault();
 
         upstream.verify();
+    }
+
+    @Test
+    void workflowRunCancellationUsesTheExactTypedThinProxyRoute() {
+        final var path = WireMockPathParams.create().add("runId", equalTo(RUN_ID.toString()));
+        final var mvc = PathParams.create().add("runId", RUN_ID);
+
+        verify(ForgeAgentWireMockEndpoints.cancelWorkflowRun(),
+                NexusAgentMockMvcEndpoints.cancelWorkflowRun(), path, mvc);
+    }
+
+    @Test
+    void workflowRunCancellationPreservesTypedUpstreamConflict() {
+        final var path = WireMockPathParams.create().add("runId", equalTo(RUN_ID.toString()));
+        final var mvc = PathParams.create().add("runId", RUN_ID);
+
+        verify(ForgeAgentWireMockEndpoints.cancelWorkflowRunConflict(),
+                NexusAgentMockMvcEndpoints.cancelWorkflowRunConflict(), path, mvc);
     }
 
     @Test

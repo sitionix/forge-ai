@@ -41,6 +41,21 @@ public final class NexusAgentMockMvcEndpoints {
                         .expectResponse("agent-execution-events-response.json"));
     }
 
+    public static Endpoint<Void, Void> cancelWorkflowRun() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/workflow-runs/{runId}/cancel", HttpMethod.POST,
+                Void.class, Void.class,
+                (MockmvcDefault) context -> context.expectStatus(HttpStatus.NO_CONTENT.value()));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> cancelWorkflowRunConflict() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/workflow-runs/{runId}/cancel", HttpMethod.POST,
+                Void.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(HttpStatus.CONFLICT.value())
+                        .expectResponse("agent-upstream-error-response.json"));
+    }
+
     public static Endpoint<AgentProjectAssetRequest, AgentProjectAssetResponse> createAsset() {
         return assetEndpoint("/api/v1/infrastructure/agents/projects/{projectId}/assets", HttpMethod.POST,
                 AgentProjectAssetRequest.class, AgentProjectAssetResponse.class, HttpStatus.CREATED,

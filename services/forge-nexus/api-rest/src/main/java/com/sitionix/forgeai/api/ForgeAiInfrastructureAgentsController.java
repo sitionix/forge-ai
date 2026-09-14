@@ -23,6 +23,7 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProject;
 import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
+import com.sitionix.forgeai.domain.usecase.CancelAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.CloneAgentProjectRepository;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentProject;
@@ -88,6 +89,7 @@ public class ForgeAiInfrastructureAgentsController {
     private final CreateAgentWorkflowRun createAgentWorkflowRun;
     private final ListAgentWorkflowRuns listAgentWorkflowRuns;
     private final GetAgentWorkflowRun getAgentWorkflowRun;
+    private final CancelAgentWorkflowRun cancelAgentWorkflowRun;
     private final AgentProxyApiMapper mapper;
 
     @GetMapping("/api/v1/infrastructure/agents/projects")
@@ -266,5 +268,11 @@ public class ForgeAiInfrastructureAgentsController {
     @GetMapping("/api/v1/infrastructure/agents/workflow-runs/{runId}")
     public ResponseEntity<AgentWorkflowRunResponse> getWorkflowRun(@PathVariable final UUID runId) {
         return ResponseEntity.ok(this.mapper.toResponse(this.getAgentWorkflowRun.execute(runId)));
+    }
+
+    @PostMapping("/api/v1/infrastructure/agents/workflow-runs/{runId}/cancel")
+    public ResponseEntity<Void> cancelWorkflowRun(@PathVariable final UUID runId) {
+        this.cancelAgentWorkflowRun.execute(runId);
+        return ResponseEntity.noContent().build();
     }
 }

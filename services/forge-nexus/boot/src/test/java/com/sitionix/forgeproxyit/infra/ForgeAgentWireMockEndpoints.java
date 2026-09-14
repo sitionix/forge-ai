@@ -42,6 +42,23 @@ public final class ForgeAgentWireMockEndpoints {
                         .responseBody("agent-execution-events-response.json"));
     }
 
+    public static Endpoint<Void, Void> cancelWorkflowRun() {
+        return Endpoint.createContract(
+                "/api/v1/workflow-runs/{runId}/cancel", HttpMethod.POST,
+                Void.class, Void.class,
+                (WiremockDefault) context -> context.plainUrl()
+                        .responseStatus(HttpStatus.NO_CONTENT.value()));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> cancelWorkflowRunConflict() {
+        return Endpoint.createContract(
+                "/api/v1/workflow-runs/{runId}/cancel", HttpMethod.POST,
+                Void.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context.plainUrl()
+                        .responseStatus(HttpStatus.CONFLICT.value())
+                        .responseBody("agent-upstream-error-response.json"));
+    }
+
     public static Endpoint<ProjectAssetRequest, ProjectAssetResponse> createAsset() {
         return assetEndpoint("/api/v1/projects/{projectId}/assets", HttpMethod.POST,
                 ProjectAssetRequest.class, ProjectAssetResponse.class, HttpStatus.CREATED,

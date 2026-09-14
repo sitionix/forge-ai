@@ -266,6 +266,37 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
+    void cancellationBeforeProviderTurnIdentityClosesTransportWithoutInterrupt() throws Exception {
+        final FakeCodexProcess process = new FakeCodexProcess(false, true);
+        final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
+        final AtomicReference<Runnable> cancellation = new AtomicReference<>();
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeTrackedFresh(
+                new CodexTurnRequest("Analyze auth.", "Instructions.", "model-a", null,
+                        this.schemaUnchecked(), this.workspace()),
+                new CodexExecutionIdentityCallbacks() {
+                    public void executionStarted(final Runnable action) {
+                        cancellation.compareAndSet(null, action);
+                    }
+                    public void conversationStarted(final String id, final String version) { }
+                    public void turnStarted(final String id) { }
+                }
+        ));
+        final long registrationDeadline = System.nanoTime() + Duration.ofSeconds(1).toNanos();
+        while (cancellation.get() == null && System.nanoTime() < registrationDeadline) Thread.onSpinWait();
+        assertThat(cancellation.get()).isNotNull();
+
+        cancellation.get().run();
+
+        assertThat(process.destroyed()).isTrue();
+        assertExecutionFailure(result);
+        final List<String> methods = new ArrayList<>();
+        while (process.pendingClientRequestBytes() > 0) {
+            methods.add(this.readRequest(process).path("method").asText());
+        }
+        assertThat(methods).doesNotContain("turn/interrupt");
+    }
+
+    @Test
     void durableExecutionPersistsThreadBeforeTurnStartAndTurnBeforeNotifications() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());

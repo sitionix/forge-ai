@@ -33,6 +33,7 @@ import com.sitionix.forgeagent.application.usecase.AgentUseCases;
 import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
 import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
+import com.sitionix.forgeagent.application.usecase.CancelWorkflowRunUseCase;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.GetAiRuntime;
 import com.sitionix.forgeagent.application.usecase.ImportProjectRepositoryCommand;
@@ -98,6 +99,8 @@ class ForgeAgentControllerTest {
     @Mock
     private WorkflowRunUseCases workflowRunUseCases;
     @Mock
+    private CancelWorkflowRunUseCase cancelWorkflowRun;
+    @Mock
     private ProjectTaskUseCases projectTaskUseCases;
     @Mock
     private ForgeAgentApiMapper mapper;
@@ -114,6 +117,7 @@ class ForgeAgentControllerTest {
                 this.getAiRuntime,
                 this.workflowUseCases,
                 this.workflowRunUseCases,
+                this.cancelWorkflowRun,
                 this.projectTaskUseCases,
                 this.mapper
         );
@@ -514,6 +518,15 @@ class ForgeAgentControllerTest {
         assertThat(actual.getBody()).isSameAs(response);
         verify(this.workflowRunUseCases).getWorkflowRun(RUN_ID);
         verify(this.mapper).toResponse(run);
+    }
+
+    @Test
+    void cancelWorkflowRun() {
+        final var actual = this.controller.cancelWorkflowRun(RUN_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(actual.getBody()).isNull();
+        verify(this.cancelWorkflowRun).execute(RUN_ID);
     }
 
     private Project project() {

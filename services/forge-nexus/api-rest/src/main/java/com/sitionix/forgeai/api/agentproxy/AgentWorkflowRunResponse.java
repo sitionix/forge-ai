@@ -2,6 +2,7 @@ package com.sitionix.forgeai.api.agentproxy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentOperatorStopStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -23,6 +24,22 @@ public record AgentWorkflowRunResponse(
         Instant createdAt,
         Instant startedAt,
         Instant finishedAt,
-        List<UUID> repositoryIds
+        List<UUID> repositoryIds,
+        AgentOperatorStopStatus operatorStopStatus,
+        String operatorStopFailureCode
 ) {
+    public AgentWorkflowRunResponse(
+            final UUID id, final UUID projectId, final UUID sourceWorkflowId, final UUID taskId,
+            final String workflowName, final String input, final AgentWorkflowRunStatus status,
+            final List<AgentNodeRunResponse> nodeRuns,
+            final List<AgentConnectionResolutionResponse> connectionResolutions,
+            final List<AgentWorkflowRunExecutionEdgeResponse> executionEdges,
+            final AgentWorkflowRunGraphResponse runtimeGraph, final JsonNode result,
+            final UUID resultSourceNodeRunId, final Instant createdAt, final Instant startedAt,
+            final Instant finishedAt, final List<UUID> repositoryIds
+    ) {
+        this(id, projectId, sourceWorkflowId, taskId, workflowName, input, status, nodeRuns,
+                connectionResolutions, executionEdges, runtimeGraph, result, resultSourceNodeRunId,
+                createdAt, startedAt, finishedAt, repositoryIds, null, null);
+    }
 }

@@ -12,6 +12,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunFailure;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunOutputDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunStatus;
+import com.sitionix.forgeai.domain.model.agentproxy.AgentOperatorStopStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentOutputSchemaDocument;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProject;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentProjectRepository;
@@ -347,7 +348,9 @@ class ForgeAgentClientMapperTest {
                 AgentWorkflowRunStatus.QUEUED,
                 CREATED,
                 null,
-                null
+                null,
+                AgentOperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         ))).isEqualTo(new AgentWorkflowRunSummary(
                 RUN_ID,
                 WORKFLOW_ID,
@@ -356,7 +359,9 @@ class ForgeAgentClientMapperTest {
                 AgentWorkflowRunStatus.QUEUED,
                 CREATED,
                 null,
-                null
+                null,
+                AgentOperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         ));
 
         final UUID executionFrameId = UUID.fromString("99999999-0000-4000-8000-000000000001");
@@ -413,7 +418,9 @@ class ForgeAgentClientMapperTest {
                 CREATED,
                 null,
                 null,
-                java.util.List.of(REPOSITORY_ID)
+                java.util.List.of(REPOSITORY_ID),
+                AgentOperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         ))).isEqualTo(new AgentWorkflowRun(
                 RUN_ID,
                 PROJECT_ID,
@@ -462,7 +469,9 @@ class ForgeAgentClientMapperTest {
                 CREATED,
                 null,
                 null,
-                java.util.List.of(REPOSITORY_ID)
+                java.util.List.of(REPOSITORY_ID),
+                AgentOperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED"
         ));
     }
 

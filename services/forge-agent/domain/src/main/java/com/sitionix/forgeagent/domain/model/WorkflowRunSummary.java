@@ -11,6 +11,20 @@ public record WorkflowRunSummary(
         WorkflowRunStatus status,
         Instant createdAt,
         Instant startedAt,
-        Instant finishedAt
+        Instant finishedAt,
+        OperatorStopStatus operatorStopStatus,
+        String operatorStopFailureCode
 ) {
+    public WorkflowRunSummary(
+            final UUID id,
+            final UUID sourceWorkflowId,
+            final UUID taskId,
+            final String workflowName,
+            final WorkflowRunStatus status,
+            final Instant createdAt,
+            final Instant startedAt,
+            final Instant finishedAt
+    ) {
+        this(id, sourceWorkflowId, taskId, workflowName, status, createdAt, startedAt, finishedAt, null, null);
+    }
 }

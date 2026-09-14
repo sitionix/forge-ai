@@ -57,8 +57,12 @@ public class NodeRunCompletionPersistence {
         if (target == null) {
             return false;
         }
-        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         final NodeRun nodeRun = target.nodeRun();
+        if (nodeRun.status() == NodeRunStatus.CANCELLED
+                && target.workflowRun().status() == WorkflowRunStatus.CANCELLED) {
+            return false;
+        }
+        if (claim != null) this.sessionLeaseService.lockCurrent(claim);
         if (nodeRun.contextTrackingVersion() != null && claim == null) {
             throw new ConflictException(
                     "STALE_AGENT_SESSION_LEASE",

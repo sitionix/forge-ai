@@ -113,6 +113,8 @@ public interface ForgeAgentClient {
 
   AgentWorkflowRun getWorkflowRun(UUID runId);
 
+  void cancelWorkflowRun(UUID runId);
+
   List<AgentExecutionContext> getAgentExecutionContexts(UUID runId);
 
   com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage getAgentExecutionEvents(

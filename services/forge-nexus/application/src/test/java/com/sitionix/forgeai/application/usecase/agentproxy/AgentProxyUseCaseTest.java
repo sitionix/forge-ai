@@ -104,6 +104,13 @@ class AgentProxyUseCaseTest {
     }
 
     @Test
+    void cancelWorkflowRunDelegatesToClient() {
+        new CancelAgentWorkflowRunUseCase(this.forgeAgentClient).execute(RUN_ID);
+
+        verify(this.forgeAgentClient).cancelWorkflowRun(RUN_ID);
+    }
+
+    @Test
     void listProjectAgentsDelegatesToClient() {
         final var agent = new AgentDefinitionListItem(AGENT_ID, PROJECT_ID, "Backend", null, NOW, NOW);
         when(this.forgeAgentClient.listProjectAgents(PROJECT_ID)).thenReturn(List.of(agent));

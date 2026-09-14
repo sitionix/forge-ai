@@ -7,6 +7,7 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
+import com.sitionix.forgeagent.domain.model.OperatorStopStatus;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunExecutionEdgeEntity;
@@ -84,6 +85,11 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         existing.setStatus(run.status().name());
         existing.setStartedAt(run.startedAt());
         existing.setFinishedAt(run.finishedAt());
+        existing.setOperatorStopStatus(run.operatorStopStatus() == null ? null : run.operatorStopStatus().name());
+        existing.setOperatorStopFailureCode(run.operatorStopFailureCode());
+        existing.setOperatorStopPendingNodeRunIds(run.operatorStopStatus() == null
+                ? null : new java.util.ArrayList<>(run.operatorStopPendingNodeRunIds()));
+        existing.setOperatorStopAttempt(run.operatorStopAttempt());
         if (run.result() != null) {
             existing.setResult(run.result().jsonValue());
         }
@@ -117,7 +123,10 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 WorkflowRunStatus.valueOf(entity.getStatus()),
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
-                entity.getFinishedAt()
+                entity.getFinishedAt(),
+                entity.getOperatorStopStatus() == null
+                        ? null : OperatorStopStatus.valueOf(entity.getOperatorStopStatus()),
+                entity.getOperatorStopFailureCode()
         );
     }
 
@@ -145,7 +154,11 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
                 entity.getFinishedAt(),
-                entity.getRepositoryIds()
+                entity.getRepositoryIds(),
+                entity.getOperatorStopStatus() == null ? null : OperatorStopStatus.valueOf(entity.getOperatorStopStatus()),
+                entity.getOperatorStopFailureCode(),
+                entity.getOperatorStopPendingNodeRunIds() == null ? List.of() : entity.getOperatorStopPendingNodeRunIds(),
+                entity.getOperatorStopAttempt()
         );
     }
 
@@ -167,7 +180,11 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
                 entity.getFinishedAt(),
-                entity.getRepositoryIds()
+                entity.getRepositoryIds(),
+                entity.getOperatorStopStatus() == null ? null : OperatorStopStatus.valueOf(entity.getOperatorStopStatus()),
+                entity.getOperatorStopFailureCode(),
+                entity.getOperatorStopPendingNodeRunIds() == null ? List.of() : entity.getOperatorStopPendingNodeRunIds(),
+                entity.getOperatorStopAttempt()
         );
     }
 
@@ -189,7 +206,11 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
                 entity.getCreatedAt(),
                 entity.getStartedAt(),
                 entity.getFinishedAt(),
-                entity.getRepositoryIds()
+                entity.getRepositoryIds(),
+                entity.getOperatorStopStatus() == null ? null : OperatorStopStatus.valueOf(entity.getOperatorStopStatus()),
+                entity.getOperatorStopFailureCode(),
+                entity.getOperatorStopPendingNodeRunIds() == null ? List.of() : entity.getOperatorStopPendingNodeRunIds(),
+                entity.getOperatorStopAttempt()
         );
     }
 
@@ -215,6 +236,11 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         entity.setCreatedAt(run.createdAt());
         entity.setStartedAt(run.startedAt());
         entity.setFinishedAt(run.finishedAt());
+        entity.setOperatorStopStatus(run.operatorStopStatus() == null ? null : run.operatorStopStatus().name());
+        entity.setOperatorStopFailureCode(run.operatorStopFailureCode());
+        entity.setOperatorStopPendingNodeRunIds(run.operatorStopStatus() == null
+                ? null : new java.util.ArrayList<>(run.operatorStopPendingNodeRunIds()));
+        entity.setOperatorStopAttempt(run.operatorStopAttempt());
         entity.setResult(run.result() == null ? null : run.result().jsonValue());
         entity.setResultSourceNodeRunId(run.resultSourceNodeRunId());
         entity.setRepositoryIds(new java.util.ArrayList<>(run.repositoryIds()));

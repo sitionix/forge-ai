@@ -15,6 +15,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
+import com.sitionix.forgeagent.domain.model.OperatorStopStatus;
 import com.sitionix.forgeagent.domain.model.PortDirection;
 import com.sitionix.forgeagent.domain.model.RunConnection;
 import com.sitionix.forgeagent.domain.model.RunNode;
@@ -398,6 +399,31 @@ class PostgresWorkflowRunRepositoryTest {
         assertThat(savedEntity.getTaskOutputPortId()).isEqualTo(OUTPUT_PORT_ID);
         assertThat(savedEntity.getResult()).isEqualTo("{\"summary\":\"new\"}");
         assertThat(savedEntity.getResultSourceNodeRunId()).isEqualTo(NODE_RUN_B);
+    }
+
+    @Test
+    void saveLifecyclePersistsAndReconstructsDurableOperatorStopControl() {
+        final WorkflowRunEntity existing = this.runEntity(RUN_ID, NOW);
+        when(this.workflowRunRepository.findById(RUN_ID)).thenReturn(Optional.of(existing));
+        when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        final WorkflowRun stopped = new WorkflowRun(
+                RUN_ID, PROJECT_ID, WORKFLOW_ID, TASK_ID, "Full Testing", "Review auth changes.",
+                WorkflowRunStatus.CANCELLED, List.of(), List.of(), List.of(), null, null, null,
+                NOW, NOW, NOW.plusSeconds(1), List.of(), OperatorStopStatus.FAILED,
+                "AGENT_EXECUTION_INTERRUPT_FAILED", List.of(NODE_RUN_A, NODE_RUN_B), 3
+        );
+
+        final WorkflowRun saved = this.repository.saveLifecycle(stopped);
+
+        final WorkflowRunEntity savedEntity = this.savedRun();
+        assertThat(savedEntity.getOperatorStopStatus()).isEqualTo("FAILED");
+        assertThat(savedEntity.getOperatorStopFailureCode()).isEqualTo("AGENT_EXECUTION_INTERRUPT_FAILED");
+        assertThat(savedEntity.getOperatorStopPendingNodeRunIds()).containsExactly(NODE_RUN_A, NODE_RUN_B);
+        assertThat(savedEntity.getOperatorStopAttempt()).isEqualTo(3);
+        assertThat(saved.operatorStopStatus()).isEqualTo(OperatorStopStatus.FAILED);
+        assertThat(saved.operatorStopFailureCode()).isEqualTo("AGENT_EXECUTION_INTERRUPT_FAILED");
+        assertThat(saved.operatorStopPendingNodeRunIds()).containsExactly(NODE_RUN_A, NODE_RUN_B);
+        assertThat(saved.operatorStopAttempt()).isEqualTo(3);
     }
 
     private WorkflowRun run(final List<NodeRun> nodeRuns) {

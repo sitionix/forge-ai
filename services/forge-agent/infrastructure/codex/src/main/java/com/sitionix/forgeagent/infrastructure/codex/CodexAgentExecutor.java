@@ -14,10 +14,9 @@ import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.RunPort;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
@@ -133,7 +132,8 @@ public final class CodexAgentExecutor implements AgentExecutor {
             } catch (RuntimeException exception) {
                 throw exception;
             } finally {
-                this.activeExecutions.remove(claim.nodeRunId(), cancellation);
+                cancellation.executionFinished();
+                this.reconcileCancellation(claim.nodeRunId(), cancellation);
             }
         }
         return this.parseExecutionResult(outputText, claim.availableOutputs(), selectionRequired);
@@ -141,23 +141,101 @@ public final class CodexAgentExecutor implements AgentExecutor {
 
     @Override
     public void cancel(final NodeExecutionClaim claim) {
-        final ExecutionCancellation cancellation = this.activeExecutions.get(claim.nodeRunId());
-        if (cancellation != null) cancellation.cancel();
+        this.secureCancellation(claim.nodeRunId()).ifPresent(Runnable::run);
+    }
+
+    @Override
+    public Optional<Runnable> secureCancellation(final UUID nodeRunId) {
+        return Optional.ofNullable(this.activeExecutions.get(nodeRunId))
+                .map(cancellation -> () -> {
+                    try {
+                        cancellation.cancel();
+                    } finally {
+                        this.reconcileCancellation(nodeRunId, cancellation);
+                    }
+                });
+    }
+
+    private void reconcileCancellation(final UUID nodeRunId, final ExecutionCancellation cancellation) {
+        this.activeExecutions.compute(nodeRunId, (id, current) -> {
+            if (cancellation.isComplete()) {
+                return current == cancellation ? null : current;
+            }
+            if (cancellation.hasUnresolvedCancellation()) {
+                return current == null ? cancellation : current;
+            }
+            return current == cancellation ? null : current;
+        });
     }
 
     private static final class ExecutionCancellation {
-        private final AtomicBoolean cancelled = new AtomicBoolean();
-        private final AtomicReference<Runnable> action = new AtomicReference<>();
+        private boolean requested;
+        private boolean complete;
+        private boolean executionFinished;
+        private boolean inProgress;
+        private Runnable action;
 
-        void register(final Runnable cancellation) {
-            this.action.set(cancellation);
-            if (this.cancelled.get()) cancellation.run();
+        synchronized void register(final Runnable cancellation) {
+            this.action = cancellation;
+            this.notifyAll();
         }
 
         void cancel() {
-            if (!this.cancelled.compareAndSet(false, true)) return;
-            final Runnable cancellation = this.action.get();
-            if (cancellation != null) cancellation.run();
+            final Runnable cancellation;
+            boolean interrupted = false;
+            synchronized (this) {
+                this.requested = true;
+                while (this.action == null && !this.executionFinished) {
+                    try {
+                        this.wait();
+                    } catch (final InterruptedException exception) {
+                        interrupted = true;
+                    }
+                }
+                while (this.inProgress && !this.complete) {
+                    try {
+                        this.wait();
+                    } catch (final InterruptedException exception) {
+                        interrupted = true;
+                    }
+                }
+                if (this.complete) {
+                    if (interrupted) Thread.currentThread().interrupt();
+                    return;
+                }
+                if (this.action == null) {
+                    if (interrupted) Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Provider execution ended before cancellation became available.");
+                }
+                this.inProgress = true;
+                cancellation = this.action;
+            }
+
+            try {
+                cancellation.run();
+                synchronized (this) {
+                    this.complete = true;
+                }
+            } finally {
+                synchronized (this) {
+                    this.inProgress = false;
+                    this.notifyAll();
+                }
+                if (interrupted) Thread.currentThread().interrupt();
+            }
+        }
+
+        synchronized void executionFinished() {
+            this.executionFinished = true;
+            this.notifyAll();
+        }
+
+        synchronized boolean isComplete() {
+            return this.complete;
+        }
+
+        synchronized boolean hasUnresolvedCancellation() {
+            return this.requested && this.action != null && !this.complete;
         }
     }
 
