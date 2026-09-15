@@ -318,7 +318,7 @@ class ForgeAgentProjectRepositoryIT {
     private Path forgeRoot() {
         Path current = Path.of("").toAbsolutePath().normalize();
         while (current != null) {
-            if (Files.isDirectory(current.resolve(".git"))) {
+            if (Files.exists(current.resolve(".git"))) {
                 return current;
             }
             current = current.getParent();

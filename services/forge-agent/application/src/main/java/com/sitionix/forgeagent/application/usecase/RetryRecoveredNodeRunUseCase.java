@@ -48,7 +48,7 @@ public class RetryRecoveredNodeRunUseCase {
         }
 
         final NodeRun child = this.nodeRuns.saveAndFlush(this.retryOf(target));
-        final WorkflowRun reopened = this.workflows.saveLifecycle(this.reopen(workflowRun));
+        final WorkflowRun reopened = this.workflows.reopenForRetry(this.reopen(workflowRun));
         return new RetryRecoveredNodeRunResult(child.id(), this.fullWorkflowRun(reopened));
     }
 

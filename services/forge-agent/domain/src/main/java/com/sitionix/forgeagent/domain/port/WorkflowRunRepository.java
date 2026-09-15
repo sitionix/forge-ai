@@ -22,6 +22,8 @@ public interface WorkflowRunRepository {
 
     WorkflowRun saveLifecycle(WorkflowRun run);
 
+    WorkflowRun reopenForRetry(WorkflowRun run);
+
     boolean existsActiveByProjectId(UUID projectId);
 
     boolean existsActiveByTaskId(UUID taskId);

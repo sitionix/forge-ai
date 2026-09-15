@@ -63,7 +63,7 @@ class RetryRecoveredNodeRunUseCaseTest {
     @BeforeEach
     void configurePersistence() {
         when(this.workflows.findByIdForUpdate(RUN_ID)).thenAnswer(ignored -> Optional.ofNullable(this.persistedRun.get()));
-        when(this.workflows.saveLifecycle(any())).thenAnswer(invocation -> {
+        when(this.workflows.reopenForRetry(any())).thenAnswer(invocation -> {
             final WorkflowRun run = invocation.getArgument(0);
             this.persistedRun.set(run);
             return run;
@@ -165,7 +165,7 @@ class RetryRecoveredNodeRunUseCaseTest {
 
         assertThat(result.nodeRunId()).isEqualTo(child.id());
         verify(this.nodeRuns, never()).saveAndFlush(any());
-        verify(this.workflows, never()).saveLifecycle(any());
+        verify(this.workflows, never()).reopenForRetry(any());
     }
 
     @ParameterizedTest
