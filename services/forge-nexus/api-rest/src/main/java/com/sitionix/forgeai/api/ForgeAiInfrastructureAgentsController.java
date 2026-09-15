@@ -4,6 +4,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentDefinitionListResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentDefinitionResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentRecoveredNodeRunRetryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectTaskPageResponse;
@@ -24,6 +25,7 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.CancelAgentWorkflowRun;
+import com.sitionix.forgeai.domain.usecase.RetryRecoveredAgentNodeRun;
 import com.sitionix.forgeai.domain.usecase.CloneAgentProjectRepository;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentProject;
@@ -90,6 +92,7 @@ public class ForgeAiInfrastructureAgentsController {
     private final ListAgentWorkflowRuns listAgentWorkflowRuns;
     private final GetAgentWorkflowRun getAgentWorkflowRun;
     private final CancelAgentWorkflowRun cancelAgentWorkflowRun;
+    private final RetryRecoveredAgentNodeRun retryRecoveredAgentNodeRun;
     private final AgentProxyApiMapper mapper;
 
     @GetMapping("/api/v1/infrastructure/agents/projects")
@@ -274,5 +277,12 @@ public class ForgeAiInfrastructureAgentsController {
     public ResponseEntity<Void> cancelWorkflowRun(@PathVariable final UUID runId) {
         this.cancelAgentWorkflowRun.execute(runId);
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/retry")
+    public ResponseEntity<AgentRecoveredNodeRunRetryResponse> retryRecoveredNodeRun(
+            @PathVariable final UUID workflowRunId, @PathVariable final UUID nodeRunId) {
+        return ResponseEntity.ok(this.mapper.toResponse(
+                this.retryRecoveredAgentNodeRun.execute(workflowRunId, nodeRunId)));
     }
 }

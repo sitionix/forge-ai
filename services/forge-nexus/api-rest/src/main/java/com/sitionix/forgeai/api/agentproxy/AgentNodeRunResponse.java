@@ -26,9 +26,11 @@ public record AgentNodeRunResponse(
         Instant finishedAt,
         UUID repositoryId,
         String contextMode,
-        Integer contextTrackingVersion
+        Integer contextTrackingVersion,
+        UUID retryOfNodeRunId,
+        AgentNodeRunRetryEligibilityResponse retryEligibility
 ) {
     public AgentNodeRunResponse(UUID id,UUID sourceNodeId,UUID sourceAgentId,String agentName,String agentInstructions,JsonNode agentOutputSchema,String inputMode,NodePositionResponse position,UUID executionFrameId,UUID enteredViaInputPortId,UUID activationFrameId,UUID selectedOutputPortId,AgentNodeRunStatus status,JsonNode output,AgentNodeRunFailureResponse failure,Instant createdAt,Instant startedAt,Instant finishedAt,UUID repositoryId) {
-        this(id,sourceNodeId,sourceAgentId,agentName,agentInstructions,agentOutputSchema,inputMode,position,executionFrameId,enteredViaInputPortId,activationFrameId,selectedOutputPortId,status,output,failure,createdAt,startedAt,finishedAt,repositoryId,"FRESH_EACH_NODE_RUN",null);
+        this(id,sourceNodeId,sourceAgentId,agentName,agentInstructions,agentOutputSchema,inputMode,position,executionFrameId,enteredViaInputPortId,activationFrameId,selectedOutputPortId,status,output,failure,createdAt,startedAt,finishedAt,repositoryId,"FRESH_EACH_NODE_RUN",null,null,null);
     }
 }

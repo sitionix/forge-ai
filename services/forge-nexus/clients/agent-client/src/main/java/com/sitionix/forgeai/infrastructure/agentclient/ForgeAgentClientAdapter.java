@@ -343,6 +343,13 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     }
 
     @Override
+    public com.sitionix.forgeai.domain.model.agentproxy.RecoveredAgentNodeRunRetry retryRecoveredNodeRun(
+            final UUID workflowRunId, final UUID nodeRunId) {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(
+                () -> this.httpClient.retryRecoveredNodeRun(workflowRunId, nodeRunId)));
+    }
+
+    @Override
     public java.util.List<com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionContext> getAgentExecutionContexts(final UUID runId) {
         return this.clientCallExecutor.execute(() -> this.httpClient.getAgentExecutionContexts(runId)).stream()
                 .map(this.mapper::toDomain)

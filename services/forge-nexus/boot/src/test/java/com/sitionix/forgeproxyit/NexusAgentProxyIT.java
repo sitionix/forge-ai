@@ -40,6 +40,7 @@ class NexusAgentProxyIT {
     private static final UUID CONNECTION_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID TURN_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
     private static final UUID RUN_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
+    private static final UUID NODE_RUN_ID = UUID.fromString("88888888-8888-4888-8888-888888888888");
 
     @Autowired
     private NexusProxyTestManager testManager;
@@ -78,6 +79,32 @@ class NexusAgentProxyIT {
 
         verify(ForgeAgentWireMockEndpoints.cancelWorkflowRunConflict(),
                 NexusAgentMockMvcEndpoints.cancelWorkflowRunConflict(), path, mvc);
+    }
+
+    @Test
+    void recoveredNodeRunRetryUsesTheExactTypedThinProxyRoute() {
+        final var upstreamPath = WireMockPathParams.create()
+                .add("workflowRunId", equalTo(RUN_ID.toString()))
+                .add("nodeRunId", equalTo(NODE_RUN_ID.toString()));
+        final var nexusPath = PathParams.create()
+                .add("workflowRunId", RUN_ID)
+                .add("nodeRunId", NODE_RUN_ID);
+
+        verify(ForgeAgentWireMockEndpoints.retryRecoveredNodeRun(),
+                NexusAgentMockMvcEndpoints.retryRecoveredNodeRun(), upstreamPath, nexusPath);
+    }
+
+    @Test
+    void recoveredNodeRunRetryPreservesTypedUpstreamConflict() {
+        final var upstreamPath = WireMockPathParams.create()
+                .add("workflowRunId", equalTo(RUN_ID.toString()))
+                .add("nodeRunId", equalTo(NODE_RUN_ID.toString()));
+        final var nexusPath = PathParams.create()
+                .add("workflowRunId", RUN_ID)
+                .add("nodeRunId", NODE_RUN_ID);
+
+        verify(ForgeAgentWireMockEndpoints.retryRecoveredNodeRunConflict(),
+                NexusAgentMockMvcEndpoints.retryRecoveredNodeRunConflict(), upstreamPath, nexusPath);
     }
 
     @Test

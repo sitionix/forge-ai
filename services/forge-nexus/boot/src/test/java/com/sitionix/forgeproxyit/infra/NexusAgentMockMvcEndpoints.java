@@ -23,6 +23,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentServiceMetricsResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentServiceProcessMetricsResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentAssetMonitoringRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentExecutionEventPageResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentRecoveredNodeRunRetryResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
@@ -52,6 +53,22 @@ public final class NexusAgentMockMvcEndpoints {
         return Endpoint.createContract(
                 "/api/v1/infrastructure/agents/workflow-runs/{runId}/cancel", HttpMethod.POST,
                 Void.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(HttpStatus.CONFLICT.value())
+                        .expectResponse("agent-upstream-error-response.json"));
+    }
+
+    public static Endpoint<Void, AgentRecoveredNodeRunRetryResponse> retryRecoveredNodeRun() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/retry",
+                HttpMethod.POST, Void.class, AgentRecoveredNodeRunRetryResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(HttpStatus.OK.value())
+                        .expectResponse("agent-node-run-retry-response.json"));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> retryRecoveredNodeRunConflict() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/retry",
+                HttpMethod.POST, Void.class, InfrastructureErrorResponse.class,
                 (MockmvcDefault) context -> context.expectStatus(HttpStatus.CONFLICT.value())
                         .expectResponse("agent-upstream-error-response.json"));
     }

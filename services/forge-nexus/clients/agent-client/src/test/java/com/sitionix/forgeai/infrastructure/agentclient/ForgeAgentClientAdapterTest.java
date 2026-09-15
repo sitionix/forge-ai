@@ -58,6 +58,8 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetCandidat
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetDiscoveryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RecoveredNodeRunRetryResponse;
+import com.sitionix.forgeai.domain.model.agentproxy.RecoveredAgentNodeRunRetry;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -654,6 +656,21 @@ class ForgeAgentClientAdapterTest {
 
         verify(this.executor).execute(any());
         verify(this.httpClient).cancelWorkflowRun(RUN_ID);
+    }
+
+    @Test
+    void retryRecoveredNodeRunExecutesExactTypedClientCallAndMapsResponse() {
+        final UUID nodeRunId = UUID.fromString("77777777-7777-4777-8777-777777777777");
+        final WorkflowRunResponse workflowResponse = null;
+        final var upstream = new RecoveredNodeRunRetryResponse(nodeRunId, workflowResponse);
+        final var expected = new RecoveredAgentNodeRunRetry(nodeRunId, null);
+        when(this.httpClient.retryRecoveredNodeRun(RUN_ID, nodeRunId)).thenReturn(upstream);
+        when(this.mapper.toDomain(upstream)).thenReturn(expected);
+
+        assertThat(this.adapter.retryRecoveredNodeRun(RUN_ID, nodeRunId)).isSameAs(expected);
+
+        verify(this.httpClient).retryRecoveredNodeRun(RUN_ID, nodeRunId);
+        verify(this.mapper).toDomain(upstream);
     }
 
     @Test

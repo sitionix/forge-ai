@@ -11,6 +11,7 @@ import com.sitionix.forgeai.api.agentproxy.AgentRuntimeProviderResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentRuntimeResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunSummaryResponse;
+import com.sitionix.forgeai.api.agentproxy.AgentRecoveredNodeRunRetryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentProjectRepositoryGitStateResponse;
@@ -41,6 +42,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflow;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRun;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunSummary;
+import com.sitionix.forgeai.domain.model.agentproxy.RecoveredAgentNodeRunRetry;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentProjectTaskCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.CreateAgentWorkflowCommand;
@@ -54,6 +56,7 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentProjectTask;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflow;
 import com.sitionix.forgeai.domain.usecase.CreateAgentWorkflowRun;
 import com.sitionix.forgeai.domain.usecase.CancelAgentWorkflowRun;
+import com.sitionix.forgeai.domain.usecase.RetryRecoveredAgentNodeRun;
 import com.sitionix.forgeai.domain.usecase.CloneAgentProjectRepository;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentDefinition;
 import com.sitionix.forgeai.domain.usecase.DeleteAgentProject;
@@ -94,6 +97,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
     private static final UUID RUN_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final UUID TASK_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
     private static final UUID REPOSITORY_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
+    private static final UUID NODE_RUN_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
     private static final Instant NOW = Instant.parse("2026-08-04T00:00:00Z");
 
     @Mock
@@ -151,6 +155,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
     @Mock
     private CancelAgentWorkflowRun cancelAgentWorkflowRun;
     @Mock
+    private RetryRecoveredAgentNodeRun retryRecoveredAgentNodeRun;
+    @Mock
     private AgentProxyApiMapper mapper;
 
     private ForgeAiInfrastructureAgentsController controller;
@@ -185,6 +191,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 this.listAgentWorkflowRuns,
                 this.getAgentWorkflowRun,
                 this.cancelAgentWorkflowRun,
+                this.retryRecoveredAgentNodeRun,
                 this.mapper
         );
     }
@@ -567,6 +574,22 @@ class ForgeAiInfrastructureAgentsControllerTest {
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         assertThat(actual.getBody()).isNull();
         verify(this.cancelAgentWorkflowRun).execute(RUN_ID);
+    }
+
+    @Test
+    void retryRecoveredNodeRun() {
+        final var retry = new RecoveredAgentNodeRunRetry(NODE_RUN_ID, this.workflowRun());
+        final var response = new AgentRecoveredNodeRunRetryResponse(
+                NODE_RUN_ID, this.workflowRunResponse());
+        when(this.retryRecoveredAgentNodeRun.execute(RUN_ID, NODE_RUN_ID)).thenReturn(retry);
+        when(this.mapper.toResponse(retry)).thenReturn(response);
+
+        final var actual = this.controller.retryRecoveredNodeRun(RUN_ID, NODE_RUN_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.retryRecoveredAgentNodeRun).execute(RUN_ID, NODE_RUN_ID);
+        verify(this.mapper).toResponse(retry);
     }
 
     private AgentProject project() {
