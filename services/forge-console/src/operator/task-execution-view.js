@@ -768,6 +768,8 @@ export class TaskExecutionView {
     this.stopPolling();
     this.pollInFlight = null;
     this.state.selectedRunId = runId;
+    this.state.contextResetInFlight = false;
+    this.state.contextResetError = '';
     this.state.selectedNodeRunId = null;
     this.state.selectedSourceNodeId = null;
     this.state.selectedVisualUnitKey = null;
@@ -920,6 +922,7 @@ export class TaskExecutionView {
       && this.opened
       && !this.state.cancellationInFlight
       && !this.state.recoveryRetryInFlight
+      && !this.state.contextResetInFlight
       && this.state.selectedRunId
       && ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)
     );
@@ -1073,7 +1076,7 @@ export class TaskExecutionView {
         <div class="task-execution-stop-confirmation" data-provider-stop-unverified>
           <div><strong>Provider stop could not be verified.</strong></div>
           <div class="task-execution-stop-actions">
-            <button type="button" class="button small danger" data-retry-stop ${this.state.cancellationInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Retrying…' : 'Retry stop'}</button>
+            <button type="button" class="button small danger" data-retry-stop ${this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Retrying…' : 'Retry stop'}</button>
           </div>
         </div>
       </div>`;
@@ -1089,11 +1092,11 @@ export class TaskExecutionView {
         <div class="task-execution-stop-confirmation" data-stop-run-confirmation>
           <div><strong>Stop this run?</strong><span>Active agent execution will be interrupted.</span></div>
           <div class="task-execution-stop-actions">
-            <button type="button" class="button small danger" data-confirm-stop-run ${this.state.cancellationInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Stopping…' : 'Stop run'}</button>
-            <button type="button" class="button small secondary" data-keep-running ${this.state.cancellationInFlight ? 'disabled' : ''}>Keep running</button>
+            <button type="button" class="button small danger" data-confirm-stop-run ${this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Stopping…' : 'Stop run'}</button>
+            <button type="button" class="button small secondary" data-keep-running ${this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>Keep running</button>
           </div>
         </div>
-      ` : '<button type="button" class="button small danger" data-stop-run>Stop run</button>'}
+      ` : `<button type="button" class="button small danger" data-stop-run ${this.state.contextResetInFlight ? 'disabled' : ''}>Stop run</button>`}
     </div>`;
     state.querySelector('[data-stop-run]')?.addEventListener('click', () => {
       this.state.stopConfirmation = true;
@@ -1108,7 +1111,7 @@ export class TaskExecutionView {
   }
 
   async stopSelectedRun() {
-    if (this.state.cancellationInFlight
+    if (this.state.cancellationInFlight || this.state.contextResetInFlight
       || (!ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status) && !this.hasUnresolvedOperatorStop())) {
       return;
     }
@@ -1127,6 +1130,7 @@ export class TaskExecutionView {
     this.stopPolling();
     this.pollInFlight = null;
     this.renderExecutionState();
+    this.renderNodeDetails();
     let commandSucceeded = false;
     try {
       try {
@@ -1456,6 +1460,9 @@ export class TaskExecutionView {
       this.selectNodeRun(button.dataset.contextNodeRun);
     }));
     this.bindActivityControls();
+    panel.querySelector('[data-reset-agent-context]')?.addEventListener('click', () => {
+      void this.resetAgentExecutionContext();
+    });
     panel.querySelector('[data-retry-recovered-node-run]')?.addEventListener('click', () => {
       void this.retryRecoveredNodeRun();
     });
@@ -1468,9 +1475,12 @@ export class TaskExecutionView {
       return '';
     }
     const action = nodeRun.retryEligibility?.action;
+    if (action === 'RESUME' && context?.contextResetAt) {
+      return '<section class="node-run-recovery"><h3>Recovery required</h3><p>Context was reset. Refresh workflow state to check Retry availability.</p></section>';
+    }
     if (action === 'RETRY' || action === 'RESUME') {
       const resume = action === 'RESUME';
-      const busy = this.state.recoveryRetryInFlight;
+      const busy = this.state.recoveryRetryInFlight || this.state.contextResetInFlight;
       const label = busy ? (resume ? 'Resuming…' : 'Retrying…') : (resume ? 'Resume' : 'Retry');
       const message = resume
         ? 'The previous provider turn finished. This context can be continued safely.'
@@ -1491,10 +1501,78 @@ export class TaskExecutionView {
     return `<section class="node-run-recovery"><h3>Recovery status</h3><p>${escapeHtml(message)}</p></section>`;
   }
 
+  renderContextReset(context) {
+    if (context.contextMode !== 'REUSE_WITHIN_WORKFLOW_NODE') return '';
+    if (context.contextResetAt) return '<p>Context reset. Existing turns and Activity remain available.</p>';
+    if (context.resetAllowed !== true) return '';
+    const busy = this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight;
+    return `<section><h4>Reset context</h4><p>The next invocation will start a new provider conversation. Existing turns and Activity will remain available.</p>
+      ${this.state.contextResetError ? `<p class="error-box">${escapeHtml(this.state.contextResetError)}</p>` : ''}
+      <button type="button" class="button small secondary" data-reset-agent-context ${busy ? 'disabled' : ''}>${this.state.contextResetInFlight ? 'Resetting…' : 'Reset context'}</button></section>`;
+  }
+
+  async resetAgentExecutionContext() {
+    const context = this.contextForNodeRun(this.selectedNodeRun()?.id);
+    if (this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight
+      || context?.contextMode !== 'REUSE_WITHIN_WORKFLOW_NODE'
+      || context.resetAllowed !== true || context.contextResetAt) return;
+    const taskId = this.state.taskId;
+    const taskSequence = this.taskLoadSequence;
+    const runId = this.state.selectedRunId;
+    const activityIdentity = this.activityIdentity;
+    const preserveActivity = activityIdentity && this.isCurrentActivity(activityIdentity);
+    const runSequence = ++this.runLoadSequence;
+    if (preserveActivity) activityIdentity.runLoadSequence = runSequence;
+    this.state.contextResetInFlight = true;
+    this.state.contextResetError = '';
+    this.state.refreshError = '';
+    this.stopPolling();
+    this.pollInFlight = null;
+    this.render();
+    try {
+      let resetContexts;
+      try {
+        resetContexts = await this.api.resetAgentExecutionContext(context.sessionId);
+      } catch (error) {
+        if (this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+          this.state.contextResetError = `Could not reset this context.${error?.message ? ` ${error.message}` : ''}`;
+        }
+        return;
+      }
+      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
+      const applyResetTruth = (contexts) => {
+        const returned = new Map(resetContexts.map((item) => [item.turnId, item]));
+        const existing = new Set(contexts.map((item) => item.turnId));
+        return [...contexts.map((item) => returned.get(item.turnId) || item),
+          ...resetContexts.filter((item) => !existing.has(item.turnId))];
+      };
+      this.state.agentExecutionContexts = applyResetTruth(this.state.agentExecutionContexts);
+      this.render();
+      const [workflowRefresh, contextRefresh] = await Promise.allSettled([
+        this.api.getWorkflowRun(runId), this.api.getAgentExecutionContexts(runId)
+      ]);
+      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
+      if (workflowRefresh.status === 'fulfilled') this.applyWorkflowRun(workflowRefresh.value);
+      if (contextRefresh.status === 'fulfilled') {
+        this.state.agentExecutionContexts = applyResetTruth(contextRefresh.value || []);
+      }
+      if (workflowRefresh.status === 'rejected' || contextRefresh.status === 'rejected') {
+        this.state.refreshError = 'Context reset, but the latest state could not be refreshed.';
+      }
+    } finally {
+      if (this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+        this.state.contextResetInFlight = false;
+        this.render();
+        this.syncPolling();
+      }
+    }
+  }
+
   async retryRecoveredNodeRun() {
     const nodeRun = this.selectedNodeRun();
     const action = nodeRun?.retryEligibility?.action;
-    if (this.state.recoveryRetryInFlight || !['RETRY', 'RESUME'].includes(action)) return;
+    if (this.state.contextResetInFlight || this.state.recoveryRetryInFlight || !['RETRY', 'RESUME'].includes(action)
+      || (action === 'RESUME' && this.contextForNodeRun(nodeRun.id)?.contextResetAt)) return;
     const actionLabel = action === 'RESUME' ? 'Resume' : 'Retry';
     const taskId = this.state.taskId;
     const taskSequence = this.taskLoadSequence;
@@ -1825,6 +1903,7 @@ export class TaskExecutionView {
     return `<section class="node-run-context"><h3>CONTEXT</h3><div><strong>${relation}</strong><span>Turn ${context.sequence}</span></div>
       ${this.detailRow('Status', status)}${this.detailRow('Scope', context.repositoryId ? this.repositoryName(context.repositoryId) : 'Global')}
       ${this.detailRow('Started', `Invocation #${startedNumber}`)}${context.sequence > 1 || currentTurn?.nodeRunId !== startedRun?.nodeRunId ? this.detailRow('Current', `Invocation #${currentNumber}`) : ''}
+      ${this.renderContextReset(context)}
       <nav aria-label="Context invocation history" class="context-history">${history}</nav>${this.renderTechnicalDetails(context)}</section>`;
   }
 
@@ -2535,6 +2614,8 @@ export class TaskExecutionView {
       stopConfirmation: false,
       cancellationInFlight: false,
       cancellationError: '',
+      contextResetInFlight: false,
+      contextResetError: '',
       recoveryRetryInFlight: false,
       recoveryRetryError: '',
       agentExecutionContexts: []

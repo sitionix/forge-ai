@@ -314,6 +314,335 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.lifecycle.tryStart(implementerTwo.id()).orElseThrow().inputEnvelope().contributions()).hasSize(1);
     }
 
+    @Autowired
+    private com.sitionix.forgeagent.application.usecase.ResetAgentExecutionContextUseCase resetContext;
+    @Autowired
+    private com.sitionix.forgeagent.application.usecase.RecoveredNodeRunRetryEligibilityService retryEligibility;
+
+    @Test
+    void resetIdleContextPreservesHistoryAndNextNormalInvocationsUseNewThenReusableSession() {
+        final var first = this.prepareIdleResetContext();
+        final var old = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        final var oldNode = this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", first.nodeRunId());
+        final var events = this.agentExecutionEventRepository.findPage(first.agentSessionClaim().turnId(), 0, 200).orElseThrow();
+        final var beforeRun = this.workflowRunRepository.findById(old.session().workflowRunId()).orElseThrow();
+        this.resetContext.execute(old.session().id());
+        final var retired = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        assertThat(retired.session().contextResetAt()).isNotNull();
+        assertThat(retired.session().status()).isEqualTo(AgentExecutionSessionStatus.IDLE);
+        assertThat(retired.session().providerConversationId()).isEqualTo(old.session().providerConversationId());
+        assertThat(retired.turn()).isEqualTo(old.turn());
+        assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", first.nodeRunId())).isEqualTo(oldNode);
+        assertThat(this.agentExecutionEventRepository.findPage(first.agentSessionClaim().turnId(), 0, 200).orElseThrow()).isEqualTo(events);
+        assertThat(this.workflowRunRepository.findById(old.session().workflowRunId()).orElseThrow()).isEqualTo(beforeRun);
+        final var resetResult = this.resetContext.execute(old.session().id());
+        assertThat(this.resetContext.execute(old.session().id())).isEqualTo(resetResult);
+        assertThat(this.agentExecutionSessionRepository.findByWorkflowRunId(beforeRun.id()).stream()
+                .filter(row -> row.session().sourceNodeId().equals(IMPLEMENTER))).hasSize(1);
+        verifyNoInteractions(this.agentExecutor, this.recoveryInspector);
+
+        final NodeRun second = this.allocateNextImplementer(beforeRun.id());
+        final var allocated = this.agentExecutionSessionRepository.findByNodeRunId(second.id()).orElseThrow();
+        assertThat(allocated.session().id()).isNotEqualTo(old.session().id());
+        assertThat(allocated.session().providerConversationId()).isNull();
+        assertThat(allocated.turn().sequence()).isEqualTo(1);
+        final var secondClaim = this.lifecycle.tryStart(second.id()).orElseThrow();
+        assertThat(secondClaim.agentSessionClaim().providerConversationId()).isNull();
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(second.id()).orElseThrow().session().status())
+                .isEqualTo(AgentExecutionSessionStatus.CREATING);
+        this.finishResetTurn(secondClaim, "thread-reset-b");
+        final var third = this.allocateNextImplementer(beforeRun.id());
+        final var thirdClaim = this.lifecycle.tryStart(third.id()).orElseThrow();
+        assertThat(thirdClaim.agentSessionClaim().sessionId()).isEqualTo(allocated.session().id());
+        assertThat(thirdClaim.agentSessionClaim().providerConversationId()).isEqualTo("thread-reset-b");
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(third.id()).orElseThrow()).satisfies(row -> {
+            assertThat(row.turn().sequence()).isEqualTo(2);
+            assertThat(row.session().status()).isEqualTo(AgentExecutionSessionStatus.RESUMING);
+        });
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow()).isEqualTo(retired);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void resetAndAllocationSerializeBothOrderings(final boolean resetWins) throws Exception {
+        final var first = this.prepareIdleResetContext();
+        final var old = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        final UUID runId = old.session().workflowRunId();
+        final var locked = new java.util.concurrent.CountDownLatch(1);
+        final var release = new java.util.concurrent.CountDownLatch(1);
+        final var blockerPid = new java.util.concurrent.atomic.AtomicInteger();
+        final var allocated = new AtomicReference<NodeRun>();
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            final var winner = workers.submit(() -> new org.springframework.transaction.support.TransactionTemplate(this.transactionManager)
+                    .execute(status -> {
+                        blockerPid.set(this.jdbcTemplate.queryForObject("SELECT pg_backend_pid()", Integer.class));
+                        if (resetWins) this.resetContext.execute(old.session().id());
+                        else allocated.set(this.allocateResetRaceChild(first.nodeRunId()));
+                        locked.countDown();
+                        this.awaitLatch(release);
+                        return true;
+                    }));
+            this.awaitLatch(locked);
+            final var loser = workers.submit(() -> {
+                if (resetWins) allocated.set(this.allocateResetRaceChild(first.nodeRunId()));
+                else assertThatThrownBy(() -> this.resetContext.execute(old.session().id()))
+                        .isInstanceOf(com.sitionix.forgeagent.domain.exception.ConflictException.class)
+                        .extracting("code").isEqualTo("AGENT_CONTEXT_RESET_BUSY");
+            });
+            try {
+                this.awaitRecoveryLockWait(blockerPid.get());
+            } finally {
+                release.countDown();
+            }
+            assertThat(winner.get(10, TimeUnit.SECONDS)).isTrue();
+            loser.get(10, TimeUnit.SECONDS);
+        }
+        final var after = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        final var next = this.agentExecutionSessionRepository.findByNodeRunId(allocated.get().id()).orElseThrow();
+        assertThat(after.turn()).isEqualTo(old.turn());
+        assertThat(next.turn().status()).isEqualTo(AgentExecutionTurnStatus.QUEUED);
+        if (resetWins) {
+            assertThat(after.session().contextResetAt()).isNotNull();
+            assertThat(next.session().id()).isNotEqualTo(old.session().id());
+            assertThat(next.turn().sequence()).isEqualTo(1);
+        } else {
+            assertThat(after.session().contextResetAt()).isNull();
+            assertThat(next.session().id()).isEqualTo(old.session().id());
+            assertThat(next.turn().sequence()).isEqualTo(2);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CREATING", "RESUMING", "ACTIVE", "FAILED", "CLOSED"})
+    void resetUnsafeSessionFailsWithoutMutationOrProviderCalls(final String status) {
+        final var first = this.prepareIdleResetContext();
+        final UUID sessionId = first.agentSessionClaim().sessionId();
+        new org.springframework.transaction.support.TransactionTemplate(this.transactionManager).executeWithoutResult(tx -> {
+            if (List.of("CREATING", "RESUMING", "ACTIVE").contains(status)) {
+                this.jdbcTemplate.update("UPDATE agent_execution_turns SET status='ACTIVE' WHERE id=?", first.agentSessionClaim().turnId());
+                this.jdbcTemplate.update("UPDATE agent_execution_sessions SET status=?,active_node_run_id=?,lease_owner_id='busy',lease_expires_at=clock_timestamp()+INTERVAL '30 seconds' WHERE id=?",
+                        status, first.nodeRunId(), sessionId);
+            } else if ("CLOSED".equals(status)) {
+                this.jdbcTemplate.update("UPDATE agent_execution_sessions SET status='CLOSED',terminal_outcome='CANCELLED',closed_at=clock_timestamp() WHERE id=?", sessionId);
+            } else {
+                this.jdbcTemplate.update("UPDATE agent_execution_sessions SET status=? WHERE id=?", status, sessionId);
+            }
+        });
+        final var before = this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_sessions WHERE id=?", sessionId);
+        assertThatThrownBy(() -> this.resetContext.execute(sessionId))
+                .isInstanceOf(com.sitionix.forgeagent.domain.exception.ConflictException.class);
+        assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_sessions WHERE id=?", sessionId)).isEqualTo(before);
+        verifyNoInteractions(this.agentExecutor, this.recoveryInspector);
+    }
+
+    @Test
+    void resetFreshSessionIsNotAllowed() {
+        this.seed();
+        this.saveTerminalWorkflow();
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Fresh context."));
+        final var claim = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow();
+        this.finishResetTurn(claim, "fresh-reset-rejected");
+        final var before = this.agentExecutionSessionRepository.findByNodeRunId(claim.nodeRunId()).orElseThrow();
+        assertThatThrownBy(() -> this.resetContext.execute(before.session().id()))
+                .isInstanceOf(com.sitionix.forgeagent.domain.exception.ConflictException.class)
+                .extracting("code").isEqualTo("AGENT_CONTEXT_RESET_NOT_ALLOWED");
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(claim.nodeRunId()).orElseThrow()).isEqualTo(before);
+        verifyNoInteractions(this.agentExecutor, this.recoveryInspector);
+    }
+
+    @Test
+    void recoveredReusableResetChangesResumeToRetryAndCompletesWithNewContext() {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var old = this.expiredRecoveryExecution("0.154.0");
+        doReturn(ProviderTurnRecoveryResult.terminal(ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Completed."))
+                .when(this.recoveryInspector).inspect(any());
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+        final var oldNode = this.nodeRunRepository.findById(old.nodeRunId()).orElseThrow();
+        final var run = this.workflowRunRepository.findById(oldNode.workflowRunId()).orElseThrow();
+        assertThat(this.retryEligibility.evaluateAll(run).get(old.nodeRunId()).action().name()).isEqualTo("RESUME");
+        this.resetContext.execute(old.sessionId());
+        final var retired = this.agentExecutionSessionRepository.findByNodeRunId(old.nodeRunId()).orElseThrow();
+        final var events = this.agentExecutionEventRepository.findPage(old.turnId(), 0, 200).orElseThrow();
+        assertThat(this.retryEligibility.evaluateAll(run).get(old.nodeRunId()).action().name()).isEqualTo("RETRY");
+        final var retry = this.retryRecoveredNodeRun.execute(run.id(), old.nodeRunId());
+        final var child = this.nodeRunRepository.findById(retry.nodeRunId()).orElseThrow();
+        assertThat(child.retryOfNodeRunId()).isEqualTo(old.nodeRunId());
+        assertThat(child.contextMode()).isEqualTo(NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
+        final var claim = this.lifecycle.tryStart(child.id()).orElseThrow();
+        assertThat(claim.agentSessionClaim().sessionId()).isNotEqualTo(old.sessionId());
+        assertThat(claim.agentSessionClaim().providerConversationId()).isNull();
+        this.finishResetTurn(claim, "thread-reset-recovered-b");
+        assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+        assertThat(this.nodeRunRepository.findById(old.nodeRunId()).orElseThrow()).isEqualTo(oldNode);
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(old.nodeRunId()).orElseThrow()).isEqualTo(retired);
+        assertThat(this.agentExecutionEventRepository.findPage(old.turnId(), 0, 200).orElseThrow()).isEqualTo(events);
+    }
+
+    private NodeExecutionClaim prepareIdleResetContext() {
+        this.seed();
+        this.saveReusableReviewerWorkflow();
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_RETURN, STRATEGY_PASS, CODE_RETURN);
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Reset context test."));
+        final var first = this.lifecycle.tryStart(this.onlyPending(run.id(), IMPLEMENTER).id()).orElseThrow();
+        this.finishResetTurn(first, "thread-reset-a");
+        return first;
+    }
+
+    private void finishResetTurn(final NodeExecutionClaim claim, final String conversationId) {
+        this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), conversationId, "0.154.0");
+        this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "turn-" + claim.nodeRunId());
+        assertThat(this.agentExecutionEventRepository.activate(claim.agentSessionClaim())).isTrue();
+        assertThat(this.agentExecutionEventRepository.append(claim.agentSessionClaim(),
+                new AgentExecutionEventCandidate(AgentExecutionEventType.AGENT_MESSAGE, AgentExecutionEventStatus.COMPLETED,
+                        null, "reset-history-" + claim.nodeRunId(), "{\"text\":\"Preserved answer\"}", Instant.now())))
+                .isNotNull();
+        assertThat(this.agentExecutionEventRepository.markComplete(claim.agentSessionClaim())).isTrue();
+        this.lifecycle.succeed(claim.nodeRunId(), new AgentExecutionResult(new NodeRunOutput("{\"answer\":\"done\"}"), null), claim.agentSessionClaim());
+    }
+
+    private NodeRun allocateResetRaceChild(final UUID parentId) {
+        final var target = this.nodeRunRepository.findById(parentId).orElseThrow();
+        // Exercise the normal NodeRun persistence allocator directly; routing has separate transactions.
+        return this.nodeRunRepository.saveAndFlush(new NodeRun(UUID.randomUUID(), target.workflowRunId(), target.sourceNodeId(), target.sourceAgentId(),
+                target.agentName(), target.agentInstructions(), target.agentOutputSchema(), target.inputMode(), target.position(),
+                target.executionFrameId(), target.enteredViaInputPortId(), target.activationFrameId(), null, null,
+                NodeRunStatus.PENDING, null, null, target.executionModel(), Instant.now(), null, null,
+                target.repositoryId(), target.contextMode(), target.contextTrackingVersion(), target.id()));
+    }
+
+    private NodeRun allocateNextImplementer(final UUID runId) {
+        this.complete(this.onlyPending(runId, STRATEGY), "{\"strategy\":\"approved\"}");
+        this.complete(this.onlyPending(runId, CODE), "{\"feedback\":\"Continue\"}");
+        return this.onlyPending(runId, IMPLEMENTER);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @EnabledIfSystemProperty(named = "forge.codex.live-reset-e2e", matches = "true")
+    void liveCodexResetStartsNewConversationAndLaterResumesOnlyNewSession(final boolean recoverFirst) throws Exception {
+        this.seed();
+        final String liveModel = System.getProperty("forge.codex.live-model", "gpt-5.6-sol");
+        this.codexRuntimePort.readyWithModel(liveModel);
+        this.agentUseCases.updateAgent(AGENT_A_ID, new SaveAgentCommand(
+                "Agent A", "Return only the requested JSON object.",
+                AgentOutputSchema.ofCanonicalJsonObject("""
+                        {"type":"object","properties":{"answer":{"type":"string"}},
+                         "required":["answer"],"additionalProperties":false}
+                        """), new AgentModelSelection("codex", liveModel, null)));
+        this.saveReusableReviewerWorkflow();
+        when(this.outputSelector.selectOutput(any(), any(), any()))
+                .thenReturn(STRATEGY_PASS, CODE_RETURN, STRATEGY_PASS, CODE_RETURN, STRATEGY_PASS, CODE_PASS);
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID,
+                new CreateWorkflowRunCommand("Return a JSON answer for the context reset acceptance."));
+        final var first = this.lifecycle.tryStart(this.onlyPending(run.id(), IMPLEMENTER).id()).orElseThrow();
+        final var provider = new LiveCodexRecoveryFixture(first.executionWorkspace().cwd());
+        if (recoverFirst) {
+            this.executeRecordedResetTurn(provider, first, false);
+            this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=?",
+                    first.agentSessionClaim().sessionId());
+            final var restarted = new AgentExecutionRecoveryService(this.agentExecutionSessionRepository,
+                    List.of(provider.inspector()), this.workflowRunRepository, this.workspaceResolver, this.nodeRunRepository,
+                    this.completionProcessor, this.coordinator, Clock.systemUTC());
+            assertThat(restarted.reconcileExpired()).isEqualTo(1);
+            assertThat(this.retryEligibility.evaluateAll(this.workflowRunRepository.findById(run.id()).orElseThrow())
+                    .get(first.nodeRunId()).action().name()).isEqualTo("RESUME");
+        } else {
+            this.executeRecordedResetTurn(provider, first);
+        }
+        final var old = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        assertThat(old.session().status()).isEqualTo(AgentExecutionSessionStatus.IDLE);
+        assertThat(old.session().providerConversationId()).isNotBlank();
+        assertThat(old.session().providerVersion()).isEqualTo("0.154.0");
+        final var oldNode = this.nodeRunRepository.findById(first.nodeRunId()).orElseThrow();
+        final var oldEvents = this.agentExecutionEventRepository.findPage(first.agentSessionClaim().turnId(), 0, 200).orElseThrow();
+        final var requestsBefore = provider.executionProcesses().stream().flatMap(process -> process.requests().stream()).toList();
+        final var inspectionsBefore = provider.inspectionProcesses();
+        this.resetContext.execute(old.session().id());
+        assertThat(provider.inspectionProcesses()).isEqualTo(inspectionsBefore);
+        assertThat(provider.executionProcesses().stream().flatMap(process -> process.requests().stream()).toList())
+                .isEqualTo(requestsBefore);
+        assertThat(provider.executionProcesses()).hasSize(1);
+        final var retired = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        assertThat(retired.session().contextResetAt()).isNotNull();
+        assertThat(retired.turn()).isEqualTo(old.turn());
+        assertThat(retired.session().providerConversationId()).isEqualTo(old.session().providerConversationId());
+        verifyNoInteractions(this.agentExecutor, this.recoveryInspector);
+
+        final NodeRun secondNode;
+        if (recoverFirst) {
+            assertThat(this.retryEligibility.evaluateAll(this.workflowRunRepository.findById(run.id()).orElseThrow())
+                    .get(first.nodeRunId()).action().name()).isEqualTo("RETRY");
+            final var retried = this.retryRecoveredNodeRun.execute(run.id(), first.nodeRunId());
+            secondNode = this.nodeRunRepository.findById(retried.nodeRunId()).orElseThrow();
+            assertThat(secondNode.retryOfNodeRunId()).isEqualTo(first.nodeRunId());
+            // Only B and its later continuation route through reviewers in this recovery scenario.
+            when(this.outputSelector.selectOutput(any(), any(), any()))
+                    .thenReturn(STRATEGY_PASS, CODE_RETURN, STRATEGY_PASS, CODE_PASS);
+        } else {
+            secondNode = this.allocateNextImplementer(run.id());
+        }
+        final var secondAllocation = this.agentExecutionSessionRepository.findByNodeRunId(secondNode.id()).orElseThrow();
+        assertThat(secondAllocation.session().id()).isNotEqualTo(old.session().id());
+        assertThat(secondAllocation.session().providerConversationId()).isNull();
+        assertThat(secondAllocation.turn().sequence()).isEqualTo(1);
+        final var second = this.lifecycle.tryStart(secondNode.id()).orElseThrow();
+        this.executeRecordedResetTurn(provider, second);
+        final var newContext = this.agentExecutionSessionRepository.findByNodeRunId(secondNode.id()).orElseThrow();
+        assertThat(newContext.session().providerConversationId()).isNotBlank().isNotEqualTo(old.session().providerConversationId());
+        assertThat(provider.executionProcesses().get(1).requests()).extracting(request -> request.path("method").asText())
+                .contains("thread/start", "turn/start").doesNotContain("thread/resume");
+        assertThat(provider.executionProcesses().get(1).requests().toString()).doesNotContain(old.session().providerConversationId());
+
+        final var thirdNode = this.allocateNextImplementer(run.id());
+        final var third = this.lifecycle.tryStart(thirdNode.id()).orElseThrow();
+        assertThat(third.agentSessionClaim().sessionId()).isEqualTo(newContext.session().id());
+        assertThat(third.agentSessionClaim().providerConversationId()).isEqualTo(newContext.session().providerConversationId());
+        this.executeRecordedResetTurn(provider, third);
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(thirdNode.id()).orElseThrow().turn().sequence()).isEqualTo(2);
+        assertThat(provider.executionProcesses()).hasSize(3);
+        assertThat(provider.executionProcesses().get(2).requests()).extracting(request -> request.path("method").asText())
+                .contains("thread/resume", "turn/start").doesNotContain("thread/start");
+        assertThat(provider.executionProcesses().get(2).requests().stream()
+                .filter(request -> "thread/resume".equals(request.path("method").asText())))
+                .singleElement().satisfies(request -> assertThat(request.path("params").path("threadId").asText())
+                        .isEqualTo(newContext.session().providerConversationId()));
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow()).isEqualTo(retired);
+        assertThat(this.nodeRunRepository.findById(first.nodeRunId()).orElseThrow()).isEqualTo(oldNode);
+        assertThat(this.agentExecutionEventRepository.findPage(first.agentSessionClaim().turnId(), 0, 200).orElseThrow()).isEqualTo(oldEvents);
+        this.complete(this.onlyPending(run.id(), STRATEGY), "{\"strategy\":\"approved\"}");
+        this.complete(this.onlyPending(run.id(), CODE), "{\"code\":\"approved\"}");
+        assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+        System.out.printf("LIVE_RESET_ACCEPTANCE recovered=%s sessionA=%s sessionB=%s conversationA=%s conversationB=%s resetRequests=0 sequenceB=1,2 protocol=thread/start,thread/resume history=unchanged workflow=SUCCEEDED%n",
+                recoverFirst, old.session().id(), newContext.session().id(), old.session().providerConversationId(),
+                newContext.session().providerConversationId());
+    }
+
+    private void executeRecordedResetTurn(final LiveCodexRecoveryFixture provider,
+                                          final NodeExecutionClaim claim) throws Exception {
+        this.executeRecordedResetTurn(provider, claim, true);
+    }
+
+    private void executeRecordedResetTurn(final LiveCodexRecoveryFixture provider,
+                                          final NodeExecutionClaim claim, final boolean complete) throws Exception {
+        try (var heartbeat = Executors.newSingleThreadScheduledExecutor()) {
+            final var renewal = heartbeat.scheduleAtFixedRate(
+                    () -> this.agentSessionLeaseService.renew(claim.agentSessionClaim()),
+                    AgentSessionLeaseService.HEARTBEAT_SECONDS, AgentSessionLeaseService.HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+            try {
+                if (complete) {
+                    final var output = provider.executeTrackedResumeTurn(claim, this.agentSessionLeaseService, this.agentExecutionEventRepository);
+                    this.lifecycle.succeed(claim.nodeRunId(), new AgentExecutionResult(new NodeRunOutput(output), null), claim.agentSessionClaim());
+                } else {
+                    provider.executeTrackedDurableTurn(claim, this.agentSessionLeaseService, this.agentExecutionEventRepository);
+                }
+            } finally {
+                renewal.cancel(false);
+                heartbeat.shutdownNow();
+            }
+        }
+    }
+
     @Test
     void reusableImplementerKeepsOneForgeSessionAcrossReviewedReentry() {
         this.seed();

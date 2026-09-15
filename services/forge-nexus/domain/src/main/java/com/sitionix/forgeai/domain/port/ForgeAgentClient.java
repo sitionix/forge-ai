@@ -120,6 +120,8 @@ public interface ForgeAgentClient {
 
   List<AgentExecutionContext> getAgentExecutionContexts(UUID runId);
 
+  List<AgentExecutionContext> resetAgentExecutionContext(UUID sessionId);
+
   com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage getAgentExecutionEvents(
       UUID turnId, long afterSequence, int limit);
 

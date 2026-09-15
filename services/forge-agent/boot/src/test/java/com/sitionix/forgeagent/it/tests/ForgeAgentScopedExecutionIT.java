@@ -143,6 +143,9 @@ class ForgeAgentScopedExecutionIT {
     @Autowired
     private AgentExecutionSessionRepository agentExecutionSessionRepository;
 
+    @Autowired
+    private com.sitionix.forgeagent.application.usecase.ResetAgentExecutionContextUseCase resetContext;
+
     @MockBean
     private OutputSelector outputSelector;
 
@@ -169,6 +172,57 @@ class ForgeAgentScopedExecutionIT {
                 .containsExactlyInAnyOrder(REPOSITORY_A, REPOSITORY_B);
         assertThat(scoped).extracting(allocation -> allocation.session().id()).doesNotHaveDuplicates();
         assertThat(scoped).extracting(allocation -> allocation.turn().sequence()).containsOnly(1);
+    }
+
+    @Test
+    void resettingRepositoryAIsolatesRetirementAndNextAllocationFromRepositoryB() {
+        this.seed();
+        this.saveScopedReviewerWorkflow(NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(REVIEWER_RETURN);
+        final UUID runId = this.createTask(this.repositories(2));
+        final NodeRun firstA = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_A);
+        final NodeRun firstB = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_B);
+        this.completeScopedContext(firstA, "scoped-reset-thread-a");
+        this.completeScopedContext(firstB, "scoped-reset-thread-b");
+        final var beforeA = this.agentExecutionSessionRepository.findByNodeRunId(firstA.id()).orElseThrow();
+        final var beforeB = this.agentExecutionSessionRepository.findByNodeRunId(firstB.id()).orElseThrow();
+        assertThat(beforeA.session().status()).isEqualTo(com.sitionix.forgeagent.domain.model.AgentExecutionSessionStatus.IDLE);
+        assertThat(beforeB.session().status()).isEqualTo(com.sitionix.forgeagent.domain.model.AgentExecutionSessionStatus.IDLE);
+
+        this.resetContext.execute(beforeA.session().id());
+
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(firstB.id())).contains(beforeB);
+        final var retiredA = this.agentExecutionSessionRepository.findByNodeRunId(firstA.id()).orElseThrow();
+        assertThat(retiredA.session().contextResetAt()).isNotNull();
+        assertThat(retiredA.turn()).isEqualTo(beforeA.turn());
+        assertThat(retiredA.session()).usingRecursiveComparison().ignoringFields("contextResetAt")
+                .isEqualTo(beforeA.session());
+
+        this.complete(this.onlyPending(runId, REVIEWER, REPOSITORY_A), "{\"route\":\"return\"}");
+        this.complete(this.onlyPending(runId, REVIEWER, REPOSITORY_B), "{\"route\":\"return\"}");
+        final var nextA = this.agentExecutionSessionRepository.findByNodeRunId(
+                this.onlyPending(runId, IMPLEMENTER, REPOSITORY_A).id()).orElseThrow();
+        final var nextB = this.agentExecutionSessionRepository.findByNodeRunId(
+                this.onlyPending(runId, IMPLEMENTER, REPOSITORY_B).id()).orElseThrow();
+        assertThat(nextA.session().id()).isNotEqualTo(beforeA.session().id());
+        assertThat(nextA.session().repositoryId()).isEqualTo(REPOSITORY_A);
+        assertThat(nextA.session().providerConversationId()).isNull();
+        assertThat(nextA.turn().sequence()).isEqualTo(1);
+        assertThat(nextB.session()).isEqualTo(beforeB.session());
+        assertThat(nextB.turn().sequence()).isEqualTo(2);
+        assertThat(nextB.session().providerConversationId()).isEqualTo("scoped-reset-thread-b");
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(firstA.id())).contains(retiredA);
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(firstB.id())).contains(beforeB);
+    }
+
+    private void completeScopedContext(final NodeRun nodeRun, final String conversationId) {
+        final var claim = this.lifecycle.tryStart(nodeRun.id()).orElseThrow();
+        final var lease = claim.agentSessionClaim();
+        assertThat(this.agentExecutionSessionRepository.persistProviderConversation(lease.sessionId(), lease.leaseOwnerId(),
+                lease.leaseToken(), conversationId, "0.154.0")).isTrue();
+        assertThat(this.agentExecutionSessionRepository.persistProviderTurn(lease.sessionId(), lease.turnId(),
+                lease.leaseOwnerId(), lease.leaseToken(), "turn-" + nodeRun.id())).isTrue();
+        this.lifecycle.succeed(nodeRun.id(), new AgentExecutionResult(new NodeRunOutput("{\"answer\":\"done\"}"), null), lease);
     }
 
     @AfterEach
@@ -836,10 +890,14 @@ class ForgeAgentScopedExecutionIT {
     }
 
     private void saveScopedReviewerWorkflow() {
+        this.saveScopedReviewerWorkflow(NodeContextMode.FRESH_EACH_NODE_RUN);
+    }
+
+    private void saveScopedReviewerWorkflow(final NodeContextMode contextMode) {
         this.save(List.of(
-                        this.node(IMPLEMENTER, AGENT_A_ID,
+                        new Node(IMPLEMENTER, AGENT_A_ID, NodeInputMode.DEPENDENCIES_ONLY,
                                 List.of(this.port(IMPLEMENTER_INITIAL_IN, "Initial", 0), this.port(IMPLEMENTER_REVIEW_IN, "Review", 1)),
-                                List.of(this.port(IMPLEMENTER_OUT, "Review")), 0, NodeScopeMode.PER_SCOPE),
+                                List.of(this.port(IMPLEMENTER_OUT, "Review")), new NodePosition(0.0, 0.0), NodeScopeMode.PER_SCOPE, contextMode),
                         this.node(REVIEWER, AGENT_B_ID, List.of(this.port(REVIEWER_IN, "Input")),
                                 List.of(this.port(REVIEWER_PASS, "Pass", 0), this.port(REVIEWER_RETURN, "Return", 1)), 1,
                                 NodeScopeMode.PER_SCOPE),

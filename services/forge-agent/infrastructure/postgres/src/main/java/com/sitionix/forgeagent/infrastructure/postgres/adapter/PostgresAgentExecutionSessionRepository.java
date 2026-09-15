@@ -21,6 +21,32 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     private final JdbcTemplate jdbc;
 
     @Override
+    public Optional<AgentExecutionSession> findSession(final UUID sessionId) {
+        return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE id=?", this::session, sessionId).stream().findFirst();
+    }
+
+    @Override
+    public void lockReusableScope(final UUID workflowRunId, final UUID sourceNodeId, final UUID repositoryId) {
+        this.jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", Object.class,
+                workflowRunId + ":" + sourceNodeId + ":" + repositoryId);
+    }
+
+    @Override
+    public Optional<AgentExecutionSession> lockSession(final UUID sessionId) {
+        return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE id=? FOR UPDATE", this::session, sessionId).stream().findFirst();
+    }
+
+    @Override
+    public boolean hasPendingTurns(final UUID sessionId) {
+        return Boolean.TRUE.equals(this.jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM agent_execution_turns WHERE agent_session_id=? AND status IN ('QUEUED','STARTING','ACTIVE'))", Boolean.class, sessionId));
+    }
+
+    @Override
+    public void markContextReset(final UUID sessionId) {
+        this.jdbc.update("UPDATE agent_execution_sessions SET context_reset_at=clock_timestamp() WHERE id=? AND context_reset_at IS NULL", sessionId);
+    }
+
+    @Override
     @Transactional
     public AgentExecutionAllocation allocate(final NodeRun nodeRun, final String providerId) {
         final AgentExecutionSession session = nodeRun.contextMode() == NodeContextMode.FRESH_EACH_NODE_RUN
@@ -37,15 +63,14 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     }
 
     private AgentExecutionSession findOrCreateReusable(final NodeRun nodeRun, final String providerId) {
-        this.jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", Object.class,
-                nodeRun.workflowRunId() + ":" + nodeRun.sourceNodeId() + ":" + nodeRun.repositoryId());
+        this.lockReusableScope(nodeRun.workflowRunId(), nodeRun.sourceNodeId(), nodeRun.repositoryId());
         final List<AgentExecutionSession> existing = this.findReusable(nodeRun);
         if (!existing.isEmpty()) return existing.getFirst();
         return this.createSession(nodeRun, providerId);
     }
 
     private List<AgentExecutionSession> findReusable(final NodeRun nodeRun) {
-        return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE workflow_run_id=? AND source_node_id=? AND context_mode='REUSE_WITHIN_WORKFLOW_NODE' AND repository_id IS NOT DISTINCT FROM ? FOR UPDATE",
+        return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE workflow_run_id=? AND source_node_id=? AND context_mode='REUSE_WITHIN_WORKFLOW_NODE' AND repository_id IS NOT DISTINCT FROM ? AND context_reset_at IS NULL FOR UPDATE",
                 this::session, nodeRun.workflowRunId(), nodeRun.sourceNodeId(), nodeRun.repositoryId());
     }
 
@@ -86,7 +111,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         if (earlier != null && earlier > 0) return Optional.empty();
         final String nextStatus = allocation.session().providerConversationId() == null ? "CREATING" : "RESUMING";
         final List<Long> tokens = this.jdbc.query(
-                "UPDATE agent_execution_sessions SET lease_owner_id=?,lease_token=lease_token+1,lease_expires_at=CURRENT_TIMESTAMP + INTERVAL '30 seconds',active_node_run_id=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND lease_owner_id IS NULL AND active_node_run_id IS NULL AND status IN ('WAITING','IDLE') RETURNING lease_token",
+                "UPDATE agent_execution_sessions SET lease_owner_id=?,lease_token=lease_token+1,lease_expires_at=CURRENT_TIMESTAMP + INTERVAL '30 seconds',active_node_run_id=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND context_reset_at IS NULL AND lease_owner_id IS NULL AND active_node_run_id IS NULL AND status IN ('WAITING','IDLE') RETURNING lease_token",
                 (rs, row) -> rs.getLong(1), ownerId, nodeRunId, nextStatus, allocation.session().id());
         if (tokens.isEmpty()) return Optional.empty();
         final long token = tokens.getFirst();
@@ -334,7 +359,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
                 rs.getString("provider_id"), rs.getString("provider_conversation_id"), rs.getString("provider_version"), NodeContextMode.valueOf(rs.getString("context_mode")),
                 AgentExecutionSessionStatus.valueOf(rs.getString("status")), enumValue(AgentExecutionTerminalOutcome.class, rs.getString("terminal_outcome")),
                 rs.getObject("active_node_run_id", UUID.class), rs.getString("lease_owner_id"), rs.getLong("lease_token"), instant(rs, "lease_expires_at"),
-                rs.getString("failure_code"), rs.getString("failure_message"), instant(rs, "created_at"), instant(rs, "updated_at"), instant(rs, "closed_at"));
+                rs.getString("failure_code"), rs.getString("failure_message"), instant(rs, "created_at"), instant(rs, "updated_at"), instant(rs, "closed_at"), instant(rs, "context_reset_at"));
     }
 
     private AgentExecutionTurn turn(final ResultSet rs) throws SQLException {

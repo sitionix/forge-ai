@@ -425,6 +425,7 @@ function api(overrides = {}) {
     getAgentExecutionContexts: vi.fn(() => Promise.resolve([])),
     cancelWorkflowRun: vi.fn(() => Promise.resolve()),
     retryRecoveredNodeRun: vi.fn(() => Promise.resolve({})),
+    resetAgentExecutionContext: vi.fn(() => Promise.resolve([])),
     createWorkflowRun: vi.fn(() => Promise.resolve({})),
     ...overrides
   };
@@ -6792,6 +6793,8 @@ describe('Agent projects page', () => {
     client.getWorkflowRun('66666666-6666-4666-8666-666666666666');
     client.cancelWorkflowRun('66666666-6666-4666-8666-666666666666');
     client.retryRecoveredNodeRun('66666666-6666-4666-8666-666666666666', 'node/run');
+    client.resetAgentExecutionContext('session/A value');
+    expect(http.post).toHaveBeenCalledWith('/agents/agent-execution-sessions/session%2FA%20value/reset-context');
     client.getAgentExecutionEvents('turn/T value', 17, 200);
     const sshRequest = { name: 'Ancestor', host: '192.168.0.108', port: 22,
       username: 'ancestor', authType: 'PASSWORD', privateKeyPath: null, password: 'secret' };
@@ -7121,5 +7124,212 @@ describe('SSH Resource monitoring workspace', () => {
     (dom.window.document.querySelector('[data-remove-monitoring-file="0"]') as HTMLButtonElement).click();
     expect(dom.window.document.querySelector('[data-monitoring-tab="FILES"]')?.textContent).toBe('FILES 0');
     page.dispose();
+  });
+});
+
+describe('Reusable context reset', () => {
+  async function fixture(contextOverrides = {}, apiOverrides = {}) {
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
+    const oldRun = {
+      ...modernNodeRun('impl-1', 'implementer', 'FAILED', '2026-08-13T10:00:00Z'),
+      contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', contextTrackingVersion: 1,
+      failure: { code: 'AGENT_EXECUTION_RECOVERY_REQUIRED', message: 'Recovery required.' },
+      retryEligibility: { action: 'RESUME', reasonCode: null }
+    };
+    const contexts = [{ sessionId: 'session-a', turnId: 'turn-a', nodeRunId: 'impl-1', sourceNodeId: 'implementer',
+      repositoryId: null, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', sequence: 1, sessionStatus: 'IDLE',
+      turnStatus: 'FAILED', providerConversationId: 'conversation-a', contextResetAt: null, resetAllowed: true,
+      resetReason: null, ...contextOverrides }];
+    const resetContexts = contexts.map((item) => ({ ...item, contextResetAt: '2026-09-15T10:00:00Z', resetAllowed: false,
+      resetReason: 'AGENT_CONTEXT_RESET_NOT_ALLOWED' }));
+    const before = workflowRunDetail('run-new', 'FAILED', [oldRun], 'Recovery', graph);
+    const after = workflowRunDetail('run-new', 'FAILED', [{ ...oldRun, retryEligibility: { action: 'RETRY', reasonCode: null } }], 'Recovery', graph);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn().mockResolvedValueOnce(before).mockResolvedValue(after),
+      getAgentExecutionContexts: vi.fn().mockResolvedValueOnce(contexts).mockResolvedValue(resetContexts),
+      getAgentExecutionEvents: vi.fn(() => Promise.resolve(activityPage('turn-a', 'Old activity remains', 'COMPLETE'))),
+      resetAgentExecutionContext: vi.fn().mockResolvedValue(resetContexts),
+      ...apiOverrides
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    return { dom, page, fakeApi, contexts, resetContexts, before };
+  }
+
+  it('shows backend-eligible idle reusable Reset with its explanation', async () => {
+    const { dom } = await fixture();
+    const button = dom.window.document.querySelector<HTMLButtonElement>('[data-reset-agent-context]')!;
+    expect(button.disabled).toBe(false);
+    expect(button.textContent).toBe('Reset context');
+    expect(dom.window.document.querySelector('.node-run-context')?.textContent)
+      .toContain('The next invocation will start a new provider conversation. Existing turns and Activity will remain available.');
+  });
+
+  it.each([
+    { contextMode: 'FRESH_EACH_NODE_RUN', resetAllowed: false },
+    { sessionStatus: 'ACTIVE', resetAllowed: false },
+    { sessionStatus: 'CREATING', resetAllowed: false },
+    { sessionStatus: 'RESUMING', resetAllowed: false },
+    { turnStatus: 'QUEUED', resetAllowed: false },
+    { contextResetAt: '2026-09-15T10:00:00Z', resetAllowed: false },
+    { resetAllowed: false, resetReason: 'AGENT_CONTEXT_RESET_NOT_ALLOWED' }
+  ])('does not enable reset for ineligible context %j', async (context) => {
+    const { dom, page, fakeApi } = await fixture(context);
+    expect(dom.window.document.querySelector('[data-reset-agent-context]')).toBeNull();
+    await page.taskExecutionView.resetAgentExecutionContext();
+    expect((fakeApi as any).resetAgentExecutionContext).not.toHaveBeenCalled();
+  });
+
+  it('submits double-click once and applies POST truth before refresh finishes', async () => {
+    const reset = deferred<any>();
+    const refresh = deferred<any>();
+    const { dom, page, fakeApi, resetContexts, before } = await fixture({}, {
+      resetAgentExecutionContext: vi.fn(() => reset.promise)
+    });
+    fakeApi.getWorkflowRun.mockImplementation(() => refresh.promise);
+    const button = dom.window.document.querySelector<HTMLButtonElement>('[data-reset-agent-context]')!;
+    button.click(); button.click();
+    expect((fakeApi as any).resetAgentExecutionContext).toHaveBeenCalledTimes(1);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-reset-agent-context]')?.disabled).toBe(true);
+    reset.resolve(resetContexts);
+    await flushAsync();
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual(resetContexts);
+    expect(dom.window.document.querySelector('[data-reset-agent-context]')).toBeNull();
+    refresh.resolve(before);
+    await flushAsync();
+  });
+
+  it('preserves old truth when POST fails', async () => {
+    const { dom, page, contexts } = await fixture({}, {
+      resetAgentExecutionContext: vi.fn().mockRejectedValue(new Error('AGENT_CONTEXT_RESET_BUSY'))
+    });
+    await page.taskExecutionView.resetAgentExecutionContext();
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual(contexts);
+    expect(dom.window.document.querySelector('.node-run-context')?.textContent).toContain('AGENT_CONTEXT_RESET_BUSY');
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-reset-agent-context]')?.disabled).toBe(false);
+  });
+
+  it('keeps successful reset truth and shows refresh warning when reads fail', async () => {
+    const { dom, page, fakeApi, resetContexts } = await fixture();
+    fakeApi.getWorkflowRun.mockRejectedValue(new Error('offline'));
+    fakeApi.getAgentExecutionContexts.mockRejectedValue(new Error('offline'));
+    await page.taskExecutionView.resetAgentExecutionContext();
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual(resetContexts);
+    expect(page.taskExecutionView.state.contextResetError).toBe('');
+    expect(page.taskExecutionView.state.refreshError).toBe('Context reset, but the latest state could not be refreshed.');
+    expect(dom.window.document.querySelector('[data-retry-recovered-node-run]')).toBeNull();
+    await page.taskExecutionView.retryRecoveredNodeRun();
+    expect(fakeApi.retryRecoveredNodeRun).not.toHaveBeenCalled();
+    expect(dom.window.document.querySelector('[data-reset-agent-context]')).toBeNull();
+  });
+
+  it('retains old turn selection and Activity and changes Resume to Retry from workflow truth', async () => {
+    const { dom, page } = await fixture();
+    expect(dom.window.document.querySelector('[data-retry-recovered-node-run]')?.textContent).toBe('Resume');
+    await page.taskExecutionView.resetAgentExecutionContext();
+    expect(dom.window.document.querySelector('[data-retry-recovered-node-run]')?.textContent).toBe('Retry');
+    dom.window.document.querySelector<HTMLButtonElement>('[data-context-node-run="impl-1"]')!.click();
+    await flushAsync();
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('impl-1');
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Old activity remains');
+    expect(page.taskExecutionView.state.agentExecutionContexts[0].providerConversationId).toBe('conversation-a');
+  });
+
+  it('excludes Stop while Reset owns the run and clears single-flight state', async () => {
+    const reset = deferred<any>();
+    const { dom, page, fakeApi, resetContexts } = await fixture({}, { resetAgentExecutionContext: vi.fn(() => reset.promise) });
+    page.taskExecutionView.state.workflowRun.status = 'RUNNING';
+    const command = page.taskExecutionView.resetAgentExecutionContext();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-stop-run]')?.disabled).toBe(true);
+    await page.taskExecutionView.stopSelectedRun();
+    expect(fakeApi.cancelWorkflowRun).not.toHaveBeenCalled();
+    reset.resolve(resetContexts);
+    await command;
+    expect(page.taskExecutionView.state.contextResetInFlight).toBe(false);
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual(resetContexts);
+  });
+
+  it('excludes Reset while Stop owns the run and clears single-flight state', async () => {
+    const stop = deferred<any>();
+    const { dom, page, fakeApi, contexts } = await fixture({}, { cancelWorkflowRun: vi.fn(() => stop.promise) });
+    (fakeApi.getAgentExecutionContexts as any).mockResolvedValue(contexts);
+    page.taskExecutionView.state.workflowRun.status = 'RUNNING';
+    const command = page.taskExecutionView.stopSelectedRun();
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-reset-agent-context]')?.disabled).toBe(true);
+    await page.taskExecutionView.resetAgentExecutionContext();
+    expect(fakeApi.resetAgentExecutionContext).not.toHaveBeenCalled();
+    stop.resolve(undefined);
+    await command;
+    expect(page.taskExecutionView.state.cancellationInFlight).toBe(false);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-reset-agent-context]')?.disabled).toBe(false);
+  });
+
+  it.each(['post-failure', 'refresh-failure'])('preserves deferred initial Activity after reset %s', async (failure) => {
+    const activity = deferred<any>();
+    const { dom, page, fakeApi } = await fixture({}, {
+      getAgentExecutionEvents: vi.fn(() => activity.promise),
+      ...(failure === 'post-failure' ? { resetAgentExecutionContext: vi.fn().mockRejectedValue(new Error('busy')) } : {})
+    });
+    fakeApi.getWorkflowRun.mockRejectedValue(new Error('offline'));
+    fakeApi.getAgentExecutionContexts.mockRejectedValue(new Error('offline'));
+    const identity = page.taskExecutionView.activityIdentity;
+    await page.taskExecutionView.resetAgentExecutionContext();
+    expect(page.taskExecutionView.activityIdentity).toBe(identity);
+    activity.resolve(activityPage('turn-a', 'Deferred preserved history', 'COMPLETE'));
+    await flushAsync();
+    expect(page.taskExecutionView.state.activityLoading).toBe(false);
+    expect(page.taskExecutionView.state.activityPollInFlight).toBeNull();
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Deferred preserved history');
+  });
+
+  it('ignores reset response after selection moves to another run', async () => {
+    const reset = deferred<any>();
+    const { page, resetContexts } = await fixture({}, { resetAgentExecutionContext: vi.fn(() => reset.promise) });
+    const command = page.taskExecutionView.resetAgentExecutionContext();
+    page.taskExecutionView.state.selectedRunId = 'another-run';
+    page.taskExecutionView.runLoadSequence += 1;
+    page.taskExecutionView.state.agentExecutionContexts = [];
+    reset.resolve(resetContexts);
+    await command;
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual([]);
+  });
+
+  it('ignores a deferred response from another selected run after reset succeeds', async () => {
+    const oldWorkflow = deferred<any>();
+    const oldContexts = deferred<any>();
+    const { page, fakeApi, contexts, resetContexts, before } = await fixture();
+    fakeApi.getWorkflowRun.mockImplementationOnce(() => oldWorkflow.promise).mockResolvedValue(before);
+    (fakeApi.getAgentExecutionContexts as any).mockImplementationOnce(() => oldContexts.promise).mockResolvedValue(contexts);
+    const oldLoad = page.taskExecutionView.selectRun('another-run');
+    await page.taskExecutionView.selectRun('run-new');
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await page.taskExecutionView.resetAgentExecutionContext();
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual(resetContexts);
+    oldWorkflow.resolve({ ...before, id: 'another-run' });
+    oldContexts.resolve([{ ...contexts[0], sessionId: 'other-session' }]);
+    await oldLoad;
+    expect(page.taskExecutionView.state.selectedRunId).toBe('run-new');
+    expect(page.taskExecutionView.state.workflowRun.id).toBe('run-new');
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual(resetContexts);
+  });
+
+  it.each(['old-context', 'missing-context'])('ignores pre-command polling and preserves POST truth against stale %s refresh', async (refresh) => {
+    const oldWorkflow = deferred<any>();
+    const oldContexts = deferred<any>();
+    const { page, fakeApi, contexts, resetContexts, before } = await fixture();
+    page.taskExecutionView.state.workflowRun.status = 'RUNNING';
+    fakeApi.getWorkflowRun.mockImplementationOnce(() => oldWorkflow.promise);
+    (fakeApi.getAgentExecutionContexts as any).mockImplementationOnce(() => oldContexts.promise).mockResolvedValue(refresh === 'missing-context' ? [] : contexts);
+    const poll = page.taskExecutionView.pollSelectedRun();
+    await page.taskExecutionView.resetAgentExecutionContext();
+    oldWorkflow.resolve(before);
+    oldContexts.resolve(contexts);
+    await poll;
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual(resetContexts);
+    expect(page.taskExecutionView.state.workflowRun.nodeRuns[0].retryEligibility.action).toBe('RETRY');
   });
 });

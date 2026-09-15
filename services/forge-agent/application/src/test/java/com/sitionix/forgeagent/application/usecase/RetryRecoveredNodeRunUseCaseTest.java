@@ -156,6 +156,34 @@ class RetryRecoveredNodeRunUseCaseTest {
                 .isEqualTo(RecoveredNodeRunRetryAction.RESUME);
     }
 
+    @Test
+    void explicitlyResetReusableRecoveryBecomesRetryAndKeepsSnapshotPolicy() {
+        final NodeRun failed = recovered(NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
+        final WorkflowRun run = run(WorkflowRunStatus.FAILED, List.of(failed), null);
+        this.persistedRun.set(run);
+        when(this.nodeRuns.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(failed));
+        when(this.sessions.findByNodeRunId(NODE_ID)).thenReturn(Optional.of(allocation(
+                failed, ProviderTurnRecoveryState.TERMINAL, AgentExecutionSessionStatus.IDLE, NOW)));
+
+        assertThat(this.eligibility.evaluate(run, failed, List.of(failed)).action())
+                .isEqualTo(RecoveredNodeRunRetryAction.RETRY);
+        this.useCase.execute(RUN_ID, NODE_ID);
+        assertThat(this.persistedChild.get().contextMode()).isEqualTo(NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
+        assertThat(this.persistedChild.get().retryOfNodeRunId()).isEqualTo(failed.id());
+    }
+
+    @Test
+    void queuedReusableWorkCannotBeResumedOrSilentlyReset() {
+        final NodeRun failed = recovered(NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
+        final WorkflowRun run = run(WorkflowRunStatus.FAILED, List.of(failed), null);
+        when(this.sessions.findByNodeRunId(NODE_ID)).thenReturn(Optional.of(allocation(
+                failed, ProviderTurnRecoveryState.TERMINAL, AgentExecutionSessionStatus.IDLE)));
+        when(this.sessions.hasPendingTurns(SESSION_ID)).thenReturn(true);
+        assertThat(this.eligibility.evaluate(run, failed, List.of(failed)).reasonCode())
+                .isEqualTo(RecoveredNodeRunRetryEligibilityService.CONTEXT_UNSAFE);
+        verify(this.sessions, never()).markContextReset(any());
+    }
+
     @ParameterizedTest
     @EnumSource(value = ProviderTurnRecoveryState.class, names = {"ACTIVE", "UNKNOWN"})
     void activeAndUnknownRecoveryCannotCreateWork(final ProviderTurnRecoveryState recoveryState) {
@@ -245,10 +273,15 @@ class RetryRecoveredNodeRunUseCaseTest {
 
     private AgentExecutionAllocation allocation(final NodeRun node, final ProviderTurnRecoveryState recoveryState,
                                                 final AgentExecutionSessionStatus sessionStatus) {
+        return allocation(node, recoveryState, sessionStatus, null);
+    }
+
+    private AgentExecutionAllocation allocation(final NodeRun node, final ProviderTurnRecoveryState recoveryState,
+                                                final AgentExecutionSessionStatus sessionStatus, final Instant resetAt) {
         final AgentExecutionSession session = new AgentExecutionSession(SESSION_ID, RUN_ID, node.sourceNodeId(),
                 node.sourceAgentId(), node.repositoryId(), "codex", "thread-1", "0.154.0", node.contextMode(),
                 sessionStatus, null, null, null, 4, null, null, null, NOW.minusSeconds(25), NOW.minusSeconds(9),
-                sessionStatus == AgentExecutionSessionStatus.CLOSED ? NOW.minusSeconds(9) : null);
+                sessionStatus == AgentExecutionSessionStatus.CLOSED ? NOW.minusSeconds(9) : null, resetAt);
         final AgentExecutionTurn turn = new AgentExecutionTurn(UUID.randomUUID(), SESSION_ID, node.id(), "turn-1", 1,
                 AgentExecutionTurnStatus.FAILED, "AGENT_EXECUTION_RECOVERY_REQUIRED", "lost", recoveryState,
                 ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, NOW.minusSeconds(10), NOW.minusSeconds(19),

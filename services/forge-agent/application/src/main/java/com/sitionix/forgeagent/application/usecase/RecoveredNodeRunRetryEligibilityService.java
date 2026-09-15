@@ -72,6 +72,7 @@ public class RecoveredNodeRunRetryEligibilityService {
                     target.contextMode() == NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE ? CONTEXT_UNSAFE : NOT_ALLOWED);
         }
         return target.contextMode() == NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE
+                && allocation.session().contextResetAt() == null
                 ? RecoveredNodeRunRetryEligibility.resume()
                 : RecoveredNodeRunRetryEligibility.retry();
     }
@@ -102,7 +103,10 @@ public class RecoveredNodeRunRetryEligibilityService {
         return session.status() == expected
                 && session.activeNodeRunId() == null
                 && session.leaseOwnerId() == null
-                && session.leaseExpiresAt() == null;
+                && session.leaseExpiresAt() == null
+                && (contextMode != NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE
+                    || (session.failureCode() == null && session.failureMessage() == null
+                        && !this.sessions.hasPendingTurns(session.id())));
     }
 
     private static boolean blank(final String value) {

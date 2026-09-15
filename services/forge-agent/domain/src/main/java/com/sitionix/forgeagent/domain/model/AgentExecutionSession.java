@@ -8,5 +8,5 @@ public record AgentExecutionSession(
         String providerId, String providerConversationId, String providerVersion, NodeContextMode contextMode,
         AgentExecutionSessionStatus status, AgentExecutionTerminalOutcome terminalOutcome, UUID activeNodeRunId,
         String leaseOwnerId, long leaseToken, Instant leaseExpiresAt, String failureCode, String failureMessage,
-        Instant createdAt, Instant updatedAt, Instant closedAt) {
+        Instant createdAt, Instant updatedAt, Instant closedAt, Instant contextResetAt) {
 }
