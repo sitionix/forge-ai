@@ -1675,6 +1675,23 @@ body.sidebar-collapsed .sidebar-link {
   white-space: nowrap;
 }
 
+.node-run-recovery {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border-color, #334155);
+  border-radius: 10px;
+  background: var(--surface-subtle, rgba(15, 23, 42, 0.45));
+}
+
+.node-run-recovery h3,
+.node-run-recovery p {
+  margin-top: 0;
+}
+
+.node-run-recovery p:last-child {
+  margin-bottom: 0;
+}
+
 .task-execution-failure-row code {
   color: #b12f2f;
   font: 800 11px/1.2 var(--mono);
