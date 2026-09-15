@@ -59,4 +59,6 @@ public interface SpringDataNodeRunRepository extends JpaRepository<NodeRunEntity
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select n from NodeRunEntity n where n.id = :id")
     Optional<NodeRunEntity> findByIdForUpdate(@Param("id") UUID id);
+
+    Optional<NodeRunEntity> findByRetryOfNodeRunId(UUID retryOfNodeRunId);
 }

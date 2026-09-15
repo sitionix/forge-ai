@@ -102,4 +102,7 @@ public class NodeRunEntity {
 
     @Column(name = "finished_at")
     private Instant finishedAt;
+
+    @Column(name = "retry_of_node_run_id")
+    private UUID retryOfNodeRunId;
 }

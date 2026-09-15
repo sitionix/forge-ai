@@ -117,6 +117,40 @@ class ForgeAgentRuntimeMigrationIT {
     }
 
     @Test
+    void v30AddsNullableUniqueRetryLineageAndRejectsSelfReference() {
+        final String schema = "node_run_retry_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        final UUID workflowRunId = UUID.randomUUID();
+        final UUID sourceNodeId = UUID.randomUUID();
+        final UUID parentId = UUID.randomUUID();
+        final UUID sessionId = UUID.randomUUID();
+        final UUID turnId = UUID.randomUUID();
+        final UUID firstChildId = UUID.randomUUID();
+        final UUID secondChildId = UUID.randomUUID();
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, MigrationVersion.fromVersion("29")).migrate();
+            this.insertHistoricalTrackedTurn(jdbc, schema, workflowRunId, sourceNodeId, parentId, sessionId, turnId);
+
+            this.flyway(schema, null).migrate();
+
+            assertThat(this.uuidValue(jdbc,
+                    "SELECT retry_of_node_run_id FROM %s.node_runs WHERE id=?".formatted(schema), parentId)).isNull();
+            jdbc.update("INSERT INTO %1$s.node_runs (id,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,retry_of_node_run_id) SELECT ?,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,? FROM %1$s.node_runs WHERE id=?".formatted(schema),
+                    firstChildId, parentId, parentId);
+            assertThat(this.uuidValue(jdbc,
+                    "SELECT retry_of_node_run_id FROM %s.node_runs WHERE id=?".formatted(schema), firstChildId)).isEqualTo(parentId);
+            assertThatThrownBy(() -> jdbc.update("INSERT INTO %1$s.node_runs (id,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,retry_of_node_run_id) SELECT ?,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,? FROM %1$s.node_runs WHERE id=?".formatted(schema),
+                    secondChildId, parentId, parentId)).isInstanceOf(RuntimeException.class);
+            assertThatThrownBy(() -> jdbc.update(
+                    "UPDATE %s.node_runs SET retry_of_node_run_id=id WHERE id=?".formatted(schema), parentId))
+                    .isInstanceOf(RuntimeException.class);
+        } finally {
+            jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+        }
+    }
+
+    @Test
     void v11ActiveLegacyRunsAreCancelledWhileHistoricalEdgesRemainReadable() {
         final String schema = "runtime_migration_" + UUID.randomUUID().toString().replace("-", "");
         final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);

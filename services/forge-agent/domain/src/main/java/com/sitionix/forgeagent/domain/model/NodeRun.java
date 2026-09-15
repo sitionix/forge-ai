@@ -27,10 +27,25 @@ public record NodeRun(
         Instant finishedAt,
         UUID repositoryId,
         NodeContextMode contextMode,
-        Integer contextTrackingVersion
+        Integer contextTrackingVersion,
+        UUID retryOfNodeRunId
 ) {
     public NodeRun {
         contextMode = NodeContextMode.legacyDefault(contextMode);
+    }
+
+    public NodeRun(final UUID id, final UUID workflowRunId, final UUID sourceNodeId, final UUID sourceAgentId,
+                   final String agentName, final String agentInstructions, final AgentOutputSchema agentOutputSchema,
+                   final NodeInputMode inputMode, final NodePosition position, final UUID executionFrameId,
+                   final UUID enteredViaInputPortId, final UUID activationFrameId, final UUID selectedOutputPortId,
+                   final Instant routingCompletedAt, final NodeRunStatus status, final NodeRunOutput output,
+                   final NodeRunFailure failure, final NodeRunExecutionModel executionModel, final Instant createdAt,
+                   final Instant startedAt, final Instant finishedAt, final UUID repositoryId,
+                   final NodeContextMode contextMode, final Integer contextTrackingVersion) {
+        this(id, workflowRunId, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema,
+                inputMode, position, executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId,
+                routingCompletedAt, status, output, failure, executionModel, createdAt, startedAt, finishedAt,
+                repositoryId, contextMode, contextTrackingVersion, null);
     }
 
     public NodeRun(final UUID id, final UUID workflowRunId, final UUID sourceNodeId, final UUID sourceAgentId,
@@ -43,6 +58,6 @@ public record NodeRun(
         this(id, workflowRunId, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema,
                 inputMode, position, executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId,
                 routingCompletedAt, status, output, failure, executionModel, createdAt, startedAt, finishedAt,
-                repositoryId, NodeContextMode.FRESH_EACH_NODE_RUN, null);
+                repositoryId, NodeContextMode.FRESH_EACH_NODE_RUN, null, null);
     }
 }

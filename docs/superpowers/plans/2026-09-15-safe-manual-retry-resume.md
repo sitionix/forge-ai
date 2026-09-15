@@ -65,6 +65,10 @@ CREATE UNIQUE INDEX uq_node_runs_retry_of
     WHERE retry_of_node_run_id IS NOT NULL;
 ```
 
+Recreate the four existing global/repository invocation and activation unique indexes with an additional
+`retry_of_node_run_id IS NULL` predicate. This preserves root NodeRun uniqueness while allowing a retry to copy the
+original frame/source/activation snapshot exactly.
+
 Append `UUID retryOfNodeRunId` to the canonical NodeRun record and update every constructor/copy site explicitly. Add Spring Data child lookup and repository delegation.
 
 - [ ] **Step 4: Run mapping and migration tests green**

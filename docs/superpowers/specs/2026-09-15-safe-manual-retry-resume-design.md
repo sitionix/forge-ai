@@ -45,6 +45,9 @@ Add Flyway migration `V30`:
 - nullable `node_runs.retry_of_node_run_id` referencing `node_runs(id)`;
 - a check preventing `id = retry_of_node_run_id`;
 - a partial unique index on `retry_of_node_run_id WHERE retry_of_node_run_id IS NOT NULL`.
+- replacement root invocation/activation uniqueness indexes whose predicates include
+  `retry_of_node_run_id IS NULL`, allowing retries to retain immutable frame/source identity without weakening
+  uniqueness for normal NodeRuns.
 
 Historical and normal NodeRuns remain `NULL`. The unique index is the final concurrency guard against sibling attempts. Repository operations expose child lookup and locked WorkflowRun/NodeRun reads. A retry chain is traversed through direct child links; a NodeRun is current exactly when no child exists.
 
