@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.application.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
@@ -23,6 +24,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -192,6 +194,32 @@ class WorkflowExecutionCoordinatorTest {
 
         verify(this.sessionRepository).cancel(tracked.id());
         assertThat(this.savedWorkflowRun().status()).isEqualTo(WorkflowRunStatus.FAILED);
+    }
+
+    @Test
+    void reconcileByIdLocksAndEvaluatesCurrentWorkflow() {
+        final WorkflowRun workflowRun = this.workflowRun(null);
+        when(this.workflowRunRepository.findByIdForUpdate(WORKFLOW_RUN_ID)).thenReturn(Optional.of(workflowRun));
+        when(this.completionPolicy.evaluate(workflowRun)).thenReturn(new RunningWorkflowDecision());
+
+        this.coordinator.reconcile(WORKFLOW_RUN_ID);
+
+        verify(this.completionPolicy).evaluate(workflowRun);
+    }
+
+    @Test
+    void reconcileByIdPreservesAlreadyTerminalWorkflow() {
+        final WorkflowRun running = this.workflowRun(null);
+        final WorkflowRun terminal = new WorkflowRun(
+                running.id(), running.projectId(), running.sourceWorkflowId(), running.taskId(), running.workflowName(),
+                running.input(), WorkflowRunStatus.CANCELLED, running.nodeRuns(), running.connectionResolutions(),
+                running.executionEdges(), running.runtimeGraph(), running.result(), running.resultSourceNodeRunId(),
+                running.createdAt(), running.startedAt(), NOW, running.repositoryIds());
+        when(this.workflowRunRepository.findByIdForUpdate(WORKFLOW_RUN_ID)).thenReturn(Optional.of(terminal));
+
+        this.coordinator.reconcile(WORKFLOW_RUN_ID);
+
+        verify(this.completionPolicy, never()).evaluate(terminal);
     }
 
     private WorkflowRun savedWorkflowRun() {

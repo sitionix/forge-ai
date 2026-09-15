@@ -2,20 +2,23 @@ package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
-import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
+import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.repository.SpringDataNodeRunRepository;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @RequiredArgsConstructor
 public class PostgresNodeRunRepository implements NodeRunRepository {
+
+    private static final int COMPLETION_RECONCILIATION_BATCH_SIZE = 100;
 
     private static final List<String> ACTIVE_STATUSES = List.of(
             NodeRunStatus.PENDING.name(),
@@ -33,6 +36,12 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     @Override
     public List<UUID> findSuccessfulUnroutedIds() {
         return this.repository.findSuccessfulUnroutedIds();
+    }
+
+    @Override
+    public List<UUID> findWorkflowRunIdsRequiringCompletion() {
+        return this.repository.findWorkflowRunIdsRequiringCompletion(
+                PageRequest.of(0, COMPLETION_RECONCILIATION_BATCH_SIZE));
     }
 
     @Override

@@ -11,7 +11,10 @@ import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,10 +33,13 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     private final CodexAppServerProperties properties;
     private final CodexServerRequestHandler serverRequestHandler;
     private final CodexTransportEventHandler eventHandler;
+    private final Clock cleanupClock;
+    private final Instant cleanupDeadline;
     private final Writer writer;
     private final AtomicLong requestIds = new AtomicLong(1L);
     private final Map<String, PendingRequest> pending = new ConcurrentHashMap<>();
     private final AtomicBoolean invalid = new AtomicBoolean();
+    private final AtomicBoolean deadlineKillIssued = new AtomicBoolean();
     private final Object lifecycleLock = new Object();
     private volatile boolean cleanupStarted;
     private volatile boolean cleanupComplete;
@@ -50,6 +56,15 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     CodexJsonRpcTransport(final ObjectMapper objectMapper,
                           final StartedCodexAppServer server,
                           final CodexAppServerProperties properties,
+                          final Clock cleanupClock,
+                          final Instant cleanupDeadline) {
+        this(objectMapper, server, properties, CodexServerRequestHandler.unsupported(),
+                CodexTransportEventHandler.noop(), cleanupClock, cleanupDeadline);
+    }
+
+    CodexJsonRpcTransport(final ObjectMapper objectMapper,
+                          final StartedCodexAppServer server,
+                          final CodexAppServerProperties properties,
                           final CodexServerRequestHandler serverRequestHandler) {
         this(objectMapper, server, properties, serverRequestHandler, CodexTransportEventHandler.noop());
     }
@@ -59,11 +74,23 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                           final CodexAppServerProperties properties,
                           final CodexServerRequestHandler serverRequestHandler,
                           final CodexTransportEventHandler eventHandler) {
+        this(objectMapper, server, properties, serverRequestHandler, eventHandler, null, null);
+    }
+
+    private CodexJsonRpcTransport(final ObjectMapper objectMapper,
+                                  final StartedCodexAppServer server,
+                                  final CodexAppServerProperties properties,
+                                  final CodexServerRequestHandler serverRequestHandler,
+                                  final CodexTransportEventHandler eventHandler,
+                                  final Clock cleanupClock,
+                                  final Instant cleanupDeadline) {
         this.objectMapper = objectMapper;
         this.server = server;
         this.properties = properties;
         this.serverRequestHandler = serverRequestHandler;
         this.eventHandler = eventHandler;
+        this.cleanupClock = cleanupClock;
+        this.cleanupDeadline = cleanupDeadline;
         this.writer = new OutputStreamWriter(server.process().getOutputStream(), StandardCharsets.UTF_8);
         this.stdoutReaderThread = Thread.ofVirtual().name("forge-agent-codex-stdout-" + server.process().pid()).start(this::readStdout);
         this.stderrReaderThread = Thread.ofVirtual().name("forge-agent-codex-stderr-" + server.process().pid()).start(this::drainStderr);
@@ -78,16 +105,40 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     }
 
     JsonNode request(final String method, final JsonNode params, final Duration timeout) {
+        return this.request(method, params, timeout, Runnable::run);
+    }
+
+    JsonNode request(final String method, final JsonNode params, final Duration timeout,
+                     final java.util.function.Consumer<Runnable> dispatch) {
         this.requireHealthy(method);
         final String requestId = Long.toString(this.requestIds.getAndIncrement());
         final CompletableFuture<JsonNode> future = new CompletableFuture<>();
         this.pending.put(requestId, new PendingRequest(method, future));
+        final String timeoutMessage = "Codex request timed out method=" + method + " requestId=" + requestId;
+        final AtomicBoolean dispatching = new AtomicBoolean(true);
+        final RequestDeadline deadline = new RequestDeadline(timeout, () -> {
+            if (this.cleanupDeadline == null && dispatching.get() && this.deadlineKillIssued.compareAndSet(false, true)) {
+                CodexProcessTree.capture(this.server.process()).terminateTree();
+            }
+            future.completeExceptionally(new CodexTransportException(timeoutMessage));
+        });
         try {
-            this.send(this.requestMessage(method, requestId, params));
-            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            dispatch.accept(() -> {
+                try {
+                    this.send(this.requestMessage(method, requestId, params), deadline);
+                } catch (IOException exception) {
+                    throw new CodexTransportException("Codex request write failed method=" + method, exception);
+                }
+            });
+            dispatching.set(false);
+            // Dispatch fencing has ended before waiting for any provider response.
+            final JsonNode response = future.get(deadline.remainingNanos(), TimeUnit.NANOSECONDS);
+            if (!deadline.complete()) throw new TimeoutException(timeoutMessage);
+            return response;
         } catch (final TimeoutException e) {
+            deadline.expire();
             this.invalidate("request timeout method=" + method + " requestId=" + requestId, e);
-            throw new CodexTransportException("Codex request timed out method=" + method + " requestId=" + requestId, e);
+            throw new CodexTransportException(timeoutMessage, e);
         } catch (final ExecutionException e) {
             final Throwable cause = e.getCause();
             if (cause instanceof RuntimeException runtimeException) {
@@ -96,9 +147,12 @@ final class CodexJsonRpcTransport implements AutoCloseable {
             throw new CodexTransportException("Codex request failed method=" + method + " requestId=" + requestId, cause);
         } catch (final Exception e) {
             this.invalidate("request failed method=" + method + " requestId=" + requestId, e);
+            if (deadline.expired()) throw new CodexTransportException(timeoutMessage, e);
             throw new CodexTransportException("Codex request failed method=" + method + " requestId=" + requestId, e);
         } finally {
             this.pending.remove(requestId);
+            deadline.close();
+            if (deadline.expired()) this.close();
         }
     }
 
@@ -128,8 +182,15 @@ final class CodexJsonRpcTransport implements AutoCloseable {
     }
 
     private void send(final JsonNode message) throws IOException {
+        this.send(message, null);
+    }
+
+    private void send(final JsonNode message, final RequestDeadline deadline) throws IOException {
         synchronized (this.writer) {
-            this.writer.write(this.objectMapper.writeValueAsString(message));
+            final String encoded = this.objectMapper.writeValueAsString(message);
+            if (deadline != null) deadline.requireTime();
+            this.requireHealthy("write");
+            this.writer.write(encoded);
             this.writer.write('\n');
             this.writer.flush();
         }
@@ -311,26 +372,21 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 return;
             }
             this.cleanupStarted = true;
+            final ProcessHandle rootHandle = nativeHandle(process);
+            final Map<Long, OwnedHandle> childProcesses = new HashMap<>();
+            captureDescendants(rootHandle, childProcesses);
             try {
-                this.closeStdin();
-                java.util.List<ProcessHandle> descendants = java.util.List.of();
-                try {
-                    descendants = process.descendants().toList();
-                } catch (final UnsupportedOperationException exception) {
-                    // Synthetic Process implementations used by protocol tests do not expose handles.
-                }
-                final java.util.List<ProcessHandle> childProcesses = descendants;
                 if (process.isAlive()) {
-                    process.destroy();
-                    childProcesses.forEach(child -> {
-                        if (child.isAlive()) child.destroy();
-                    });
-                    if (!process.waitFor(this.properties.getGracefulTerminateTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
-                        childProcesses.forEach(child -> {
-                            if (child.isAlive()) child.destroyForcibly();
-                        });
-                        process.destroyForcibly();
-                        if (!process.waitFor(this.properties.getForceKillTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
+                    captureDescendants(rootHandle, childProcesses);
+                    terminateChildFirst(childProcesses, false);
+                    destroyRoot(process, rootHandle, false);
+                    if (!process.waitFor(this.cleanupWaitMillis(this.properties.getGracefulTerminateTimeout()),
+                            TimeUnit.MILLISECONDS)) {
+                        captureDescendants(rootHandle, childProcesses);
+                        terminateChildFirst(childProcesses, true);
+                        destroyRoot(process, rootHandle, true);
+                        if (!process.waitFor(this.cleanupWaitMillis(this.properties.getForceKillTimeout()),
+                                TimeUnit.MILLISECONDS)) {
                             throw new CodexTransportException("Codex app-server process remained alive after force kill timeout");
                         }
                     }
@@ -338,13 +394,12 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 if (process.isAlive()) {
                     throw new CodexTransportException("Codex app-server process cleanup incomplete");
                 }
-                childProcesses.forEach(child -> {
-                    if (child.isAlive()) child.destroyForcibly();
-                });
-                for (final ProcessHandle child : childProcesses) {
-                    if (child.isAlive()) {
+                terminateChildFirst(childProcesses, true);
+                for (final OwnedHandle child : childProcesses.values()) {
+                    if (child.handle().isAlive()) {
                         try {
-                            child.onExit().get(this.properties.getForceKillTimeout().toMillis(), TimeUnit.MILLISECONDS);
+                            child.handle().onExit().get(this.cleanupWaitMillis(this.properties.getForceKillTimeout()),
+                                    TimeUnit.MILLISECONDS);
                         } catch (final java.util.concurrent.TimeoutException exception) {
                             throw new CodexTransportException("Codex child process remained alive after force kill timeout", exception);
                         } catch (final java.util.concurrent.ExecutionException exception) {
@@ -352,16 +407,84 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                         }
                     }
                 }
+                // A blocked native write owns this monitor. Killing its pipe owners first unblocks it.
+                this.closeStdin();
                 this.completeCleanup(process);
             } catch (final InterruptedException e) {
                 Thread.currentThread().interrupt();
-                process.destroyForcibly();
+                terminateChildFirst(childProcesses, true);
+                destroyRoot(process, rootHandle, true);
                 this.cleanupFailure = new CodexTransportException("Codex app-server cleanup interrupted", e);
                 throw this.cleanupFailure;
             } catch (final CodexTransportException e) {
                 this.cleanupFailure = e;
                 throw e;
             }
+        }
+    }
+
+    private static ProcessHandle nativeHandle(final Process process) {
+        try {
+            return process.toHandle();
+        } catch (final UnsupportedOperationException exception) {
+            // Synthetic Process implementations in unit tests use the Process API fallback below.
+            return null;
+        }
+    }
+
+    private static void captureDescendants(final ProcessHandle root,
+                                           final Map<Long, OwnedHandle> descendants) {
+        if (root == null || !root.isAlive()) {
+            return;
+        }
+        try {
+            root.descendants().forEach(handle -> descendants.merge(
+                    handle.pid(), new OwnedHandle(handle, depthFromRoot(handle, root)),
+                    (known, discovered) -> known.depth() >= discovered.depth() ? known : discovered));
+        } catch (final UnsupportedOperationException ignored) {
+            // Root termination remains available even when descendant enumeration is unsupported.
+        }
+    }
+
+    private static int depthFromRoot(final ProcessHandle handle, final ProcessHandle root) {
+        int depth = 1;
+        ProcessHandle ancestor = handle;
+        while (depth < 64) {
+            final var parent = ancestor.parent();
+            if (parent.isEmpty() || parent.get().pid() == root.pid()) {
+                return depth;
+            }
+            ancestor = parent.get();
+            depth++;
+        }
+        return depth;
+    }
+
+    private static void terminateChildFirst(final Map<Long, OwnedHandle> descendants, final boolean force) {
+        descendants.values().stream()
+                .sorted((left, right) -> Integer.compare(right.depth(), left.depth()))
+                .map(OwnedHandle::handle)
+                .filter(ProcessHandle::isAlive)
+                .forEach(handle -> {
+                    if (force) {
+                        handle.destroyForcibly();
+                    } else {
+                        handle.destroy();
+                    }
+                });
+    }
+
+    private static void destroyRoot(final Process process, final ProcessHandle root, final boolean force) {
+        if (root != null) {
+            if (force) {
+                root.destroyForcibly();
+            } else {
+                root.destroy();
+            }
+        } else if (force) {
+            process.destroyForcibly();
+        } else {
+            process.destroy();
         }
     }
 
@@ -394,12 +517,109 @@ final class CodexJsonRpcTransport implements AutoCloseable {
         if (thread == Thread.currentThread()) {
             return;
         }
-        thread.join(this.properties.getForceKillTimeout().toMillis());
+        final long waitMillis = this.cleanupWaitMillis(this.properties.getForceKillTimeout());
+        if (waitMillis > 0) {
+            thread.join(waitMillis);
+        }
         if (thread.isAlive()) {
             throw new CodexTransportException("Codex app-server " + streamName + " reader did not terminate");
         }
     }
 
+    private long cleanupWaitMillis(final Duration maximum) {
+        if (this.cleanupClock == null || this.cleanupDeadline == null) {
+            return maximum.toMillis();
+        }
+        final Duration remaining = Duration.between(this.cleanupClock.instant(), this.cleanupDeadline);
+        if (remaining.isZero() || remaining.isNegative()) {
+            return 0L;
+        }
+        return Math.min(maximum.toMillis(), remaining.toMillis());
+    }
+
     private record PendingRequest(String method, CompletableFuture<JsonNode> future) {
+    }
+
+    private final class RequestDeadline implements AutoCloseable {
+        private final long deadlineNanos;
+        private final AtomicBoolean resolved = new AtomicBoolean();
+        private final AtomicBoolean expired = new AtomicBoolean();
+        private final CompletableFuture<Void> finished = new CompletableFuture<>();
+        private final Runnable abort;
+        private final Thread watchdog;
+
+        RequestDeadline(final Duration timeout, final Runnable abort) {
+            this.deadlineNanos = System.nanoTime() + timeout.toNanos();
+            this.abort = abort;
+            // Recovery transports already have one authoritative outer lifecycle watchdog.
+            if (cleanupDeadline != null) {
+                this.watchdog = null;
+                return;
+            }
+            this.watchdog = Thread.ofVirtual().name("forge-agent-codex-deadline-" + server.process().pid()).start(() -> {
+                try {
+                    this.finished.get(this.remainingNanos(), TimeUnit.NANOSECONDS);
+                } catch (TimeoutException exception) {
+                    this.expire();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException exception) {
+                    throw new IllegalStateException(exception);
+                }
+            });
+        }
+
+        long remainingNanos() throws TimeoutException {
+            final long remaining = this.deadlineNanos - System.nanoTime();
+            if (remaining <= 0) throw new TimeoutException("Codex request deadline exhausted");
+            return remaining;
+        }
+
+        boolean complete() {
+            if (System.nanoTime() >= this.deadlineNanos) this.expire();
+            return this.resolved.compareAndSet(false, true);
+        }
+
+        void requireTime() {
+            if (System.nanoTime() >= this.deadlineNanos) {
+                this.expire();
+                // Another expiry owner may not have published expired yet; elapsed time still forbids a write.
+                throw new CodexTransportException("Codex request deadline exhausted before write");
+            }
+            if (this.expired()) throw new CodexTransportException("Codex request deadline exhausted before write");
+        }
+
+        void expire() {
+            if (this.resolved.compareAndSet(false, true)) {
+                this.expired.set(true);
+                this.abort.run();
+            }
+        }
+
+        boolean expired() { return this.expired.get(); }
+
+        @Override public void close() {
+            this.resolved.set(true);
+            this.finished.complete(null);
+            if (this.watchdog == null) return;
+            boolean interrupted = Thread.interrupted();
+            final long cleanupEnd = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(
+                    Math.max(1, cleanupWaitMillis(properties.getForceKillTimeout())));
+            try {
+                while (this.watchdog.isAlive() && System.nanoTime() < cleanupEnd) {
+                    try {
+                        this.watchdog.join(Math.max(1, TimeUnit.NANOSECONDS.toMillis(cleanupEnd - System.nanoTime())));
+                    } catch (InterruptedException exception) {
+                        interrupted = true;
+                    }
+                }
+                if (this.watchdog.isAlive()) throw new CodexTransportException("Codex request deadline watchdog did not terminate");
+            } finally {
+                if (interrupted) Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private record OwnedHandle(ProcessHandle handle, int depth) {
     }
 }

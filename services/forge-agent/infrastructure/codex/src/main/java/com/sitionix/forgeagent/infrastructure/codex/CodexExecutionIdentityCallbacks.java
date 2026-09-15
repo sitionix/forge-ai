@@ -6,6 +6,7 @@ interface CodexExecutionIdentityCallbacks {
     default void executionStarted(final Runnable cancellation) { }
     void conversationStarted(String threadId, String providerVersion);
     void turnStarted(String turnId);
+    default void dispatchTurnStart(final Runnable writeRequest) { writeRequest.run(); }
     default void executionEvent(final AgentExecutionEventCandidate event) { }
     default void eventCaptureCompleted(final AgentExecutionEventCandidate terminalEvent) { }
     default void eventCaptureDegraded(final RuntimeException failure) { }

@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 final class FakeCodexProcess extends Process {
@@ -30,6 +31,7 @@ final class FakeCodexProcess extends Process {
     private final AtomicBoolean alive = new AtomicBoolean(true);
     private final boolean exitOnDestroy;
     private final boolean exitOnForce;
+    private final AtomicInteger forceCalls = new AtomicInteger();
     private volatile boolean destroyed;
     private volatile boolean forciblyDestroyed;
 
@@ -89,6 +91,8 @@ final class FakeCodexProcess extends Process {
     boolean forciblyDestroyed() {
         return this.forciblyDestroyed;
     }
+
+    int forceCalls() { return this.forceCalls.get(); }
 
     void terminateNow() {
         this.exit();
@@ -166,6 +170,7 @@ final class FakeCodexProcess extends Process {
     @Override
     public Process destroyForcibly() {
         this.forciblyDestroyed = true;
+        this.forceCalls.incrementAndGet();
         if (this.exitOnForce) {
             this.exit();
         }

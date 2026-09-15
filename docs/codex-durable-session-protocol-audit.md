@@ -3,13 +3,78 @@
 Date: 2026-09-04  
 Scope: Forge Agent Codex app-server adapter only. No Forge session persistence, Node schema, UI, or production resume behavior is introduced by this audit.
 
-## Verdict
+## Phase 5B recovery addendum (`0.154.0`, 2026-09-14)
+
+The installed binary reports `codex-cli 0.154.0`. The gated live checks passed on that exact version:
+
+- normal durable execution created a durable thread, closed its first app-server process, resumed it from a second process, and recalled a first-turn-only fact;
+- recovery created a terminal durable turn, closed its original client/process, and found the exact persisted `(threadId, turnId)` from a fresh inspector process as `TERMINAL/SUCCEEDED`;
+- the integrated PostgreSQL acceptance persisted real thread/turn/version callbacks for a tracked durable turn, withheld Forge completion/result persistence, expired Forge ownership, and reconciled through a new application recovery service and a fresh provider process. It persisted `TERMINAL/SUCCEEDED` evidence while failing the lost Forge NodeRun/turn with `AGENT_EXECUTION_RECOVERY_REQUIRED`, degrading active capture, and leaving the healthy reusable session `IDLE`. A separate WorkflowRun then completed through the normal real Codex executor.
+
+The successful recovery process emitted only `initialize`, the `initialized` notification, and `thread/turns/list`. It emitted no `thread/start`, `thread/resume`, or `turn/start`. This evidence permits the shared durable/recovery version pin to move from `0.153.2` to `0.154.0`.
+
+### Exact recovery request and response
+
+After the standard initialization handshake, Forge sends the first page as:
+
+```json
+{"id":"2","method":"thread/turns/list","params":{"threadId":"<persisted-thread-id>","limit":100,"sortDirection":"desc","itemsView":"notLoaded"}}
+```
+
+When `nextCursor` is non-null, the next request adds only the returned cursor:
+
+```json
+{"id":"3","method":"thread/turns/list","params":{"threadId":"<persisted-thread-id>","cursor":"<next-cursor>","limit":100,"sortDirection":"desc","itemsView":"notLoaded"}}
+```
+
+Recovery never sends `includeTurns`, and it does not need `thread/read` or `thread/items/list` for the audited status-bearing response:
+
+```json
+{"data":[{"id":"<persisted-turn-id>","items":[],"status":"completed"}],"nextCursor":null}
+```
+
+The exact-turn classification contract is:
+
+| Exact turn status | Forge classification |
+| --- | --- |
+| `completed` | `TERMINAL/SUCCEEDED` |
+| `failed` | `TERMINAL/FAILED` |
+| `interrupted` | `TERMINAL/CANCELLED` |
+| `inProgress` | `ACTIVE`, terminal outcome `UNKNOWN` |
+
+The inspector returns `UNKNOWN` for missing, blank, mismatched, or duplicate turn identity; an absent target after the terminal page; repeated or malformed cursors; more than 100 pages; malformed `data`; malformed or unknown target status; unknown-thread JSON-RPC error; timeout; unsupported provider/version; persisted/live version mismatch; or process/transport failure. It always tears down the fresh process.
+
+The real gate proved fresh-process terminal inspection only. `ACTIVE` is contract-tested against the literal `inProgress` response, but active-turn reproduction and exact cross-process `turn/interrupt` were not proven. Production recovery therefore performs no interrupt and must fail closed when exact evidence says the provider turn remains active.
+
+### Integrated restart acceptance
+
+`ForgeAgentPortAwareExecutionIT.liveCodexRestartReconcilesPersistedExactTurnAndUnrelatedWorkflowStillSucceeds`
+is gated by `forge.codex.live-recovery-e2e=true`. Its initial provider execution is real; identity callbacks commit through the normal lease service and PostgreSQL repository before the turn can be inspected. The test models a Forge crash by withholding completion capture and NodeRun result/routing persistence, closing the original app-server process, stopping the normal heartbeat, and expiring the ownership lease. It constructs a new application recovery service with the real inspector and real repository, rather than supplying a canned provider classification.
+
+The acceptance records every outgoing JSON-RPC frame and both process IDs. It checks that the first process has exited before inspection, that the inspection PID differs, that the inspection process also exits, and that its complete method sequence is exactly `initialize`, `initialized`, `thread/turns/list`. The list request uses the persisted thread ID; the application passes the persisted turn ID unchanged for exact response correlation. No request contains `includeTurns`. There is exactly one initial `turn/start` and no recovery turn start, resume, or interrupt. A second recovery poll creates no provider process. The orphan never becomes scheduler-pending, receives no reconstructed output or synthetic provider event, and remains failed after the unrelated real execution succeeds.
+
+Run the live durable, provider recovery, and PostgreSQL recovery acceptance together:
+
+```bash
+mvn -B -ntp -Dapi.version=1.40 -pl services/forge-agent/boot -am \
+  -Dforge.codex.live-session-e2e=true -Dforge.codex.live-recovery-e2e=true \
+  -Dtest=CodexDurableSessionE2ETest,CodexRecoveryE2ETest,ForgeAgentPortAwareExecutionIT \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+```
+
+The `0.154.0` active-turn audit remains deliberately limited: a prompted long-running shell command is not proof that a second app-server owns or can safely interrupt the persisted turn. The existing Phase 5A live cancellation test proves interruption by the owning process only. No deterministic fresh-process active-turn/interrupt/post-interrupt sequence was established for Phase 5B, so cross-process interruption is unsupported. An explicit exact-turn `inProgress` response remains `ACTIVE` and fails Forge ownership closed; ambiguous or unavailable evidence remains `UNKNOWN`.
+
+## Historical `0.153.2` audit (2026-09-04)
+
+The remainder of this document preserves the original `0.153.2` audit evidence and Phase 1 conclusions as historical context. It does not describe the current installed or Forge-pinned version; the current `0.154.0` verdict and recovery contract are the Phase 5B addendum above.
+
+### Verdict at the time of the original audit
 
 Codex CLI `0.153.2` supports durable threads and successfully resumes them after the original app-server process exits. A real two-process smoke test preserved conversation continuity. Phase 1 may safely begin if Forge treats the protocol as version-pinned, persists identities before dependent operations, serializes writers per thread, and never replaces a failed resume with a new thread.
 
 One blocker exists outside the durable-thread mechanism: although the generated stable schema contains `turn/completed`, neither live turn emitted it. Both emitted a final `item/completed`, `thread/tokenUsage/updated`, and `thread/status/changed` with `status.type=idle`. The current Forge adapter waits only for `turn/completed`; Phase 1 must explicitly resolve and test this `0.153.2` completion behavior instead of assuming the schema event is delivered.
 
-## Installed and Forge-configured version
+### Original audit environment
 
 - Binary resolved from Forge's default command: `/home/vlad/.nvm/versions/node/v24.19.0/bin/codex`.
 - `codex --version`: `codex-cli 0.153.2`.
@@ -26,7 +91,7 @@ codex app-server generate-json-schema --experimental --out /tmp/codex-schema-0.1
 
 Official OpenAI documentation search did not expose a normative app-server JSON-RPC reference for these methods. Therefore the installed schema and live transcripts, not upstream assumptions, are authoritative for this audit.
 
-## Confirmed session APIs
+### Session APIs confirmed by the original audit
 
 All methods below are present in the non-experimental schema bundle generated by `0.153.2`.
 
@@ -43,7 +108,7 @@ All methods below are present in the non-experimental schema bundle generated by
 
 The resume schema also describes history- and path-based forms, with precedence `history > non-empty path > threadId` for non-running threads. Those fields are not exposed in the generated v2 `ThreadResumeParams` used here and are unnecessary for Forge Phase 1. Forge should use `threadId` only.
 
-## Exact Phase 1 JSON-RPC contract
+### Exact historical Phase 1 JSON-RPC contract
 
 Every request is a newline-delimited JSON object with a client-selected JSON-RPC correlation `id`. The current transport accepts string IDs. Notifications have `method` and `params` but no `id`.
 
@@ -162,7 +227,7 @@ Persist `result.turn.id` immediately after validating it, before interrupt, retr
 
 Both identities are required. An interrupt must target the exact active pair; never infer a turn from “latest”.
 
-## Critical two-process smoke evidence
+### Historical two-process smoke evidence
 
 Successful Forge-capability run (`experimentalApi=true`):
 
@@ -197,7 +262,7 @@ Failed/negative evidence:
 - Unknown `thread/resume` returned JSON-RPC `-32600`; it did not create a thread.
 - Neither live turn emitted schema-declared `turn/completed`; both reached an unambiguous final item, token update, and idle status.
 
-## Observability event inventory
+### Historical observability event inventory
 
 These are in the stable generated schema unless noted otherwise.
 
@@ -215,7 +280,7 @@ These are in the stable generated schema unless noted otherwise.
 
 All turn-scoped events must be correlated by the pair `(threadId, turnId)`, and item events additionally by `item.id`/`itemId`. Notifications with malformed or missing required identity must fail explicitly rather than being attached to a guessed current execution.
 
-## Current Forge adapter gap analysis
+### Forge adapter gap analysis at the time of the original audit
 
 Current production flow is:
 
@@ -243,7 +308,7 @@ Required later Phase 1 changes:
 
 The audit adds a package-private protocol helper and parser for tests/future integration, but neither is wired into `CodexAppServerClient.execute()`.
 
-## Persistence ordering and recovery rules
+### Historical persistence ordering and recovery rules
 
 Recommended Phase 1 state machine:
 
@@ -263,7 +328,7 @@ RUNNING
 
 The thread ID must be durable before the first `turn/start`. The turn ID must be durable before subsequent provider operations, especially `turn/interrupt`. If persistence fails, do not continue the provider operation because Forge would lose its correlation/recovery handle.
 
-## Concurrency and ownership
+### Historical concurrency and ownership conclusions
 
 - Schema text says resuming a thread that is already running in the same app-server rejoins it. A non-empty path then acts as a consistency check.
 - The schema does not promise safe concurrent mutation by independent app-server processes, and this audit did not intentionally race two writers against one rollout.
@@ -271,7 +336,7 @@ The thread ID must be durable before the first `turn/start`. The turn ID must be
 - Do not start two turns concurrently for one thread. `turn/start` may steer an active turn in some conditions, and the schema defines errors when an active turn cannot accept same-turn steering. Forge Phase 1 should not depend on steering.
 - Reads/listing may be performed separately, but metadata can be eventually updated while a writer is active; treat notifications from the owning process as authoritative for the active operation.
 
-## Unsupported or uncertain features
+### Historically unsupported or uncertain features
 
 - Safe multi-process concurrent writers for one thread: unsupported by this Forge contract and not guaranteed by schema.
 - Automatic fallback from resume to new thread: explicitly unsupported.
@@ -282,6 +347,6 @@ The thread ID must be durable before the first `turn/start`. The turn ID must be
 - Plan item streaming content: explicitly experimental even though related method/item definitions appear in the stable bundle.
 - Cross-version compatibility: not established. Forge should record Codex version with the session and gate durable operations to tested versions or rerun this contract suite on upgrade.
 
-## Phase 1 recommendation
+### Historical Phase 1 recommendation
 
 Phase 1 is safe to start for durable identity persistence and explicit start/resume orchestration. It is not safe to ship production durable execution until completion detection, single-writer ownership, persistence ordering, and the current MCP policy are implemented and tested. Pin/support `0.153.2` explicitly, retain unknown fields, reject malformed/mismatched identities, and make failed resume terminal rather than silently creating a new conversation.
