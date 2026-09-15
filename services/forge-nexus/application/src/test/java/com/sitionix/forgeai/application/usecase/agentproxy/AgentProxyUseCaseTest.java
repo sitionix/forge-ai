@@ -23,6 +23,7 @@ import com.sitionix.forgeai.domain.model.agentproxy.NodePosition;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentDefinitionCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentWorkflowCommand;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentWorkflowRunStatus;
+import com.sitionix.forgeai.domain.model.agentproxy.RecoveredAgentNodeRunRetry;
 import com.sitionix.forgeai.domain.port.ForgeAgentClient;
 import java.time.Instant;
 import java.util.List;
@@ -108,6 +109,18 @@ class AgentProxyUseCaseTest {
         new CancelAgentWorkflowRunUseCase(this.forgeAgentClient).execute(RUN_ID);
 
         verify(this.forgeAgentClient).cancelWorkflowRun(RUN_ID);
+    }
+
+    @Test
+    void retryRecoveredNodeRunDelegatesToClient() {
+        final var retry = new RecoveredAgentNodeRunRetry(NODE_ID, null);
+        when(this.forgeAgentClient.retryRecoveredNodeRun(RUN_ID, NODE_ID)).thenReturn(retry);
+
+        final var actual = new RetryRecoveredAgentNodeRunUseCase(this.forgeAgentClient)
+                .execute(RUN_ID, NODE_ID);
+
+        assertThat(actual).isSameAs(retry);
+        verify(this.forgeAgentClient).retryRecoveredNodeRun(RUN_ID, NODE_ID);
     }
 
     @Test

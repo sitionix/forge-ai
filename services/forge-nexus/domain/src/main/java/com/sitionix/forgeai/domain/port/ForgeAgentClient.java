@@ -115,6 +115,9 @@ public interface ForgeAgentClient {
 
   void cancelWorkflowRun(UUID runId);
 
+  com.sitionix.forgeai.domain.model.agentproxy.RecoveredAgentNodeRunRetry retryRecoveredNodeRun(
+      UUID workflowRunId, UUID nodeRunId);
+
   List<AgentExecutionContext> getAgentExecutionContexts(UUID runId);
 
   com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage getAgentExecutionEvents(

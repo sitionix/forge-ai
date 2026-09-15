@@ -464,6 +464,12 @@ public class ForgeAgentClientMapper {
         );
     }
 
+    com.sitionix.forgeai.domain.model.agentproxy.RecoveredAgentNodeRunRetry toDomain(
+            final com.sitionix.forgeai.infrastructure.agentclient.dto.RecoveredNodeRunRetryResponse response) {
+        return new com.sitionix.forgeai.domain.model.agentproxy.RecoveredAgentNodeRunRetry(
+                response.nodeRunId(), this.toDomain(response.workflowRun()));
+    }
+
     private AgentWorkflowRunGraph toDomain(final WorkflowRunGraphResponse response) {
         if (response == null) {
             return null;
@@ -650,7 +656,12 @@ public class ForgeAgentClientMapper {
                     response.finishedAt(),
                     response.repositoryId(),
                     response.contextMode(),
-                    response.contextTrackingVersion()
+                    response.contextTrackingVersion(),
+                    response.retryOfNodeRunId(),
+                    response.retryEligibility() == null ? null
+                            : new com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunRetryEligibility(
+                                    response.retryEligibility().action(),
+                                    response.retryEligibility().reasonCode())
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Forge Agent node run JSON was invalid.", exception);

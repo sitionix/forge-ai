@@ -60,6 +60,11 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
     }
 
     @Override
+    public Optional<NodeRun> findRetryChild(final UUID nodeRunId) {
+        return this.repository.findByRetryOfNodeRunId(nodeRunId).map(PostgresNodeRunMapper::toDomain);
+    }
+
+    @Override
     public List<NodeRun> findByIds(final Collection<UUID> nodeRunIds) {
         if (nodeRunIds == null || nodeRunIds.isEmpty()) {
             return List.of();

@@ -37,6 +37,8 @@ import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
+import com.sitionix.forgeagent.api.dto.RecoveredNodeRunRetryEligibilityResponse;
+import com.sitionix.forgeagent.api.dto.RecoveredNodeRunRetryResponse;
 import com.sitionix.forgeagent.api.dto.RuntimeTargetCandidateResponse;
 import com.sitionix.forgeagent.api.dto.RunConnectionResponse;
 import com.sitionix.forgeagent.api.dto.RunNodeResponse;
@@ -61,6 +63,7 @@ import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
 import com.sitionix.forgeagent.application.usecase.SaveLogSourceCommand;
 import com.sitionix.forgeagent.application.usecase.SaveSshConnectionCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
+import com.sitionix.forgeagent.application.usecase.RetryRecoveredNodeRunResult;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDetails;
 import com.sitionix.forgeagent.domain.model.AgentListItem;
@@ -101,6 +104,8 @@ import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunExecutionEdge;
 import com.sitionix.forgeagent.domain.model.WorkflowRunSummary;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -363,6 +368,11 @@ class ForgeAgentApiMapper {
     }
 
     WorkflowRunResponse toResponse(final WorkflowRun run) {
+        return this.toResponse(run, Map.of());
+    }
+
+    WorkflowRunResponse toResponse(final WorkflowRun run,
+                                   final Map<UUID, com.sitionix.forgeagent.domain.model.RecoveredNodeRunRetryEligibility> eligibility) {
         try {
             return new WorkflowRunResponse(
                     run.id(),
@@ -372,7 +382,7 @@ class ForgeAgentApiMapper {
                     run.workflowName(),
                     run.input(),
                     run.status(),
-                    run.nodeRuns().stream().map(this::toResponse).toList(),
+                    run.nodeRuns().stream().map(nodeRun -> this.toResponse(nodeRun, eligibility.get(nodeRun.id()))).toList(),
                     run.connectionResolutions().stream().map(this::toResponse).toList(),
                     run.executionEdges().stream().map(this::toResponse).toList(),
                     this.toResponse(run.runtimeGraph()),
@@ -388,6 +398,11 @@ class ForgeAgentApiMapper {
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored workflow run result JSON is invalid.", exception);
         }
+    }
+
+    RecoveredNodeRunRetryResponse toResponse(final RetryRecoveredNodeRunResult result,
+                                             final Map<UUID, com.sitionix.forgeagent.domain.model.RecoveredNodeRunRetryEligibility> eligibility) {
+        return new RecoveredNodeRunRetryResponse(result.nodeRunId(), this.toResponse(result.workflowRun(), eligibility));
     }
 
     private WorkflowRunGraphResponse toResponse(final com.sitionix.forgeagent.domain.model.WorkflowRunGraph graph) {
@@ -534,6 +549,12 @@ class ForgeAgentApiMapper {
     }
 
     private NodeRunResponse toResponse(final NodeRun nodeRun) {
+        return this.toResponse(nodeRun, null);
+    }
+
+    private NodeRunResponse toResponse(
+            final NodeRun nodeRun,
+            final com.sitionix.forgeagent.domain.model.RecoveredNodeRunRetryEligibility eligibility) {
         try {
             return new NodeRunResponse(
                     nodeRun.id(),
@@ -556,7 +577,12 @@ class ForgeAgentApiMapper {
                     nodeRun.finishedAt(),
                     nodeRun.repositoryId(),
                     nodeRun.contextMode().name(),
-                    nodeRun.contextTrackingVersion()
+                    nodeRun.contextTrackingVersion(),
+                    nodeRun.retryOfNodeRunId(),
+                    eligibility == null
+                            ? new RecoveredNodeRunRetryEligibilityResponse("NONE", null)
+                            : new RecoveredNodeRunRetryEligibilityResponse(
+                                    eligibility.action().name(), eligibility.reasonCode())
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored node run JSON is invalid.", exception);

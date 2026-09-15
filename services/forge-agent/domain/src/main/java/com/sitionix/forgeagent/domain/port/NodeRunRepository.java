@@ -20,6 +20,8 @@ public interface NodeRunRepository {
 
     Optional<NodeRun> findByIdForUpdate(UUID nodeRunId);
 
+    Optional<NodeRun> findRetryChild(UUID nodeRunId);
+
     List<NodeRun> findByIds(Collection<UUID> nodeRunIds);
 
     List<NodeRun> findByWorkflowRunId(UUID workflowRunId);

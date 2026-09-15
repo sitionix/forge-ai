@@ -100,6 +100,18 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     }
 
     @Override
+    public WorkflowRun reopenForRetry(final WorkflowRun run) {
+        final WorkflowRunEntity existing = this.workflowRunRepository.findById(run.id())
+                .orElseThrow(() -> new ConflictException(
+                        "WORKFLOW_RUN_LIFECYCLE_STATE_NOT_FOUND", "Persisted workflow run lifecycle state was not found."));
+        existing.setStatus(run.status().name());
+        existing.setFinishedAt(null);
+        existing.setResult(null);
+        existing.setResultSourceNodeRunId(null);
+        return this.toLifecycleDomain(this.workflowRunRepository.save(existing));
+    }
+
+    @Override
     public boolean existsActiveByProjectId(final UUID projectId) {
         return this.workflowRunRepository.existsByProjectIdAndStatusIn(projectId, ACTIVE_STATUSES);
     }

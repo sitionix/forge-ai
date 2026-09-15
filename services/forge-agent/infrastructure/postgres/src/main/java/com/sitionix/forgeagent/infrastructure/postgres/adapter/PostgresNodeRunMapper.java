@@ -43,7 +43,8 @@ final class PostgresNodeRunMapper {
                 entity.getFinishedAt(),
                 entity.getRepositoryId(),
                 contextMode(entity.getContextMode()),
-                entity.getContextTrackingVersion()
+                entity.getContextTrackingVersion(),
+                entity.getRetryOfNodeRunId()
         );
     }
 
@@ -77,6 +78,7 @@ final class PostgresNodeRunMapper {
         entity.setCreatedAt(nodeRun.createdAt());
         entity.setStartedAt(nodeRun.startedAt());
         entity.setFinishedAt(nodeRun.finishedAt());
+        entity.setRetryOfNodeRunId(nodeRun.retryOfNodeRunId());
         return entity;
     }
 

@@ -424,6 +424,7 @@ function api(overrides = {}) {
     getWorkflowRun: vi.fn((runId: string) => Promise.resolve(workflowRunDetail(runId, 'SUCCEEDED'))),
     getAgentExecutionContexts: vi.fn(() => Promise.resolve([])),
     cancelWorkflowRun: vi.fn(() => Promise.resolve()),
+    retryRecoveredNodeRun: vi.fn(() => Promise.resolve({})),
     createWorkflowRun: vi.fn(() => Promise.resolve({})),
     ...overrides
   };
@@ -2532,6 +2533,253 @@ describe('Agent projects page', () => {
     await flushAsync();
 
     expect(dom.window.document.querySelector('[data-stop-run]')).toBeNull();
+  });
+
+  it.each([
+    ['FRESH_EACH_NODE_RUN', 'RETRY', 'Retry', 'Forge lost its result after restart'],
+    ['REUSE_WITHIN_WORKFLOW_NODE', 'RESUME', 'Resume', 'continued safely']
+  ])('shows the backend-authorized %s recovery action', async (contextMode, action, label, message) => {
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode }]);
+    const recovered = {
+      ...modernNodeRun('impl-1', 'implementer', 'FAILED', '2026-08-13T10:00:00Z'),
+      contextMode, contextTrackingVersion: 1,
+      failure: { code: 'AGENT_EXECUTION_RECOVERY_REQUIRED', message: 'Recovery required.' },
+      retryEligibility: { action, reasonCode: null }
+    };
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'FAILED', [recovered], 'Recovery', graph))),
+      getAgentExecutionContexts: vi.fn(() => Promise.resolve([{ sessionId: 'session-a', turnId: 'turn-a',
+        nodeRunId: 'impl-1', sourceNodeId: 'implementer', repositoryId: null, contextMode,
+        sequence: 1, sessionStatus: contextMode === 'FRESH_EACH_NODE_RUN' ? 'CLOSED' : 'IDLE',
+        turnStatus: 'FAILED', providerRecoveryState: 'TERMINAL' }]))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+    page.taskExecutionView.selectNodeRun('impl-1');
+
+    const recovery = dom.window.document.querySelector('.node-run-recovery');
+    expect(recovery?.textContent).toContain('Recovery required');
+    expect(recovery?.textContent).toContain(message);
+    expect(recovery?.querySelector<HTMLButtonElement>('[data-retry-recovered-node-run]')?.textContent).toContain(label);
+  });
+
+  it.each([
+    ['ACTIVE', 'AGENT_EXECUTION_RECOVERY_PROVIDER_ACTIVE', 'still active'],
+    ['UNKNOWN', 'AGENT_EXECUTION_RECOVERY_UNKNOWN', 'could not be proven'],
+    ['TERMINAL', 'AGENT_EXECUTION_RECOVERY_REQUIRED', 'cancelled work']
+  ])('keeps unsafe recovery state %s disabled and truthful', async (providerRecoveryState, failureCode, message) => {
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
+    const recovered = {
+      ...modernNodeRun('impl-1', 'implementer', 'FAILED', '2026-08-13T10:00:00Z'),
+      contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', contextTrackingVersion: 1,
+      failure: { code: failureCode, message: 'Recovery failed.' },
+      retryEligibility: { action: 'NONE', reasonCode: providerRecoveryState === 'TERMINAL' ? 'WORKFLOW_RUN_RETRY_UNSAFE' : failureCode }
+    };
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'FAILED', [recovered], 'Recovery', graph))),
+      getAgentExecutionContexts: vi.fn(() => Promise.resolve([{ sessionId: 'session-a', turnId: 'turn-a',
+        nodeRunId: 'impl-1', sourceNodeId: 'implementer', repositoryId: null,
+        contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', sequence: 1, sessionStatus: 'IDLE',
+        turnStatus: 'FAILED', providerRecoveryState }]))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+    page.taskExecutionView.selectNodeRun('impl-1');
+
+    expect(dom.window.document.querySelector('[data-retry-recovered-node-run]')).toBeNull();
+    expect(dom.window.document.querySelector('.node-run-recovery')?.textContent).toContain(message);
+  });
+
+  it('submits recovery once, refreshes backend truth, pins the new invocation, and retains the old activity', async () => {
+    const retry = deferred<any>();
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
+    const oldRun = {
+      ...modernNodeRun('impl-1', 'implementer', 'FAILED', '2026-08-13T10:00:00Z'),
+      contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', contextTrackingVersion: 1,
+      failure: { code: 'AGENT_EXECUTION_RECOVERY_REQUIRED', message: 'Recovery required.' },
+      retryEligibility: { action: 'RESUME', reasonCode: null }
+    };
+    const newRun = { ...modernNodeRun('impl-2', 'implementer', 'PENDING', '2026-08-13T10:03:00Z'),
+      contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', contextTrackingVersion: 1, retryOfNodeRunId: 'impl-1',
+      retryEligibility: { action: 'NONE', reasonCode: 'WORKFLOW_RUN_RETRY_NOT_ALLOWED' } };
+    const failed = workflowRunDetail('run-new', 'FAILED', [oldRun], 'Recovery', graph);
+    const reopened = workflowRunDetail('run-new', 'RUNNING', [oldRun, newRun], 'Recovery', graph);
+    const contexts = [{ sessionId: 'session-a', turnId: 'turn-a', nodeRunId: 'impl-1', sourceNodeId: 'implementer',
+      repositoryId: null, contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', sequence: 1, sessionStatus: 'IDLE',
+      turnStatus: 'FAILED', providerRecoveryState: 'TERMINAL' }];
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn().mockResolvedValueOnce(failed).mockResolvedValueOnce(reopened),
+      getAgentExecutionContexts: vi.fn().mockResolvedValueOnce(contexts).mockResolvedValueOnce(contexts),
+      getAgentExecutionEvents: vi.fn(() => Promise.resolve(activityPage('turn-a', 'Old attempt activity', 'COMPLETE'))),
+      retryRecoveredNodeRun: vi.fn(() => retry.promise)
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+
+    const button = dom.window.document.querySelector<HTMLButtonElement>('[data-retry-recovered-node-run]')!;
+    button.click();
+    button.click();
+
+    expect(fakeApi.retryRecoveredNodeRun).toHaveBeenCalledTimes(1);
+    const submitting = dom.window.document.querySelector<HTMLButtonElement>('[data-retry-recovered-node-run]')!;
+    expect(submitting.disabled).toBe(true);
+    expect(submitting.textContent).toContain('Resuming…');
+    expect(page.taskExecutionView.state.workflowRun.status).toBe('FAILED');
+    retry.resolve({ nodeRunId: 'impl-2', workflowRun: reopened });
+    await flushAsync();
+
+    expect(fakeApi.getWorkflowRun).toHaveBeenCalledTimes(2);
+    expect(page.taskExecutionView.state.workflowRun.status).toBe('RUNNING');
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('impl-2');
+    expect(dom.window.document.querySelector('[data-node-run-invocation-select]')?.textContent).toContain('#1');
+    expect(dom.window.document.querySelector('[data-node-run-invocation-select]')?.textContent).toContain('#2');
+    page.taskExecutionView.selectNodeRun('impl-1');
+    await flushAsync();
+    expect(dom.window.document.querySelector('.node-run-activity')?.textContent).toContain('Old attempt activity');
+  });
+
+  it('keeps failed backend truth when recovery is rejected', async () => {
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'FRESH_EACH_NODE_RUN' }]);
+    const oldRun = { ...modernNodeRun('impl-1', 'implementer', 'FAILED', '2026-08-13T10:00:00Z'),
+      contextMode: 'FRESH_EACH_NODE_RUN', contextTrackingVersion: 1,
+      failure: { code: 'AGENT_EXECUTION_RECOVERY_REQUIRED', message: 'Recovery required.' },
+      retryEligibility: { action: 'RETRY', reasonCode: null } };
+    const failed = workflowRunDetail('run-new', 'FAILED', [oldRun], 'Recovery', graph);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(failed)),
+      retryRecoveredNodeRun: vi.fn(() => Promise.reject(new Error('WORKFLOW_RUN_RETRY_UNSAFE')))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+    page.taskExecutionView.selectNodeRun('impl-1');
+    const recovery = page.taskExecutionView.retryRecoveredNodeRun();
+    await recovery;
+    await flushAsync();
+
+    expect(page.taskExecutionView.state.workflowRun).toBe(failed);
+    expect(dom.window.document.querySelector('.node-run-recovery')?.textContent)
+      .toContain('Could not retry this recovery.');
+    expect(dom.window.document.querySelector('.node-run-recovery')?.textContent).toContain('WORKFLOW_RUN_RETRY_UNSAFE');
+  });
+
+  it('keeps authoritative retry response and resumes polling when both refreshes fail', async () => {
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'FRESH_EACH_NODE_RUN' }]);
+    const oldRun = { ...modernNodeRun('impl-1', 'implementer', 'FAILED', '2026-08-13T10:00:00Z'),
+      contextMode: 'FRESH_EACH_NODE_RUN', contextTrackingVersion: 1,
+      failure: { code: 'AGENT_EXECUTION_RECOVERY_REQUIRED', message: 'Recovery required.' },
+      retryEligibility: { action: 'RETRY', reasonCode: null } };
+    const child = { ...modernNodeRun('impl-2', 'implementer', 'PENDING', '2026-08-13T10:03:00Z'),
+      contextMode: 'FRESH_EACH_NODE_RUN', contextTrackingVersion: 1, retryOfNodeRunId: 'impl-1',
+      retryEligibility: { action: 'NONE', reasonCode: 'WORKFLOW_RUN_RETRY_NOT_ALLOWED' } };
+    const failed = workflowRunDetail('run-new', 'FAILED', [oldRun], 'Recovery', graph);
+    const reopened = workflowRunDetail('run-new', 'RUNNING', [oldRun, child], 'Recovery', graph);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn().mockResolvedValueOnce(failed).mockRejectedValueOnce(new Error('run refresh unavailable')),
+      getAgentExecutionContexts: vi.fn().mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('context refresh unavailable')),
+      retryRecoveredNodeRun: vi.fn(() => Promise.resolve({ nodeRunId: 'impl-2', workflowRun: reopened }))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    page.taskExecutionView.selectNodeRun('impl-1');
+
+    await page.taskExecutionView.retryRecoveredNodeRun();
+    await flushAsync();
+
+    expect(fakeApi.retryRecoveredNodeRun).toHaveBeenCalledTimes(1);
+    expect(page.taskExecutionView.state.workflowRun).toBe(reopened);
+    expect(page.taskExecutionView.state.workflowRun.status).toBe('RUNNING');
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('impl-2');
+    expect(page.taskExecutionView.state.nodeRunSelectionMode).toBe('PINNED_INVOCATION');
+    expect(page.taskExecutionView.state.refreshError).toContain('Retry started, but the latest state could not be refreshed.');
+    expect(page.taskExecutionView.state.refreshError).not.toContain('Could not continue this recovery');
+    expect(dom.window.document.getElementById('agentsV2TaskExecutionRefreshError')?.textContent)
+      .toContain('Retry started, but the latest state could not be refreshed.');
+    expect(page.taskExecutionView.shouldPoll()).toBe(true);
+  });
+
+  it('keeps refreshed WorkflowRun when only Resume context refresh fails', async () => {
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'REUSE_WITHIN_WORKFLOW_NODE' }]);
+    const oldRun = { ...modernNodeRun('impl-1', 'implementer', 'FAILED', '2026-08-13T10:00:00Z'),
+      contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', contextTrackingVersion: 1,
+      failure: { code: 'AGENT_EXECUTION_RECOVERY_REQUIRED', message: 'Recovery required.' },
+      retryEligibility: { action: 'RESUME', reasonCode: null } };
+    const child = { ...modernNodeRun('impl-2', 'implementer', 'PENDING', '2026-08-13T10:03:00Z'),
+      contextMode: 'REUSE_WITHIN_WORKFLOW_NODE', contextTrackingVersion: 1, retryOfNodeRunId: 'impl-1',
+      retryEligibility: { action: 'NONE', reasonCode: 'WORKFLOW_RUN_RETRY_NOT_ALLOWED' } };
+    const runningChild = { ...child, status: 'RUNNING' };
+    const failed = workflowRunDetail('run-new', 'FAILED', [oldRun], 'Recovery', graph);
+    const reopened = workflowRunDetail('run-new', 'RUNNING', [oldRun, child], 'Recovery', graph);
+    const refreshed = workflowRunDetail('run-new', 'RUNNING', [oldRun, runningChild], 'Recovery', graph);
+    const oldContexts = [{ sessionId: 'session-a', turnId: 'turn-a', nodeRunId: 'impl-1', sourceNodeId: 'implementer' }];
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn().mockResolvedValueOnce(failed).mockResolvedValueOnce(refreshed),
+      getAgentExecutionContexts: vi.fn().mockResolvedValueOnce(oldContexts)
+        .mockRejectedValueOnce(new Error('context refresh unavailable')),
+      retryRecoveredNodeRun: vi.fn(() => Promise.resolve({ nodeRunId: 'impl-2', workflowRun: reopened }))
+    });
+    const { page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    page.taskExecutionView.selectNodeRun('impl-1');
+
+    await page.taskExecutionView.retryRecoveredNodeRun();
+    await flushAsync();
+
+    expect(page.taskExecutionView.state.workflowRun).toBe(refreshed);
+    expect(page.taskExecutionView.state.workflowRun.nodeRuns[1].status).toBe('RUNNING');
+    expect(page.taskExecutionView.state.agentExecutionContexts).toBe(oldContexts);
+    expect(page.taskExecutionView.state.selectedNodeRunId).toBe('impl-2');
+    expect(page.taskExecutionView.state.refreshError)
+      .toContain('Resume started, but agent contexts could not be refreshed.');
+    expect(page.taskExecutionView.state.recoveryRetryError).toBe('');
+  });
+
+  it('does not let a stale retry response overwrite a newly selected run', async () => {
+    const retry = deferred<any>();
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: 'FRESH_EACH_NODE_RUN' }]);
+    const oldRun = { ...modernNodeRun('impl-1', 'implementer', 'FAILED', '2026-08-13T10:00:00Z'),
+      contextMode: 'FRESH_EACH_NODE_RUN', contextTrackingVersion: 1,
+      failure: { code: 'AGENT_EXECUTION_RECOVERY_REQUIRED', message: 'Recovery required.' },
+      retryEligibility: { action: 'RETRY', reasonCode: null } };
+    const failed = workflowRunDetail('run-new', 'FAILED', [oldRun], 'Recovery', graph);
+    const other = workflowRunDetail('run-other', 'SUCCEEDED', [
+      modernNodeRun('other-1', 'implementer', 'SUCCEEDED', '2026-08-13T11:00:00Z')
+    ], 'Other', graph);
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [
+        taskRun('run-new', 'FAILED', '2026-08-13T10:00:00Z'),
+        taskRun('run-other', 'SUCCEEDED', '2026-08-13T09:00:00Z')
+      ]))),
+      getWorkflowRun: vi.fn((runId: string) => Promise.resolve(runId === 'run-new' ? failed : other)),
+      retryRecoveredNodeRun: vi.fn(() => retry.promise)
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1');
+    await flushAsync();
+    page.taskExecutionView.selectNodeRun('impl-1');
+
+    const recovery = page.taskExecutionView.retryRecoveredNodeRun();
+    await page.taskExecutionView.selectRun('run-other');
+    await flushAsync();
+    retry.resolve({ nodeRunId: 'impl-2', workflowRun: failed });
+    await recovery;
+    await flushAsync();
+    expect(page.taskExecutionView.state.selectedRunId).toBe('run-other');
+    expect(page.taskExecutionView.state.workflowRun.status).toBe('SUCCEEDED');
+    expect(page.taskExecutionView.state.workflowRun.nodeRuns[0].id).toBe('other-1');
   });
 
   it('confirms Stop once, refreshes backend truth, and preserves the pinned invocation', async () => {
@@ -6543,6 +6791,7 @@ describe('Agent projects page', () => {
     client.deleteProjectTask('55555555-5555-4555-8555-555555555555');
     client.getWorkflowRun('66666666-6666-4666-8666-666666666666');
     client.cancelWorkflowRun('66666666-6666-4666-8666-666666666666');
+    client.retryRecoveredNodeRun('66666666-6666-4666-8666-666666666666', 'node/run');
     client.getAgentExecutionEvents('turn/T value', 17, 200);
     const sshRequest = { name: 'Ancestor', host: '192.168.0.108', port: 22,
       username: 'ancestor', authType: 'PASSWORD', privateKeyPath: null, password: 'secret' };
@@ -6562,6 +6811,7 @@ describe('Agent projects page', () => {
     expect(http.get).toHaveBeenCalledWith(
       '/agents/agent-execution-turns/turn%2FT%20value/events?afterSequence=17&limit=200');
     expect(http.post).toHaveBeenCalledWith('/agents/workflow-runs/66666666-6666-4666-8666-666666666666/cancel');
+    expect(http.post).toHaveBeenCalledWith('/agents/workflow-runs/66666666-6666-4666-8666-666666666666/node-runs/node%2Frun/retry');
     expect(http.post).toHaveBeenCalledWith(`/agents/projects/${project().id}/repositories`, {
       remoteUrl: 'git@gitlab.com:company/service-a.git'
     });

@@ -23,6 +23,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceMetricsRespons
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceProcessMetricsResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMonitoringRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionEventPageResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RecoveredNodeRunRetryResponse;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
@@ -53,6 +54,24 @@ public final class ForgeAgentWireMockEndpoints {
     public static Endpoint<Void, InfrastructureErrorResponse> cancelWorkflowRunConflict() {
         return Endpoint.createContract(
                 "/api/v1/workflow-runs/{runId}/cancel", HttpMethod.POST,
+                Void.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context.plainUrl()
+                        .responseStatus(HttpStatus.CONFLICT.value())
+                        .responseBody("agent-upstream-error-response.json"));
+    }
+
+    public static Endpoint<Void, RecoveredNodeRunRetryResponse> retryRecoveredNodeRun() {
+        return Endpoint.createContract(
+                "/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/retry", HttpMethod.POST,
+                Void.class, RecoveredNodeRunRetryResponse.class,
+                (WiremockDefault) context -> context.plainUrl()
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("agent-node-run-retry-response.json"));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> retryRecoveredNodeRunConflict() {
+        return Endpoint.createContract(
+                "/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/retry", HttpMethod.POST,
                 Void.class, InfrastructureErrorResponse.class,
                 (WiremockDefault) context -> context.plainUrl()
                         .responseStatus(HttpStatus.CONFLICT.value())

@@ -323,7 +323,8 @@ public class NodeRunLifecycle {
                 nodeRun.finishedAt(),
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
-                nodeRun.contextTrackingVersion()
+                nodeRun.contextTrackingVersion(),
+                nodeRun.retryOfNodeRunId()
         );
     }
 
@@ -352,7 +353,8 @@ public class NodeRunLifecycle {
                 nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
-                nodeRun.contextTrackingVersion()
+                nodeRun.contextTrackingVersion(),
+                nodeRun.retryOfNodeRunId()
         );
     }
 

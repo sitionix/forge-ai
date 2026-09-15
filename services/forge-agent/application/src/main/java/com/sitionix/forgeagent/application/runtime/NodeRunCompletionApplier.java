@@ -79,7 +79,8 @@ public class NodeRunCompletionApplier {
                 nodeRun.finishedAt(),
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
-                nodeRun.contextTrackingVersion()
+                nodeRun.contextTrackingVersion(),
+                nodeRun.retryOfNodeRunId()
         );
     }
 
@@ -108,7 +109,8 @@ public class NodeRunCompletionApplier {
                 nodeRun.finishedAt(),
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
-                nodeRun.contextTrackingVersion()
+                nodeRun.contextTrackingVersion(),
+                nodeRun.retryOfNodeRunId()
         );
     }
 

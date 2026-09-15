@@ -31,7 +31,8 @@ public class QuiescenceWorkflowCompletionPolicy implements WorkflowCompletionPol
     @Override
     public WorkflowCompletionDecision evaluate(final WorkflowRun workflowRun) {
         final List<NodeRun> nodeRuns = this.nodeRunRepository.findByWorkflowRunId(workflowRun.id());
-        return this.ruleRegistry.evaluate(new WorkflowCompletionContext(workflowRun, nodeRuns, this.hasOpenActivation(workflowRun)));
+        return this.ruleRegistry.evaluate(new WorkflowCompletionContext(
+                workflowRun, NodeRunRetryLineage.currentLeaves(nodeRuns), this.hasOpenActivation(workflowRun)));
     }
 
     private boolean hasOpenActivation(final WorkflowRun workflowRun) {

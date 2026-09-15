@@ -15,6 +15,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,6 +46,7 @@ import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.SaveAgentCommand;
 import com.sitionix.forgeagent.application.usecase.SaveWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.ProjectTaskUseCases;
+import com.sitionix.forgeagent.application.usecase.RetryRecoveredNodeRunUseCase;
 import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowUseCases;
 import com.sitionix.forgeagent.domain.model.AgentModelSelection;
@@ -109,6 +111,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -173,6 +176,8 @@ class ForgeAgentPortAwareExecutionIT {
     @Autowired
     private CancelWorkflowRunUseCase cancelWorkflowRun;
     @Autowired
+    private RetryRecoveredNodeRunUseCase retryRecoveredNodeRun;
+    @Autowired
     private NodeRunLifecycle lifecycle;
     @Autowired
     private NodeRunCompletionPersistence completionPersistence;
@@ -188,7 +193,7 @@ class ForgeAgentPortAwareExecutionIT {
     private WorkflowRunRepository workflowRunRepository;
     @Autowired
     private WorkflowRunGraphRepository graphRepository;
-    @Autowired
+    @SpyBean
     private ConnectionResolutionRepository resolutionRepository;
     @Autowired
     private ExecutionFrameRepository frameRepository;
@@ -533,6 +538,52 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(restartedRecovery.reconcileExpired()).isZero();
         assertThat(provider.inspectionProcesses()).hasSize(1);
         verifyNoInteractions(this.agentExecutor);
+
+        final var oldNodeBeforeResume = this.jdbcTemplate.queryForMap(
+                "SELECT * FROM node_runs WHERE id=?", claim.nodeRunId());
+        final var oldTurnBeforeResume = this.jdbcTemplate.queryForMap(
+                "SELECT * FROM agent_execution_turns WHERE id=?", claim.agentSessionClaim().turnId());
+        final var retry = this.retryRecoveredNodeRun.execute(orphanRun.id(), claim.nodeRunId());
+        final NodeRun resumedNode = this.nodeRunRepository.findById(retry.nodeRunId()).orElseThrow();
+        assertThat(resumedNode.retryOfNodeRunId()).isEqualTo(claim.nodeRunId());
+        assertThat(retry.workflowRun().status()).isEqualTo(WorkflowRunStatus.RUNNING);
+        final NodeExecutionClaim resumedClaim = this.lifecycle.tryStart(resumedNode.id()).orElseThrow();
+        assertThat(resumedClaim.agentSessionClaim().sessionId()).isEqualTo(claim.agentSessionClaim().sessionId());
+        assertThat(resumedClaim.agentSessionClaim().providerConversationId())
+                .isEqualTo(beforeRecovery.session().providerConversationId());
+        assertThat(resumedClaim.agentSessionClaim().turnId()).isNotEqualTo(claim.agentSessionClaim().turnId());
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(resumedNode.id()).orElseThrow()
+                .turn().providerTurnId()).isNull();
+        final String resumedOutput = provider.executeTrackedResumeTurn(
+                resumedClaim, this.agentSessionLeaseService, this.agentExecutionEventRepository);
+        this.lifecycle.succeed(resumedNode.id(), new AgentExecutionResult(
+                new NodeRunOutput(resumedOutput), null), resumedClaim.agentSessionClaim());
+
+        assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", claim.nodeRunId()))
+                .isEqualTo(oldNodeBeforeResume);
+        assertThat(this.jdbcTemplate.queryForMap(
+                "SELECT * FROM agent_execution_turns WHERE id=?", claim.agentSessionClaim().turnId()))
+                .isEqualTo(oldTurnBeforeResume);
+        final var completedResume = this.agentExecutionSessionRepository.findByNodeRunId(resumedNode.id()).orElseThrow();
+        assertThat(completedResume.session().id()).isEqualTo(claim.agentSessionClaim().sessionId());
+        assertThat(completedResume.session().providerConversationId())
+                .isEqualTo(beforeRecovery.session().providerConversationId());
+        assertThat(completedResume.turn().providerTurnId()).isNotBlank()
+                .isNotEqualTo(beforeRecovery.turn().providerTurnId());
+        assertThat(completedResume.turn().sequence()).isEqualTo(2);
+        assertThat(provider.executionProcesses()).hasSize(2);
+        assertThat(provider.executionProcesses().get(1).requests())
+                .extracting(request -> request.path("method").asText())
+                .contains("thread/resume", "turn/start")
+                .doesNotContain("thread/start");
+        assertThat(this.workflowRunRepository.findById(orphanRun.id()).orElseThrow()).satisfies(workflow -> {
+            assertThat(workflow.status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+            assertThat(workflow.resultSourceNodeRunId()).isEqualTo(resumedNode.id());
+        });
+        assertThat(this.nodeRunRepository.findByWorkflowRunId(orphanRun.id()))
+                .filteredOn(node -> node.routingCompletedAt() != null)
+                .singleElement()
+                .satisfies(node -> assertThat(node.id()).isEqualTo(resumedNode.id()));
 
         final var unrelatedRun = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID,
                 new CreateWorkflowRunCommand("Return JSON with answer set to normal execution after restart."));
@@ -1300,6 +1351,228 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     @Test
+    void terminalFreshRecoveryRetriesThroughANewSessionAndNormalWorkerCompletion() throws Exception {
+        this.seed();
+        this.saveTerminalWorkflow();
+        final var oldClaim = this.expiredRecoveryExecution("0.154.0");
+        final UUID workflowRunId = this.nodeRunRepository.findById(oldClaim.nodeRunId()).orElseThrow().workflowRunId();
+        doReturn(ProviderTurnRecoveryResult.terminal(
+                ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Exact completed turn."))
+                .when(this.recoveryInspector).inspect(any());
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+        final var oldNodeBeforeRetry = this.jdbcTemplate.queryForMap(
+                "SELECT * FROM node_runs WHERE id=?", oldClaim.nodeRunId());
+        final var oldTurnBeforeRetry = this.jdbcTemplate.queryForMap(
+                "SELECT * FROM agent_execution_turns WHERE id=?", oldClaim.turnId());
+
+        final var retried = this.retryRecoveredNodeRun.execute(workflowRunId, oldClaim.nodeRunId());
+
+        assertThat(retried.workflowRun().status()).isEqualTo(WorkflowRunStatus.RUNNING);
+        assertThat(retried.workflowRun().finishedAt()).isNull();
+        assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", oldClaim.nodeRunId()))
+                .isEqualTo(oldNodeBeforeRetry);
+        assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_turns WHERE id=?", oldClaim.turnId()))
+                .isEqualTo(oldTurnBeforeRetry);
+        final NodeRun retry = this.nodeRunRepository.findById(retried.nodeRunId()).orElseThrow();
+        assertThat(retry.retryOfNodeRunId()).isEqualTo(oldClaim.nodeRunId());
+        assertThat(retry.status()).isEqualTo(NodeRunStatus.PENDING);
+        final var retryAllocation = this.agentExecutionSessionRepository.findByNodeRunId(retry.id()).orElseThrow();
+        assertThat(retryAllocation.session().id()).isNotEqualTo(oldClaim.sessionId());
+        assertThat(retryAllocation.session().providerConversationId()).isNull();
+        assertThat(retryAllocation.turn().sequence()).isEqualTo(1);
+
+        final AgentExecutor scheduledExecutor = mock(AgentExecutor.class);
+        final AtomicReference<NodeExecutionClaim> executedRetry = new AtomicReference<>();
+        when(scheduledExecutor.execute(any())).thenAnswer(invocation -> {
+            final NodeExecutionClaim retryClaim = invocation.getArgument(0);
+            if (retryClaim.nodeRunId().equals(retry.id())) {
+                executedRetry.set(retryClaim);
+            }
+            return new AgentExecutionResult(new NodeRunOutput("{\"retried\":true}"), null);
+        });
+        try (var executor = Executors.newSingleThreadExecutor();
+             var heartbeat = Executors.newSingleThreadScheduledExecutor()) {
+            final var worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, scheduledExecutor,
+                    executor, heartbeat, this.agentSessionLeaseService, this.recoveryService);
+            worker.poll();
+            executor.submit(() -> { }).get(10, TimeUnit.SECONDS);
+        }
+
+        assertThat(this.nodeRunRepository.findById(oldClaim.nodeRunId()).orElseThrow().status())
+                .isEqualTo(NodeRunStatus.FAILED);
+        assertThat(this.nodeRunRepository.findById(retry.id()).orElseThrow()).satisfies(node -> {
+            assertThat(node.status()).isEqualTo(NodeRunStatus.SUCCEEDED);
+            assertThat(node.routingCompletedAt()).isNotNull();
+        });
+        assertThat(this.workflowRunRepository.findById(workflowRunId).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+            assertThat(run.result()).isEqualTo(new NodeRunOutput("{\"retried\": true}"));
+            assertThat(run.resultSourceNodeRunId()).isEqualTo(retry.id());
+        });
+        assertThat(executedRetry.get()).isNotNull();
+        assertThat(executedRetry.get().inputEnvelope().originalTask()).isEqualTo("Recover exact execution.");
+        assertThat(executedRetry.get().inputEnvelope().contributions()).isEmpty();
+    }
+
+    @Test
+    void nonRootRecoveryRetryPreservesExactSequentialInputEnvelopeAndParentHistory() {
+        this.seed();
+        this.saveLinearWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Sequential retry input."));
+        this.complete(this.onlyPending(run.id(), A), "{\"from\":\"A\"}");
+        final NodeExecutionClaim parentClaim = this.lifecycle.tryStart(this.onlyPending(run.id(), B).id()).orElseThrow();
+        final List<ConnectionResolution> parentInputs = List.copyOf(
+                this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()));
+        assertThat(parentInputs).singleElement();
+        this.recoverTerminal(parentClaim);
+
+        final var retried = this.retryRecoveredNodeRun.execute(run.id(), parentClaim.nodeRunId());
+
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()))
+                .containsExactlyElementsOf(parentInputs);
+        final List<ConnectionResolution> retryInputs =
+                this.resolutionRepository.findConsumedByNodeRunId(retried.nodeRunId());
+        this.assertRetryInputCopies(parentInputs, retryInputs, retried.nodeRunId());
+        assertThat(this.lifecycle.tryStart(retried.nodeRunId()).orElseThrow().inputEnvelope())
+                .isEqualTo(parentClaim.inputEnvelope());
+    }
+
+    @Test
+    void consumedInputCopyFailureRollsBackRetryChildAllocationAndWorkflowReopen() {
+        this.seed();
+        this.saveLinearWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Rollback incomplete retry input."));
+        this.complete(this.onlyPending(run.id(), A), "{\"from\":\"A\"}");
+        final NodeExecutionClaim parentClaim = this.lifecycle.tryStart(this.onlyPending(run.id(), B).id()).orElseThrow();
+        final List<ConnectionResolution> parentInputs = List.copyOf(
+                this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()));
+        this.recoverTerminal(parentClaim);
+        doThrow(new IllegalStateException("input copy failed"))
+                .when(this.resolutionRepository).saveAll(any());
+
+        assertThatThrownBy(() -> this.retryRecoveredNodeRun.execute(run.id(), parentClaim.nodeRunId()))
+                .isInstanceOf(RuntimeException.class)
+                .hasRootCauseMessage("input copy failed");
+
+        assertThat(this.nodeRunRepository.findRetryChild(parentClaim.nodeRunId())).isEmpty();
+        assertThat(this.nodeRunRepository.findByWorkflowRunId(run.id()))
+                .noneMatch(nodeRun -> parentClaim.nodeRunId().equals(nodeRun.retryOfNodeRunId()));
+        assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status())
+                .isEqualTo(WorkflowRunStatus.FAILED);
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()))
+                .containsExactlyElementsOf(parentInputs);
+    }
+
+    @Test
+    void fanInRecoveryRetryPreservesBothExactContributionsWithoutDuplication() {
+        this.seed();
+        this.saveDeepWorkflow(false);
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Fan-in retry input."));
+        this.complete(this.onlyPending(run.id(), A), "{\"step\":\"A\"}");
+        this.complete(this.onlyPending(run.id(), B), "{\"branch\":\"B\"}");
+        this.complete(this.onlyPending(run.id(), C), "{\"branch\":\"C\"}");
+        this.complete(this.onlyPending(run.id(), D), "{\"branch\":\"D\"}");
+        final NodeExecutionClaim parentClaim = this.lifecycle.tryStart(this.onlyPending(run.id(), X).id()).orElseThrow();
+        final List<ConnectionResolution> parentInputs = List.copyOf(
+                this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()));
+        assertThat(parentInputs).hasSize(2);
+        this.recoverTerminal(parentClaim);
+
+        final var retried = this.retryRecoveredNodeRun.execute(run.id(), parentClaim.nodeRunId());
+
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()))
+                .containsExactlyElementsOf(parentInputs);
+        final List<ConnectionResolution> retryInputs =
+                this.resolutionRepository.findConsumedByNodeRunId(retried.nodeRunId());
+        this.assertRetryInputCopies(parentInputs, retryInputs, retried.nodeRunId());
+        assertThat(this.lifecycle.tryStart(retried.nodeRunId()).orElseThrow().inputEnvelope())
+                .isEqualTo(parentClaim.inputEnvelope());
+    }
+
+    @Test
+    void reentryRecoveryRetryPreservesOnlyFailedLaterFrameInputs() {
+        this.seed();
+        this.saveReviewerWorkflow();
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_RETURN);
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Re-entry retry input."));
+        final NodeRun implementerOne = this.onlyPending(run.id(), IMPLEMENTER);
+        this.complete(implementerOne, "{\"patch\":\"v1\"}");
+        this.complete(this.onlyPending(run.id(), STRATEGY), "{\"strategy\":\"pass\"}");
+        this.complete(this.onlyPending(run.id(), CODE), "{\"code\":\"return-v1\"}");
+        final NodeExecutionClaim parentClaim = this.lifecycle.tryStart(
+                this.nodeRuns(run.id(), IMPLEMENTER).get(1).id()).orElseThrow();
+        final List<ConnectionResolution> parentInputs = List.copyOf(
+                this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()));
+        assertThat(parentInputs).singleElement().satisfies(input -> {
+            assertThat(input.executionFrameId()).isEqualTo(implementerOne.executionFrameId());
+            assertThat(input.payload()).isEqualTo(new NodeRunOutput("{\"code\": \"return-v1\"}"));
+        });
+        this.recoverTerminal(parentClaim);
+
+        final var retried = this.retryRecoveredNodeRun.execute(run.id(), parentClaim.nodeRunId());
+
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()))
+                .containsExactlyElementsOf(parentInputs);
+        final List<ConnectionResolution> retryInputs =
+                this.resolutionRepository.findConsumedByNodeRunId(retried.nodeRunId());
+        this.assertRetryInputCopies(parentInputs, retryInputs, retried.nodeRunId());
+        assertThat(retryInputs).allSatisfy(input ->
+                assertThat(input.executionFrameId()).isEqualTo(implementerOne.executionFrameId()));
+        assertThat(this.lifecycle.tryStart(retried.nodeRunId()).orElseThrow().inputEnvelope())
+                .isEqualTo(parentClaim.inputEnvelope());
+    }
+
+    @Test
+    void terminalReusableRecoveryResumesSameSessionWithNextTurnAndIsIdempotentUnderRace() throws Exception {
+        this.seed();
+        this.saveReusableTerminalWorkflow();
+        final var oldClaim = this.expiredRecoveryExecution("0.154.0");
+        final UUID workflowRunId = this.nodeRunRepository.findById(oldClaim.nodeRunId()).orElseThrow().workflowRunId();
+        doReturn(ProviderTurnRecoveryResult.terminal(
+                ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Exact completed turn."))
+                .when(this.recoveryInspector).inspect(any());
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+        final var oldTurnBeforeRetry = this.jdbcTemplate.queryForMap(
+                "SELECT * FROM agent_execution_turns WHERE id=?", oldClaim.turnId());
+
+        final List<com.sitionix.forgeagent.application.usecase.RetryRecoveredNodeRunResult> results;
+        try (var requests = Executors.newFixedThreadPool(2)) {
+            final var start = new java.util.concurrent.CountDownLatch(1);
+            final var left = requests.submit(() -> {
+                start.await();
+                return this.retryRecoveredNodeRun.execute(workflowRunId, oldClaim.nodeRunId());
+            });
+            final var right = requests.submit(() -> {
+                start.await();
+                return this.retryRecoveredNodeRun.execute(workflowRunId, oldClaim.nodeRunId());
+            });
+            start.countDown();
+            results = List.of(left.get(10, TimeUnit.SECONDS), right.get(10, TimeUnit.SECONDS));
+        }
+
+        assertThat(results).extracting(
+                com.sitionix.forgeagent.application.usecase.RetryRecoveredNodeRunResult::nodeRunId)
+                .containsOnly(results.getFirst().nodeRunId());
+        assertThat(this.nodeRunRepository.findByWorkflowRunId(workflowRunId))
+                .filteredOn(node -> oldClaim.nodeRunId().equals(node.retryOfNodeRunId()))
+                .singleElement();
+        assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM agent_execution_turns WHERE id=?", oldClaim.turnId()))
+                .isEqualTo(oldTurnBeforeRetry);
+        final var allocation = this.agentExecutionSessionRepository
+                .findByNodeRunId(results.getFirst().nodeRunId()).orElseThrow();
+        assertThat(allocation.session().id()).isEqualTo(oldClaim.sessionId());
+        assertThat(allocation.session().providerConversationId()).isEqualTo("thread-" + oldClaim.nodeRunId());
+        assertThat(allocation.session().status()).isEqualTo(AgentExecutionSessionStatus.IDLE);
+        assertThat(allocation.turn().sequence()).isEqualTo(2);
+        assertThat(allocation.turn().providerTurnId()).isNull();
+        assertThat(allocation.turn().status()).isEqualTo(AgentExecutionTurnStatus.QUEUED);
+    }
+
+    @Test
     void forgeTerminalSuccessResumesPersistedOutputRoutingExactlyOnceAfterRecovery() {
         this.seed();
         this.saveLinearWorkflow();
@@ -1540,6 +1813,35 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.agentExecutionEventRepository.activate(normal)).isTrue();
         this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP-INTERVAL '1 second' WHERE id=?", normal.sessionId());
         return normal;
+    }
+
+    private void recoverTerminal(final NodeExecutionClaim claim) {
+        this.agentSessionLeaseService.persistConversation(
+                claim.agentSessionClaim(), "thread-" + claim.nodeRunId(), "0.154.0");
+        this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "turn-" + claim.nodeRunId());
+        assertThat(this.agentExecutionEventRepository.activate(claim.agentSessionClaim())).isTrue();
+        this.jdbcTemplate.update(
+                "UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP-INTERVAL '1 second' WHERE id=?",
+                claim.agentSessionClaim().sessionId());
+        doReturn(ProviderTurnRecoveryResult.terminal(
+                ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Exact completed turn."))
+                .when(this.recoveryInspector).inspect(any());
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+    }
+
+    private void assertRetryInputCopies(final List<ConnectionResolution> parents,
+                                        final List<ConnectionResolution> copies,
+                                        final UUID retryNodeRunId) {
+        assertThat(copies).hasSameSizeAs(parents);
+        for (int index = 0; index < parents.size(); index++) {
+            final ConnectionResolution parent = parents.get(index);
+            final ConnectionResolution copy = copies.get(index);
+            assertThat(copy.id()).isNotEqualTo(parent.id());
+            assertThat(copy.consumedByNodeRunId()).isEqualTo(retryNodeRunId);
+            assertThat(copy).usingRecursiveComparison()
+                    .ignoringFields("id", "consumedByNodeRunId", "createdAt")
+                    .isEqualTo(parent);
+        }
     }
 
     @Test

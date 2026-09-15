@@ -17,6 +17,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskPageRespon
 import com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectTaskSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.RecoveredNodeRunRetryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogDiscoveryRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentLogSourceRequest;
@@ -136,6 +137,10 @@ public interface ForgeAgentHttpClient {
 
     @PostExchange("/api/v1/workflow-runs/{runId}/cancel")
     void cancelWorkflowRun(@PathVariable UUID runId);
+
+    @PostExchange("/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/retry")
+    RecoveredNodeRunRetryResponse retryRecoveredNodeRun(
+            @PathVariable UUID workflowRunId, @PathVariable UUID nodeRunId);
 
     @GetExchange("/api/v1/workflow-runs/{runId}/agent-execution-contexts")
     List<com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionContextResponse> getAgentExecutionContexts(@PathVariable UUID runId);

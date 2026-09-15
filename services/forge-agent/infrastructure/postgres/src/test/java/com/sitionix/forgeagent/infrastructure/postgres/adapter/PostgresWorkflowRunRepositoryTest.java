@@ -189,6 +189,7 @@ class PostgresWorkflowRunRepositoryTest {
     @Test
     void findByIdReconstructsDomainIncludingNodeRunsOutputAndFailure() {
         final NodeRunEntity node = this.nodeEntity(NODE_RUN_B, SOURCE_NODE_B, AGENT_B);
+        node.setRetryOfNodeRunId(NODE_RUN_A);
         node.setOutput("{\"summary\":\"done\"}");
         node.setFailureCode("ERR");
         node.setFailureMessage("Failed");
@@ -213,9 +214,34 @@ class PostgresWorkflowRunRepositoryTest {
             assertThat(nodeRun.output()).isEqualTo(new NodeRunOutput("{\"summary\":\"done\"}"));
             assertThat(nodeRun.failure()).isEqualTo(new NodeRunFailure("ERR", "Failed"));
             assertThat(nodeRun.executionModel()).isEqualTo(new NodeRunExecutionModel("codex", "model-b", "xhigh"));
+            assertThat(nodeRun.retryOfNodeRunId()).isEqualTo(NODE_RUN_A);
         });
         verify(this.nodeRunRepository).findByWorkflowRunIdOrderByCreatedAtAscIdAsc(RUN_ID);
         verify(this.graphRepository).findByWorkflowRunId(RUN_ID);
+    }
+
+    @Test
+    void savePersistsRetryLineage() {
+        when(this.workflowRunRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        final NodeRun retry = this.withRetryOf(
+                this.nodeRun(NODE_RUN_B, SOURCE_NODE_B, AGENT_B, null, null),
+                NODE_RUN_A
+        );
+
+        this.repository.save(this.run(List.of(retry)));
+
+        assertThat(this.savedNodes()).singleElement()
+                .extracting(NodeRunEntity::getRetryOfNodeRunId)
+                .isEqualTo(NODE_RUN_A);
+    }
+
+    private NodeRun withRetryOf(final NodeRun source, final UUID retryOfNodeRunId) {
+        return new NodeRun(source.id(), source.workflowRunId(), source.sourceNodeId(), source.sourceAgentId(),
+                source.agentName(), source.agentInstructions(), source.agentOutputSchema(), source.inputMode(),
+                source.position(), source.executionFrameId(), source.enteredViaInputPortId(), source.activationFrameId(),
+                source.selectedOutputPortId(), source.routingCompletedAt(), source.status(), source.output(),
+                source.failure(), source.executionModel(), source.createdAt(), source.startedAt(), source.finishedAt(),
+                source.repositoryId(), source.contextMode(), source.contextTrackingVersion(), retryOfNodeRunId);
     }
 
     @Test

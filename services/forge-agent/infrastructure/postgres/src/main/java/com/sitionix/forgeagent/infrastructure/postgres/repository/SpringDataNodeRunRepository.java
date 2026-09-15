@@ -47,6 +47,9 @@ public interface SpringDataNodeRunRepository extends JpaRepository<NodeRunEntity
             where n.status in ('FAILED', 'BLOCKED')
               and w.status in ('QUEUED', 'RUNNING')
               and w.finishedAt is null
+              and not exists (
+                  select child.id from NodeRunEntity child where child.retryOfNodeRunId = n.id
+              )
             order by n.workflowRunId
             """)
     List<UUID> findWorkflowRunIdsRequiringCompletion(Pageable pageable);
@@ -59,4 +62,6 @@ public interface SpringDataNodeRunRepository extends JpaRepository<NodeRunEntity
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select n from NodeRunEntity n where n.id = :id")
     Optional<NodeRunEntity> findByIdForUpdate(@Param("id") UUID id);
+
+    Optional<NodeRunEntity> findByRetryOfNodeRunId(UUID retryOfNodeRunId);
 }

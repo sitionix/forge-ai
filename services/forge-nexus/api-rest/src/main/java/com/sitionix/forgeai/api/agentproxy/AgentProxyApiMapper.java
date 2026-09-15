@@ -632,11 +632,20 @@ public class AgentProxyApiMapper {
                     nodeRun.finishedAt(),
                     nodeRun.repositoryId(),
                     nodeRun.contextMode(),
-                    nodeRun.contextTrackingVersion()
+                    nodeRun.contextTrackingVersion(),
+                    nodeRun.retryOfNodeRunId(),
+                    nodeRun.retryEligibility() == null ? null : new AgentNodeRunRetryEligibilityResponse(
+                            nodeRun.retryEligibility().action(), nodeRun.retryEligibility().reasonCode())
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Agent workflow run JSON is not valid JSON.", exception);
         }
+    }
+
+    public AgentRecoveredNodeRunRetryResponse toResponse(
+            final com.sitionix.forgeai.domain.model.agentproxy.RecoveredAgentNodeRunRetry retry) {
+        return new AgentRecoveredNodeRunRetryResponse(
+                retry.nodeRunId(), this.toResponse(retry.workflowRun()));
     }
 
     private AgentNodeRunFailureResponse toResponse(final AgentNodeRunFailure failure) {

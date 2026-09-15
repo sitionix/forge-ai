@@ -161,7 +161,8 @@ public class NodeRunCompletionPersistence {
                 nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
-                nodeRun.contextTrackingVersion()
+                nodeRun.contextTrackingVersion(),
+                nodeRun.retryOfNodeRunId()
         );
     }
 
@@ -190,7 +191,8 @@ public class NodeRunCompletionPersistence {
                 nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(),
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
-                nodeRun.contextTrackingVersion()
+                nodeRun.contextTrackingVersion(),
+                nodeRun.retryOfNodeRunId()
         );
     }
 

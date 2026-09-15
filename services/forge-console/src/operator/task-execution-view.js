@@ -919,6 +919,7 @@ export class TaskExecutionView {
       !this.disposed
       && this.opened
       && !this.state.cancellationInFlight
+      && !this.state.recoveryRetryInFlight
       && this.state.selectedRunId
       && ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)
     );
@@ -1411,6 +1412,7 @@ export class TaskExecutionView {
         ${this.detailRow('Finished', this.formatDate(nodeRun.finishedAt))}
       </div>
       ${this.renderContextDetails(nodeRun, context)}
+      ${this.renderRecoveryAction(nodeRun, context)}
       ${this.renderActivity(nodeRun, context)}
       <details class="node-run-prompt-details">
         <summary>Prompt</summary>
@@ -1454,6 +1456,107 @@ export class TaskExecutionView {
       this.selectNodeRun(button.dataset.contextNodeRun);
     }));
     this.bindActivityControls();
+    panel.querySelector('[data-retry-recovered-node-run]')?.addEventListener('click', () => {
+      void this.retryRecoveredNodeRun();
+    });
+  }
+
+  renderRecoveryAction(nodeRun, context) {
+    const failureCode = nodeRun?.failure?.code;
+    if (!['AGENT_EXECUTION_RECOVERY_REQUIRED', 'AGENT_EXECUTION_RECOVERY_PROVIDER_ACTIVE',
+      'AGENT_EXECUTION_RECOVERY_UNKNOWN'].includes(failureCode)) {
+      return '';
+    }
+    const action = nodeRun.retryEligibility?.action;
+    if (action === 'RETRY' || action === 'RESUME') {
+      const resume = action === 'RESUME';
+      const busy = this.state.recoveryRetryInFlight;
+      const label = busy ? (resume ? 'Resuming…' : 'Retrying…') : (resume ? 'Resume' : 'Retry');
+      const message = resume
+        ? 'The previous provider turn finished. This context can be continued safely.'
+        : 'The previous provider turn finished, but Forge lost its result after restart.';
+      return `<section class="node-run-recovery"><h3>Recovery required</h3><p>${message}</p>
+        ${this.state.recoveryRetryError ? `<p class="error-box">${escapeHtml(this.state.recoveryRetryError)}</p>` : ''}
+        <button type="button" class="button primary" data-retry-recovered-node-run ${busy ? 'disabled' : ''}>${label}</button></section>`;
+    }
+    const recoveryState = context?.providerRecoveryState;
+    let message = 'Forge cannot prove that this workflow can be continued safely.';
+    if (recoveryState === 'ACTIVE' || failureCode === 'AGENT_EXECUTION_RECOVERY_PROVIDER_ACTIVE') {
+      message = 'The previous provider turn is still active. Retry is unavailable.';
+    } else if (recoveryState === 'UNKNOWN' || failureCode === 'AGENT_EXECUTION_RECOVERY_UNKNOWN') {
+      message = 'The previous provider turn state could not be proven. Retry is unavailable.';
+    } else if (nodeRun.retryEligibility?.reasonCode === 'WORKFLOW_RUN_RETRY_UNSAFE') {
+      message = 'This workflow contains cancelled work that cannot be reconstructed safely.';
+    }
+    return `<section class="node-run-recovery"><h3>Recovery status</h3><p>${escapeHtml(message)}</p></section>`;
+  }
+
+  async retryRecoveredNodeRun() {
+    const nodeRun = this.selectedNodeRun();
+    const action = nodeRun?.retryEligibility?.action;
+    if (this.state.recoveryRetryInFlight || !['RETRY', 'RESUME'].includes(action)) return;
+    const actionLabel = action === 'RESUME' ? 'Resume' : 'Retry';
+    const taskId = this.state.taskId;
+    const taskSequence = this.taskLoadSequence;
+    const runId = this.state.selectedRunId;
+    const nodeRunId = nodeRun.id;
+    const runSequence = this.runLoadSequence + 1;
+    this.runLoadSequence = runSequence;
+    this.state.recoveryRetryInFlight = true;
+    this.state.recoveryRetryError = '';
+    this.stopPolling();
+    this.pollInFlight = null;
+    this.renderNodeDetails();
+    try {
+      let retry;
+      try {
+        retry = await this.api.retryRecoveredNodeRun(runId, nodeRunId);
+      } catch (error) {
+        if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
+        this.state.recoveryRetryError = `Could not ${actionLabel.toLowerCase()} this recovery.${error?.message ? ` ${error.message}` : ''}`;
+        return;
+      }
+      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
+      this.applyWorkflowRun(retry.workflowRun);
+      this.pinRecoveryRetry(retry.nodeRunId);
+      this.render();
+
+      const [workflowRefresh, contextRefresh] = await Promise.allSettled([
+        this.api.getWorkflowRun(runId),
+        this.api.getAgentExecutionContexts ? this.api.getAgentExecutionContexts(runId) : Promise.resolve([])
+      ]);
+      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
+      if (workflowRefresh.status === 'fulfilled') {
+        this.applyWorkflowRun(workflowRefresh.value);
+      }
+      if (contextRefresh.status === 'fulfilled') {
+        this.state.agentExecutionContexts = contextRefresh.value || [];
+      }
+      this.pinRecoveryRetry(retry.nodeRunId);
+      if (workflowRefresh.status === 'rejected' && contextRefresh.status === 'rejected') {
+        this.state.refreshError = `${actionLabel} started, but the latest state could not be refreshed.`;
+      } else if (workflowRefresh.status === 'rejected') {
+        this.state.refreshError = `${actionLabel} started, but the latest workflow state could not be refreshed.`;
+      } else if (contextRefresh.status === 'rejected') {
+        this.state.refreshError = `${actionLabel} started, but agent contexts could not be refreshed.`;
+      }
+    } finally {
+      if (this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+        this.state.recoveryRetryInFlight = false;
+        this.render();
+        this.syncPolling();
+      }
+    }
+  }
+
+  pinRecoveryRetry(nodeRunId) {
+    const created = (this.state.workflowRun?.nodeRuns || []).find((item) => item.id === nodeRunId);
+    if (!created) return;
+    this.state.selectedNodeRunId = created.id;
+    this.state.selectedSourceNodeId = created.sourceNodeId;
+    this.state.selectedVisualUnitKey = visualUnitKey(created.sourceNodeId, created.repositoryId);
+    this.state.nodeRunSelectionMode = SELECTION_PINNED_INVOCATION;
+    this.syncSelectedActivity();
   }
 
   contextForNodeRun(nodeRunId) {
@@ -2432,6 +2535,8 @@ export class TaskExecutionView {
       stopConfirmation: false,
       cancellationInFlight: false,
       cancellationError: '',
+      recoveryRetryInFlight: false,
+      recoveryRetryError: '',
       agentExecutionContexts: []
     };
   }

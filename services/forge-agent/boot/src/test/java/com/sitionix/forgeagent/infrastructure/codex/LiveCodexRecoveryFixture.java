@@ -62,6 +62,41 @@ public final class LiveCodexRecoveryFixture {
         }
     }
 
+    public String executeTrackedResumeTurn(final NodeExecutionClaim claim,
+                                           final AgentSessionLeaseService leases,
+                                           final AgentExecutionEventRepository events) throws IOException {
+        final var client = new CodexAppServerClient(this.mapper, this.starter(this.executionProcesses),
+                this.properties, new CodexRuntimeWorkspace(this.properties));
+        try {
+            final String output = client.executeDurable(new CodexTurnRequest(
+                    "Return JSON with answer set to resumed-safely.",
+                    "Return only JSON matching the supplied schema. Do not invoke tools.",
+                    claim.executionModel().modelId(), null,
+                    this.mapper.readTree(claim.outputSchema().jsonObject()), claim.executionWorkspace()),
+                    claim.agentSessionClaim().providerConversationId(),
+                    claim.agentSessionClaim().providerVersion(), new CodexExecutionIdentityCallbacks() {
+                        @Override
+                        public void conversationStarted(final String threadId, final String providerVersion) {
+                            leases.persistConversation(claim.agentSessionClaim(), threadId, providerVersion);
+                        }
+
+                        @Override
+                        public void turnStarted(final String turnId) {
+                            leases.persistTurn(claim.agentSessionClaim(), turnId);
+                            if (!events.activate(claim.agentSessionClaim())) {
+                                throw new IllegalStateException("Tracked resumed turn lost ownership before capture activation.");
+                            }
+                        }
+                    });
+            if (!events.markComplete(claim.agentSessionClaim())) {
+                throw new IllegalStateException("Tracked resumed turn lost ownership before capture completion.");
+            }
+            return output;
+        } finally {
+            client.close();
+        }
+    }
+
     public AgentExecutionRecoveryInspector inspector() {
         final Clock clock = Clock.systemUTC();
         return new CodexRecoveryInspector(this.mapper, this.starter(this.inspectionProcesses), this.properties,
