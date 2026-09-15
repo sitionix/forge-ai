@@ -90,12 +90,8 @@ public class PostgresWorkflowRunRepository implements WorkflowRunRepository {
         existing.setOperatorStopPendingNodeRunIds(run.operatorStopStatus() == null
                 ? null : new java.util.ArrayList<>(run.operatorStopPendingNodeRunIds()));
         existing.setOperatorStopAttempt(run.operatorStopAttempt());
-        if (run.result() != null) {
-            existing.setResult(run.result().jsonValue());
-        }
-        if (run.resultSourceNodeRunId() != null) {
-            existing.setResultSourceNodeRunId(run.resultSourceNodeRunId());
-        }
+        existing.setResult(run.result() == null ? null : run.result().jsonValue());
+        existing.setResultSourceNodeRunId(run.resultSourceNodeRunId());
         return this.toLifecycleDomain(this.workflowRunRepository.save(existing));
     }
 
