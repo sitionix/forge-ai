@@ -1495,6 +1495,7 @@ export class TaskExecutionView {
     const nodeRun = this.selectedNodeRun();
     const action = nodeRun?.retryEligibility?.action;
     if (this.state.recoveryRetryInFlight || !['RETRY', 'RESUME'].includes(action)) return;
+    const actionLabel = action === 'RESUME' ? 'Resume' : 'Retry';
     const taskId = this.state.taskId;
     const taskSequence = this.taskLoadSequence;
     const runId = this.state.selectedRunId;
@@ -1507,26 +1508,38 @@ export class TaskExecutionView {
     this.pollInFlight = null;
     this.renderNodeDetails();
     try {
-      const retry = await this.api.retryRecoveredNodeRun(runId, nodeRunId);
+      let retry;
+      try {
+        retry = await this.api.retryRecoveredNodeRun(runId, nodeRunId);
+      } catch (error) {
+        if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
+        this.state.recoveryRetryError = `Could not ${actionLabel.toLowerCase()} this recovery.${error?.message ? ` ${error.message}` : ''}`;
+        return;
+      }
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
-      const [workflowRun, contexts] = await Promise.all([
+      this.applyWorkflowRun(retry.workflowRun);
+      this.pinRecoveryRetry(retry.nodeRunId);
+      this.render();
+
+      const [workflowRefresh, contextRefresh] = await Promise.allSettled([
         this.api.getWorkflowRun(runId),
         this.api.getAgentExecutionContexts ? this.api.getAgentExecutionContexts(runId) : Promise.resolve([])
       ]);
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
-      this.state.agentExecutionContexts = contexts || [];
-      this.applyWorkflowRun(workflowRun);
-      const created = (workflowRun.nodeRuns || []).find((item) => item.id === retry.nodeRunId);
-      if (created) {
-        this.state.selectedNodeRunId = created.id;
-        this.state.selectedSourceNodeId = created.sourceNodeId;
-        this.state.selectedVisualUnitKey = visualUnitKey(created.sourceNodeId, created.repositoryId);
-        this.state.nodeRunSelectionMode = SELECTION_PINNED_INVOCATION;
+      if (workflowRefresh.status === 'fulfilled') {
+        this.applyWorkflowRun(workflowRefresh.value);
       }
-      this.syncSelectedActivity();
-    } catch (error) {
-      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
-      this.state.recoveryRetryError = `Could not continue this recovery.${error?.message ? ` ${error.message}` : ''}`;
+      if (contextRefresh.status === 'fulfilled') {
+        this.state.agentExecutionContexts = contextRefresh.value || [];
+      }
+      this.pinRecoveryRetry(retry.nodeRunId);
+      if (workflowRefresh.status === 'rejected' && contextRefresh.status === 'rejected') {
+        this.state.refreshError = `${actionLabel} started, but the latest state could not be refreshed.`;
+      } else if (workflowRefresh.status === 'rejected') {
+        this.state.refreshError = `${actionLabel} started, but the latest workflow state could not be refreshed.`;
+      } else if (contextRefresh.status === 'rejected') {
+        this.state.refreshError = `${actionLabel} started, but agent contexts could not be refreshed.`;
+      }
     } finally {
       if (this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
         this.state.recoveryRetryInFlight = false;
@@ -1534,6 +1547,16 @@ export class TaskExecutionView {
         this.syncPolling();
       }
     }
+  }
+
+  pinRecoveryRetry(nodeRunId) {
+    const created = (this.state.workflowRun?.nodeRuns || []).find((item) => item.id === nodeRunId);
+    if (!created) return;
+    this.state.selectedNodeRunId = created.id;
+    this.state.selectedSourceNodeId = created.sourceNodeId;
+    this.state.selectedVisualUnitKey = visualUnitKey(created.sourceNodeId, created.repositoryId);
+    this.state.nodeRunSelectionMode = SELECTION_PINNED_INVOCATION;
+    this.syncSelectedActivity();
   }
 
   contextForNodeRun(nodeRunId) {

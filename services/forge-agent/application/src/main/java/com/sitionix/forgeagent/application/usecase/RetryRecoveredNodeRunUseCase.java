@@ -2,17 +2,20 @@ package com.sitionix.forgeagent.application.usecase;
 
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
+import com.sitionix.forgeagent.domain.model.ConnectionResolution;
 import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.RecoveredNodeRunRetryEligibility;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
+import com.sitionix.forgeagent.domain.port.ConnectionResolutionRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +26,7 @@ public class RetryRecoveredNodeRunUseCase {
 
     private final WorkflowRunRepository workflows;
     private final NodeRunRepository nodeRuns;
+    private final ConnectionResolutionRepository resolutions;
     private final RecoveredNodeRunRetryEligibilityService eligibility;
     private final Clock clock;
 
@@ -48,8 +52,26 @@ public class RetryRecoveredNodeRunUseCase {
         }
 
         final NodeRun child = this.nodeRuns.saveAndFlush(this.retryOf(target));
+        this.copyConsumedInputs(target.id(), child.id());
         final WorkflowRun reopened = this.workflows.reopenForRetry(this.reopen(workflowRun));
         return new RetryRecoveredNodeRunResult(child.id(), this.fullWorkflowRun(reopened));
+    }
+
+    private void copyConsumedInputs(final UUID parentNodeRunId, final UUID childNodeRunId) {
+        final Instant copiedAt = Instant.now(this.clock);
+        final List<ConnectionResolution> parents = this.resolutions.findConsumedByNodeRunId(parentNodeRunId);
+        final List<ConnectionResolution> copies = IntStream.range(0, parents.size())
+                .mapToObj(index -> {
+                    final ConnectionResolution parent = parents.get(index);
+                    return new ConnectionResolution(UUID.randomUUID(), parent.workflowRunId(),
+                        parent.executionFrameId(), parent.sourceNodeRunId(), parent.sourceConnectionId(),
+                        parent.targetInputPortId(), parent.type(), parent.payload(), childNodeRunId,
+                        copiedAt.plusNanos(index * 1_000L), parent.targetRepositoryId());
+                })
+                .toList();
+        if (!copies.isEmpty()) {
+            this.resolutions.saveAll(copies);
+        }
     }
 
     private WorkflowRun fullWorkflowRun(final WorkflowRun fallback) {

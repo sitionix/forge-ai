@@ -15,6 +15,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -110,6 +111,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -191,7 +193,7 @@ class ForgeAgentPortAwareExecutionIT {
     private WorkflowRunRepository workflowRunRepository;
     @Autowired
     private WorkflowRunGraphRepository graphRepository;
-    @Autowired
+    @SpyBean
     private ConnectionResolutionRepository resolutionRepository;
     @Autowired
     private ExecutionFrameRepository frameRepository;
@@ -1380,8 +1382,14 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(retryAllocation.turn().sequence()).isEqualTo(1);
 
         final AgentExecutor scheduledExecutor = mock(AgentExecutor.class);
-        when(scheduledExecutor.execute(any())).thenReturn(
-                new AgentExecutionResult(new NodeRunOutput("{\"retried\":true}"), null));
+        final AtomicReference<NodeExecutionClaim> executedRetry = new AtomicReference<>();
+        when(scheduledExecutor.execute(any())).thenAnswer(invocation -> {
+            final NodeExecutionClaim retryClaim = invocation.getArgument(0);
+            if (retryClaim.nodeRunId().equals(retry.id())) {
+                executedRetry.set(retryClaim);
+            }
+            return new AgentExecutionResult(new NodeRunOutput("{\"retried\":true}"), null);
+        });
         try (var executor = Executors.newSingleThreadExecutor();
              var heartbeat = Executors.newSingleThreadScheduledExecutor()) {
             final var worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, scheduledExecutor,
@@ -1401,7 +1409,121 @@ class ForgeAgentPortAwareExecutionIT {
             assertThat(run.result()).isEqualTo(new NodeRunOutput("{\"retried\": true}"));
             assertThat(run.resultSourceNodeRunId()).isEqualTo(retry.id());
         });
-        verify(scheduledExecutor).execute(any());
+        assertThat(executedRetry.get()).isNotNull();
+        assertThat(executedRetry.get().inputEnvelope().originalTask()).isEqualTo("Recover exact execution.");
+        assertThat(executedRetry.get().inputEnvelope().contributions()).isEmpty();
+    }
+
+    @Test
+    void nonRootRecoveryRetryPreservesExactSequentialInputEnvelopeAndParentHistory() {
+        this.seed();
+        this.saveLinearWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Sequential retry input."));
+        this.complete(this.onlyPending(run.id(), A), "{\"from\":\"A\"}");
+        final NodeExecutionClaim parentClaim = this.lifecycle.tryStart(this.onlyPending(run.id(), B).id()).orElseThrow();
+        final List<ConnectionResolution> parentInputs = List.copyOf(
+                this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()));
+        assertThat(parentInputs).singleElement();
+        this.recoverTerminal(parentClaim);
+
+        final var retried = this.retryRecoveredNodeRun.execute(run.id(), parentClaim.nodeRunId());
+
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()))
+                .containsExactlyElementsOf(parentInputs);
+        final List<ConnectionResolution> retryInputs =
+                this.resolutionRepository.findConsumedByNodeRunId(retried.nodeRunId());
+        this.assertRetryInputCopies(parentInputs, retryInputs, retried.nodeRunId());
+        assertThat(this.lifecycle.tryStart(retried.nodeRunId()).orElseThrow().inputEnvelope())
+                .isEqualTo(parentClaim.inputEnvelope());
+    }
+
+    @Test
+    void consumedInputCopyFailureRollsBackRetryChildAllocationAndWorkflowReopen() {
+        this.seed();
+        this.saveLinearWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Rollback incomplete retry input."));
+        this.complete(this.onlyPending(run.id(), A), "{\"from\":\"A\"}");
+        final NodeExecutionClaim parentClaim = this.lifecycle.tryStart(this.onlyPending(run.id(), B).id()).orElseThrow();
+        final List<ConnectionResolution> parentInputs = List.copyOf(
+                this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()));
+        this.recoverTerminal(parentClaim);
+        doThrow(new IllegalStateException("input copy failed"))
+                .when(this.resolutionRepository).saveAll(any());
+
+        assertThatThrownBy(() -> this.retryRecoveredNodeRun.execute(run.id(), parentClaim.nodeRunId()))
+                .isInstanceOf(RuntimeException.class)
+                .hasRootCauseMessage("input copy failed");
+
+        assertThat(this.nodeRunRepository.findRetryChild(parentClaim.nodeRunId())).isEmpty();
+        assertThat(this.nodeRunRepository.findByWorkflowRunId(run.id()))
+                .noneMatch(nodeRun -> parentClaim.nodeRunId().equals(nodeRun.retryOfNodeRunId()));
+        assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status())
+                .isEqualTo(WorkflowRunStatus.FAILED);
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()))
+                .containsExactlyElementsOf(parentInputs);
+    }
+
+    @Test
+    void fanInRecoveryRetryPreservesBothExactContributionsWithoutDuplication() {
+        this.seed();
+        this.saveDeepWorkflow(false);
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Fan-in retry input."));
+        this.complete(this.onlyPending(run.id(), A), "{\"step\":\"A\"}");
+        this.complete(this.onlyPending(run.id(), B), "{\"branch\":\"B\"}");
+        this.complete(this.onlyPending(run.id(), C), "{\"branch\":\"C\"}");
+        this.complete(this.onlyPending(run.id(), D), "{\"branch\":\"D\"}");
+        final NodeExecutionClaim parentClaim = this.lifecycle.tryStart(this.onlyPending(run.id(), X).id()).orElseThrow();
+        final List<ConnectionResolution> parentInputs = List.copyOf(
+                this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()));
+        assertThat(parentInputs).hasSize(2);
+        this.recoverTerminal(parentClaim);
+
+        final var retried = this.retryRecoveredNodeRun.execute(run.id(), parentClaim.nodeRunId());
+
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()))
+                .containsExactlyElementsOf(parentInputs);
+        final List<ConnectionResolution> retryInputs =
+                this.resolutionRepository.findConsumedByNodeRunId(retried.nodeRunId());
+        this.assertRetryInputCopies(parentInputs, retryInputs, retried.nodeRunId());
+        assertThat(this.lifecycle.tryStart(retried.nodeRunId()).orElseThrow().inputEnvelope())
+                .isEqualTo(parentClaim.inputEnvelope());
+    }
+
+    @Test
+    void reentryRecoveryRetryPreservesOnlyFailedLaterFrameInputs() {
+        this.seed();
+        this.saveReviewerWorkflow();
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_RETURN);
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Re-entry retry input."));
+        final NodeRun implementerOne = this.onlyPending(run.id(), IMPLEMENTER);
+        this.complete(implementerOne, "{\"patch\":\"v1\"}");
+        this.complete(this.onlyPending(run.id(), STRATEGY), "{\"strategy\":\"pass\"}");
+        this.complete(this.onlyPending(run.id(), CODE), "{\"code\":\"return-v1\"}");
+        final NodeExecutionClaim parentClaim = this.lifecycle.tryStart(
+                this.nodeRuns(run.id(), IMPLEMENTER).get(1).id()).orElseThrow();
+        final List<ConnectionResolution> parentInputs = List.copyOf(
+                this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()));
+        assertThat(parentInputs).singleElement().satisfies(input -> {
+            assertThat(input.executionFrameId()).isEqualTo(implementerOne.executionFrameId());
+            assertThat(input.payload()).isEqualTo(new NodeRunOutput("{\"code\": \"return-v1\"}"));
+        });
+        this.recoverTerminal(parentClaim);
+
+        final var retried = this.retryRecoveredNodeRun.execute(run.id(), parentClaim.nodeRunId());
+
+        assertThat(this.resolutionRepository.findConsumedByNodeRunId(parentClaim.nodeRunId()))
+                .containsExactlyElementsOf(parentInputs);
+        final List<ConnectionResolution> retryInputs =
+                this.resolutionRepository.findConsumedByNodeRunId(retried.nodeRunId());
+        this.assertRetryInputCopies(parentInputs, retryInputs, retried.nodeRunId());
+        assertThat(retryInputs).allSatisfy(input ->
+                assertThat(input.executionFrameId()).isEqualTo(implementerOne.executionFrameId()));
+        assertThat(this.lifecycle.tryStart(retried.nodeRunId()).orElseThrow().inputEnvelope())
+                .isEqualTo(parentClaim.inputEnvelope());
     }
 
     @Test
@@ -1691,6 +1813,35 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.agentExecutionEventRepository.activate(normal)).isTrue();
         this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP-INTERVAL '1 second' WHERE id=?", normal.sessionId());
         return normal;
+    }
+
+    private void recoverTerminal(final NodeExecutionClaim claim) {
+        this.agentSessionLeaseService.persistConversation(
+                claim.agentSessionClaim(), "thread-" + claim.nodeRunId(), "0.154.0");
+        this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "turn-" + claim.nodeRunId());
+        assertThat(this.agentExecutionEventRepository.activate(claim.agentSessionClaim())).isTrue();
+        this.jdbcTemplate.update(
+                "UPDATE agent_execution_sessions SET lease_expires_at=CURRENT_TIMESTAMP-INTERVAL '1 second' WHERE id=?",
+                claim.agentSessionClaim().sessionId());
+        doReturn(ProviderTurnRecoveryResult.terminal(
+                ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Exact completed turn."))
+                .when(this.recoveryInspector).inspect(any());
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+    }
+
+    private void assertRetryInputCopies(final List<ConnectionResolution> parents,
+                                        final List<ConnectionResolution> copies,
+                                        final UUID retryNodeRunId) {
+        assertThat(copies).hasSameSizeAs(parents);
+        for (int index = 0; index < parents.size(); index++) {
+            final ConnectionResolution parent = parents.get(index);
+            final ConnectionResolution copy = copies.get(index);
+            assertThat(copy.id()).isNotEqualTo(parent.id());
+            assertThat(copy.consumedByNodeRunId()).isEqualTo(retryNodeRunId);
+            assertThat(copy).usingRecursiveComparison()
+                    .ignoringFields("id", "consumedByNodeRunId", "createdAt")
+                    .isEqualTo(parent);
+        }
     }
 
     @Test

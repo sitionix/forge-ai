@@ -8,6 +8,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.sitionix.forgeagent.domain.model.ConnectionResolution;
+import com.sitionix.forgeagent.domain.model.ConnectionResolutionType;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.AgentExecutionAllocation;
 import com.sitionix.forgeagent.domain.model.AgentExecutionSession;
@@ -29,11 +31,13 @@ import com.sitionix.forgeagent.domain.model.RecoveredNodeRunRetryAction;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
+import com.sitionix.forgeagent.domain.port.ConnectionResolutionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -52,13 +56,14 @@ class RetryRecoveredNodeRunUseCaseTest {
 
     private final WorkflowRunRepository workflows = mock(WorkflowRunRepository.class);
     private final NodeRunRepository nodeRuns = mock(NodeRunRepository.class);
+    private final ConnectionResolutionRepository resolutions = mock(ConnectionResolutionRepository.class);
     private final AgentExecutionSessionRepository sessions = mock(AgentExecutionSessionRepository.class);
     private final AtomicReference<WorkflowRun> persistedRun = new AtomicReference<>();
     private final AtomicReference<NodeRun> persistedChild = new AtomicReference<>();
     private final RecoveredNodeRunRetryEligibilityService eligibility =
             new RecoveredNodeRunRetryEligibilityService(this.sessions);
     private final RetryRecoveredNodeRunUseCase useCase = new RetryRecoveredNodeRunUseCase(
-            this.workflows, this.nodeRuns, this.eligibility, Clock.fixed(NOW, ZoneOffset.UTC));
+            this.workflows, this.nodeRuns, this.resolutions, this.eligibility, Clock.fixed(NOW, ZoneOffset.UTC));
 
     @BeforeEach
     void configurePersistence() {
@@ -105,6 +110,39 @@ class RetryRecoveredNodeRunUseCaseTest {
         assertThat(this.persistedRun.get().finishedAt()).isNull();
         assertThat(this.persistedRun.get().result()).isNull();
         assertThat(this.persistedRun.get().resultSourceNodeRunId()).isNull();
+    }
+
+    @Test
+    void retryCopiesExactConsumedInputContributionsWithoutChangingParentRows() {
+        final NodeRun failed = recovered(NodeContextMode.FRESH_EACH_NODE_RUN);
+        final ConnectionResolution parentInput = new ConnectionResolution(
+                UUID.fromString("51000000-0000-4000-8000-000000000010"), RUN_ID,
+                failed.executionFrameId(), UUID.fromString("51000000-0000-4000-8000-000000000011"),
+                UUID.fromString("51000000-0000-4000-8000-000000000012"),
+                UUID.fromString("51000000-0000-4000-8000-000000000013"),
+                ConnectionResolutionType.DELIVERED, new NodeRunOutput("{\"answer\":42}"), NODE_ID,
+                NOW.minusSeconds(18), failed.repositoryId());
+        this.persistedRun.set(run(WorkflowRunStatus.FAILED, List.of(failed), null));
+        when(this.nodeRuns.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(failed));
+        when(this.sessions.findByNodeRunId(NODE_ID)).thenReturn(Optional.of(allocation(
+                failed, ProviderTurnRecoveryState.TERMINAL, AgentExecutionSessionStatus.CLOSED)));
+        when(this.resolutions.findConsumedByNodeRunId(NODE_ID)).thenReturn(List.of(parentInput));
+
+        final RetryRecoveredNodeRunResult result = this.useCase.execute(RUN_ID, NODE_ID);
+
+        @SuppressWarnings("unchecked")
+        final org.mockito.ArgumentCaptor<Collection<ConnectionResolution>> copies =
+                org.mockito.ArgumentCaptor.forClass(Collection.class);
+        verify(this.resolutions).saveAll(copies.capture());
+        assertThat(copies.getValue()).singleElement().satisfies(copy -> {
+            assertThat(copy.id()).isNotEqualTo(parentInput.id());
+            assertThat(copy.consumedByNodeRunId()).isEqualTo(result.nodeRunId());
+            assertThat(copy).usingRecursiveComparison()
+                    .ignoringFields("id", "consumedByNodeRunId", "createdAt")
+                    .isEqualTo(parentInput);
+            assertThat(copy.createdAt()).isEqualTo(NOW);
+        });
+        assertThat(parentInput.consumedByNodeRunId()).isEqualTo(NODE_ID);
     }
 
     @Test
