@@ -13,11 +13,9 @@ import com.sitionix.forgeagent.domain.model.RecoveredNodeRunRetryEligibility;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
-import java.util.HashSet;
+import com.sitionix.forgeagent.application.runtime.NodeRunRetryLineage;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -46,13 +44,11 @@ public class RecoveredNodeRunRetryEligibilityService {
             return RecoveredNodeRunRetryEligibility.none(NOT_ALLOWED);
         }
 
-        final Set<UUID> superseded = new HashSet<>();
-        nodeRuns.stream().map(NodeRun::retryOfNodeRunId).filter(Objects::nonNull).forEach(superseded::add);
-        if (superseded.contains(target.id())) {
+        final List<NodeRun> currentLeaves = NodeRunRetryLineage.currentLeaves(nodeRuns);
+        if (currentLeaves.stream().noneMatch(node -> node.id().equals(target.id()))) {
             return RecoveredNodeRunRetryEligibility.none(SUPERSEDED);
         }
-        if (nodeRuns.stream().anyMatch(node -> !node.id().equals(target.id())
-                && !superseded.contains(node.id())
+        if (currentLeaves.stream().anyMatch(node -> !node.id().equals(target.id())
                 && node.status() == NodeRunStatus.CANCELLED)) {
             return RecoveredNodeRunRetryEligibility.none(UNSAFE);
         }
