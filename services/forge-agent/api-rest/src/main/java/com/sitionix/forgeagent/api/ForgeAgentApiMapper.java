@@ -136,13 +136,14 @@ class ForgeAgentApiMapper {
         }
     }
 
-    AgentExecutionContextResponse toResponse(final com.sitionix.forgeagent.domain.model.AgentExecutionAllocation allocation) {
+    AgentExecutionContextResponse toResponse(final com.sitionix.forgeagent.domain.model.AgentExecutionAllocation allocation, final String resetReason) {
         final var session = allocation.session();
         final var turn = allocation.turn();
         return new AgentExecutionContextResponse(session.id(), turn.id(), turn.nodeRunId(), session.sourceNodeId(),
                 session.repositoryId(), session.contextMode().name(), turn.sequence(), session.status().name(), turn.status().name(),
                 session.providerId(), session.providerConversationId(), turn.providerTurnId(), session.providerVersion(),
-                turn.failureCode(), turn.failureMessage(), session.createdAt(), turn.startedAt(), turn.finishedAt());
+                turn.failureCode(), turn.failureMessage(), session.createdAt(), turn.startedAt(), turn.finishedAt(),
+                session.contextResetAt(), resetReason == null, resetReason);
     }
 
     CreateProjectCommand toCommand(final CreateProjectRequest request) {

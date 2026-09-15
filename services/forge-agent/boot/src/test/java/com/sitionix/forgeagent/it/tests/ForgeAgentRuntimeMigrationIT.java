@@ -11,6 +11,7 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @IntegrationTest
@@ -148,6 +149,100 @@ class ForgeAgentRuntimeMigrationIT {
         } finally {
             jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
         }
+    }
+
+    @Test
+    void v31RetiresGlobalContextWithoutChangingHistoricalRowsOrProviderUniqueness() {
+        this.assertContextResetMigration(null, "uq_agent_sessions_reusable_global");
+    }
+
+    @Test
+    void v31RetiresRepositoryContextWithoutChangingOtherRepositoryReuse() {
+        this.assertContextResetMigration(UUID.randomUUID(), "uq_agent_sessions_reusable_scope");
+    }
+
+    private void assertContextResetMigration(final UUID repositoryId, final String reusableIndex) {
+        final String schema = "context_reset_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        final UUID workflowRunId = UUID.randomUUID();
+        final UUID sourceNodeId = UUID.randomUUID();
+        final UUID nodeRunId = UUID.randomUUID();
+        final UUID sessionId = UUID.randomUUID();
+        final UUID turnId = UUID.randomUUID();
+        final UUID replacementId = UUID.randomUUID();
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, MigrationVersion.fromVersion("30")).migrate();
+            this.insertHistoricalTrackedTurn(jdbc, schema, workflowRunId, sourceNodeId, nodeRunId, sessionId, turnId);
+            jdbc.update("UPDATE %s.workflow_run_nodes SET context_mode='REUSE_WITHIN_WORKFLOW_NODE', scope_mode=? WHERE workflow_run_id=? AND source_node_id=?".formatted(schema),
+                    repositoryId == null ? "GLOBAL" : "PER_SCOPE", workflowRunId, sourceNodeId);
+            if (repositoryId != null) {
+                jdbc.update("INSERT INTO %s.workflow_run_repositories (workflow_run_id, repository_id, repository_ordinal) VALUES (?, ?, 0)".formatted(schema),
+                        workflowRunId, repositoryId);
+            }
+            jdbc.update("UPDATE %s.node_runs SET context_mode='REUSE_WITHIN_WORKFLOW_NODE', repository_id=? WHERE id=?".formatted(schema), repositoryId, nodeRunId);
+            jdbc.update("UPDATE %s.agent_execution_turns SET status='SUCCEEDED' WHERE id=?".formatted(schema), turnId);
+            jdbc.update("UPDATE %s.agent_execution_sessions SET context_mode='REUSE_WITHIN_WORKFLOW_NODE', status='IDLE', repository_id=?, provider_conversation_id='historical-conversation' WHERE id=?".formatted(schema),
+                    repositoryId, sessionId);
+            final var historicalSession = jdbc.queryForMap("SELECT * FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), sessionId);
+            final var historicalTurn = jdbc.queryForMap("SELECT * FROM %s.agent_execution_turns WHERE id=?".formatted(schema), turnId);
+            final String providerIndex = this.value(jdbc,
+                    "SELECT indexdef FROM pg_indexes WHERE schemaname=? AND indexname='uq_agent_sessions_provider_conversation'", schema);
+
+            this.flyway(schema, null).migrate();
+
+            final var migratedSession = jdbc.queryForMap("SELECT * FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), sessionId);
+            assertThat(migratedSession).containsAllEntriesOf(historicalSession).containsEntry("context_reset_at", null);
+            assertThat(this.value(jdbc,
+                    "SELECT data_type FROM information_schema.columns WHERE table_schema=? AND table_name='agent_execution_sessions' AND column_name='context_reset_at'", schema))
+                    .isEqualTo("timestamp with time zone");
+            assertThat(this.value(jdbc,
+                    "SELECT indexdef FROM pg_indexes WHERE schemaname=? AND indexname='uq_agent_sessions_provider_conversation'", schema))
+                    .isEqualTo(providerIndex);
+            assertThatThrownBy(() -> this.insertReusableSessionCopy(jdbc, schema, sessionId, replacementId, repositoryId))
+                    .isInstanceOf(DuplicateKeyException.class).hasMessageContaining(reusableIndex);
+
+            UUID otherRepositorySessionId = null;
+            if (repositoryId != null) {
+                final UUID otherRepositoryId = UUID.randomUUID();
+                otherRepositorySessionId = UUID.randomUUID();
+                jdbc.update("INSERT INTO %s.workflow_run_repositories (workflow_run_id, repository_id, repository_ordinal) VALUES (?, ?, 1)".formatted(schema),
+                        workflowRunId, otherRepositoryId);
+                this.insertReusableSessionCopy(jdbc, schema, sessionId, otherRepositorySessionId, otherRepositoryId);
+            }
+
+            jdbc.update("UPDATE %s.agent_execution_sessions SET context_reset_at=CURRENT_TIMESTAMP WHERE id=?".formatted(schema), sessionId);
+            this.insertReusableSessionCopy(jdbc, schema, sessionId, replacementId, repositoryId);
+
+            final var retiredSession = jdbc.queryForMap("SELECT * FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), sessionId);
+            assertThat(retiredSession).containsAllEntriesOf(historicalSession);
+            assertThat(retiredSession.get("context_reset_at")).isNotNull();
+            assertThat(jdbc.queryForMap("SELECT * FROM %s.agent_execution_turns WHERE id=?".formatted(schema), turnId)).isEqualTo(historicalTurn);
+            assertThat(jdbc.queryForMap("SELECT context_reset_at, provider_conversation_id FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), replacementId))
+                    .containsEntry("context_reset_at", null).containsEntry("provider_conversation_id", null);
+            assertThatThrownBy(() -> this.insertReusableSessionCopy(jdbc, schema, sessionId, UUID.randomUUID(), repositoryId))
+                    .isInstanceOf(DuplicateKeyException.class).hasMessageContaining(reusableIndex);
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET provider_conversation_id='historical-conversation' WHERE id=?".formatted(schema), replacementId))
+                    .isInstanceOf(DuplicateKeyException.class).hasMessageContaining("uq_agent_sessions_provider_conversation");
+            if (otherRepositorySessionId != null) {
+                assertThat(jdbc.queryForMap("SELECT context_reset_at, status FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), otherRepositorySessionId))
+                        .containsEntry("context_reset_at", null).containsEntry("status", "IDLE");
+            }
+        } finally {
+            jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+        }
+    }
+
+    private void insertReusableSessionCopy(final JdbcTemplate jdbc, final String schema, final UUID sourceId,
+                                          final UUID sessionId, final UUID repositoryId) {
+        jdbc.update("""
+                INSERT INTO %1$s.agent_execution_sessions (
+                    id, workflow_run_id, source_node_id, source_agent_id, repository_id,
+                    provider_id, context_mode, status, created_at, updated_at
+                ) SELECT ?, workflow_run_id, source_node_id, source_agent_id, ?,
+                    provider_id, context_mode, status, created_at, updated_at
+                  FROM %1$s.agent_execution_sessions WHERE id=?
+                """.formatted(schema), sessionId, repositoryId, sourceId);
     }
 
     @Test
@@ -497,8 +592,8 @@ class ForgeAgentRuntimeMigrationIT {
                 status);
     }
 
-    private String value(final JdbcTemplate jdbc, final String sql, final UUID id) {
-        return jdbc.queryForObject(sql, String.class, id);
+    private String value(final JdbcTemplate jdbc, final String sql, final Object... args) {
+        return jdbc.queryForObject(sql, String.class, args);
     }
 
     private UUID uuidValue(final JdbcTemplate jdbc, final String sql, final UUID id) {

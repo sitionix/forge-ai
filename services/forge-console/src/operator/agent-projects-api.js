@@ -201,6 +201,9 @@ export function createAgentProjectsApi(http) {
     retryRecoveredNodeRun(workflowRunId, nodeRunId) {
       return http.post(`${root}/workflow-runs/${encodeURIComponent(workflowRunId)}/node-runs/${encodeURIComponent(nodeRunId)}/retry`);
     },
+    resetAgentExecutionContext(sessionId) {
+      return http.post(`${root}/agent-execution-sessions/${encodeURIComponent(sessionId)}/reset-context`);
+    },
     getAgentExecutionContexts(runId) {
       return http.get(`${root}/workflow-runs/${encodeURIComponent(runId)}/agent-execution-contexts`);
     },

@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.domain.port;
 
 import com.sitionix.forgeagent.domain.model.AgentExecutionAllocation;
+import com.sitionix.forgeagent.domain.model.AgentExecutionSession;
 import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryClaim;
 import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryReconciliation;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
@@ -11,6 +12,11 @@ import java.util.UUID;
 import java.util.List;
 
 public interface AgentExecutionSessionRepository {
+    Optional<AgentExecutionSession> findSession(UUID sessionId);
+    void lockReusableScope(UUID workflowRunId, UUID sourceNodeId, UUID repositoryId);
+    Optional<AgentExecutionSession> lockSession(UUID sessionId);
+    boolean hasPendingTurns(UUID sessionId);
+    void markContextReset(UUID sessionId);
     AgentExecutionAllocation allocate(NodeRun nodeRun, String providerId);
     Optional<AgentExecutionAllocation> findByNodeRunId(UUID nodeRunId);
     List<AgentExecutionAllocation> findByWorkflowRunId(UUID workflowRunId);

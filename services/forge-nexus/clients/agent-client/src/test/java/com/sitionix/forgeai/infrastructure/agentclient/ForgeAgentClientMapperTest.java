@@ -716,24 +716,24 @@ class ForgeAgentClientMapperTest {
                 sessionId, turnId, NODE_RUN_ID, NODE_ID, REPOSITORY_ID,
                 " opaque-context ", 7, " opaque-session ", " opaque-turn ",
                 " provider ", " conversation ", " provider-turn ", " version ",
-                " failure-code ", " failure message ", CREATED, startedAt, finishedAt);
+                " failure-code ", " failure message ", CREATED, startedAt, finishedAt, CREATED.plusSeconds(3), true, " opaque-reason ");
 
         assertThat(this.mapper.toDomain(response)).isEqualTo(new AgentExecutionContext(
                 sessionId, turnId, NODE_RUN_ID, NODE_ID, REPOSITORY_ID,
                 " opaque-context ", 7, " opaque-session ", " opaque-turn ",
                 " provider ", " conversation ", " provider-turn ", " version ",
-                " failure-code ", " failure message ", CREATED, startedAt, finishedAt));
+                " failure-code ", " failure message ", CREATED, startedAt, finishedAt, CREATED.plusSeconds(3), true, " opaque-reason "));
     }
 
     @Test
     void executionContextMappingPreservesNullFieldsWithoutDefaults() {
         final var response = new AgentExecutionContextResponse(
                 null, null, null, null, null, null, 0, null, null,
-                null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, false, null);
 
         assertThat(this.mapper.toDomain(response)).isEqualTo(new AgentExecutionContext(
                 null, null, null, null, null, null, 0, null, null,
-                null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, false, null));
     }
 
 }
