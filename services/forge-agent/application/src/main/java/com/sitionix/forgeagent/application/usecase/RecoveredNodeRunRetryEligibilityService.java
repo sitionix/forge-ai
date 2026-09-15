@@ -15,6 +15,8 @@ import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import com.sitionix.forgeagent.application.runtime.NodeRunRetryLineage;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -30,6 +32,14 @@ public class RecoveredNodeRunRetryEligibilityService {
     private static final String RECOVERY_REQUIRED = "AGENT_EXECUTION_RECOVERY_REQUIRED";
 
     private final AgentExecutionSessionRepository sessions;
+
+    public Map<java.util.UUID, RecoveredNodeRunRetryEligibility> evaluateAll(final WorkflowRun workflowRun) {
+        final Map<java.util.UUID, RecoveredNodeRunRetryEligibility> result = new LinkedHashMap<>();
+        for (final NodeRun nodeRun : workflowRun.nodeRuns()) {
+            result.put(nodeRun.id(), this.evaluate(workflowRun, nodeRun, workflowRun.nodeRuns()));
+        }
+        return Map.copyOf(result);
+    }
 
     public RecoveredNodeRunRetryEligibility evaluate(final WorkflowRun workflowRun, final NodeRun target,
                                                       final List<NodeRun> nodeRuns) {

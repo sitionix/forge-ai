@@ -34,6 +34,9 @@ import com.sitionix.forgeagent.application.usecase.CreateProjectCommand;
 import com.sitionix.forgeagent.application.usecase.CreateProjectTaskCommand;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowRunCommand;
 import com.sitionix.forgeagent.application.usecase.CancelWorkflowRunUseCase;
+import com.sitionix.forgeagent.application.usecase.RecoveredNodeRunRetryEligibilityService;
+import com.sitionix.forgeagent.application.usecase.RetryRecoveredNodeRunResult;
+import com.sitionix.forgeagent.application.usecase.RetryRecoveredNodeRunUseCase;
 import com.sitionix.forgeagent.application.usecase.CreateWorkflowCommand;
 import com.sitionix.forgeagent.application.usecase.GetAiRuntime;
 import com.sitionix.forgeagent.application.usecase.ImportProjectRepositoryCommand;
@@ -101,6 +104,10 @@ class ForgeAgentControllerTest {
     @Mock
     private CancelWorkflowRunUseCase cancelWorkflowRun;
     @Mock
+    private RetryRecoveredNodeRunUseCase retryRecoveredNodeRun;
+    @Mock
+    private RecoveredNodeRunRetryEligibilityService retryEligibility;
+    @Mock
     private ProjectTaskUseCases projectTaskUseCases;
     @Mock
     private ForgeAgentApiMapper mapper;
@@ -118,6 +125,8 @@ class ForgeAgentControllerTest {
                 this.workflowUseCases,
                 this.workflowRunUseCases,
                 this.cancelWorkflowRun,
+                this.retryRecoveredNodeRun,
+                this.retryEligibility,
                 this.projectTaskUseCases,
                 this.mapper
         );
@@ -509,15 +518,35 @@ class ForgeAgentControllerTest {
     void getWorkflowRun() {
         final WorkflowRun run = this.workflowRun();
         final WorkflowRunResponse response = this.workflowRunResponse();
+        final var eligibility = java.util.Map.<UUID, com.sitionix.forgeagent.domain.model.RecoveredNodeRunRetryEligibility>of();
         when(this.workflowRunUseCases.getWorkflowRun(RUN_ID)).thenReturn(run);
-        when(this.mapper.toResponse(run)).thenReturn(response);
+        when(this.retryEligibility.evaluateAll(run)).thenReturn(eligibility);
+        when(this.mapper.toResponse(run, eligibility)).thenReturn(response);
 
         final var actual = this.controller.getWorkflowRun(RUN_ID);
 
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(actual.getBody()).isSameAs(response);
         verify(this.workflowRunUseCases).getWorkflowRun(RUN_ID);
-        verify(this.mapper).toResponse(run);
+        verify(this.mapper).toResponse(run, eligibility);
+    }
+
+    @Test
+    void retryRecoveredNodeRunReturnsCreatedAttemptAndBackendTruth() {
+        final WorkflowRun run = this.workflowRun();
+        final RetryRecoveredNodeRunResult result = new RetryRecoveredNodeRunResult(NODE_RUN_ID, run);
+        final var eligibility = java.util.Map.<UUID, com.sitionix.forgeagent.domain.model.RecoveredNodeRunRetryEligibility>of();
+        final var response = new com.sitionix.forgeagent.api.dto.RecoveredNodeRunRetryResponse(
+                NODE_RUN_ID, this.workflowRunResponse());
+        when(this.retryRecoveredNodeRun.execute(RUN_ID, NODE_RUN_ID)).thenReturn(result);
+        when(this.retryEligibility.evaluateAll(run)).thenReturn(eligibility);
+        when(this.mapper.toResponse(result, eligibility)).thenReturn(response);
+
+        final var actual = this.controller.retryRecoveredNodeRun(RUN_ID, NODE_RUN_ID);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.retryRecoveredNodeRun).execute(RUN_ID, NODE_RUN_ID);
     }
 
     @Test

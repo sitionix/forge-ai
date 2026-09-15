@@ -13,6 +13,7 @@ import com.sitionix.forgeagent.api.dto.ProjectRepositoryResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskPageResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskResponse;
 import com.sitionix.forgeagent.api.dto.ProjectTaskSummaryResponse;
+import com.sitionix.forgeagent.api.dto.RecoveredNodeRunRetryResponse;
 import com.sitionix.forgeagent.api.dto.SaveAgentRequest;
 import com.sitionix.forgeagent.api.dto.SaveWorkflowRequest;
 import com.sitionix.forgeagent.api.dto.WorkflowRunResponse;
@@ -20,6 +21,8 @@ import com.sitionix.forgeagent.api.dto.WorkflowRunSummaryResponse;
 import com.sitionix.forgeagent.api.dto.WorkflowResponse;
 import com.sitionix.forgeagent.application.usecase.AgentUseCases;
 import com.sitionix.forgeagent.application.usecase.CancelWorkflowRunUseCase;
+import com.sitionix.forgeagent.application.usecase.RecoveredNodeRunRetryEligibilityService;
+import com.sitionix.forgeagent.application.usecase.RetryRecoveredNodeRunUseCase;
 import com.sitionix.forgeagent.application.usecase.GetAiRuntime;
 import com.sitionix.forgeagent.application.usecase.ProjectRepositoryUseCases;
 import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
@@ -52,6 +55,8 @@ public class ForgeAgentController {
     private final WorkflowUseCases workflowUseCases;
     private final WorkflowRunUseCases workflowRunUseCases;
     private final CancelWorkflowRunUseCase cancelWorkflowRun;
+    private final RetryRecoveredNodeRunUseCase retryRecoveredNodeRun;
+    private final RecoveredNodeRunRetryEligibilityService retryEligibility;
     private final ProjectTaskUseCases projectTaskUseCases;
     private final ForgeAgentApiMapper mapper;
 
@@ -220,7 +225,16 @@ public class ForgeAgentController {
 
     @GetMapping("/api/v1/workflow-runs/{runId}")
     public ResponseEntity<WorkflowRunResponse> getWorkflowRun(@PathVariable final UUID runId) {
-        return ResponseEntity.ok(this.mapper.toResponse(this.workflowRunUseCases.getWorkflowRun(runId)));
+        final var run = this.workflowRunUseCases.getWorkflowRun(runId);
+        return ResponseEntity.ok(this.mapper.toResponse(run, this.retryEligibility.evaluateAll(run)));
+    }
+
+    @PostMapping("/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/retry")
+    public ResponseEntity<RecoveredNodeRunRetryResponse> retryRecoveredNodeRun(
+            @PathVariable final UUID workflowRunId, @PathVariable final UUID nodeRunId) {
+        final var result = this.retryRecoveredNodeRun.execute(workflowRunId, nodeRunId);
+        return ResponseEntity.ok(this.mapper.toResponse(
+                result, this.retryEligibility.evaluateAll(result.workflowRun())));
     }
 
     @PostMapping("/api/v1/workflow-runs/{runId}/cancel")

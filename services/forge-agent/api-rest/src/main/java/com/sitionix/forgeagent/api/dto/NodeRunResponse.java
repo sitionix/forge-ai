@@ -26,8 +26,23 @@ public record NodeRunResponse(
         Instant finishedAt,
         UUID repositoryId,
         String contextMode,
-        Integer contextTrackingVersion
+        Integer contextTrackingVersion,
+        UUID retryOfNodeRunId,
+        RecoveredNodeRunRetryEligibilityResponse retryEligibility
 ) {
+    public NodeRunResponse(final UUID id, final UUID sourceNodeId, final UUID sourceAgentId,
+                           final String agentName, final String agentInstructions, final JsonNode agentOutputSchema,
+                           final String inputMode, final NodePositionResponse position, final UUID executionFrameId,
+                           final UUID enteredViaInputPortId, final UUID activationFrameId, final UUID selectedOutputPortId,
+                           final NodeRunStatus status, final JsonNode output, final NodeRunFailureResponse failure,
+                           final Instant createdAt, final Instant startedAt, final Instant finishedAt,
+                           final UUID repositoryId, final String contextMode, final Integer contextTrackingVersion) {
+        this(id, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema, inputMode, position,
+                executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId, status, output,
+                failure, createdAt, startedAt, finishedAt, repositoryId, contextMode, contextTrackingVersion,
+                null, new RecoveredNodeRunRetryEligibilityResponse("NONE", null));
+    }
+
     public NodeRunResponse(final UUID id, final UUID sourceNodeId, final UUID sourceAgentId,
                            final String agentName, final String agentInstructions, final JsonNode agentOutputSchema,
                            final String inputMode, final NodePositionResponse position, final UUID executionFrameId,
@@ -37,6 +52,7 @@ public record NodeRunResponse(
                            final UUID repositoryId) {
         this(id, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema, inputMode, position,
                 executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId, status, output,
-                failure, createdAt, startedAt, finishedAt, repositoryId, "FRESH_EACH_NODE_RUN", null);
+                failure, createdAt, startedAt, finishedAt, repositoryId, "FRESH_EACH_NODE_RUN", null,
+                null, new RecoveredNodeRunRetryEligibilityResponse("NONE", null));
     }
 }

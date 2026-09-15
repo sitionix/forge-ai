@@ -675,7 +675,9 @@ class ForgeAgentApiMapperTest {
                 OperatorStopStatus.FAILED,
                 "AGENT_EXECUTION_INTERRUPT_FAILED"
         ));
-        assertThat(this.mapper.toResponse(run)).isEqualTo(new WorkflowRunResponse(
+        final var retryEligibility = java.util.Map.of(NODE_RUN_ID,
+                com.sitionix.forgeagent.domain.model.RecoveredNodeRunRetryEligibility.retry());
+        assertThat(this.mapper.toResponse(run, retryEligibility)).isEqualTo(new WorkflowRunResponse(
                 RUN_ID,
                 PROJECT_ID,
                 WORKFLOW_ID,
@@ -702,7 +704,11 @@ class ForgeAgentApiMapperTest {
                         CREATED,
                         null,
                         null,
-                        null
+                        null,
+                        "FRESH_EACH_NODE_RUN",
+                        null,
+                        null,
+                        new com.sitionix.forgeagent.api.dto.RecoveredNodeRunRetryEligibilityResponse("RETRY", null)
                 )),
                 List.of(),
                 List.of(),
