@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryDisposition;
 import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryReconciliation;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
+import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.time.Clock;
 import java.time.Duration;
@@ -31,6 +32,9 @@ public class AgentExecutionRecoveryService {
     private final List<AgentExecutionRecoveryInspector> inspectors;
     private final WorkflowRunRepository workflows;
     private final ExecutionWorkspaceResolver workspaces;
+    private final NodeRunRepository nodeRuns;
+    private final NodeRunCompletionProcessor completionProcessor;
+    private final WorkflowExecutionCoordinator coordinator;
     private final Clock clock;
     private final String ownerId = "agent-recovery-" + UUID.randomUUID();
 
@@ -47,7 +51,23 @@ public class AgentExecutionRecoveryService {
         } else {
             reconciliation = this.reconciliation(this.inspect(claim));
         }
-        return this.sessions.reconcileRecovery(claim, reconciliation) ? 1 : 0;
+        if (!this.sessions.reconcileRecovery(claim, reconciliation)) return 0;
+        this.continueNodeRunLifecycle(claim.nodeRunId());
+        return 1;
+    }
+
+    private void continueNodeRunLifecycle(final UUID nodeRunId) {
+        this.nodeRuns.findById(nodeRunId).ifPresent(nodeRun -> {
+            switch (nodeRun.status()) {
+                case SUCCEEDED -> {
+                    if (nodeRun.routingCompletedAt() == null) this.completionProcessor.process(nodeRun.id());
+                }
+                case FAILED, BLOCKED -> this.coordinator.reconcile(nodeRun.workflowRunId());
+                case PENDING, RUNNING, CANCELLED -> {
+                    // Recovery does not restart active work or recreate cancelled downstream work.
+                }
+            }
+        });
     }
 
     private ProviderTurnRecoveryResult inspect(final AgentExecutionRecoveryClaim claim) {

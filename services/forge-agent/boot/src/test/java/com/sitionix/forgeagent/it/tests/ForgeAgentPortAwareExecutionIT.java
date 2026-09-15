@@ -497,7 +497,8 @@ class ForgeAgentPortAwareExecutionIT {
             }
         };
         final var restartedRecovery = new AgentExecutionRecoveryService(this.agentExecutionSessionRepository,
-                List.of(checkedInspector), this.workflowRunRepository, this.workspaceResolver, Clock.systemUTC());
+                List.of(checkedInspector), this.workflowRunRepository, this.workspaceResolver, this.nodeRunRepository,
+                this.completionProcessor, this.coordinator, Clock.systemUTC());
         assertThat(restartedRecovery.reconcileExpired()).isEqualTo(1);
 
         final var recovered = this.agentExecutionSessionRepository.findByWorkflowRunId(orphanRun.id()).getFirst();
@@ -514,6 +515,10 @@ class ForgeAgentPortAwareExecutionIT {
             assertThat(node.status()).isEqualTo(NodeRunStatus.FAILED);
             assertThat(node.failure().code()).isEqualTo("AGENT_EXECUTION_RECOVERY_REQUIRED");
             assertThat(node.output()).isNull();
+        });
+        assertThat(this.workflowRunRepository.findById(orphanRun.id()).orElseThrow()).satisfies(workflow -> {
+            assertThat(workflow.status()).isEqualTo(WorkflowRunStatus.FAILED);
+            assertThat(workflow.finishedAt()).isNotNull();
         });
         this.assertRecoveryCannotScheduleOrFabricateEvents(claim.agentSessionClaim());
         assertThat(provider.inspectionProcesses()).singleElement().satisfies(process -> {
@@ -1188,6 +1193,11 @@ class ForgeAgentPortAwareExecutionIT {
                 WHERE id=?
                 """, status, "FAILED".equals(status) ? "EXECUTION_FAILED" : null,
                 "FAILED".equals(status) ? "Persisted execution failure." : null, normal.nodeRunId());
+        if ("SUCCEEDED".equals(status)) {
+            this.jdbcTemplate.update(
+                    "UPDATE node_runs SET routing_completed_at=CURRENT_TIMESTAMP-INTERVAL '30 minutes' WHERE id=?",
+                    normal.nodeRunId());
+        }
         final var before = this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", normal.nodeRunId());
 
         assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
@@ -1261,6 +1271,12 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(node.status()).isEqualTo(NodeRunStatus.FAILED);
         assertThat(node.failure().code()).isEqualTo(failureCode);
         assertThat(node.output()).isNull();
+        assertThat(node.routingCompletedAt()).isNull();
+        assertThat(this.nodeRunRepository.findByWorkflowRunId(node.workflowRunId())).hasSize(1);
+        assertThat(this.workflowRunRepository.findById(node.workflowRunId()).orElseThrow()).satisfies(workflow -> {
+            assertThat(workflow.status()).isEqualTo(WorkflowRunStatus.FAILED);
+            assertThat(workflow.finishedAt()).isNotNull();
+        });
         final var allocation = this.agentExecutionSessionRepository.findByNodeRunId(normal.nodeRunId()).orElseThrow();
         assertThat(allocation.turn().status()).isEqualTo(AgentExecutionTurnStatus.FAILED);
         assertThat(allocation.turn().failureCode()).isEqualTo(failureCode);
@@ -1281,6 +1297,72 @@ class ForgeAgentPortAwareExecutionIT {
         }
         this.assertRecoveryCannotScheduleOrFabricateEvents(normal);
         assertThat(this.recoveryService.reconcileExpired()).isZero();
+    }
+
+    @Test
+    void forgeTerminalSuccessResumesPersistedOutputRoutingExactlyOnceAfterRecovery() {
+        this.seed();
+        this.saveLinearWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Resume routing after recovery."));
+        final NodeExecutionClaim claim = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow();
+        final AgentSessionExecutionClaim session = claim.agentSessionClaim();
+        this.agentSessionLeaseService.persistConversation(session, "thread-" + session.nodeRunId(), "0.154.0");
+        this.agentSessionLeaseService.persistTurn(session, "turn-" + session.nodeRunId());
+        assertThat(this.agentExecutionEventRepository.activate(session)).isTrue();
+        this.jdbcTemplate.update("""
+                UPDATE node_runs
+                SET status='SUCCEEDED', output='{"step":"A"}'::jsonb, finished_at=clock_timestamp()
+                WHERE id=?
+                """, session.nodeRunId());
+        this.jdbcTemplate.update("""
+                UPDATE agent_execution_sessions
+                SET lease_expires_at=clock_timestamp()-INTERVAL '1 second'
+                WHERE id=?
+                """, session.sessionId());
+
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+
+        verifyNoInteractions(this.recoveryInspector, this.agentExecutor);
+        final NodeRun routed = this.nodeRunRepository.findById(session.nodeRunId()).orElseThrow();
+        assertThat(routed.status()).isEqualTo(NodeRunStatus.SUCCEEDED);
+        assertThat(routed.output()).isEqualTo(new NodeRunOutput("{\"step\": \"A\"}"));
+        assertThat(routed.routingCompletedAt()).isNotNull();
+        assertThat(this.pendingForSource(run.id(), B)).singleElement();
+        final UUID childId = this.onlyPending(run.id(), B).id();
+        final Instant routedAt = routed.routingCompletedAt();
+
+        assertThat(this.recoveryService.reconcileExpired()).isZero();
+        this.completionProcessor.process(session.nodeRunId());
+
+        assertThat(this.nodeRunRepository.findById(session.nodeRunId()).orElseThrow().routingCompletedAt())
+                .isEqualTo(routedAt);
+        assertThat(this.pendingForSource(run.id(), B)).singleElement()
+                .satisfies(child -> assertThat(child.id()).isEqualTo(childId));
+    }
+
+    @Test
+    void completionWorkerRetriesWorkflowReconciliationForStrandedFailedNodeRun() {
+        this.seed();
+        this.saveTerminalWorkflow();
+        final WorkflowRun run = this.workflowRunUseCases.createWorkflowRun(
+                WORKFLOW_ID, new CreateWorkflowRunCommand("Retry stranded workflow completion."));
+        final NodeRun running = this.start(this.onlyPending(run.id(), A));
+        this.jdbcTemplate.update("""
+                UPDATE node_runs
+                SET status='FAILED', failure_code='RECOVERED_FAILURE',
+                    failure_message='Recovery commit completed.', finished_at=clock_timestamp()
+                WHERE id=?
+                """, running.id());
+
+        this.completionWorker.poll();
+
+        assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow()).satisfies(workflow -> {
+            assertThat(workflow.status()).isEqualTo(WorkflowRunStatus.FAILED);
+            assertThat(workflow.finishedAt()).isNotNull();
+        });
+        assertThat(this.nodeRunRepository.findByWorkflowRunId(run.id())).singleElement()
+                .satisfies(nodeRun -> assertThat(nodeRun.failure().code()).isEqualTo("RECOVERED_FAILURE"));
     }
 
     @Test
@@ -1325,7 +1407,8 @@ class ForgeAgentPortAwareExecutionIT {
         });
         final var deadlineService = new AgentExecutionRecoveryService(
                 deadlineRepository, List.of(deadlineInspector), this.workflowRunRepository,
-                this.workspaceResolver, Clock.systemUTC());
+                this.workspaceResolver, this.nodeRunRepository, this.completionProcessor, this.coordinator,
+                Clock.systemUTC());
 
         try {
             assertThat(deadlineService.reconcileExpired()).isEqualTo(1);

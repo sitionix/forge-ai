@@ -2,16 +2,16 @@ package com.sitionix.forgeagent;
 
 import com.sitionix.forgeagent.application.runtime.AgentExecutor;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryService;
+import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionProcessor;
 import com.sitionix.forgeagent.application.runtime.NodeRunCompletionWorker;
 import com.sitionix.forgeagent.application.runtime.NodeRunLifecycle;
 import com.sitionix.forgeagent.application.runtime.NodeRunWorker;
+import com.sitionix.forgeagent.application.runtime.WorkflowExecutionCoordinator;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.Executors;
-import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
-import java.util.concurrent.Executors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -51,8 +51,9 @@ class ForgeAgentWorkerConfiguration {
     @Bean
     @ConditionalOnBean(AgentExecutor.class)
     NodeRunCompletionWorker nodeRunCompletionWorker(final NodeRunRepository nodeRunRepository,
-                                                    final NodeRunCompletionProcessor processor) {
-        return new NodeRunCompletionWorker(nodeRunRepository, processor);
+                                                    final NodeRunCompletionProcessor processor,
+                                                    final WorkflowExecutionCoordinator coordinator) {
+        return new NodeRunCompletionWorker(nodeRunRepository, processor, coordinator);
     }
 
     @Bean

@@ -15,12 +15,14 @@ import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryClaim;
 import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryDisposition;
 import com.sitionix.forgeagent.domain.model.AgentExecutionRecoveryReconciliation;
 import com.sitionix.forgeagent.domain.model.NodeContextMode;
+import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.ProviderTurnRecoveryState;
 import com.sitionix.forgeagent.domain.model.ProviderTurnRecoveryTerminalOutcome;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
+import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -53,9 +55,12 @@ class AgentExecutionRecoveryServiceTest {
     private static final Instant NOW = Instant.parse("2026-09-14T12:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
     private final AgentExecutionSessionRepository sessions = mock(AgentExecutionSessionRepository.class);
+    private final NodeRunRepository nodeRuns = mock(NodeRunRepository.class);
     private final WorkflowRunRepository workflows = mock(WorkflowRunRepository.class);
     private final ExecutionWorkspaceResolver workspaces = mock(ExecutionWorkspaceResolver.class);
     private final AgentExecutionRecoveryInspector inspector = mock(AgentExecutionRecoveryInspector.class);
+    private final NodeRunCompletionProcessor completionProcessor = mock(NodeRunCompletionProcessor.class);
+    private final WorkflowExecutionCoordinator coordinator = mock(WorkflowExecutionCoordinator.class);
     private final UUID projectId = UUID.randomUUID();
     private final ExecutionWorkspace workspace = new ExecutionWorkspace(Path.of("/forge/project"), List.of(Path.of("/forge/project/repo")));
     private AgentExecutionRecoveryService service;
@@ -64,10 +69,60 @@ class AgentExecutionRecoveryServiceTest {
     @BeforeEach
     void setUp() {
         this.service = new AgentExecutionRecoveryService(
-                this.sessions, List.of(this.inspector), this.workflows, this.workspaces, CLOCK);
+                this.sessions, List.of(this.inspector), this.workflows, this.workspaces, this.nodeRuns,
+                this.completionProcessor, this.coordinator, CLOCK);
         this.claim = this.claim(NodeRunStatus.RUNNING, "codex", "0.154.0", "thread-exact", "turn-exact");
         when(this.sessions.claimExpiredRecovery(anyString())).thenAnswer(call -> Optional.of(this.claim));
         when(this.sessions.reconcileRecovery(any(), any())).thenReturn(true);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = NodeRunStatus.class, names = {"FAILED", "BLOCKED"})
+    void recoveredFailureOrBlockReconcilesOwningWorkflowAfterFencedCommit(final NodeRunStatus status) {
+        this.inspectable();
+        when(this.inspector.inspect(any())).thenReturn(ProviderTurnRecoveryResult.terminal(
+                ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "exact terminal turn"));
+        when(this.nodeRuns.findById(this.claim.nodeRunId())).thenReturn(Optional.of(this.nodeRun(status, null)));
+
+        assertThat(this.service.reconcileExpired()).isEqualTo(1);
+
+        verify(this.coordinator).reconcile(this.claim.workflowRunId());
+    }
+
+    @Test
+    void forgeTerminalSuccessResumesIncompleteRoutingAfterFencedCommit() {
+        this.claim = this.claim(NodeRunStatus.SUCCEEDED, null, null, null, null);
+        when(this.nodeRuns.findById(this.claim.nodeRunId()))
+                .thenReturn(Optional.of(this.nodeRun(NodeRunStatus.SUCCEEDED, null)));
+
+        assertThat(this.service.reconcileExpired()).isEqualTo(1);
+
+        verify(this.completionProcessor).process(this.claim.nodeRunId());
+        verifyNoInteractions(this.inspector, this.workspaces);
+    }
+
+    @Test
+    void forgeTerminalAlreadyRoutedSuccessDoesNotRouteAgain() {
+        this.claim = this.claim(NodeRunStatus.SUCCEEDED, null, null, null, null);
+        when(this.nodeRuns.findById(this.claim.nodeRunId()))
+                .thenReturn(Optional.of(this.nodeRun(NodeRunStatus.SUCCEEDED, NOW)));
+
+        assertThat(this.service.reconcileExpired()).isEqualTo(1);
+
+        verifyNoInteractions(this.completionProcessor, this.coordinator, this.inspector, this.workspaces);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = NodeRunStatus.class, names = {"PENDING", "RUNNING", "CANCELLED"})
+    void authoritativeNonCompletableStateHasNoPostRecoverySideEffects(final NodeRunStatus status) {
+        this.inspectable();
+        when(this.inspector.inspect(any())).thenReturn(ProviderTurnRecoveryResult.terminal(
+                ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "exact terminal turn"));
+        when(this.nodeRuns.findById(this.claim.nodeRunId())).thenReturn(Optional.of(this.nodeRun(status, null)));
+
+        assertThat(this.service.reconcileExpired()).isEqualTo(1);
+
+        verifyNoInteractions(this.completionProcessor, this.coordinator);
     }
 
     @ParameterizedTest
@@ -171,6 +226,7 @@ class AgentExecutionRecoveryServiceTest {
         assertThat(this.service.reconcileExpired()).isZero();
         verify(this.sessions, times(2)).claimExpiredRecovery(anyString());
         verify(this.sessions, times(1)).reconcileRecovery(eq(this.claim), any());
+        verifyNoInteractions(this.nodeRuns, this.completionProcessor, this.coordinator);
     }
 
     @Test
@@ -223,7 +279,8 @@ class AgentExecutionRecoveryServiceTest {
         when(this.sessions.claimExpiredRecovery(anyString())).thenReturn(Optional.empty());
         this.service.reconcileExpired();
         this.service.reconcileExpired();
-        new AgentExecutionRecoveryService(this.sessions, List.of(), this.workflows, this.workspaces, CLOCK)
+        new AgentExecutionRecoveryService(this.sessions, List.of(), this.workflows, this.workspaces, this.nodeRuns,
+                this.completionProcessor, this.coordinator, CLOCK)
                 .reconcileExpired();
         final var owners = ArgumentCaptor.forClass(String.class);
         verify(this.sessions, times(3)).claimExpiredRecovery(owners.capture());
@@ -288,6 +345,13 @@ class AgentExecutionRecoveryServiceTest {
                 value.providerId(), value.providerVersion(), value.providerConversationId(), value.providerTurnId(),
                 value.contextMode(), value.nodeRunStatus(), value.failureCode(), value.failureMessage(),
                 value.ownerId(), value.leaseToken(), leaseExpiresAt);
+    }
+
+    private NodeRun nodeRun(final NodeRunStatus status, final Instant routingCompletedAt) {
+        return new NodeRun(this.claim.nodeRunId(), this.claim.workflowRunId(), UUID.randomUUID(), UUID.randomUUID(),
+                "agent", "instructions", null, null, null, UUID.randomUUID(), null, null, null,
+                routingCompletedAt, status, null, null, null, NOW, NOW, NOW, this.claim.repositoryId(),
+                NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE, 1);
     }
 
     private String missing(final String scenario) { return scenario.endsWith("null") ? null : " "; }

@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class WorkflowExecutionCoordinator {
@@ -56,6 +58,19 @@ public class WorkflowExecutionCoordinator {
 
     public void reconcile(final WorkflowRun workflowRun) {
         this.completionPolicy.evaluate(workflowRun).apply(this.completionDecisionHandler(workflowRun));
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void reconcile(final UUID workflowRunId) {
+        this.workflowRunRepository.findByIdForUpdate(workflowRunId)
+                .filter(workflowRun -> workflowRun.finishedAt() == null && !this.isTerminal(workflowRun.status()))
+                .ifPresent(this::reconcile);
+    }
+
+    private boolean isTerminal(final WorkflowRunStatus status) {
+        return status == WorkflowRunStatus.SUCCEEDED
+                || status == WorkflowRunStatus.FAILED
+                || status == WorkflowRunStatus.CANCELLED;
     }
 
     private WorkflowRun withStatus(final WorkflowRun workflowRun, final WorkflowRunStatus status) {
