@@ -8,10 +8,10 @@ public final class AgentContextResetEligibility {
     private AgentContextResetEligibility() { }
 
     public static String reason(final AgentExecutionSession session, final boolean pendingTurns) {
-        if (!session.contextMode().reusable() || session.contextResetAt() != null) {
+        if (!session.contextMode().reusable() || session.contextResetAt() != null || session.contextForkedAt() != null) {
             return NOT_ALLOWED;
         }
-        if (pendingTurns || session.activeNodeRunId() != null || session.leaseOwnerId() != null
+        if (session.status() == AgentExecutionSessionStatus.FORKING || pendingTurns || session.activeNodeRunId() != null || session.leaseOwnerId() != null
                 || session.leaseExpiresAt() != null || session.status() == AgentExecutionSessionStatus.CREATING
                 || session.status() == AgentExecutionSessionStatus.RESUMING || session.status() == AgentExecutionSessionStatus.ACTIVE) {
             return BUSY;

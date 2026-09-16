@@ -122,6 +122,8 @@ public interface ForgeAgentClient {
 
   List<AgentExecutionContext> resetAgentExecutionContext(UUID sessionId);
 
+  List<AgentExecutionContext> forkAgentExecutionContext(UUID sessionId);
+
   com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage getAgentExecutionEvents(
       UUID turnId, long afterSequence, int limit);
 

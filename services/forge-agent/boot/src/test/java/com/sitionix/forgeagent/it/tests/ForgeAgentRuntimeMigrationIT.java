@@ -521,6 +521,79 @@ class ForgeAgentRuntimeMigrationIT {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+            "REUSE_WITHIN_WORKFLOW_NODE,false", "REUSE_WITHIN_WORKFLOW_NODE,true",
+            "REUSE_WITHIN_WORKFLOW_ITERATION,false", "REUSE_WITHIN_WORKFLOW_ITERATION,true",
+            "SHARED_SESSION_GROUP,false", "SHARED_SESSION_GROUP,true"})
+    void forkMigrationPreservesHistoryAndEnforcesCurrentIdentityAndLineage(final String mode, final boolean perScope) {
+        final String schema = "fork_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        final UUID run = UUID.randomUUID(), node = UUID.randomUUID(), source = UUID.randomUUID(), turn = UUID.randomUUID();
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, MigrationVersion.fromVersion("33")).migrate();
+            this.insertHistoricalTrackedTurn(jdbc, schema, run, node, UUID.randomUUID(), source, turn);
+            final UUID repository = perScope ? UUID.randomUUID() : null;
+            final boolean iteration = !mode.equals("REUSE_WITHIN_WORKFLOW_NODE");
+            final boolean shared = mode.equals("SHARED_SESSION_GROUP");
+            if (perScope) jdbc.update("INSERT INTO %s.workflow_run_repositories(workflow_run_id,repository_id,repository_ordinal) VALUES (?,?,0)".formatted(schema), run, repository);
+            jdbc.update("UPDATE %s.workflow_run_nodes SET scope_mode=?,context_mode=?,context_group_key=? WHERE workflow_run_id=? AND source_node_id=?".formatted(schema),
+                    perScope ? "PER_SCOPE" : "GLOBAL", mode, iteration ? "fork-group" : null, run, node);
+            jdbc.update("UPDATE %s.agent_execution_sessions SET context_mode=?,context_iteration_id=?,context_group_key=?,repository_id=?,source_node_id=?,source_agent_id=CASE WHEN ? THEN NULL ELSE source_agent_id END,status='IDLE',provider_conversation_id='historical-provider' WHERE id=?".formatted(schema),
+                    mode, iteration ? UUID.randomUUID() : null, shared ? "fork-group" : null, repository, shared ? null : node, shared, source);
+            final var historical = jdbc.queryForMap("SELECT * FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), source);
+            final var historicalTurn = jdbc.queryForMap("SELECT * FROM %s.agent_execution_turns WHERE id=?".formatted(schema), turn);
+            this.flyway(schema, null).migrate();
+            assertThat(jdbc.queryForMap("SELECT * FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), source))
+                    .containsAllEntriesOf(historical).containsEntry("context_forked_at", null)
+                    .containsEntry("forked_from_session_id", null).containsEntry("forked_from_turn_id", null);
+            assertThat(jdbc.queryForMap("SELECT * FROM %s.agent_execution_turns WHERE id=?".formatted(schema), turn)).isEqualTo(historicalTurn);
+            final UUID child = UUID.randomUUID();
+            assertThatThrownBy(() -> this.insertForkSuccessor(jdbc, schema, source, child, turn, "child-provider"))
+                    .isInstanceOf(DuplicateKeyException.class);
+            jdbc.update("UPDATE %s.agent_execution_sessions SET context_forked_at=clock_timestamp() WHERE id=?".formatted(schema), source);
+            this.insertForkSuccessor(jdbc, schema, source, child, turn, "child-provider");
+            assertThat(jdbc.queryForMap("SELECT context_reset_at,context_forked_at FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), source))
+                    .containsEntry("context_reset_at", null).doesNotContainEntry("context_forked_at", null);
+            assertThatThrownBy(() -> this.insertForkSuccessor(jdbc, schema, source, UUID.randomUUID(), turn, "duplicate-current"))
+                    .isInstanceOf(DuplicateKeyException.class);
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET forked_from_session_id=id WHERE id=?".formatted(schema), child))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET forked_from_session_id=? WHERE id=?".formatted(schema), UUID.randomUUID(), child))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET forked_from_turn_id=? WHERE id=?".formatted(schema), UUID.randomUUID(), child))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET provider_conversation_id='historical-provider' WHERE id=?".formatted(schema), child))
+                    .isInstanceOf(DuplicateKeyException.class);
+            jdbc.update("UPDATE %s.agent_execution_sessions SET context_reset_at=clock_timestamp() WHERE id=?".formatted(schema), child);
+            final UUID fresh = UUID.randomUUID();
+            this.insertForkSuccessor(jdbc, schema, source, fresh, turn, "next-current-provider");
+            assertThat(jdbc.queryForMap("SELECT context_reset_at,context_forked_at FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), child))
+                    .containsEntry("context_forked_at", null).doesNotContainEntry("context_reset_at", null);
+            assertThatThrownBy(() -> this.insertForkSuccessor(jdbc, schema, source, UUID.randomUUID(), turn, "second-current"))
+                    .isInstanceOf(DuplicateKeyException.class);
+            jdbc.update("DELETE FROM %s.node_runs WHERE id=(SELECT node_run_id FROM %s.agent_execution_turns WHERE id=?)".formatted(schema, schema), turn);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM %s.agent_execution_sessions WHERE id IN (?,?)".formatted(schema), Integer.class, child, fresh)).isZero();
+            jdbc.update("DELETE FROM %s.workflow_runs WHERE id=?".formatted(schema), run);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM %s.agent_execution_sessions WHERE workflow_run_id=?".formatted(schema), Integer.class, run)).isZero();
+        } finally {
+            jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+        }
+    }
+
+    private void insertForkSuccessor(final JdbcTemplate jdbc, final String schema, final UUID parent,
+                                     final UUID child, final UUID turn, final String providerThread) {
+        jdbc.update("""
+                INSERT INTO %1$s.agent_execution_sessions(id,workflow_run_id,source_node_id,source_agent_id,
+                    provider_id,provider_conversation_id,context_mode,context_iteration_id,context_group_key,
+                    repository_id,status,created_at,updated_at,forked_from_session_id,forked_from_turn_id)
+                SELECT ?,workflow_run_id,source_node_id,source_agent_id,provider_id,?,context_mode,
+                    context_iteration_id,context_group_key,repository_id,'IDLE',clock_timestamp(),clock_timestamp(),?,?
+                FROM %1$s.agent_execution_sessions WHERE id=?
+                """.formatted(schema), child, providerThread, parent, turn, parent);
+    }
+
     private Flyway flyway(final String schema, final MigrationVersion target) {
         final var configuration = Flyway.configure()
                 .dataSource(this.dataSource)

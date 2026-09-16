@@ -24,6 +24,7 @@ public final class LiveCodexRecoveryFixture {
     private final ObjectMapper mapper = new ObjectMapper();
     private final CodexAppServerProperties properties = new CodexAppServerProperties();
     private final List<RecordedProcess> executionProcesses = new ArrayList<>();
+    private final List<RecordedProcess> forkProcesses = new ArrayList<>();
     private final List<RecordedProcess> inspectionProcesses = new ArrayList<>();
 
     public LiveCodexRecoveryFixture(final Path workspace) {
@@ -101,6 +102,23 @@ public final class LiveCodexRecoveryFixture {
             client.close();
         }
     }
+
+    public com.sitionix.forgeagent.application.runtime.AgentContextForkProvider forkProvider() {
+        final var client = new CodexAppServerClient(this.mapper, this.starter(this.forkProcesses),
+                this.properties, new CodexRuntimeWorkspace(this.properties));
+        final var delegate = new CodexContextForkProvider(client);
+        return new com.sitionix.forgeagent.application.runtime.AgentContextForkProvider() {
+            public boolean supports(String provider, String version) { return delegate.supports(provider, version); }
+            public void validateSupport(String provider, String version) {
+                try { delegate.validateSupport(provider, version); } finally { client.close(); }
+            }
+            public String fork(String provider, String version, String thread, String turn) {
+                try { return delegate.fork(provider, version, thread, turn); } finally { client.close(); }
+            }
+        };
+    }
+
+    public List<RecordedProcess> forkProcesses() { return List.copyOf(this.forkProcesses); }
 
     private boolean sharedGroup(final NodeExecutionClaim claim) {
         return claim.agentSessionClaim().contextMode() == NodeContextMode.SHARED_SESSION_GROUP;

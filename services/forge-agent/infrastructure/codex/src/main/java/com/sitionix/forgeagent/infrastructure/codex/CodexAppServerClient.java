@@ -47,6 +47,24 @@ final class CodexAppServerClient implements CodexClient {
         }
     }
 
+    String forkDurableContext(final String threadId, final String lastTurnId,
+                              final String expectedVersion) {
+        // Fork owns a provider writer until its app-server exits. Release it before a normal
+        // execution process resumes the child; never share this control transport with executions.
+        final CodexJsonRpcTransport current = this.startNeutralTransport(
+                this.runtimeWorkspace.routingWorkspace().cwd());
+        try {
+            this.validateDurableVersion(this.initialize(current), expectedVersion);
+            return new CodexSessionProtocol(this.objectMapper).forkThread(
+                    current, threadId, lastTurnId, this.properties.getRequestTimeout());
+        } finally {
+            current.close();
+            if (!current.cleanupComplete()) {
+                throw new CodexTransportException("Codex fork app-server process cleanup incomplete");
+            }
+        }
+    }
+
     @Override
     public String execute(final CodexTurnRequest request) {
         return this.executeInternal(request, null, null);

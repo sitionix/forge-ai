@@ -12,6 +12,11 @@ import java.util.UUID;
 import java.util.List;
 
 public interface AgentExecutionSessionRepository {
+    List<com.sitionix.forgeagent.domain.model.AgentExecutionContext> findContextsByWorkflowRunId(UUID workflowRunId);
+    com.sitionix.forgeagent.domain.model.AgentContextForkPreparation prepareFork(UUID sessionId);
+    UUID completeFork(com.sitionix.forgeagent.domain.model.AgentContextForkPreparation preparation, String providerConversationId);
+    void abortFork(com.sitionix.forgeagent.domain.model.AgentContextForkPreparation preparation);
+    int reconcileStaleForks();
     Optional<AgentExecutionSession> findSession(UUID sessionId);
     void lockReusableScope(UUID workflowRunId, UUID sourceNodeId, UUID repositoryId);
     void lockSharedScope(UUID workflowRunId, UUID contextIterationId, String contextGroupKey, UUID repositoryId);

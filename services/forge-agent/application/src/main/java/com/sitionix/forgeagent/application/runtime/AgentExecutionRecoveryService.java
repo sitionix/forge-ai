@@ -40,8 +40,9 @@ public class AgentExecutionRecoveryService {
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public int reconcileExpired() {
+        final int recoveredForks = this.sessions.reconcileStaleForks();
         final var candidate = this.sessions.claimExpiredRecovery(this.ownerId);
-        if (candidate.isEmpty()) return 0;
+        if (candidate.isEmpty()) return recoveredForks;
         final AgentExecutionRecoveryClaim claim = candidate.get();
         final AgentExecutionRecoveryReconciliation reconciliation;
         if (claim.nodeRunStatus() == NodeRunStatus.SUCCEEDED || claim.nodeRunStatus() == NodeRunStatus.FAILED

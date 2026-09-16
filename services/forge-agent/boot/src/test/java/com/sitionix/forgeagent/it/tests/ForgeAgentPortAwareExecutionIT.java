@@ -481,6 +481,308 @@ class ForgeAgentPortAwareExecutionIT {
         assertThat(this.agentExecutionEventRepository.findPage(old.turnId(), 0, 200).orElseThrow()).isEqualTo(events);
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void forkCreatesZeroTurnSuccessorAndNextTwoInvocationsResumeOnlyChild(final boolean iterationMode) {
+        final var first = this.prepareIdleResetContext(iterationMode);
+        final var before = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        final var oldNode = this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", first.nodeRunId());
+        final var preparation = this.agentExecutionSessionRepository.prepareFork(before.session().id());
+        assertThat(preparation.session().status().name()).isEqualTo("FORKING");
+        assertThat(preparation.session().activeNodeRunId()).isNull();
+        assertThat(preparation.session().leaseOwnerId()).isNull();
+        assertThat(preparation.session().leaseExpiresAt()).isNull();
+        final UUID childId = this.agentExecutionSessionRepository.completeFork(preparation, "thread-fork-child");
+        final var child = this.agentExecutionSessionRepository.findSession(childId).orElseThrow();
+        assertThat(child).usingRecursiveComparison()
+                .ignoringFields("id", "providerConversationId", "createdAt", "updatedAt", "leaseToken", "forkedFromSessionId", "forkedFromTurnId")
+                .isEqualTo(before.session());
+        assertThat(child.forkedFromSessionId()).isEqualTo(before.session().id());
+        assertThat(child.forkedFromTurnId()).isEqualTo(before.turn().id());
+        assertThat(child.providerConversationId()).isEqualTo("thread-fork-child");
+        assertThat(this.agentExecutionSessionRepository.findContextsByWorkflowRunId(child.workflowRunId()))
+                .anySatisfy(context -> {
+                    assertThat(context.session().id()).isEqualTo(childId);
+                    assertThat(context.turn()).isNull();
+                });
+        assertThat(this.jdbcTemplate.queryForObject("SELECT count(*) FROM agent_execution_turns WHERE agent_session_id=?", Integer.class, childId)).isZero();
+        final var retired = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        assertThat(retired.session().contextForkedAt()).isNotNull();
+        assertThat(retired.session().contextResetAt()).isNull();
+        assertThat(retired.turn()).isEqualTo(before.turn());
+        assertThat(retired.session().providerConversationId()).isEqualTo(before.session().providerConversationId());
+        assertThat(this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", first.nodeRunId())).isEqualTo(oldNode);
+        assertThatThrownBy(() -> this.resetContext.execute(before.session().id())).extracting("code").isEqualTo("AGENT_CONTEXT_RESET_NOT_ALLOWED");
+        UUID previousNodeId = first.nodeRunId();
+        for (int sequence = 1; sequence <= 2; sequence++) {
+            final var next = this.allocateResetRaceChild(previousNodeId);
+            previousNodeId = next.id();
+            final var claim = this.agentExecutionSessionRepository.acquire(next.id(), "fork-test").orElseThrow();
+            assertThat(claim.sessionId()).isEqualTo(childId);
+            assertThat(claim.providerConversationId()).isEqualTo("thread-fork-child");
+            final var allocation = this.agentExecutionSessionRepository.findByNodeRunId(next.id()).orElseThrow();
+            assertThat(allocation.turn().sequence()).isEqualTo(sequence);
+            assertThat(allocation.session().status()).isEqualTo(AgentExecutionSessionStatus.RESUMING);
+            this.agentExecutionSessionRepository.finish(claim.sessionId(), claim.turnId(), claim.leaseOwnerId(), claim.leaseToken(), AgentExecutionTurnStatus.SUCCEEDED, null, null, false);
+        }
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow()).isEqualTo(retired);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void forkPreparedBeforeAllocationMovesOnlyNewQueuedTurnsInOrder(final boolean iterationMode) {
+        final var first = this.prepareIdleResetContext(iterationMode);
+        final var original = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        final var prepared = this.agentExecutionSessionRepository.prepareFork(original.session().id());
+        final var second = this.allocateResetRaceChild(first.nodeRunId());
+        final var third = this.allocateResetRaceChild(second.id());
+        assertThat(this.agentExecutionSessionRepository.acquire(second.id(), "blocked")).isEmpty();
+        assertThat(this.agentExecutionSessionRepository.acquire(third.id(), "blocked")).isEmpty();
+        assertThatThrownBy(() -> this.resetContext.execute(original.session().id())).extracting("code").isEqualTo("AGENT_CONTEXT_RESET_BUSY");
+        final UUID child = this.agentExecutionSessionRepository.completeFork(prepared, "queued-fork-child");
+        final var moved = List.of(second, third).stream().map(node -> this.agentExecutionSessionRepository.findByNodeRunId(node.id()).orElseThrow()).toList();
+        assertThat(moved).extracting(row -> row.turn().sequence()).containsExactly(1, 2);
+        assertThat(moved).allSatisfy(row -> {
+            assertThat(row.session().id()).isEqualTo(child);
+            assertThat(row.turn().status()).isEqualTo(AgentExecutionTurnStatus.QUEUED);
+        });
+        assertThat(moved).extracting(row -> row.turn().nodeRunId()).containsExactly(second.id(), third.id());
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow().turn()).isEqualTo(original.turn());
+        assertThat(this.agentExecutionSessionRepository.acquire(third.id(), "out-of-order")).isEmpty();
+        assertThat(this.agentExecutionSessionRepository.acquire(second.id(), "next")).isPresent();
+    }
+
+    @Test
+    void allocationWinningBeforeForkPreventsPreparation() {
+        final var first = this.prepareIdleResetContext();
+        this.allocateResetRaceChild(first.nodeRunId());
+        assertThatThrownBy(() -> this.agentExecutionSessionRepository.prepareFork(first.agentSessionClaim().sessionId()))
+                .extracting("code").isEqualTo("AGENT_CONTEXT_FORK_BUSY");
+        final var queued = this.agentExecutionSessionRepository.findByWorkflowRunId(this.nodeRunRepository.findById(first.nodeRunId()).orElseThrow().workflowRunId()).stream()
+                .filter(row -> row.session().id().equals(first.agentSessionClaim().sessionId()) && row.turn().status() == AgentExecutionTurnStatus.QUEUED).toList();
+        assertThat(queued).hasSize(1);
+    }
+
+    @Test
+    void forkRejectsFreshAndActiveContextsWithoutMutation() {
+        this.seed();
+        this.saveTerminalWorkflow();
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Fresh fork rejected."));
+        final var claim = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow();
+        final var fresh = this.agentExecutionSessionRepository.findSession(claim.agentSessionClaim().sessionId()).orElseThrow();
+        assertThatThrownBy(() -> this.agentExecutionSessionRepository.prepareFork(fresh.id())).extracting("code").isEqualTo("AGENT_CONTEXT_FORK_NOT_ALLOWED");
+        assertThat(this.agentExecutionSessionRepository.findSession(fresh.id()).orElseThrow()).isEqualTo(fresh);
+    }
+
+    @Test
+    void forkRejectsActiveReusableWriterWithoutMutation() {
+        final var first = this.prepareIdleResetContext();
+        final var pending = this.allocateResetRaceChild(first.nodeRunId());
+        this.agentExecutionSessionRepository.acquire(pending.id(), "active-writer").orElseThrow();
+        final var active = this.agentExecutionSessionRepository.findSession(first.agentSessionClaim().sessionId()).orElseThrow();
+        assertThatThrownBy(() -> this.agentExecutionSessionRepository.prepareFork(active.id())).extracting("code").isEqualTo("AGENT_CONTEXT_FORK_BUSY");
+        assertThat(this.agentExecutionSessionRepository.findSession(active.id()).orElseThrow()).isEqualTo(active);
+    }
+
+    @Test
+    void resetWinningBeforeForkRejectsHistoricalSource() {
+        final var first = this.prepareIdleResetContext();
+        this.resetContext.execute(first.agentSessionClaim().sessionId());
+        assertThatThrownBy(() -> this.agentExecutionSessionRepository.prepareFork(first.agentSessionClaim().sessionId()))
+                .extracting("code").isEqualTo("AGENT_CONTEXT_FORK_NOT_ALLOWED");
+    }
+
+    @Test
+    void failedForkRestoresSourceAndKeepsQueuedWork() {
+        final var first = this.prepareIdleResetContext();
+        final var prepared = this.agentExecutionSessionRepository.prepareFork(first.agentSessionClaim().sessionId());
+        final var queued = this.allocateResetRaceChild(first.nodeRunId());
+        this.agentExecutionSessionRepository.abortFork(prepared);
+        final var source = this.agentExecutionSessionRepository.findSession(first.agentSessionClaim().sessionId()).orElseThrow();
+        assertThat(source.status()).isEqualTo(AgentExecutionSessionStatus.IDLE);
+        assertThat(source.contextForkedAt()).isNull();
+        final var resumed = this.agentExecutionSessionRepository.acquire(queued.id(), "after-failure").orElseThrow();
+        assertThat(resumed.sessionId()).isEqualTo(source.id());
+        assertThat(resumed.providerConversationId()).isEqualTo(source.providerConversationId());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"FAILED", "CANCELLED"})
+    void forkDoesNotRewindPastLatestUnsuccessfulTurn(final String latestStatus) {
+        final var first = this.prepareIdleResetContext();
+        final var next = this.allocateResetRaceChild(first.nodeRunId());
+        this.jdbcTemplate.update("UPDATE agent_execution_turns SET status=?,provider_turn_id='unsuccessful-latest' WHERE node_run_id=?", latestStatus, next.id());
+        assertThatThrownBy(() -> this.agentExecutionSessionRepository.prepareFork(first.agentSessionClaim().sessionId()))
+                .extracting("code").isEqualTo("AGENT_CONTEXT_FORK_NOT_ALLOWED");
+    }
+
+    @Test
+    void staleForkRecoveryKeepsQueuedSourceAndFencesLateProviderResponse() {
+        final var first = this.prepareIdleResetContext();
+        final var prepared = this.agentExecutionSessionRepository.prepareFork(first.agentSessionClaim().sessionId());
+        final var queued = this.allocateResetRaceChild(first.nodeRunId());
+        this.jdbcTemplate.update("UPDATE agent_execution_sessions SET updated_at=clock_timestamp()-INTERVAL '1 day' WHERE id=?", prepared.session().id());
+        assertThat(this.agentExecutionSessionRepository.reconcileStaleForks()).isEqualTo(1);
+        assertThat(this.agentExecutionSessionRepository.findSession(prepared.session().id()).orElseThrow().status()).isEqualTo(AgentExecutionSessionStatus.IDLE);
+        assertThatThrownBy(() -> this.agentExecutionSessionRepository.completeFork(prepared, "late-orphan-child"))
+                .extracting("code").isEqualTo("AGENT_CONTEXT_FORK_CONFLICT");
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(queued.id()).orElseThrow().session().id()).isEqualTo(prepared.session().id());
+        assertThat(this.jdbcTemplate.queryForObject("SELECT count(*) FROM agent_execution_sessions WHERE provider_conversation_id='late-orphan-child'", Integer.class)).isZero();
+        assertThat(this.agentExecutionSessionRepository.acquire(queued.id(), "recovered")).isPresent();
+    }
+
+    @Test
+    void staleForkResponseAndAbortCannotReplaceNewerPreparedOperation() {
+        final var first = this.prepareIdleResetContext();
+        final var stale = this.agentExecutionSessionRepository.prepareFork(first.agentSessionClaim().sessionId());
+        this.jdbcTemplate.update("UPDATE agent_execution_sessions SET updated_at=clock_timestamp()-INTERVAL '1 day' WHERE id=?", stale.session().id());
+        assertThat(this.agentExecutionSessionRepository.reconcileStaleForks()).isEqualTo(1);
+        final var current = this.agentExecutionSessionRepository.prepareFork(stale.session().id());
+        assertThat(current.session().leaseToken()).isGreaterThan(stale.session().leaseToken());
+        assertThatThrownBy(() -> this.agentExecutionSessionRepository.completeFork(stale, "obsolete-child"))
+                .extracting("code").isEqualTo("AGENT_CONTEXT_FORK_CONFLICT");
+        this.agentExecutionSessionRepository.abortFork(stale);
+        assertThat(this.agentExecutionSessionRepository.findSession(current.session().id()).orElseThrow()).isEqualTo(current.session());
+        final UUID child = this.agentExecutionSessionRepository.completeFork(current, "authoritative-child");
+        assertThat(this.agentExecutionSessionRepository.findSession(child).orElseThrow().providerConversationId()).isEqualTo("authoritative-child");
+    }
+
+    @Test
+    void workflowStopDuringForkCannotInstallProviderChild() {
+        final var first = this.prepareIdleResetContext();
+        final var prepared = this.agentExecutionSessionRepository.prepareFork(first.agentSessionClaim().sessionId());
+        this.jdbcTemplate.update("UPDATE workflow_runs SET status='CANCELLED' WHERE id=?", prepared.session().workflowRunId());
+        assertThatThrownBy(() -> this.agentExecutionSessionRepository.completeFork(prepared, "stopped-orphan-child"))
+                .extracting("code").isEqualTo("AGENT_CONTEXT_FORK_CONFLICT");
+        assertThat(this.jdbcTemplate.queryForObject("SELECT count(*) FROM agent_execution_sessions WHERE provider_conversation_id='stopped-orphan-child'", Integer.class)).isZero();
+        assertThat(this.agentExecutionSessionRepository.findSession(prepared.session().id()).orElseThrow().contextForkedAt()).isNull();
+    }
+
+    @Test
+    void sharedForkRemainsGroupOwnedAndNextOtherNodeResumesChild() {
+        final var run = this.prepareSharedAllocationRun();
+        final var iteration = UUID.randomUUID();
+        final var first = this.allocateSharedInvocation(run.id(), IMPLEMENTER, iteration);
+        final var claim = this.agentExecutionSessionRepository.acquire(first.id(), "setup-fork").orElseThrow();
+        this.agentExecutionSessionRepository.persistProviderConversation(claim.sessionId(), claim.leaseOwnerId(), claim.leaseToken(), "shared-parent", "0.154.0");
+        this.jdbcTemplate.update("UPDATE agent_execution_turns SET provider_turn_id='shared-exact-turn' WHERE id=?", claim.turnId());
+        this.agentExecutionSessionRepository.finish(claim.sessionId(), claim.turnId(), claim.leaseOwnerId(), claim.leaseToken(), AgentExecutionTurnStatus.SUCCEEDED, null, null, false);
+        final var prepared = this.agentExecutionSessionRepository.prepareFork(claim.sessionId());
+        final var next = this.allocateSharedInvocation(run.id(), STRATEGY, iteration);
+        final UUID childId = this.agentExecutionSessionRepository.completeFork(prepared, "shared-child");
+        final var child = this.agentExecutionSessionRepository.findSession(childId).orElseThrow();
+        assertThat(child.sourceNodeId()).isNull();
+        assertThat(child.sourceAgentId()).isNull();
+        assertThat(child.contextGroupKey()).isEqualTo(prepared.session().contextGroupKey());
+        assertThat(child.contextIterationId()).isEqualTo(iteration);
+        assertThat(child.workflowRunId()).isEqualTo(run.id());
+        assertThat(child.repositoryId()).isEqualTo(prepared.session().repositoryId());
+        final var other = this.agentExecutionSessionRepository.acquire(next.id(), "other-node").orElseThrow();
+        assertThat(other.sessionId()).isEqualTo(childId);
+        assertThat(other.providerConversationId()).isEqualTo("shared-child");
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(next.id()).orElseThrow().turn().sequence()).isEqualTo(1);
+    }
+
+    @Test
+    void forkUseCaseCallsProviderOutsideTransactionOnceWithExactPersistedBoundary() {
+        final var first = this.prepareIdleResetContext();
+        final var source = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        final var provider = org.mockito.Mockito.mock(com.sitionix.forgeagent.application.runtime.AgentContextForkProvider.class);
+        org.mockito.Mockito.doAnswer(call -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(this.agentExecutionSessionRepository.findSession(source.session().id()).orElseThrow().status()).isEqualTo(AgentExecutionSessionStatus.IDLE);
+            return null;
+        }).when(provider).validateSupport("codex", "0.154.0");
+        when(provider.fork("codex", "0.154.0", source.session().providerConversationId(), source.turn().providerTurnId())).thenAnswer(call -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(this.agentExecutionSessionRepository.findSession(source.session().id()).orElseThrow().status().name()).isEqualTo("FORKING");
+            return "exact-provider-fork-result";
+        });
+        final var result = new com.sitionix.forgeagent.application.usecase.ForkAgentExecutionContextUseCase(this.agentExecutionSessionRepository,
+                provider, new com.sitionix.forgeagent.application.usecase.AgentExecutionContextUseCases(this.agentExecutionSessionRepository)).execute(source.session().id());
+        assertThat(result).anySatisfy(context -> {
+            assertThat(context.session().providerConversationId()).isEqualTo("exact-provider-fork-result");
+            assertThat(context.session().forkedFromTurnId()).isEqualTo(source.turn().id());
+            assertThat(context.turn()).isNull();
+        });
+        org.mockito.Mockito.verify(provider).validateSupport("codex", "0.154.0");
+        org.mockito.Mockito.verify(provider).fork("codex", "0.154.0", source.session().providerConversationId(), source.turn().providerTurnId());
+        org.mockito.Mockito.verifyNoMoreInteractions(provider);
+    }
+
+    @Test
+    void unsupportedForkProviderFailsBeforeMutationOrForkRequest() {
+        final var first = this.prepareIdleResetContext();
+        final var source = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        final var provider = org.mockito.Mockito.mock(com.sitionix.forgeagent.application.runtime.AgentContextForkProvider.class);
+        org.mockito.Mockito.doThrow(new com.sitionix.forgeagent.domain.exception.ConflictException("AGENT_CONTEXT_FORK_UNSUPPORTED", "Unsupported"))
+                .when(provider).validateSupport("codex", "0.154.0");
+        final var useCase = new com.sitionix.forgeagent.application.usecase.ForkAgentExecutionContextUseCase(this.agentExecutionSessionRepository,
+                provider, new com.sitionix.forgeagent.application.usecase.AgentExecutionContextUseCases(this.agentExecutionSessionRepository));
+        assertThatThrownBy(() -> useCase.execute(source.session().id())).extracting("code").isEqualTo("AGENT_CONTEXT_FORK_UNSUPPORTED");
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow()).isEqualTo(source);
+        org.mockito.Mockito.verify(provider).validateSupport("codex", "0.154.0");
+        org.mockito.Mockito.verifyNoMoreInteractions(provider);
+    }
+
+    @Test
+    void failedForkUseCaseDoesNotRetryAndRestoresSource() {
+        final var first = this.prepareIdleResetContext();
+        final var source = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
+        final var provider = org.mockito.Mockito.mock(com.sitionix.forgeagent.application.runtime.AgentContextForkProvider.class);
+        when(provider.fork(any(), any(), any(), any())).thenThrow(new IllegalStateException("ambiguous timeout"));
+        final var useCase = new com.sitionix.forgeagent.application.usecase.ForkAgentExecutionContextUseCase(this.agentExecutionSessionRepository,
+                provider, new com.sitionix.forgeagent.application.usecase.AgentExecutionContextUseCases(this.agentExecutionSessionRepository));
+        assertThatThrownBy(() -> useCase.execute(source.session().id())).extracting("code").isEqualTo("AGENT_CONTEXT_FORK_FAILED");
+        assertThat(this.agentExecutionSessionRepository.findSession(source.session().id()).orElseThrow().status()).isEqualTo(AgentExecutionSessionStatus.IDLE);
+        org.mockito.Mockito.verify(provider).fork("codex", "0.154.0", source.session().providerConversationId(), source.turn().providerTurnId());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"true,false", "false,false", "true,true", "false,true"})
+    void forkAndAllocationSerializeAtExistingScopeLock(final boolean forkWins, final boolean iterationMode) throws Exception {
+        final var first = this.prepareIdleResetContext(iterationMode);
+        final UUID source = first.agentSessionClaim().sessionId();
+        final var prepared = new AtomicReference<com.sitionix.forgeagent.domain.model.AgentContextForkPreparation>();
+        final var allocated = new AtomicReference<NodeRun>();
+        final var locked = new java.util.concurrent.CountDownLatch(1);
+        final var release = new java.util.concurrent.CountDownLatch(1);
+        final var blockerPid = new java.util.concurrent.atomic.AtomicInteger();
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            final var winner = workers.submit(() -> new org.springframework.transaction.support.TransactionTemplate(this.transactionManager).execute(tx -> {
+                blockerPid.set(this.jdbcTemplate.queryForObject("SELECT pg_backend_pid()", Integer.class));
+                if (forkWins) prepared.set(this.agentExecutionSessionRepository.prepareFork(source));
+                else allocated.set(this.allocateResetRaceChild(first.nodeRunId()));
+                locked.countDown();
+                this.awaitLatch(release);
+                return true;
+            }));
+            this.awaitLatch(locked);
+            final var loser = workers.submit(() -> {
+                if (forkWins) allocated.set(this.allocateResetRaceChild(first.nodeRunId()));
+                else assertThatThrownBy(() -> this.agentExecutionSessionRepository.prepareFork(source))
+                        .extracting("code").isEqualTo("AGENT_CONTEXT_FORK_BUSY");
+            });
+            try {
+                this.awaitRecoveryLockWait(blockerPid.get());
+            } finally {
+                release.countDown();
+            }
+            assertThat(winner.get(10, TimeUnit.SECONDS)).isTrue();
+            loser.get(10, TimeUnit.SECONDS);
+        }
+        if (forkWins) {
+            assertThat(this.agentExecutionSessionRepository.acquire(allocated.get().id(), "during-fork")).isEmpty();
+            final UUID child = this.agentExecutionSessionRepository.completeFork(prepared.get(), "race-child");
+            final var moved = this.agentExecutionSessionRepository.findByNodeRunId(allocated.get().id()).orElseThrow();
+            assertThat(moved.session().id()).isEqualTo(child);
+            assertThat(moved.turn().sequence()).isEqualTo(1);
+        } else {
+            assertThat(prepared.get()).isNull();
+            assertThat(this.agentExecutionSessionRepository.findByNodeRunId(allocated.get().id()).orElseThrow().session().id()).isEqualTo(source);
+        }
+    }
+
     private NodeExecutionClaim prepareIdleResetContext() {
         return this.prepareIdleResetContext(false);
     }
@@ -522,6 +824,67 @@ class ForgeAgentPortAwareExecutionIT {
         this.complete(this.onlyPending(runId, STRATEGY), "{\"strategy\":\"approved\"}");
         this.complete(this.onlyPending(runId, CODE), "{\"feedback\":\"Continue\"}");
         return this.onlyPending(runId, IMPLEMENTER);
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "forge.codex.live-fork-e2e", matches = "true")
+    void liveCodexForkPersistsSuccessorAndNextTwoNodeRunsResumeOnlyChild() throws Exception {
+        this.seed();
+        final String model = System.getProperty("forge.codex.live-model", "gpt-5.6-sol");
+        this.codexRuntimePort.readyWithModel(model);
+        this.agentUseCases.updateAgent(AGENT_A_ID, new SaveAgentCommand("Agent A", "Return JSON only.",
+                AgentOutputSchema.ofCanonicalJsonObject("""
+                        {"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}
+                        """), new AgentModelSelection("codex", model, null)));
+        this.saveReusableReviewerWorkflow();
+        when(this.outputSelector.selectOutput(any(), any(), any()))
+                .thenReturn(STRATEGY_PASS, CODE_RETURN, STRATEGY_PASS, CODE_RETURN, STRATEGY_PASS, CODE_RETURN);
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID,
+                new CreateWorkflowRunCommand("Real native context fork acceptance."));
+        final var first = this.lifecycle.tryStart(this.onlyPending(run.id(), IMPLEMENTER).id()).orElseThrow();
+        final var provider = new LiveCodexRecoveryFixture(first.executionWorkspace().cwd());
+        this.executeRecordedResetTurn(provider, first);
+        final var second = this.lifecycle.tryStart(this.allocateNextImplementer(run.id()).id()).orElseThrow();
+        this.executeRecordedResetTurn(provider, second);
+        final var source = this.agentExecutionSessionRepository.findByNodeRunId(second.nodeRunId()).orElseThrow();
+        assertThat(source.turn().sequence()).isEqualTo(2);
+        final var result = new com.sitionix.forgeagent.application.usecase.ForkAgentExecutionContextUseCase(
+                this.agentExecutionSessionRepository, provider.forkProvider(),
+                new com.sitionix.forgeagent.application.usecase.AgentExecutionContextUseCases(this.agentExecutionSessionRepository))
+                .execute(source.session().id());
+        final var child = result.stream().filter(context -> source.session().id().equals(context.session().forkedFromSessionId()))
+                .findFirst().orElseThrow();
+        assertThat(child.turn()).isNull();
+        assertThat(child.session().forkedFromTurnId()).isEqualTo(source.turn().id());
+        assertThat(child.session().providerConversationId()).isNotBlank().isNotEqualTo(source.session().providerConversationId());
+        assertThat(child.session().workflowRunId()).isEqualTo(source.session().workflowRunId());
+        assertThat(child.session().sourceNodeId()).isEqualTo(source.session().sourceNodeId());
+        final var retired = this.agentExecutionSessionRepository.findByNodeRunId(second.nodeRunId()).orElseThrow();
+        assertThat(retired.session().contextForkedAt()).isNotNull();
+        assertThat(retired.turn()).isEqualTo(source.turn());
+        assertThat(retired.session().providerConversationId()).isEqualTo(source.session().providerConversationId());
+        final var forkRequests = provider.forkProcesses().stream().flatMap(process -> process.requests().stream()).toList();
+        assertThat(forkRequests).extracting(request -> request.path("method").asText())
+                .doesNotContain("turn/start", "thread/start", "thread/resume");
+        assertThat(forkRequests.stream().filter(request -> "thread/fork".equals(request.path("method").asText())))
+                .singleElement().satisfies(request -> {
+                    assertThat(request.path("params").path("threadId").asText()).isEqualTo(source.session().providerConversationId());
+                    assertThat(request.path("params").path("lastTurnId").asText()).isEqualTo(source.turn().providerTurnId());
+                });
+        for (int sequence = 1; sequence <= 2; sequence++) {
+            final var claim = this.lifecycle.tryStart(this.allocateNextImplementer(run.id()).id()).orElseThrow();
+            assertThat(claim.agentSessionClaim().sessionId()).isEqualTo(child.session().id());
+            this.executeRecordedResetTurn(provider, claim);
+            assertThat(this.agentExecutionSessionRepository.findByNodeRunId(claim.nodeRunId()).orElseThrow().turn().sequence()).isEqualTo(sequence);
+            final var wire = provider.executionProcesses().get(sequence + 1).requests();
+            assertThat(wire).extracting(request -> request.path("method").asText()).contains("thread/resume", "turn/start").doesNotContain("thread/start");
+            assertThat(wire.stream().filter(request -> "thread/resume".equals(request.path("method").asText())))
+                    .singleElement().satisfies(request -> assertThat(request.path("params").path("threadId").asText()).isEqualTo(child.session().providerConversationId()));
+        }
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(second.nodeRunId()).orElseThrow()).isEqualTo(retired);
+        System.out.printf("LIVE_FORK_ACCEPTANCE sessionA=%s sessionB=%s threadA=%s threadB=%s sourceForgeTurn=%s lastProviderTurn=%s provider=0.154.0 forkTurnStarts=0 childSequences=1,2 childProtocol=thread/resume parent=unchanged%n",
+                source.session().id(), child.session().id(), source.session().providerConversationId(), child.session().providerConversationId(),
+                source.turn().id(), source.turn().providerTurnId());
     }
 
     @ParameterizedTest

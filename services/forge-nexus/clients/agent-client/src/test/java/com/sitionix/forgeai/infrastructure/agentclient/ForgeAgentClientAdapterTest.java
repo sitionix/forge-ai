@@ -779,6 +779,40 @@ class ForgeAgentClientAdapterTest {
     }
 
     @Test
+    void forkAgentExecutionContextExecutesTypedClientCallAndMapsEachResponse() {
+        final var first = new AgentExecutionContextResponse(
+                AGENT_ID, TASK_ID, RUN_ID, WORKFLOW_ID, REPOSITORY_ID,
+                "FRESH", 1, "ACTIVE", "RUNNING", "CODEX", "conversation", "turn",
+                "version", null, null, CREATED, UPDATED, null, null, false, null);
+        final var second = new AgentExecutionContextResponse(
+                AGENT_ID, TASK_ID, RUN_ID, WORKFLOW_ID, null,
+                "CONTINUED", 2, "ACTIVE", "PENDING", "CODEX", null, null,
+                null, null, null, CREATED, null, null, null, false, null);
+        final var firstDomain = new AgentExecutionContext(
+                AGENT_ID, TASK_ID, RUN_ID, WORKFLOW_ID, REPOSITORY_ID,
+                "FRESH", 1, "ACTIVE", "RUNNING", "CODEX", "conversation", "turn",
+                "version", null, null, CREATED, UPDATED, null, null, false, null);
+        final var secondDomain = new AgentExecutionContext(
+                AGENT_ID, TASK_ID, RUN_ID, WORKFLOW_ID, null,
+                "CONTINUED", 2, "ACTIVE", "PENDING", "CODEX", null, null,
+                null, null, null, CREATED, null, null, null, false, null);
+        when(this.httpClient.forkAgentExecutionContext(RUN_ID)).thenReturn(List.of(first, second));
+        when(this.mapper.toDomain(first)).thenReturn(firstDomain);
+        when(this.mapper.toDomain(second)).thenReturn(secondDomain);
+
+        final var result = this.adapter.forkAgentExecutionContext(RUN_ID);
+
+        assertThat(result).containsExactly(firstDomain, secondDomain);
+        assertThat(result.get(0)).isSameAs(firstDomain);
+        assertThat(result.get(1)).isSameAs(secondDomain);
+        final InOrder inOrder = inOrder(this.executor, this.httpClient, this.mapper);
+        inOrder.verify(this.executor).execute(any());
+        inOrder.verify(this.httpClient).forkAgentExecutionContext(RUN_ID);
+        inOrder.verify(this.mapper).toDomain(first);
+        inOrder.verify(this.mapper).toDomain(second);
+    }
+
+    @Test
     void getAgentExecutionEventsExecutesTypedPagedClientCallAndMapsResponse() {
         final UUID turnId = UUID.randomUUID();
         final var upstream = new com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionEventPageResponse(

@@ -17,8 +17,10 @@ import org.junit.jupiter.api.Test;
 class AgentExecutionContextsControllerTest {
     private final AgentExecutionContextUseCases list = mock(AgentExecutionContextUseCases.class);
     private final ResetAgentExecutionContextUseCase reset = mock(ResetAgentExecutionContextUseCase.class);
+    private final com.sitionix.forgeagent.application.runtime.AgentContextForkProvider provider = mock(com.sitionix.forgeagent.application.runtime.AgentContextForkProvider.class);
+    private final com.sitionix.forgeagent.application.usecase.ForkAgentExecutionContextUseCase fork = mock(com.sitionix.forgeagent.application.usecase.ForkAgentExecutionContextUseCase.class);
     private final AgentExecutionContextsController controller = new AgentExecutionContextsController(
-            this.list, new ForgeAgentApiMapper(new ObjectMapper()), this.reset);
+            this.list, new ForgeAgentApiMapper(new ObjectMapper()), this.reset, this.fork, this.provider);
 
     @Test
     void listUsesSessionWidePendingTruthAndFreshAndRetiredEligibility() {
@@ -98,16 +100,49 @@ class AgentExecutionContextsControllerTest {
         }
     }
 
+    @Test
+    void forkEligibilityUsesLatestTurnAndBackendProviderCapability() {
+        final var idle = session(NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE, null);
+        when(this.provider.supports("codex", "0.154.0")).thenReturn(true);
+        when(this.list.list(idle.workflowRunId())).thenReturn(List.of(allocation(idle, AgentExecutionTurnStatus.SUCCEEDED, 1)));
+        assertThat(this.controller.list(idle.workflowRunId()).getFirst().forkAllowed()).isTrue();
+        when(this.list.list(idle.workflowRunId())).thenReturn(List.of(allocation(idle, AgentExecutionTurnStatus.SUCCEEDED, 1),
+                allocation(idle, AgentExecutionTurnStatus.FAILED, 2)));
+        assertThat(this.controller.list(idle.workflowRunId())).allSatisfy(row -> assertThat(row.forkAllowed()).isFalse());
+    }
+
+    @Test
+    void forkResultIncludesZeroTurnSuccessorWithoutInvocationMetadata() {
+        final var parent = session(NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE, null);
+        final var now = Instant.now();
+        final var sourceTurn = allocation(parent, AgentExecutionTurnStatus.SUCCEEDED, 3).turn();
+        final var child = new AgentExecutionSession(UUID.randomUUID(), parent.workflowRunId(), parent.sourceNodeId(),
+                parent.sourceAgentId(), parent.repositoryId(), "codex", "child-thread", "0.154.0", parent.contextMode(),
+                AgentExecutionSessionStatus.IDLE, null, null, null, 0, null, null, null, now, now, null, null,
+                null, null, null, parent.id(), sourceTurn.id());
+        when(this.fork.execute(parent.id())).thenReturn(List.of(new AgentExecutionContext(child, null, false)));
+        final var row = this.controller.fork(parent.id()).getFirst();
+        assertThat(row.sessionId()).isEqualTo(child.id());
+        assertThat(row.forkedFromSessionId()).isEqualTo(parent.id());
+        assertThat(row.forkedFromTurnId()).isEqualTo(sourceTurn.id());
+        assertThat(row.sequence()).isNull();
+        assertThat(row.turnId()).isNull();
+        assertThat(row.nodeRunId()).isNull();
+        assertThat(row.turnStatus()).isNull();
+        assertThat(row.resetAllowed()).isTrue();
+        assertThat(row.forkAllowed()).isFalse();
+    }
+
     private static AgentExecutionSession session(final NodeContextMode mode, final Instant resetAt) {
         return new AgentExecutionSession(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null,
                 "codex", "thread-original", "0.154.0", mode, AgentExecutionSessionStatus.IDLE, null, null, null, 1,
                 null, null, null, Instant.now(), Instant.now(), null, resetAt);
     }
 
-    private static AgentExecutionAllocation allocation(final AgentExecutionSession session,
+    private static AgentExecutionContext allocation(final AgentExecutionSession session,
                                                        final AgentExecutionTurnStatus status, final int sequence) {
-        return new AgentExecutionAllocation(session, new AgentExecutionTurn(UUID.randomUUID(), session.id(), UUID.randomUUID(),
+        return new AgentExecutionContext(session, new AgentExecutionTurn(UUID.randomUUID(), session.id(), UUID.randomUUID(),
                 "turn-" + sequence, sequence, status, null, null, null, null, null,
-                Instant.now(), Instant.now(), Instant.now(), Instant.now()));
+                Instant.now(), Instant.now(), Instant.now(), Instant.now()), false);
     }
 }

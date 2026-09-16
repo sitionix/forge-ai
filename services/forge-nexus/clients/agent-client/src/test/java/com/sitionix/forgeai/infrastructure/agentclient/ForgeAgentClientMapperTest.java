@@ -102,6 +102,15 @@ class ForgeAgentClientMapperTest {
     private final ForgeAgentClientMapper mapper = new ForgeAgentClientMapper(this.objectMapper);
 
     @Test
+    void forkLineageAndZeroTurnReadFieldsArePreserved() {
+        var response = new AgentExecutionContextResponse(AGENT_ID, null, null, null, null,
+                "SHARED_SESSION_GROUP", null, "IDLE", null, "CODEX", "child-thread", null, "0.154.0",
+                null, null, CREATED, null, null, null, true, null, RUN_ID, "group",
+                null, WORKFLOW_ID, NODE_RUN_ID, false, "AGENT_CONTEXT_FORK_NOT_ALLOWED");
+        assertThat(this.mapper.toDomain(response)).usingRecursiveComparison().isEqualTo(response);
+    }
+
+    @Test
     void iterationGroupSurvivesClientRequestAndResponse() {
         var node = new Node(NODE_ID, AGENT_ID, "DEPENDENCIES_ONLY", List.of(), List.of(), new NodePosition(0, 0),
                 "GLOBAL", "REUSE_WITHIN_WORKFLOW_ITERATION", "implementation-review");

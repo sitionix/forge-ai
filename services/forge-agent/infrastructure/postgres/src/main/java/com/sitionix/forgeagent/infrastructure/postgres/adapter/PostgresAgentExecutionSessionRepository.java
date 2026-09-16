@@ -82,10 +82,10 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
 
     private List<AgentExecutionSession> findReusable(final NodeRun nodeRun) {
         if (nodeRun.contextMode() == NodeContextMode.SHARED_SESSION_GROUP) {
-            return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE workflow_run_id=? AND context_iteration_id=? AND context_group_key=? AND context_mode='SHARED_SESSION_GROUP' AND repository_id IS NOT DISTINCT FROM ? AND context_reset_at IS NULL FOR UPDATE",
+            return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE workflow_run_id=? AND context_iteration_id=? AND context_group_key=? AND context_mode='SHARED_SESSION_GROUP' AND repository_id IS NOT DISTINCT FROM ? AND context_reset_at IS NULL AND context_forked_at IS NULL FOR UPDATE",
                     this::session, nodeRun.workflowRunId(), nodeRun.contextIterationId(), nodeRun.contextGroupKey(), nodeRun.repositoryId());
         }
-        return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE workflow_run_id=? AND source_node_id=? AND context_mode=? AND context_iteration_id IS NOT DISTINCT FROM ? AND repository_id IS NOT DISTINCT FROM ? AND context_reset_at IS NULL FOR UPDATE",
+        return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE workflow_run_id=? AND source_node_id=? AND context_mode=? AND context_iteration_id IS NOT DISTINCT FROM ? AND repository_id IS NOT DISTINCT FROM ? AND context_reset_at IS NULL AND context_forked_at IS NULL FOR UPDATE",
                 this::session, nodeRun.workflowRunId(), nodeRun.sourceNodeId(), nodeRun.contextMode().name(), nodeRun.contextIterationId(), nodeRun.repositoryId());
     }
 
@@ -127,7 +127,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         if (earlier != null && earlier > 0) return Optional.empty();
         final String nextStatus = allocation.session().providerConversationId() == null ? "CREATING" : "RESUMING";
         final List<Long> tokens = this.jdbc.query(
-                "UPDATE agent_execution_sessions SET lease_owner_id=?,lease_token=lease_token+1,lease_expires_at=CURRENT_TIMESTAMP + INTERVAL '30 seconds',active_node_run_id=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND context_reset_at IS NULL AND lease_owner_id IS NULL AND active_node_run_id IS NULL AND status IN ('WAITING','IDLE') RETURNING lease_token",
+                "UPDATE agent_execution_sessions SET lease_owner_id=?,lease_token=lease_token+1,lease_expires_at=CURRENT_TIMESTAMP + INTERVAL '30 seconds',active_node_run_id=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND context_reset_at IS NULL AND context_forked_at IS NULL AND lease_owner_id IS NULL AND active_node_run_id IS NULL AND status IN ('WAITING','IDLE') RETURNING lease_token",
                 (rs, row) -> rs.getLong(1), ownerId, nodeRunId, nextStatus, allocation.session().id());
         if (tokens.isEmpty()) return Optional.empty();
         final long token = tokens.getFirst();
@@ -369,13 +369,154 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         return true;
     }
 
+
+    @Override
+    public List<AgentExecutionContext> findContextsByWorkflowRunId(final UUID workflowRunId) {
+        return this.jdbc.query("SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.provider_recovery_state turn_provider_recovery_state,t.provider_recovery_terminal_outcome turn_provider_recovery_terminal_outcome,t.provider_recovery_checked_at turn_provider_recovery_checked_at,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at,w.status workflow_status FROM agent_execution_sessions s JOIN workflow_runs w ON w.id=s.workflow_run_id LEFT JOIN agent_execution_turns t ON t.agent_session_id=s.id WHERE s.workflow_run_id=? ORDER BY s.created_at,s.id,t.sequence", (rs,row) -> new AgentExecutionContext(this.session(rs,row),
+                rs.getObject("turn_id") == null ? null : this.turn(rs),
+                terminalWorkflow(rs.getString("workflow_status"))), workflowRunId);
+    }
+
+    private Optional<AgentExecutionTurn> latestTurn(final UUID sessionId) {
+        return this.jdbc.query("SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.provider_recovery_state turn_provider_recovery_state,t.provider_recovery_terminal_outcome turn_provider_recovery_terminal_outcome,t.provider_recovery_checked_at turn_provider_recovery_checked_at,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_sessions s JOIN agent_execution_turns t ON t.agent_session_id=s.id WHERE s.id=? ORDER BY t.sequence DESC LIMIT 1 FOR UPDATE OF t", (rs,row) -> this.turn(rs), sessionId).stream().findFirst();
+    }
+
+    @Override
+    @Transactional
+    public AgentContextForkPreparation prepareFork(final UUID sessionId) {
+        final AgentExecutionSession identity = this.findSession(sessionId).orElseThrow(() -> missingSession(sessionId));
+        final String workflowStatus = this.lockForkWorkflow(identity.workflowRunId());
+        this.lockContextScope(identity);
+        final AgentExecutionSession source = this.lockSession(sessionId).orElseThrow(() -> missingSession(sessionId));
+        final var latest = this.latestTurn(sessionId).orElse(null);
+        final String reason = AgentContextForkEligibility.reason(source, latest, this.hasPendingTurns(sessionId), terminalWorkflow(workflowStatus));
+        if (reason != null) throw new ConflictException(reason, "The current agent context cannot be forked.");
+        this.jdbc.update("UPDATE agent_execution_sessions SET status='FORKING',lease_token=lease_token+1,updated_at=clock_timestamp() WHERE id=?", sessionId);
+        return new AgentContextForkPreparation(this.findSession(sessionId).orElseThrow(), latest);
+    }
+
+    @Override
+    @Transactional
+    public UUID completeFork(final AgentContextForkPreparation prepared, final String providerConversationId) {
+        final AgentExecutionSession identity = prepared.session();
+        final String workflowStatus = this.lockForkWorkflow(identity.workflowRunId());
+        this.lockContextScope(identity);
+        final AgentExecutionSession source = this.lockSession(identity.id()).orElseThrow(PostgresAgentExecutionSessionRepository::forkConflict);
+        if (terminalWorkflow(workflowStatus) || !this.authoritativeFork(source, prepared)
+                || providerConversationId == null || providerConversationId.isBlank()
+                || providerConversationId.equals(source.providerConversationId())) throw forkConflict();
+        final var turns = this.jdbc.query("SELECT id,status,sequence FROM agent_execution_turns WHERE agent_session_id=? ORDER BY sequence FOR UPDATE",
+                (rs,row) -> new ForkQueuedTurn(rs.getObject("id", UUID.class), rs.getString("status"), rs.getInt("sequence")), source.id());
+        if (turns.stream().anyMatch(turn -> "STARTING".equals(turn.status()) || "ACTIVE".equals(turn.status())
+                || ("QUEUED".equals(turn.status()) && turn.sequence() <= prepared.turn().sequence()))) throw forkConflict();
+        final UUID childId = UUID.randomUUID();
+        this.jdbc.update("UPDATE agent_execution_sessions SET context_forked_at=clock_timestamp(),status='IDLE',updated_at=clock_timestamp() WHERE id=?", source.id());
+        this.jdbc.update("""
+                INSERT INTO agent_execution_sessions(id,workflow_run_id,source_node_id,source_agent_id,repository_id,
+                    provider_id,provider_conversation_id,provider_version,context_mode,context_iteration_id,context_group_key,
+                    status,lease_token,created_at,updated_at,forked_from_session_id,forked_from_turn_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,'IDLE',0,clock_timestamp(),clock_timestamp(),?,?)
+                """, childId, source.workflowRunId(), source.sourceNodeId(), source.sourceAgentId(), source.repositoryId(),
+                source.providerId(), providerConversationId, source.providerVersion(), source.contextMode().name(),
+                source.contextIterationId(), source.contextGroupKey(), source.id(), prepared.turn().id());
+        int sequence = 0;
+        for (var turn : turns) {
+            if ("QUEUED".equals(turn.status())) {
+                this.jdbc.update("UPDATE agent_execution_turns SET agent_session_id=?,sequence=?,updated_at=clock_timestamp() WHERE id=? AND status='QUEUED'",
+                        childId, ++sequence, turn.id());
+            }
+        }
+        return childId;
+    }
+
+    @Override
+    @Transactional
+    public void abortFork(final AgentContextForkPreparation prepared) {
+        final String workflowStatus = this.lockForkWorkflow(prepared.session().workflowRunId());
+        this.lockContextScope(prepared.session());
+        final var source = this.lockSession(prepared.session().id());
+        if (source.isPresent() && this.authoritativeFork(source.get(), prepared)) {
+            this.restoreForkSource(source.get(), workflowStatus);
+        }
+    }
+
+    @Override
+    @Transactional
+    public int reconcileStaleForks() {
+        // One candidate per worker poll bounds lock work. No provider inspection, adoption or retry.
+        final var candidates = this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE status='FORKING' AND updated_at < clock_timestamp()-INTERVAL '5 minutes' ORDER BY updated_at LIMIT 1", this::session);
+        if (candidates.isEmpty()) return 0;
+        final var identity = candidates.getFirst();
+        final String workflowStatus = this.lockForkWorkflow(identity.workflowRunId());
+        this.lockContextScope(identity);
+        final var locked = this.lockSession(identity.id());
+        if (locked.isEmpty()) return 0;
+        final var source = locked.get();
+        if (source.status() != AgentExecutionSessionStatus.FORKING || source.leaseToken() != identity.leaseToken()
+                || !source.updatedAt().equals(identity.updatedAt()) || source.activeNodeRunId() != null
+                || source.leaseOwnerId() != null || source.leaseExpiresAt() != null
+                || source.contextResetAt() != null || source.contextForkedAt() != null) return 0;
+        if (Boolean.TRUE.equals(this.jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM agent_execution_turns WHERE agent_session_id=? AND status IN ('STARTING','ACTIVE'))", Boolean.class, source.id()))) return 0;
+        this.restoreForkSource(source, workflowStatus);
+        return 1;
+    }
+
+    private void restoreForkSource(final AgentExecutionSession source, final String workflowStatus) {
+        if (terminalWorkflow(workflowStatus)) {
+            this.jdbc.update("UPDATE agent_execution_sessions SET status='CLOSED',terminal_outcome=?,closed_at=clock_timestamp(),lease_token=lease_token+1,updated_at=clock_timestamp() WHERE id=?",
+                    workflowStatus == null ? "CANCELLED" : workflowStatus, source.id());
+        } else if (source.contextMode().reusable() && source.failureCode() == null && source.failureMessage() == null
+                && source.terminalOutcome() == null && source.closedAt() == null) {
+            this.jdbc.update("UPDATE agent_execution_sessions SET status='IDLE',lease_token=lease_token+1,updated_at=clock_timestamp() WHERE id=?", source.id());
+        }
+    }
+
+    private boolean authoritativeFork(final AgentExecutionSession source, final AgentContextForkPreparation prepared) {
+        final var expected = prepared.session();
+        if (source.status() != AgentExecutionSessionStatus.FORKING || source.leaseToken() != expected.leaseToken()
+                || source.activeNodeRunId() != null || source.leaseOwnerId() != null || source.leaseExpiresAt() != null
+                || source.contextResetAt() != null || source.contextForkedAt() != null || source.failureCode() != null
+                || source.failureMessage() != null || source.closedAt() != null || source.terminalOutcome() != null
+                || !java.util.Objects.equals(source.providerConversationId(), expected.providerConversationId())
+                || !java.util.Objects.equals(source.providerVersion(), expected.providerVersion())
+                || !java.util.Objects.equals(source.providerId(), expected.providerId())
+                || !java.util.Objects.equals(source.workflowRunId(), expected.workflowRunId())
+                || !java.util.Objects.equals(source.sourceNodeId(), expected.sourceNodeId())
+                || !java.util.Objects.equals(source.sourceAgentId(), expected.sourceAgentId())
+                || !java.util.Objects.equals(source.repositoryId(), expected.repositoryId())
+                || source.contextMode() != expected.contextMode()
+                || !java.util.Objects.equals(source.contextIterationId(), expected.contextIterationId())
+                || !java.util.Objects.equals(source.contextGroupKey(), expected.contextGroupKey())) return false;
+        return Boolean.TRUE.equals(this.jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM agent_execution_turns WHERE id=? AND agent_session_id=? AND provider_turn_id=? AND sequence=? AND status='SUCCEEDED')",
+                Boolean.class, prepared.turn().id(), source.id(), prepared.turn().providerTurnId(), prepared.turn().sequence()));
+    }
+
+    private String lockForkWorkflow(final UUID workflowRunId) {
+        return this.jdbc.query("SELECT status FROM workflow_runs WHERE id=? FOR UPDATE", (rs,row) -> rs.getString(1), workflowRunId).stream().findFirst().orElse(null);
+    }
+
+    private void lockContextScope(final AgentExecutionSession session) {
+        if (session.contextMode() == NodeContextMode.SHARED_SESSION_GROUP) {
+            this.lockSharedScope(session.workflowRunId(), session.contextIterationId(), session.contextGroupKey(), session.repositoryId());
+        } else {
+            this.lockReusableScope(session.workflowRunId(), session.sourceNodeId(), session.repositoryId());
+        }
+    }
+
+    private static boolean terminalWorkflow(final String status) { return !"QUEUED".equals(status) && !"RUNNING".equals(status); }
+    private static ConflictException forkConflict() { return new ConflictException(AgentContextForkEligibility.CONFLICT, "The prepared fork no longer owns the current context."); }
+    private static com.sitionix.forgeagent.domain.exception.NotFoundException missingSession(UUID id) {
+        return new com.sitionix.forgeagent.domain.exception.NotFoundException("AGENT_EXECUTION_SESSION_NOT_FOUND", "Agent execution session was not found: " + id);
+    }
+    private record ForkQueuedTurn(UUID id, String status, int sequence) { }
+
     private AgentExecutionSession session(final ResultSet rs, final int row) throws SQLException {
         return new AgentExecutionSession(rs.getObject("id", UUID.class), rs.getObject("workflow_run_id", UUID.class),
                 rs.getObject("source_node_id", UUID.class), rs.getObject("source_agent_id", UUID.class), rs.getObject("repository_id", UUID.class),
                 rs.getString("provider_id"), rs.getString("provider_conversation_id"), rs.getString("provider_version"), NodeContextMode.valueOf(rs.getString("context_mode")),
                 AgentExecutionSessionStatus.valueOf(rs.getString("status")), enumValue(AgentExecutionTerminalOutcome.class, rs.getString("terminal_outcome")),
                 rs.getObject("active_node_run_id", UUID.class), rs.getString("lease_owner_id"), rs.getLong("lease_token"), instant(rs, "lease_expires_at"),
-                rs.getString("failure_code"), rs.getString("failure_message"), instant(rs, "created_at"), instant(rs, "updated_at"), instant(rs, "closed_at"), instant(rs, "context_reset_at"), rs.getObject("context_iteration_id", UUID.class), rs.getString("context_group_key"));
+                rs.getString("failure_code"), rs.getString("failure_message"), instant(rs, "created_at"), instant(rs, "updated_at"), instant(rs, "closed_at"), instant(rs, "context_reset_at"), rs.getObject("context_iteration_id", UUID.class), rs.getString("context_group_key"), instant(rs, "context_forked_at"), rs.getObject("forked_from_session_id", UUID.class), rs.getObject("forked_from_turn_id", UUID.class));
     }
 
     private AgentExecutionTurn turn(final ResultSet rs) throws SQLException {

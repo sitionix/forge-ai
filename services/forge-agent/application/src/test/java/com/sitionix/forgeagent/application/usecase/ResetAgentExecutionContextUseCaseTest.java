@@ -28,7 +28,7 @@ class ResetAgentExecutionContextUseCaseTest {
         order.verify(this.sessions).lockSession(session.id());
         order.verify(this.sessions).hasPendingTurns(session.id());
         order.verify(this.sessions).markContextReset(session.id());
-        order.verify(this.sessions).findByWorkflowRunId(session.workflowRunId());
+        order.verify(this.sessions).findContextsByWorkflowRunId(session.workflowRunId());
         order.verifyNoMoreInteractions();
     }
 
@@ -78,7 +78,7 @@ class ResetAgentExecutionContextUseCaseTest {
     private void prepare(final AgentExecutionSession session) {
         when(this.sessions.findSession(session.id())).thenReturn(Optional.of(session));
         when(this.sessions.lockSession(session.id())).thenReturn(Optional.of(session));
-        when(this.sessions.findByWorkflowRunId(session.workflowRunId())).thenReturn(List.of());
+        when(this.sessions.findContextsByWorkflowRunId(session.workflowRunId())).thenReturn(List.of());
     }
 
     private static AgentExecutionSession session(final NodeContextMode mode, final AgentExecutionSessionStatus status,

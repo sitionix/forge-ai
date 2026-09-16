@@ -73,6 +73,7 @@ public class RecoveredNodeRunRetryEligibilityService {
         }
         return target.contextMode().reusable()
                 && allocation.session().contextResetAt() == null
+                && allocation.session().contextForkedAt() == null
                 ? RecoveredNodeRunRetryEligibility.resume()
                 : RecoveredNodeRunRetryEligibility.retry();
     }

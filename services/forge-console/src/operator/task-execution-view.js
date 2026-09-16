@@ -768,6 +768,8 @@ export class TaskExecutionView {
     this.stopPolling();
     this.pollInFlight = null;
     this.state.selectedRunId = runId;
+    this.state.contextForkInFlight = false;
+    this.state.contextForkError = '';
     this.state.contextResetInFlight = false;
     this.state.contextResetError = '';
     this.state.selectedNodeRunId = null;
@@ -922,7 +924,7 @@ export class TaskExecutionView {
       && this.opened
       && !this.state.cancellationInFlight
       && !this.state.recoveryRetryInFlight
-      && !this.state.contextResetInFlight
+      && !this.state.contextForkInFlight && !this.state.contextResetInFlight
       && this.state.selectedRunId
       && ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)
     );
@@ -1076,7 +1078,7 @@ export class TaskExecutionView {
         <div class="task-execution-stop-confirmation" data-provider-stop-unverified>
           <div><strong>Provider stop could not be verified.</strong></div>
           <div class="task-execution-stop-actions">
-            <button type="button" class="button small danger" data-retry-stop ${this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Retrying…' : 'Retry stop'}</button>
+            <button type="button" class="button small danger" data-retry-stop ${this.state.cancellationInFlight || this.state.contextForkInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Retrying…' : 'Retry stop'}</button>
           </div>
         </div>
       </div>`;
@@ -1092,11 +1094,11 @@ export class TaskExecutionView {
         <div class="task-execution-stop-confirmation" data-stop-run-confirmation>
           <div><strong>Stop this run?</strong><span>Active agent execution will be interrupted.</span></div>
           <div class="task-execution-stop-actions">
-            <button type="button" class="button small danger" data-confirm-stop-run ${this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Stopping…' : 'Stop run'}</button>
-            <button type="button" class="button small secondary" data-keep-running ${this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>Keep running</button>
+            <button type="button" class="button small danger" data-confirm-stop-run ${this.state.cancellationInFlight || this.state.contextForkInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Stopping…' : 'Stop run'}</button>
+            <button type="button" class="button small secondary" data-keep-running ${this.state.cancellationInFlight || this.state.contextForkInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>Keep running</button>
           </div>
         </div>
-      ` : `<button type="button" class="button small danger" data-stop-run ${this.state.contextResetInFlight ? 'disabled' : ''}>Stop run</button>`}
+      ` : `<button type="button" class="button small danger" data-stop-run ${this.state.contextForkInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>Stop run</button>`}
     </div>`;
     state.querySelector('[data-stop-run]')?.addEventListener('click', () => {
       this.state.stopConfirmation = true;
@@ -1111,7 +1113,7 @@ export class TaskExecutionView {
   }
 
   async stopSelectedRun() {
-    if (this.state.cancellationInFlight || this.state.contextResetInFlight
+    if (this.state.cancellationInFlight || this.state.contextForkInFlight || this.state.contextResetInFlight
       || (!ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status) && !this.hasUnresolvedOperatorStop())) {
       return;
     }
@@ -1460,8 +1462,11 @@ export class TaskExecutionView {
       this.selectNodeRun(button.dataset.contextNodeRun);
     }));
     this.bindActivityControls();
-    panel.querySelector('[data-reset-agent-context]')?.addEventListener('click', () => {
-      void this.resetAgentExecutionContext();
+    panel.querySelectorAll('[data-reset-agent-context]').forEach((button) => button.addEventListener('click', () => {
+      void this.resetAgentExecutionContext(button.dataset.resetAgentContext);
+    }));
+    panel.querySelector('[data-fork-agent-context]')?.addEventListener('click', () => {
+      void this.forkAgentExecutionContext();
     });
     panel.querySelector('[data-retry-recovered-node-run]')?.addEventListener('click', () => {
       void this.retryRecoveredNodeRun();
@@ -1475,12 +1480,12 @@ export class TaskExecutionView {
       return '';
     }
     const action = nodeRun.retryEligibility?.action;
-    if (action === 'RESUME' && context?.contextResetAt) {
-      return '<section class="node-run-recovery"><h3>Recovery required</h3><p>Context was reset. Refresh workflow state to check Retry availability.</p></section>';
+    if (action === 'RESUME' && (context?.contextResetAt || context?.contextForkedAt)) {
+      return `<section class="node-run-recovery"><h3>Recovery required</h3><p>Context was ${context.contextForkedAt ? 'forked' : 'reset'}. Refresh workflow state to check Retry availability.</p></section>`;
     }
     if (action === 'RETRY' || action === 'RESUME') {
       const resume = action === 'RESUME';
-      const busy = this.state.recoveryRetryInFlight || this.state.contextResetInFlight;
+      const busy = this.state.recoveryRetryInFlight || this.state.contextForkInFlight || this.state.contextResetInFlight;
       const label = busy ? (resume ? 'Resuming…' : 'Retrying…') : (resume ? 'Resume' : 'Retry');
       const message = resume
         ? 'The previous provider turn finished. This context can be continued safely.'
@@ -1501,19 +1506,43 @@ export class TaskExecutionView {
     return `<section class="node-run-recovery"><h3>Recovery status</h3><p>${escapeHtml(message)}</p></section>`;
   }
 
+  renderContextFork(context) {
+    if (context.contextForkedAt) return '<p>Context forked. This session remains in history.</p>';
+    if (context.forkAllowed !== true) return '';
+    const busy = this.state.contextForkInFlight || this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight;
+    return `<section><h4>Fork context</h4><p>Creates a copy of this context and uses the fork for the next invocation. The original context stays in history.</p>
+      ${this.state.contextForkError ? `<p class="error-box">${escapeHtml(this.state.contextForkError)}</p>` : ''}
+      <button type="button" class="button small secondary" data-fork-agent-context ${busy ? 'disabled' : ''}>${this.state.contextForkInFlight ? 'Forking…' : 'Fork context'}</button></section>`;
+  }
+
+  renderContextLineage(context) {
+    if (!context.forkedFromSessionId) return '';
+    const parent = this.state.agentExecutionContexts.find((item) => item.turnId === context.forkedFromTurnId);
+    const label = `Session ${context.forkedFromSessionId} · Turn ${parent?.sequence ?? 'Unavailable'}`;
+    return `<p>Forked from ${parent?.nodeRunId ? `<button type="button" data-context-node-run="${escapeHtml(parent.nodeRunId)}">${escapeHtml(label)}</button>` : escapeHtml(label)}</p>`;
+  }
+
+  renderContextSuccessor(context) {
+    const children = this.state.agentExecutionContexts.filter((item) => item.forkedFromSessionId === context.sessionId);
+    const child = children.find((item) => !item.turnId);
+    if (child) return `<section class="forked-context"><h4>Forked context</h4>${this.detailRow('Status', this.contextLifecycle(child))}<p>Waiting for next invocation</p>${this.renderContextLineage(child)}${this.renderContextReset(child)}${this.renderTechnicalDetails(child)}</section>`;
+    if (children.length) return `<p>Forked context: <button type="button" data-context-node-run="${escapeHtml(children[0].nodeRunId)}">View successor history</button></p>`;
+    return '';
+  }
+
   renderContextReset(context) {
     if (!['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(context.contextMode)) return '';
     if (context.contextResetAt) return '<p>Context reset. Existing turns and Activity remain available.</p>';
     if (context.resetAllowed !== true) return '';
-    const busy = this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight;
+    const busy = this.state.contextForkInFlight || this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight;
     return `<section><h4>Reset context</h4><p>The next invocation will start a new provider conversation. Existing turns and Activity will remain available.</p>
       ${this.state.contextResetError ? `<p class="error-box">${escapeHtml(this.state.contextResetError)}</p>` : ''}
-      <button type="button" class="button small secondary" data-reset-agent-context ${busy ? 'disabled' : ''}>${this.state.contextResetInFlight ? 'Resetting…' : 'Reset context'}</button></section>`;
+      <button type="button" class="button small secondary" data-reset-agent-context="${escapeHtml(context.sessionId)}" ${busy ? 'disabled' : ''}>${this.state.contextResetInFlight ? 'Resetting…' : 'Reset context'}</button></section>`;
   }
 
-  async resetAgentExecutionContext() {
-    const context = this.contextForNodeRun(this.selectedNodeRun()?.id);
-    if (this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight
+  async resetAgentExecutionContext(sessionId) {
+    const context = sessionId ? this.state.agentExecutionContexts.find((item) => item.sessionId === sessionId) : this.contextForNodeRun(this.selectedNodeRun()?.id);
+    if (this.state.contextForkInFlight || this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight
       || !['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(context?.contextMode)
       || context.resetAllowed !== true || context.contextResetAt) return;
     const taskId = this.state.taskId;
@@ -1541,10 +1570,10 @@ export class TaskExecutionView {
       }
       if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
       const applyResetTruth = (contexts) => {
-        const returned = new Map(resetContexts.map((item) => [item.turnId, item]));
-        const existing = new Set(contexts.map((item) => item.turnId));
-        return [...contexts.map((item) => returned.get(item.turnId) || item),
-          ...resetContexts.filter((item) => !existing.has(item.turnId))];
+        const returned = new Map(resetContexts.map((item) => [item.turnId || item.sessionId, item]));
+        const existing = new Set(contexts.map((item) => item.turnId || item.sessionId));
+        return [...contexts.map((item) => returned.get(item.turnId || item.sessionId) || item),
+          ...resetContexts.filter((item) => !existing.has(item.turnId || item.sessionId))];
       };
       this.state.agentExecutionContexts = applyResetTruth(this.state.agentExecutionContexts);
       this.render();
@@ -1568,11 +1597,78 @@ export class TaskExecutionView {
     }
   }
 
+  async forkAgentExecutionContext() {
+    const context = this.contextForNodeRun(this.selectedNodeRun()?.id);
+    if (this.state.contextForkInFlight || this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight
+      || context?.forkAllowed !== true) return;
+    const taskId = this.state.taskId;
+    const taskSequence = this.taskLoadSequence;
+    const runId = this.state.selectedRunId;
+    const activityIdentity = this.activityIdentity;
+    const preserveActivity = activityIdentity && this.isCurrentActivity(activityIdentity);
+    const runSequence = ++this.runLoadSequence;
+    if (preserveActivity) activityIdentity.runLoadSequence = runSequence;
+    this.state.contextForkInFlight = true;
+    this.state.contextForkError = '';
+    this.state.refreshError = '';
+    this.stopPolling();
+    this.pollInFlight = null;
+    this.render();
+    try {
+      let forkContexts;
+      try {
+        forkContexts = await this.api.forkAgentExecutionContext(context.sessionId);
+      } catch (error) {
+        if (this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+          this.state.contextForkError = `Could not fork this context.${error?.message ? ` ${error.message}` : ''}`;
+        }
+        return;
+      }
+      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
+      const applyForkTruth = (contexts) => {
+        const returned = new Map(forkContexts.map((item) => [item.turnId || item.sessionId, item]));
+        const existing = new Set(contexts.map((item) => item.turnId || item.sessionId));
+        return [...contexts.map((item) => {
+          const committed = returned.get(item.turnId || item.sessionId);
+          if (!committed) return item;
+          // Retirement and moved-turn ownership cannot be undone by a stale read.
+          if (committed.contextForkedAt || committed.sessionId !== item.sessionId) return committed;
+          // The child and unrelated sessions may already have progressed since POST.
+          return committed.forkedFromSessionId ? { ...item,
+            forkedFromSessionId: committed.forkedFromSessionId,
+            forkedFromTurnId: committed.forkedFromTurnId } : item;
+        }),
+          ...forkContexts.filter((item) => !existing.has(item.turnId || item.sessionId)
+            && (item.turnId || !contexts.some((current) => current.sessionId === item.sessionId && current.turnId)))];
+      };
+      this.state.agentExecutionContexts = forkContexts;
+      this.render();
+      const [workflowRefresh, contextRefresh] = await Promise.allSettled([
+        this.api.getWorkflowRun(runId), this.api.getAgentExecutionContexts(runId)
+      ]);
+      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
+      if (workflowRefresh.status === 'fulfilled') this.applyWorkflowRun(workflowRefresh.value);
+      if (contextRefresh.status === 'fulfilled') {
+        this.state.agentExecutionContexts = applyForkTruth(contextRefresh.value || []);
+      }
+      if (workflowRefresh.status === 'rejected' || contextRefresh.status === 'rejected') {
+        this.state.refreshError = 'Context forked, but the latest state could not be refreshed.';
+      }
+    } finally {
+      if (this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+        this.state.contextForkInFlight = false;
+        this.render();
+        this.syncPolling();
+      }
+    }
+  }
+
   async retryRecoveredNodeRun() {
     const nodeRun = this.selectedNodeRun();
     const action = nodeRun?.retryEligibility?.action;
-    if (this.state.contextResetInFlight || this.state.recoveryRetryInFlight || !['RETRY', 'RESUME'].includes(action)
-      || (action === 'RESUME' && this.contextForNodeRun(nodeRun.id)?.contextResetAt)) return;
+    const context = this.contextForNodeRun(nodeRun?.id);
+    if (this.state.contextForkInFlight || this.state.contextResetInFlight || this.state.recoveryRetryInFlight || !['RETRY', 'RESUME'].includes(action)
+      || (action === 'RESUME' && (context?.contextResetAt || context?.contextForkedAt))) return;
     const actionLabel = action === 'RESUME' ? 'Resume' : 'Retry';
     const taskId = this.state.taskId;
     const taskSequence = this.taskLoadSequence;
@@ -1923,7 +2019,7 @@ export class TaskExecutionView {
     return `<section class="node-run-context"><h3>CONTEXT</h3>${iterationDetails}<div><strong>${relation}</strong><span>Turn ${context.sequence}</span></div>
       ${this.detailRow('Status', status)}${this.detailRow('Scope', context.repositoryId ? this.repositoryName(context.repositoryId) : 'Global')}
       ${this.detailRow('Started', shared ? sharedTurnLabel(startedRun) : `Invocation #${startedNumber}`)}${context.sequence > 1 || currentTurn?.nodeRunId !== startedRun?.nodeRunId ? this.detailRow('Current', shared ? sharedTurnLabel(currentTurn || context) : `Invocation #${currentNumber}`) : ''}
-      ${this.renderContextReset(context)}
+      ${this.renderContextLineage(context)}${this.renderContextReset(context)}${this.renderContextFork(context)}${this.renderContextSuccessor(context)}
       <nav aria-label="Context invocation history" class="context-history">${history}</nav>${this.renderTechnicalDetails(context)}</section>`;
   }
 
@@ -1948,6 +2044,7 @@ export class TaskExecutionView {
     if (context.sessionStatus === 'CLOSED') return 'Closed';
     if (context.sessionStatus === 'WAITING' || ['QUEUED', 'STARTING'].includes(context.turnStatus)) return 'Waiting';
     if (context.sessionStatus === 'ACTIVE') return 'Active';
+    if (context.sessionStatus === 'FORKING') return 'Forking';
     if (context.sessionStatus === 'IDLE') return 'Idle';
     return 'Unavailable';
   }
@@ -1955,7 +2052,7 @@ export class TaskExecutionView {
   renderTechnicalDetails(context) {
     return `<details class="node-run-technical-details"><summary>Technical details</summary>
       ${context.contextIterationId ? this.detailRow('Context iteration ID', context.contextIterationId) : ''}
-      ${this.detailRow('Forge session ID', context.sessionId)}${this.detailRow('Forge turn ID', context.turnId)}
+      ${this.detailRow('Forge session ID', context.sessionId)}${context.turnId ? this.detailRow('Forge turn ID', context.turnId) : ''}
       ${context.provider ? this.detailRow('Provider', context.provider) : ''}${context.providerConversationId ? this.detailRow('Provider conversation ID', context.providerConversationId) : ''}
       ${context.providerTurnId ? this.detailRow('Provider turn ID', context.providerTurnId) : ''}${context.providerVersion ? this.detailRow('Provider / CLI version', context.providerVersion) : ''}
       ${context.repositoryId ? this.detailRow('Repository ID', context.repositoryId) : ''}
@@ -2635,6 +2732,8 @@ export class TaskExecutionView {
       stopConfirmation: false,
       cancellationInFlight: false,
       cancellationError: '',
+      contextForkInFlight: false,
+      contextForkError: '',
       contextResetInFlight: false,
       contextResetError: '',
       recoveryRetryInFlight: false,

@@ -3,7 +3,7 @@ package com.sitionix.forgeagent.application.usecase;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
 import com.sitionix.forgeagent.domain.model.AgentContextResetEligibility;
-import com.sitionix.forgeagent.domain.model.AgentExecutionAllocation;
+import com.sitionix.forgeagent.domain.model.AgentExecutionContext;
 import com.sitionix.forgeagent.domain.model.AgentExecutionSession;
 import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
@@ -19,7 +19,7 @@ public class ResetAgentExecutionContextUseCase {
     private final AgentExecutionSessionRepository sessions;
 
     @Transactional
-    public List<AgentExecutionAllocation> execute(final UUID sessionId) {
+    public List<AgentExecutionContext> execute(final UUID sessionId) {
         // Read immutable identity first; match allocator order: scope advisory lock -> session row.
         final AgentExecutionSession identity = this.sessions.findSession(sessionId).orElseThrow(() -> missing(sessionId));
         if (identity.contextMode() == NodeContextMode.SHARED_SESSION_GROUP) {
@@ -39,7 +39,7 @@ public class ResetAgentExecutionContextUseCase {
             }
             this.sessions.markContextReset(sessionId);
         }
-        return this.sessions.findByWorkflowRunId(session.workflowRunId()).stream()
+        return this.sessions.findContextsByWorkflowRunId(session.workflowRunId()).stream()
                 .filter(allocation -> allocation.session().id().equals(sessionId)).toList();
     }
 

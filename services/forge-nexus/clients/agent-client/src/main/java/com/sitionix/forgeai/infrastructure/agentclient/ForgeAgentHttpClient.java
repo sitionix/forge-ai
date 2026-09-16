@@ -148,6 +148,9 @@ public interface ForgeAgentHttpClient {
     @PostExchange("/api/v1/agent-execution-sessions/{sessionId}/reset-context")
     List<com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionContextResponse> resetAgentExecutionContext(@PathVariable UUID sessionId);
 
+    @PostExchange("/api/v1/agent-execution-sessions/{sessionId}/fork-context")
+    List<com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionContextResponse> forkAgentExecutionContext(@PathVariable UUID sessionId);
+
     @GetExchange("/api/v1/agent-execution-turns/{turnId}/events")
     com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionEventPageResponse getAgentExecutionEvents(
             @PathVariable UUID turnId,

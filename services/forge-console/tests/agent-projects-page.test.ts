@@ -6938,6 +6938,8 @@ describe('Agent projects page', () => {
     client.getWorkflowRun('66666666-6666-4666-8666-666666666666');
     client.cancelWorkflowRun('66666666-6666-4666-8666-666666666666');
     client.retryRecoveredNodeRun('66666666-6666-4666-8666-666666666666', 'node/run');
+    client.forkAgentExecutionContext('session/A value');
+    expect(http.post).toHaveBeenCalledWith('/agents/agent-execution-sessions/session%2FA%20value/fork-context');
     client.resetAgentExecutionContext('session/A value');
     expect(http.post).toHaveBeenCalledWith('/agents/agent-execution-sessions/session%2FA%20value/reset-context');
     client.getAgentExecutionEvents('turn/T value', 17, 200);
@@ -7304,6 +7306,109 @@ describe('Reusable context reset', () => {
     await flushAsync();
     return { dom, page, fakeApi, contexts, resetContexts, before };
   }
+
+  it('forks once, installs zero-turn successor and keeps authoritative truth after failed refresh', async () => {
+    const fork = deferred<any>();
+    const { dom, page, fakeApi, contexts } = await fixture({ turnStatus: 'SUCCEEDED', forkAllowed: true }, {
+      forkAgentExecutionContext: vi.fn(() => fork.promise)
+    });
+    const parent = { ...contexts[0], forkAllowed: false, resetAllowed: false, contextForkedAt: '2026-09-16T10:00:00Z' };
+    const child = { ...contexts[0], sessionId: 'session-b', turnId: null, nodeRunId: null, sequence: null,
+      turnStatus: null, forkAllowed: false, forkedFromSessionId: 'session-a', forkedFromTurnId: 'turn-a' };
+    const button = dom.window.document.querySelector<HTMLButtonElement>('[data-fork-agent-context]')!;
+    expect(button?.textContent).toBe('Fork context');
+    button.click(); button.click();
+    expect((fakeApi as any).forkAgentExecutionContext).toHaveBeenCalledTimes(1);
+    expect(dom.window.document.querySelector<HTMLButtonElement>('[data-reset-agent-context]')?.disabled).toBe(true);
+    fakeApi.getAgentExecutionContexts.mockRejectedValue(new Error('offline'));
+    fork.resolve([parent, child]);
+    await flushAsync();
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual([parent, child]);
+    const card = dom.window.document.querySelector('.node-run-context')!;
+    expect(card.textContent).toContain('Waiting for next invocation');
+    expect(card.textContent).toContain('Forked from');
+    expect(card.textContent).toContain('Session session-a · Turn 1');
+    expect(page.taskExecutionView.state.refreshError).toContain('Context forked');
+    expect(card.querySelector('[data-fork-agent-context]')).toBeNull();
+  });
+
+  it('uses real child invocation when refresh advances past the zero-turn fork response', async () => {
+    const { page, fakeApi, contexts } = await fixture({ forkAllowed: true }, { forkAgentExecutionContext: vi.fn() });
+    const parent = { ...contexts[0], contextForkedAt: '2026-09-16T10:00:00Z', forkAllowed: false, resetAllowed: false };
+    const child = { ...parent, sessionId: 'session-b', nodeRunId: null, turnId: null, sequence: null,
+      turnStatus: null, contextForkedAt: null, forkedFromSessionId: 'session-a', forkedFromTurnId: 'turn-a' };
+    const realTurn = { ...child, turnId: 'turn-b', nodeRunId: 'impl-2', sequence: 1, turnStatus: 'ACTIVE' };
+    (fakeApi as any).forkAgentExecutionContext.mockResolvedValue([parent, child]);
+    (fakeApi.getAgentExecutionContexts as any).mockResolvedValue([parent, realTurn]);
+    await page.taskExecutionView.forkAgentExecutionContext();
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual([parent, realTurn]);
+  });
+
+  it('preserves parent context on failed Fork and allows another operator command', async () => {
+    const { page, contexts } = await fixture({ forkAllowed: true }, {
+      forkAgentExecutionContext: vi.fn().mockRejectedValue(new Error('AGENT_CONTEXT_FORK_FAILED'))
+    });
+    await page.taskExecutionView.forkAgentExecutionContext();
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual(contexts);
+    expect(page.taskExecutionView.state.contextForkError).toContain('AGENT_CONTEXT_FORK_FAILED');
+    expect(page.taskExecutionView.state.contextForkInFlight).toBe(false);
+  });
+
+  it('does not let old polling or stale refresh overwrite successful Fork', async () => {
+    const oldWorkflow = deferred<any>();
+    const oldContexts = deferred<any>();
+    const { page, fakeApi, contexts, before } = await fixture({ forkAllowed: true }, {
+      forkAgentExecutionContext: vi.fn()
+    });
+    const parent = { ...contexts[0], contextForkedAt: '2026-09-16T10:00:00Z', forkAllowed: false, resetAllowed: false };
+    const child = { ...parent, sessionId: 'session-b', nodeRunId: null, turnId: null, sequence: null,
+      turnStatus: null, contextForkedAt: null, forkedFromSessionId: 'session-a', forkedFromTurnId: 'turn-a' };
+    (fakeApi as any).forkAgentExecutionContext.mockResolvedValue([parent, child]);
+    page.taskExecutionView.state.workflowRun.status = 'RUNNING';
+    fakeApi.getWorkflowRun.mockImplementationOnce(() => oldWorkflow.promise);
+    (fakeApi.getAgentExecutionContexts as any).mockImplementationOnce(() => oldContexts.promise).mockResolvedValue(contexts);
+    const poll = page.taskExecutionView.pollSelectedRun();
+    await page.taskExecutionView.forkAgentExecutionContext();
+    oldWorkflow.resolve(before); oldContexts.resolve(contexts);
+    await poll;
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual([parent, child]);
+  });
+
+  it('preserves newer child and unrelated turn states after Fork refresh', async () => {
+    const { page, fakeApi, contexts } = await fixture({ forkAllowed: true }, { forkAgentExecutionContext: vi.fn() });
+    const parent = { ...contexts[0], contextForkedAt: '2026-09-16T10:00:00Z', forkAllowed: false, resetAllowed: false };
+    const child = { ...contexts[0], sessionId: 'session-b', turnId: 'turn-b', nodeRunId: 'impl-2', sequence: 1,
+      turnStatus: 'QUEUED', forkAllowed: false, forkedFromSessionId: 'session-a', forkedFromTurnId: 'turn-a' };
+    const unrelated = { ...contexts[0], sessionId: 'session-c', turnId: 'turn-c', turnStatus: 'ACTIVE' };
+    const finishedChild = { ...child, turnStatus: 'SUCCEEDED', forkAllowed: true };
+    const finishedOther = { ...unrelated, turnStatus: 'SUCCEEDED' };
+    (fakeApi as any).forkAgentExecutionContext.mockResolvedValue([parent, child, unrelated]);
+    (fakeApi.getAgentExecutionContexts as any).mockResolvedValue([parent, finishedChild, finishedOther]);
+    await page.taskExecutionView.forkAgentExecutionContext();
+    expect(page.taskExecutionView.state.agentExecutionContexts).toEqual([parent, finishedChild, finishedOther]);
+    page.dispose();
+  });
+
+  it('blocks stale Resume after parent retirement when Fork workflow refresh fails', async () => {
+    const { dom, page, fakeApi, contexts } = await fixture({ forkAllowed: true }, {
+      forkAgentExecutionContext: vi.fn()
+    });
+    const parent = { ...contexts[0], contextForkedAt: '2026-09-16T10:00:00Z', forkAllowed: false, resetAllowed: false };
+    (fakeApi as any).forkAgentExecutionContext.mockResolvedValue([parent]);
+    fakeApi.getWorkflowRun.mockRejectedValue(new Error('offline'));
+    fakeApi.getAgentExecutionContexts.mockRejectedValue(new Error('offline'));
+    await page.taskExecutionView.forkAgentExecutionContext();
+    expect(dom.window.document.querySelector('[data-retry-recovered-node-run]')).toBeNull();
+    expect(dom.window.document.body.textContent).toContain('Context was forked');
+    await page.taskExecutionView.retryRecoveredNodeRun();
+    expect(fakeApi.retryRecoveredNodeRun).not.toHaveBeenCalled();
+    page.dispose();
+  });
+
+  it('does not offer Fork without backend permission', async () => {
+    const { dom } = await fixture({ forkAllowed: false });
+    expect(dom.window.document.querySelector('[data-fork-agent-context]')).toBeNull();
+  });
 
   it('shows backend-eligible idle reusable Reset with its explanation', async () => {
     const { dom } = await fixture();

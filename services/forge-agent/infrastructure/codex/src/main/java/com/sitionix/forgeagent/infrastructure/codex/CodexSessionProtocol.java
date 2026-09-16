@@ -38,6 +38,21 @@ final class CodexSessionProtocol {
         return resumedThreadId;
     }
 
+    String forkThread(final CodexJsonRpcTransport transport, final String threadId,
+                      final String lastTurnId, final Duration timeout) {
+        final ObjectNode params = this.objectMapper.createObjectNode();
+        params.put("threadId", requireIdentity(threadId, "Codex fork requires a valid threadId"));
+        params.put("lastTurnId", requireIdentity(lastTurnId, "Codex fork requires a valid lastTurnId"));
+        params.put("ephemeral", false);
+        params.put("excludeTurns", true);
+        final String childId = requireThreadId(transport.request("thread/fork", params, timeout));
+        if (threadId.equals(childId)) {
+            throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY,
+                    "Codex fork returned the source thread identity");
+        }
+        return childId;
+    }
+
     String startTurn(final CodexJsonRpcTransport transport, final JsonNode turnStartParams, final Duration timeout) {
         return this.startTurn(transport, turnStartParams, timeout, Runnable::run);
     }

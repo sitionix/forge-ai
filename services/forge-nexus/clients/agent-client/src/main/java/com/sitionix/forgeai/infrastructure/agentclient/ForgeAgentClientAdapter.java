@@ -364,6 +364,13 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
     }
 
     @Override
+    public java.util.List<com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionContext> forkAgentExecutionContext(final UUID sessionId) {
+        return this.clientCallExecutor.execute(() -> this.httpClient.forkAgentExecutionContext(sessionId)).stream()
+                .map(this.mapper::toDomain)
+                .toList();
+    }
+
+    @Override
     public com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage getAgentExecutionEvents(
             final UUID turnId, final long afterSequence, final int limit) {
         return this.mapper.toDomain(this.clientCallExecutor.execute(

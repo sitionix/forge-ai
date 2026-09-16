@@ -156,14 +156,15 @@ class RetryRecoveredNodeRunUseCaseTest {
                 .isEqualTo(RecoveredNodeRunRetryAction.RESUME);
     }
 
-    @Test
-    void explicitlyResetReusableRecoveryBecomesRetryAndKeepsSnapshotPolicy() {
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void retiredReusableRecoveryBecomesRetryAndKeepsSnapshotPolicy(final boolean forked) {
         final NodeRun failed = recovered(NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE);
         final WorkflowRun run = run(WorkflowRunStatus.FAILED, List.of(failed), null);
         this.persistedRun.set(run);
         when(this.nodeRuns.findByWorkflowRunId(RUN_ID)).thenReturn(List.of(failed));
         when(this.sessions.findByNodeRunId(NODE_ID)).thenReturn(Optional.of(allocation(
-                failed, ProviderTurnRecoveryState.TERMINAL, AgentExecutionSessionStatus.IDLE, NOW)));
+                failed, ProviderTurnRecoveryState.TERMINAL, AgentExecutionSessionStatus.IDLE, forked ? null : NOW, forked ? NOW : null)));
 
         assertThat(this.eligibility.evaluate(run, failed, List.of(failed)).action())
                 .isEqualTo(RecoveredNodeRunRetryAction.RETRY);
@@ -278,10 +279,15 @@ class RetryRecoveredNodeRunUseCaseTest {
 
     private AgentExecutionAllocation allocation(final NodeRun node, final ProviderTurnRecoveryState recoveryState,
                                                 final AgentExecutionSessionStatus sessionStatus, final Instant resetAt) {
+        return allocation(node, recoveryState, sessionStatus, resetAt, null);
+    }
+
+    private AgentExecutionAllocation allocation(final NodeRun node, final ProviderTurnRecoveryState recoveryState,
+                                                final AgentExecutionSessionStatus sessionStatus, final Instant resetAt, final Instant forkedAt) {
         final AgentExecutionSession session = new AgentExecutionSession(SESSION_ID, RUN_ID, node.sourceNodeId(),
                 node.sourceAgentId(), node.repositoryId(), "codex", "thread-1", "0.154.0", node.contextMode(),
                 sessionStatus, null, null, null, 4, null, null, null, NOW.minusSeconds(25), NOW.minusSeconds(9),
-                sessionStatus == AgentExecutionSessionStatus.CLOSED ? NOW.minusSeconds(9) : null, resetAt);
+                sessionStatus == AgentExecutionSessionStatus.CLOSED ? NOW.minusSeconds(9) : null, resetAt, null, null, forkedAt, null, null);
         final AgentExecutionTurn turn = new AgentExecutionTurn(UUID.randomUUID(), SESSION_ID, node.id(), "turn-1", 1,
                 AgentExecutionTurnStatus.FAILED, "AGENT_EXECUTION_RECOVERY_REQUIRED", "lost", recoveryState,
                 ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, NOW.minusSeconds(10), NOW.minusSeconds(19),

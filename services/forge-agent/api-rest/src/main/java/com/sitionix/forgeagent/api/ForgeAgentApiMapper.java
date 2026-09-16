@@ -136,14 +136,17 @@ class ForgeAgentApiMapper {
         }
     }
 
-    AgentExecutionContextResponse toResponse(final com.sitionix.forgeagent.domain.model.AgentExecutionAllocation allocation, final String resetReason) {
-        final var session = allocation.session();
-        final var turn = allocation.turn();
-        return new AgentExecutionContextResponse(session.id(), turn.id(), turn.nodeRunId(), session.sourceNodeId(),
-                session.repositoryId(), session.contextMode().name(), turn.sequence(), session.status().name(), turn.status().name(),
-                session.providerId(), session.providerConversationId(), turn.providerTurnId(), session.providerVersion(),
-                turn.failureCode(), turn.failureMessage(), session.createdAt(), turn.startedAt(), turn.finishedAt(),
-                session.contextResetAt(), resetReason == null, resetReason, session.contextIterationId(), session.contextGroupKey());
+    AgentExecutionContextResponse toResponse(final com.sitionix.forgeagent.domain.model.AgentExecutionContext context,
+                                             final String resetReason, final String forkReason) {
+        final var session = context.session();
+        final var turn = context.turn();
+        return new AgentExecutionContextResponse(session.id(), turn == null ? null : turn.id(), turn == null ? null : turn.nodeRunId(), session.sourceNodeId(),
+                session.repositoryId(), session.contextMode().name(), turn == null ? null : turn.sequence(), session.status().name(), turn == null ? null : turn.status().name(),
+                session.providerId(), session.providerConversationId(), turn == null ? null : turn.providerTurnId(), session.providerVersion(),
+                turn == null ? session.failureCode() : turn.failureCode(), turn == null ? session.failureMessage() : turn.failureMessage(),
+                session.createdAt(), turn == null ? null : turn.startedAt(), turn == null ? null : turn.finishedAt(),
+                session.contextResetAt(), resetReason == null, resetReason, session.contextIterationId(), session.contextGroupKey(),
+                session.contextForkedAt(), session.forkedFromSessionId(), session.forkedFromTurnId(), forkReason == null, forkReason);
     }
 
     CreateProjectCommand toCommand(final CreateProjectRequest request) {

@@ -1,5 +1,5 @@
 package com.sitionix.forgeagent.domain.model;
 
 public enum AgentExecutionSessionStatus {
-    WAITING, CREATING, RESUMING, IDLE, ACTIVE, FAILED, CLOSED
+    WAITING, CREATING, RESUMING, IDLE, FORKING, ACTIVE, FAILED, CLOSED
 }
