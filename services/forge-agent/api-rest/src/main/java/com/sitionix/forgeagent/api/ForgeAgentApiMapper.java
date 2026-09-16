@@ -143,7 +143,7 @@ class ForgeAgentApiMapper {
                 session.repositoryId(), session.contextMode().name(), turn.sequence(), session.status().name(), turn.status().name(),
                 session.providerId(), session.providerConversationId(), turn.providerTurnId(), session.providerVersion(),
                 turn.failureCode(), turn.failureMessage(), session.createdAt(), turn.startedAt(), turn.finishedAt(),
-                session.contextResetAt(), resetReason == null, resetReason);
+                session.contextResetAt(), resetReason == null, resetReason, session.contextIterationId());
     }
 
     CreateProjectCommand toCommand(final CreateProjectRequest request) {
@@ -425,7 +425,7 @@ class ForgeAgentApiMapper {
                 node.agentName(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
                 node.scopeMode().name(),
-                node.contextMode().name()
+                node.contextMode().name(), node.contextGroupKey()
         );
     }
 
@@ -510,7 +510,7 @@ class ForgeAgentApiMapper {
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toNodePort).toList(),
                 position,
                 this.scopeMode(request.scopeMode()),
-                this.contextMode(request.contextMode())
+                this.contextMode(request.contextMode()), request.contextGroupKey()
         );
     }
 
@@ -523,7 +523,7 @@ class ForgeAgentApiMapper {
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
                 node.scopeMode().name(),
-                node.contextMode().name()
+                node.contextMode().name(), node.contextGroupKey()
         );
     }
 
@@ -583,7 +583,8 @@ class ForgeAgentApiMapper {
                     eligibility == null
                             ? new RecoveredNodeRunRetryEligibilityResponse("NONE", null)
                             : new RecoveredNodeRunRetryEligibilityResponse(
-                                    eligibility.action().name(), eligibility.reasonCode())
+                                    eligibility.action().name(), eligibility.reasonCode()),
+                    nodeRun.contextGroupKey(), nodeRun.contextIterationId()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored node run JSON is invalid.", exception);

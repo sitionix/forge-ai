@@ -41,6 +41,7 @@ public class WorkflowGraphValidator {
         final List<Node> normalizedNodes = nodes == null ? List.of() : nodes.stream()
                 .map(this::normalizeNode)
                 .toList();
+        com.sitionix.forgeagent.domain.model.ContextIterationPolicy.validateScopes(normalizedNodes);
         final List<WorkflowConnection> normalizedConnections = connections == null ? List.of() : connections.stream()
                 .map(this::normalizeConnection)
                 .toList();
@@ -89,7 +90,8 @@ public class WorkflowGraphValidator {
                 this.normalizePorts(node.outputs()),
                 position,
                 node.scopeMode(),
-                node.contextMode()
+                node.contextMode(),
+                node.contextGroupKey()
         );
     }
 

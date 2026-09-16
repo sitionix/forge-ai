@@ -163,7 +163,10 @@ public class DefaultInputActivationPlanner implements InputActivationPlanner {
                             activationFrame,
                             targetNode,
                             decision.targetInputPortId(),
-                            decision.repositoryId()
+                            decision.repositoryId(),
+                            DefaultInputActivationPlanner.this.nodeRunRepository.findByIds(
+                                    decision.delivered().stream().map(ConnectionResolution::sourceNodeRunId)
+                                            .filter(Objects::nonNull).distinct().toList())
                     )
             );
             final int consumed = DefaultInputActivationPlanner.this.resolutionRepository.markConsumed(

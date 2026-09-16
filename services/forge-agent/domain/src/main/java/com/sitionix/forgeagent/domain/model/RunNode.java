@@ -14,11 +14,12 @@ public record RunNode(
         NodeInputMode inputMode,
         NodePosition position,
         NodeScopeMode scopeMode,
-        NodeContextMode contextMode
-) {
+        NodeContextMode contextMode,
+        String contextGroupKey) {
     public RunNode {
         Objects.requireNonNull(scopeMode, "scopeMode must not be null");
         contextMode = NodeContextMode.legacyDefault(contextMode);
+        ContextIterationPolicy.validateGroup(contextMode, contextGroupKey);
     }
 
     public RunNode(final UUID workflowRunId, final UUID sourceNodeId, final UUID sourceAgentId,
@@ -29,4 +30,19 @@ public record RunNode(
                 executionModel, inputMode, position, scopeMode, NodeContextMode.FRESH_EACH_NODE_RUN);
     }
 
+
+    public RunNode(UUID workflowRunId,
+        UUID sourceNodeId,
+        UUID sourceAgentId,
+        String agentName,
+        String agentInstructions,
+        AgentOutputSchema agentOutputSchema,
+        NodeRunExecutionModel executionModel,
+        NodeInputMode inputMode,
+        NodePosition position,
+        NodeScopeMode scopeMode,
+        NodeContextMode contextMode) {
+        this(workflowRunId, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema,
+                executionModel, inputMode, position, scopeMode, contextMode, null);
+    }
 }

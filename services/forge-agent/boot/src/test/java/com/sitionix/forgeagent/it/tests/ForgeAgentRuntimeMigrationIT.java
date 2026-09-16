@@ -64,6 +64,49 @@ class ForgeAgentRuntimeMigrationIT {
     private DataSource dataSource;
 
     @Test
+    void iterationMigrationPreservesHistoryAndEnforcesIdentityAndCurrentSessionKeys() {
+        final String schema = "iteration_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        final UUID run = UUID.randomUUID(), node = UUID.randomUUID(), invocation = UUID.randomUUID();
+        final UUID session = UUID.randomUUID(), turn = UUID.randomUUID(), iteration = UUID.randomUUID();
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, MigrationVersion.fromVersion("31")).migrate();
+            this.insertHistoricalTrackedTurn(jdbc, schema, run, node, invocation, session, turn);
+            this.flyway(schema, null).migrate();
+            assertThat(jdbc.queryForMap("SELECT context_group_key,context_iteration_id FROM %s.node_runs WHERE id=?".formatted(schema), invocation))
+                    .containsEntry("context_group_key", null).containsEntry("context_iteration_id", null);
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET context_iteration_id=? WHERE id=?".formatted(schema), iteration, session))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.node_runs SET context_mode='REUSE_WITHIN_WORKFLOW_ITERATION' WHERE id=?".formatted(schema), invocation))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            jdbc.update("UPDATE %s.agent_execution_sessions SET context_mode='REUSE_WITHIN_WORKFLOW_ITERATION',context_iteration_id=? WHERE id=?".formatted(schema), iteration, session);
+            jdbc.update("UPDATE %s.agent_execution_sessions SET context_reset_at=clock_timestamp() WHERE id=?".formatted(schema), session);
+            for (UUID repository : java.util.Arrays.asList(null, UUID.randomUUID())) {
+                if (repository != null) jdbc.update("INSERT INTO %s.workflow_run_repositories(workflow_run_id,repository_id,repository_ordinal) VALUES (?,?,0)".formatted(schema), run, repository);
+                final UUID current = UUID.randomUUID();
+                this.insertIterationSession(jdbc, schema, session, current, iteration, repository);
+                assertThatThrownBy(() -> this.insertIterationSession(jdbc, schema, session, UUID.randomUUID(), iteration, repository))
+                        .isInstanceOf(DuplicateKeyException.class);
+                this.insertIterationSession(jdbc, schema, session, UUID.randomUUID(), UUID.randomUUID(), repository);
+                jdbc.update("UPDATE %s.agent_execution_sessions SET context_reset_at=clock_timestamp() WHERE id=?".formatted(schema), current);
+                this.insertIterationSession(jdbc, schema, session, UUID.randomUUID(), iteration, repository);
+            }
+        } finally {
+            jdbc.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    private void insertIterationSession(JdbcTemplate jdbc, String schema, UUID source, UUID id, UUID iteration, UUID repository) {
+        jdbc.update("""
+                INSERT INTO %1$s.agent_execution_sessions(id,workflow_run_id,source_node_id,source_agent_id,repository_id,
+                    provider_id,context_mode,context_iteration_id,status,created_at,updated_at)
+                SELECT ?,workflow_run_id,source_node_id,source_agent_id,?,provider_id,context_mode,?,'IDLE',created_at,updated_at
+                FROM %1$s.agent_execution_sessions WHERE id=?
+                """.formatted(schema), id, repository, iteration, source);
+    }
+
+    @Test
     void v26CreatesFencedAgentSessionAndTurnContract() {
         final String schema = "agent_sessions_" + UUID.randomUUID().toString().replace("-", "");
         final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);

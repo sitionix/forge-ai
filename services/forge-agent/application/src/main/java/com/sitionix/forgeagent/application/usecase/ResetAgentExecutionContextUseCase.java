@@ -24,7 +24,7 @@ public class ResetAgentExecutionContextUseCase {
         final AgentExecutionSession identity = this.sessions.findSession(sessionId).orElseThrow(() -> missing(sessionId));
         this.sessions.lockReusableScope(identity.workflowRunId(), identity.sourceNodeId(), identity.repositoryId());
         final AgentExecutionSession session = this.sessions.lockSession(sessionId).orElseThrow(() -> missing(sessionId));
-        if (session.contextMode() != NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE) {
+        if (!session.contextMode().reusable()) {
             throw new ConflictException(AgentContextResetEligibility.NOT_ALLOWED, "Fresh agent contexts cannot be reset.");
         }
         if (session.contextResetAt() == null) {

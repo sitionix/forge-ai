@@ -11,9 +11,20 @@ public record NodeRequest(
         List<NodePortRequest> outputs,
         NodePositionRequest position,
         String scopeMode,
-        String contextMode
-) {
+        String contextMode,
+        String contextGroupKey) {
     public NodeRequest(UUID id,UUID targetId,String inputMode,List<NodePortRequest> inputs,List<NodePortRequest> outputs,NodePositionRequest position,String scopeMode) {
         this(id,targetId,inputMode,inputs,outputs,position,scopeMode,null);
+    }
+
+    public NodeRequest(UUID id,
+        UUID targetId,
+        String inputMode,
+        List<NodePortRequest> inputs,
+        List<NodePortRequest> outputs,
+        NodePositionRequest position,
+        String scopeMode,
+        String contextMode) {
+        this(id, targetId, inputMode, inputs, outputs, position, scopeMode, contextMode, null);
     }
 }

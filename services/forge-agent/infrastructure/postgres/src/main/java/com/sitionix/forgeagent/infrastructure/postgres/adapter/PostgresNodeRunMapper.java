@@ -44,7 +44,8 @@ final class PostgresNodeRunMapper {
                 entity.getRepositoryId(),
                 contextMode(entity.getContextMode()),
                 entity.getContextTrackingVersion(),
-                entity.getRetryOfNodeRunId()
+                entity.getRetryOfNodeRunId(),
+                entity.getContextGroupKey(), entity.getContextIterationId()
         );
     }
 
@@ -63,6 +64,8 @@ final class PostgresNodeRunMapper {
         entity.setExecutionFrameId(nodeRun.executionFrameId());
         entity.setRepositoryId(nodeRun.repositoryId());
         entity.setContextMode(nodeRun.contextMode().name());
+        entity.setContextGroupKey(nodeRun.contextGroupKey());
+        entity.setContextIterationId(nodeRun.contextIterationId());
         entity.setContextTrackingVersion(nodeRun.contextTrackingVersion());
         entity.setEnteredViaInputPortId(nodeRun.enteredViaInputPortId());
         entity.setActivationFrameId(nodeRun.activationFrameId());

@@ -12,11 +12,12 @@ public record Node(
         List<NodePort> outputs,
         NodePosition position,
         NodeScopeMode scopeMode,
-        NodeContextMode contextMode
-) {
+        NodeContextMode contextMode,
+        String contextGroupKey) {
     public Node {
         Objects.requireNonNull(scopeMode, "scopeMode must not be null");
         contextMode = NodeContextMode.legacyDefault(contextMode);
+        ContextIterationPolicy.validateGroup(contextMode, contextGroupKey);
     }
 
     public Node(final UUID id,
@@ -29,4 +30,15 @@ public record Node(
         this(id, targetId, inputMode, inputs, outputs, position, scopeMode, NodeContextMode.FRESH_EACH_NODE_RUN);
     }
 
+
+    public Node(UUID id,
+        UUID targetId,
+        NodeInputMode inputMode,
+        List<NodePort> inputs,
+        List<NodePort> outputs,
+        NodePosition position,
+        NodeScopeMode scopeMode,
+        NodeContextMode contextMode) {
+        this(id, targetId, inputMode, inputs, outputs, position, scopeMode, contextMode, null);
+    }
 }

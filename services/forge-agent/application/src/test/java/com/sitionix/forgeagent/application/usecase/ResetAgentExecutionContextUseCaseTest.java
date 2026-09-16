@@ -57,7 +57,7 @@ class ResetAgentExecutionContextUseCaseTest {
     void freshAndUnsafeSessionsAreRejected() {
         for (final var mode : NodeContextMode.values()) {
             for (final var status : AgentExecutionSessionStatus.values()) {
-                if (mode == NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE && status == AgentExecutionSessionStatus.IDLE) continue;
+                if (mode.reusable() && status == AgentExecutionSessionStatus.IDLE) continue;
                 final var session = session(mode, status, null);
                 prepare(session);
                 assertThatThrownBy(() -> this.useCase.execute(session.id())).isInstanceOf(ConflictException.class);
@@ -85,6 +85,6 @@ class ResetAgentExecutionContextUseCaseTest {
                                                   final Instant resetAt) {
         return new AgentExecutionSession(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null,
                 "codex", "thread-1", "0.154.0", mode, status, null, null, null, 1, null, null, null,
-                Instant.now(), Instant.now(), null, resetAt);
+                Instant.now(), Instant.now(), null, resetAt, mode == NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION ? UUID.randomUUID() : null);
     }
 }

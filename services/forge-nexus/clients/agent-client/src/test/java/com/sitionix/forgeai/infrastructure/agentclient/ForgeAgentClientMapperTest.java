@@ -102,6 +102,18 @@ class ForgeAgentClientMapperTest {
     private final ForgeAgentClientMapper mapper = new ForgeAgentClientMapper(this.objectMapper);
 
     @Test
+    void iterationGroupSurvivesClientRequestAndResponse() {
+        var node = new Node(NODE_ID, AGENT_ID, "DEPENDENCIES_ONLY", List.of(), List.of(), new NodePosition(0, 0),
+                "GLOBAL", "REUSE_WITHIN_WORKFLOW_ITERATION", "implementation-review");
+        var request = mapper.toRequest(new SaveAgentWorkflowCommand("Iteration", List.of(node), List.of(), INPUT_ID, OUTPUT_ID));
+        assertThat(request.nodes().getFirst().contextGroupKey()).isEqualTo("implementation-review");
+        var responseNode = new NodeResponse(NODE_ID, AGENT_ID, "DEPENDENCIES_ONLY", List.of(), List.of(), new NodePositionResponse(0, 0),
+                "GLOBAL", "REUSE_WITHIN_WORKFLOW_ITERATION", "implementation-review");
+        var response = new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Iteration", List.of(responseNode), List.of(), INPUT_ID, OUTPUT_ID, CREATED, UPDATED);
+        assertThat(mapper.toDomain(response).nodes().getFirst()).isEqualTo(node);
+    }
+
+    @Test
     void projectCommandMapsToRequest() {
         assertThat(this.mapper.toRequest(new CreateAgentProjectCommand("Sitionix")))
                 .isEqualTo(new AgentProjectRequest("Sitionix"));

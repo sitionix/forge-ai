@@ -3729,6 +3729,46 @@ describe('Agent projects page', () => {
     expect(details.textContent).toContain('Invocation #2');
   });
 
+  it('iteration details number groups deterministically and keep session histories separate', async () => {
+    const mode = 'REUSE_WITHIN_WORKFLOW_ITERATION';
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: mode, contextGroupKey: 'implementation-review' }]);
+    const runs = [0, 1, 2].map((index) => ({
+      ...modernNodeRun(`impl-${index}`, 'implementer', 'SUCCEEDED', `2026-08-13T10:0${index}:00Z`),
+      repositoryId: null, contextMode: mode, contextTrackingVersion: 1, contextGroupKey: 'implementation-review', contextIterationId: index < 2 ? 'iteration-a' : 'iteration-b'
+    }));
+    const contexts = runs.map((run, index) => ({
+      sessionId: index < 2 ? 'session-a' : 'session-b', turnId: `turn-${index}`, nodeRunId: run.id,
+      sourceNodeId: 'implementer', repositoryId: null, contextMode: mode, contextIterationId: run.contextIterationId,
+      sequence: index === 1 ? 2 : 1, sessionStatus: 'IDLE', turnStatus: 'SUCCEEDED', provider: 'codex',
+      providerConversationId: index < 2 ? 'thread-a' : 'thread-b', resetAllowed: true
+    }));
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', runs, 'Iterations', graph))),
+      getAgentExecutionContexts: vi.fn(() => Promise.resolve(contexts))
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1'); await flushAsync();
+    dom.window.document.querySelector<HTMLElement>('[data-execution-source-node-id="implementer"]')!.click();
+    const details = dom.window.document.getElementById('agentsV2NodeRunDetails')!;
+    expect(details.textContent).toContain('Reuse within iteration');
+    expect(details.textContent).toContain('implementation-review');
+    expect(details.textContent?.replace(/\s/g, '')).toContain('Iteration#2');
+    expect(details.textContent).toContain('iteration-b');
+    expect(details.textContent).toContain('Reset context');
+    expect(details.querySelector('[data-context-node-run="impl-0"]')).toBeNull();
+    expect(details.querySelector('[data-context-node-run="impl-1"]')).toBeNull();
+    page.taskExecutionView.state.selectedNodeRunId = 'impl-1';
+    page.taskExecutionView.state.nodeRunSelectionMode = 'PINNED_INVOCATION';
+    const html = page.taskExecutionView.renderContextDetails(runs[1], contexts[1]);
+    expect(html).toContain('iteration-a');
+    expect(html).toContain('data-context-node-run="impl-0"');
+    expect(html).not.toContain('data-context-node-run="impl-2"');
+    const mismatched = { ...contexts[2], contextIterationId: 'iteration-a' };
+    expect(page.taskExecutionView.hasVerifiedActivityTurn(runs[2], mismatched)).toBe(false);
+    expect(page.taskExecutionView.renderContextDetails(runs[2], mismatched)).toContain('Unavailable');
+  });
+
   it('an unexecuted card follows its first invocation when it appears', async () => {
     const graph = runtimeGraph([{ id: 'reviewer', agentName: 'Reviewer' }]);
     const fakeApi = api({
@@ -6700,7 +6740,7 @@ describe('Agent projects page', () => {
     scopeSelect.value = 'PER_SCOPE';
     scopeSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     const radios = [...dom.window.document.querySelectorAll<HTMLInputElement>('[data-node-editor-context-mode]')];
-    expect(radios).toHaveLength(2);
+    expect(radios).toHaveLength(3);
     expect(radios[0]!.checked).toBe(true);
     expect(dom.window.document.getElementById('agentsV2NodeEditorBody')?.textContent)
       .toContain('Each repository keeps its own independent context.');
@@ -6741,6 +6781,28 @@ describe('Agent projects page', () => {
       taskInputPortId: 'node-1-input',
       taskOutputPortId: 'node-2-output'
     });
+  });
+
+  it('Workflow Builder requires an iteration group and persists it through save', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20)
+    ], project().id, [connection('node-1', 'node-2')], 'node-1-input', 'node-2-output'))) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    clickNode(dom, 'node-2');
+    const radio = dom.window.document.querySelector<HTMLInputElement>('[data-node-editor-context-mode][value="REUSE_WITHIN_WORKFLOW_ITERATION"]')!;
+    expect(radio).not.toBeNull();
+    radio.checked = true;
+    radio.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
+    const group = dom.window.document.querySelector<HTMLInputElement>('[data-node-editor-context-group]')!;
+    expect(group).not.toBeNull();
+    group.value = 'implementation-review';
+    dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
+    await page.workflowBuilder.save();
+    expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', expect.objectContaining({
+      nodes: expect.arrayContaining([expect.objectContaining({ id: 'node-2', contextMode: 'REUSE_WITHIN_WORKFLOW_ITERATION', contextGroupKey: 'implementation-review' })])
+    }));
   });
 
   it('Workflow Builder rejects malformed node scope mode instead of defaulting to global', async () => {

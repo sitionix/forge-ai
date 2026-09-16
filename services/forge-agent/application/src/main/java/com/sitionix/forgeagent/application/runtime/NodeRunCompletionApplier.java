@@ -80,7 +80,7 @@ public class NodeRunCompletionApplier {
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
                 nodeRun.contextTrackingVersion(),
-                nodeRun.retryOfNodeRunId()
+                nodeRun.retryOfNodeRunId(), nodeRun.contextGroupKey(), nodeRun.contextIterationId()
         );
     }
 
@@ -110,7 +110,7 @@ public class NodeRunCompletionApplier {
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
                 nodeRun.contextTrackingVersion(),
-                nodeRun.retryOfNodeRunId()
+                nodeRun.retryOfNodeRunId(), nodeRun.contextGroupKey(), nodeRun.contextIterationId()
         );
     }
 
