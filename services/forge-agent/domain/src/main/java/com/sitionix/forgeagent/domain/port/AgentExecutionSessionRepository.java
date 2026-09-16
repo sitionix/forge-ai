@@ -14,6 +14,7 @@ import java.util.List;
 public interface AgentExecutionSessionRepository {
     Optional<AgentExecutionSession> findSession(UUID sessionId);
     void lockReusableScope(UUID workflowRunId, UUID sourceNodeId, UUID repositoryId);
+    void lockSharedScope(UUID workflowRunId, UUID contextIterationId, String contextGroupKey, UUID repositoryId);
     Optional<AgentExecutionSession> lockSession(UUID sessionId);
     boolean hasPendingTurns(UUID sessionId);
     void markContextReset(UUID sessionId);

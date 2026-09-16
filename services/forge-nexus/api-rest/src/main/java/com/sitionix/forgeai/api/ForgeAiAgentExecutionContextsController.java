@@ -26,6 +26,6 @@ public class ForgeAiAgentExecutionContextsController {
     }
 
     private AgentExecutionContextResponse response(com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionContext value) {
-        return new AgentExecutionContextResponse(value.sessionId(), value.turnId(), value.nodeRunId(), value.sourceNodeId(), value.repositoryId(), value.contextMode(), value.sequence(), value.sessionStatus(), value.turnStatus(), value.provider(), value.providerConversationId(), value.providerTurnId(), value.providerVersion(), value.failureCode(), value.failureMessage(), value.createdAt(), value.startedAt(), value.finishedAt(), value.contextResetAt(), value.resetAllowed(), value.resetReason(), value.contextIterationId());
+        return new AgentExecutionContextResponse(value.sessionId(), value.turnId(), value.nodeRunId(), value.sourceNodeId(), value.repositoryId(), value.contextMode(), value.sequence(), value.sessionStatus(), value.turnStatus(), value.provider(), value.providerConversationId(), value.providerTurnId(), value.providerVersion(), value.failureCode(), value.failureMessage(), value.createdAt(), value.startedAt(), value.finishedAt(), value.contextResetAt(), value.resetAllowed(), value.resetReason(), value.contextIterationId(), value.contextGroupKey());
     }
 }

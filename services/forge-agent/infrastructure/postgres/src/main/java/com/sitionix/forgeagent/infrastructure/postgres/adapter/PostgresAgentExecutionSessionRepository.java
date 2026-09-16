@@ -32,6 +32,13 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     }
 
     @Override
+    public void lockSharedScope(final UUID workflowRunId, final UUID contextIterationId,
+                                final String contextGroupKey, final UUID repositoryId) {
+        this.jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", Object.class,
+                "shared:" + workflowRunId + ":" + contextIterationId + ":" + repositoryId + ":" + contextGroupKey);
+    }
+
+    @Override
     public Optional<AgentExecutionSession> lockSession(final UUID sessionId) {
         return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE id=? FOR UPDATE", this::session, sessionId).stream().findFirst();
     }
@@ -63,24 +70,33 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     }
 
     private AgentExecutionSession findOrCreateReusable(final NodeRun nodeRun, final String providerId) {
-        this.lockReusableScope(nodeRun.workflowRunId(), nodeRun.sourceNodeId(), nodeRun.repositoryId());
+        if (nodeRun.contextMode() == NodeContextMode.SHARED_SESSION_GROUP) {
+            this.lockSharedScope(nodeRun.workflowRunId(), nodeRun.contextIterationId(), nodeRun.contextGroupKey(), nodeRun.repositoryId());
+        } else {
+            this.lockReusableScope(nodeRun.workflowRunId(), nodeRun.sourceNodeId(), nodeRun.repositoryId());
+        }
         final List<AgentExecutionSession> existing = this.findReusable(nodeRun);
         if (!existing.isEmpty()) return existing.getFirst();
         return this.createSession(nodeRun, providerId);
     }
 
     private List<AgentExecutionSession> findReusable(final NodeRun nodeRun) {
+        if (nodeRun.contextMode() == NodeContextMode.SHARED_SESSION_GROUP) {
+            return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE workflow_run_id=? AND context_iteration_id=? AND context_group_key=? AND context_mode='SHARED_SESSION_GROUP' AND repository_id IS NOT DISTINCT FROM ? AND context_reset_at IS NULL FOR UPDATE",
+                    this::session, nodeRun.workflowRunId(), nodeRun.contextIterationId(), nodeRun.contextGroupKey(), nodeRun.repositoryId());
+        }
         return this.jdbc.query("SELECT * FROM agent_execution_sessions WHERE workflow_run_id=? AND source_node_id=? AND context_mode=? AND context_iteration_id IS NOT DISTINCT FROM ? AND repository_id IS NOT DISTINCT FROM ? AND context_reset_at IS NULL FOR UPDATE",
                 this::session, nodeRun.workflowRunId(), nodeRun.sourceNodeId(), nodeRun.contextMode().name(), nodeRun.contextIterationId(), nodeRun.repositoryId());
     }
 
     private AgentExecutionSession createSession(final NodeRun nodeRun, final String providerId) {
         if (providerId == null || providerId.isBlank()) throw new ConflictException("AGENT_CONTEXT_PERSISTENCE_FAILED", "Execution provider is required for an agent context.");
+        final boolean shared = nodeRun.contextMode() == NodeContextMode.SHARED_SESSION_GROUP;
         final UUID id = UUID.randomUUID();
         final Instant now = Instant.now();
-        this.jdbc.update("INSERT INTO agent_execution_sessions(id,workflow_run_id,source_node_id,source_agent_id,repository_id,provider_id,context_mode,context_iteration_id,status,lease_token,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,0,?,?)",
-                id, nodeRun.workflowRunId(), nodeRun.sourceNodeId(), nodeRun.sourceAgentId(), nodeRun.repositoryId(), providerId,
-                nodeRun.contextMode().name(), nodeRun.contextIterationId(), AgentExecutionSessionStatus.WAITING.name(),
+        this.jdbc.update("INSERT INTO agent_execution_sessions(id,workflow_run_id,source_node_id,source_agent_id,repository_id,provider_id,context_mode,context_iteration_id,context_group_key,status,lease_token,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)",
+                id, nodeRun.workflowRunId(), shared ? null : nodeRun.sourceNodeId(), shared ? null : nodeRun.sourceAgentId(), nodeRun.repositoryId(), providerId,
+                nodeRun.contextMode().name(), nodeRun.contextIterationId(), shared ? nodeRun.contextGroupKey() : null, AgentExecutionSessionStatus.WAITING.name(),
                 Timestamp.from(now), Timestamp.from(now));
         return this.jdbc.queryForObject("SELECT * FROM agent_execution_sessions WHERE id=?", this::session, id);
     }
@@ -359,7 +375,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
                 rs.getString("provider_id"), rs.getString("provider_conversation_id"), rs.getString("provider_version"), NodeContextMode.valueOf(rs.getString("context_mode")),
                 AgentExecutionSessionStatus.valueOf(rs.getString("status")), enumValue(AgentExecutionTerminalOutcome.class, rs.getString("terminal_outcome")),
                 rs.getObject("active_node_run_id", UUID.class), rs.getString("lease_owner_id"), rs.getLong("lease_token"), instant(rs, "lease_expires_at"),
-                rs.getString("failure_code"), rs.getString("failure_message"), instant(rs, "created_at"), instant(rs, "updated_at"), instant(rs, "closed_at"), instant(rs, "context_reset_at"), rs.getObject("context_iteration_id", UUID.class));
+                rs.getString("failure_code"), rs.getString("failure_message"), instant(rs, "created_at"), instant(rs, "updated_at"), instant(rs, "closed_at"), instant(rs, "context_reset_at"), rs.getObject("context_iteration_id", UUID.class), rs.getString("context_group_key"));
     }
 
     private AgentExecutionTurn turn(final ResultSet rs) throws SQLException {

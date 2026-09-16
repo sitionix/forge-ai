@@ -69,6 +69,35 @@ class AgentExecutionContextsControllerTest {
         verify(this.reset).execute(session.id());
     }
 
+    @Test
+    void sharedReadAndResetKeepGroupOwnershipAndEachActualNodeRun() {
+        final var iterationId = UUID.randomUUID();
+        final var now = Instant.now();
+        for (final Instant resetAt : new Instant[] { null, now }) {
+            final var shared = new AgentExecutionSession(UUID.randomUUID(), UUID.randomUUID(), null, null, null,
+                    "codex", "shared-thread", "0.154.0", NodeContextMode.SHARED_SESSION_GROUP,
+                    AgentExecutionSessionStatus.IDLE, null, null, null, 1,
+                    null, null, null, now, now, null, resetAt, iterationId, "implementation-loop");
+            final var first = allocation(shared, AgentExecutionTurnStatus.SUCCEEDED, 1);
+            final var second = allocation(shared, AgentExecutionTurnStatus.SUCCEEDED, 2);
+            when(this.list.list(shared.workflowRunId())).thenReturn(List.of(first, second));
+            when(this.reset.execute(shared.id())).thenReturn(List.of(first, second));
+            final var rows = resetAt == null ? this.controller.list(shared.workflowRunId()) : this.controller.reset(shared.id());
+            assertThat(rows).extracting(row -> row.nodeRunId()).containsExactly(first.turn().nodeRunId(), second.turn().nodeRunId());
+            assertThat(rows).extracting(row -> row.sequence()).containsExactly(1, 2);
+            assertThat(rows).allSatisfy(row -> {
+                assertThat(row.sourceNodeId()).isNull();
+                assertThat(row.contextMode()).isEqualTo("SHARED_SESSION_GROUP");
+                assertThat(row.contextGroupKey()).isEqualTo("implementation-loop");
+                assertThat(row.contextIterationId()).isEqualTo(iterationId);
+                assertThat(row.sessionId()).isEqualTo(shared.id());
+                assertThat(row.providerConversationId()).isEqualTo("shared-thread");
+                assertThat(row.contextResetAt()).isEqualTo(resetAt);
+                assertThat(row.resetAllowed()).isEqualTo(resetAt == null);
+            });
+        }
+    }
+
     private static AgentExecutionSession session(final NodeContextMode mode, final Instant resetAt) {
         return new AgentExecutionSession(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null,
                 "codex", "thread-original", "0.154.0", mode, AgentExecutionSessionStatus.IDLE, null, null, null, 1,

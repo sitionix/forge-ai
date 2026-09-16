@@ -29,6 +29,8 @@ const PER_SCOPE_MODE = 'PER_SCOPE';
 const FRESH_CONTEXT_MODE = 'FRESH_EACH_NODE_RUN';
 const REUSE_CONTEXT_MODE = 'REUSE_WITHIN_WORKFLOW_NODE';
 const ITERATION_CONTEXT_MODE = 'REUSE_WITHIN_WORKFLOW_ITERATION';
+const SHARED_CONTEXT_MODE = 'SHARED_SESSION_GROUP';
+const ITERATION_CONTEXT_MODES = [ITERATION_CONTEXT_MODE, SHARED_CONTEXT_MODE];
 const NODE_DRAG_THRESHOLD = 3;
 const EDGE_CORNER_RADIUS = 12;
 const EDGE_ROUTE_CLEARANCE = 32;
@@ -768,7 +770,10 @@ export class WorkflowBuilder {
         <label><input type="radio" name="node-context-mode" value="${ITERATION_CONTEXT_MODE}" data-node-editor-context-mode ${this.nodeContextMode(node) === ITERATION_CONTEXT_MODE ? 'checked' : ''}>
           <span><strong>Reuse within iteration</strong><small>Nodes with the same iteration group keep their own agent contexts while collaborating inside one iteration. Leaving the group and entering it again starts clean contexts.</small></span>
         </label>
-        ${this.nodeContextMode(node) === ITERATION_CONTEXT_MODE ? `<label>Context iteration group<input class="text-input" data-node-editor-context-group value="${escapeHtml(node.contextGroupKey || '')}" placeholder="implementation-review"></label>` : ''}
+        <label><input type="radio" name="node-context-mode" value="${SHARED_CONTEXT_MODE}" data-node-editor-context-mode ${this.nodeContextMode(node) === SHARED_CONTEXT_MODE ? 'checked' : ''}>
+          <span><strong>Shared session within iteration</strong><small>Nodes in this group share one provider conversation during one workflow iteration. Leaving the group and entering it again starts a new conversation.</small></span>
+        </label>
+        ${ITERATION_CONTEXT_MODES.includes(this.nodeContextMode(node)) ? `<label>${this.nodeContextMode(node) === SHARED_CONTEXT_MODE ? 'Context group' : 'Context iteration group'}<input class="text-input" data-node-editor-context-group value="${escapeHtml(node.contextGroupKey || '')}" placeholder="${this.nodeContextMode(node) === SHARED_CONTEXT_MODE ? 'implementation-loop' : 'implementation-review'}"></label>` : ''}
       </fieldset>
       <div class="node-editor-input-mode">
         <label class="field-label" for="agentsV2NodeEditorScopeMode">Execution</label>
@@ -949,7 +954,7 @@ export class WorkflowBuilder {
     if (contextMode) this.nodeEditorDraft.contextMode = this.normalizeContextMode(contextMode);
     const group = this.byId('agentsV2NodeEditorBody').querySelector('[data-node-editor-context-group]');
     if (group) this.nodeEditorDraft.contextGroupKey = group.value;
-    if (contextMode !== ITERATION_CONTEXT_MODE) this.nodeEditorDraft.contextGroupKey = null;
+    if (!ITERATION_CONTEXT_MODES.includes(contextMode)) this.nodeEditorDraft.contextGroupKey = null;
   }
 
   saveNodeEditor() {
@@ -976,9 +981,13 @@ export class WorkflowBuilder {
   }
 
   validateNodeEditorDraft() {
-    if (this.nodeContextMode(this.nodeEditorDraft) === ITERATION_CONTEXT_MODE) {
+    if (ITERATION_CONTEXT_MODES.includes(this.nodeContextMode(this.nodeEditorDraft))) {
       const group = String(this.nodeEditorDraft.contextGroupKey || '');
       if (!group.trim()) return 'Context iteration group is required.';
+      if ((this.workflow?.nodes || []).some((node) => node.id !== this.nodeEditorNodeId
+        && node.contextGroupKey === group && this.nodeContextMode(node) !== this.nodeContextMode(this.nodeEditorDraft))) {
+        return 'Nodes in a context group must use the same context mode (CONTEXT_GROUP_MODE_CONFLICT).';
+      }
       if ((this.workflow?.nodes || []).some((node) => node.id !== this.nodeEditorNodeId
         && node.contextGroupKey === group && this.nodeScopeMode(node) !== this.nodeScopeMode(this.nodeEditorDraft))) {
         return 'Nodes in an iteration group must use the same execution scope.';
@@ -1410,7 +1419,7 @@ export class WorkflowBuilder {
         inputMode: this.nodeInputMode(node),
         scopeMode: this.nodeScopeMode(node),
         contextMode: this.nodeContextMode(node),
-        ...(this.nodeContextMode(node) === ITERATION_CONTEXT_MODE ? { contextGroupKey: node.contextGroupKey } : {}),
+        ...(ITERATION_CONTEXT_MODES.includes(this.nodeContextMode(node)) ? { contextGroupKey: node.contextGroupKey } : {}),
         inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
         outputs: this.reindexPorts(node.outputs).map((port) => this.normalizedPort(port)),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1473,7 +1482,7 @@ export class WorkflowBuilder {
         inputMode: this.nodeInputMode(node),
         scopeMode: this.nodeScopeMode(node),
         contextMode: this.nodeContextMode(node),
-        ...(this.nodeContextMode(node) === ITERATION_CONTEXT_MODE ? { contextGroupKey: node.contextGroupKey } : {}),
+        ...(ITERATION_CONTEXT_MODES.includes(this.nodeContextMode(node)) ? { contextGroupKey: node.contextGroupKey } : {}),
         inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
         outputs: this.reindexPorts(node.outputs).map((port) => this.normalizedPort(port)),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1495,7 +1504,7 @@ export class WorkflowBuilder {
       inputMode: this.nodeInputMode(node),
       scopeMode: this.nodeScopeMode(node),
       contextMode: this.nodeContextMode(node),
-        ...(this.nodeContextMode(node) === ITERATION_CONTEXT_MODE ? { contextGroupKey: node.contextGroupKey } : {}),
+        ...(ITERATION_CONTEXT_MODES.includes(this.nodeContextMode(node)) ? { contextGroupKey: node.contextGroupKey } : {}),
       inputs: this.reindexPorts(node.inputs).map((port) => ({ ...port })),
       outputs: this.reindexPorts(node.outputs).map((port) => ({ ...port })),
       position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1528,7 +1537,7 @@ export class WorkflowBuilder {
   normalizeContextMode(contextMode) {
     if (contextMode == null || contextMode === FRESH_CONTEXT_MODE) return FRESH_CONTEXT_MODE;
     if (contextMode === REUSE_CONTEXT_MODE) return REUSE_CONTEXT_MODE;
-    if (contextMode === ITERATION_CONTEXT_MODE) return ITERATION_CONTEXT_MODE;
+    if (ITERATION_CONTEXT_MODES.includes(contextMode)) return contextMode;
     throw new Error('Workflow node context mode is invalid.');
   }
 

@@ -321,6 +321,46 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
+    void sharedGroupResumeUsesEachNodesInstructionsAndSchemaOnTheSameThread() throws Exception {
+        final List<FakeCodexProcess> processes = List.of(
+                new FakeCodexProcess(false, true), new FakeCodexProcess(false, true),
+                new FakeCodexProcess(false, true));
+        final CodexAppServerClient client = this.client(
+                new FakeStarter(processes.toArray(FakeCodexProcess[]::new)), this.properties());
+        for (int index = 0; index < processes.size(); index++) {
+            final int sequence = index + 1;
+            final boolean nodeB = index == 1;
+            final String instructions = nodeB ? "Review as Node B." : "Implement as Node A.";
+            final JsonNode schema = this.objectMapper.readTree(nodeB
+                    ? "{\"type\":\"object\",\"properties\":{\"review\":{\"type\":\"string\"}}}"
+                    : "{\"type\":\"object\",\"properties\":{\"implementation\":{\"type\":\"string\"}}}");
+            final FakeCodexProcess process = processes.get(index);
+            final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeDurable(
+                    new CodexTurnRequest("Current node input", instructions, "model-a", null,
+                            schema, this.workspace(), true),
+                    sequence == 1 ? null : "thread-shared", new CodexExecutionIdentityCallbacks() {
+                        public void conversationStarted(String id, String version) {
+                            assertThat(sequence).isEqualTo(1);
+                        }
+                        public void turnStarted(String id) { }
+                    }));
+            this.initialize(process);
+            final JsonNode thread = this.readRequest(process);
+            assertThat(thread.path("method").asText()).isEqualTo(sequence == 1 ? "thread/start" : "thread/resume");
+            assertThat(thread.path("params").path("developerInstructions").asText()).isEqualTo(instructions);
+            if (sequence > 1) assertThat(thread.path("params").path("threadId").asText()).isEqualTo("thread-shared");
+            this.replyThread(process, thread, "thread-shared");
+            final JsonNode turn = this.readRequest(process);
+            assertThat(turn.path("params").path("threadId").asText()).isEqualTo("thread-shared");
+            assertThat(turn.path("params").path("outputSchema")).isEqualTo(schema);
+            this.replyTurn(process, turn, "turn-" + sequence);
+            this.complete(process, "thread-shared", "turn-" + sequence, "{\"result\":\"OK\"}");
+            assertThat(result.get(1, TimeUnit.SECONDS)).contains("OK");
+        }
+        client.close();
+    }
+
+    @Test
     void durableResumeNeverStartsReplacementThread() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
@@ -334,6 +374,7 @@ class CodexAppServerTurnClientTest {
         final JsonNode resume=this.readRequest(process);
         assertThat(resume.path("method").asText()).isEqualTo("thread/resume");
         assertThat(resume.path("params").path("excludeTurns").asBoolean()).isTrue();
+        assertThat(resume.path("params").has("developerInstructions")).isFalse();
         process.writeStdout("{\"id\":\""+resume.path("id").asText()+"\",\"error\":{\"code\":-32600,\"message\":\"missing\"}}");
         assertThatThrownBy(() -> result.get(1,TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
         assertThat(process.pendingClientRequestBytes()).isZero();

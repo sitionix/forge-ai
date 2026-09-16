@@ -11,6 +11,9 @@ public record WorkflowRunGraph(
         List<RunPort> ports,
         List<RunConnection> connections
 ) {
+    public WorkflowRunGraph {
+        ContextIterationPolicy.validateSnapshots(nodes);
+    }
     public WorkflowRunGraph(final UUID workflowRunId,
                             final UUID taskInputPortId,
                             final List<RunNode> nodes,

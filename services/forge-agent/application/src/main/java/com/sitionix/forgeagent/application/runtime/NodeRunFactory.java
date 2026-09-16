@@ -47,7 +47,7 @@ public class NodeRunFactory {
 
     static UUID iteration(final WorkflowRun workflowRun, final RunNode target,
                           final UUID repositoryId, final List<NodeRun> incoming) {
-        if (target.contextMode() != NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION) {
+        if (!target.contextMode().iterationScoped()) {
             return null;
         }
         final var identities = incoming.stream()

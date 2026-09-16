@@ -403,6 +403,29 @@ class CodexAgentExecutorTest {
     }
 
     @Test
+    void sharedGroupUsesCurrentClaimInstructionsSchemaAndRoutingContract() throws Exception {
+        final NodeExecutionClaim base = this.multiOutputClaim();
+        final NodeExecutionClaim shared = new NodeExecutionClaim(base.workflowRunId(), base.nodeRunId(),
+                UUID.randomUUID(), base.workflowInput(), "Reviewer B", "Review as Node B.", base.outputSchema(),
+                base.executionModel(), base.inputEnvelope(), base.availableOutputs(), base.executionWorkspace(),
+                new AgentSessionExecutionClaim(UUID.randomUUID(), UUID.randomUUID(), base.nodeRunId(), "owner", 1,
+                        Instant.now().plusSeconds(30), "thread-shared", "codex", NodeContextMode.SHARED_SESSION_GROUP,
+                        "0.153.2"));
+        this.client.outputText = """
+                {"payload":{"summary":"Reviewed","riskLevel":"LOW"},"__forge":{"outputPortId":"%s"}}
+                """.formatted(OUTPUT_B_ID);
+
+        final AgentExecutionResult result = this.executor.execute(shared);
+
+        assertThat(this.client.request.sharedSessionGroup()).isTrue();
+        assertThat(this.client.request.developerInstructions()).contains("Review as Node B.");
+        assertThat(this.client.request.outputSchema().path("$defs").path("__forge_payload"))
+                .isEqualTo(this.objectMapper.readTree(base.outputSchema().jsonObject()));
+        assertThat(result.selectedOutputPortId()).isEqualTo(OUTPUT_B_ID);
+        assertThat(result.output()).isEqualTo(new NodeRunOutput("{\"summary\":\"Reviewed\",\"riskLevel\":\"LOW\"}"));
+    }
+
+    @Test
     void nullEffortRemainsNull() {
         this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", null), OUTPUT_SCHEMA));
 

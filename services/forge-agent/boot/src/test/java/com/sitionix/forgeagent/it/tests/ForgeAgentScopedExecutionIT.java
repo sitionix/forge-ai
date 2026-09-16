@@ -179,6 +179,67 @@ class ForgeAgentScopedExecutionIT {
     }
 
     @Test
+    void sharedGroupScopesSessionsByRepositoryAndRestartsAfterLeavingTheGroup() {
+        this.seed();
+        this.saveScopedReviewerWorkflow(NodeContextMode.SHARED_SESSION_GROUP, true);
+        final UUID runId = this.createTask(this.repositories(2));
+        final var sessionIds = new java.util.HashSet<UUID>();
+        final var iterationIds = new java.util.HashSet<UUID>();
+        for (UUID repository : List.of(REPOSITORY_A, REPOSITORY_B)) {
+            final NodeRun first = this.onlyPending(runId, IMPLEMENTER, repository);
+            this.completeScopedContext(first, "shared-repository-" + repository);
+            final var initial = this.agentExecutionSessionRepository.findByNodeRunId(first.id()).orElseThrow();
+            assertThat(initial.session().sourceNodeId()).isNull();
+            assertThat(initial.session().sourceAgentId()).isNull();
+            assertThat(initial.session().repositoryId()).isEqualTo(repository);
+            assertThat(initial.session().contextGroupKey()).isEqualTo("implementation-review");
+            assertThat(initial.turn().sequence()).isEqualTo(1);
+            sessionIds.add(initial.session().id());
+            iterationIds.add(first.contextIterationId());
+
+            final NodeRun reviewer = this.onlyPending(runId, REVIEWER, repository);
+            final var review = this.agentExecutionSessionRepository.findByNodeRunId(reviewer.id()).orElseThrow();
+            assertThat(reviewer.sourceAgentId()).isNotEqualTo(first.sourceAgentId());
+            assertThat(reviewer.contextIterationId()).isEqualTo(first.contextIterationId());
+            assertThat(review.session().id()).isEqualTo(initial.session().id());
+            assertThat(review.session().providerConversationId()).isEqualTo("shared-repository-" + repository);
+            assertThat(review.turn().sequence()).isEqualTo(2);
+            when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(REVIEWER_RETURN);
+            this.completeWithWorkspaceAssertion(reviewer, "{}");
+
+            final NodeRun feedback = this.onlyPending(runId, IMPLEMENTER, repository);
+            final var feedbackAllocation = this.agentExecutionSessionRepository.findByNodeRunId(feedback.id()).orElseThrow();
+            assertThat(feedback.contextIterationId()).isEqualTo(first.contextIterationId());
+            assertThat(feedbackAllocation.session().id()).isEqualTo(initial.session().id());
+            assertThat(feedbackAllocation.turn().sequence()).isEqualTo(3);
+            this.completeWithWorkspaceAssertion(feedback, "{}");
+            when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(REVIEWER_PASS);
+            this.completeWithWorkspaceAssertion(this.onlyPending(runId, REVIEWER, repository), "{}");
+
+            final NodeRun outside = this.onlyPending(runId, X, repository);
+            assertThat(outside.contextIterationId()).isNull();
+            when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(X_OUT);
+            this.completeWithWorkspaceAssertion(outside, "{}");
+            final NodeRun reentered = this.onlyPending(runId, IMPLEMENTER, repository);
+            final var replacement = this.agentExecutionSessionRepository.findByNodeRunId(reentered.id()).orElseThrow();
+            assertThat(reentered.contextIterationId()).isNotNull().isNotEqualTo(first.contextIterationId());
+            assertThat(replacement.session().id()).isNotEqualTo(initial.session().id());
+            assertThat(replacement.session().providerConversationId()).isNull();
+            assertThat(replacement.turn().sequence()).isEqualTo(1);
+            this.completeScopedContext(reentered, "shared-repository-new-" + repository);
+            final var nextReviewer = this.agentExecutionSessionRepository.findByNodeRunId(
+                    this.onlyPending(runId, REVIEWER, repository).id()).orElseThrow();
+            assertThat(nextReviewer.session().id()).isEqualTo(replacement.session().id());
+            assertThat(nextReviewer.session().providerConversationId()).isEqualTo("shared-repository-new-" + repository);
+            assertThat(nextReviewer.turn().sequence()).isEqualTo(2);
+            sessionIds.add(replacement.session().id());
+            iterationIds.add(reentered.contextIterationId());
+        }
+        assertThat(sessionIds).hasSize(4);
+        assertThat(iterationIds).hasSize(4).doesNotContainNull();
+    }
+
+    @Test
     void reusablePerScopeNodeAllocatesIndependentRepositorySessions() {
         this.seed();
         this.save(List.of(
@@ -921,17 +982,30 @@ class ForgeAgentScopedExecutionIT {
     }
 
     private void saveScopedReviewerWorkflow(final NodeContextMode contextMode) {
-        this.save(List.of(
+        this.saveScopedReviewerWorkflow(contextMode, false);
+    }
+
+    private void saveScopedReviewerWorkflow(final NodeContextMode contextMode, final boolean allowReentry) {
+        final var nodes = new java.util.ArrayList<>(List.of(
                         new Node(IMPLEMENTER, AGENT_A_ID, NodeInputMode.DEPENDENCIES_ONLY,
                                 List.of(this.port(IMPLEMENTER_INITIAL_IN, "Initial", 0), this.port(IMPLEMENTER_REVIEW_IN, "Review", 1)),
-                                List.of(this.port(IMPLEMENTER_OUT, "Review")), new NodePosition(0.0, 0.0), NodeScopeMode.PER_SCOPE, contextMode, contextMode == NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION ? "implementation-review" : null),
+                                List.of(this.port(IMPLEMENTER_OUT, "Review")), new NodePosition(0.0, 0.0), NodeScopeMode.PER_SCOPE, contextMode, contextMode.iterationScoped() ? "implementation-review" : null),
                         new Node(REVIEWER, AGENT_B_ID, NodeInputMode.DEPENDENCIES_ONLY, List.of(this.port(REVIEWER_IN, "Input")),
                                 List.of(this.port(REVIEWER_PASS, "Pass", 0), this.port(REVIEWER_RETURN, "Return", 1)), new NodePosition(100, 0),
-                                NodeScopeMode.PER_SCOPE, contextMode == NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION ? contextMode : NodeContextMode.FRESH_EACH_NODE_RUN,
-                                contextMode == NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION ? "implementation-review" : null),
-                        this.node(FINAL, AGENT_C_ID, FINAL_IN, FINAL_OUT, 2, NodeScopeMode.GLOBAL)),
-                List.of(this.connection(1, IMPLEMENTER_OUT, REVIEWER_IN), this.connection(2, REVIEWER_PASS, FINAL_IN),
-                        this.connection(3, REVIEWER_RETURN, IMPLEMENTER_REVIEW_IN)), IMPLEMENTER_INITIAL_IN, FINAL_OUT);
+                                NodeScopeMode.PER_SCOPE, contextMode.iterationScoped() ? contextMode : NodeContextMode.FRESH_EACH_NODE_RUN,
+                                contextMode.iterationScoped() ? "implementation-review" : null),
+                        this.node(FINAL, AGENT_C_ID, FINAL_IN, FINAL_OUT, 2, NodeScopeMode.GLOBAL)));
+        final var connections = new java.util.ArrayList<>(List.of(
+                this.connection(1, IMPLEMENTER_OUT, REVIEWER_IN),
+                this.connection(2, REVIEWER_PASS, allowReentry ? X_IN : FINAL_IN),
+                this.connection(3, REVIEWER_RETURN, IMPLEMENTER_REVIEW_IN)));
+        if (allowReentry) {
+            nodes.add(this.node(X, AGENT_C_ID, List.of(this.port(X_IN, "Input")),
+                    List.of(this.port(X_OUT, "Reenter", 0), this.port(B_OTHER, "Finish", 1)), 3, NodeScopeMode.PER_SCOPE));
+            connections.add(this.connection(4, X_OUT, IMPLEMENTER_INITIAL_IN));
+            connections.add(this.connection(5, B_OTHER, FINAL_IN));
+        }
+        this.save(nodes, connections, IMPLEMENTER_INITIAL_IN, FINAL_OUT);
     }
 
     private void saveGuardedSelfLoopWorkflow() {

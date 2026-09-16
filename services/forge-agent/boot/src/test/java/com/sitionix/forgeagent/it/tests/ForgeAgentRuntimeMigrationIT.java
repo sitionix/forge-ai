@@ -64,6 +64,97 @@ class ForgeAgentRuntimeMigrationIT {
     private DataSource dataSource;
 
     @Test
+    void sharedMigrationPreservesHistoricalOwnershipAndEnforcesSharedSessionContract() {
+        final String schema = "shared_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        final UUID run = UUID.randomUUID(), node = UUID.randomUUID(), iteration = UUID.randomUUID();
+        final UUID source = UUID.randomUUID(), reusable = UUID.randomUUID(), legacyIteration = UUID.randomUUID();
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, MigrationVersion.fromVersion("32")).migrate();
+            this.insertHistoricalTrackedTurn(jdbc, schema, run, node, UUID.randomUUID(), source, UUID.randomUUID());
+            for (var entry : java.util.Map.of(reusable, "REUSE_WITHIN_WORKFLOW_NODE", legacyIteration, "REUSE_WITHIN_WORKFLOW_ITERATION").entrySet()) {
+                jdbc.update("""
+                        INSERT INTO %1$s.agent_execution_sessions(id,workflow_run_id,source_node_id,source_agent_id,
+                            provider_id,context_mode,context_iteration_id,status,created_at,updated_at)
+                        SELECT ?,workflow_run_id,source_node_id,source_agent_id,provider_id,?,?,status,created_at,updated_at
+                        FROM %1$s.agent_execution_sessions WHERE id=?
+                        """.formatted(schema), entry.getKey(), entry.getValue(),
+                        entry.getKey().equals(legacyIteration) ? iteration : null, source);
+            }
+            var historical = jdbc.queryForList("SELECT * FROM %s.agent_execution_sessions ORDER BY id".formatted(schema));
+            this.flyway(schema, null).migrate();
+            var migrated = jdbc.queryForList("SELECT * FROM %s.agent_execution_sessions ORDER BY id".formatted(schema));
+            for (int i = 0; i < historical.size(); i++) {
+                assertThat(migrated.get(i)).containsAllEntriesOf(historical.get(i)).containsEntry("context_group_key", null);
+            }
+            for (UUID id : java.util.List.of(source, reusable, legacyIteration)) {
+                assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET source_node_id=NULL WHERE id=?".formatted(schema), id))
+                        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+                assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET source_agent_id=NULL WHERE id=?".formatted(schema), id))
+                        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+                assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET context_group_key='loop' WHERE id=?".formatted(schema), id))
+                        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            }
+            UUID repoA = UUID.randomUUID(), repoB = UUID.randomUUID();
+            jdbc.update("INSERT INTO %s.workflow_run_repositories(workflow_run_id,repository_id,repository_ordinal) VALUES (?,?,0),(?,?,1)".formatted(schema), run, repoA, run, repoB);
+            for (String group : java.util.List.of("global", "other", "scoped")) {
+                jdbc.update("""
+                        INSERT INTO %1$s.workflow_run_nodes(workflow_run_id,source_node_id,source_agent_id,agent_name,
+                            agent_instructions,agent_output_schema,execution_model_provider_id,execution_model_id,
+                            input_mode,position_x,position_y,scope_mode,context_mode,context_group_key)
+                        SELECT workflow_run_id,?,source_agent_id,agent_name,agent_instructions,agent_output_schema,
+                            execution_model_provider_id,execution_model_id,input_mode,position_x,position_y,?,
+                            'SHARED_SESSION_GROUP',? FROM %1$s.workflow_run_nodes WHERE workflow_run_id=? AND source_node_id=?
+                        """.formatted(schema), UUID.randomUUID(), group.equals("scoped") ? "PER_SCOPE" : "GLOBAL", group, run, node);
+            }
+            UUID global = UUID.randomUUID();
+            this.insertSharedSession(jdbc, schema, run, global, iteration, "global", null);
+            var ownership = jdbc.queryForMap("SELECT source_node_id,source_agent_id,context_group_key,context_iteration_id FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), global);
+            assertThat(ownership).containsEntry("source_node_id", null).containsEntry("source_agent_id", null)
+                    .containsEntry("context_group_key", "global").containsEntry("context_iteration_id", iteration);
+            for (UUID repository : java.util.Arrays.asList(null, repoA, repoB)) {
+                String group = repository == null ? "global" : "scoped";
+                UUID current = repository == null ? global : UUID.randomUUID();
+                if (repository != null) this.insertSharedSession(jdbc, schema, run, current, iteration, group, repository);
+                assertThatThrownBy(() -> this.insertSharedSession(jdbc, schema, run, UUID.randomUUID(), iteration, group, repository))
+                        .isInstanceOf(DuplicateKeyException.class);
+                this.insertSharedSession(jdbc, schema, run, UUID.randomUUID(), UUID.randomUUID(), group, repository);
+                jdbc.update("UPDATE %s.agent_execution_sessions SET context_reset_at=clock_timestamp() WHERE id=?".formatted(schema), current);
+                this.insertSharedSession(jdbc, schema, run, UUID.randomUUID(), iteration, group, repository);
+            }
+            UUID other = UUID.randomUUID();
+            this.insertSharedSession(jdbc, schema, run, other, iteration, "other", null);
+            for (String assignments : java.util.List.of("source_node_id='" + node + "'", "source_agent_id='" + UUID.randomUUID() + "'",
+                    "context_group_key=NULL", "context_group_key=' '", "context_iteration_id=NULL")) {
+                assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET %s WHERE id=?".formatted(schema, assignments), other))
+                        .isInstanceOf(org.springframework.dao.DataAccessException.class);
+            }
+            assertThatThrownBy(() -> this.insertSharedSession(jdbc, schema, run, UUID.randomUUID(), iteration, "global", repoA))
+                    .isInstanceOf(org.springframework.dao.DataAccessException.class);
+            assertThatThrownBy(() -> this.insertSharedSession(jdbc, schema, run, UUID.randomUUID(), iteration, "scoped", null))
+                    .isInstanceOf(org.springframework.dao.DataAccessException.class);
+            assertThatThrownBy(() -> this.insertSharedSession(jdbc, schema, UUID.randomUUID(), UUID.randomUUID(), iteration, "global", null))
+                    .isInstanceOf(org.springframework.dao.DataAccessException.class);
+            jdbc.update("UPDATE %s.agent_execution_sessions SET provider_conversation_id='conversation' WHERE id=?".formatted(schema), global);
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.agent_execution_sessions SET provider_conversation_id='conversation' WHERE id=?".formatted(schema), other))
+                    .isInstanceOf(DuplicateKeyException.class);
+            jdbc.update("DELETE FROM %s.workflow_runs WHERE id=?".formatted(schema), run);
+            assertThat(this.count(jdbc, "SELECT COUNT(*) FROM %s.agent_execution_sessions WHERE workflow_run_id=?".formatted(schema), run)).isZero();
+        } finally {
+            jdbc.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    private void insertSharedSession(JdbcTemplate jdbc, String schema, UUID run, UUID id, UUID iteration, String group, UUID repository) {
+        jdbc.update("""
+                INSERT INTO %s.agent_execution_sessions(id,workflow_run_id,repository_id,provider_id,context_mode,
+                    context_iteration_id,context_group_key,status,created_at,updated_at)
+                VALUES (?,?,?,'codex','SHARED_SESSION_GROUP',?,?,'IDLE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """.formatted(schema), id, run, repository, iteration, group);
+    }
+
+    @Test
     void iterationMigrationPreservesHistoryAndEnforcesIdentityAndCurrentSessionKeys() {
         final String schema = "iteration_" + UUID.randomUUID().toString().replace("-", "");
         final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
@@ -84,26 +175,36 @@ class ForgeAgentRuntimeMigrationIT {
             jdbc.update("UPDATE %s.agent_execution_sessions SET context_reset_at=clock_timestamp() WHERE id=?".formatted(schema), session);
             for (UUID repository : java.util.Arrays.asList(null, UUID.randomUUID())) {
                 if (repository != null) jdbc.update("INSERT INTO %s.workflow_run_repositories(workflow_run_id,repository_id,repository_ordinal) VALUES (?,?,0)".formatted(schema), run, repository);
+                final UUID scopeNode = repository == null ? node : UUID.randomUUID();
+                if (repository != null) jdbc.update("""
+                        INSERT INTO %1$s.workflow_run_nodes(workflow_run_id,source_node_id,source_agent_id,agent_name,
+                            agent_instructions,agent_output_schema,execution_model_provider_id,execution_model_id,
+                            input_mode,position_x,position_y,scope_mode,context_mode,context_group_key)
+                        SELECT workflow_run_id,?,source_agent_id,agent_name,agent_instructions,agent_output_schema,
+                            execution_model_provider_id,execution_model_id,input_mode,position_x,position_y,'PER_SCOPE',
+                            'REUSE_WITHIN_WORKFLOW_ITERATION','scoped'
+                        FROM %1$s.workflow_run_nodes WHERE workflow_run_id=? AND source_node_id=?
+                        """.formatted(schema), scopeNode, run, node);
                 final UUID current = UUID.randomUUID();
-                this.insertIterationSession(jdbc, schema, session, current, iteration, repository);
-                assertThatThrownBy(() -> this.insertIterationSession(jdbc, schema, session, UUID.randomUUID(), iteration, repository))
+                this.insertIterationSession(jdbc, schema, session, current, iteration, repository, scopeNode);
+                assertThatThrownBy(() -> this.insertIterationSession(jdbc, schema, session, UUID.randomUUID(), iteration, repository, scopeNode))
                         .isInstanceOf(DuplicateKeyException.class);
-                this.insertIterationSession(jdbc, schema, session, UUID.randomUUID(), UUID.randomUUID(), repository);
+                this.insertIterationSession(jdbc, schema, session, UUID.randomUUID(), UUID.randomUUID(), repository, scopeNode);
                 jdbc.update("UPDATE %s.agent_execution_sessions SET context_reset_at=clock_timestamp() WHERE id=?".formatted(schema), current);
-                this.insertIterationSession(jdbc, schema, session, UUID.randomUUID(), iteration, repository);
+                this.insertIterationSession(jdbc, schema, session, UUID.randomUUID(), iteration, repository, scopeNode);
             }
         } finally {
             jdbc.execute("DROP SCHEMA " + schema + " CASCADE");
         }
     }
 
-    private void insertIterationSession(JdbcTemplate jdbc, String schema, UUID source, UUID id, UUID iteration, UUID repository) {
+    private void insertIterationSession(JdbcTemplate jdbc, String schema, UUID source, UUID id, UUID iteration, UUID repository, UUID sourceNode) {
         jdbc.update("""
                 INSERT INTO %1$s.agent_execution_sessions(id,workflow_run_id,source_node_id,source_agent_id,repository_id,
                     provider_id,context_mode,context_iteration_id,status,created_at,updated_at)
-                SELECT ?,workflow_run_id,source_node_id,source_agent_id,?,provider_id,context_mode,?,'IDLE',created_at,updated_at
+                SELECT ?,workflow_run_id,?,source_agent_id,?,provider_id,context_mode,?,'IDLE',created_at,updated_at
                 FROM %1$s.agent_execution_sessions WHERE id=?
-                """.formatted(schema), id, repository, iteration, source);
+                """.formatted(schema), id, sourceNode, repository, iteration, source);
     }
 
     @Test

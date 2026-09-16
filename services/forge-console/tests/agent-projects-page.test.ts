@@ -3769,6 +3769,48 @@ describe('Agent projects page', () => {
     expect(page.taskExecutionView.renderContextDetails(runs[2], mismatched)).toContain('Unavailable');
   });
 
+  it('shared context verifies group ownership and shows turns from each real node', async () => {
+    const mode = 'SHARED_SESSION_GROUP';
+    const graph = runtimeGraph([{ id: 'implementer', agentName: 'Implementer', contextMode: mode }, { id: 'reviewer', agentName: 'Reviewer', contextMode: mode }]);
+    const runs = ['implementer', 'reviewer', 'implementer'].map((node, index) => ({
+      ...modernNodeRun(`shared-${index}`, node, 'SUCCEEDED', `2026-08-13T10:0${index}:00Z`),
+      repositoryId: null, contextMode: mode, contextTrackingVersion: 1, contextGroupKey: 'implementation-loop', contextIterationId: index < 2 ? 'iteration-a' : 'iteration-b'
+    }));
+    const contexts = runs.map((run, index) => ({
+      sessionId: index < 2 ? 'session-a' : 'session-b', turnId: `turn-${index}`, nodeRunId: run.id,
+      sourceNodeId: null, repositoryId: null, contextMode: mode, contextGroupKey: 'implementation-loop', contextIterationId: run.contextIterationId,
+      sequence: index === 1 ? 2 : 1, sessionStatus: 'IDLE', turnStatus: 'SUCCEEDED', provider: 'codex', resetAllowed: true
+    }));
+    const fakeApi = api({
+      getProjectTask: vi.fn(() => Promise.resolve(taskDetail('task-1', [taskRun('run-new', 'RUNNING', '2026-08-13T10:00:00Z')]))),
+      getWorkflowRun: vi.fn(() => Promise.resolve(workflowRunDetail('run-new', 'RUNNING', runs, 'Shared', graph))),
+      getAgentExecutionContexts: vi.fn(() => Promise.resolve(contexts))
+    });
+    const { page } = await openedProject(fakeApi);
+    await page.openTaskExecution('task-1'); await flushAsync();
+    const view = page.taskExecutionView;
+    const html = view.renderContextDetails(runs[1], contexts[1]);
+    expect(html).toContain('Shared session');
+    expect(html).toContain('implementation-loop');
+    expect(html).toContain('implementer · Turn 1');
+    expect(html).toContain('reviewer · Turn 2');
+    expect(html).toContain('data-context-node-run="shared-0"');
+    expect(html).not.toContain('data-context-node-run="shared-2"');
+    expect(html).toContain('Reset context');
+    expect(view.hasVerifiedActivityTurn(runs[1], contexts[1])).toBe(true);
+    for (const invalid of [{ contextGroupKey: 'other' }, { contextIterationId: 'iteration-b' }, { sourceNodeId: 'implementer' }, { repositoryId: 'repo-other' }]) {
+      expect(view.hasVerifiedActivityTurn(runs[1], { ...contexts[1], ...invalid })).toBe(false);
+    }
+    contexts[1]!.turnStatus = 'ACTIVE';
+    const activeHtml = view.renderContextDetails(runs[0], contexts[0]);
+    expect(activeHtml).toMatch(/<span>Started<\/span>\s*<strong>implementer · Turn 1<\/strong>/);
+    expect(activeHtml).toMatch(/<span>Current<\/span>\s*<strong>reviewer · Turn 2<\/strong>/);
+    contexts[1]!.turnStatus = 'SUCCEEDED';
+    view.selectNodeRun('shared-1');
+    await view.resetAgentExecutionContext();
+    expect(fakeApi.resetAgentExecutionContext).toHaveBeenCalledWith('session-a');
+  });
+
   it('an unexecuted card follows its first invocation when it appears', async () => {
     const graph = runtimeGraph([{ id: 'reviewer', agentName: 'Reviewer' }]);
     const fakeApi = api({
@@ -6740,7 +6782,7 @@ describe('Agent projects page', () => {
     scopeSelect.value = 'PER_SCOPE';
     scopeSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     const radios = [...dom.window.document.querySelectorAll<HTMLInputElement>('[data-node-editor-context-mode]')];
-    expect(radios).toHaveLength(3);
+    expect(radios).toHaveLength(4);
     expect(radios[0]!.checked).toBe(true);
     expect(dom.window.document.getElementById('agentsV2NodeEditorBody')?.textContent)
       .toContain('Each repository keeps its own independent context.');
@@ -6804,6 +6846,46 @@ describe('Agent projects page', () => {
     expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', expect.objectContaining({
       nodes: expect.arrayContaining([expect.objectContaining({ id: 'node-2', contextMode: 'REUSE_WITHIN_WORKFLOW_ITERATION', contextGroupKey: 'implementation-review' })])
     }));
+  });
+
+  it('Workflow Builder requires a shared group and persists explicit sharing through save', async () => {
+    const fakeApi = api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+      portedNode('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 260, 20)
+    ], project().id, [connection('node-1', 'node-2')], 'node-1-input', 'node-2-output'))) });
+    const { dom, page } = await openedBuilder(fakeApi);
+    clickNode(dom, 'node-2');
+    const radio = dom.window.document.querySelector<HTMLInputElement>('[data-node-editor-context-mode][value="SHARED_SESSION_GROUP"]')!;
+    expect(radio).not.toBeNull();
+    radio.checked = true;
+    radio.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
+    const group = dom.window.document.querySelector<HTMLInputElement>('[data-node-editor-context-group]')!;
+    expect(group).not.toBeNull();
+    group.value = 'implementation-review';
+    dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
+    expect(dom.window.document.querySelector('[data-node-id="node-2"]')?.textContent).toContain('↻ Context');
+    await page.workflowBuilder.save();
+    expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', expect.objectContaining({
+      nodes: expect.arrayContaining([expect.objectContaining({ id: 'node-2', contextMode: 'SHARED_SESSION_GROUP', contextGroupKey: 'implementation-review' })])
+    }));
+  });
+
+  it('Workflow Builder rejects mixed group modes and mixed shared scopes', async () => {
+    const { dom, page } = await openedBuilder(api({ getWorkflow: vi.fn(() => Promise.resolve(workflow('wf', [
+      { ...portedNode('node-1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), contextMode: 'REUSE_WITHIN_WORKFLOW_ITERATION', contextGroupKey: 'loop' },
+      portedNode('node-2', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    ]))) }));
+    clickNode(dom, 'node-2');
+    const builder = page.workflowBuilder;
+    builder.nodeEditorDraft.contextMode = 'SHARED_SESSION_GROUP';
+    builder.nodeEditorDraft.contextGroupKey = 'loop';
+    expect(builder.validateNodeEditorDraft()).toContain('CONTEXT_GROUP_MODE_CONFLICT');
+    builder.workflow.nodes[0].contextMode = 'SHARED_SESSION_GROUP';
+    builder.workflow.nodes[0].scopeMode = 'PER_SCOPE';
+    expect(builder.validateNodeEditorDraft()).toContain('same execution scope');
+    builder.workflow.nodes[0].scopeMode = 'GLOBAL';
+    expect(builder.validateNodeEditorDraft()).toBe('');
   });
 
   it('Workflow Builder rejects malformed node scope mode instead of defaulting to global', async () => {

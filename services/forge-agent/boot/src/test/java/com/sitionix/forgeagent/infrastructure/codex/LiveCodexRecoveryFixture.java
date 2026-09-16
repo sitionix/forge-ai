@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryInspector;
 import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.port.AgentExecutionEventRepository;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -39,9 +40,11 @@ public final class LiveCodexRecoveryFixture {
         try {
             client.executeDurable(new CodexTurnRequest(
                     "Return JSON with answer set to recovery-ready.",
-                    "Return only JSON matching the supplied schema. Do not invoke tools.",
-                    claim.executionModel().modelId(), null,
-                    this.mapper.readTree(claim.outputSchema().jsonObject()), claim.executionWorkspace()),
+                    this.sharedGroup(claim) ? WorkflowExecutionDeveloperInstructions.compose(claim.agentInstructions())
+                            : "Return only JSON matching the supplied schema. Do not invoke tools.",
+                    claim.executionModel().modelId(), this.sharedGroup(claim) ? claim.executionModel().effortId() : null,
+                    this.mapper.readTree(claim.outputSchema().jsonObject()), claim.executionWorkspace(),
+                    this.sharedGroup(claim)),
                     null, new CodexExecutionIdentityCallbacks() {
                         @Override
                         public void conversationStarted(final String threadId, final String providerVersion) {
@@ -70,9 +73,11 @@ public final class LiveCodexRecoveryFixture {
         try {
             final String output = client.executeDurable(new CodexTurnRequest(
                     "Return JSON with answer set to resumed-safely.",
-                    "Return only JSON matching the supplied schema. Do not invoke tools.",
-                    claim.executionModel().modelId(), null,
-                    this.mapper.readTree(claim.outputSchema().jsonObject()), claim.executionWorkspace()),
+                    this.sharedGroup(claim) ? WorkflowExecutionDeveloperInstructions.compose(claim.agentInstructions())
+                            : "Return only JSON matching the supplied schema. Do not invoke tools.",
+                    claim.executionModel().modelId(), this.sharedGroup(claim) ? claim.executionModel().effortId() : null,
+                    this.mapper.readTree(claim.outputSchema().jsonObject()), claim.executionWorkspace(),
+                    this.sharedGroup(claim)),
                     claim.agentSessionClaim().providerConversationId(),
                     claim.agentSessionClaim().providerVersion(), new CodexExecutionIdentityCallbacks() {
                         @Override
@@ -95,6 +100,10 @@ public final class LiveCodexRecoveryFixture {
         } finally {
             client.close();
         }
+    }
+
+    private boolean sharedGroup(final NodeExecutionClaim claim) {
+        return claim.agentSessionClaim().contextMode() == NodeContextMode.SHARED_SESSION_GROUP;
     }
 
     public AgentExecutionRecoveryInspector inspector() {
