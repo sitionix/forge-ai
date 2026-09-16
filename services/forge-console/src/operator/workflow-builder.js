@@ -290,7 +290,7 @@ export class WorkflowBuilder {
         <div class="workflow-node-content">
           <strong>${escapeHtml(agent?.name || 'Unknown agent')}</strong>
           <span>${escapeHtml(agent?.instructions || 'Reusable agent')}</span>
-          ${this.nodeContextMode(node) === REUSE_CONTEXT_MODE ? '<small class="workflow-node-context-badge">↻ Context</small>' : ''}
+          ${this.nodeContextMode(node) !== FRESH_CONTEXT_MODE ? '<small class="workflow-node-context-badge">↻ Context</small>' : ''}
         </div>
         <button class="node-delete" type="button" title="Remove node" data-node-remove="${escapeHtml(node.id)}" aria-label="Remove node">×</button>
         <div class="workflow-node-port-list output" aria-label="Configured outputs">

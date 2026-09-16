@@ -6799,6 +6799,7 @@ describe('Agent projects page', () => {
     expect(group).not.toBeNull();
     group.value = 'implementation-review';
     dom.window.document.getElementById('agentsV2NodeEditorSave')?.click();
+    expect(dom.window.document.querySelector('[data-node-id="node-2"]')?.textContent).toContain('↻ Context');
     await page.workflowBuilder.save();
     expect(fakeApi.updateWorkflow).toHaveBeenCalledWith('wf', expect.objectContaining({
       nodes: expect.arrayContaining([expect.objectContaining({ id: 'node-2', contextMode: 'REUSE_WITHIN_WORKFLOW_ITERATION', contextGroupKey: 'implementation-review' })])
