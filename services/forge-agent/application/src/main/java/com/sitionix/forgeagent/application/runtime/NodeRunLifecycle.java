@@ -324,7 +324,7 @@ public class NodeRunLifecycle {
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
                 nodeRun.contextTrackingVersion(),
-                nodeRun.retryOfNodeRunId()
+                nodeRun.retryOfNodeRunId(), nodeRun.contextGroupKey(), nodeRun.contextIterationId()
         );
     }
 
@@ -354,7 +354,7 @@ public class NodeRunLifecycle {
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
                 nodeRun.contextTrackingVersion(),
-                nodeRun.retryOfNodeRunId()
+                nodeRun.retryOfNodeRunId(), nodeRun.contextGroupKey(), nodeRun.contextIterationId()
         );
     }
 

@@ -11,7 +11,18 @@ public record NodeResponse(
         List<NodePortResponse> outputs,
         NodePositionResponse position,
         String scopeMode,
-        String contextMode
-) {
+        String contextMode,
+        String contextGroupKey) {
     public NodeResponse(UUID id,UUID targetId,String inputMode,List<NodePortResponse> inputs,List<NodePortResponse> outputs,NodePositionResponse position,String scopeMode) { this(id,targetId,inputMode,inputs,outputs,position,scopeMode,"FRESH_EACH_NODE_RUN"); }
+
+    public NodeResponse(UUID id,
+        UUID targetId,
+        String inputMode,
+        List<NodePortResponse> inputs,
+        List<NodePortResponse> outputs,
+        NodePositionResponse position,
+        String scopeMode,
+        String contextMode) {
+        this(id, targetId, inputMode, inputs, outputs, position, scopeMode, contextMode, null);
+    }
 }

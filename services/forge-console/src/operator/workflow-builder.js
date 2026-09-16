@@ -28,6 +28,7 @@ const GLOBAL_SCOPE_MODE = 'GLOBAL';
 const PER_SCOPE_MODE = 'PER_SCOPE';
 const FRESH_CONTEXT_MODE = 'FRESH_EACH_NODE_RUN';
 const REUSE_CONTEXT_MODE = 'REUSE_WITHIN_WORKFLOW_NODE';
+const ITERATION_CONTEXT_MODE = 'REUSE_WITHIN_WORKFLOW_ITERATION';
 const NODE_DRAG_THRESHOLD = 3;
 const EDGE_CORNER_RADIUS = 12;
 const EDGE_ROUTE_CLEARANCE = 32;
@@ -289,7 +290,7 @@ export class WorkflowBuilder {
         <div class="workflow-node-content">
           <strong>${escapeHtml(agent?.name || 'Unknown agent')}</strong>
           <span>${escapeHtml(agent?.instructions || 'Reusable agent')}</span>
-          ${this.nodeContextMode(node) === REUSE_CONTEXT_MODE ? '<small class="workflow-node-context-badge">↻ Context</small>' : ''}
+          ${this.nodeContextMode(node) !== FRESH_CONTEXT_MODE ? '<small class="workflow-node-context-badge">↻ Context</small>' : ''}
         </div>
         <button class="node-delete" type="button" title="Remove node" data-node-remove="${escapeHtml(node.id)}" aria-label="Remove node">×</button>
         <div class="workflow-node-port-list output" aria-label="Configured outputs">
@@ -762,8 +763,12 @@ export class WorkflowBuilder {
           <span><strong>Fresh each invocation</strong><small>Starts this agent with clean context every time this node runs.</small></span>
         </label>
         <label><input type="radio" name="node-context-mode" value="${REUSE_CONTEXT_MODE}" data-node-editor-context-mode ${this.nodeContextMode(node) === REUSE_CONTEXT_MODE ? 'checked' : ''}>
-          <span><strong>Keep context during execution</strong><small>If this execution returns to this node, the agent continues its existing context. A new execution starts clean.${this.nodeScopeMode(node) === PER_SCOPE_MODE ? ' Each repository keeps its own independent context.' : ''}</small></span>
+          <span><strong>Reuse within workflow node</strong><small>If this execution returns to this node, the agent continues its existing context. A new execution starts clean.${this.nodeScopeMode(node) === PER_SCOPE_MODE ? ' Each repository keeps its own independent context.' : ''}</small></span>
         </label>
+        <label><input type="radio" name="node-context-mode" value="${ITERATION_CONTEXT_MODE}" data-node-editor-context-mode ${this.nodeContextMode(node) === ITERATION_CONTEXT_MODE ? 'checked' : ''}>
+          <span><strong>Reuse within iteration</strong><small>Nodes with the same iteration group keep their own agent contexts while collaborating inside one iteration. Leaving the group and entering it again starts clean contexts.</small></span>
+        </label>
+        ${this.nodeContextMode(node) === ITERATION_CONTEXT_MODE ? `<label>Context iteration group<input class="text-input" data-node-editor-context-group value="${escapeHtml(node.contextGroupKey || '')}" placeholder="implementation-review"></label>` : ''}
       </fieldset>
       <div class="node-editor-input-mode">
         <label class="field-label" for="agentsV2NodeEditorScopeMode">Execution</label>
@@ -773,6 +778,10 @@ export class WorkflowBuilder {
         </select>
       </div>
     `;
+    this.byId('agentsV2NodeEditorBody').querySelectorAll('[data-node-editor-context-mode]').forEach((radio) => radio.addEventListener('change', () => {
+      this.syncNodeEditorDraftFromDom();
+      this.renderNodeEditor();
+    }));
     this.byId('agentsV2NodeEditorScopeMode')?.addEventListener('change', () => {
       this.syncNodeEditorDraftFromDom();
       this.renderNodeEditor();
@@ -938,6 +947,9 @@ export class WorkflowBuilder {
     }
     const contextMode = this.byId('agentsV2NodeEditorBody').querySelector('[data-node-editor-context-mode]:checked')?.value;
     if (contextMode) this.nodeEditorDraft.contextMode = this.normalizeContextMode(contextMode);
+    const group = this.byId('agentsV2NodeEditorBody').querySelector('[data-node-editor-context-group]');
+    if (group) this.nodeEditorDraft.contextGroupKey = group.value;
+    if (contextMode !== ITERATION_CONTEXT_MODE) this.nodeEditorDraft.contextGroupKey = null;
   }
 
   saveNodeEditor() {
@@ -964,6 +976,14 @@ export class WorkflowBuilder {
   }
 
   validateNodeEditorDraft() {
+    if (this.nodeContextMode(this.nodeEditorDraft) === ITERATION_CONTEXT_MODE) {
+      const group = String(this.nodeEditorDraft.contextGroupKey || '');
+      if (!group.trim()) return 'Context iteration group is required.';
+      if ((this.workflow?.nodes || []).some((node) => node.id !== this.nodeEditorNodeId
+        && node.contextGroupKey === group && this.nodeScopeMode(node) !== this.nodeScopeMode(this.nodeEditorDraft))) {
+        return 'Nodes in an iteration group must use the same execution scope.';
+      }
+    }
     for (const [direction, label] of [['inputs', 'Input'], ['outputs', 'Output']]) {
       const names = new Set();
       for (const port of this.nodePorts(this.nodeEditorDraft[direction])) {
@@ -1390,6 +1410,7 @@ export class WorkflowBuilder {
         inputMode: this.nodeInputMode(node),
         scopeMode: this.nodeScopeMode(node),
         contextMode: this.nodeContextMode(node),
+        ...(this.nodeContextMode(node) === ITERATION_CONTEXT_MODE ? { contextGroupKey: node.contextGroupKey } : {}),
         inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
         outputs: this.reindexPorts(node.outputs).map((port) => this.normalizedPort(port)),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1452,6 +1473,7 @@ export class WorkflowBuilder {
         inputMode: this.nodeInputMode(node),
         scopeMode: this.nodeScopeMode(node),
         contextMode: this.nodeContextMode(node),
+        ...(this.nodeContextMode(node) === ITERATION_CONTEXT_MODE ? { contextGroupKey: node.contextGroupKey } : {}),
         inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
         outputs: this.reindexPorts(node.outputs).map((port) => this.normalizedPort(port)),
         position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1473,6 +1495,7 @@ export class WorkflowBuilder {
       inputMode: this.nodeInputMode(node),
       scopeMode: this.nodeScopeMode(node),
       contextMode: this.nodeContextMode(node),
+        ...(this.nodeContextMode(node) === ITERATION_CONTEXT_MODE ? { contextGroupKey: node.contextGroupKey } : {}),
       inputs: this.reindexPorts(node.inputs).map((port) => ({ ...port })),
       outputs: this.reindexPorts(node.outputs).map((port) => ({ ...port })),
       position: { x: Number(node.position?.x || 0), y: Number(node.position?.y || 0) }
@@ -1505,6 +1528,7 @@ export class WorkflowBuilder {
   normalizeContextMode(contextMode) {
     if (contextMode == null || contextMode === FRESH_CONTEXT_MODE) return FRESH_CONTEXT_MODE;
     if (contextMode === REUSE_CONTEXT_MODE) return REUSE_CONTEXT_MODE;
+    if (contextMode === ITERATION_CONTEXT_MODE) return ITERATION_CONTEXT_MODE;
     throw new Error('Workflow node context mode is invalid.');
   }
 

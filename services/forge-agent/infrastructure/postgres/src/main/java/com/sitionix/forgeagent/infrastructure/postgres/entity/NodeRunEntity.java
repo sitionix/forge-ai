@@ -57,6 +57,12 @@ public class NodeRunEntity {
     @Column(name = "context_mode", nullable = false, length = 48)
     private String contextMode;
 
+    @Column(name = "context_group_key")
+    private String contextGroupKey;
+
+    @Column(name = "context_iteration_id")
+    private UUID contextIterationId;
+
     @Column(name = "context_tracking_version")
     private Integer contextTrackingVersion;
 

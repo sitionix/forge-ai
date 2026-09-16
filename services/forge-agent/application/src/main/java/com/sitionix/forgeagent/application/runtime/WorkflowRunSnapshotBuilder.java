@@ -34,6 +34,7 @@ public class WorkflowRunSnapshotBuilder {
     private final AgentExecutionProviderCapabilities providerCapabilities;
 
     public WorkflowRunGraph build(final UUID workflowRunId, final Workflow workflow) {
+        com.sitionix.forgeagent.domain.model.ContextIterationPolicy.validateScopes(workflow.nodes());
         final Map<UUID, AgentDefinition> agentsById = this.agentDefinitionRepository.findByIds(this.agentIds(workflow.nodes())).stream()
                 .collect(Collectors.toMap(AgentDefinition::id, Function.identity()));
         return new WorkflowRunGraph(
@@ -61,7 +62,7 @@ public class WorkflowRunSnapshotBuilder {
             throw new ConflictException("SOURCE_AGENT_NOT_FOUND", "Source agent was not found.");
         }
         final NodeRunExecutionModel executionModel = this.executionModel(agent.model());
-        if (node.contextMode() == com.sitionix.forgeagent.domain.model.NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE
+        if (node.contextMode().reusable()
                 && !this.providerCapabilities.supports(
                         executionModel.providerId(), AgentExecutionProviderCapability.DURABLE_CONTEXT)) {
             throw new ValidationException(
@@ -80,7 +81,8 @@ public class WorkflowRunSnapshotBuilder {
                 node.inputMode(),
                 node.position(),
                 node.scopeMode(),
-                node.contextMode()
+                node.contextMode(),
+                node.contextGroupKey()
         );
     }
 

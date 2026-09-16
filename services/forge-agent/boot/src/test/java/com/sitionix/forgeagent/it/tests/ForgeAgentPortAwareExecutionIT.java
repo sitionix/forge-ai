@@ -319,9 +319,10 @@ class ForgeAgentPortAwareExecutionIT {
     @Autowired
     private com.sitionix.forgeagent.application.usecase.RecoveredNodeRunRetryEligibilityService retryEligibility;
 
-    @Test
-    void resetIdleContextPreservesHistoryAndNextNormalInvocationsUseNewThenReusableSession() {
-        final var first = this.prepareIdleResetContext();
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void resetIdleContextPreservesHistoryAndNextNormalInvocationsUseNewThenReusableSession(final boolean iterationMode) {
+        final var first = this.prepareIdleResetContext(iterationMode);
         final var old = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
         final var oldNode = this.jdbcTemplate.queryForMap("SELECT * FROM node_runs WHERE id=?", first.nodeRunId());
         final var events = this.agentExecutionEventRepository.findPage(first.agentSessionClaim().turnId(), 0, 200).orElseThrow();
@@ -343,6 +344,7 @@ class ForgeAgentPortAwareExecutionIT {
 
         final NodeRun second = this.allocateNextImplementer(beforeRun.id());
         final var allocated = this.agentExecutionSessionRepository.findByNodeRunId(second.id()).orElseThrow();
+        assertThat(second.contextIterationId()).isEqualTo(old.session().contextIterationId());
         assertThat(allocated.session().id()).isNotEqualTo(old.session().id());
         assertThat(allocated.session().providerConversationId()).isNull();
         assertThat(allocated.turn().sequence()).isEqualTo(1);
@@ -363,9 +365,9 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     @ParameterizedTest
-    @ValueSource(booleans = {true, false})
-    void resetAndAllocationSerializeBothOrderings(final boolean resetWins) throws Exception {
-        final var first = this.prepareIdleResetContext();
+    @CsvSource({"true,false", "false,false", "true,true", "false,true"})
+    void resetAndAllocationSerializeBothOrderings(final boolean resetWins, final boolean iterationMode) throws Exception {
+        final var first = this.prepareIdleResetContext(iterationMode);
         final var old = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
         final UUID runId = old.session().workflowRunId();
         final var locked = new java.util.concurrent.CountDownLatch(1);
@@ -480,8 +482,12 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private NodeExecutionClaim prepareIdleResetContext() {
+        return this.prepareIdleResetContext(false);
+    }
+
+    private NodeExecutionClaim prepareIdleResetContext(final boolean iterationMode) {
         this.seed();
-        this.saveReusableReviewerWorkflow();
+        if (iterationMode) this.saveIterationReviewerWorkflow(); else this.saveReusableReviewerWorkflow();
         when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(STRATEGY_PASS, CODE_RETURN, STRATEGY_PASS, CODE_RETURN);
         final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Reset context test."));
         final var first = this.lifecycle.tryStart(this.onlyPending(run.id(), IMPLEMENTER).id()).orElseThrow();
@@ -508,7 +514,8 @@ class ForgeAgentPortAwareExecutionIT {
                 target.agentName(), target.agentInstructions(), target.agentOutputSchema(), target.inputMode(), target.position(),
                 target.executionFrameId(), target.enteredViaInputPortId(), target.activationFrameId(), null, null,
                 NodeRunStatus.PENDING, null, null, target.executionModel(), Instant.now(), null, null,
-                target.repositoryId(), target.contextMode(), target.contextTrackingVersion(), target.id()));
+                target.repositoryId(), target.contextMode(), target.contextTrackingVersion(), target.id(),
+                target.contextGroupKey(), target.contextIterationId()));
     }
 
     private NodeRun allocateNextImplementer(final UUID runId) {
@@ -632,7 +639,10 @@ class ForgeAgentPortAwareExecutionIT {
             try {
                 if (complete) {
                     final var output = provider.executeTrackedResumeTurn(claim, this.agentSessionLeaseService, this.agentExecutionEventRepository);
-                    this.lifecycle.succeed(claim.nodeRunId(), new AgentExecutionResult(new NodeRunOutput(output), null), claim.agentSessionClaim());
+                    final var businessOutput = new NodeRunOutput(output);
+                    final UUID selected = claim.availableOutputs().size() > 1
+                            ? this.outputSelector.selectOutput(businessOutput, claim.availableOutputs(), claim.executionModel()) : null;
+                    this.lifecycle.succeed(claim.nodeRunId(), new AgentExecutionResult(businessOutput, selected), claim.agentSessionClaim());
                 } else {
                     provider.executeTrackedDurableTurn(claim, this.agentSessionLeaseService, this.agentExecutionEventRepository);
                 }
@@ -641,6 +651,188 @@ class ForgeAgentPortAwareExecutionIT {
                 heartbeat.shutdownNow();
             }
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void iterationFanInContinuesOneIdentityOrFailsClosed(final boolean conflict) {
+        this.seed();
+        final var left = this.iterationNode(this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Output")), 1));
+        final var rightBase = this.node(B, AGENT_B_ID, List.of(this.port(B_IN, "Input")), List.of(this.port(B_OUT, "Output")), 2);
+        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand("Iteration fan-in", List.of(
+                this.node(X, AGENT_C_ID, List.of(this.port(X_IN, "Input")), List.of(this.port(X_OUT, "Output")), 0),
+                left, conflict ? this.iterationNode(rightBase) : rightBase,
+                this.iterationNode(this.node(C, AGENT_C_ID, List.of(this.port(C_IN, "Join")), List.of(this.port(C_OUT, "Result")), 3))),
+                List.of(this.connection(1, X_OUT, A_IN), this.connection(2, X_OUT, B_IN),
+                        this.connection(3, A_OUT, C_IN), this.connection(4, B_OUT, C_IN)), X_IN, C_OUT));
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Join inputs."));
+        this.complete(this.onlyPending(run.id(), X), "{}");
+        final var a = this.onlyPending(run.id(), A);
+        final var b = this.onlyPending(run.id(), B);
+        this.complete(a, "{}");
+        this.complete(b, "{}");
+        if (conflict) {
+            assertThat(a.contextIterationId()).isNotEqualTo(b.contextIterationId());
+            assertThat(this.nodeRuns(run.id(), C)).isEmpty();
+            assertThat(this.agentExecutionSessionRepository.findByWorkflowRunId(run.id())).noneMatch(c -> c.session().sourceNodeId().equals(C));
+            assertThat(this.nodeRunRepository.findById(b.id()).orElseThrow().failure().code()).isEqualTo("AGENT_CONTEXT_ITERATION_CONFLICT");
+            assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.FAILED);
+        } else {
+            assertThat(this.onlyPending(run.id(), C).contextIterationId()).isEqualTo(a.contextIterationId());
+            this.complete(this.onlyPending(run.id(), C), "{}");
+            assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+        }
+        verifyNoInteractions(this.agentExecutor);
+    }
+
+    private Node iterationNode(final Node node) {
+        return new Node(node.id(), node.targetId(), node.inputMode(), node.inputs(), node.outputs(), node.position(),
+                node.scopeMode(), NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION, "implementation-review");
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void iterationRecoveryRetryPreservesConsumedInputsAndIdentity(final boolean reset) {
+        this.seed();
+        this.saveIterationWorkflow();
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Recover reviewer."));
+        this.complete(this.onlyPending(run.id(), A), "{}");
+        this.complete(this.onlyPending(run.id(), IMPLEMENTER), "{\"patch\":\"preserved\"}");
+        final var parent = this.onlyPending(run.id(), STRATEGY);
+        final var old = this.lifecycle.tryStart(parent.id()).orElseThrow();
+        this.agentSessionLeaseService.persistConversation(old.agentSessionClaim(), "iteration-recovery-thread", "0.154.0");
+        this.agentSessionLeaseService.persistTurn(old.agentSessionClaim(), "iteration-recovery-turn");
+        this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=?", old.agentSessionClaim().sessionId());
+        doReturn(ProviderTurnRecoveryResult.terminal(ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Completed"))
+                .when(this.recoveryInspector).inspect(any());
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+        final var failedRun = this.workflowRunRepository.findById(run.id()).orElseThrow();
+        assertThat(this.retryEligibility.evaluateAll(failedRun).get(parent.id()).action().name()).isEqualTo("RESUME");
+        if (reset) this.resetContext.execute(old.agentSessionClaim().sessionId());
+        assertThat(this.retryEligibility.evaluateAll(failedRun).get(parent.id()).action().name()).isEqualTo(reset ? "RETRY" : "RESUME");
+        final var oldNode = this.nodeRunRepository.findById(parent.id()).orElseThrow();
+        final var childResult = this.retryRecoveredNodeRun.execute(run.id(), parent.id());
+        final var child = this.nodeRunRepository.findById(childResult.nodeRunId()).orElseThrow();
+        assertThat(child.contextIterationId()).isEqualTo(parent.contextIterationId());
+        assertThat(child.contextGroupKey()).isEqualTo(parent.contextGroupKey());
+        assertThat(child.retryOfNodeRunId()).isEqualTo(parent.id());
+        final var claim = this.lifecycle.tryStart(child.id()).orElseThrow();
+        assertThat(claim.inputEnvelope().contributions()).isEqualTo(old.inputEnvelope().contributions());
+        if (reset) {
+            assertThat(claim.agentSessionClaim().sessionId()).isNotEqualTo(old.agentSessionClaim().sessionId());
+            assertThat(claim.agentSessionClaim().providerConversationId()).isNull();
+            assertThat(this.agentExecutionSessionRepository.findByNodeRunId(child.id()).orElseThrow().turn().sequence()).isEqualTo(1);
+        } else {
+            assertThat(claim.agentSessionClaim().sessionId()).isEqualTo(old.agentSessionClaim().sessionId());
+            assertThat(claim.agentSessionClaim().providerConversationId()).isEqualTo("iteration-recovery-thread");
+            assertThat(this.agentExecutionSessionRepository.findByNodeRunId(child.id()).orElseThrow().turn().sequence()).isEqualTo(2);
+        }
+        assertThat(this.nodeRunRepository.findById(parent.id()).orElseThrow()).isEqualTo(oldNode);
+    }
+
+    @Test
+    void iterationContextsAreIsolatedAcrossTwoEntriesWithFeedback() throws Exception {
+        this.twoIterationWorkflow(false);
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "forge.codex.live-iteration-e2e", matches = "true")
+    void liveCodexIsolatesTwoIndependentIterations() throws Exception {
+        this.twoIterationWorkflow(true);
+    }
+
+    private void twoIterationWorkflow(final boolean live) throws Exception {
+        this.seed();
+        if (live) {
+            final String model = System.getProperty("forge.codex.live-model", "gpt-5.6-sol");
+            this.codexRuntimePort.readyWithModel(model);
+            for (UUID agentId : List.of(AGENT_A_ID, AGENT_B_ID)) {
+                this.agentUseCases.updateAgent(agentId, new SaveAgentCommand("Iteration agent " + agentId,
+                        "Return the requested JSON answer. Do not use tools.", AgentOutputSchema.ofCanonicalJsonObject(
+                        "{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"],\"additionalProperties\":false}"),
+                        new AgentModelSelection("codex", model, null)));
+            }
+        }
+        this.saveIterationWorkflow();
+        when(this.outputSelector.selectOutput(any(), any(), any()))
+                .thenReturn(STRATEGY_RETURN, STRATEGY_PASS, B_OUT, STRATEGY_RETURN, STRATEGY_PASS, C_OUT);
+        final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Return a JSON answer for iteration isolation."));
+        // A template edit after snapshot must never change the running group.
+        this.jdbcTemplate.update("UPDATE workflow_nodes SET context_group_key='future-group' WHERE context_group_key='implementation-review'");
+        this.complete(this.onlyPending(run.id(), A), "{\"preparation\":1}");
+        LiveCodexRecoveryFixture provider = null;
+        final var invocations = new java.util.ArrayList<NodeRun>();
+        for (int iteration = 0; iteration < 2; iteration++) {
+            for (int turn = 0; turn < 2; turn++) {
+                for (UUID source : List.of(IMPLEMENTER, STRATEGY)) {
+                    final var candidates = this.pendingForSource(run.id(), source);
+                    assertThat(candidates).as("iteration=%s turn=%s source=%s run=%s", iteration, turn, source, this.workflowRunRepository.findById(run.id())).hasSize(1);
+                    final var node = candidates.getFirst();
+                    invocations.add(node);
+                    final var allocation = this.agentExecutionSessionRepository.findByNodeRunId(node.id()).orElseThrow();
+                    assertThat(allocation.turn().sequence()).isEqualTo(turn + 1);
+                    assertThat(allocation.session().contextIterationId()).isEqualTo(node.contextIterationId());
+                    if (turn == 0) assertThat(allocation.session().providerConversationId()).isNull();
+                    final var claim = this.lifecycle.tryStart(node.id()).orElseThrow();
+                    if (live) {
+                        if (provider == null) provider = new LiveCodexRecoveryFixture(claim.executionWorkspace().cwd());
+                        this.executeRecordedResetTurn(provider, claim);
+                        final var requests = provider.executionProcesses().getLast().requests();
+                        assertThat(requests).extracting(request -> request.path("method").asText())
+                                .contains(turn == 0 ? "thread/start" : "thread/resume")
+                                .doesNotContain(turn == 0 ? "thread/resume" : "thread/start");
+                        if (turn == 1) assertThat(requests.stream().filter(request -> "thread/resume".equals(request.path("method").asText())))
+                                .singleElement().satisfies(request -> assertThat(request.path("params").path("threadId").asText())
+                                        .isEqualTo(allocation.session().providerConversationId()));
+                    } else {
+                        if (turn == 0) this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), "iteration-" + node.contextIterationId() + "-" + source, "0.154.0");
+                        this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "turn-" + node.id());
+                        UUID selected = source.equals(STRATEGY) ? this.outputSelector.selectOutput(new NodeRunOutput("{}"), claim.availableOutputs(), claim.executionModel()) : null;
+                        this.lifecycle.succeed(node.id(), new AgentExecutionResult(new NodeRunOutput("{}"), selected), claim.agentSessionClaim());
+                    }
+                }
+            }
+            final var outside = this.onlyPending(run.id(), B);
+            assertThat(outside.contextIterationId()).isNull();
+            this.complete(outside, "{\"intermediate\":true}");
+        }
+        assertThat(this.workflowRunRepository.findById(run.id()).orElseThrow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
+        for (int i = 0; i < 8; i++) {
+            assertThat(invocations.get(i).contextGroupKey()).isEqualTo("implementation-review");
+            assertThat(invocations.get(i).contextIterationId()).isEqualTo(invocations.get(i < 4 ? 0 : 4).contextIterationId());
+        }
+        assertThat(invocations.get(0).contextIterationId()).isNotEqualTo(invocations.get(4).contextIterationId());
+        assertThat(invocations.get(0).executionFrameId()).isNotEqualTo(invocations.get(2).executionFrameId());
+        assertThat(invocations.get(4).executionFrameId()).isNotEqualTo(invocations.get(6).executionFrameId());
+        final var contexts = invocations.stream().map(node -> this.agentExecutionSessionRepository.findByNodeRunId(node.id()).orElseThrow()).toList();
+        assertThat(contexts.get(0).session().id()).isEqualTo(contexts.get(2).session().id());
+        assertThat(contexts.get(1).session().id()).isEqualTo(contexts.get(3).session().id());
+        assertThat(contexts.get(4).session().id()).isEqualTo(contexts.get(6).session().id());
+        assertThat(contexts.get(5).session().id()).isEqualTo(contexts.get(7).session().id());
+        assertThat(List.of(contexts.get(0), contexts.get(1), contexts.get(4), contexts.get(5)))
+                .extracting(c -> c.session().id()).doesNotHaveDuplicates();
+        assertThat(List.of(contexts.get(0), contexts.get(1), contexts.get(4), contexts.get(5)))
+                .extracting(c -> c.session().providerConversationId()).doesNotHaveDuplicates().doesNotContainNull();
+        System.out.printf("ITERATION_ACCEPTANCE live=%s A=%s IA=%s RA=%s B=%s IB=%s RB=%s workflow=SUCCEEDED%n", live,
+                invocations.get(0).contextIterationId(), contexts.get(0).session().providerConversationId(), contexts.get(1).session().providerConversationId(),
+                invocations.get(4).contextIterationId(), contexts.get(4).session().providerConversationId(), contexts.get(5).session().providerConversationId());
+    }
+
+    private void saveIterationWorkflow() {
+        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand("Two independent iterations", List.of(
+                this.node(A, AGENT_C_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Prepared")), 0),
+                new Node(IMPLEMENTER, AGENT_A_ID, NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(IMPLEMENTER_INITIAL_IN, "Initial", 0), this.port(IMPLEMENTER_REVIEW_IN, "Feedback", 1), this.port(B_IN_UPDATED, "Next iteration", 2)),
+                        List.of(this.port(IMPLEMENTER_OUT, "Implemented")), new NodePosition(250, 0), NodeScopeMode.GLOBAL,
+                        NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION, "implementation-review"),
+                new Node(STRATEGY, AGENT_B_ID, NodeInputMode.DEPENDENCIES_ONLY, List.of(this.port(STRATEGY_IN, "Review")),
+                        List.of(this.port(STRATEGY_PASS, "Approve", 0), this.port(STRATEGY_RETURN, "Reject", 1)),
+                        new NodePosition(500, 0), NodeScopeMode.GLOBAL, NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION, "implementation-review"),
+                this.node(B, AGENT_C_ID, List.of(this.port(B_IN, "Intermediate")),
+                        List.of(this.port(B_OUT, "Prepare next", 0), this.port(C_OUT, "Result", 1)), 3)),
+                List.of(this.connection(1, A_OUT, IMPLEMENTER_INITIAL_IN), this.connection(2, IMPLEMENTER_OUT, STRATEGY_IN),
+                        this.connection(3, STRATEGY_RETURN, IMPLEMENTER_REVIEW_IN), this.connection(4, STRATEGY_PASS, B_IN),
+                        this.connection(5, B_OUT, B_IN_UPDATED)), A_IN, C_OUT));
     }
 
     @Test
@@ -1599,6 +1791,9 @@ class ForgeAgentPortAwareExecutionIT {
 
     @ParameterizedTest
     @CsvSource({
+            "TERMINAL,REUSE_WITHIN_WORKFLOW_ITERATION,IDLE,AGENT_EXECUTION_RECOVERY_REQUIRED",
+            "ACTIVE,REUSE_WITHIN_WORKFLOW_ITERATION,FAILED,AGENT_EXECUTION_RECOVERY_PROVIDER_ACTIVE",
+            "UNKNOWN,REUSE_WITHIN_WORKFLOW_ITERATION,FAILED,AGENT_EXECUTION_RECOVERY_UNKNOWN",
             "TERMINAL,REUSE_WITHIN_WORKFLOW_NODE,IDLE,AGENT_EXECUTION_RECOVERY_REQUIRED",
             "TERMINAL,FRESH_EACH_NODE_RUN,CLOSED,AGENT_EXECUTION_RECOVERY_REQUIRED",
             "ACTIVE,REUSE_WITHIN_WORKFLOW_NODE,FAILED,AGENT_EXECUTION_RECOVERY_PROVIDER_ACTIVE",
@@ -2100,7 +2295,11 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private void saveRecoveryWorkflow(final String contextMode) {
-        if ("REUSE_WITHIN_WORKFLOW_NODE".equals(contextMode)) this.saveReusableTerminalWorkflow();
+        if ("REUSE_WITHIN_WORKFLOW_ITERATION".equals(contextMode)) {
+            this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand("Recovery iteration",
+                    List.of(this.iterationNode(this.node(A, AGENT_A_ID, List.of(this.port(A_IN, "Input")), List.of(this.port(A_OUT, "Result")), 0))),
+                    List.of(), A_IN, A_OUT));
+        } else if ("REUSE_WITHIN_WORKFLOW_NODE".equals(contextMode)) this.saveReusableTerminalWorkflow();
         else this.saveTerminalWorkflow();
     }
 
@@ -2975,6 +3174,30 @@ class ForgeAgentPortAwareExecutionIT {
                                 List.of(this.port(STRATEGY_PASS, "Pass", 0), this.port(STRATEGY_RETURN, "Return", 1)), 1),
                         this.node(CODE, AGENT_C_ID, List.of(this.port(CODE_IN, "Input")),
                                 List.of(this.port(CODE_PASS, "Pass", 0), this.port(CODE_RETURN, "Return", 1)), 2)
+                ),
+                List.of(
+                        this.connection(1, IMPLEMENTER_OUT, STRATEGY_IN),
+                        this.connection(2, IMPLEMENTER_OUT, CODE_IN),
+                        this.connection(3, STRATEGY_RETURN, IMPLEMENTER_REVIEW_IN),
+                        this.connection(4, CODE_RETURN, IMPLEMENTER_REVIEW_IN)
+                ),
+                IMPLEMENTER_INITIAL_IN,
+                CODE_PASS
+        ));
+    }
+
+    private void saveIterationReviewerWorkflow() {
+        this.workflowUseCases.updateWorkflow(WORKFLOW_ID, new SaveWorkflowCommand(
+                "Full Testing",
+                List.of(
+                        new Node(IMPLEMENTER, AGENT_A_ID, NodeInputMode.DEPENDENCIES_ONLY,
+                                List.of(this.port(IMPLEMENTER_INITIAL_IN, "Initial", 0), this.port(IMPLEMENTER_REVIEW_IN, "Review", 1)),
+                                List.of(this.port(IMPLEMENTER_OUT, "Done")), new NodePosition(0.0, 0.0),
+                                NodeScopeMode.GLOBAL, NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION, "implementation-review"),
+                        this.iterationNode(this.node(STRATEGY, AGENT_B_ID, List.of(this.port(STRATEGY_IN, "Input")),
+                                List.of(this.port(STRATEGY_PASS, "Pass", 0), this.port(STRATEGY_RETURN, "Return", 1)), 1)),
+                        this.iterationNode(this.node(CODE, AGENT_C_ID, List.of(this.port(CODE_IN, "Input")),
+                                List.of(this.port(CODE_PASS, "Pass", 0), this.port(CODE_RETURN, "Return", 1)), 2))
                 ),
                 List.of(
                         this.connection(1, IMPLEMENTER_OUT, STRATEGY_IN),

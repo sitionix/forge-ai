@@ -28,8 +28,8 @@ public record NodeRunResponse(
         String contextMode,
         Integer contextTrackingVersion,
         UUID retryOfNodeRunId,
-        RecoveredNodeRunRetryEligibilityResponse retryEligibility
-) {
+        RecoveredNodeRunRetryEligibilityResponse retryEligibility,
+        String contextGroupKey, UUID contextIterationId) {
     public NodeRunResponse(final UUID id, final UUID sourceNodeId, final UUID sourceAgentId,
                            final String agentName, final String agentInstructions, final JsonNode agentOutputSchema,
                            final String inputMode, final NodePositionResponse position, final UUID executionFrameId,
@@ -54,5 +54,34 @@ public record NodeRunResponse(
                 executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId, status, output,
                 failure, createdAt, startedAt, finishedAt, repositoryId, "FRESH_EACH_NODE_RUN", null,
                 null, new RecoveredNodeRunRetryEligibilityResponse("NONE", null));
+    }
+
+    public NodeRunResponse(UUID id,
+        UUID sourceNodeId,
+        UUID sourceAgentId,
+        String agentName,
+        String agentInstructions,
+        JsonNode agentOutputSchema,
+        String inputMode,
+        NodePositionResponse position,
+        UUID executionFrameId,
+        UUID enteredViaInputPortId,
+        UUID activationFrameId,
+        UUID selectedOutputPortId,
+        NodeRunStatus status,
+        JsonNode output,
+        NodeRunFailureResponse failure,
+        Instant createdAt,
+        Instant startedAt,
+        Instant finishedAt,
+        UUID repositoryId,
+        String contextMode,
+        Integer contextTrackingVersion,
+        UUID retryOfNodeRunId,
+        RecoveredNodeRunRetryEligibilityResponse retryEligibility) {
+        this(id, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema, inputMode, position,
+                executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId, status, output,
+                failure, createdAt, startedAt, finishedAt, repositoryId, contextMode, contextTrackingVersion,
+                retryOfNodeRunId, retryEligibility, null, null);
     }
 }

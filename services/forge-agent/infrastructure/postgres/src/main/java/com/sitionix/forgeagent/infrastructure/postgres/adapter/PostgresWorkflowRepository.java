@@ -158,6 +158,7 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
             entity.setInputMode(inputMode(node.inputMode()).name());
             entity.setScopeMode(node.scopeMode().name());
             entity.setContextMode(node.contextMode().name());
+        entity.setContextGroupKey(node.contextGroupKey());
             entity.setPositionX(node.position().x());
             entity.setPositionY(node.position().y());
             desiredEntities.add(entity);
@@ -273,7 +274,8 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
                 this.toPorts(outputPortsByNode.getOrDefault(entity.getId(), List.of())),
                 new NodePosition(entity.getPositionX(), entity.getPositionY()),
                 NodeScopeMode.valueOf(entity.getScopeMode()),
-                contextMode(entity.getContextMode())
+                contextMode(entity.getContextMode()),
+                entity.getContextGroupKey()
         );
     }
 

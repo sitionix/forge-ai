@@ -1249,7 +1249,7 @@ export class TaskExecutionView {
           </div>
           <div class="execution-board-card-main">
             <strong>${escapeHtml(node.agentName || 'Unknown agent')}</strong>
-            ${node.contextMode === 'REUSE_WITHIN_WORKFLOW_NODE' ? '<small class="execution-context-badge">↻ Context</small>' : ''}
+            ${['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION'].includes(node.contextMode) ? '<small class="execution-context-badge">↻ Context</small>' : ''}
             ${node.repositoryName ? `<small class="execution-board-repository">${escapeHtml(node.repositoryName)}</small>` : ''}
             ${latest ? `<span>#${latestNumber} ${escapeHtml(latest.status)}</span>` : ''}
             <div class="execution-board-runline">
@@ -1502,7 +1502,7 @@ export class TaskExecutionView {
   }
 
   renderContextReset(context) {
-    if (context.contextMode !== 'REUSE_WITHIN_WORKFLOW_NODE') return '';
+    if (!['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION'].includes(context.contextMode)) return '';
     if (context.contextResetAt) return '<p>Context reset. Existing turns and Activity remain available.</p>';
     if (context.resetAllowed !== true) return '';
     const busy = this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight;
@@ -1514,7 +1514,7 @@ export class TaskExecutionView {
   async resetAgentExecutionContext() {
     const context = this.contextForNodeRun(this.selectedNodeRun()?.id);
     if (this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight
-      || context?.contextMode !== 'REUSE_WITHIN_WORKFLOW_NODE'
+      || !['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION'].includes(context?.contextMode)
       || context.resetAllowed !== true || context.contextResetAt) return;
     const taskId = this.state.taskId;
     const taskSequence = this.taskLoadSequence;
@@ -1641,8 +1641,18 @@ export class TaskExecutionView {
     return (this.state.agentExecutionContexts || []).find((context) => context.nodeRunId === nodeRunId) || null;
   }
 
+  hasMatchingIterationContext(nodeRun, context) {
+    if (nodeRun?.contextMode !== 'REUSE_WITHIN_WORKFLOW_ITERATION') return true;
+    return typeof nodeRun.contextIterationId === 'string' && nodeRun.contextIterationId.trim().length > 0
+      && context?.contextMode === nodeRun.contextMode
+      && context.contextIterationId === nodeRun.contextIterationId
+      && context.sourceNodeId === nodeRun.sourceNodeId
+      && context.repositoryId === nodeRun.repositoryId;
+  }
+
   hasVerifiedActivityTurn(nodeRun, context) {
     return nodeRun?.contextTrackingVersion != null
+      && this.hasMatchingIterationContext(nodeRun, context)
       && context?.nodeRunId === nodeRun.id
       && (nodeRun.contextMode !== 'FRESH_EACH_NODE_RUN' || context.contextMode === 'FRESH_EACH_NODE_RUN')
       && typeof context.turnId === 'string' && context.turnId.trim().length > 0;
@@ -1883,9 +1893,15 @@ export class TaskExecutionView {
       })), nodeRun.id, false);
       return `<section class="node-run-context"><h3>CONTEXT</h3><strong>Fresh</strong><p>Context is not reused</p>${this.detailRow('Status', this.contextLifecycle(context))}<nav aria-label="Independent invocation history" class="context-history independent">${history}</nav>${this.renderTechnicalDetails(context)}</section>`;
     }
-    if (!context) {
+    if (!context || !this.hasMatchingIterationContext(nodeRun, context)) {
       return '<section class="node-run-context"><h3>CONTEXT</h3><strong>Unavailable</strong><p>Verified context information is unavailable.</p></section>';
     }
+    const iterationRuns = (this.state.workflowRun?.nodeRuns || [])
+      .filter((run) => run.contextGroupKey === nodeRun.contextGroupKey && run.repositoryId === nodeRun.repositoryId && run.contextIterationId)
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)) || a.id.localeCompare(b.id));
+    const identities = [...new Set(iterationRuns.map((run) => run.contextIterationId))];
+    const iterationDetails = nodeRun.contextMode === 'REUSE_WITHIN_WORKFLOW_ITERATION'
+      ? `<strong>Reuse within iteration</strong>${this.detailRow('Group', nodeRun.contextGroupKey)}${this.detailRow('Iteration', identities.includes(nodeRun.contextIterationId) ? `#${identities.indexOf(nodeRun.contextIterationId) + 1}` : nodeRun.contextIterationId)}` : '';
     const relation = context.sequence === 1 ? 'New' : 'Continued';
     const status = this.contextLifecycle(context);
     const projection = this.modernProjection();
@@ -1894,13 +1910,13 @@ export class TaskExecutionView {
     const currentTurn = (this.state.agentExecutionContexts || []).find((item) => item.sessionId === context.sessionId
       && ['STARTING', 'ACTIVE'].includes(item.turnStatus));
     const currentNumber = projection.invocationNumberById.get(currentTurn?.nodeRunId || nodeRun.id) || context.sequence;
-    const history = this.renderContextHistory((this.state.agentExecutionContexts || []).filter((item) => item.sessionId === context.sessionId)
+    const history = this.renderContextHistory((this.state.agentExecutionContexts || []).filter((item) => item.sessionId === context.sessionId && this.hasMatchingIterationContext(nodeRun, item))
       .sort((a, b) => a.sequence - b.sequence)
       .map((item) => ({
         nodeRunId: item.nodeRunId,
         label: `#${projection.invocationNumberById.get(item.nodeRunId) || item.sequence} ${item.sequence === 1 ? 'New' : 'Continued'}`,
       })), nodeRun.id, true);
-    return `<section class="node-run-context"><h3>CONTEXT</h3><div><strong>${relation}</strong><span>Turn ${context.sequence}</span></div>
+    return `<section class="node-run-context"><h3>CONTEXT</h3>${iterationDetails}<div><strong>${relation}</strong><span>Turn ${context.sequence}</span></div>
       ${this.detailRow('Status', status)}${this.detailRow('Scope', context.repositoryId ? this.repositoryName(context.repositoryId) : 'Global')}
       ${this.detailRow('Started', `Invocation #${startedNumber}`)}${context.sequence > 1 || currentTurn?.nodeRunId !== startedRun?.nodeRunId ? this.detailRow('Current', `Invocation #${currentNumber}`) : ''}
       ${this.renderContextReset(context)}
@@ -1934,6 +1950,7 @@ export class TaskExecutionView {
 
   renderTechnicalDetails(context) {
     return `<details class="node-run-technical-details"><summary>Technical details</summary>
+      ${context.contextIterationId ? this.detailRow('Context iteration ID', context.contextIterationId) : ''}
       ${this.detailRow('Forge session ID', context.sessionId)}${this.detailRow('Forge turn ID', context.turnId)}
       ${context.provider ? this.detailRow('Provider', context.provider) : ''}${context.providerConversationId ? this.detailRow('Provider conversation ID', context.providerConversationId) : ''}
       ${context.providerTurnId ? this.detailRow('Provider turn ID', context.providerTurnId) : ''}${context.providerVersion ? this.detailRow('Provider / CLI version', context.providerVersion) : ''}

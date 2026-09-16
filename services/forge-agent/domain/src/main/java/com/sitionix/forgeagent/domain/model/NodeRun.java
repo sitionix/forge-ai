@@ -28,10 +28,12 @@ public record NodeRun(
         UUID repositoryId,
         NodeContextMode contextMode,
         Integer contextTrackingVersion,
-        UUID retryOfNodeRunId
-) {
+        UUID retryOfNodeRunId,
+        String contextGroupKey, UUID contextIterationId) {
     public NodeRun {
         contextMode = NodeContextMode.legacyDefault(contextMode);
+        ContextIterationPolicy.validateGroup(contextMode, contextGroupKey);
+        ContextIterationPolicy.validateIdentity(contextMode, contextIterationId);
     }
 
     public NodeRun(final UUID id, final UUID workflowRunId, final UUID sourceNodeId, final UUID sourceAgentId,
@@ -59,5 +61,36 @@ public record NodeRun(
                 inputMode, position, executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId,
                 routingCompletedAt, status, output, failure, executionModel, createdAt, startedAt, finishedAt,
                 repositoryId, NodeContextMode.FRESH_EACH_NODE_RUN, null, null);
+    }
+
+    public NodeRun(UUID id,
+        UUID workflowRunId,
+        UUID sourceNodeId,
+        UUID sourceAgentId,
+        String agentName,
+        String agentInstructions,
+        AgentOutputSchema agentOutputSchema,
+        NodeInputMode inputMode,
+        NodePosition position,
+        UUID executionFrameId,
+        UUID enteredViaInputPortId,
+        UUID activationFrameId,
+        UUID selectedOutputPortId,
+        Instant routingCompletedAt,
+        NodeRunStatus status,
+        NodeRunOutput output,
+        NodeRunFailure failure,
+        NodeRunExecutionModel executionModel,
+        Instant createdAt,
+        Instant startedAt,
+        Instant finishedAt,
+        UUID repositoryId,
+        NodeContextMode contextMode,
+        Integer contextTrackingVersion,
+        UUID retryOfNodeRunId) {
+        this(id, workflowRunId, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema, inputMode,
+                position, executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId,
+                routingCompletedAt, status, output, failure, executionModel, createdAt, startedAt, finishedAt,
+                repositoryId, contextMode, contextTrackingVersion, retryOfNodeRunId, null, null);
     }
 }

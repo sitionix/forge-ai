@@ -28,9 +28,38 @@ public record AgentNodeRunResponse(
         String contextMode,
         Integer contextTrackingVersion,
         UUID retryOfNodeRunId,
-        AgentNodeRunRetryEligibilityResponse retryEligibility
-) {
+        AgentNodeRunRetryEligibilityResponse retryEligibility,
+        String contextGroupKey, UUID contextIterationId) {
     public AgentNodeRunResponse(UUID id,UUID sourceNodeId,UUID sourceAgentId,String agentName,String agentInstructions,JsonNode agentOutputSchema,String inputMode,NodePositionResponse position,UUID executionFrameId,UUID enteredViaInputPortId,UUID activationFrameId,UUID selectedOutputPortId,AgentNodeRunStatus status,JsonNode output,AgentNodeRunFailureResponse failure,Instant createdAt,Instant startedAt,Instant finishedAt,UUID repositoryId) {
-        this(id,sourceNodeId,sourceAgentId,agentName,agentInstructions,agentOutputSchema,inputMode,position,executionFrameId,enteredViaInputPortId,activationFrameId,selectedOutputPortId,status,output,failure,createdAt,startedAt,finishedAt,repositoryId,"FRESH_EACH_NODE_RUN",null,null,null);
+this(id,sourceNodeId,sourceAgentId,agentName,agentInstructions,agentOutputSchema,inputMode,position,executionFrameId,enteredViaInputPortId,activationFrameId,selectedOutputPortId,status,output,failure,createdAt,startedAt,finishedAt,repositoryId,"FRESH_EACH_NODE_RUN",null,null,null);
+    }
+
+    public AgentNodeRunResponse(UUID id,
+        UUID sourceNodeId,
+        UUID sourceAgentId,
+        String agentName,
+        String agentInstructions,
+        JsonNode agentOutputSchema,
+        String inputMode,
+        NodePositionResponse position,
+        UUID executionFrameId,
+        UUID enteredViaInputPortId,
+        UUID activationFrameId,
+        UUID selectedOutputPortId,
+        AgentNodeRunStatus status,
+        JsonNode output,
+        AgentNodeRunFailureResponse failure,
+        Instant createdAt,
+        Instant startedAt,
+        Instant finishedAt,
+        UUID repositoryId,
+        String contextMode,
+        Integer contextTrackingVersion,
+        UUID retryOfNodeRunId,
+        AgentNodeRunRetryEligibilityResponse retryEligibility) {
+        this(id, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema, inputMode, position,
+                executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId, status, output,
+                failure, createdAt, startedAt, finishedAt, repositoryId, contextMode, contextTrackingVersion,
+                retryOfNodeRunId, retryEligibility, null, null);
     }
 }

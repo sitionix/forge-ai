@@ -57,6 +57,9 @@ public class WorkflowRunNodeEntity {
     @Column(name = "context_mode", nullable = false, length = 48)
     private String contextMode;
 
+    @Column(name = "context_group_key")
+    private String contextGroupKey;
+
     @Column(name = "position_x", nullable = false)
     private double positionX;
 

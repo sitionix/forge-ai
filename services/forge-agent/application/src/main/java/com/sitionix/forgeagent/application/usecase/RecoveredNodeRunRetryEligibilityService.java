@@ -69,9 +69,9 @@ public class RecoveredNodeRunRetryEligibilityService {
         }
         if (!this.safeSessionState(target.contextMode(), allocation.session())) {
             return RecoveredNodeRunRetryEligibility.none(
-                    target.contextMode() == NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE ? CONTEXT_UNSAFE : NOT_ALLOWED);
+                    target.contextMode().reusable() ? CONTEXT_UNSAFE : NOT_ALLOWED);
         }
-        return target.contextMode() == NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE
+        return target.contextMode().reusable()
                 && allocation.session().contextResetAt() == null
                 ? RecoveredNodeRunRetryEligibility.resume()
                 : RecoveredNodeRunRetryEligibility.retry();
@@ -87,6 +87,7 @@ public class RecoveredNodeRunRetryEligibilityService {
                 && target.sourceAgentId().equals(session.sourceAgentId())
                 && Objects.equals(target.repositoryId(), session.repositoryId())
                 && target.contextMode() == session.contextMode()
+                && Objects.equals(target.contextIterationId(), session.contextIterationId())
                 && turn.status() == AgentExecutionTurnStatus.FAILED
                 && RECOVERY_REQUIRED.equals(turn.failureCode())
                 && turn.providerRecoveryState() == ProviderTurnRecoveryState.TERMINAL
@@ -98,13 +99,13 @@ public class RecoveredNodeRunRetryEligibilityService {
     }
 
     private boolean safeSessionState(final NodeContextMode contextMode, final AgentExecutionSession session) {
-        final AgentExecutionSessionStatus expected = contextMode == NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE
+        final AgentExecutionSessionStatus expected = contextMode.reusable()
                 ? AgentExecutionSessionStatus.IDLE : AgentExecutionSessionStatus.CLOSED;
         return session.status() == expected
                 && session.activeNodeRunId() == null
                 && session.leaseOwnerId() == null
                 && session.leaseExpiresAt() == null
-                && (contextMode != NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE
+                && (!contextMode.reusable()
                     || (session.failureCode() == null && session.failureMessage() == null
                         && !this.sessions.hasPendingTurns(session.id())));
     }

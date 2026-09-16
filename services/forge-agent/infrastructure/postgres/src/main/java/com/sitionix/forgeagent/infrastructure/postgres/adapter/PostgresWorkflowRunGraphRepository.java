@@ -109,7 +109,8 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
                 NodeInputMode.valueOf(entity.getInputMode()),
                 new NodePosition(entity.getPositionX(), entity.getPositionY()),
                 NodeScopeMode.valueOf(entity.getScopeMode()),
-                contextMode(entity.getContextMode())
+                contextMode(entity.getContextMode()),
+                entity.getContextGroupKey()
         );
     }
 
@@ -148,6 +149,7 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
         entity.setInputMode(node.inputMode().name());
         entity.setScopeMode(node.scopeMode().name());
         entity.setContextMode(node.contextMode().name());
+        entity.setContextGroupKey(node.contextGroupKey());
         entity.setPositionX(node.position().x());
         entity.setPositionY(node.position().y());
         return entity;

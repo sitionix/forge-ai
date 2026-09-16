@@ -8,7 +8,7 @@ public final class AgentContextResetEligibility {
     private AgentContextResetEligibility() { }
 
     public static String reason(final AgentExecutionSession session, final boolean pendingTurns) {
-        if (session.contextMode() != NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE || session.contextResetAt() != null) {
+        if (!session.contextMode().reusable() || session.contextResetAt() != null) {
             return NOT_ALLOWED;
         }
         if (pendingTurns || session.activeNodeRunId() != null || session.leaseOwnerId() != null
