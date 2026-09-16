@@ -21,6 +21,8 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class NodeRunFactoryTest {
 
@@ -60,10 +62,11 @@ class NodeRunFactoryTest {
                 .extracting("code").isEqualTo("CONTEXT_GROUP_SCOPE_CONFLICT");
     }
 
-    @Test
-    void feedbackPreservesIterationAcrossFramesAndExitStartsNewIdentity() {
-        var impl = iterationNode(NodeScopeMode.GLOBAL);
-        var reviewer = iterationNode(NodeScopeMode.GLOBAL);
+    @ParameterizedTest
+    @ValueSource(strings = {"REUSE_WITHIN_WORKFLOW_ITERATION", "SHARED_SESSION_GROUP"})
+    void feedbackPreservesIterationAcrossFramesAndExitStartsNewIdentity(String mode) {
+        var impl = iterationNode(NodeScopeMode.GLOBAL, mode);
+        var reviewer = iterationNode(NodeScopeMode.GLOBAL, mode);
         var first = factory.root(workflowRun(), frame, impl, UUID.randomUUID(), null);
         var review = factory.activated(workflowRun(), frame, frame, reviewer, UUID.randomUUID(), null, List.of(first));
         var child = new ExecutionFrame(UUID.randomUUID(), RUN_ID, frame.id(), NOW);
@@ -77,9 +80,10 @@ class NodeRunFactoryTest {
         assertThat(second.contextGroupKey()).isEqualTo("implementation-review");
     }
 
-    @Test
-    void fanInContinuesOneIdentityWithOutsideInputAndRejectsTwo() {
-        var target = iterationNode(NodeScopeMode.GLOBAL);
+    @ParameterizedTest
+    @ValueSource(strings = {"REUSE_WITHIN_WORKFLOW_ITERATION", "SHARED_SESSION_GROUP"})
+    void fanInContinuesOneIdentityWithOutsideInputAndRejectsTwo(String mode) {
+        var target = iterationNode(NodeScopeMode.GLOBAL, mode);
         var first = factory.root(workflowRun(), frame, target, UUID.randomUUID(), null);
         var other = factory.root(workflowRun(), frame, target, UUID.randomUUID(), null);
         var outside = factory.root(workflowRun(), frame, node(NodeScopeMode.GLOBAL), UUID.randomUUID(), null);
@@ -89,19 +93,20 @@ class NodeRunFactoryTest {
                 .extracting("code").isEqualTo("AGENT_CONTEXT_ITERATION_CONFLICT");
     }
 
-    @Test
-    void repositoryBoundaryDoesNotPropagateIdentity() {
-        var target = iterationNode(NodeScopeMode.PER_SCOPE);
+    @ParameterizedTest
+    @ValueSource(strings = {"REUSE_WITHIN_WORKFLOW_ITERATION", "SHARED_SESSION_GROUP"})
+    void repositoryBoundaryDoesNotPropagateIdentity(String mode) {
+        var target = iterationNode(NodeScopeMode.PER_SCOPE, mode);
         var source = factory.root(workflowRun(), frame, target, UUID.randomUUID(), REPOSITORY_ID);
         assertThat(NodeRunFactory.iteration(workflowRun(), target, OUTSIDE_REPOSITORY_ID, List.of(source)))
                 .isNotEqualTo(source.contextIterationId());
     }
 
-    private RunNode iterationNode(NodeScopeMode scope) {
+    private RunNode iterationNode(NodeScopeMode scope, String mode) {
         var n = node(scope);
         return new RunNode(n.workflowRunId(), n.sourceNodeId(), n.sourceAgentId(), n.agentName(), n.agentInstructions(),
                 n.agentOutputSchema(), n.executionModel(), n.inputMode(), n.position(), scope,
-                NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION, "implementation-review");
+                NodeContextMode.valueOf(mode), "implementation-review");
     }
 
     private static final Instant NOW = Instant.parse("2026-08-20T12:00:00Z");

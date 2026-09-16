@@ -76,7 +76,9 @@ public final class CodexAgentExecutor implements AgentExecutor {
                 claim.executionModel().modelId(),
                 claim.executionModel().effortId(),
                 effectiveOutputSchema,
-                claim.executionWorkspace()
+                claim.executionWorkspace(),
+                claim.agentSessionClaim() != null && claim.agentSessionClaim().contextMode()
+                        == com.sitionix.forgeagent.domain.model.NodeContextMode.SHARED_SESSION_GROUP
         );
         final String outputText;
         if (claim.agentSessionClaim() == null) {

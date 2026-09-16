@@ -212,7 +212,9 @@ final class CodexAppServerClient implements CodexClient {
                         : existingThreadId == null && durable
                             ? sessionProtocol.startDurableThread(current, this.threadStartParams(request), this.properties.getRequestTimeout())
                             : existingThreadId != null
-                                ? sessionProtocol.resumeThread(current, existingThreadId, this.properties.getRequestTimeout())
+                                ? sessionProtocol.resumeThread(current, existingThreadId,
+                                        request.sharedSessionGroup() ? request.developerInstructions() : null,
+                                        this.properties.getRequestTimeout())
                                 : this.startThread(current, turnStateTracker, request);
             } catch (final CodexExecutionException exception) {
                 throw exception;

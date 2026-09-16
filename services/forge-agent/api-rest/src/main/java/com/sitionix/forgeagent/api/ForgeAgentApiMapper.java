@@ -143,7 +143,7 @@ class ForgeAgentApiMapper {
                 session.repositoryId(), session.contextMode().name(), turn.sequence(), session.status().name(), turn.status().name(),
                 session.providerId(), session.providerConversationId(), turn.providerTurnId(), session.providerVersion(),
                 turn.failureCode(), turn.failureMessage(), session.createdAt(), turn.startedAt(), turn.finishedAt(),
-                session.contextResetAt(), resetReason == null, resetReason, session.contextIterationId());
+                session.contextResetAt(), resetReason == null, resetReason, session.contextIterationId(), session.contextGroupKey());
     }
 
     CreateProjectCommand toCommand(final CreateProjectRequest request) {

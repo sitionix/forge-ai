@@ -83,8 +83,11 @@ public class RecoveredNodeRunRetryEligibilityService {
         return target.id().equals(turn.nodeRunId())
                 && session.id().equals(turn.agentSessionId())
                 && target.workflowRunId().equals(session.workflowRunId())
-                && target.sourceNodeId().equals(session.sourceNodeId())
-                && target.sourceAgentId().equals(session.sourceAgentId())
+                && (target.contextMode() == NodeContextMode.SHARED_SESSION_GROUP
+                    ? session.sourceNodeId() == null && session.sourceAgentId() == null
+                        && Objects.equals(target.contextGroupKey(), session.contextGroupKey())
+                    : target.sourceNodeId().equals(session.sourceNodeId())
+                        && target.sourceAgentId().equals(session.sourceAgentId()))
                 && Objects.equals(target.repositoryId(), session.repositoryId())
                 && target.contextMode() == session.contextMode()
                 && Objects.equals(target.contextIterationId(), session.contextIterationId())

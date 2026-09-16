@@ -144,7 +144,7 @@ public class ForgeAgentClientMapper {
                 response.failureMessage(),
                 response.createdAt(),
                 response.startedAt(),
-                response.finishedAt(), response.contextResetAt(), response.resetAllowed(), response.resetReason(), response.contextIterationId());
+                response.finishedAt(), response.contextResetAt(), response.resetAllowed(), response.resetReason(), response.contextIterationId(), response.contextGroupKey());
     }
 
     com.sitionix.forgeai.domain.model.agentproxy.AgentExecutionEventPage toDomain(

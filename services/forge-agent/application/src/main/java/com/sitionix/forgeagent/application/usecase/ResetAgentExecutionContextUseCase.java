@@ -22,7 +22,11 @@ public class ResetAgentExecutionContextUseCase {
     public List<AgentExecutionAllocation> execute(final UUID sessionId) {
         // Read immutable identity first; match allocator order: scope advisory lock -> session row.
         final AgentExecutionSession identity = this.sessions.findSession(sessionId).orElseThrow(() -> missing(sessionId));
-        this.sessions.lockReusableScope(identity.workflowRunId(), identity.sourceNodeId(), identity.repositoryId());
+        if (identity.contextMode() == NodeContextMode.SHARED_SESSION_GROUP) {
+            this.sessions.lockSharedScope(identity.workflowRunId(), identity.contextIterationId(), identity.contextGroupKey(), identity.repositoryId());
+        } else {
+            this.sessions.lockReusableScope(identity.workflowRunId(), identity.sourceNodeId(), identity.repositoryId());
+        }
         final AgentExecutionSession session = this.sessions.lockSession(sessionId).orElseThrow(() -> missing(sessionId));
         if (!session.contextMode().reusable()) {
             throw new ConflictException(AgentContextResetEligibility.NOT_ALLOWED, "Fresh agent contexts cannot be reset.");

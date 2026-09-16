@@ -9,6 +9,11 @@ record CodexTurnRequest(
         String modelId,
         String effortId,
         JsonNode outputSchema,
-        ExecutionWorkspace executionWorkspace
+        ExecutionWorkspace executionWorkspace,
+        boolean sharedSessionGroup
 ) {
+    CodexTurnRequest(final String userInput, final String developerInstructions, final String modelId,
+                     final String effortId, final JsonNode outputSchema, final ExecutionWorkspace executionWorkspace) {
+        this(userInput, developerInstructions, modelId, effortId, outputSchema, executionWorkspace, false);
+    }
 }

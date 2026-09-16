@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeagent.application.runtime.ExecutionBudgetPolicy;
@@ -47,6 +48,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -104,6 +107,33 @@ class WorkflowRunUseCasesTest {
                 new ScopeProjectionPolicy(),
                 CLOCK
         );
+    }
+
+    @ParameterizedTest
+    @CsvSource({"other,gpt-5,", "codex,other,", "codex,gpt-5,high"})
+    void sharedSnapshotConfigurationMismatchFailsBeforeAnyRuntimePersistence(String provider, String model, String effort) {
+        final Workflow base = this.workflowWithTwoNodes();
+        final List<Node> sharedNodes = base.nodes().stream()
+                .map(node -> new Node(node.id(), node.targetId(), node.inputMode(), node.inputs(), node.outputs(),
+                        node.position(), node.scopeMode(), NodeContextMode.SHARED_SESSION_GROUP, "implementation-loop"))
+                .toList();
+        final Workflow workflow = new Workflow(base.id(), base.projectId(), base.name(), base.normalizedName(),
+                sharedNodes, base.connections(), base.taskInputPortId(), base.taskOutputPortId(), base.createdAt(), base.updatedAt());
+        final AgentDefinition original = this.secondAgent();
+        final AgentDefinition incompatible = new AgentDefinition(original.id(), original.projectId(), original.name(),
+                original.normalizedName(), original.instructions(), original.outputSchema(),
+                new AgentModelSelection(provider, model, effort), original.createdAt(), original.updatedAt());
+        when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
+        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent(), incompatible));
+        when(this.providerCapabilities.supports(any(), any())).thenReturn(true);
+
+        assertThatThrownBy(() -> this.useCases.createWorkflowRun(this.workflowId, new CreateWorkflowRunCommand("Run it")))
+                .isInstanceOf(ValidationException.class)
+                .extracting("code").isEqualTo("CONTEXT_GROUP_CONFIGURATION_CONFLICT");
+
+        // No persisted run or pending NodeRun exists for a worker to allocate a session or call a provider.
+        verifyNoInteractions(this.workflowRunRepository, this.graphRepository, this.executionFrameRepository,
+                this.nodeRunRepository, this.executionBudgetPolicy);
     }
 
     @Test

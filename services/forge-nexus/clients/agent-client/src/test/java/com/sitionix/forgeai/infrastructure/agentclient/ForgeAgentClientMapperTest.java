@@ -748,4 +748,22 @@ class ForgeAgentClientMapperTest {
                 null, null, null, null, null, null, null, null, null, null, false, null));
     }
 
+    @Test
+    void sharedExecutionContextPreservesNullableOwnerAndIterationGroup() {
+        final UUID iterationId = UUID.randomUUID();
+        final UUID sessionId = UUID.randomUUID();
+        final UUID turnId = UUID.randomUUID();
+        for (final Instant resetAt : new Instant[] { null, CREATED }) {
+            final var response = new AgentExecutionContextResponse(
+                    sessionId, turnId, NODE_RUN_ID, null, REPOSITORY_ID,
+                    "SHARED_SESSION_GROUP", 2, "IDLE", "SUCCEEDED", "codex", "shared-thread", "provider-turn",
+                    "version", null, null, CREATED, CREATED, CREATED, resetAt, resetAt == null, null,
+                    iterationId, "implementation-loop");
+            assertThat(this.mapper.toDomain(response)).isEqualTo(new AgentExecutionContext(
+                    sessionId, turnId, NODE_RUN_ID, null, REPOSITORY_ID,
+                    "SHARED_SESSION_GROUP", 2, "IDLE", "SUCCEEDED", "codex", "shared-thread", "provider-turn",
+                    "version", null, null, CREATED, CREATED, CREATED, resetAt, resetAt == null, null,
+                    iterationId, "implementation-loop"));
+        }
+    }
 }

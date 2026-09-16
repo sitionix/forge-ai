@@ -1249,7 +1249,7 @@ export class TaskExecutionView {
           </div>
           <div class="execution-board-card-main">
             <strong>${escapeHtml(node.agentName || 'Unknown agent')}</strong>
-            ${['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION'].includes(node.contextMode) ? '<small class="execution-context-badge">↻ Context</small>' : ''}
+            ${['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(node.contextMode) ? '<small class="execution-context-badge">↻ Context</small>' : ''}
             ${node.repositoryName ? `<small class="execution-board-repository">${escapeHtml(node.repositoryName)}</small>` : ''}
             ${latest ? `<span>#${latestNumber} ${escapeHtml(latest.status)}</span>` : ''}
             <div class="execution-board-runline">
@@ -1502,7 +1502,7 @@ export class TaskExecutionView {
   }
 
   renderContextReset(context) {
-    if (!['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION'].includes(context.contextMode)) return '';
+    if (!['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(context.contextMode)) return '';
     if (context.contextResetAt) return '<p>Context reset. Existing turns and Activity remain available.</p>';
     if (context.resetAllowed !== true) return '';
     const busy = this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight;
@@ -1514,7 +1514,7 @@ export class TaskExecutionView {
   async resetAgentExecutionContext() {
     const context = this.contextForNodeRun(this.selectedNodeRun()?.id);
     if (this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight
-      || !['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION'].includes(context?.contextMode)
+      || !['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(context?.contextMode)
       || context.resetAllowed !== true || context.contextResetAt) return;
     const taskId = this.state.taskId;
     const taskSequence = this.taskLoadSequence;
@@ -1642,11 +1642,13 @@ export class TaskExecutionView {
   }
 
   hasMatchingIterationContext(nodeRun, context) {
-    if (nodeRun?.contextMode !== 'REUSE_WITHIN_WORKFLOW_ITERATION') return true;
+    if (!['REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(nodeRun?.contextMode)) return true;
     return typeof nodeRun.contextIterationId === 'string' && nodeRun.contextIterationId.trim().length > 0
       && context?.contextMode === nodeRun.contextMode
       && context.contextIterationId === nodeRun.contextIterationId
-      && context.sourceNodeId === nodeRun.sourceNodeId
+      && (nodeRun.contextMode === 'SHARED_SESSION_GROUP'
+        ? context.sourceNodeId === null && typeof nodeRun.contextGroupKey === 'string' && nodeRun.contextGroupKey.trim().length > 0 && context.contextGroupKey === nodeRun.contextGroupKey
+        : context.sourceNodeId === nodeRun.sourceNodeId)
       && context.repositoryId === nodeRun.repositoryId;
   }
 
@@ -1900,8 +1902,9 @@ export class TaskExecutionView {
       .filter((run) => run.contextGroupKey === nodeRun.contextGroupKey && run.repositoryId === nodeRun.repositoryId && run.contextIterationId)
       .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)) || a.id.localeCompare(b.id));
     const identities = [...new Set(iterationRuns.map((run) => run.contextIterationId))];
-    const iterationDetails = nodeRun.contextMode === 'REUSE_WITHIN_WORKFLOW_ITERATION'
-      ? `<strong>Reuse within iteration</strong>${this.detailRow('Group', nodeRun.contextGroupKey)}${this.detailRow('Iteration', identities.includes(nodeRun.contextIterationId) ? `#${identities.indexOf(nodeRun.contextIterationId) + 1}` : nodeRun.contextIterationId)}` : '';
+    const shared = nodeRun.contextMode === 'SHARED_SESSION_GROUP';
+    const iterationDetails = ['REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(nodeRun.contextMode)
+      ? `<strong>${shared ? 'Shared session' : 'Reuse within iteration'}</strong>${this.detailRow('Group', nodeRun.contextGroupKey)}${this.detailRow('Iteration', identities.includes(nodeRun.contextIterationId) ? `#${identities.indexOf(nodeRun.contextIterationId) + 1}` : nodeRun.contextIterationId)}` : '';
     const relation = context.sequence === 1 ? 'New' : 'Continued';
     const status = this.contextLifecycle(context);
     const projection = this.modernProjection();
@@ -1910,15 +1913,16 @@ export class TaskExecutionView {
     const currentTurn = (this.state.agentExecutionContexts || []).find((item) => item.sessionId === context.sessionId
       && ['STARTING', 'ACTIVE'].includes(item.turnStatus));
     const currentNumber = projection.invocationNumberById.get(currentTurn?.nodeRunId || nodeRun.id) || context.sequence;
+    const sharedTurnLabel = (turn) => `${(this.state.workflowRun?.nodeRuns || []).find((run) => run.id === turn?.nodeRunId)?.agentName || 'Unknown agent'} · Turn ${turn?.sequence ?? 'Unavailable'}`;
     const history = this.renderContextHistory((this.state.agentExecutionContexts || []).filter((item) => item.sessionId === context.sessionId && this.hasMatchingIterationContext(nodeRun, item))
       .sort((a, b) => a.sequence - b.sequence)
       .map((item) => ({
         nodeRunId: item.nodeRunId,
-        label: `#${projection.invocationNumberById.get(item.nodeRunId) || item.sequence} ${item.sequence === 1 ? 'New' : 'Continued'}`,
+        label: `${shared ? `${sharedTurnLabel(item)} · ` : ''}#${projection.invocationNumberById.get(item.nodeRunId) || item.sequence} ${item.sequence === 1 ? 'New' : 'Continued'}`,
       })), nodeRun.id, true);
     return `<section class="node-run-context"><h3>CONTEXT</h3>${iterationDetails}<div><strong>${relation}</strong><span>Turn ${context.sequence}</span></div>
       ${this.detailRow('Status', status)}${this.detailRow('Scope', context.repositoryId ? this.repositoryName(context.repositoryId) : 'Global')}
-      ${this.detailRow('Started', `Invocation #${startedNumber}`)}${context.sequence > 1 || currentTurn?.nodeRunId !== startedRun?.nodeRunId ? this.detailRow('Current', `Invocation #${currentNumber}`) : ''}
+      ${this.detailRow('Started', shared ? sharedTurnLabel(startedRun) : `Invocation #${startedNumber}`)}${context.sequence > 1 || currentTurn?.nodeRunId !== startedRun?.nodeRunId ? this.detailRow('Current', shared ? sharedTurnLabel(currentTurn || context) : `Invocation #${currentNumber}`) : ''}
       ${this.renderContextReset(context)}
       <nav aria-label="Context invocation history" class="context-history">${history}</nav>${this.renderTechnicalDetails(context)}</section>`;
   }
