@@ -31,7 +31,8 @@ public final class ContextIterationPolicy {
             if (prior.contextMode() != node.contextMode()) {
                 throw new ValidationException("CONTEXT_GROUP_MODE_CONFLICT", "A context group cannot mix shared and node-owned iteration modes.");
             }
-            if (prior.scopeMode() != node.scopeMode()) {
+            if (node.contextMode() == NodeContextMode.SHARED_SESSION_GROUP
+                    && prior.scopeMode() != node.scopeMode()) {
                 throw new ValidationException("CONTEXT_GROUP_SCOPE_CONFLICT", "All nodes in an iteration group must use the same scope mode.");
             }
             if (node.contextMode() == NodeContextMode.SHARED_SESSION_GROUP
@@ -52,7 +53,8 @@ public final class ContextIterationPolicy {
                     throw new ValidationException("CONTEXT_GROUP_MODE_CONFLICT", "A context group cannot mix shared and node-owned iteration modes.");
                 }
                 final var prior = scopes.putIfAbsent(node.contextGroupKey(), node.scopeMode());
-                if (prior != null && prior != node.scopeMode()) {
+                if (node.contextMode() == NodeContextMode.SHARED_SESSION_GROUP
+                        && prior != null && prior != node.scopeMode()) {
                     throw new ValidationException("CONTEXT_GROUP_SCOPE_CONFLICT", "All nodes in an iteration group must use the same scope mode.");
                 }
             }

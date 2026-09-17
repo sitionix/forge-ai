@@ -59,6 +59,13 @@ import com.sitionix.forgeagent.infrastructure.postgres.entity.ProjectTaskEntity;
 import com.sitionix.forgeagent.infrastructure.postgres.entity.WorkflowRunEntity;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryService;
+import com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryInspector;
+import com.sitionix.forgeagent.application.runtime.ProviderTurnRecoveryResult;
+import com.sitionix.forgeagent.domain.model.ProviderTurnRecoveryTerminalOutcome;
+import com.sitionix.forgeagent.application.usecase.RetryRecoveredNodeRunUseCase;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -146,10 +153,271 @@ class ForgeAgentScopedExecutionIT {
     @Autowired
     private com.sitionix.forgeagent.application.usecase.ResetAgentExecutionContextUseCase resetContext;
 
+    @Autowired
+    private AgentExecutionRecoveryService recoveryService;
+    @SpyBean
+    private AgentExecutionRecoveryInspector recoveryInspector;
+    @Autowired
+    private RetryRecoveredNodeRunUseCase retryRecoveredNodeRun;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @MockBean
     private OutputSelector outputSelector;
 
     private final java.util.Map<UUID, NodeExecutionClaim> sessionClaims = new ConcurrentHashMap<>();
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void mixedIterationSurvivesFanInFeedbackAndIndependentReentry(final boolean outsideEntry) {
+        this.seed();
+        this.saveMixedReviewerWorkflow(outsideEntry);
+        final UUID runId = this.createTask(this.repositories(2));
+        if (outsideEntry) this.complete(this.onlyPending(runId, A), "{}");
+        final var iterations = new java.util.HashSet<UUID>();
+        final var allSessions = new java.util.HashSet<UUID>();
+        for (int cycle = 0; cycle < 2; cycle++) {
+            final var firstA = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_A);
+            final var firstB = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_B);
+            final UUID iteration = firstA.contextIterationId();
+            assertThat(iteration).isNotNull();
+            assertThat(iterations.add(iteration)).isTrue();
+            assertThat(firstB.contextIterationId()).isEqualTo(iteration);
+            final var sessions = new java.util.HashMap<UUID, UUID>();
+            for (int pass = 1; pass <= 2; pass++) {
+                for (UUID repo : this.repositories(2)) {
+                    final var impl = this.onlyPending(runId, IMPLEMENTER, repo);
+                    assertThat(impl.contextIterationId()).isEqualTo(iteration);
+                    final var allocation = this.agentExecutionSessionRepository.findByNodeRunId(impl.id()).orElseThrow();
+                    assertThat(allocation.session().repositoryId()).isEqualTo(repo);
+                    assertThat(allocation.session().sourceNodeId()).isEqualTo(IMPLEMENTER);
+                    assertThat(allocation.turn().sequence()).isEqualTo(pass);
+                    if (pass == 1) {
+                        assertThat(allocation.session().providerConversationId()).isNull();
+                        assertThat(allSessions.add(allocation.session().id())).isTrue();
+                        sessions.put(repo, allocation.session().id());
+                    } else {
+                        assertThat(allocation.session().id()).isEqualTo(sessions.get(repo));
+                        assertThat(allocation.session().providerConversationId()).isEqualTo("impl-" + cycle + "-" + repo);
+                        final var feedback = this.resolutionRepository.findConsumedByNodeRunId(impl.id());
+                        assertThat(feedback).hasSize(1);
+                        final var source = this.nodeRunRepository.findById(feedback.getFirst().sourceNodeRunId()).orElseThrow();
+                        assertThat(source.repositoryId()).isNull();
+                        assertThat(source.selectedOutputPortId()).isEqualTo(REVIEWER_RETURN);
+                    }
+                    this.completeMixedContext(impl, "impl-" + cycle + "-" + repo);
+                    if (repo.equals(REPOSITORY_A)) assertThat(this.pending(runId, REVIEWER)).isEmpty();
+                }
+                final var reviewer = this.onlyPending(runId, REVIEWER);
+                assertThat(reviewer.repositoryId()).isNull();
+                assertThat(reviewer.contextIterationId()).isEqualTo(iteration);
+                assertThat(this.resolutionRepository.findConsumedByNodeRunId(reviewer.id()))
+                        .extracting(c -> this.nodeRunRepository.findById(c.sourceNodeRunId()).orElseThrow().repositoryId())
+                        .containsExactlyInAnyOrder(REPOSITORY_A, REPOSITORY_B);
+                final var review = this.agentExecutionSessionRepository.findByNodeRunId(reviewer.id()).orElseThrow();
+                assertThat(review.session().repositoryId()).isNull();
+                assertThat(review.session().sourceNodeId()).isEqualTo(REVIEWER);
+                assertThat(review.turn().sequence()).isEqualTo(pass);
+                if (pass == 1) {
+                    assertThat(review.session().providerConversationId()).isNull();
+                    assertThat(allSessions.add(review.session().id())).isTrue();
+                    sessions.put(REVIEWER, review.session().id());
+                } else {
+                    assertThat(review.session().id()).isEqualTo(sessions.get(REVIEWER));
+                    assertThat(review.session().providerConversationId()).isEqualTo("review-" + cycle);
+                }
+                when(this.outputSelector.selectOutput(any(), any(), any()))
+                        .thenReturn(pass == 1 ? REVIEWER_RETURN : REVIEWER_PASS);
+                this.completeMixedContext(reviewer, "review-" + cycle);
+            }
+            final var outside = this.onlyPending(runId, X);
+            assertThat(outside.contextIterationId()).isNull();
+            when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(cycle == 0 ? X_OUT : B_OTHER);
+            this.complete(outside, "{}");
+        }
+        this.complete(this.onlyPending(runId, FINAL), "{}");
+        this.assertTerminalQuiescence(runId);
+        assertThat(iterations).hasSize(2);
+        assertThat(allSessions).hasSize(6);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void mixedIterationRecoveryRetryKeepsExactSessionAndConsumedInputs(final boolean global) {
+        this.seed();
+        this.saveMixedReviewerWorkflow(false);
+        final UUID runId = this.createTask(this.repositories(2));
+        for (UUID repo : this.repositories(2)) {
+            this.completeMixedContext(this.onlyPending(runId, IMPLEMENTER, repo), "retry-" + repo);
+        }
+        final var reviewer = this.onlyPending(runId, REVIEWER);
+        if (!global) {
+            when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(REVIEWER_RETURN);
+            this.completeMixedContext(reviewer, "retry-review");
+            // Preserve the existing retry guard: no cancelled parallel work to reconstruct.
+            this.completeMixedContext(this.onlyPending(runId, IMPLEMENTER, REPOSITORY_B), "retry-" + REPOSITORY_B);
+        }
+        final var parent = global ? reviewer : this.onlyPending(runId, IMPLEMENTER, REPOSITORY_A);
+        final var old = this.lifecycle.tryStart(parent.id()).orElseThrow();
+        final var lease = old.agentSessionClaim();
+        final String conversation = global ? "retry-review" : "retry-" + REPOSITORY_A;
+        if (lease.providerConversationId() == null) {
+            assertThat(this.agentExecutionSessionRepository.persistProviderConversation(lease.sessionId(), lease.leaseOwnerId(),
+                    lease.leaseToken(), conversation, "0.154.0")).isTrue();
+        }
+        assertThat(this.agentExecutionSessionRepository.persistProviderTurn(lease.sessionId(), lease.turnId(),
+                lease.leaseOwnerId(), lease.leaseToken(), "lost-provider-turn")).isTrue();
+        final var before = this.agentExecutionSessionRepository.findByNodeRunId(parent.id()).orElseThrow();
+        this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=?",
+                lease.sessionId());
+        org.mockito.Mockito.doReturn(ProviderTurnRecoveryResult.terminal(
+                ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Completed"))
+                .when(this.recoveryInspector).inspect(any());
+        assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+        final var retry = this.retryRecoveredNodeRun.execute(runId, parent.id());
+        final var child = this.nodeRunRepository.findById(retry.nodeRunId()).orElseThrow();
+        assertThat(child.contextIterationId()).isEqualTo(parent.contextIterationId());
+        assertThat(child.repositoryId()).isEqualTo(parent.repositoryId());
+        assertThat(child.retryOfNodeRunId()).isEqualTo(parent.id());
+        final var resumed = this.lifecycle.tryStart(child.id()).orElseThrow();
+        assertThat(resumed.inputEnvelope().contributions()).isEqualTo(old.inputEnvelope().contributions());
+        assertThat(resumed.agentSessionClaim().sessionId()).isEqualTo(lease.sessionId());
+        assertThat(resumed.agentSessionClaim().providerConversationId()).isEqualTo(conversation);
+        final var after = this.agentExecutionSessionRepository.findByNodeRunId(child.id()).orElseThrow();
+        assertThat(after.turn().sequence()).isEqualTo(before.turn().sequence() + 1);
+        assertThat(after.session().sourceNodeId()).isEqualTo(parent.sourceNodeId());
+        assertThat(after.session().repositoryId()).isEqualTo(global ? null : REPOSITORY_A);
+    }
+
+    @Test
+    void mixedIterationResetRetiresOnlyRepositoryA() {
+        this.seed();
+        this.saveMixedReviewerWorkflow(false);
+        final UUID runId = this.createTask(this.repositories(2));
+        final var firstA = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_A);
+        final var firstB = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_B);
+        this.completeMixedContext(firstA, "reset-a");
+        this.completeMixedContext(firstB, "reset-b");
+        final var reviewer = this.onlyPending(runId, REVIEWER);
+        final var oldA = this.agentExecutionSessionRepository.findByNodeRunId(firstA.id()).orElseThrow();
+        final var oldB = this.agentExecutionSessionRepository.findByNodeRunId(firstB.id()).orElseThrow();
+        final var oldReview = this.agentExecutionSessionRepository.findByNodeRunId(reviewer.id()).orElseThrow();
+        this.resetContext.execute(oldA.session().id());
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(firstB.id())).contains(oldB);
+        assertThat(this.agentExecutionSessionRepository.findByNodeRunId(reviewer.id())).contains(oldReview);
+        when(this.outputSelector.selectOutput(any(), any(), any())).thenReturn(REVIEWER_RETURN);
+        this.completeMixedContext(reviewer, "reset-review");
+        for (UUID repo : this.repositories(2)) {
+            final var next = this.onlyPending(runId, IMPLEMENTER, repo);
+            final var allocation = this.agentExecutionSessionRepository.findByNodeRunId(next.id()).orElseThrow();
+            assertThat(next.contextIterationId()).isEqualTo(firstA.contextIterationId());
+            assertThat(allocation.session().repositoryId()).isEqualTo(repo);
+            if (repo.equals(REPOSITORY_A)) {
+                assertThat(allocation.session().id()).isNotEqualTo(oldA.session().id());
+                assertThat(allocation.session().providerConversationId()).isNull();
+                assertThat(allocation.turn().sequence()).isEqualTo(1);
+                this.completeMixedContext(next, "reset-a-new");
+            } else {
+                assertThat(allocation.session().id()).isEqualTo(oldB.session().id());
+                assertThat(allocation.turn().sequence()).isEqualTo(2);
+                this.completeMixedContext(next, "reset-b");
+            }
+        }
+        final var nextReview = this.agentExecutionSessionRepository.findByNodeRunId(
+                this.onlyPending(runId, REVIEWER).id()).orElseThrow();
+        assertThat(nextReview.session().id()).isEqualTo(oldReview.session().id());
+        assertThat(nextReview.session().providerConversationId()).isEqualTo("reset-review");
+        assertThat(nextReview.turn().sequence()).isEqualTo(2);
+    }
+
+    @Test
+    void mixedGlobalFanInRejectsIndependentEntries() {
+        this.seed();
+        this.save(List.of(
+                this.node(A, AGENT_C_ID, A_IN, A_OUT, 0, NodeScopeMode.GLOBAL),
+                this.node(B, AGENT_C_ID, B_IN, B_OUT, 1, NodeScopeMode.GLOBAL),
+                this.node(X, AGENT_C_ID, X_IN, X_OUT, 1, NodeScopeMode.GLOBAL),
+                this.mixedNode(IMPLEMENTER, IMPLEMENTER_INITIAL_IN, IMPLEMENTER_OUT, NodeScopeMode.PER_SCOPE),
+                this.mixedNode(D, D_IN, D_OUT, NodeScopeMode.PER_SCOPE),
+                this.mixedNode(REVIEWER, REVIEWER_IN, REVIEWER_PASS, NodeScopeMode.GLOBAL)),
+                List.of(this.connection(1, A_OUT, B_IN), this.connection(2, A_OUT, X_IN),
+                        this.connection(3, B_OUT, IMPLEMENTER_INITIAL_IN), this.connection(4, X_OUT, D_IN),
+                        this.connection(5, IMPLEMENTER_OUT, REVIEWER_IN), this.connection(6, D_OUT, REVIEWER_IN)),
+                A_IN, REVIEWER_PASS);
+        final UUID runId = this.createTask(this.repositories(2));
+        this.complete(this.onlyPending(runId, A), "{}");
+        this.complete(this.onlyPending(runId, B), "{}");
+        this.complete(this.onlyPending(runId, X), "{}");
+        final var left = this.onlyPending(runId, IMPLEMENTER, REPOSITORY_A);
+        final var right = this.onlyPending(runId, D, REPOSITORY_A);
+        assertThat(left.contextIterationId()).isNotEqualTo(right.contextIterationId());
+        for (UUID node : List.of(IMPLEMENTER, D)) {
+            for (UUID repo : this.repositories(2)) this.complete(this.onlyPending(runId, node, repo), "{}");
+        }
+        assertThat(this.nodeRuns(runId, REVIEWER)).isEmpty();
+        assertThat(this.agentExecutionSessionRepository.findByWorkflowRunId(runId))
+                .noneMatch(a -> REVIEWER.equals(a.session().sourceNodeId()));
+        assertThat(this.nodeRunRepository.findByWorkflowRunId(runId))
+                .anyMatch(n -> n.failure() != null && "AGENT_CONTEXT_ITERATION_CONFLICT".equals(n.failure().code()));
+        this.terminal(runId, WorkflowRunStatus.FAILED);
+    }
+
+    private Node mixedNode(final UUID id, final UUID input, final UUID output, final NodeScopeMode scope) {
+        return new Node(id, AGENT_A_ID, NodeInputMode.DEPENDENCIES_ONLY,
+                List.of(this.port(input, "Input")), List.of(this.port(output, "Output")), new NodePosition(0, 0),
+                scope, NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION, "implementation-review");
+    }
+
+    private void saveMixedReviewerWorkflow(final boolean outsideEntry) {
+        final var mode = NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION;
+        final var nodes = new java.util.ArrayList<>(List.of(
+                new Node(IMPLEMENTER, AGENT_A_ID, NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(IMPLEMENTER_INITIAL_IN, "Initial", 0), this.port(IMPLEMENTER_REVIEW_IN, "Feedback", 1),
+                                this.port(A_REVIEW_IN, "Next independent cycle", 2)),
+                        List.of(this.port(IMPLEMENTER_OUT, "Review")), new NodePosition(0, 0),
+                        NodeScopeMode.PER_SCOPE, mode, "implementation-review"),
+                new Node(REVIEWER, AGENT_B_ID, NodeInputMode.DEPENDENCIES_ONLY,
+                        List.of(this.port(REVIEWER_IN, "Implementation")),
+                        List.of(this.port(REVIEWER_RETURN, "Changes requested", 0), this.port(REVIEWER_PASS, "Approved", 1)),
+                        new NodePosition(100, 0), NodeScopeMode.GLOBAL, mode, "implementation-review"),
+                this.node(X, AGENT_C_ID, List.of(this.port(X_IN, "Outside")),
+                        List.of(this.port(X_OUT, "Next cycle", 0), this.port(B_OTHER, "Finish", 1)), 2, NodeScopeMode.GLOBAL),
+                this.node(FINAL, AGENT_C_ID, FINAL_IN, FINAL_OUT, 3, NodeScopeMode.GLOBAL)));
+        final var edges = new java.util.ArrayList<>(List.of(
+                this.connection(1, IMPLEMENTER_OUT, REVIEWER_IN),
+                this.connection(2, REVIEWER_RETURN, IMPLEMENTER_REVIEW_IN),
+                this.connection(3, REVIEWER_PASS, X_IN),
+                this.connection(4, X_OUT, A_REVIEW_IN),
+                this.connection(5, B_OTHER, FINAL_IN)));
+        if (outsideEntry) {
+            nodes.add(this.node(A, AGENT_C_ID, A_IN, A_OUT, 4, NodeScopeMode.GLOBAL));
+            edges.add(this.connection(6, A_OUT, IMPLEMENTER_INITIAL_IN));
+        }
+        this.save(nodes, edges, outsideEntry ? A_IN : IMPLEMENTER_INITIAL_IN, FINAL_OUT);
+    }
+
+    private void completeMixedContext(final NodeRun nodeRun, final String conversation) {
+        final var claim = this.lifecycle.tryStart(nodeRun.id()).orElseThrow();
+        final var lease = claim.agentSessionClaim();
+        if (IMPLEMENTER_REVIEW_IN.equals(nodeRun.enteredViaInputPortId())) {
+            assertThat(claim.inputEnvelope().contributions()).singleElement().satisfies(c -> {
+                assertThat(c.sourceRepositoryId()).isNull();
+                final var source = this.nodeRunRepository.findById(c.sourceNodeRunId()).orElseThrow();
+                assertThat(source.sourceNodeId()).isEqualTo(REVIEWER);
+                assertThat(c.payload()).isEqualTo(source.output());
+                assertThat(c.payload().jsonValue()).contains("\"done\"");
+            });
+        }
+        if (lease.providerConversationId() == null) {
+            assertThat(this.agentExecutionSessionRepository.persistProviderConversation(lease.sessionId(), lease.leaseOwnerId(),
+                    lease.leaseToken(), conversation, "0.154.0")).isTrue();
+        } else {
+            assertThat(lease.providerConversationId()).isEqualTo(conversation);
+        }
+        assertThat(this.agentExecutionSessionRepository.persistProviderTurn(lease.sessionId(), lease.turnId(),
+                lease.leaseOwnerId(), lease.leaseToken(), "turn-" + nodeRun.id())).isTrue();
+        this.lifecycle.succeed(nodeRun.id(), this.result(nodeRun, "{\"answer\":\"done\"}"), lease);
+    }
 
     @Test
     void iterationFeedbackKeepsEachRepositoryIndependent() {
