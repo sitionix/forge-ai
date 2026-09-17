@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.application.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
@@ -15,6 +16,8 @@ import com.sitionix.forgeagent.domain.model.NodeScopeMode;
 import com.sitionix.forgeagent.domain.model.RunNode;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
+import com.sitionix.forgeagent.domain.model.WorkflowRunGraph;
+import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -43,7 +46,7 @@ class NodeRunFactoryTest {
     }
 
     @Test
-    void rejectsInvalidTemplateGroupsAndMixedScopes() {
+    void rejectsInvalidTemplateGroups() {
         var mode = NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION;
         for (String group : java.util.Arrays.asList(null, "", " \t\n")) {
             assertThatThrownBy(() -> com.sitionix.forgeagent.domain.model.ContextIterationPolicy.validateGroup(mode, group))
@@ -53,13 +56,7 @@ class NodeRunFactoryTest {
             assertThatThrownBy(() -> com.sitionix.forgeagent.domain.model.ContextIterationPolicy.validateGroup(existing, "group"))
                     .extracting("code").isEqualTo("INVALID_CONTEXT_GROUP");
         }
-        var nodes = List.of(
-                new com.sitionix.forgeagent.domain.model.Node(UUID.randomUUID(), UUID.randomUUID(), NodeInputMode.DEPENDENCIES_ONLY,
-                        List.of(), List.of(), new NodePosition(0, 0), NodeScopeMode.GLOBAL, mode, "group"),
-                new com.sitionix.forgeagent.domain.model.Node(UUID.randomUUID(), UUID.randomUUID(), NodeInputMode.DEPENDENCIES_ONLY,
-                        List.of(), List.of(), new NodePosition(0, 0), NodeScopeMode.PER_SCOPE, mode, "group"));
-        assertThatThrownBy(() -> com.sitionix.forgeagent.domain.model.ContextIterationPolicy.validateScopes(nodes))
-                .extracting("code").isEqualTo("CONTEXT_GROUP_SCOPE_CONFLICT");
+
     }
 
     @ParameterizedTest
@@ -98,8 +95,59 @@ class NodeRunFactoryTest {
     void repositoryBoundaryDoesNotPropagateIdentity(String mode) {
         var target = iterationNode(NodeScopeMode.PER_SCOPE, mode);
         var source = factory.root(workflowRun(), frame, target, UUID.randomUUID(), REPOSITORY_ID);
-        assertThat(NodeRunFactory.iteration(workflowRun(), target, OUTSIDE_REPOSITORY_ID, List.of(source)))
+        assertThat(factory.iteration(workflowRun(), target, OUTSIDE_REPOSITORY_ID, List.of(source)))
                 .isNotEqualTo(source.contextIterationId());
+    }
+
+    @Test
+    void mixedEntryIdentityIsReplayableAndCrossesScope() {
+        final var impl = iterationNode(NodeScopeMode.PER_SCOPE, "REUSE_WITHIN_WORKFLOW_ITERATION");
+        final var reviewer = iterationNode(NodeScopeMode.GLOBAL, "REUSE_WITHIN_WORKFLOW_ITERATION");
+        final var run = mixedRun(impl, reviewer);
+        final var first = factory.root(run, frame, impl, UUID.randomUUID(), REPOSITORY_ID);
+        final var other = factory.root(run, frame, impl, UUID.randomUUID(), OUTSIDE_REPOSITORY_ID);
+        assertThat(other.contextIterationId()).isEqualTo(first.contextIterationId());
+        final var newFrame = new ExecutionFrame(UUID.randomUUID(), RUN_ID, null, NOW);
+        final var restarted = new NodeRunFactory(Clock.fixed(NOW, ZoneOffset.UTC),
+                new ScopeProjectionPolicy(), mock(WorkflowRunGraphRepository.class));
+        assertThat(restarted.root(run, newFrame, impl, UUID.randomUUID(), REPOSITORY_ID).contextIterationId())
+                .isEqualTo(first.contextIterationId());
+        final var review = factory.activated(run, frame, frame, reviewer, UUID.randomUUID(), null, List.of(first, other));
+        assertThat(review.contextIterationId()).isEqualTo(first.contextIterationId());
+        assertThat(factory.activated(run, newFrame, frame, impl, UUID.randomUUID(), OUTSIDE_REPOSITORY_ID, List.of(review))
+                .contextIterationId()).isEqualTo(first.contextIterationId());
+
+        final var outside = factory.root(run, frame, node(NodeScopeMode.GLOBAL), UUID.randomUUID(), null);
+        final var second = factory.activated(run, frame, frame, impl, UUID.randomUUID(), REPOSITORY_ID, List.of(outside));
+        assertThat(second.contextIterationId()).isNotEqualTo(first.contextIterationId());
+        assertThat(restarted.activated(run, newFrame, newFrame, impl, UUID.randomUUID(), OUTSIDE_REPOSITORY_ID, List.of(outside))
+                .contextIterationId()).isEqualTo(second.contextIterationId());
+        assertThatThrownBy(() -> factory.activated(run, frame, frame, reviewer, UUID.randomUUID(), null, List.of(first, second)))
+                .extracting("code").isEqualTo("AGENT_CONTEXT_ITERATION_CONFLICT");
+    }
+
+    @Test
+    void mixedEntryUsesThePersistedSourceSetRegardlessOfDeliveryOrder() {
+        final var impl = iterationNode(NodeScopeMode.PER_SCOPE, "REUSE_WITHIN_WORKFLOW_ITERATION");
+        final var reviewer = iterationNode(NodeScopeMode.GLOBAL, "REUSE_WITHIN_WORKFLOW_ITERATION");
+        final var run = mixedRun(impl, reviewer);
+        final var left = factory.root(run, frame, node(NodeScopeMode.GLOBAL), UUID.randomUUID(), null);
+        final var right = factory.root(run, frame, node(NodeScopeMode.GLOBAL), UUID.randomUUID(), null);
+        final var first = factory.activated(run, frame, frame, impl, UUID.randomUUID(), REPOSITORY_ID, List.of(left, right));
+        final var replay = factory.activated(run, frame, frame, impl, UUID.randomUUID(), OUTSIDE_REPOSITORY_ID,
+                List.of(right, left, right));
+        assertThat(replay.contextIterationId()).isEqualTo(first.contextIterationId());
+        final var later = factory.root(run, frame, node(NodeScopeMode.GLOBAL), UUID.randomUUID(), null);
+        assertThat(factory.activated(run, frame, frame, impl, UUID.randomUUID(), REPOSITORY_ID, List.of(left, later))
+                .contextIterationId()).isNotEqualTo(first.contextIterationId());
+    }
+
+    private WorkflowRun mixedRun(RunNode impl, RunNode reviewer) {
+        return new WorkflowRun(RUN_ID, UUID.randomUUID(), UUID.randomUUID(), null, "Mixed", "Input",
+                WorkflowRunStatus.RUNNING, List.of(), List.of(), List.of(),
+                new WorkflowRunGraph(RUN_ID, UUID.randomUUID(),
+                        List.of(impl, reviewer), List.of(), List.of()), null, null,
+                NOW, NOW, null, List.of(REPOSITORY_ID, OUTSIDE_REPOSITORY_ID));
     }
 
     private RunNode iterationNode(NodeScopeMode scope, String mode) {
@@ -114,7 +162,7 @@ class NodeRunFactoryTest {
     private static final UUID REPOSITORY_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
     private static final UUID OUTSIDE_REPOSITORY_ID = UUID.fromString("20000000-0000-4000-8000-000000000002");
     private final NodeRunFactory factory = new NodeRunFactory(
-            Clock.fixed(NOW, ZoneOffset.UTC), new ScopeProjectionPolicy());
+            Clock.fixed(NOW, ZoneOffset.UTC), new ScopeProjectionPolicy(), mock(WorkflowRunGraphRepository.class));
     private final ExecutionFrame frame = new ExecutionFrame(UUID.randomUUID(), RUN_ID, null, NOW);
 
     @Test

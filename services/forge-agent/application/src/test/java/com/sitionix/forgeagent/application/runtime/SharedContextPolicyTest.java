@@ -62,6 +62,16 @@ class SharedContextPolicyTest {
     }
 
     @Test
+    void nodeOwnedIterationAcceptsMixedScopesAndDifferentModels() {
+        var first = snapshot(NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION, NodeScopeMode.GLOBAL, "loop", MODEL);
+        var second = snapshot(NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION, NodeScopeMode.PER_SCOPE, "loop",
+                new NodeRunExecutionModel("other", "other", "high"));
+        assertThatCode(() -> graph(first, second)).doesNotThrowAnyException();
+        assertThatCode(() -> ContextIterationPolicy.validateScopes(List.of(template(first), template(second))))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void templateAndImmutableGraphRejectMixedRepositoryScopeModes() {
         var first = snapshot(NodeContextMode.SHARED_SESSION_GROUP, NodeScopeMode.GLOBAL, "loop", MODEL);
         var second = snapshot(NodeContextMode.SHARED_SESSION_GROUP, NodeScopeMode.PER_SCOPE, "loop", MODEL);
