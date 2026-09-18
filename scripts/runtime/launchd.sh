@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-ACTION="${1:?Usage: launchd.sh start|stop|restart|status|logs [service]}"
+ACTION="${1:?Usage: launchd.sh start|stop|status|logs [service]}"
 SERVICE="${2:-all}"
 DOMAIN="gui/${UID}"
 PLIST_DIR="${FORGE_LAUNCHD_DIR:-${HOME:?HOME is required}/Library/LaunchAgents}"
@@ -99,11 +99,7 @@ start_services() {
   local service
   for service in "${SERVICES[@]}"; do
     assert_owned "${service}"
-    if is_loaded "${service}"; then
-      launchctl kickstart -k "$(target "${service}")"
-    else
-      launchctl bootstrap "${DOMAIN}" "$(plist "${service}")"
-    fi
+    launchctl bootstrap "${DOMAIN}" "$(plist "${service}")"
   done
   for service in "${SERVICES[@]}"; do wait_healthy "${service}"; done
 }
@@ -150,20 +146,14 @@ case "${ACTION}" in
     install_plists
     prepare
     start_postgres
+    # Reload the definitions as well as the processes when start is repeated.
+    stop_services
     start_services
     ;;
   stop)
     validate
     stop_services
     docker compose --project-directory "${ROOT}" stop forge-agent-postgres
-    ;;
-  restart)
-    validate
-    stop_services
-    start_postgres
-    prepare
-    install_plists
-    start_services
     ;;
   status) validate; status ;;
   logs)
