@@ -24,12 +24,50 @@ import com.sitionix.forgeai.api.agentproxy.AgentServiceProcessMetricsResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentAssetMonitoringRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentExecutionEventPageResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentRecoveredNodeRunRetryResponse;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
 import org.springframework.http.HttpStatus;
 
 public final class NexusAgentMockMvcEndpoints {
+
+    public static Endpoint<JsonNode, Void> invalidManualSelection(final String requestFixture) {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection",
+                HttpMethod.POST, JsonNode.class, Void.class,
+                (MockmvcDefault) context -> context.withRequest(requestFixture).expectStatus(HttpStatus.BAD_REQUEST.value()));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> manualSelection() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection", HttpMethod.POST,
+                JsonNode.class, JsonNode.class, (MockmvcDefault) context -> context.expectStatus(200).withRequest("agent-manual-selection-request.json").expectResponse("agent-manual-selection-response.json"));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> manualSelectionConflict() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection", HttpMethod.POST,
+                JsonNode.class, JsonNode.class, (MockmvcDefault) context -> context.expectStatus(409).withRequest("agent-manual-selection-request.json").expectResponse("agent-upstream-error-response.json"));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> manualSelectionNotFound() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection", HttpMethod.POST,
+                JsonNode.class, JsonNode.class, (MockmvcDefault) context -> context.expectStatus(404).withRequest("agent-manual-selection-request.json").expectResponse("agent-upstream-error-response.json"));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> manualSelectionBadRequest() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection", HttpMethod.POST,
+                JsonNode.class, JsonNode.class, (MockmvcDefault) context -> context.expectStatus(400).withRequest("agent-manual-selection-request.json").expectResponse("agent-upstream-error-response.json"));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> waitingManualRun() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}", HttpMethod.GET,
+                JsonNode.class, JsonNode.class, (MockmvcDefault) context -> context.expectStatus(200).expectResponse("agent-waiting-manual-run-response.json"));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> saveManualWorkflow() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/workflows/{workflowRunId}", HttpMethod.PUT,
+                JsonNode.class, JsonNode.class, (MockmvcDefault) context -> context.expectStatus(200).withRequest("agent-manual-workflow-request.json").expectResponse("agent-manual-workflow-response.json"));
+    }
 
     private NexusAgentMockMvcEndpoints() {
     }

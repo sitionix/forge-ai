@@ -15,6 +15,8 @@ import com.sitionix.forgeit.wiremock.api.WireMockPathParams;
 import com.sitionix.forgeit.wiremock.api.WireMockQueryParams;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,6 +46,61 @@ class NexusAgentProxyIT {
 
     @Autowired
     private NexusProxyTestManager testManager;
+
+    @ParameterizedTest
+    @ValueSource(strings = {"agent-manual-selection-missing-port-request.json",
+            "agent-manual-selection-null-port-request.json", "agent-manual-selection-invalid-port-request.json"})
+    void invalidManualSelectionIsRejectedBeforeCallingUpstream(final String requestFixture) {
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.invalidManualSelection(requestFixture))
+                .withPathParameters(PathParams.create().add("workflowRunId", RUN_ID).add("nodeRunId", NODE_RUN_ID))
+                .assertDefault();
+    }
+
+    @Test
+    void manualSelectionPreservesTypedProxyContract() {
+        verify(ForgeAgentWireMockEndpoints.manualSelection(), NexusAgentMockMvcEndpoints.manualSelection(),
+                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString()))
+                        .add("nodeRunId", equalTo(NODE_RUN_ID.toString())),
+                PathParams.create().add("workflowRunId", RUN_ID).add("nodeRunId", NODE_RUN_ID));
+    }
+
+    @Test
+    void manualSelectionConflictPreservesTypedProxyContract() {
+        verify(ForgeAgentWireMockEndpoints.manualSelectionConflict(), NexusAgentMockMvcEndpoints.manualSelectionConflict(),
+                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString()))
+                        .add("nodeRunId", equalTo(NODE_RUN_ID.toString())),
+                PathParams.create().add("workflowRunId", RUN_ID).add("nodeRunId", NODE_RUN_ID));
+    }
+
+    @Test
+    void manualSelectionNotFoundPreservesTypedProxyContract() {
+        verify(ForgeAgentWireMockEndpoints.manualSelectionNotFound(), NexusAgentMockMvcEndpoints.manualSelectionNotFound(),
+                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString()))
+                        .add("nodeRunId", equalTo(NODE_RUN_ID.toString())),
+                PathParams.create().add("workflowRunId", RUN_ID).add("nodeRunId", NODE_RUN_ID));
+    }
+
+    @Test
+    void manualSelectionBadRequestPreservesTypedProxyContract() {
+        verify(ForgeAgentWireMockEndpoints.manualSelectionBadRequest(), NexusAgentMockMvcEndpoints.manualSelectionBadRequest(),
+                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString()))
+                        .add("nodeRunId", equalTo(NODE_RUN_ID.toString())),
+                PathParams.create().add("workflowRunId", RUN_ID).add("nodeRunId", NODE_RUN_ID));
+    }
+
+    @Test
+    void waitingManualRunPreservesTypedProxyContract() {
+        verify(ForgeAgentWireMockEndpoints.waitingManualRun(), NexusAgentMockMvcEndpoints.waitingManualRun(),
+                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString())),
+                PathParams.create().add("workflowRunId", RUN_ID));
+    }
+
+    @Test
+    void saveManualWorkflowPreservesTypedProxyContract() {
+        verify(ForgeAgentWireMockEndpoints.saveManualWorkflow(), NexusAgentMockMvcEndpoints.saveManualWorkflow(),
+                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString())),
+                PathParams.create().add("workflowRunId", RUN_ID));
+    }
 
     @Test
     void executionEventsForwardCursorAndLimitThroughTheTypedThinProxy() {

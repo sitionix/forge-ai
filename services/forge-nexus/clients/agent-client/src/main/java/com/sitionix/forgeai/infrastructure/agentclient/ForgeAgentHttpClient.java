@@ -29,6 +29,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetCandidat
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetDiscoveryRequest;
 import java.util.List;
 import java.util.UUID;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ManualNodeSelectionRequest;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -137,6 +138,11 @@ public interface ForgeAgentHttpClient {
 
     @PostExchange("/api/v1/workflow-runs/{runId}/cancel")
     void cancelWorkflowRun(@PathVariable UUID runId);
+
+    @PostExchange(value = "/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection",
+            contentType = MediaType.APPLICATION_JSON_VALUE)
+    WorkflowRunResponse selectManualNodeOutput(@PathVariable UUID workflowRunId, @PathVariable UUID nodeRunId,
+                                              @RequestBody ManualNodeSelectionRequest request);
 
     @PostExchange("/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/retry")
     RecoveredNodeRunRetryResponse retryRecoveredNodeRun(

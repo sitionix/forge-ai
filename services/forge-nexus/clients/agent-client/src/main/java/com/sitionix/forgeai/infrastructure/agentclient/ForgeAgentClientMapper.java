@@ -495,7 +495,7 @@ public class ForgeAgentClientMapper {
                 response.agentName(),
                 response.position() == null ? null : new NodePosition(response.position().x(), response.position().y()),
                 response.scopeMode(),
-                response.contextMode(), response.contextGroupKey()
+                response.contextMode(), response.contextGroupKey(), response.nodeType()
         );
     }
 
@@ -588,7 +588,7 @@ public class ForgeAgentClientMapper {
                 node.outputs() == null ? null : node.outputs().stream().map(this::toRequest).toList(),
                 node.position() == null ? null : new NodePositionRequest(node.position().x(), node.position().y()),
                 node.scopeMode(),
-                node.contextMode(), node.contextGroupKey()
+                node.contextMode(), node.contextGroupKey(), node.nodeType()
         );
     }
 
@@ -602,7 +602,7 @@ public class ForgeAgentClientMapper {
                 response.outputs() == null ? null : response.outputs().stream().map(this::toDomain).toList(),
                 position == null ? null : new NodePosition(position.x(), position.y()),
                 response.scopeMode(),
-                response.contextMode(), response.contextGroupKey()
+                response.contextMode(), response.contextGroupKey(), response.nodeType()
         );
     }
 
@@ -662,7 +662,7 @@ public class ForgeAgentClientMapper {
                             : new com.sitionix.forgeai.domain.model.agentproxy.AgentNodeRunRetryEligibility(
                                     response.retryEligibility().action(),
                                     response.retryEligibility().reasonCode()),
-                    response.contextGroupKey(), response.contextIterationId()
+                    response.contextGroupKey(), response.contextIterationId(), response.nodeType()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Forge Agent node run JSON was invalid.", exception);

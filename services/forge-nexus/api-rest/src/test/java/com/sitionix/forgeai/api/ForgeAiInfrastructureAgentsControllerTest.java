@@ -157,6 +157,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
     @Mock
     private RetryRecoveredAgentNodeRun retryRecoveredAgentNodeRun;
     @Mock
+    private com.sitionix.forgeai.domain.usecase.SelectAgentManualNodeOutput selectAgentManualNodeOutput;
+    @Mock
     private AgentProxyApiMapper mapper;
 
     private ForgeAiInfrastructureAgentsController controller;
@@ -192,6 +194,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 this.getAgentWorkflowRun,
                 this.cancelAgentWorkflowRun,
                 this.retryRecoveredAgentNodeRun,
+                this.selectAgentManualNodeOutput,
                 this.mapper
         );
     }

@@ -108,6 +108,8 @@ class ForgeAgentControllerTest {
     @Mock
     private RecoveredNodeRunRetryEligibilityService retryEligibility;
     @Mock
+    private com.sitionix.forgeagent.application.usecase.SelectManualNodeOutputUseCase selectManualNodeOutput;
+    @Mock
     private ProjectTaskUseCases projectTaskUseCases;
     @Mock
     private ForgeAgentApiMapper mapper;
@@ -126,6 +128,7 @@ class ForgeAgentControllerTest {
                 this.workflowRunUseCases,
                 this.cancelWorkflowRun,
                 this.retryRecoveredNodeRun,
+                this.selectManualNodeOutput,
                 this.retryEligibility,
                 this.projectTaskUseCases,
                 this.mapper

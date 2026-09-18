@@ -29,6 +29,8 @@ import com.sitionix.forgeagent.application.usecase.ProjectUseCases;
 import com.sitionix.forgeagent.application.usecase.ProjectTaskUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowRunUseCases;
 import com.sitionix.forgeagent.application.usecase.WorkflowUseCases;
+import com.sitionix.forgeagent.api.dto.ManualSelectionRequest;
+import com.sitionix.forgeagent.application.usecase.SelectManualNodeOutputUseCase;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
@@ -56,6 +58,7 @@ public class ForgeAgentController {
     private final WorkflowRunUseCases workflowRunUseCases;
     private final CancelWorkflowRunUseCase cancelWorkflowRun;
     private final RetryRecoveredNodeRunUseCase retryRecoveredNodeRun;
+    private final SelectManualNodeOutputUseCase selectManualNodeOutput;
     private final RecoveredNodeRunRetryEligibilityService retryEligibility;
     private final ProjectTaskUseCases projectTaskUseCases;
     private final ForgeAgentApiMapper mapper;
@@ -235,6 +238,14 @@ public class ForgeAgentController {
         final var result = this.retryRecoveredNodeRun.execute(workflowRunId, nodeRunId);
         return ResponseEntity.ok(this.mapper.toResponse(
                 result, this.retryEligibility.evaluateAll(result.workflowRun())));
+    }
+
+    @PostMapping("/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection")
+    public ResponseEntity<WorkflowRunResponse> selectManualNodeOutput(
+            @PathVariable final UUID workflowRunId, @PathVariable final UUID nodeRunId,
+            @Valid @RequestBody final ManualSelectionRequest request) {
+        final var run = this.selectManualNodeOutput.execute(workflowRunId, nodeRunId, request.outputPortId());
+        return ResponseEntity.ok(this.mapper.toResponse(run, this.retryEligibility.evaluateAll(run)));
     }
 
     @PostMapping("/api/v1/workflow-runs/{runId}/cancel")

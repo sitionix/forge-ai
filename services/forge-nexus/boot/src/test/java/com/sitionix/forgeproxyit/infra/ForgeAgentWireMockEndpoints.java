@@ -24,12 +24,43 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceProcessMetrics
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMonitoringRequest;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionEventPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RecoveredNodeRunRetryResponse;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
 import org.springframework.http.HttpStatus;
 
 public final class ForgeAgentWireMockEndpoints {
+
+    public static Endpoint<JsonNode, JsonNode> manualSelection() {
+        return Endpoint.createContract("/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection", HttpMethod.POST,
+                JsonNode.class, JsonNode.class, (WiremockDefault) context -> context.plainUrl().responseStatus(200).matchesJson("agent-manual-selection-request.json").responseBody("agent-manual-selection-response.json"));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> manualSelectionConflict() {
+        return Endpoint.createContract("/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection", HttpMethod.POST,
+                JsonNode.class, JsonNode.class, (WiremockDefault) context -> context.plainUrl().responseStatus(409).matchesJson("agent-manual-selection-request.json").responseBody("agent-upstream-error-response.json"));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> manualSelectionNotFound() {
+        return Endpoint.createContract("/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection", HttpMethod.POST,
+                JsonNode.class, JsonNode.class, (WiremockDefault) context -> context.plainUrl().responseStatus(404).matchesJson("agent-manual-selection-request.json").responseBody("agent-upstream-error-response.json"));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> manualSelectionBadRequest() {
+        return Endpoint.createContract("/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection", HttpMethod.POST,
+                JsonNode.class, JsonNode.class, (WiremockDefault) context -> context.plainUrl().responseStatus(400).matchesJson("agent-manual-selection-request.json").responseBody("agent-upstream-error-response.json"));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> waitingManualRun() {
+        return Endpoint.createContract("/api/v1/workflow-runs/{workflowRunId}", HttpMethod.GET,
+                JsonNode.class, JsonNode.class, (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("agent-waiting-manual-run-response.json"));
+    }
+
+    public static Endpoint<JsonNode, JsonNode> saveManualWorkflow() {
+        return Endpoint.createContract("/api/v1/workflows/{workflowRunId}", HttpMethod.PUT,
+                JsonNode.class, JsonNode.class, (WiremockDefault) context -> context.plainUrl().responseStatus(200).matchesJson("agent-manual-workflow-request.json").responseBody("agent-manual-workflow-response.json"));
+    }
 
     private ForgeAgentWireMockEndpoints() {
     }
