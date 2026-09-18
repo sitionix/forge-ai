@@ -19,6 +19,7 @@ public class NodeRunWorker {
     private final NodeRunRepository nodeRunRepository;
     private final NodeRunLifecycle lifecycle;
     private final AgentExecutor agentExecutor;
+    private final ManualNodeRunLifecycle manualLifecycle;
     private final ExecutorService executorService;
     private final ScheduledExecutorService heartbeatExecutor;
     private final AgentSessionLeaseService sessionLeaseService;
@@ -26,22 +27,30 @@ public class NodeRunWorker {
 
     public NodeRunWorker(NodeRunRepository nodeRunRepository, NodeRunLifecycle lifecycle, AgentExecutor agentExecutor,
                          ExecutorService executorService, ScheduledExecutorService heartbeatExecutor,
-                         AgentSessionLeaseService sessionLeaseService, AgentExecutionRecoveryService recoveryService) {
+                         AgentSessionLeaseService sessionLeaseService, AgentExecutionRecoveryService recoveryService,
+                         ManualNodeRunLifecycle manualLifecycle) {
         this.nodeRunRepository=nodeRunRepository; this.lifecycle=lifecycle; this.agentExecutor=agentExecutor;
         this.executorService=executorService; this.heartbeatExecutor=heartbeatExecutor; this.sessionLeaseService=sessionLeaseService;
         this.recoveryService=recoveryService;
+        this.manualLifecycle=manualLifecycle;
     }
 
     NodeRunWorker(NodeRunRepository nodeRunRepository, NodeRunLifecycle lifecycle, AgentExecutor agentExecutor,
-                  ExecutorService executorService, AgentExecutionRecoveryService recoveryService) {
+                  ExecutorService executorService, AgentExecutionRecoveryService recoveryService,
+                  ManualNodeRunLifecycle manualLifecycle) {
         this(nodeRunRepository, lifecycle, agentExecutor, executorService,
-                Executors.newSingleThreadScheduledExecutor(r -> { var thread=new Thread(r,"agent-session-heartbeat-test"); thread.setDaemon(true); return thread; }), null, recoveryService);
+                Executors.newSingleThreadScheduledExecutor(r -> { var thread=new Thread(r,"agent-session-heartbeat-test"); thread.setDaemon(true); return thread; }), null, recoveryService, manualLifecycle);
     }
 
     public void poll() {
         this.recoveryService.reconcileExpired();
         for (final UUID nodeRunId : this.nodeRunRepository.findPendingIds()) {
-            this.lifecycle.tryStart(nodeRunId).ifPresent(this::submit);
+            this.nodeRunRepository.findById(nodeRunId).ifPresent(node -> {
+                switch (node.nodeType()) {
+                    case AGENT -> this.lifecycle.tryStart(nodeRunId).ifPresent(this::submit);
+                    case MANUAL -> this.manualLifecycle.waitForSelection(nodeRunId);
+                }
+            });
         }
     }
 

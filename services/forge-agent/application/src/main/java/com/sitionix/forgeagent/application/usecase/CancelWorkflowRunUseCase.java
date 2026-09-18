@@ -76,8 +76,7 @@ public class CancelWorkflowRunUseCase {
         }
 
         final List<NodeRun> active = this.nodeRunRepository.findByWorkflowRunId(workflowRunId).stream()
-                .filter(nodeRun -> nodeRun.status() == NodeRunStatus.PENDING
-                        || nodeRun.status() == NodeRunStatus.RUNNING)
+                .filter(nodeRun -> nodeRun.status().active())
                 .toList();
         final List<CancellationAction> cancellations = new ArrayList<>();
         for (final NodeRun nodeRun : active) {

@@ -43,9 +43,10 @@ class ForgeAgentWorkerConfiguration {
                                 final ExecutorService nodeRunExecutorService,
                                 final ScheduledExecutorService agentSessionHeartbeatExecutor,
                                 final AgentSessionLeaseService sessionLeaseService,
-                                final AgentExecutionRecoveryService recoveryService) {
+                                final AgentExecutionRecoveryService recoveryService,
+                                final com.sitionix.forgeagent.application.runtime.ManualNodeRunLifecycle manualLifecycle) {
         return new NodeRunWorker(nodeRunRepository, lifecycle, agentExecutor, nodeRunExecutorService,
-                agentSessionHeartbeatExecutor, sessionLeaseService, recoveryService);
+                agentSessionHeartbeatExecutor, sessionLeaseService, recoveryService, manualLifecycle);
     }
 
     @Bean

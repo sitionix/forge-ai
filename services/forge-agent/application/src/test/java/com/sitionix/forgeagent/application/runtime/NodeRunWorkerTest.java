@@ -48,13 +48,23 @@ class NodeRunWorkerTest {
     @Mock
     private AgentExecutionRecoveryService recoveryService;
 
+    @Mock
+    private ManualNodeRunLifecycle manualLifecycle;
+
     private ExecutorService executorService;
     private NodeRunWorker worker;
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(this.nodeRunRepository.findById(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(invocation -> Optional.of(new com.sitionix.forgeagent.domain.model.NodeRun(
+                        invocation.getArgument(0), WORKFLOW_RUN_ID, AGENT_ID, AGENT_ID, "Agent", "Instructions",
+                        OUTPUT_SCHEMA, com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                        new com.sitionix.forgeagent.domain.model.NodePosition(0, 0), UUID.randomUUID(),
+                        null, null, null, null, com.sitionix.forgeagent.domain.model.NodeRunStatus.PENDING,
+                        null, null, EXECUTION_MODEL, java.time.Instant.EPOCH, null, null, null)));
         this.executorService = Executors.newVirtualThreadPerTaskExecutor();
-        this.worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, this.agentExecutor, this.executorService, this.recoveryService);
+        this.worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, this.agentExecutor, this.executorService, this.recoveryService, this.manualLifecycle);
     }
 
     @Test

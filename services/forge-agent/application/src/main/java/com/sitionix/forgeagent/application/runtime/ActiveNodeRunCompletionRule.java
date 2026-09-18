@@ -11,7 +11,7 @@ public class ActiveNodeRunCompletionRule implements WorkflowCompletionRule {
     @Override
     public boolean supports(final WorkflowCompletionContext context) {
         return context.nodeRuns().stream()
-                .anyMatch(nodeRun -> nodeRun.status() == NodeRunStatus.PENDING || nodeRun.status() == NodeRunStatus.RUNNING);
+                .anyMatch(nodeRun -> nodeRun.status().active());
     }
 
     @Override
