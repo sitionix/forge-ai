@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { JSDOM } from "jsdom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // @ts-expect-error Production JavaScript is exercised through its DOM contract.
 import { ProjectLogsView } from "../src/operator/project-logs-view.js";
 
@@ -29,7 +29,7 @@ function setup(options: any = {}, listed = sources, assets = [{ id: "asset-1", n
   };
   const view = new ProjectLogsView({
     document: dom.window.document,
-    window: { EventSource: EventSourceFake },
+    window: { EventSource: EventSourceFake, setTimeout, clearTimeout },
     api,
     ...options,
   });
@@ -38,7 +38,18 @@ function setup(options: any = {}, listed = sources, assets = [{ id: "asset-1", n
 }
 
 describe("ProjectLogsView", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
   function mockLogViewport(output: HTMLElement) {
+    vi.spyOn(output.ownerDocument.defaultView!.HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        let lines = 0;
+        for (const sibling of output.childNodes) {
+          if (sibling === this) break;
+          lines += (sibling.textContent!.match(/\n/g) || []).length;
+        }
+        return { top: lines * 20 - output.scrollTop } as DOMRect;
+      });
     Object.defineProperties(output, {
       clientHeight: { configurable: true, value: 100 },
       scrollHeight: {
@@ -75,31 +86,168 @@ describe("ProjectLogsView", () => {
     expect(dom.window.document.getElementById("projectLogsDialog")).toBeNull();
   });
 
-  it("follows new log events while the viewer is already at the tail", () => {
-    const { dom, view } = setup();
+  it("coalesces SSE bursts and renders at most once per 100 ms during continuous traffic", async () => {
+    const { dom, view, streams } = setup();
+    await view.load("project-1");
+    view.start();
+    const render = vi.spyOn(view, "renderEvents");
     const output = dom.window.document.getElementById("projectLogsOutput")!;
-    mockLogViewport(output);
-
-    view.pushEvent({ sourceName: "API", message: "first" });
-    output.scrollTop = output.scrollHeight - output.clientHeight;
-    view.pushEvent({ sourceName: "API", message: "latest" });
-
-    expect(output.textContent).toContain("latest");
-    expect(output.scrollTop).toBe(output.scrollHeight);
+    const rebuild = vi.spyOn(output, "replaceChildren");
+    for (let batch = 0; batch < 3; batch++) {
+      for (let index = 0; index < 500; index++) {
+        streams[0].emit("log", { sourceName: "API", message: `line ${batch * 500 + index}` });
+      }
+      expect(render).toHaveBeenCalledTimes(batch);
+      expect(rebuild).toHaveBeenCalledTimes(batch);
+      vi.advanceTimersByTime(99);
+      expect(render).toHaveBeenCalledTimes(batch);
+      vi.advanceTimersByTime(1);
+      expect(render).toHaveBeenCalledTimes(batch + 1);
+      expect(rebuild).toHaveBeenCalledTimes(batch + 1);
+    }
+    expect(output.textContent!.split("\n")[0]).toBe(" [API] line 1499");
+    vi.advanceTimersByTime(1000);
+    expect(render).toHaveBeenCalledTimes(3);
   });
 
-  it("preserves the reading position when the viewer was scrolled away from the tail", () => {
+  it("retains exactly the newest 1000 events and renders them newest-first without changing storage order", () => {
+    const { dom, view } = setup();
+    for (let index = 0; index < 2500; index++) {
+      view.pushEvent({ sourceName: "API", message: `line ${index}` });
+      expect(view.events.size).toBeLessThanOrEqual(1000);
+    }
+    vi.advanceTimersByTime(100);
+    const messages = Array.from({ length: 1000 }, (_, index) => `line ${1500 + index}`);
+    expect([...view.events.values()].map((event: any) => event.message)).toEqual(messages);
+    expect(dom.window.document.getElementById("projectLogsOutput")!.textContent)
+      .toBe(messages.slice().reverse().map((message) => ` [API] ${message}`).join("\n"));
+  });
+
+  it.each([0, 20])("follows new logs at the top from scrollTop %i", (scrollTop) => {
     const { dom, view } = setup();
     const output = dom.window.document.getElementById("projectLogsOutput")!;
     mockLogViewport(output);
-    view.events = Array.from({ length: 12 }, (_, index) => ({ sourceName: "API", message: `line ${index}` }));
-    view.renderEvents();
+    view.pushEvent({ sourceName: "API", message: "first" });
+    vi.advanceTimersByTime(100);
+    output.scrollTop = scrollTop;
+    view.pushEvent({ sourceName: "API", message: "latest" });
+    vi.advanceTimersByTime(100);
+    expect(output.textContent).toBe(" [API] latest\n [API] first");
+    expect(output.scrollTop).toBe(0);
+  });
+
+  it.each([12, 1000])("anchors older content when adding multiline logs to a buffer of %i events", (count) => {
+    const { dom, view } = setup();
+    const output = dom.window.document.getElementById("projectLogsOutput")!;
+    mockLogViewport(output);
+    for (let index = 0; index < count; index++) view.pushEvent({ sourceName: "API", message: `line ${index}` });
+    vi.advanceTimersByTime(100);
+    output.scrollTop = 45;
+    view.pushEvent({ sourceName: "API", message: "new\nstack frame\nstack frame" });
+    vi.advanceTimersByTime(100);
+    expect(output.scrollTop).toBe(105);
+    expect(output.textContent).toContain("new\nstack frame");
+  });
+
+  it("filters messages and source names while keeping newest-first order and ignoring hidden arrivals for scroll", () => {
+    const { dom, view } = setup();
+    const output = dom.window.document.getElementById("projectLogsOutput")!;
+    const filter = dom.window.document.getElementById("projectLogsFilter") as HTMLInputElement;
+    mockLogViewport(output);
+    view.pushEvent({ sourceName: "API", message: "first" });
+    view.pushEvent({ sourceName: "Worker", message: "api error" });
+    view.pushEvent({ sourceName: "Worker", message: "hidden" });
+    vi.advanceTimersByTime(100);
+    filter.value = "API";
+    filter.dispatchEvent(new dom.window.Event("input"));
+    expect(output.textContent).toBe(" [Worker] api error\n [API] first");
     output.scrollTop = 40;
-
-    view.pushEvent({ sourceName: "API", message: "new while reading" });
-
-    expect(output.textContent).toContain("new while reading");
+    view.pushEvent({ sourceName: "Worker", message: "also hidden" });
+    vi.advanceTimersByTime(100);
     expect(output.scrollTop).toBe(40);
+  });
+
+  it("pauses rendering, bounds ingestion, and renders the latest state once on Resume", async () => {
+    const { dom, view, streams } = setup();
+    await view.load("project-1");
+    view.start();
+    streams[0].emit("log", { sourceName: "API", message: "before pause" });
+    vi.advanceTimersByTime(100);
+    const output = dom.window.document.getElementById("projectLogsOutput")!;
+    const previous = output.textContent;
+    const render = vi.spyOn(view, "renderEvents");
+    streams[0].emit("log", { sourceName: "API", message: "pending" });
+    view.togglePause();
+    for (let index = 0; index < 2500; index++) {
+      streams[0].emit("log", { sourceName: "API", message: `paused ${index}` });
+      vi.advanceTimersByTime(1);
+    }
+    expect(streams[0].closed).toBe(false);
+    expect(view.events.size).toBe(1000);
+    expect(render).not.toHaveBeenCalled();
+    expect(output.textContent).toBe(previous);
+    expect(vi.getTimerCount()).toBe(0);
+    view.togglePause();
+    expect(render).toHaveBeenCalledTimes(1);
+    expect(output.textContent!.split("\n")).toHaveLength(1000);
+    expect(output.textContent!.split("\n")[0]).toBe(" [API] paused 2499");
+    expect(output.textContent).not.toContain("before pause");
+    vi.advanceTimersByTime(100);
+    expect(render).toHaveBeenCalledTimes(1);
+    streams[0].emit("log", { sourceName: "API", message: "resumed" });
+    vi.advanceTimersByTime(100);
+    expect(render).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears previous stream state and cancels pending rendering on restart", async () => {
+    const { dom, view, streams } = setup();
+    await view.load("project-1");
+    view.start();
+    streams[0].emit("log", { sourceName: "API", message: "old rendered" });
+    vi.advanceTimersByTime(100);
+    streams[0].emit("log", { sourceName: "API", message: "old pending" });
+    view.start();
+    expect(streams[0].closed).toBe(true);
+    expect(view.events.size).toBe(0);
+    expect(dom.window.document.getElementById("projectLogsOutput")!.textContent).toBe("");
+    const render = vi.spyOn(view, "renderEvents");
+    streams[0].emit("log", { sourceName: "API", message: "stale callback" });
+    streams[0].emit("source-error", { sourceName: "API", message: "stale error" });
+    vi.advanceTimersByTime(100);
+    expect(render).not.toHaveBeenCalled();
+    streams[1].emit("log", { sourceName: "API", message: "fresh" });
+    vi.advanceTimersByTime(100);
+    expect(dom.window.document.getElementById("projectLogsOutput")!.textContent).toBe(" [API] fresh");
+  });
+
+  it.each(["close", "dispose"])("cancels pending rendering and ignores stale callbacks after %s", async (method) => {
+    const { dom, view, streams } = setup();
+    await view.load("project-1");
+    view.start();
+    streams[0].emit("log", { sourceName: "API", message: "pending" });
+    const output = dom.window.document.getElementById("projectLogsOutput")!;
+    const previous = output.textContent;
+    const render = vi.spyOn(view, "renderEvents");
+    view[method]();
+    streams[0].emit("log", { sourceName: "API", message: "stale" });
+    streams[0].emit("source-error", { sourceName: "API", message: "stale" });
+    vi.advanceTimersByTime(1000);
+    expect(streams[0].closed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(render).not.toHaveBeenCalled();
+    expect(output.textContent).toBe(previous);
+  });
+
+  it("flushes the final batch after stream completion, including source errors", async () => {
+    const { dom, view, streams } = setup();
+    await view.load("project-1");
+    view.start();
+    streams[0].emit("log", { sourceName: "API", message: "last log" });
+    streams[0].emit("source-error", { sourceName: "API", message: "failed" });
+    streams[0].emit("stream-complete", {});
+    vi.advanceTimersByTime(100);
+    expect(dom.window.document.getElementById("projectLogsOutput")!.textContent)
+      .toBe(" [API] ERROR: failed\n [API] last log");
   });
 
   it("applies the initial Service scope", async () => {
