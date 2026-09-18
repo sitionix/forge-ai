@@ -91,3 +91,5 @@ export function executionConnectionsMayBundle(
   left: Pick<ProjectedExecutionConnection, 'sourceVisualUnitKey' | 'sourceOutputPortId' | 'targetVisualUnitKey' | 'targetInputPortId'>,
   right: Pick<ProjectedExecutionConnection, 'sourceVisualUnitKey' | 'sourceOutputPortId' | 'targetVisualUnitKey' | 'targetInputPortId'>
 ): boolean;
+
+export const TaskExecutionView: any;
