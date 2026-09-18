@@ -12,8 +12,30 @@ public record Node(
         NodePosition position,
         String scopeMode,
         String contextMode,
+        String contextGroupKey,
+        AgentNodeType nodeType) {
+    public Node(
+        UUID id,
+        UUID targetId,
+        String inputMode,
+        List<NodePort> inputs,
+        List<NodePort> outputs,
+        NodePosition position,
+        String scopeMode,
+        String contextMode,
         String contextGroupKey) {
-    public Node { if (contextMode == null) contextMode="FRESH_EACH_NODE_RUN"; }
+        this(id, targetId, inputMode, inputs, outputs, position, scopeMode, contextMode, contextGroupKey,
+                AgentNodeType.AGENT);
+    }
+
+    public Node {
+        if (nodeType == null) {
+            nodeType = AgentNodeType.AGENT;
+        }
+        if (contextMode == null) {
+            contextMode = "FRESH_EACH_NODE_RUN";
+        }
+    }
     public Node(UUID id, UUID targetId, String inputMode, List<NodePort> inputs, List<NodePort> outputs,
                 NodePosition position, String scopeMode) {
         this(id,targetId,inputMode,inputs,outputs,position,scopeMode,"FRESH_EACH_NODE_RUN");

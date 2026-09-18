@@ -1,0 +1,30 @@
+{
+  "name": "Manual choice",
+  "taskInputPortId": null,
+  "taskOutputPortId": null,
+  "nodes": [
+    {
+      "id": "88888888-8888-4888-8888-888888888888",
+      "nodeType": "MANUAL",
+      "targetId": null,
+      "inputMode": "ALL",
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "name": "Continue",
+          "description": null,
+          "order": 0
+        }
+      ],
+      "position": {
+        "x": 1,
+        "y": 2
+      },
+      "scopeMode": "SHARED",
+      "contextMode": "FRESH_EACH_NODE_RUN",
+      "contextGroupKey": null
+    }
+  ],
+  "connections": []
+}

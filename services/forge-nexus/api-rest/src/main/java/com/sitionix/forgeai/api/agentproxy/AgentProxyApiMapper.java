@@ -520,7 +520,7 @@ public class AgentProxyApiMapper {
                 node.agentName(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
                 node.scopeMode(),
-                node.contextMode(), node.contextGroupKey()
+                node.contextMode(), node.contextGroupKey(), node.nodeType()
         );
     }
 
@@ -570,7 +570,7 @@ public class AgentProxyApiMapper {
                 request.outputs() == null ? null : request.outputs().stream().map(this::toDomain).toList(),
                 request.position() == null ? null : new NodePosition(request.position().x(), request.position().y()),
                 request.scopeMode(),
-                request.contextMode(), request.contextGroupKey()
+                request.contextMode(), request.contextGroupKey(), request.nodeType()
         );
     }
 
@@ -583,7 +583,7 @@ public class AgentProxyApiMapper {
                 node.outputs() == null ? null : node.outputs().stream().map(this::toResponse).toList(),
                 node.position() == null ? null : new NodePositionResponse(node.position().x(), node.position().y()),
                 node.scopeMode(),
-                node.contextMode(), node.contextGroupKey()
+                node.contextMode(), node.contextGroupKey(), node.nodeType()
         );
     }
 
@@ -617,7 +617,8 @@ public class AgentProxyApiMapper {
                     nodeRun.sourceAgentId(),
                     nodeRun.agentName(),
                     nodeRun.agentInstructions(),
-                    this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
+                    nodeRun.agentOutputSchema() == null ? null
+                            : this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
                     nodeRun.inputMode(),
                     new NodePositionResponse(nodeRun.position().x(), nodeRun.position().y()),
                     nodeRun.executionFrameId(),
@@ -636,7 +637,7 @@ public class AgentProxyApiMapper {
                     nodeRun.retryOfNodeRunId(),
                     nodeRun.retryEligibility() == null ? null : new AgentNodeRunRetryEligibilityResponse(
                             nodeRun.retryEligibility().action(), nodeRun.retryEligibility().reasonCode()),
-                    nodeRun.contextGroupKey(), nodeRun.contextIterationId()
+                    nodeRun.contextGroupKey(), nodeRun.contextIterationId(), nodeRun.nodeType()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Agent workflow run JSON is not valid JSON.", exception);

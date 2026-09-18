@@ -44,6 +44,7 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.RuntimeTargetDiscover
 import com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest;
 import java.util.List;
 import java.util.UUID;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.ManualNodeSelectionRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -340,6 +341,13 @@ public class ForgeAgentClientAdapter implements ForgeAgentClient {
             this.httpClient.cancelWorkflowRun(runId);
             return null;
         });
+    }
+
+    @Override
+    public AgentWorkflowRun selectManualNodeOutput(final UUID workflowRunId, final UUID nodeRunId,
+                                                 final UUID outputPortId) {
+        return this.mapper.toDomain(this.clientCallExecutor.execute(() -> this.httpClient.selectManualNodeOutput(
+                workflowRunId, nodeRunId, new ManualNodeSelectionRequest(outputPortId))));
     }
 
     @Override

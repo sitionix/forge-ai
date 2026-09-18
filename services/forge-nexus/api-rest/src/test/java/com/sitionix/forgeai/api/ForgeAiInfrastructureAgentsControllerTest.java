@@ -157,6 +157,8 @@ class ForgeAiInfrastructureAgentsControllerTest {
     @Mock
     private RetryRecoveredAgentNodeRun retryRecoveredAgentNodeRun;
     @Mock
+    private com.sitionix.forgeai.domain.usecase.SelectAgentManualNodeOutput selectAgentManualNodeOutput;
+    @Mock
     private AgentProxyApiMapper mapper;
 
     private ForgeAiInfrastructureAgentsController controller;
@@ -192,6 +194,7 @@ class ForgeAiInfrastructureAgentsControllerTest {
                 this.getAgentWorkflowRun,
                 this.cancelAgentWorkflowRun,
                 this.retryRecoveredAgentNodeRun,
+                this.selectAgentManualNodeOutput,
                 this.mapper
         );
     }
@@ -549,6 +552,23 @@ class ForgeAiInfrastructureAgentsControllerTest {
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(actual.getBody()).containsExactly(response);
         verify(this.listAgentWorkflowRuns).execute(WORKFLOW_ID);
+        verify(this.mapper).toResponse(run);
+    }
+
+    @Test
+    void selectManualNodeOutputReturnsMappedWorkflowRun() {
+        final UUID outputPortId = UUID.fromString("99999999-9999-4999-8999-999999999999");
+        final var request = new com.sitionix.forgeai.api.agentproxy.ManualNodeSelectionRequest(outputPortId);
+        final AgentWorkflowRun run = this.workflowRun();
+        final AgentWorkflowRunResponse response = this.workflowRunResponse();
+        when(this.selectAgentManualNodeOutput.execute(RUN_ID, NODE_RUN_ID, outputPortId)).thenReturn(run);
+        when(this.mapper.toResponse(run)).thenReturn(response);
+
+        final var actual = this.controller.selectManualNodeOutput(RUN_ID, NODE_RUN_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.selectAgentManualNodeOutput).execute(RUN_ID, NODE_RUN_ID, outputPortId);
         verify(this.mapper).toResponse(run);
     }
 

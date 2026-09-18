@@ -50,6 +50,9 @@ import com.sitionix.forgeai.domain.usecase.UpdateAgentWorkflow;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
+import jakarta.validation.Valid;
+import com.sitionix.forgeai.domain.usecase.SelectAgentManualNodeOutput;
+import com.sitionix.forgeai.api.agentproxy.ManualNodeSelectionRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -93,6 +96,7 @@ public class ForgeAiInfrastructureAgentsController {
     private final GetAgentWorkflowRun getAgentWorkflowRun;
     private final CancelAgentWorkflowRun cancelAgentWorkflowRun;
     private final RetryRecoveredAgentNodeRun retryRecoveredAgentNodeRun;
+    private final SelectAgentManualNodeOutput selectAgentManualNodeOutput;
     private final AgentProxyApiMapper mapper;
 
     @GetMapping("/api/v1/infrastructure/agents/projects")
@@ -284,5 +288,12 @@ public class ForgeAiInfrastructureAgentsController {
             @PathVariable final UUID workflowRunId, @PathVariable final UUID nodeRunId) {
         return ResponseEntity.ok(this.mapper.toResponse(
                 this.retryRecoveredAgentNodeRun.execute(workflowRunId, nodeRunId)));
+    }
+    @PostMapping("/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection")
+    public ResponseEntity<AgentWorkflowRunResponse> selectManualNodeOutput(
+            @PathVariable final UUID workflowRunId, @PathVariable final UUID nodeRunId,
+            @Valid @RequestBody final ManualNodeSelectionRequest request) {
+        return ResponseEntity.ok(this.mapper.toResponse(
+                this.selectAgentManualNodeOutput.execute(workflowRunId, nodeRunId, request.outputPortId())));
     }
 }

@@ -659,6 +659,29 @@ class ForgeAgentClientAdapterTest {
     }
 
     @Test
+    void selectManualNodeOutputExecutesExactTypedClientCallAndMapsResponse() {
+        final UUID nodeRunId = UUID.fromString("77777777-7777-4777-8777-777777777777");
+        final UUID outputPortId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+        final var request = new com.sitionix.forgeai.infrastructure.agentclient.dto.ManualNodeSelectionRequest(outputPortId);
+        final var upstream = new WorkflowRunResponse(RUN_ID, PROJECT_ID, WORKFLOW_ID,
+                null, "Manual selection", "Input", AgentWorkflowRunStatus.RUNNING, List.of(), List.of(), List.of(),
+                null, null, null, CREATED, CREATED, null, List.of());
+        final var expected = new AgentWorkflowRun(RUN_ID, PROJECT_ID, WORKFLOW_ID,
+                null, "Manual selection", "Input", AgentWorkflowRunStatus.RUNNING, List.of(), List.of(), List.of(),
+                null, null, null, CREATED, CREATED, null, List.of());
+        when(this.httpClient.selectManualNodeOutput(RUN_ID, nodeRunId, request)).thenReturn(upstream);
+        when(this.mapper.toDomain(upstream)).thenReturn(expected);
+
+        assertThat(this.adapter.selectManualNodeOutput(RUN_ID, nodeRunId, outputPortId)).isSameAs(expected);
+
+        final InOrder inOrder = inOrder(this.executor, this.httpClient, this.mapper);
+        inOrder.verify(this.executor).execute(any());
+        inOrder.verify(this.httpClient).selectManualNodeOutput(RUN_ID, nodeRunId, request);
+        inOrder.verify(this.mapper).toDomain(upstream);
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
     void retryRecoveredNodeRunExecutesExactTypedClientCallAndMapsResponse() {
         final UUID nodeRunId = UUID.fromString("77777777-7777-4777-8777-777777777777");
         final WorkflowRunResponse workflowResponse = null;
