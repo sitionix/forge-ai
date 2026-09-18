@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
+import com.sitionix.forgeagent.domain.model.NodeType;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeContextMode;
@@ -24,7 +25,7 @@ final class PostgresNodeRunMapper {
                 entity.getSourceAgentId(),
                 entity.getAgentName(),
                 entity.getAgentInstructions(),
-                AgentOutputSchema.ofCanonicalJsonObject(entity.getAgentOutputSchema()),
+                entity.getAgentOutputSchema() == null ? null : AgentOutputSchema.ofCanonicalJsonObject(entity.getAgentOutputSchema()),
                 inputMode(entity.getInputMode()),
                 new NodePosition(entity.getPositionX(), entity.getPositionY()),
                 entity.getExecutionFrameId(),
@@ -45,7 +46,8 @@ final class PostgresNodeRunMapper {
                 contextMode(entity.getContextMode()),
                 entity.getContextTrackingVersion(),
                 entity.getRetryOfNodeRunId(),
-                entity.getContextGroupKey(), entity.getContextIterationId()
+                entity.getContextGroupKey(), entity.getContextIterationId(),
+                NodeType.valueOf(entity.getNodeType())
         );
     }
 
@@ -57,7 +59,7 @@ final class PostgresNodeRunMapper {
         entity.setSourceAgentId(nodeRun.sourceAgentId());
         entity.setAgentName(nodeRun.agentName());
         entity.setAgentInstructions(nodeRun.agentInstructions());
-        entity.setAgentOutputSchema(nodeRun.agentOutputSchema().jsonObject());
+        entity.setAgentOutputSchema(nodeRun.agentOutputSchema() == null ? null : nodeRun.agentOutputSchema().jsonObject());
         entity.setInputMode(inputMode(nodeRun.inputMode()).name());
         entity.setPositionX(nodeRun.position().x());
         entity.setPositionY(nodeRun.position().y());
@@ -65,6 +67,7 @@ final class PostgresNodeRunMapper {
         entity.setRepositoryId(nodeRun.repositoryId());
         entity.setContextMode(nodeRun.contextMode().name());
         entity.setContextGroupKey(nodeRun.contextGroupKey());
+        entity.setNodeType(nodeRun.nodeType().name());
         entity.setContextIterationId(nodeRun.contextIterationId());
         entity.setContextTrackingVersion(nodeRun.contextTrackingVersion());
         entity.setEnteredViaInputPortId(nodeRun.enteredViaInputPortId());

@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
+import com.sitionix.forgeagent.domain.model.NodeType;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.Node;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
@@ -158,7 +159,8 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
             entity.setInputMode(inputMode(node.inputMode()).name());
             entity.setScopeMode(node.scopeMode().name());
             entity.setContextMode(node.contextMode().name());
-        entity.setContextGroupKey(node.contextGroupKey());
+            entity.setContextGroupKey(node.contextGroupKey());
+            entity.setNodeType(node.nodeType().name());
             entity.setPositionX(node.position().x());
             entity.setPositionY(node.position().y());
             desiredEntities.add(entity);
@@ -275,7 +277,8 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
                 new NodePosition(entity.getPositionX(), entity.getPositionY()),
                 NodeScopeMode.valueOf(entity.getScopeMode()),
                 contextMode(entity.getContextMode()),
-                entity.getContextGroupKey()
+                entity.getContextGroupKey(),
+                NodeType.valueOf(entity.getNodeType())
         );
     }
 

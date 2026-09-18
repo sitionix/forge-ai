@@ -4,6 +4,7 @@ import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.ValidationException;
 import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeType;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodePosition;
@@ -58,6 +59,9 @@ public class WorkflowGraphValidator {
             }
             this.indexPorts(node.inputs(), node.id(), portIds, inputOwnersByPortId, allOwnersByPortId);
             this.indexPorts(node.outputs(), node.id(), portIds, outputOwnersByPortId, allOwnersByPortId);
+            if (node.nodeType() == NodeType.MANUAL) {
+                continue;
+            }
             final AgentDefinition target = targetsById.get(node.targetId());
             if (target == null) {
                 throw new ValidationException("UNKNOWN_NODE_TARGET", "Workflow nodes must target existing agents.");
@@ -77,8 +81,11 @@ public class WorkflowGraphValidator {
         if (node == null || node.id() == null) {
             throw new ValidationException("DUPLICATE_NODE_ID", "Workflow node IDs must be unique.");
         }
-        if (node.targetId() == null) {
+        if (node.nodeType() == NodeType.AGENT && node.targetId() == null) {
             throw new ValidationException("UNKNOWN_NODE_TARGET", "Workflow nodes must target existing agents.");
+        }
+        if (node.nodeType() == NodeType.MANUAL && node.targetId() != null) {
+            throw new ValidationException("INVALID_MANUAL_NODE_TARGET", "Manual workflow nodes must not target an agent.");
         }
         final NodePosition position = node.position() == null ? new NodePosition(0.0, 0.0) : node.position();
         final NodeInputMode inputMode = node.inputMode() == null ? NodeInputMode.DEPENDENCIES_ONLY : node.inputMode();
@@ -91,7 +98,8 @@ public class WorkflowGraphValidator {
                 position,
                 node.scopeMode(),
                 node.contextMode(),
-                node.contextGroupKey()
+                node.contextGroupKey(),
+                node.nodeType()
         );
     }
 

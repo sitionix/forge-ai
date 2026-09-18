@@ -16,6 +16,9 @@ import lombok.Setter;
 @Setter
 public class WorkflowNodeEntity {
 
+    @Column(name = "node_type", nullable = false, length = 16)
+    private String nodeType = "AGENT";
+
     @Id
     private UUID id;
 
@@ -23,7 +26,7 @@ public class WorkflowNodeEntity {
     @Column(name = "workflow_id", nullable = false)
     private UUID workflowId;
 
-    @Column(name = "target_id", nullable = false)
+    @Column(name = "target_id")
     private UUID targetId;
 
     @Column(name = "input_mode", nullable = false, length = 32)

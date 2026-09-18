@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.application.runtime;
 
+import com.sitionix.forgeagent.domain.model.NodeType;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.NodeContextMode;
 import com.sitionix.forgeagent.domain.model.ExecutionFrame;
@@ -117,10 +118,11 @@ public class NodeRunFactory {
                 null,
                 repositoryId,
                 runNode.contextMode(),
-                1,
+                runNode.nodeType() == NodeType.AGENT ? 1 : null,
                 null,
                 runNode.contextGroupKey(),
-                iteration(workflowRun, runNode, repositoryId, incoming)
+                iteration(workflowRun, runNode, repositoryId, incoming),
+                runNode.nodeType()
         );
     }
 

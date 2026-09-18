@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.domain.model.NodeRun;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
 import com.sitionix.forgeagent.domain.model.NodeRunStatus;
+import com.sitionix.forgeagent.domain.model.NodeType;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
@@ -104,6 +105,9 @@ public class NodeRunLifecycle {
         }
 
         final NodeRun nodeRun = locked.get();
+        if (nodeRun.nodeType() != NodeType.AGENT) {
+            return Optional.empty();
+        }
         final NodeRunExecutionModel executionModel = nodeRun.executionModel();
         if (executionModel == null || this.isBlank(executionModel.providerId()) || this.isBlank(executionModel.modelId())) {
             this.nodeRunRepository.save(this.withFailed(
@@ -324,7 +328,7 @@ public class NodeRunLifecycle {
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
                 nodeRun.contextTrackingVersion(),
-                nodeRun.retryOfNodeRunId(), nodeRun.contextGroupKey(), nodeRun.contextIterationId()
+                nodeRun.retryOfNodeRunId(), nodeRun.contextGroupKey(), nodeRun.contextIterationId(), nodeRun.nodeType()
         );
     }
 
@@ -354,7 +358,7 @@ public class NodeRunLifecycle {
                 nodeRun.repositoryId(),
                 nodeRun.contextMode(),
                 nodeRun.contextTrackingVersion(),
-                nodeRun.retryOfNodeRunId(), nodeRun.contextGroupKey(), nodeRun.contextIterationId()
+                nodeRun.retryOfNodeRunId(), nodeRun.contextGroupKey(), nodeRun.contextIterationId(), nodeRun.nodeType()
         );
     }
 

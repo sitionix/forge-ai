@@ -83,7 +83,7 @@ public class RetryRecoveredNodeRunUseCase {
                 target.agentName(), target.agentInstructions(), target.agentOutputSchema(), target.inputMode(),
                 target.position(), target.executionFrameId(), target.enteredViaInputPortId(), target.activationFrameId(),
                 null, null, NodeRunStatus.PENDING, null, null, target.executionModel(), Instant.now(this.clock),
-                null, null, target.repositoryId(), target.contextMode(), target.contextTrackingVersion(), target.id(), target.contextGroupKey(), target.contextIterationId());
+                null, null, target.repositoryId(), target.contextMode(), target.contextTrackingVersion(), target.id(), target.contextGroupKey(), target.contextIterationId(), target.nodeType());
     }
 
     private WorkflowRun reopen(final WorkflowRun run) {

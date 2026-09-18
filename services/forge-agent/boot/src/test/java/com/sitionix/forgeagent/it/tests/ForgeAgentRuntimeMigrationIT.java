@@ -64,6 +64,61 @@ class ForgeAgentRuntimeMigrationIT {
     private DataSource dataSource;
 
     @Test
+    void nodeTypeMigrationDefaultsExistingRowsToAgentAndKeepsAgentConstraints() {
+        final String schema = "node_type_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        final UUID run = UUID.randomUUID(), node = UUID.randomUUID();
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, MigrationVersion.fromVersion("33")).migrate();
+            this.insertHistoricalTrackedTurn(jdbc, schema, run, node, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+            jdbc.update("""
+                    INSERT INTO %1$s.agent_definitions(id,project_id,name,normalized_name,instructions,output_schema,created_at,updated_at)
+                    SELECT n.source_agent_id,r.project_id,n.agent_name,'agent',n.agent_instructions,n.agent_output_schema,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP
+                    FROM %1$s.workflow_run_nodes n JOIN %1$s.workflow_runs r ON r.id=n.workflow_run_id WHERE r.id=?
+                    """.formatted(schema), run);
+            jdbc.update("""
+                    INSERT INTO %1$s.agent_workflows(id,project_id,name,normalized_name,created_at,updated_at)
+                    SELECT source_workflow_id,project_id,workflow_name,'workflow',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP
+                    FROM %1$s.workflow_runs WHERE id=?
+                    """.formatted(schema), run);
+            jdbc.update("""
+                    INSERT INTO %1$s.workflow_nodes(id,workflow_id,target_id,position_x,position_y,input_mode,scope_mode,context_mode)
+                    SELECT n.source_node_id,r.source_workflow_id,n.source_agent_id,0,0,'DEPENDENCIES_ONLY','GLOBAL','FRESH_EACH_NODE_RUN'
+                    FROM %1$s.workflow_run_nodes n JOIN %1$s.workflow_runs r ON r.id=n.workflow_run_id WHERE r.id=?
+                    """.formatted(schema), run);
+            var templateBefore = jdbc.queryForMap("SELECT * FROM %s.workflow_nodes".formatted(schema));
+            var snapshotBefore = jdbc.queryForMap("SELECT * FROM %s.workflow_run_nodes".formatted(schema));
+            var invocationBefore = jdbc.queryForMap("SELECT * FROM %s.node_runs".formatted(schema));
+            this.flyway(schema, null).migrate();
+            assertThat(jdbc.queryForMap("SELECT * FROM %s.workflow_nodes".formatted(schema)))
+                    .containsAllEntriesOf(templateBefore).containsEntry("node_type", "AGENT");
+            assertThat(jdbc.queryForMap("SELECT * FROM %s.workflow_run_nodes".formatted(schema)))
+                    .containsAllEntriesOf(snapshotBefore).containsEntry("node_type", "AGENT");
+            assertThat(jdbc.queryForMap("SELECT * FROM %s.node_runs".formatted(schema)))
+                    .containsAllEntriesOf(invocationBefore).containsEntry("node_type", "AGENT");
+            assertThatThrownBy(() -> jdbc.update("UPDATE %s.workflow_nodes SET target_id=NULL".formatted(schema)))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            for (String table : java.util.List.of("workflow_run_nodes", "node_runs")) {
+                for (String field : java.util.List.of("source_agent_id", "agent_name", "agent_instructions", "agent_output_schema")) {
+                    assertThatThrownBy(() -> jdbc.update("UPDATE " + schema + "." + table + " SET " + field + "=NULL"))
+                            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+                }
+                assertThatThrownBy(() -> jdbc.update("UPDATE " + schema + "." + table + " SET node_type='SYSTEM'"))
+                        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            }
+            for (String field : java.util.List.of("execution_model_provider_id", "execution_model_id")) {
+                assertThatThrownBy(() -> jdbc.update("UPDATE " + schema + ".workflow_run_nodes SET " + field + "=NULL"))
+                        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            }
+            // Pre-model historical node_runs remain readable: these columns were nullable in V33.
+            jdbc.update("UPDATE %s.node_runs SET execution_model_provider_id=NULL, execution_model_id=NULL".formatted(schema));
+        } finally {
+            jdbc.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    @Test
     void sharedMigrationPreservesHistoricalOwnershipAndEnforcesSharedSessionContract() {
         final String schema = "shared_" + UUID.randomUUID().toString().replace("-", "");
         final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
