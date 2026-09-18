@@ -1,6 +1,8 @@
 import { escapeHtml } from "./dom-render-helpers.js";
 
-const LOG_TAIL_THRESHOLD_PX = 24;
+const LOG_TOP_THRESHOLD_PX = 24;
+const CLIENT_LOG_BUFFER_LIMIT = 1000;
+const LOG_RENDER_INTERVAL_MS = 100;
 
 /** The single project log viewer. Configuration belongs to Service/Asset workspaces. */
 export class ProjectLogsView {
@@ -14,7 +16,10 @@ export class ProjectLogsView {
     this.projectId = null;
     this.sources = [];
     this.assets = [];
-    this.events = [];
+    this.events = new Map();
+    this.renderedRows = new Map();
+    this.nextEventId = 0;
+    this.renderTimer = null;
     this.stream = null;
     this.paused = false;
     this.selectedSourceIds = new Set();
@@ -56,6 +61,7 @@ export class ProjectLogsView {
   }
 
   close() {
+    this.cancelRender();
     this.loadGeneration += 1;
     this.stream?.close();
     this.stream = null;
@@ -69,7 +75,8 @@ export class ProjectLogsView {
     this.listeners = [];
     this.sources = [];
     this.assets = [];
-    this.events = [];
+    this.events.clear();
+    this.renderedRows.clear();
     this.paused = false;
     this.selectedSourceIds.clear();
   }
@@ -141,18 +148,27 @@ export class ProjectLogsView {
   }
 
   start() {
+    this.cancelRender();
     this.stream?.close();
+    this.stream = null;
     const enabledIds = new Set(this.sources.filter((source) => source.enabled).map((source) => source.id));
     const ids = [...this.selectedSourceIds].filter((id) => enabledIds.has(id));
     if (!ids.length) return;
-    this.events = [];
+    this.events.clear();
+    this.renderedRows.clear();
+    this.nextEventId = 0;
+    this.byId("projectLogsOutput").replaceChildren();
+    this.byId("projectLogsOutput").scrollTop = 0;
     this.paused = false;
     this.byId("projectLogsPause").textContent = "Pause";
     const stream = new this.window.EventSource(
       this.api.logStreamUrl(this.projectId, ids, Number(this.byId("projectLogsLines").value) || 100));
     this.stream = stream;
-    stream.addEventListener("log", (event) => this.pushEvent(JSON.parse(event.data)));
+    stream.addEventListener("log", (event) => {
+      if (this.stream === stream) this.pushEvent(JSON.parse(event.data));
+    });
     stream.addEventListener("source-error", (event) => {
+      if (this.stream !== stream) return;
       const error = JSON.parse(event.data);
       this.pushEvent({ ...error, message: `ERROR: ${error.message}`, error: true });
     });
@@ -168,30 +184,58 @@ export class ProjectLogsView {
   }
 
   pushEvent(event) {
-    this.events.push(event);
-    if (this.events.length > 5000) this.events.shift();
-    if (!this.paused) this.renderEvents();
+    // Map insertion order keeps ingestion chronological, without shifting an array.
+    this.events.set(this.nextEventId++, event);
+    if (this.events.size > CLIENT_LOG_BUFFER_LIMIT) {
+      this.events.delete(this.events.keys().next().value);
+    }
+    if (this.paused || this.renderTimer !== null) return;
+    this.renderTimer = this.window.setTimeout(() => {
+      this.renderTimer = null;
+      this.renderEvents();
+    }, LOG_RENDER_INTERVAL_MS);
+  }
+
+  cancelRender() {
+    if (this.renderTimer !== null) this.window.clearTimeout(this.renderTimer);
+    this.renderTimer = null;
   }
 
   togglePause() {
     this.paused = !this.paused;
+    this.cancelRender();
     this.byId("projectLogsPause").textContent = this.paused ? "Resume" : "Pause";
     if (!this.paused) this.renderEvents();
   }
 
   renderEvents() {
+    this.cancelRender();
     const output = this.byId("projectLogsOutput");
-    const previousScrollTop = output.scrollTop;
-    const followsTail = !output.textContent
-      || output.scrollHeight - output.scrollTop - output.clientHeight <= LOG_TAIL_THRESHOLD_PX;
+    const followsTop = output.scrollTop <= LOG_TOP_THRESHOLD_PX;
     const filter = this.byId("projectLogsFilter").value.toLowerCase();
-    output.textContent = this.events
-      .filter((event) => !filter || event.message.toLowerCase().includes(filter)
-        || event.sourceName.toLowerCase().includes(filter))
-      .map((event) => `${event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : ""} [${event.sourceName}] ${event.message}`)
-      .join("\n");
-    if (followsTail) output.scrollTop = output.scrollHeight;
-    else output.scrollTop = previousScrollTop;
+    const visible = [...this.events].reverse()
+      .filter(([, event]) => !filter || event.message.toLowerCase().includes(filter)
+        || event.sourceName.toLowerCase().includes(filter));
+
+    // Anchor a surviving row: total height deltas alone fail when old rows are evicted.
+    const anchorId = followsTop ? undefined : visible.find(([id]) => this.renderedRows.has(id))?.[0];
+    const anchor = this.renderedRows.get(anchorId);
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    const rows = new Map();
+    visible.forEach(([id, event]) => {
+      let row = this.renderedRows.get(id);
+      if (!row) {
+        row = this.document.createElement("span");
+        row.textContent = `${event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : ""} [${event.sourceName}] ${event.message}`;
+      }
+      rows.set(id, row);
+    });
+    // Separate text nodes preserve the existing <pre> text format and multiline messages.
+    const children = [...rows.values()].flatMap((row, index) => index ? ["\n", row] : [row]);
+    output.replaceChildren(...children);
+    this.renderedRows = rows;
+    if (followsTop || !anchor) output.scrollTop = 0;
+    else output.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
   }
 
   byId(id) {
