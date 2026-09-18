@@ -203,6 +203,27 @@ case_systemd_units_use_runtime_runners() {
   rg -q 'scripts/runtime/run-jarvis\.sh' "${dir}/units/forge-jarvis.service"
 }
 
+case_systemd_preserves_ssh_agent() {
+  local dir socket
+  dir="$(tmp)"
+  socket="${dir}/agent socket"
+  SSH_AUTH_SOCK="${socket}" FORGE_SYSTEMD_UNIT_DIR="${dir}/units" \
+    FORGE_SYSTEMD_ENV_DIR="${dir}/env" FORGE_SYSTEMD_ENV_FILE="${dir}/env/forge-ai.env" \
+    FORGE_SYSTEMD_USE_SUDO=0 FORGE_SYSTEMD_SKIP_RELOAD=1 \
+    "${ROOT}/scripts/systemd/install.sh" >/dev/null || return 1
+  grep -Fx "SSH_AUTH_SOCK=\"${socket}\"" "${dir}/env/forge-ai.env" >/dev/null || return 1
+  grep -Fx "EnvironmentFile=${dir}/env/forge-ai.env" "${dir}/units/forge-agent.service" >/dev/null
+}
+
+case_systemd_without_ssh_agent() {
+  local dir
+  dir="$(tmp)"
+  env -u SSH_AUTH_SOCK "${ROOT}/scripts/systemd/render-units.sh" "${dir}/units" "${dir}/forge-ai.env" >/dev/null || return 1
+  ! grep -q '^SSH_AUTH_SOCK=' "${dir}/forge-ai.env"
+}
+
+run_case "systemd installation preserves the caller SSH agent socket" case_systemd_preserves_ssh_agent
+run_case "systemd rendering works without an SSH agent" case_systemd_without_ssh_agent
 run_case "backend resolver selects systemd and launchd" case_backend_resolution
 run_case "unusable systemd never falls back" case_unusable_systemd_never_falls_back
 run_case "systemctl without an active systemd runtime is rejected" case_inactive_systemd_never_selects

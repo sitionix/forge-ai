@@ -56,6 +56,10 @@ render_template "${TEMPLATE_DIR}/forge-knowledge.service.in" "${OUTPUT_DIR}/forg
 render_template "${TEMPLATE_DIR}/forge-jarvis.service.in" "${OUTPUT_DIR}/forge-jarvis.service"
 
 {
+  # System services do not inherit the installing user's SSH agent environment.
+  if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
+    env_line "SSH_AUTH_SOCK" "${SSH_AUTH_SOCK}"
+  fi
   env_line "FORGE_AI_HOME" "${FORGE_AI_HOME}"
   env_line "FORGE_CONFIG_DIR" "${FORGE_CONFIG_DIR}"
   env_line "FORGE_RUNTIME_DIR" "${FORGE_RUNTIME_DIR}"
