@@ -5856,6 +5856,98 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2Workspace')?.classList.contains('hidden')).toBe(false);
   });
 
+  it('Manual palette creates a distinct manual preset without an Agent', async () => {
+    const { dom, page } = await openedBuilder(api({ listProjectAgents: vi.fn(() => Promise.resolve([])) }));
+    const button = dom.window.document.querySelector<HTMLButtonElement>('[data-add-manual-node]');
+    expect(button?.textContent).toContain('Manual Node');
+    button!.click();
+    button!.click();
+    const [first, second] = page.workflowBuilder.workflow.nodes;
+    expect(first).toMatchObject({ nodeType: 'MANUAL', targetId: null, scopeMode: 'GLOBAL', contextMode: 'FRESH_EACH_NODE_RUN' });
+    expect(first.inputs.map((port: any) => port.name)).toEqual(['Input']);
+    expect(first.outputs.map((port: any) => port.name)).toEqual(['Retry', 'Continue']);
+    const ids = [first, second].flatMap((node: any) => [node.id, ...node.inputs.map((p: any) => p.id), ...node.outputs.map((p: any) => p.id)]);
+    expect(new Set(ids).size).toBe(ids.length);
+    const card = dom.window.document.querySelector(`[data-node-id="${first.id}"]`)!;
+    expect(card.textContent).toContain('Manual action');
+    expect(card.textContent).not.toContain('Unknown agent');
+    expect(card.querySelectorAll('[data-node-output-port]')).toHaveLength(2);
+  });
+
+  it('Manual creation rejects duplicate generated port IDs without changing the workflow', async () => {
+    const { dom, page } = await openedBuilder();
+    setRandomUuids(dom, ['node-id', 'input-id', 'output-id', 'output-id']);
+    page.workflowBuilder.addManualNode();
+    expect(page.workflowBuilder.workflow.nodes).toEqual([]);
+    expect(dom.window.document.getElementById('agentsV2WorkflowBuilderError')?.textContent).toContain('duplicate ID');
+  });
+
+  it('Manual save and reload preserve type null target and exact preset port IDs', async () => {
+    const { page, fakeApi } = await openedBuilder();
+    const builder = page.workflowBuilder;
+    builder.addManualNode();
+    const manual = structuredClone(builder.workflow.nodes[0]);
+    builder.workflow.taskInputPortId = manual.inputs[0].id;
+    builder.workflow.taskOutputPortId = manual.outputs[1].id;
+    await builder.save();
+    const request = fakeApi.updateWorkflow.mock.calls[0]![1];
+    expect(request.nodes[0]).toMatchObject(manual);
+    builder.open({ ...workflow(), ...request }, project(), []);
+    expect(builder.workflow.nodes[0]).toEqual(manual);
+  });
+
+  it('Manual editor shows readonly configured ports and no Agent context or scope controls', async () => {
+    const { dom, page } = await openedBuilder();
+    const builder = page.workflowBuilder;
+    builder.addManualNode({ inputs: [{ name: 'Review', description: 'Review input.' }],
+      outputs: [{ name: 'Approve', description: 'Proceed.' }, { name: 'Reject', description: 'Return.' }] });
+    const manual = structuredClone(builder.workflow.nodes[0]);
+    builder.openNodeEditor(manual.id);
+    const body = dom.window.document.getElementById('agentsV2NodeEditorBody')!;
+    expect(body.textContent).toContain('Approve');
+    expect(body.textContent).toContain('Reject');
+    expect(body.querySelectorAll('input, select, textarea, button')).toHaveLength(0);
+    expect(dom.window.document.getElementById('agentsV2NodeEditorAgent')?.textContent).toBe('Manual action');
+    expect(dom.window.document.getElementById('agentsV2NodeEditorSave')?.classList.contains('hidden')).toBe(true);
+    builder.addNodeEditorPort('outputs');
+    builder.removeNodeEditorPort('outputs', manual.outputs[0].id);
+    builder.editNodeEditorPort('outputs', manual.outputs[0].id);
+    builder.saveNodeEditor();
+    expect(builder.workflow.nodes[0]).toEqual(manual);
+    builder.closeNodeEditor();
+    builder.addAgentNode('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    builder.openNodeEditor(builder.workflow.nodes[1].id);
+    expect(body.querySelector('[data-node-editor-context-mode]')).not.toBeNull();
+    expect(dom.window.document.getElementById('agentsV2NodeEditorSave')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('Manual nodes move connect and remove through existing graph interactions', async () => {
+    const { dom, page } = await openedBuilder();
+    const builder = page.workflowBuilder;
+    builder.addAgentNode('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    builder.addManualNode();
+    const [agentNode, manual] = builder.workflow.nodes;
+    const card = dom.window.document.querySelector<HTMLElement>(`[data-node-id="${manual.id}"]`)!;
+    const before = { ...manual.position };
+    card.dispatchEvent(pointer(dom, 'pointerdown', 10, 20));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 60, 80));
+    dom.window.document.dispatchEvent(pointer(dom, 'pointerup', 60, 80));
+    expect(manual.position).toEqual({ x: before.x + 50, y: before.y + 60 });
+    for (const [source, target] of [[agentNode, manual], [manual, agentNode]]) {
+      dom.window.document.querySelector<HTMLElement>(`[data-node-output-port="${source.outputs[0].id}"]`)!
+        .dispatchEvent(pointer(dom, 'pointerdown', 200, 40));
+      dom.window.document.querySelector<HTMLElement>(`[data-node-input-port="${target.inputs[0].id}"]`)!
+        .dispatchEvent(pointer(dom, 'pointerup', 20, 40));
+    }
+    expect(builder.workflow.connections).toHaveLength(2);
+    expect(builder.workflow.connections[0]).toMatchObject({ sourceOutputPortId: agentNode.outputs[0].id, targetInputPortId: manual.inputs[0].id });
+    builder.workflow.taskOutputPortId = manual.outputs[1].id;
+    dom.window.document.querySelector<HTMLButtonElement>(`[data-node-remove="${manual.id}"]`)!.click();
+    expect(builder.workflow.nodes).toHaveLength(1);
+    expect(builder.workflow.connections).toEqual([]);
+    expect(builder.workflow.taskOutputPortId).toBeNull();
+  });
+
   it('same Agent can be added multiple times as distinct Node IDs', async () => {
     const { dom, page } = await openedBuilder();
     setRandomUuids(dom, [
@@ -5870,9 +5962,9 @@ describe('Agent projects page', () => {
       '33333333-3333-4333-8333-333333333335'
     ]);
 
-    page.workflowBuilder.addNode('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
-    page.workflowBuilder.addNode('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
-    page.workflowBuilder.addNode('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    page.workflowBuilder.addAgentNode('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    page.workflowBuilder.addAgentNode('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    page.workflowBuilder.addAgentNode('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
 
     expect(page.workflowBuilder.workflow.nodes).toHaveLength(3);
     expect(page.workflowBuilder.workflow.nodes[0].id).not.toBe(page.workflowBuilder.workflow.nodes[1].id);
@@ -6243,6 +6335,7 @@ describe('Agent projects page', () => {
       nodes: [{
         id: 'node-1',
         targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        nodeType: 'AGENT',
         inputMode: 'DEPENDENCIES_ONLY',
         scopeMode: 'GLOBAL',
         contextMode: 'FRESH_EACH_NODE_RUN',
@@ -6725,6 +6818,7 @@ describe('Agent projects page', () => {
       nodes: [{
         id: 'node-1',
         targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        nodeType: 'AGENT',
         inputMode: 'DEPENDENCIES_ONLY',
         scopeMode: 'GLOBAL',
         contextMode: 'FRESH_EACH_NODE_RUN',
@@ -6797,6 +6891,7 @@ describe('Agent projects page', () => {
         {
           id: 'node-1',
           targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        nodeType: 'AGENT',
           inputMode: 'DEPENDENCIES_ONLY',
           scopeMode: 'GLOBAL',
           contextMode: 'FRESH_EACH_NODE_RUN',
@@ -6807,6 +6902,7 @@ describe('Agent projects page', () => {
         {
           id: 'node-2',
           targetId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        nodeType: 'AGENT',
           inputMode: 'TASK_AND_DEPENDENCIES',
           scopeMode: 'PER_SCOPE',
           contextMode: 'REUSE_WITHIN_WORKFLOW_NODE',
@@ -6898,15 +6994,16 @@ describe('Agent projects page', () => {
 
   it('UUID fallback produces valid UUIDs and missing crypto fails clearly', async () => {
     const { dom, page } = await openedBuilder();
+    let randomByte = 7;
     Object.defineProperty(dom.window, 'crypto', {
-      value: { getRandomValues: (bytes: Uint8Array) => bytes.fill(7) },
+      value: { getRandomValues: (bytes: Uint8Array) => bytes.fill(randomByte++) },
       configurable: true
     });
-    page.workflowBuilder.addNode('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    page.workflowBuilder.addAgentNode('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     expect(page.workflowBuilder.workflow.nodes[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
     Object.defineProperty(dom.window, 'crypto', { value: {}, configurable: true });
-    page.workflowBuilder.addNode('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    page.workflowBuilder.addAgentNode('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     expect(dom.window.document.getElementById('agentsV2WorkflowBuilderError')?.textContent).toContain('UUID generation unavailable');
   });
 

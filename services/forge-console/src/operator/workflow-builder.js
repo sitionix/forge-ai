@@ -46,6 +46,14 @@ const DEFAULT_OUTPUT_PORT = {
   order: 0
 };
 
+const DEFAULT_MANUAL_PRESET = {
+  inputs: [DEFAULT_INPUT_PORT],
+  outputs: [
+    { name: 'Retry', description: 'Return to the previous step.', order: 0 },
+    { name: 'Continue', description: 'Continue to the next step.', order: 1 }
+  ]
+};
+
 export class WorkflowBuilder {
   constructor(options) {
     this.document = options.document;
@@ -95,6 +103,7 @@ export class WorkflowBuilder {
     }
     this.byId('agentsV2BuilderBack')?.addEventListener('click', () => this.onBack());
     this.byId('agentsV2WorkflowSave')?.addEventListener('click', () => this.save());
+    this.document.querySelector('[data-add-manual-node]')?.addEventListener('click', () => this.addManualNode());
     this.byId('agentsV2NodeEditorCancel')?.addEventListener('click', () => this.closeNodeEditor());
     this.byId('agentsV2NodeEditorClose')?.addEventListener('click', () => this.closeNodeEditor());
     this.byId('agentsV2NodeEditorSave')?.addEventListener('click', () => this.saveNodeEditor());
@@ -149,35 +158,46 @@ export class WorkflowBuilder {
     }
   }
 
-  addNode(agentId) {
+  addAgentNode(agentId) {
+    this.addPresetNode('AGENT', agentId, { inputs: [DEFAULT_INPUT_PORT], outputs: [DEFAULT_OUTPUT_PORT] });
+  }
+
+  addManualNode(preset = DEFAULT_MANUAL_PRESET) {
+    this.addPresetNode('MANUAL', null, preset);
+  }
+
+  addPresetNode(nodeType, targetId, preset) {
     if (!this.workflow) {
       return;
     }
     this.showError('');
     let nodeId;
-    let inputPortId;
-    let outputPortId;
+    let inputs;
+    let outputs;
     try {
       nodeId = this.randomUuid();
-      inputPortId = this.randomUuid();
-      outputPortId = this.randomUuid();
+      inputs = preset.inputs.map((port, order) => ({ ...port, id: this.randomUuid(), order }));
+      outputs = preset.outputs.map((port, order) => ({ ...port, id: this.randomUuid(), order }));
     } catch (error) {
       this.showError(error.message || 'Node UUID generation unavailable.');
       return;
     }
-    if (this.workflow.nodes.some((node) => node.id === nodeId) || this.portById(inputPortId) || this.portById(outputPortId)) {
+    const ids = [nodeId, ...inputs.map((port) => port.id), ...outputs.map((port) => port.id)];
+    if (new Set(ids).size !== ids.length || ids.some((id) =>
+      this.workflow.nodes.some((node) => node.id === id) || this.portById(id))) {
       this.showError('Node UUID generation produced a duplicate ID.');
       return;
     }
     const index = this.workflow.nodes.length;
     this.workflow.nodes.push({
       id: nodeId,
-      targetId: agentId,
+      nodeType,
+      targetId,
       inputMode: DEFAULT_INPUT_MODE,
       scopeMode: GLOBAL_SCOPE_MODE,
       contextMode: FRESH_CONTEXT_MODE,
-      inputs: [{ id: inputPortId, ...DEFAULT_INPUT_PORT }],
-      outputs: [{ id: outputPortId, ...DEFAULT_OUTPUT_PORT }],
+      inputs,
+      outputs,
       position: {
         x: NODE_START_X + (index % 3) * NODE_HORIZONTAL_STEP,
         y: NODE_START_Y + Math.floor(index / 3) * NODE_VERTICAL_STEP
@@ -239,7 +259,7 @@ export class WorkflowBuilder {
       </button>
     `).join('') || '<div class="muted-state">No agents yet.</div>';
     palette.querySelectorAll('[data-add-agent-id]').forEach((element) => {
-      element.addEventListener('click', () => this.addNode(element.dataset.addAgentId));
+      element.addEventListener('click', () => this.addAgentNode(element.dataset.addAgentId));
     });
   }
 
@@ -290,9 +310,9 @@ export class WorkflowBuilder {
           ${this.renderCompactPorts(inputs, 'input')}
         </div>
         <div class="workflow-node-content">
-          <strong>${escapeHtml(agent?.name || 'Unknown agent')}</strong>
-          <span>${escapeHtml(agent?.instructions || 'Reusable agent')}</span>
-          ${this.nodeContextMode(node) !== FRESH_CONTEXT_MODE ? '<small class="workflow-node-context-badge">↻ Context</small>' : ''}
+          <strong>${escapeHtml(node.nodeType === 'MANUAL' ? 'Manual' : agent?.name || 'Unknown agent')}</strong>
+          <span>${escapeHtml(node.nodeType === 'MANUAL' ? 'Manual action' : agent?.instructions || 'Reusable agent')}</span>
+          ${node.nodeType !== 'MANUAL' && this.nodeContextMode(node) !== FRESH_CONTEXT_MODE ? '<small class="workflow-node-context-badge">↻ Context</small>' : ''}
         </div>
         <button class="node-delete" type="button" title="Remove node" data-node-remove="${escapeHtml(node.id)}" aria-label="Remove node">×</button>
         <div class="workflow-node-port-list output" aria-label="Configured outputs">
@@ -747,6 +767,30 @@ export class WorkflowBuilder {
     if (!node) {
       return;
     }
+    const manual = node.nodeType === 'MANUAL';
+    this.byId('agentsV2NodeEditorSave').classList.toggle('hidden', manual);
+    this.byId('agentsV2NodeEditorCancel').textContent = manual ? 'Close' : 'Cancel';
+    if (manual) {
+      this.byId('agentsV2NodeEditorTitle').textContent = 'Manual';
+      this.byId('agentsV2NodeEditorAgent').textContent = 'Manual action';
+      this.byId('agentsV2NodeEditorBody').innerHTML = `
+        <p class="field-hint">Choose an output when this node is reached during execution.</p>
+        <div class="node-editor-port-columns">
+          ${['inputs', 'outputs'].map((direction) => `
+            <section class="node-editor-port-section">
+              <div class="node-editor-section-head"><h3>${direction.toUpperCase()}</h3></div>
+              <div class="node-editor-port-list">
+                ${this.nodePorts(node[direction]).map((port) => `
+                  <div class="node-editor-port-row compact">
+                    <div class="node-editor-port-summary"><strong>${escapeHtml(port.name)}</strong><span>${escapeHtml(port.description)}</span></div>
+                  </div>
+                `).join('')}
+              </div>
+            </section>
+          `).join('')}
+        </div>`;
+      return;
+    }
     const agent = this.agentById(node.targetId);
     this.byId('agentsV2NodeEditorTitle').textContent = agent?.name || 'Unknown agent';
     this.byId('agentsV2NodeEditorAgent').textContent = `Agent: ${agent?.name || 'Unknown agent'}`;
@@ -875,7 +919,7 @@ export class WorkflowBuilder {
   }
 
   addNodeEditorPort(direction) {
-    if (!this.nodeEditorDraft || !['inputs', 'outputs'].includes(direction)) {
+    if (!this.nodeEditorDraft || this.nodeEditorDraft.nodeType === 'MANUAL' || !['inputs', 'outputs'].includes(direction)) {
       return;
     }
     this.syncNodeEditorDraftFromDom();
@@ -894,7 +938,7 @@ export class WorkflowBuilder {
   }
 
   removeNodeEditorPort(direction, portId) {
-    if (!this.nodeEditorDraft || !['inputs', 'outputs'].includes(direction)) {
+    if (!this.nodeEditorDraft || this.nodeEditorDraft.nodeType === 'MANUAL' || !['inputs', 'outputs'].includes(direction)) {
       return;
     }
     this.syncNodeEditorDraftFromDom();
@@ -912,7 +956,7 @@ export class WorkflowBuilder {
   }
 
   editNodeEditorPort(direction, portId) {
-    if (!this.nodeEditorDraft || !['inputs', 'outputs'].includes(direction)) {
+    if (!this.nodeEditorDraft || this.nodeEditorDraft.nodeType === 'MANUAL' || !['inputs', 'outputs'].includes(direction)) {
       return;
     }
     this.syncNodeEditorDraftFromDom();
@@ -921,7 +965,7 @@ export class WorkflowBuilder {
   }
 
   syncNodeEditorDraftFromDom() {
-    if (!this.nodeEditorDraft) {
+    if (!this.nodeEditorDraft || this.nodeEditorDraft.nodeType === 'MANUAL') {
       return;
     }
     for (const direction of ['inputs', 'outputs']) {
@@ -958,7 +1002,7 @@ export class WorkflowBuilder {
   }
 
   saveNodeEditor() {
-    if (!this.workflow || !this.nodeEditorDraft || !this.nodeEditorNodeId) {
+    if (!this.workflow || !this.nodeEditorDraft || !this.nodeEditorNodeId || this.nodeEditorDraft.nodeType === 'MANUAL') {
       return;
     }
     this.syncNodeEditorDraftFromDom();
@@ -1416,6 +1460,7 @@ export class WorkflowBuilder {
       nodes: this.workflow.nodes.map((node) => ({
         id: node.id,
         targetId: node.targetId,
+        nodeType: node.nodeType || 'AGENT',
         inputMode: this.nodeInputMode(node),
         scopeMode: this.nodeScopeMode(node),
         contextMode: this.nodeContextMode(node),
@@ -1479,6 +1524,7 @@ export class WorkflowBuilder {
       nodes: (workflow.nodes || []).map((node) => ({
         id: node.id,
         targetId: node.targetId,
+        nodeType: node.nodeType || 'AGENT',
         inputMode: this.nodeInputMode(node),
         scopeMode: this.nodeScopeMode(node),
         contextMode: this.nodeContextMode(node),
@@ -1501,6 +1547,7 @@ export class WorkflowBuilder {
     return {
       id: node.id,
       targetId: node.targetId,
+      nodeType: node.nodeType || 'AGENT',
       inputMode: this.nodeInputMode(node),
       scopeMode: this.nodeScopeMode(node),
       contextMode: this.nodeContextMode(node),
