@@ -6058,3 +6058,20 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   gap: 6px;
   margin-top: 8px;
 }
+
+.manual-output-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manual-output-actions button {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.agents-v2-status-waiting,
+.execution-node-waiting,
+.execution-node-has-waiting {
+  border-color: rgba(184, 148, 31, 0.48);
+}
