@@ -518,6 +518,26 @@ class ForgeAgentControllerTest {
     }
 
     @Test
+    void selectManualNodeOutputReturnsMappedRunWithRetryEligibility() {
+        final UUID outputPortId = UUID.fromString("99999999-9999-4999-8999-999999999999");
+        final var request = new com.sitionix.forgeagent.api.dto.ManualSelectionRequest(outputPortId);
+        final WorkflowRun run = this.workflowRun();
+        final WorkflowRunResponse response = this.workflowRunResponse();
+        final var eligibility = java.util.Map.<UUID, com.sitionix.forgeagent.domain.model.RecoveredNodeRunRetryEligibility>of();
+        when(this.selectManualNodeOutput.execute(RUN_ID, NODE_RUN_ID, outputPortId)).thenReturn(run);
+        when(this.retryEligibility.evaluateAll(run)).thenReturn(eligibility);
+        when(this.mapper.toResponse(run, eligibility)).thenReturn(response);
+
+        final var actual = this.controller.selectManualNodeOutput(RUN_ID, NODE_RUN_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.selectManualNodeOutput).execute(RUN_ID, NODE_RUN_ID, outputPortId);
+        verify(this.retryEligibility).evaluateAll(run);
+        verify(this.mapper).toResponse(run, eligibility);
+    }
+
+    @Test
     void getWorkflowRun() {
         final WorkflowRun run = this.workflowRun();
         final WorkflowRunResponse response = this.workflowRunResponse();

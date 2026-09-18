@@ -556,6 +556,23 @@ class ForgeAiInfrastructureAgentsControllerTest {
     }
 
     @Test
+    void selectManualNodeOutputReturnsMappedWorkflowRun() {
+        final UUID outputPortId = UUID.fromString("99999999-9999-4999-8999-999999999999");
+        final var request = new com.sitionix.forgeai.api.agentproxy.ManualNodeSelectionRequest(outputPortId);
+        final AgentWorkflowRun run = this.workflowRun();
+        final AgentWorkflowRunResponse response = this.workflowRunResponse();
+        when(this.selectAgentManualNodeOutput.execute(RUN_ID, NODE_RUN_ID, outputPortId)).thenReturn(run);
+        when(this.mapper.toResponse(run)).thenReturn(response);
+
+        final var actual = this.controller.selectManualNodeOutput(RUN_ID, NODE_RUN_ID, request);
+
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isSameAs(response);
+        verify(this.selectAgentManualNodeOutput).execute(RUN_ID, NODE_RUN_ID, outputPortId);
+        verify(this.mapper).toResponse(run);
+    }
+
+    @Test
     void getWorkflowRun() {
         final AgentWorkflowRun run = this.workflowRun();
         final AgentWorkflowRunResponse response = this.workflowRunResponse();
