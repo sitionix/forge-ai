@@ -1098,6 +1098,10 @@ body.sidebar-collapsed .sidebar-link {
   font: 800 13px/1 var(--mono);
 }
 
+.workflow-agent-palette > h2:not(:first-child) {
+  margin-top: 24px;
+}
+
 .agents-v2-agent-palette-row {
   display: block;
   width: 100%;
