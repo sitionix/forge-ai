@@ -13,13 +13,19 @@ run_case() { local name="$1"; shift; TOTAL=$((TOTAL + 1)); if "$@"; then printf 
 
 fake_systemd_bin() {
   local bin="$1"
+  export FORGE_SYSTEMD_UNIT_DIR="${bin}/../units"
+  export FORGE_SYSTEMD_ENV_DIR="${bin}/../env"
+  export FORGE_SYSTEMD_ENV_FILE="${FORGE_SYSTEMD_ENV_DIR}/forge-ai.env"
+  export FORGE_SYSTEMD_SKIP_RELOAD=0
   cat > "${bin}/systemctl" <<'EOF'
 #!/usr/bin/env bash
 printf 'systemctl %s\n' "$*" >> "${TEST_RUNTIME_LOG}"
 if [[ "${TEST_SYSTEMD_USABLE:-1}" != 1 ]]; then exit 1; fi
 case "$*" in
   "show --property=Version --value") echo 257 ;;
-  *"--property=LoadState --value"*) echo loaded ;;
+  *"--property=LoadState --value"*)
+    if [[ "${TEST_REQUIRE_INSTALLED_UNITS:-0}" == 1 && ! -f "${FORGE_SYSTEMD_UNIT_DIR}/${2}" ]]; then echo not-found; else echo loaded; fi ;;
+  daemon-reload) exit "${TEST_SYSTEMD_RELOAD_EXIT:-0}" ;;
   is-active*) echo active ;;
   restart*) [[ "${TEST_SYSTEMD_START_EXIT:-0}" == 0 ]] || exit "${TEST_SYSTEMD_START_EXIT}" ;;
 esac
@@ -72,7 +78,7 @@ case "${1:-}" in
   bootstrap)
     mkdir -p "${state}"
     name="$(basename "${3}" .plist)"
-    : > "${state}/${name}"
+    cp "${3}" "${state}/${name}"
     ;;
   kickstart) ;;
   bootout) rm -f "${state}/${2##*/}" ;;
@@ -131,7 +137,7 @@ case_systemd_lifecycle() {
 printf 'prepare\n' >> "${TEST_RUNTIME_LOG}"
 EOF
   chmod +x "${prepare}"
-  for action in start stop restart status; do
+  for action in start stop start status; do
     PATH="${bin}:${SYSTEM_PATH}" FORGE_RUNTIME_PREPARE_COMMAND="${prepare}" FORGE_SYSTEMD_USE_SUDO=0 FORGE_RUNTIME_OS=Linux FORGE_RUNTIME_LINUX_ID=ubuntu FORGE_SYSTEMD_RUNTIME_DIR="${dir}/systemd" "${ROOT}/scripts/runtime/control.sh" "${action}" >/dev/null
   done
   grep -q 'systemctl stop forge-nexus.service' "${dir}/log"
@@ -156,7 +162,9 @@ EOF
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" status >/dev/null
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" logs agent >/dev/null
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" logs all >/dev/null
-  env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" restart >/dev/null
+  env "${envs[@]}" FORGE_LAUNCHD_LOG_DIR="${dir}/new-logs" "${ROOT}/scripts/runtime/control.sh" start >/dev/null || return 1
+  grep -Fq "${dir}/new-logs/agent.out.log" "${dir}/launchd/ai.forge.agent" || return 1
+  grep -q 'launchctl bootout .*ai.forge.agent' "${dir}/log" || return 1
   [[ "$(grep -c '^prepare$' "${dir}/log")" == 2 ]]
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" stop >/dev/null
   [[ ! -e "${dir}/launchd/ai.forge.agent" ]]
@@ -189,7 +197,8 @@ case_architecture_cleanup() {
   ! rg -n 'lsof|kill .*port|kill .*listener' "${ROOT}/scripts/runtime" "${ROOT}/scripts/launchd" >/dev/null
   [[ ! -e "${ROOT}/scripts/runtime-ownership.sh" && ! -e "${ROOT}/scripts/lib/process.sh" ]]
   [[ ! -e "${ROOT}/scripts/runtime/managed-session.sh" ]]
-  for command in start stop restart status logs; do rg -q "^${command}([[:space:]].*)?:" "${ROOT}/Justfile"; done
+  for command in start stop status logs; do rg -q "^${command}([[:space:]].*)?:" "${ROOT}/Justfile"; done
+  ! rg -q '^(restart|systemd-install):' "${ROOT}/Justfile" || return 1
   ! rg -q '^attach([[:space:]].*)?:' "${ROOT}/Justfile"
 }
 
@@ -203,12 +212,56 @@ case_systemd_units_use_runtime_runners() {
   rg -q 'scripts/runtime/run-jarvis\.sh' "${dir}/units/forge-jarvis.service"
 }
 
+case_systemd_preserves_ssh_agent() {
+  local dir socket
+  dir="$(tmp)"
+  socket="${dir}/agent socket"
+  SSH_AUTH_SOCK="${socket}" FORGE_SYSTEMD_UNIT_DIR="${dir}/units" \
+    FORGE_SYSTEMD_ENV_DIR="${dir}/env" FORGE_SYSTEMD_ENV_FILE="${dir}/env/forge-ai.env" \
+    FORGE_SYSTEMD_USE_SUDO=0 FORGE_SYSTEMD_SKIP_RELOAD=1 \
+    "${ROOT}/scripts/systemd/install.sh" >/dev/null || return 1
+  grep -Fx "SSH_AUTH_SOCK=\"${socket}\"" "${dir}/env/forge-ai.env" >/dev/null || return 1
+  grep -Fx "EnvironmentFile=${dir}/env/forge-ai.env" "${dir}/units/forge-agent.service" >/dev/null
+}
+
+case_systemd_without_ssh_agent() {
+  local dir
+  dir="$(tmp)"
+  env -u SSH_AUTH_SOCK "${ROOT}/scripts/systemd/render-units.sh" "${dir}/units" "${dir}/forge-ai.env" >/dev/null || return 1
+  ! grep -q '^SSH_AUTH_SOCK=' "${dir}/forge-ai.env"
+}
+
+case_systemd_start_installs_and_refreshes() {
+  local dir bin prepare socket
+  dir="$(tmp)"; bin="${dir}/bin"; prepare="${dir}/prepare"
+  mkdir -p "${bin}" "${dir}/systemd"
+  export TEST_RUNTIME_LOG="${dir}/log"
+  fake_systemd_bin "${bin}"; fake_common_bin "${bin}"
+  printf '#!/usr/bin/env bash\nprintf "prepare\\n" >> "${TEST_RUNTIME_LOG}"\n' > "${prepare}"
+  chmod +x "${prepare}"
+  local envs=(PATH="${bin}:${SYSTEM_PATH}" TEST_REQUIRE_INSTALLED_UNITS=1 FORGE_RUNTIME_OS=Linux FORGE_RUNTIME_LINUX_ID=ubuntu FORGE_SYSTEMD_RUNTIME_DIR="${dir}/systemd" FORGE_SYSTEMD_USE_SUDO=0 FORGE_RUNTIME_PREPARE_COMMAND="${prepare}")
+  for socket in "${dir}/first agent" "${dir}/new agent"; do
+    env "${envs[@]}" SSH_AUTH_SOCK="${socket}" "${ROOT}/scripts/runtime/control.sh" start >/dev/null || return 1
+    grep -Fx "SSH_AUTH_SOCK=\"${socket}\"" "${FORGE_SYSTEMD_ENV_FILE}" >/dev/null || return 1
+  done
+  [[ "$(grep -c '^prepare$' "${dir}/log")" == 2 ]] || return 1
+  [[ "$(grep -c '^systemctl daemon-reload$' "${dir}/log")" == 2 ]] || return 1
+  [[ "$(grep -c '^systemctl restart forge-knowledge.service' "${dir}/log")" == 2 ]] || return 1
+  # A failed installation must not restart the running services.
+  : > "${dir}/log"
+  if env "${envs[@]}" TEST_SYSTEMD_RELOAD_EXIT=23 "${ROOT}/scripts/runtime/control.sh" start >/dev/null 2>&1; then return 1; fi
+  ! grep -q '^systemctl restart' "${dir}/log"
+}
+
+run_case "start installs missing systemd units and refreshes SSH on every run" case_systemd_start_installs_and_refreshes
+run_case "systemd installation preserves the caller SSH agent socket" case_systemd_preserves_ssh_agent
+run_case "systemd rendering works without an SSH agent" case_systemd_without_ssh_agent
 run_case "backend resolver selects systemd and launchd" case_backend_resolution
 run_case "unusable systemd never falls back" case_unusable_systemd_never_falls_back
 run_case "systemctl without an active systemd runtime is rejected" case_inactive_systemd_never_selects
 run_case "a selected systemd action never falls back" case_systemd_action_failure_never_falls_back
 run_case "systemd lifecycle uses one owner" case_systemd_lifecycle
-run_case "launchd start/status/logs/restart/stop" case_launchd_lifecycle
+run_case "launchd start/status/logs/start/stop" case_launchd_lifecycle
 run_case "launchd does not replace a foreign loaded service" case_launchd_rejects_foreign_loaded_service
 run_case "launchd rejects stale-port health when the job has exited" case_launchd_stale_health_never_masks_failed_job
 run_case "legacy PID/nohup launcher is removed" case_architecture_cleanup

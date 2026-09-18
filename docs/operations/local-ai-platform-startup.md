@@ -19,5 +19,18 @@ To follow all application logs, run `just logs`; pass `knowledge`, `jarvis`,
 `agent`, `nexus`, or `postgres` to follow one logical service.
 
 Startup is successful only after all four health endpoints respond. Check real
-process, health, and Postgres state with `just status`. Restart the same selected
-backend with `just restart`.
+process, health, and Postgres state with `just status`. Running `just start` again
+rebuilds the artifacts and restarts the services on the selected backend.
+
+On Ubuntu, `just start` automatically installs or refreshes the systemd units and
+environment before restarting the services. Run it as your regular service user;
+it invokes sudo for the installation steps itself.
+
+For SSH Git remotes, run `just start` from a terminal where SSH Git access works.
+It captures that terminal's `SSH_AUTH_SOCK` in the systemd environment so Forge
+can use the same SSH agent.
+
+The SSH agent must remain available with the required key loaded. If its socket
+path changes (for example, after a new login), run `just start` again from the
+working terminal. Starting without `SSH_AUTH_SOCK` still works, but does not
+configure an SSH agent for the services.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ACTION="${1:?Usage: control.sh start|stop|restart|status|logs [service]}"
+ACTION="${1:?Usage: control.sh start|stop|status|logs [service]}"
 SERVICE="${2:-all}"
 BACKEND="$("${SCRIPT_DIR}/resolve-backend.sh")"
 case "${BACKEND}" in

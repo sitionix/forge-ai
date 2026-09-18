@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-ACTION="${1:?Usage: systemd.sh validate|start|stop|restart|status|logs [service]}"
+ACTION="${1:?Usage: systemd.sh validate|start|stop|status|logs [service]}"
 SERVICE="${2:-all}"
 RUNTIME_DIR="${FORGE_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}"
 UNITS=(forge-knowledge.service forge-jarvis.service forge-agent.service forge-nexus.service)
@@ -13,14 +13,18 @@ sudo_cmd=()
 if [[ "${USE_SUDO}" == "1" || ( "${USE_SUDO}" == "auto" && "${EUID}" -ne 0 ) ]]; then sudo_cmd=(sudo); fi
 privileged() { if (( ${#sudo_cmd[@]} )); then "${sudo_cmd[@]}" "$@"; else "$@"; fi; }
 
-validate() {
+validate_manager() {
   command -v systemctl >/dev/null 2>&1 || { echo "Ubuntu Forge runtime requires systemctl." >&2; return 1; }
   [[ -d "${RUNTIME_DIR}" ]] || { echo "systemctl exists but systemd is not the active system runtime." >&2; return 1; }
   systemctl show --property=Version --value >/dev/null 2>&1 || { echo "systemd is present but its manager is not usable." >&2; return 1; }
+}
+
+validate() {
+  validate_manager
   local unit state
   for unit in "${UNITS[@]}"; do
     state="$(systemctl show "${unit}" --property=LoadState --value 2>/dev/null || true)"
-    [[ "${state}" == "loaded" ]] || { echo "Forge systemd unit is not installed: ${unit}. Run 'just systemd-install'." >&2; return 1; }
+    [[ "${state}" == "loaded" ]] || { echo "Forge systemd unit is not installed: ${unit}. Run 'just start'." >&2; return 1; }
   done
 }
 
@@ -86,10 +90,12 @@ health_url() {
 }
 
 case "${ACTION}" in
-  validate) validate ;;
+  validate) validate_manager ;;
   start)
-    validate
+    validate_manager
     prepare
+    "${ROOT}/scripts/systemd/install.sh"
+    validate
     start_postgres
     # `start` is a no-op for active units. Restart so freshly built artifacts are always loaded.
     privileged systemctl restart "${UNITS[@]}"
@@ -99,16 +105,6 @@ case "${ACTION}" in
     wait_healthy nexus http://127.0.0.1:9099/fgaisox/actuator/health
     ;;
   stop) validate; privileged systemctl stop "${REVERSE_UNITS[@]}"; docker compose --project-directory "${ROOT}" stop forge-agent-postgres ;;
-  restart)
-    validate
-    prepare
-    start_postgres
-    privileged systemctl restart "${UNITS[@]}"
-    wait_healthy knowledge http://127.0.0.1:7081/health
-    wait_healthy jarvis http://127.0.0.1:7071/health
-    wait_healthy agent http://127.0.0.1:7091/actuator/health
-    wait_healthy nexus http://127.0.0.1:9099/fgaisox/actuator/health
-    ;;
   status) validate; status ;;
   logs)
     validate
