@@ -13,8 +13,22 @@ public record Node(
         NodePosition position,
         NodeScopeMode scopeMode,
         NodeContextMode contextMode,
+        String contextGroupKey,
+        NodeType nodeType) {
+    public Node(UUID id,
+        UUID targetId,
+        NodeInputMode inputMode,
+        List<NodePort> inputs,
+        List<NodePort> outputs,
+        NodePosition position,
+        NodeScopeMode scopeMode,
+        NodeContextMode contextMode,
         String contextGroupKey) {
+        this(id, targetId, inputMode, inputs, outputs, position, scopeMode, contextMode, contextGroupKey, NodeType.AGENT);
+    }
+
     public Node {
+        nodeType = nodeType == null ? NodeType.AGENT : nodeType;
         Objects.requireNonNull(scopeMode, "scopeMode must not be null");
         contextMode = NodeContextMode.legacyDefault(contextMode);
         ContextIterationPolicy.validateGroup(contextMode, contextGroupKey);

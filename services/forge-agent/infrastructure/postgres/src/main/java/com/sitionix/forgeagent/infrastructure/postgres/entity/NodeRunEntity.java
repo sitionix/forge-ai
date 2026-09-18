@@ -17,6 +17,9 @@ import org.hibernate.type.SqlTypes;
 @Setter
 public class NodeRunEntity {
 
+    @Column(name = "node_type", nullable = false, length = 16)
+    private String nodeType;
+
     @Id
     private UUID id;
 
@@ -26,17 +29,17 @@ public class NodeRunEntity {
     @Column(name = "source_node_id", nullable = false)
     private UUID sourceNodeId;
 
-    @Column(name = "source_agent_id", nullable = false)
+    @Column(name = "source_agent_id")
     private UUID sourceAgentId;
 
-    @Column(name = "agent_name", nullable = false, length = 120)
+    @Column(name = "agent_name", length = 120)
     private String agentName;
 
-    @Column(name = "agent_instructions", nullable = false)
+    @Column(name = "agent_instructions")
     private String agentInstructions;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "agent_output_schema", nullable = false, columnDefinition = "jsonb")
+    @Column(name = "agent_output_schema", columnDefinition = "jsonb")
     private String agentOutputSchema;
 
     @Column(name = "position_x", nullable = false)

@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
+import com.sitionix.forgeagent.domain.model.NodeType;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeContextMode;
@@ -104,13 +105,14 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
                 entity.getSourceAgentId(),
                 entity.getAgentName(),
                 entity.getAgentInstructions(),
-                AgentOutputSchema.ofCanonicalJsonObject(entity.getAgentOutputSchema()),
-                new NodeRunExecutionModel(entity.getExecutionModelProviderId(), entity.getExecutionModelId(), entity.getExecutionModelEffortId()),
+                entity.getAgentOutputSchema() == null ? null : AgentOutputSchema.ofCanonicalJsonObject(entity.getAgentOutputSchema()),
+                entity.getExecutionModelProviderId() == null ? null : new NodeRunExecutionModel(entity.getExecutionModelProviderId(), entity.getExecutionModelId(), entity.getExecutionModelEffortId()),
                 NodeInputMode.valueOf(entity.getInputMode()),
                 new NodePosition(entity.getPositionX(), entity.getPositionY()),
                 NodeScopeMode.valueOf(entity.getScopeMode()),
                 contextMode(entity.getContextMode()),
-                entity.getContextGroupKey()
+                entity.getContextGroupKey(),
+                NodeType.valueOf(entity.getNodeType())
         );
     }
 
@@ -142,14 +144,15 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
         entity.setSourceAgentId(node.sourceAgentId());
         entity.setAgentName(node.agentName());
         entity.setAgentInstructions(node.agentInstructions());
-        entity.setAgentOutputSchema(node.agentOutputSchema().jsonObject());
-        entity.setExecutionModelProviderId(node.executionModel().providerId());
-        entity.setExecutionModelId(node.executionModel().modelId());
-        entity.setExecutionModelEffortId(node.executionModel().effortId());
+        entity.setAgentOutputSchema(node.agentOutputSchema() == null ? null : node.agentOutputSchema().jsonObject());
+        entity.setExecutionModelProviderId(node.executionModel() == null ? null : node.executionModel().providerId());
+        entity.setExecutionModelId(node.executionModel() == null ? null : node.executionModel().modelId());
+        entity.setExecutionModelEffortId(node.executionModel() == null ? null : node.executionModel().effortId());
         entity.setInputMode(node.inputMode().name());
         entity.setScopeMode(node.scopeMode().name());
         entity.setContextMode(node.contextMode().name());
         entity.setContextGroupKey(node.contextGroupKey());
+        entity.setNodeType(node.nodeType().name());
         entity.setPositionX(node.position().x());
         entity.setPositionY(node.position().y());
         return entity;

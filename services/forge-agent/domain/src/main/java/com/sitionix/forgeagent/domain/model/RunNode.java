@@ -15,8 +15,26 @@ public record RunNode(
         NodePosition position,
         NodeScopeMode scopeMode,
         NodeContextMode contextMode,
+        String contextGroupKey,
+        NodeType nodeType) {
+    public RunNode(UUID workflowRunId,
+        UUID sourceNodeId,
+        UUID sourceAgentId,
+        String agentName,
+        String agentInstructions,
+        AgentOutputSchema agentOutputSchema,
+        NodeRunExecutionModel executionModel,
+        NodeInputMode inputMode,
+        NodePosition position,
+        NodeScopeMode scopeMode,
+        NodeContextMode contextMode,
         String contextGroupKey) {
+        this(workflowRunId, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema,
+                executionModel, inputMode, position, scopeMode, contextMode, contextGroupKey, NodeType.AGENT);
+    }
+
     public RunNode {
+        nodeType = nodeType == null ? NodeType.AGENT : nodeType;
         Objects.requireNonNull(scopeMode, "scopeMode must not be null");
         contextMode = NodeContextMode.legacyDefault(contextMode);
         ContextIterationPolicy.validateGroup(contextMode, contextGroupKey);

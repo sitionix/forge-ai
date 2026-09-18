@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.api;
 
+import com.sitionix.forgeagent.domain.model.NodeType;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -425,7 +426,7 @@ class ForgeAgentApiMapper {
                 node.agentName(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
                 node.scopeMode().name(),
-                node.contextMode().name(), node.contextGroupKey()
+                node.contextMode().name(), node.contextGroupKey(), node.nodeType().name()
         );
     }
 
@@ -510,7 +511,7 @@ class ForgeAgentApiMapper {
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toNodePort).toList(),
                 position,
                 this.scopeMode(request.scopeMode()),
-                this.contextMode(request.contextMode()), request.contextGroupKey()
+                this.contextMode(request.contextMode()), request.contextGroupKey(), this.nodeType(request.nodeType())
         );
     }
 
@@ -523,7 +524,7 @@ class ForgeAgentApiMapper {
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
                 node.scopeMode().name(),
-                node.contextMode().name(), node.contextGroupKey()
+                node.contextMode().name(), node.contextGroupKey(), node.nodeType().name()
         );
     }
 
@@ -563,7 +564,7 @@ class ForgeAgentApiMapper {
                     nodeRun.sourceAgentId(),
                     nodeRun.agentName(),
                     nodeRun.agentInstructions(),
-                    this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
+                    nodeRun.agentOutputSchema() == null ? null : this.objectMapper.readTree(nodeRun.agentOutputSchema().jsonObject()),
                     inputMode(nodeRun.inputMode()).name(),
                     new NodePositionResponse(nodeRun.position().x(), nodeRun.position().y()),
                     nodeRun.executionFrameId(),
@@ -584,7 +585,7 @@ class ForgeAgentApiMapper {
                             ? new RecoveredNodeRunRetryEligibilityResponse("NONE", null)
                             : new RecoveredNodeRunRetryEligibilityResponse(
                                     eligibility.action().name(), eligibility.reasonCode()),
-                    nodeRun.contextGroupKey(), nodeRun.contextIterationId()
+                    nodeRun.contextGroupKey(), nodeRun.contextIterationId(), nodeRun.nodeType().name()
             );
         } catch (final JsonProcessingException exception) {
             throw new IllegalStateException("Stored node run JSON is invalid.", exception);
@@ -663,6 +664,15 @@ class ForgeAgentApiMapper {
             return NodeInputMode.valueOf(inputMode);
         } catch (final IllegalArgumentException exception) {
             throw new ValidationException("INVALID_NODE_INPUT_MODE", "Workflow node input mode is invalid.");
+        }
+    }
+
+    private NodeType nodeType(final String value) {
+        if (value == null) return NodeType.AGENT;
+        try {
+            return NodeType.valueOf(value);
+        } catch (final IllegalArgumentException exception) {
+            throw new ValidationException("INVALID_NODE_TYPE", "Workflow node type is invalid.");
         }
     }
 

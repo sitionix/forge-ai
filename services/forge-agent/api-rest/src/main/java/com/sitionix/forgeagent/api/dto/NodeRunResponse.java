@@ -29,7 +29,42 @@ public record NodeRunResponse(
         Integer contextTrackingVersion,
         UUID retryOfNodeRunId,
         RecoveredNodeRunRetryEligibilityResponse retryEligibility,
+        String contextGroupKey, UUID contextIterationId,
+        String nodeType) {
+    public NodeRunResponse {
+        nodeType = nodeType == null ? "AGENT" : nodeType;
+    }
+
+    public NodeRunResponse(UUID id,
+        UUID sourceNodeId,
+        UUID sourceAgentId,
+        String agentName,
+        String agentInstructions,
+        JsonNode agentOutputSchema,
+        String inputMode,
+        NodePositionResponse position,
+        UUID executionFrameId,
+        UUID enteredViaInputPortId,
+        UUID activationFrameId,
+        UUID selectedOutputPortId,
+        NodeRunStatus status,
+        JsonNode output,
+        NodeRunFailureResponse failure,
+        Instant createdAt,
+        Instant startedAt,
+        Instant finishedAt,
+        UUID repositoryId,
+        String contextMode,
+        Integer contextTrackingVersion,
+        UUID retryOfNodeRunId,
+        RecoveredNodeRunRetryEligibilityResponse retryEligibility,
         String contextGroupKey, UUID contextIterationId) {
+        this(id, sourceNodeId, sourceAgentId, agentName, agentInstructions, agentOutputSchema, inputMode, position,
+                executionFrameId, enteredViaInputPortId, activationFrameId, selectedOutputPortId, status, output,
+                failure, createdAt, startedAt, finishedAt, repositoryId, contextMode, contextTrackingVersion,
+                retryOfNodeRunId, retryEligibility, contextGroupKey, contextIterationId, "AGENT");
+    }
+
     public NodeRunResponse(final UUID id, final UUID sourceNodeId, final UUID sourceAgentId,
                            final String agentName, final String agentInstructions, final JsonNode agentOutputSchema,
                            final String inputMode, final NodePositionResponse position, final UUID executionFrameId,

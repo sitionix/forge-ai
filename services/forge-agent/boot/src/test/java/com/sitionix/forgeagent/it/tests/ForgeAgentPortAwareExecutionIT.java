@@ -3160,12 +3160,12 @@ class ForgeAgentPortAwareExecutionIT {
                 INSERT INTO node_runs (
                     id, workflow_run_id, source_node_id, source_agent_id, agent_name, agent_instructions,
                     agent_output_schema, input_mode, position_x, position_y, status,
-                    execution_model_provider_id, execution_model_id, execution_model_effort_id, context_mode, created_at
+                    execution_model_provider_id, execution_model_id, execution_model_effort_id, context_mode, created_at, node_type
                 )
                 VALUES (
                     :nodeRunId, :runId, :sourceNodeId, :agentId, 'Legacy Agent', 'Legacy instructions.',
                     CAST(:schema AS jsonb), 'DEPENDENCIES_ONLY', 0, 0, 'PENDING',
-                    'codex', 'discovered-model', 'medium', 'FRESH_EACH_NODE_RUN', CURRENT_TIMESTAMP
+                    'codex', 'discovered-model', 'medium', 'FRESH_EACH_NODE_RUN', CURRENT_TIMESTAMP, 'AGENT'
                 )
                 """)
                 .setParameter("nodeRunId", legacyNodeRunId)

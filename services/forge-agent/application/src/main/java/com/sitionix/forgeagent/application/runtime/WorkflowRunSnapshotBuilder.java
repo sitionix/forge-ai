@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.AgentExecutionProviderCapability;
 import com.sitionix.forgeagent.domain.model.AgentModelSelection;
 import com.sitionix.forgeagent.domain.model.Node;
+import com.sitionix.forgeagent.domain.model.NodeType;
 import com.sitionix.forgeagent.domain.model.NodePort;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.PortDirection;
@@ -53,10 +54,17 @@ public class WorkflowRunSnapshotBuilder {
     }
 
     private Collection<UUID> agentIds(final List<Node> nodes) {
-        return nodes.stream().map(Node::targetId).collect(Collectors.toSet());
+        return nodes.stream().filter(node -> node.nodeType() == NodeType.AGENT).map(Node::targetId).collect(Collectors.toSet());
     }
 
     private RunNode runNode(final UUID workflowRunId, final Node node, final Map<UUID, AgentDefinition> agentsById) {
+        if (node.nodeType() == NodeType.MANUAL) {
+            if (node.targetId() != null) {
+                throw new ValidationException("INVALID_MANUAL_NODE_TARGET", "Manual workflow nodes must not target an agent.");
+            }
+            return new RunNode(workflowRunId, node.id(), null, null, null, null, null,
+                    node.inputMode(), node.position(), node.scopeMode(), node.contextMode(), node.contextGroupKey(), node.nodeType());
+        }
         final AgentDefinition agent = agentsById.get(node.targetId());
         if (agent == null) {
             throw new ConflictException("SOURCE_AGENT_NOT_FOUND", "Source agent was not found.");
@@ -82,7 +90,8 @@ public class WorkflowRunSnapshotBuilder {
                 node.position(),
                 node.scopeMode(),
                 node.contextMode(),
-                node.contextGroupKey()
+                node.contextGroupKey(),
+                node.nodeType()
         );
     }
 

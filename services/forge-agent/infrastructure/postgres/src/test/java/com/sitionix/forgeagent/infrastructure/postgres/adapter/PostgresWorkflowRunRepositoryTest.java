@@ -551,6 +551,7 @@ class PostgresWorkflowRunRepositoryTest {
                                      final UUID sourceNodeId,
                                      final UUID sourceAgentId) {
         final NodeRunEntity entity = new NodeRunEntity();
+        entity.setNodeType("AGENT");
         entity.setId(id);
         entity.setWorkflowRunId(RUN_ID);
         entity.setSourceNodeId(sourceNodeId);

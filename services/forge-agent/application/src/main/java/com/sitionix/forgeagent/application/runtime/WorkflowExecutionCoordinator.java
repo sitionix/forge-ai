@@ -157,7 +157,7 @@ public class WorkflowExecutionCoordinator {
                 nodeRun.selectedOutputPortId(), nodeRun.routingCompletedAt(), NodeRunStatus.CANCELLED, nodeRun.output(),
                 nodeRun.failure(), nodeRun.executionModel(), nodeRun.createdAt(), nodeRun.startedAt(),
                 nodeRun.finishedAt() == null ? now : nodeRun.finishedAt(), nodeRun.repositoryId(),
-                nodeRun.contextMode(), nodeRun.contextTrackingVersion(), nodeRun.retryOfNodeRunId(), nodeRun.contextGroupKey(), nodeRun.contextIterationId()
+                nodeRun.contextMode(), nodeRun.contextTrackingVersion(), nodeRun.retryOfNodeRunId(), nodeRun.contextGroupKey(), nodeRun.contextIterationId(), nodeRun.nodeType()
         );
     }
 
