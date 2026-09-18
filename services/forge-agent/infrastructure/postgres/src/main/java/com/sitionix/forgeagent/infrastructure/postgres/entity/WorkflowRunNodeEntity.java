@@ -19,7 +19,7 @@ import org.hibernate.type.SqlTypes;
 public class WorkflowRunNodeEntity {
 
     @Column(name = "node_type", nullable = false, length = 16)
-    private String nodeType = "AGENT";
+    private String nodeType;
 
     @Id
     @Column(name = "workflow_run_id", nullable = false)

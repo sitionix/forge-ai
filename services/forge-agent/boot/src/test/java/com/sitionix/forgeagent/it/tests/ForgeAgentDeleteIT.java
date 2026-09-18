@@ -346,6 +346,7 @@ class ForgeAgentDeleteIT {
         this.executionFrameRepository.save(frame);
 
         final NodeRunEntity entity = new NodeRunEntity();
+        entity.setNodeType("AGENT");
         entity.setId(nodeRunId);
         entity.setWorkflowRunId(workflowRunId);
         entity.setSourceNodeId(UUID.randomUUID());

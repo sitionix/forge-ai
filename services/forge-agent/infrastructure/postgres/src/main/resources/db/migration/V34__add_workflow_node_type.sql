@@ -58,3 +58,8 @@ ALTER TABLE node_runs
             AND execution_model_effort_id IS NULL
             AND context_tracking_version IS NULL)
     );
+
+-- The default is only for backfilling existing rows; new writes must provide the type.
+ALTER TABLE workflow_nodes ALTER COLUMN node_type DROP DEFAULT;
+ALTER TABLE workflow_run_nodes ALTER COLUMN node_type DROP DEFAULT;
+ALTER TABLE node_runs ALTER COLUMN node_type DROP DEFAULT;

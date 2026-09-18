@@ -18,7 +18,7 @@ import org.hibernate.type.SqlTypes;
 public class NodeRunEntity {
 
     @Column(name = "node_type", nullable = false, length = 16)
-    private String nodeType = "AGENT";
+    private String nodeType;
 
     @Id
     private UUID id;

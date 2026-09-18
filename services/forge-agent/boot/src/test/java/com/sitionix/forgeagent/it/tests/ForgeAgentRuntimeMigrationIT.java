@@ -97,6 +97,15 @@ class ForgeAgentRuntimeMigrationIT {
                     .containsAllEntriesOf(snapshotBefore).containsEntry("node_type", "AGENT");
             assertThat(jdbc.queryForMap("SELECT * FROM %s.node_runs".formatted(schema)))
                     .containsAllEntriesOf(invocationBefore).containsEntry("node_type", "AGENT");
+            for (String table : java.util.List.of("workflow_nodes", "workflow_run_nodes", "node_runs")) {
+                assertThat(jdbc.queryForMap("""
+                        SELECT is_nullable, column_default
+                        FROM information_schema.columns
+                        WHERE table_schema = ? AND table_name = ? AND column_name = 'node_type'
+                        """, schema, table))
+                        .containsEntry("is_nullable", "NO")
+                        .containsEntry("column_default", null);
+            }
             assertThatThrownBy(() -> jdbc.update("UPDATE %s.workflow_nodes SET target_id=NULL".formatted(schema)))
                     .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
             for (String table : java.util.List.of("workflow_run_nodes", "node_runs")) {
@@ -157,10 +166,10 @@ class ForgeAgentRuntimeMigrationIT {
                 jdbc.update("""
                         INSERT INTO %1$s.workflow_run_nodes(workflow_run_id,source_node_id,source_agent_id,agent_name,
                             agent_instructions,agent_output_schema,execution_model_provider_id,execution_model_id,
-                            input_mode,position_x,position_y,scope_mode,context_mode,context_group_key)
+                            input_mode,position_x,position_y,scope_mode,context_mode,context_group_key,node_type)
                         SELECT workflow_run_id,?,source_agent_id,agent_name,agent_instructions,agent_output_schema,
                             execution_model_provider_id,execution_model_id,input_mode,position_x,position_y,?,
-                            'SHARED_SESSION_GROUP',? FROM %1$s.workflow_run_nodes WHERE workflow_run_id=? AND source_node_id=?
+                            'SHARED_SESSION_GROUP',?,node_type FROM %1$s.workflow_run_nodes WHERE workflow_run_id=? AND source_node_id=?
                         """.formatted(schema), UUID.randomUUID(), group.equals("scoped") ? "PER_SCOPE" : "GLOBAL", group, run, node);
             }
             UUID global = UUID.randomUUID();
@@ -234,10 +243,10 @@ class ForgeAgentRuntimeMigrationIT {
                 if (repository != null) jdbc.update("""
                         INSERT INTO %1$s.workflow_run_nodes(workflow_run_id,source_node_id,source_agent_id,agent_name,
                             agent_instructions,agent_output_schema,execution_model_provider_id,execution_model_id,
-                            input_mode,position_x,position_y,scope_mode,context_mode,context_group_key)
+                            input_mode,position_x,position_y,scope_mode,context_mode,context_group_key,node_type)
                         SELECT workflow_run_id,?,source_agent_id,agent_name,agent_instructions,agent_output_schema,
                             execution_model_provider_id,execution_model_id,input_mode,position_x,position_y,'PER_SCOPE',
-                            'REUSE_WITHIN_WORKFLOW_ITERATION','scoped'
+                            'REUSE_WITHIN_WORKFLOW_ITERATION','scoped',node_type
                         FROM %1$s.workflow_run_nodes WHERE workflow_run_id=? AND source_node_id=?
                         """.formatted(schema), scopeNode, run, node);
                 final UUID current = UUID.randomUUID();
@@ -336,11 +345,11 @@ class ForgeAgentRuntimeMigrationIT {
 
             assertThat(this.uuidValue(jdbc,
                     "SELECT retry_of_node_run_id FROM %s.node_runs WHERE id=?".formatted(schema), parentId)).isNull();
-            jdbc.update("INSERT INTO %1$s.node_runs (id,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,retry_of_node_run_id) SELECT ?,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,? FROM %1$s.node_runs WHERE id=?".formatted(schema),
+            jdbc.update("INSERT INTO %1$s.node_runs (id,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,retry_of_node_run_id,node_type) SELECT ?,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,?,node_type FROM %1$s.node_runs WHERE id=?".formatted(schema),
                     firstChildId, parentId, parentId);
             assertThat(this.uuidValue(jdbc,
                     "SELECT retry_of_node_run_id FROM %s.node_runs WHERE id=?".formatted(schema), firstChildId)).isEqualTo(parentId);
-            assertThatThrownBy(() -> jdbc.update("INSERT INTO %1$s.node_runs (id,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,retry_of_node_run_id) SELECT ?,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,? FROM %1$s.node_runs WHERE id=?".formatted(schema),
+            assertThatThrownBy(() -> jdbc.update("INSERT INTO %1$s.node_runs (id,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,retry_of_node_run_id,node_type) SELECT ?,workflow_run_id,source_node_id,source_agent_id,agent_name,agent_instructions,agent_output_schema,position_x,position_y,status,output,failure_code,failure_message,created_at,started_at,finished_at,execution_model_provider_id,execution_model_id,execution_model_effort_id,input_mode,execution_frame_id,entered_via_input_port_id,activation_frame_id,selected_output_port_id,routing_completed_at,repository_id,context_mode,context_tracking_version,?,node_type FROM %1$s.node_runs WHERE id=?".formatted(schema),
                     secondChildId, parentId, parentId)).isInstanceOf(RuntimeException.class);
             assertThatThrownBy(() -> jdbc.update(
                     "UPDATE %s.node_runs SET retry_of_node_run_id=id WHERE id=?".formatted(schema), parentId))
