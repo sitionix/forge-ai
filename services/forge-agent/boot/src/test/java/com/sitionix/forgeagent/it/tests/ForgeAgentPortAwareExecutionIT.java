@@ -180,6 +180,8 @@ class ForgeAgentPortAwareExecutionIT {
     @Autowired
     private NodeRunLifecycle lifecycle;
     @Autowired
+    private com.sitionix.forgeagent.application.runtime.ManualNodeRunLifecycle manualLifecycle;
+    @Autowired
     private NodeRunCompletionPersistence completionPersistence;
     @Autowired
     private NodeRunCompletionProcessor completionProcessor;
@@ -2147,7 +2149,7 @@ class ForgeAgentPortAwareExecutionIT {
         try (var executor = Executors.newSingleThreadExecutor();
              var heartbeat = Executors.newSingleThreadScheduledExecutor()) {
             final var worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, scheduledExecutor,
-                    executor, heartbeat, this.agentSessionLeaseService, this.recoveryService);
+                    executor, heartbeat, this.agentSessionLeaseService, this.recoveryService, this.manualLifecycle);
             worker.poll();
             executor.submit(() -> { }).get(10, TimeUnit.SECONDS);
         }
@@ -2480,7 +2482,7 @@ class ForgeAgentPortAwareExecutionIT {
              var executor = Executors.newSingleThreadExecutor();
              var heartbeat = Executors.newSingleThreadScheduledExecutor()) {
             final var worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, scheduledExecutor,
-                    executor, heartbeat, this.agentSessionLeaseService, this.recoveryService);
+                    executor, heartbeat, this.agentSessionLeaseService, this.recoveryService, this.manualLifecycle);
             final var oldRecovery = recoverer.submit(this.recoveryService::reconcileExpired);
             try {
                 assertThat(inspected.await(10, TimeUnit.SECONDS)).isTrue();

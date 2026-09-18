@@ -137,7 +137,7 @@ public class WorkflowExecutionCoordinator {
     public boolean cancelActiveNodeRuns(final WorkflowRun workflowRun) {
         final Instant now = Instant.now(this.clock);
         return this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
-                .filter(nodeRun -> nodeRun.status() == NodeRunStatus.PENDING || nodeRun.status() == NodeRunStatus.RUNNING)
+                .filter(nodeRun -> nodeRun.status().active())
                 .map(nodeRun -> {
                     if (nodeRun.contextTrackingVersion() != null) {
                         return this.sessionRepository.cancel(nodeRun.id());

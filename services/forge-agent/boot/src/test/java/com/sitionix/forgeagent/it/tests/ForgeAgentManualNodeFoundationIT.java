@@ -77,7 +77,7 @@ class ForgeAgentManualNodeFoundationIT {
     }
 
     @Test
-    void agentLifecycleLeavesManualPendingUntilManualRuntimeIsImplemented() {
+    void agentLifecycleNeverStartsManualNodes() {
         Workflow template = manualWorkflow();
         WorkflowRun run = runs.createWorkflowRun(template.id(), new CreateWorkflowRunCommand("Input"));
 
