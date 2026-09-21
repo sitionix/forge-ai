@@ -768,6 +768,8 @@ export class TaskExecutionView {
     this.stopPolling();
     this.pollInFlight = null;
     this.state.selectedRunId = runId;
+    this.state.manualSelectionInFlight = false;
+    this.state.manualSelectionError = null;
     this.state.contextResetInFlight = false;
     this.state.contextResetError = '';
     this.state.selectedNodeRunId = null;
@@ -923,6 +925,7 @@ export class TaskExecutionView {
       && !this.state.cancellationInFlight
       && !this.state.recoveryRetryInFlight
       && !this.state.contextResetInFlight
+      && !this.state.manualSelectionInFlight
       && this.state.selectedRunId
       && ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)
     );
@@ -994,7 +997,7 @@ export class TaskExecutionView {
         <strong>Failure</strong>
         ${failedNodeRuns.map((nodeRun) => `
           <button class="task-execution-failure-row" type="button" data-failed-node-run-id="${escapeHtml(nodeRun.id)}">
-            <span>${escapeHtml(nodeRun.agentName || 'Unknown agent')}</span>
+            <span>${escapeHtml(nodeRun.nodeType === 'MANUAL' ? 'Manual' : nodeRun.agentName || 'Unknown agent')}</span>
             <code>${escapeHtml(nodeRun.failure?.code || 'FAILURE')}</code>
             <small>${escapeHtml(nodeRun.failure?.message || 'Node execution failed.')}</small>
           </button>
@@ -1076,7 +1079,7 @@ export class TaskExecutionView {
         <div class="task-execution-stop-confirmation" data-provider-stop-unverified>
           <div><strong>Provider stop could not be verified.</strong></div>
           <div class="task-execution-stop-actions">
-            <button type="button" class="button small danger" data-retry-stop ${this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Retrying…' : 'Retry stop'}</button>
+            <button type="button" class="button small danger" data-retry-stop ${this.state.manualSelectionInFlight || this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Retrying…' : 'Retry stop'}</button>
           </div>
         </div>
       </div>`;
@@ -1092,11 +1095,11 @@ export class TaskExecutionView {
         <div class="task-execution-stop-confirmation" data-stop-run-confirmation>
           <div><strong>Stop this run?</strong><span>Active agent execution will be interrupted.</span></div>
           <div class="task-execution-stop-actions">
-            <button type="button" class="button small danger" data-confirm-stop-run ${this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Stopping…' : 'Stop run'}</button>
-            <button type="button" class="button small secondary" data-keep-running ${this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>Keep running</button>
+            <button type="button" class="button small danger" data-confirm-stop-run ${this.state.manualSelectionInFlight || this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>${this.state.cancellationInFlight ? 'Stopping…' : 'Stop run'}</button>
+            <button type="button" class="button small secondary" data-keep-running ${this.state.manualSelectionInFlight || this.state.cancellationInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>Keep running</button>
           </div>
         </div>
-      ` : `<button type="button" class="button small danger" data-stop-run ${this.state.contextResetInFlight ? 'disabled' : ''}>Stop run</button>`}
+      ` : `<button type="button" class="button small danger" data-stop-run ${this.state.manualSelectionInFlight || this.state.contextResetInFlight ? 'disabled' : ''}>Stop run</button>`}
     </div>`;
     state.querySelector('[data-stop-run]')?.addEventListener('click', () => {
       this.state.stopConfirmation = true;
@@ -1111,7 +1114,7 @@ export class TaskExecutionView {
   }
 
   async stopSelectedRun() {
-    if (this.state.cancellationInFlight || this.state.contextResetInFlight
+    if (this.state.manualSelectionInFlight || this.state.cancellationInFlight || this.state.contextResetInFlight
       || (!ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status) && !this.hasUnresolvedOperatorStop())) {
       return;
     }
@@ -1231,6 +1234,7 @@ export class TaskExecutionView {
       'execution-board-node',
       selected ? 'selected' : '',
       running ? 'execution-node-has-running' : '',
+      nodeRuns.some((run) => run.status === 'WAITING_FOR_MANUAL') ? 'execution-node-has-waiting' : '',
       failed ? 'execution-node-has-failed' : '',
       !nodeRuns.length ? 'execution-node-unreached' : ''
     ].filter(Boolean).join(' ');
@@ -1248,8 +1252,8 @@ export class TaskExecutionView {
             ${this.renderCompactPorts(inputPorts, 'input', null, node.visualUnitKey)}
           </div>
           <div class="execution-board-card-main">
-            <strong>${escapeHtml(node.agentName || 'Unknown agent')}</strong>
-            ${['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(node.contextMode) ? '<small class="execution-context-badge">↻ Context</small>' : ''}
+            <strong>${escapeHtml(node.nodeType === 'MANUAL' ? 'Manual' : node.agentName || 'Unknown agent')}</strong>
+            ${node.nodeType !== 'MANUAL' && ['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(node.contextMode) ? '<small class="execution-context-badge">↻ Context</small>' : ''}
             ${node.repositoryName ? `<small class="execution-board-repository">${escapeHtml(node.repositoryName)}</small>` : ''}
             ${latest ? `<span>#${latestNumber} ${escapeHtml(latest.status)}</span>` : ''}
             <div class="execution-board-runline">
@@ -1311,7 +1315,7 @@ export class TaskExecutionView {
       const points = this.modernRoutePoints(start, end, sourceNode, targetNode, projection, connection, occupiedRoutes);
       occupiedRoutes.push({ connection, points });
       const path = this.orthogonalRoundedPath(points);
-      const title = `${sourceNode.agentName}.${sourcePort.name} -> ${targetNode.agentName}.${targetPort.name}`;
+      const title = `${sourceNode.nodeType === 'MANUAL' ? 'Manual' : sourceNode.agentName}.${sourcePort.name} -> ${targetNode.nodeType === 'MANUAL' ? 'Manual' : targetNode.agentName}.${targetPort.name}`;
       return `
         <g class="workflow-edge execution-edge execution-topology-edge execution-edge-${escapeHtml(String(connection.visualType || 'PRIMARY_FORWARD').toLowerCase().replaceAll('_', '-'))}" data-runtime-connection-id="${escapeHtml(connection.sourceConnectionId)}" data-source-visual-unit-key="${escapeHtml(connection.sourceVisualUnitKey)}" data-target-visual-unit-key="${escapeHtml(connection.targetVisualUnitKey)}">
           <title>${escapeHtml(title)}</title>
@@ -1352,7 +1356,7 @@ export class TaskExecutionView {
         style="left:${Number(nodeRun.position?.x || 0)}px; top:${Number(nodeRun.position?.y || 0)}px;"
       >
         <div class="execution-node-content">
-          <strong>${escapeHtml(nodeRun.agentName || 'Unknown agent')}</strong>
+          <strong>${escapeHtml(nodeRun.nodeType === 'MANUAL' ? 'Manual' : nodeRun.agentName || 'Unknown agent')}</strong>
           <span class="agents-v2-status agents-v2-status-${escapeHtml(statusTone(status))}">${escapeHtml(status)}</span>
         </div>
       </article>
@@ -1390,7 +1394,7 @@ export class TaskExecutionView {
       if (unit && !unit.taskBoundary) {
         panel.innerHTML = `
           <div class="node-run-details-grid">
-            ${this.detailRow('Agent', unit.agentName || 'Unknown agent')}
+            ${this.detailRow(unit.nodeType === 'MANUAL' ? 'Node' : 'Agent', unit.nodeType === 'MANUAL' ? 'Manual' : unit.agentName || 'Unknown agent')}
             ${this.detailRow('Repository', unit.repositoryName || (unit.scopeMode === 'GLOBAL' ? 'Global' : UNAVAILABLE_REPOSITORY_LABEL))}
             ${this.detailRow('Status', 'Not executed yet')}
           </div>
@@ -1398,6 +1402,10 @@ export class TaskExecutionView {
         return;
       }
       panel.innerHTML = '<div class="muted-state">Select a node to inspect its execution.</div>';
+      return;
+    }
+    if (nodeRun.nodeType === 'MANUAL') {
+      this.renderManualNodeDetails(nodeRun, panel);
       return;
     }
     const failure = nodeRun.failure;
@@ -1468,6 +1476,80 @@ export class TaskExecutionView {
     });
   }
 
+  manualOutputPorts(nodeRun) {
+    return (this.state.workflowRun?.runtimeGraph?.ports || [])
+      .filter((port) => port.sourceNodeId === nodeRun.sourceNodeId && port.direction === 'OUTPUT')
+      .slice().sort((left, right) => left.order - right.order);
+  }
+
+  renderManualNodeDetails(nodeRun, panel) {
+    const ports = this.manualOutputPorts(nodeRun);
+    const selected = ports.find((port) => port.sourcePortId === nodeRun.selectedOutputPortId);
+    const waiting = nodeRun.status === 'WAITING_FOR_MANUAL' && ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status);
+    const busy = this.state.manualSelectionInFlight || this.state.cancellationInFlight
+      || this.state.contextResetInFlight || this.state.recoveryRetryInFlight;
+    const error = this.state.manualSelectionError?.nodeRunId === nodeRun.id ? this.state.manualSelectionError.message : '';
+    panel.innerHTML = `
+      ${this.renderInvocationSelector()}
+      <section class="node-run-manual">
+        <h3>Manual action</h3>
+        <div class="node-run-details-grid">
+          ${this.detailRow('Status', nodeRun.status)}
+          ${this.detailRow('Started', this.formatDate(nodeRun.startedAt))}
+          ${this.detailRow('Finished', this.formatDate(nodeRun.finishedAt))}
+        </div>
+        ${nodeRun.selectedOutputPortId ? `<p>Selected: <strong>${escapeHtml(selected?.name || nodeRun.selectedOutputPortId)}</strong></p>` : ''}
+        ${waiting ? `<p>Choose next output:</p>
+          <div class="manual-output-actions">
+            ${ports.map((port) => `<button type="button" class="button small secondary" data-manual-output-port="${escapeHtml(port.sourcePortId)}" ${busy ? 'disabled' : ''}>${escapeHtml(port.name)}</button>`).join('')}
+          </div>
+          ${!ports.length ? '<p class="muted-state">No runtime outputs available.</p>' : ''}` : ''}
+        ${error ? `<p class="error-box" role="alert">${escapeHtml(error)}</p>` : ''}
+        ${nodeRun.failure ? `<p class="error-box">${escapeHtml(nodeRun.failure.code || 'FAILURE')}: ${escapeHtml(nodeRun.failure.message || '')}</p>` : ''}
+      </section>`;
+    panel.querySelector('[data-node-run-invocation-select]')?.addEventListener('change', (event) => this.selectNodeRun(event.target.value));
+    panel.querySelectorAll('[data-manual-output-port]').forEach((button) => button.addEventListener('click', () => {
+      void this.selectManualNodeOutput(button.dataset.manualOutputPort);
+    }));
+  }
+
+  async selectManualNodeOutput(outputPortId) {
+    const nodeRun = this.selectedNodeRun();
+    if (nodeRun?.nodeType !== 'MANUAL' || nodeRun.status !== 'WAITING_FOR_MANUAL'
+      || !ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)
+      || this.state.manualSelectionInFlight || this.state.cancellationInFlight
+      || this.state.contextResetInFlight || this.state.recoveryRetryInFlight
+      || !this.manualOutputPorts(nodeRun).some((port) => port.sourcePortId === outputPortId)) return;
+    const taskId = this.state.taskId;
+    const taskSequence = this.taskLoadSequence;
+    const runId = this.state.selectedRunId;
+    const runSequence = ++this.runLoadSequence;
+    this.state.manualSelectionInFlight = true;
+    this.state.manualSelectionError = null;
+    // Invalidate reads started before this command so late polling cannot undo its response.
+    this.stopPolling();
+    this.pollInFlight = null;
+    this.render();
+    try {
+      const run = await this.api.selectManualNodeOutput(runId, nodeRun.id, outputPortId);
+      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
+      this.applyWorkflowRun(run);
+    } catch (error) {
+      if (!this.isCurrentRun(taskId, taskSequence, runId, runSequence)) return;
+      const code = error.code || error.body?.error?.code || error.body?.code || 'MANUAL_SELECTION_FAILED';
+      this.state.manualSelectionError = {
+        nodeRunId: nodeRun.id,
+        message: `${code}: ${error.message || 'Could not select this output.'}`
+      };
+    } finally {
+      if (this.isCurrentRun(taskId, taskSequence, runId, runSequence)) {
+        this.state.manualSelectionInFlight = false;
+        this.render();
+        this.syncPolling();
+      }
+    }
+  }
+
   renderRecoveryAction(nodeRun, context) {
     const failureCode = nodeRun?.failure?.code;
     if (!['AGENT_EXECUTION_RECOVERY_REQUIRED', 'AGENT_EXECUTION_RECOVERY_PROVIDER_ACTIVE',
@@ -1480,7 +1562,7 @@ export class TaskExecutionView {
     }
     if (action === 'RETRY' || action === 'RESUME') {
       const resume = action === 'RESUME';
-      const busy = this.state.recoveryRetryInFlight || this.state.contextResetInFlight;
+      const busy = this.state.manualSelectionInFlight || this.state.recoveryRetryInFlight || this.state.contextResetInFlight;
       const label = busy ? (resume ? 'Resuming…' : 'Retrying…') : (resume ? 'Resume' : 'Retry');
       const message = resume
         ? 'The previous provider turn finished. This context can be continued safely.'
@@ -1505,7 +1587,7 @@ export class TaskExecutionView {
     if (!['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(context.contextMode)) return '';
     if (context.contextResetAt) return '<p>Context reset. Existing turns and Activity remain available.</p>';
     if (context.resetAllowed !== true) return '';
-    const busy = this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight;
+    const busy = this.state.manualSelectionInFlight || this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight;
     return `<section><h4>Reset context</h4><p>The next invocation will start a new provider conversation. Existing turns and Activity will remain available.</p>
       ${this.state.contextResetError ? `<p class="error-box">${escapeHtml(this.state.contextResetError)}</p>` : ''}
       <button type="button" class="button small secondary" data-reset-agent-context ${busy ? 'disabled' : ''}>${this.state.contextResetInFlight ? 'Resetting…' : 'Reset context'}</button></section>`;
@@ -1513,7 +1595,7 @@ export class TaskExecutionView {
 
   async resetAgentExecutionContext() {
     const context = this.contextForNodeRun(this.selectedNodeRun()?.id);
-    if (this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight
+    if (this.state.manualSelectionInFlight || this.state.contextResetInFlight || this.state.recoveryRetryInFlight || this.state.cancellationInFlight
       || !['REUSE_WITHIN_WORKFLOW_NODE', 'REUSE_WITHIN_WORKFLOW_ITERATION', 'SHARED_SESSION_GROUP'].includes(context?.contextMode)
       || context.resetAllowed !== true || context.contextResetAt) return;
     const taskId = this.state.taskId;
@@ -1571,7 +1653,7 @@ export class TaskExecutionView {
   async retryRecoveredNodeRun() {
     const nodeRun = this.selectedNodeRun();
     const action = nodeRun?.retryEligibility?.action;
-    if (this.state.contextResetInFlight || this.state.recoveryRetryInFlight || !['RETRY', 'RESUME'].includes(action)
+    if (this.state.manualSelectionInFlight || this.state.contextResetInFlight || this.state.recoveryRetryInFlight || !['RETRY', 'RESUME'].includes(action)
       || (action === 'RESUME' && this.contextForNodeRun(nodeRun.id)?.contextResetAt)) return;
     const actionLabel = action === 'RESUME' ? 'Resume' : 'Retry';
     const taskId = this.state.taskId;
@@ -1653,7 +1735,7 @@ export class TaskExecutionView {
   }
 
   hasVerifiedActivityTurn(nodeRun, context) {
-    return nodeRun?.contextTrackingVersion != null
+    return nodeRun?.nodeType !== 'MANUAL' && nodeRun?.contextTrackingVersion != null
       && this.hasMatchingIterationContext(nodeRun, context)
       && context?.nodeRunId === nodeRun.id
       && (nodeRun.contextMode !== 'FRESH_EACH_NODE_RUN' || context.contextMode === 'FRESH_EACH_NODE_RUN')
@@ -2637,6 +2719,8 @@ export class TaskExecutionView {
       cancellationError: '',
       contextResetInFlight: false,
       contextResetError: '',
+      manualSelectionInFlight: false,
+      manualSelectionError: null,
       recoveryRetryInFlight: false,
       recoveryRetryError: '',
       agentExecutionContexts: []
@@ -2663,6 +2747,9 @@ export function statusTone(status) {
   }
   if (normalized === 'cancelled') {
     return 'cancelled';
+  }
+  if (normalized === 'waiting_for_manual') {
+    return 'waiting';
   }
   if (normalized === 'pending') {
     return 'pending';
