@@ -56,10 +56,55 @@
         "scopeMode": "SHARED",
         "contextMode": null,
         "contextGroupKey": null
+      },
+      {
+        "sourceNodeId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "nodeType": "AGENT",
+        "agentName": "Reviewer",
+        "position": {
+          "x": 400,
+          "y": 2
+        },
+        "scopeMode": "SHARED",
+        "contextMode": null,
+        "contextGroupKey": null
       }
     ],
-    "ports": [],
-    "connections": []
+    "ports": [
+      {
+        "sourcePortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "sourceNodeId": "88888888-8888-4888-8888-888888888888",
+        "direction": "OUTPUT",
+        "name": "Continue review",
+        "order": 0
+      },
+      {
+        "sourcePortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+        "sourceNodeId": "88888888-8888-4888-8888-888888888888",
+        "direction": "OUTPUT",
+        "name": "Skip review",
+        "order": 1
+      },
+      {
+        "sourcePortId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "sourceNodeId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "direction": "INPUT",
+        "name": "Input",
+        "order": 0
+      }
+    ],
+    "connections": [
+      {
+        "sourceConnectionId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        "sourceOutputPortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "targetInputPortId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      },
+      {
+        "sourceConnectionId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef",
+        "sourceOutputPortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+        "targetInputPortId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      }
+    ]
   },
   "result": null,
   "resultSourceNodeRunId": null,

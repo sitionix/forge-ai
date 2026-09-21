@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { TaskExecutionView } from '../src/operator/task-execution-view.js';
 import { HttpError } from '../src/api/http-client';
+import { createAgentProjectsApi } from '../src/operator/agent-projects-api.js';
+// @ts-expect-error Production JavaScript is exercised through its DOM and HTTP contract.
+import { createInfrastructureHttpClient } from '../src/operator/infrastructure-http-client.js';
 
 const RUN = '11111111-1111-4111-8111-111111111111';
 const MANUAL = '22222222-2222-4222-8222-222222222222';
@@ -70,6 +73,61 @@ async function opened(initial = run()) {
 }
 
 describe('Manual Task Execution', () => {
+  it('selects a runtime output through the real API and HTTP client and renders the returned downstream activation', async () => {
+    const dom = new JSDOM(readFileSync('src/operator/agent-projects.html', 'utf8'), {
+      url: 'http://localhost/forge/operator/agent-projects.html', pretendToBeVisual: true
+    });
+    const base = '/forge/api/v1/infrastructure/agents';
+    const selectionUrl = `${base}/workflow-runs/${RUN}/node-runs/${MANUAL}/manual-selection`;
+    const selection = deferred();
+    const initial = run();
+    const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+      if (init.method === 'GET' && url === `${base}/tasks/task`) {
+        return Response.json({ id: 'task', input: 'Do work', runs: [initial] });
+      }
+      if (init.method === 'GET' && url === `${base}/workflow-runs/${RUN}`) return Response.json(initial);
+      if (init.method === 'GET' && url === `${base}/workflow-runs/${RUN}/agent-execution-contexts`) return Response.json([]);
+      if (init.method === 'POST' && url === selectionUrl) return selection.promise;
+      throw new Error(`Unexpected HTTP request: ${init.method} ${url}`);
+    });
+    const http = createInfrastructureHttpClient({ window: dom.window, fetcher });
+    const api = createAgentProjectsApi(http);
+    const view = new TaskExecutionView({ document: dom.window.document, window: dom.window, api,
+      onBack: vi.fn(), runtimeConfig: { activeJobPollIntervalMs: 60_000 } });
+    view.bind();
+    cleanup.push(() => { view.dispose(); dom.window.close(); });
+    await view.open('task', { name: 'Project' });
+    view.selectNodeRun(MANUAL);
+    const panel = dom.window.document.getElementById('agentsV2NodeRunDetails')!;
+    expect(panel.textContent).toContain('WAITING_FOR_MANUAL');
+    expect([...panel.querySelectorAll<HTMLButtonElement>('[data-manual-output-port]')]
+      .map((button) => button.dataset.manualOutputPort)).toEqual(PORTS);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      `${base}/tasks/task`, `${base}/workflow-runs/${RUN}`, `${base}/workflow-runs/${RUN}/agent-execution-contexts`
+    ]);
+
+    panel.querySelector<HTMLButtonElement>(`[data-manual-output-port="${PORTS[1]}"]`)!.click();
+    const posts = fetcher.mock.calls.filter(([, init]) => init.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toEqual([selectionUrl, expect.objectContaining({
+      method: 'POST', cache: 'no-store',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ outputPortId: PORTS[1] })
+    })]);
+    expect([...panel.querySelectorAll<HTMLButtonElement>('[data-manual-output-port]')]
+      .every((button) => button.disabled)).toBe(true);
+
+    selection.resolve(Response.json(run(PORTS[1]!)));
+    await vi.waitFor(() => expect(panel.textContent).toContain('Selected: Skip'));
+    expect(panel.textContent).toContain('SUCCEEDED');
+    expect(panel.textContent).not.toContain('stale label');
+    expect(panel.querySelector('[data-manual-output-port]')).toBeNull();
+    expect(view.state.workflowRun.nodeRuns[0].selectedOutputPortId).toBe(PORTS[1]);
+    expect(dom.window.document.querySelector('[data-execution-source-node-id="reviewer"]')?.textContent).toContain('PENDING');
+    expect(view.shouldPoll()).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
   it('renders one button per snapshotted output with Manual presentation and no agent sections', async () => {
     const { dom, panel, buttons, api } = await opened();
     expect(buttons().map((b) => b.textContent?.trim())).toEqual(['Retry', 'Skip', 'Stop']);
