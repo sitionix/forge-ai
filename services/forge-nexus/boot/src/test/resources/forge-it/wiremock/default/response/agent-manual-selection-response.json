@@ -25,7 +25,10 @@
       "activationFrameId": null,
       "selectedOutputPortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "status": "SUCCEEDED",
-      "output": null,
+      "output": {
+        "selectedOutputPortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "selectedOutputName": "Continue review"
+      },
       "failure": null,
       "createdAt": "2026-09-15T08:00:00Z",
       "startedAt": "2026-09-15T08:00:01Z",
@@ -37,9 +40,68 @@
       "retryEligibility": null,
       "contextGroupKey": null,
       "contextIterationId": null
+    },
+    {
+      "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "sourceNodeId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "nodeType": "AGENT",
+      "sourceAgentId": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      "agentName": "Reviewer",
+      "agentInstructions": "Review selected branch.",
+      "agentOutputSchema": null,
+      "inputMode": "ALL",
+      "position": {
+        "x": 1,
+        "y": 2
+      },
+      "executionFrameId": null,
+      "enteredViaInputPortId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "activationFrameId": null,
+      "selectedOutputPortId": null,
+      "status": "PENDING",
+      "output": null,
+      "failure": null,
+      "createdAt": "2026-09-15T08:00:00Z",
+      "startedAt": null,
+      "finishedAt": null,
+      "repositoryId": null,
+      "contextMode": null,
+      "contextTrackingVersion": null,
+      "retryOfNodeRunId": null,
+      "retryEligibility": null,
+      "contextGroupKey": null,
+      "contextIterationId": null
     }
   ],
-  "connectionResolutions": [],
+  "connectionResolutions": [
+    {
+      "id": "12121212-1212-4212-8212-121212121212",
+      "executionFrameId": null,
+      "sourceNodeRunId": "88888888-8888-4888-8888-888888888888",
+      "sourceConnectionId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      "targetInputPortId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "resolutionType": "DELIVERED",
+      "payload": {
+        "selectedOutputPortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "selectedOutputName": "Continue review"
+      },
+      "consumedByNodeRunId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "createdAt": "2026-09-15T08:00:01Z",
+      "targetRepositoryId": null
+    },
+    {
+      "id": "13131313-1313-4313-8313-131313131313",
+      "executionFrameId": null,
+      "sourceNodeRunId": "88888888-8888-4888-8888-888888888888",
+      "sourceConnectionId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef",
+      "targetInputPortId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "resolutionType": "CLOSED",
+      "payload": null,
+      "consumedByNodeRunId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "createdAt": "2026-09-15T08:00:01Z",
+      "targetRepositoryId": null
+    }
+  ],
   "executionEdges": [],
   "runtimeGraph": {
     "taskInputPortId": null,
@@ -56,10 +118,55 @@
         "scopeMode": "SHARED",
         "contextMode": null,
         "contextGroupKey": null
+      },
+      {
+        "sourceNodeId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "nodeType": "AGENT",
+        "agentName": "Reviewer",
+        "position": {
+          "x": 400,
+          "y": 2
+        },
+        "scopeMode": "SHARED",
+        "contextMode": null,
+        "contextGroupKey": null
       }
     ],
-    "ports": [],
-    "connections": []
+    "ports": [
+      {
+        "sourcePortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "sourceNodeId": "88888888-8888-4888-8888-888888888888",
+        "direction": "OUTPUT",
+        "name": "Continue review",
+        "order": 0
+      },
+      {
+        "sourcePortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+        "sourceNodeId": "88888888-8888-4888-8888-888888888888",
+        "direction": "OUTPUT",
+        "name": "Skip review",
+        "order": 1
+      },
+      {
+        "sourcePortId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "sourceNodeId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "direction": "INPUT",
+        "name": "Input",
+        "order": 0
+      }
+    ],
+    "connections": [
+      {
+        "sourceConnectionId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        "sourceOutputPortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "targetInputPortId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      },
+      {
+        "sourceConnectionId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef",
+        "sourceOutputPortId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+        "targetInputPortId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      }
+    ]
   },
   "result": null,
   "resultSourceNodeRunId": null,

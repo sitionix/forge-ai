@@ -2,7 +2,11 @@ package com.sitionix.forgeproxyit;
 
 import static com.sitionix.forgeit.wiremock.api.Parameter.equalTo;
 import static com.sitionix.forgeit.wiremock.api.Parameter.matches;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeai.Application;
 import com.sitionix.forgeproxyit.infra.ForgeAgentWireMockEndpoints;
 import com.sitionix.forgeproxyit.infra.NexusAgentMockMvcEndpoints;
@@ -14,6 +18,7 @@ import com.sitionix.forgeit.mockmvc.api.QueryParams;
 import com.sitionix.forgeit.wiremock.api.WireMockPathParams;
 import com.sitionix.forgeit.wiremock.api.WireMockQueryParams;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -57,11 +62,34 @@ class NexusAgentProxyIT {
     }
 
     @Test
-    void manualSelectionPreservesTypedProxyContract() {
-        verify(ForgeAgentWireMockEndpoints.manualSelection(), NexusAgentMockMvcEndpoints.manualSelection(),
-                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString()))
-                        .add("nodeRunId", equalTo(NODE_RUN_ID.toString())),
-                PathParams.create().add("workflowRunId", RUN_ID).add("nodeRunId", NODE_RUN_ID));
+    void waitingSnapshotSelectionAndDownstreamActivationFlowThroughTypedProxy() {
+        final var snapshot = new AtomicReference<JsonNode>();
+        final var waiting = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.waitingManualRun())
+                .pathPattern(WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.waitingManualRun())
+                .withPathParameters(PathParams.create().add("workflowRunId", RUN_ID))
+                .andExpectPath(result -> snapshot.set(new ObjectMapper().readTree(result.getResponse().getContentAsString())))
+                .assertDefault();
+        waiting.verify();
+
+        final var run = snapshot.get();
+        final var manual = run.path("nodeRuns").get(0);
+        final var outputPort = run.path("runtimeGraph").path("ports").get(0);
+        assertThat(manual.path("status").asText()).isEqualTo("WAITING_FOR_MANUAL");
+        assertThat(outputPort.path("sourceNodeId").asText()).isEqualTo(manual.path("sourceNodeId").asText());
+        assertThat(outputPort.path("direction").asText()).isEqualTo("OUTPUT");
+
+        final var selection = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.manualSelection())
+                .pathPattern(WireMockPathParams.create().add("workflowRunId", equalTo(run.path("id").asText()))
+                        .add("nodeRunId", equalTo(manual.path("id").asText())))
+                .createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.manualSelection())
+                .withPathParameters(PathParams.create().add("workflowRunId", run.path("id").asText())
+                        .add("nodeRunId", manual.path("id").asText()))
+                .assertDefault(context -> context.mutateRequest(
+                        request -> ((ObjectNode) request).put("outputPortId", outputPort.path("sourcePortId").asText())));
+        selection.verify();
     }
 
     @Test
@@ -86,13 +114,6 @@ class NexusAgentProxyIT {
                 WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString()))
                         .add("nodeRunId", equalTo(NODE_RUN_ID.toString())),
                 PathParams.create().add("workflowRunId", RUN_ID).add("nodeRunId", NODE_RUN_ID));
-    }
-
-    @Test
-    void waitingManualRunPreservesTypedProxyContract() {
-        verify(ForgeAgentWireMockEndpoints.waitingManualRun(), NexusAgentMockMvcEndpoints.waitingManualRun(),
-                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString())),
-                PathParams.create().add("workflowRunId", RUN_ID));
     }
 
     @Test
