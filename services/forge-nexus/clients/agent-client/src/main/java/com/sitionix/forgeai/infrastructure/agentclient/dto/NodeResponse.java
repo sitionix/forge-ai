@@ -1,13 +1,16 @@
 package com.sitionix.forgeai.infrastructure.agentclient.dto;
 
-import java.util.ArrayList;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.JsonSetter;
+import com.fasterxml.jackson.annotation.Nulls;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
+
 import com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType;
 import java.util.List;
 import java.util.UUID;
 
+@JsonDeserialize(builder = NodeResponse.Builder.class)
 public record NodeResponse(
         UUID id,
         UUID targetId,
@@ -67,32 +70,27 @@ public record NodeResponse(
         String contextMode) {
         this(id, targetId, inputMode, inputs, outputs, position, scopeMode, contextMode, null);
     }
-    @JsonCreator
-    public static NodeResponse fromJson(
-            @JsonProperty("id") UUID id,
-            @JsonProperty("targetId") UUID targetId,
-            @JsonProperty("inputMode") String inputMode,
-            @JsonProperty("inputs") List<NodePortResponse> inputs,
-            @JsonProperty("outputs") List<NodePortResponse> outputs,
-            @JsonProperty("position") NodePositionResponse position,
-            @JsonProperty("scopeMode") String scopeMode,
-            @JsonProperty("contextMode") String contextMode,
-            @JsonProperty("contextGroupKey") String contextGroupKey,
-            @JsonProperty("nodeType") AgentNodeType nodeType,
-            @JsonProperty("includeTaskRepositories") JsonNode include,
-            @JsonProperty("workspaceRepositoryIds") JsonNode repositories) {
-        if (include != null && !include.isBoolean()) {
-            throw new IllegalArgumentException("includeTaskRepositories must be a boolean");
+    @JsonPOJOBuilder(withPrefix = "")
+    @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY)
+    public static final class Builder {
+        private UUID id;
+        private UUID targetId;
+        private String inputMode;
+        private List<NodePortResponse> inputs;
+        private List<NodePortResponse> outputs;
+        private NodePositionResponse position;
+        private String scopeMode;
+        private String contextMode;
+        private String contextGroupKey;
+        private AgentNodeType nodeType;
+        @JsonSetter(nulls = Nulls.FAIL)
+        private Boolean includeTaskRepositories = true;
+        @JsonSetter(nulls = Nulls.FAIL, contentNulls = Nulls.FAIL)
+        private List<UUID> workspaceRepositoryIds = List.of();
+
+        public NodeResponse build() {
+            return new NodeResponse(id, targetId, inputMode, inputs, outputs, position,
+                    scopeMode, contextMode, contextGroupKey, nodeType, includeTaskRepositories, List.copyOf(workspaceRepositoryIds));
         }
-        final var ids = new ArrayList<UUID>();
-        if (repositories != null) {
-            if (!repositories.isArray()) throw new IllegalArgumentException("workspaceRepositoryIds must be an array");
-            for (var idValue : repositories) {
-                if (!idValue.isTextual()) throw new IllegalArgumentException("workspaceRepositoryIds must contain UUID strings");
-                ids.add(UUID.fromString(idValue.textValue()));
-            }
-        }
-        return new NodeResponse(id, targetId, inputMode, inputs, outputs, position, scopeMode,
-                contextMode, contextGroupKey, nodeType, include == null || include.booleanValue(), List.copyOf(ids));
     }
 }

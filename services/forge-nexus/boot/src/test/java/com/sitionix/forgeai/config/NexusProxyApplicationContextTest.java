@@ -27,4 +27,25 @@ class NexusProxyApplicationContextTest {
     void startsWithoutLegacyRuntimeConfigurationAndProvidesTypedAgentClient() {
         assertThat(this.forgeAgentClient).isNotNull();
     }
+
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "{\"includeTaskRepositories\":null}",
+            "{\"includeTaskRepositories\":\"false\"}",
+            "{\"workspaceRepositoryIds\":null}",
+            "{\"workspaceRepositoryIds\":\"bad\"}",
+            "{\"workspaceRepositoryIds\":[null]}",
+            "{\"workspaceRepositoryIds\":[\"not-a-uuid\"]}"
+    })
+    void configuredMapperRejectsInvalidWorkingRepositoriesAtBothBoundaries(String json) {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> this.objectMapper.readValue(json,
+                com.sitionix.forgeai.api.agentproxy.NodeRequest.class))
+                .isInstanceOf(com.fasterxml.jackson.databind.exc.MismatchedInputException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> this.objectMapper.readValue(json,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.NodeResponse.class))
+                .isInstanceOf(com.fasterxml.jackson.databind.exc.MismatchedInputException.class);
+    }
 }
