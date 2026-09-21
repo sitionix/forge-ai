@@ -1,5 +1,7 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
+import java.util.ArrayList;
+import org.springframework.transaction.annotation.Transactional;
 import com.sitionix.forgeagent.domain.model.NodeType;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
@@ -31,6 +33,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@Transactional(readOnly = true)
 @RequiredArgsConstructor
 public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepository {
 
@@ -40,6 +43,7 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
     private final SpringDataWorkflowRunRepository workflowRunRepository;
 
     @Override
+    @Transactional
     public void saveSnapshot(final WorkflowRunGraph graph) {
         // Session allocation uses JDBC immediately after the first NodeRun is
         // flushed and is protected by a FK to this snapshot identity.
@@ -112,7 +116,8 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
                 NodeScopeMode.valueOf(entity.getScopeMode()),
                 contextMode(entity.getContextMode()),
                 entity.getContextGroupKey(),
-                NodeType.valueOf(entity.getNodeType())
+                NodeType.valueOf(entity.getNodeType()),
+                entity.getResolvedWorkspaceRepositoryIds()
         );
     }
 
@@ -153,6 +158,7 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
         entity.setContextMode(node.contextMode().name());
         entity.setContextGroupKey(node.contextGroupKey());
         entity.setNodeType(node.nodeType().name());
+        entity.setResolvedWorkspaceRepositoryIds(new ArrayList<>(node.resolvedWorkspaceRepositoryIds()));
         entity.setPositionX(node.position().x());
         entity.setPositionY(node.position().y());
         return entity;

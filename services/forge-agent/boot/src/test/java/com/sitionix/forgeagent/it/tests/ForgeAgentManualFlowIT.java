@@ -145,7 +145,7 @@ class ForgeAgentManualFlowIT {
         forgeIt.postgresql().create().to(PROJECT.withJson("project_alpha.json"))
                 .to(AGENT_DEFINITION.withJson("agent_a.json"))
                 .to(AGENT_DEFINITION.withJson("agent_b.json")).build();
-        when(workspace.resolve(any(), any(), any())).thenReturn(new ExecutionWorkspace(Path.of("/tmp"), List.of()));
+        when(workspace.resolve(any(), any())).thenReturn(new ExecutionWorkspace(Path.of("/tmp"), List.of()));
         when(executor.execute(any())).thenAnswer(invocation -> {
             NodeExecutionClaim claim = invocation.getArgument(0);
             assertThat(claim.sourceAgentId()).isIn(AGENT_A_ID, AGENT_B_ID);
@@ -189,7 +189,7 @@ class ForgeAgentManualFlowIT {
 
     private void assertNoManualExecution(Fixture f, int agentExecutions) {
         verify(executor, times(agentExecutions)).execute(any());
-        verify(workspace, times(agentExecutions)).resolve(any(), any(), any());
+        verify(workspace, times(agentExecutions)).resolve(any(), any());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM agent_execution_sessions WHERE workflow_run_id=? AND source_node_id=?",
                 Long.class, f.runId(), f.manual().id())).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM agent_execution_turns t JOIN node_runs n ON n.id=t.node_run_id WHERE n.workflow_run_id=? AND n.node_type='MANUAL'",

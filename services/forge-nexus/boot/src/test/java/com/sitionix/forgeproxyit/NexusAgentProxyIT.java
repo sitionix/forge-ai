@@ -62,6 +62,27 @@ class NexusAgentProxyIT {
     }
 
     @Test
+    void saveWorkingWorkflowPreservesWorkingRepositoryContract() {
+        verify(ForgeAgentWireMockEndpoints.saveWorkingWorkflow(), NexusAgentMockMvcEndpoints.saveWorkingWorkflow(),
+                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString())),
+                PathParams.create().add("workflowRunId", RUN_ID));
+    }
+
+    @Test
+    void getWorkingWorkflowPreservesWorkingRepositoryContract() {
+        verify(ForgeAgentWireMockEndpoints.getWorkingWorkflow(), NexusAgentMockMvcEndpoints.getWorkingWorkflow(),
+                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString())),
+                PathParams.create().add("workflowRunId", RUN_ID));
+    }
+
+    @Test
+    void workingRunPreservesWorkingRepositoryContract() {
+        verify(ForgeAgentWireMockEndpoints.workingRun(), NexusAgentMockMvcEndpoints.workingRun(),
+                WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString())),
+                PathParams.create().add("workflowRunId", RUN_ID));
+    }
+
+    @Test
     void waitingSnapshotSelectionAndDownstreamActivationFlowThroughTypedProxy() {
         final var snapshot = new AtomicReference<JsonNode>();
         final var waiting = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.waitingManualRun())

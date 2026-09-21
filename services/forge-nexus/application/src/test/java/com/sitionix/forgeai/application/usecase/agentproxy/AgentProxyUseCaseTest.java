@@ -161,7 +161,8 @@ class AgentProxyUseCaseTest {
                 java.util.List.of(),
                 java.util.List.of(),
                 new NodePosition(1.0, 2.0),
-                "GLOBAL"
+                "GLOBAL", "FRESH_EACH_NODE_RUN", null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType.AGENT, false, List.of(UUID.randomUUID())
         );
         final var createCommand = new CreateAgentWorkflowCommand("Full Testing");
         final var saveCommand = new SaveAgentWorkflowCommand("Full Testing", List.of(node), List.of(), null);

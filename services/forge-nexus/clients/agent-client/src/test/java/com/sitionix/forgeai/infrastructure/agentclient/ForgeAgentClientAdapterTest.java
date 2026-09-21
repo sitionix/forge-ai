@@ -508,8 +508,10 @@ class ForgeAgentClientAdapterTest {
 
     @Test
     void updateWorkflowMapsRequestExecutesTypedClientCallAndMapsResponse() {
-        final var command = new SaveAgentWorkflowCommand("Full Testing", List.of(), List.of(), null);
-        final var request = new SaveAgentWorkflowRequest("Full Testing", List.of(), List.of(), null, null);
+        final var node = new com.sitionix.forgeai.domain.model.agentproxy.Node(UUID.randomUUID(), UUID.randomUUID(), "DEPENDENCIES_ONLY", List.of(), List.of(), null, "GLOBAL", "FRESH_EACH_NODE_RUN", null, com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType.AGENT, false, List.of(UUID.randomUUID()));
+        final var nodeRequest = new com.sitionix.forgeai.infrastructure.agentclient.dto.NodeRequest(node.id(), node.targetId(), node.inputMode(), List.of(), List.of(), null, node.scopeMode(), node.contextMode(), null, node.nodeType(), node.includeTaskRepositories(), node.workspaceRepositoryIds());
+        final var command = new SaveAgentWorkflowCommand("Full Testing", List.of(node), List.of(), null);
+        final var request = new SaveAgentWorkflowRequest("Full Testing", List.of(nodeRequest), List.of(), null, null);
         final var upstreamResponse = new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), List.of(), null, CREATED, UPDATED);
         final var expected = new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "Full Testing", List.of(), List.of(), null, CREATED, UPDATED);
         when(this.mapper.toRequest(command)).thenReturn(request);

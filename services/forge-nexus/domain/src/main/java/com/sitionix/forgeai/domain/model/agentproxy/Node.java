@@ -13,7 +13,23 @@ public record Node(
         String scopeMode,
         String contextMode,
         String contextGroupKey,
+        AgentNodeType nodeType,
+        boolean includeTaskRepositories,
+        List<UUID> workspaceRepositoryIds) {
+    public Node(
+        UUID id,
+        UUID targetId,
+        String inputMode,
+        List<NodePort> inputs,
+        List<NodePort> outputs,
+        NodePosition position,
+        String scopeMode,
+        String contextMode,
+        String contextGroupKey,
         AgentNodeType nodeType) {
+        this(id, targetId, inputMode, inputs, outputs, position, scopeMode, contextMode, contextGroupKey, nodeType, true, java.util.List.of());
+    }
+
     public Node(
         UUID id,
         UUID targetId,

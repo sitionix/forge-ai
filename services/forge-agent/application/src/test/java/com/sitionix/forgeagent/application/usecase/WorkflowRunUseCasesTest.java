@@ -101,7 +101,7 @@ class WorkflowRunUseCasesTest {
                 this.graphRepository,
                 this.executionFrameRepository,
                 this.nodeRunRepository,
-                new WorkflowRunSnapshotBuilder(this.agentDefinitionRepository, this.providerCapabilities),
+                new WorkflowRunSnapshotBuilder(new com.sitionix.forgeagent.application.graph.WorkflowWorkspaceValidator(org.mockito.Mockito.mock(com.sitionix.forgeagent.domain.port.ProjectRepositoryLinkRepository.class)), this.agentDefinitionRepository, this.providerCapabilities),
                 new NodeRunFactory(CLOCK, new ScopeProjectionPolicy(), this.graphRepository),
                 this.executionBudgetPolicy,
                 new ScopeProjectionPolicy(),
@@ -360,7 +360,6 @@ class WorkflowRunUseCasesTest {
     void rejectsTaskRunWithEmptyRepositorySnapshotBeforePersistence() {
         final Workflow workflow = this.workflow();
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
-        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
 
         assertThatThrownBy(() -> this.useCases.createWorkflowRunForTask(
                 this.workflowId, new CreateWorkflowRunCommand("Run it"), this.taskId, List.of()))
@@ -373,7 +372,6 @@ class WorkflowRunUseCasesTest {
     void rejectsTaskRunWithNullRepositorySnapshotThroughControlledValidation() {
         final Workflow workflow = this.workflow();
         when(this.workflowRepository.findByIdForUpdate(this.workflowId)).thenReturn(Optional.of(workflow));
-        when(this.agentDefinitionRepository.findByIds(any())).thenReturn(List.of(this.agent()));
 
         assertThatThrownBy(() -> this.useCases.createWorkflowRunForTask(
                 this.workflowId, new CreateWorkflowRunCommand("Run it"), this.taskId, null))

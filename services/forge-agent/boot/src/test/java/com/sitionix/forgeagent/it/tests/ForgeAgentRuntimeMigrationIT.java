@@ -64,6 +64,28 @@ class ForgeAgentRuntimeMigrationIT {
     private DataSource dataSource;
 
     @Test
+    void workingRepositoryMigrationBackfillsPersistedRunOrderWithoutDefaults() {
+        final String schema = "working_repos_" + UUID.randomUUID().toString().replace("-", "");
+        final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);
+        final UUID run = UUID.randomUUID(), node = UUID.randomUUID();
+        final UUID first = UUID.randomUUID(), second = UUID.randomUUID();
+        jdbc.execute("CREATE SCHEMA " + schema);
+        try {
+            this.flyway(schema, MigrationVersion.fromVersion("33")).migrate();
+            this.insertHistoricalTrackedTurn(jdbc, schema, run, node, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+            this.flyway(schema, MigrationVersion.fromVersion("35")).migrate();
+            jdbc.update("INSERT INTO %s.workflow_run_repositories VALUES (?, ?, 0), (?, ?, 1)".formatted(schema), run, second, run, first);
+            this.flyway(schema, null).migrate();
+            assertThat(jdbc.queryForList("SELECT repository_id FROM %s.workflow_run_node_workspace_repositories WHERE workflow_run_id=? ORDER BY repository_ordinal".formatted(schema), UUID.class, run))
+                    .containsExactly(second, first);
+            assertThat(jdbc.queryForMap("SELECT is_nullable,column_default FROM information_schema.columns WHERE table_schema=? AND table_name='workflow_nodes' AND column_name='include_task_repositories'", schema))
+                    .containsEntry("is_nullable", "NO").containsEntry("column_default", null);
+        } finally {
+            jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+        }
+    }
+
+    @Test
     void nodeTypeMigrationDefaultsExistingRowsToAgentAndKeepsAgentConstraints() {
         final String schema = "node_type_" + UUID.randomUUID().toString().replace("-", "");
         final JdbcTemplate jdbc = new JdbcTemplate(this.dataSource);

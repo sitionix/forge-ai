@@ -105,7 +105,7 @@ class NodeRunLifecycleTest {
         this.workflowRun = this.workflowRun(WorkflowRunStatus.QUEUED, null, null);
         this.stubRepositories();
         lenient().when(this.executionWorkspaceResolver.resolve(
-                        any(), org.mockito.ArgumentMatchers.nullable(UUID.class), any()))
+                        any(), any()))
                 .thenReturn(new ExecutionWorkspace(java.nio.file.Path.of("/forge/project"), List.of()));
     }
 
@@ -146,7 +146,7 @@ class NodeRunLifecycleTest {
     void unavailableExecutionWorkspaceFailsNodeBeforeExecutorClaim() {
         this.nodeRuns.put(NODE_RUN_ID, this.nodeRun(NodeRunStatus.PENDING, MODEL));
         when(this.executionWorkspaceResolver.resolve(
-                any(), org.mockito.ArgumentMatchers.nullable(UUID.class), any()))
+                any(), any()))
                 .thenThrow(new ExecutionWorkspaceException("Required Forge repository checkout is unavailable."));
 
         assertThat(this.lifecycle.tryStart(NODE_RUN_ID)).isEmpty();

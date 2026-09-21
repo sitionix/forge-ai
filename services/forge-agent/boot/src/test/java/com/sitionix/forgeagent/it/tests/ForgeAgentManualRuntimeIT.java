@@ -93,7 +93,7 @@ class ForgeAgentManualRuntimeIT {
         WorkflowRun run = createRun(true);
         manualLifecycle.waitForSelection(run.nodeRuns().getFirst().id());
         assertThat(nodeRuns.findById(run.nodeRuns().getFirst().id()).orElseThrow().status()).isEqualTo(NodeRunStatus.PENDING);
-        when(workspaceResolver.resolve(any(), any(), any())).thenReturn(new ExecutionWorkspace(Path.of("/tmp"), List.of()));
+        when(workspaceResolver.resolve(any(), any())).thenReturn(new ExecutionWorkspace(Path.of("/tmp"), List.of()));
         when(executor.execute(any())).thenReturn(new AgentExecutionResult(new NodeRunOutput("{\"done\":true}"), null));
 
         worker.poll();
@@ -106,7 +106,7 @@ class ForgeAgentManualRuntimeIT {
         assertThat(nodeRuns.findByWorkflowRunId(run.id())).filteredOn(node -> node.nodeType() == NodeType.AGENT)
                 .singleElement().satisfies(node -> assertThat(node.status()).isEqualTo(NodeRunStatus.SUCCEEDED));
         verify(executor, times(1)).execute(any());
-        verify(workspaceResolver, times(1)).resolve(any(), any(), any());
+        verify(workspaceResolver, times(1)).resolve(any(), any());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM agent_execution_sessions WHERE workflow_run_id=?", Long.class, run.id())).isEqualTo(1);
     }
 

@@ -79,6 +79,7 @@ class WorkflowUseCasesTest {
                 this.projectTaskRepository,
                 this.workflowRunRepository,
                 new WorkflowGraphValidator(),
+                new com.sitionix.forgeagent.application.graph.WorkflowWorkspaceValidator(org.mockito.Mockito.mock(com.sitionix.forgeagent.domain.port.ProjectRepositoryLinkRepository.class)),
                 CLOCK
         );
     }

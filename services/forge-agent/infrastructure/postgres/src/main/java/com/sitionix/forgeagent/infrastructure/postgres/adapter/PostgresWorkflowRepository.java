@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
+import org.springframework.transaction.annotation.Transactional;
 import com.sitionix.forgeagent.domain.model.NodeType;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.Node;
@@ -33,6 +34,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@Transactional(readOnly = true)
 @RequiredArgsConstructor
 public class PostgresWorkflowRepository implements WorkflowRepository {
 
@@ -71,6 +73,7 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
     }
 
     @Override
+    @Transactional
     public Workflow save(final Workflow workflow) {
         final WorkflowEntity savedWorkflow = this.workflowRepository.save(this.toEntity(workflow));
         this.validatePersistedIdentityOwnership(workflow);
@@ -79,6 +82,7 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
     }
 
     @Override
+    @Transactional
     public void deleteById(final UUID workflowId) {
         this.workflowRepository.deleteById(workflowId);
     }
@@ -161,6 +165,8 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
             entity.setContextMode(node.contextMode().name());
             entity.setContextGroupKey(node.contextGroupKey());
             entity.setNodeType(node.nodeType().name());
+            entity.setIncludeTaskRepositories(node.includeTaskRepositories());
+            entity.setWorkspaceRepositoryIds(new ArrayList<>(node.workspaceRepositoryIds()));
             entity.setPositionX(node.position().x());
             entity.setPositionY(node.position().y());
             desiredEntities.add(entity);
@@ -278,7 +284,8 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
                 NodeScopeMode.valueOf(entity.getScopeMode()),
                 contextMode(entity.getContextMode()),
                 entity.getContextGroupKey(),
-                NodeType.valueOf(entity.getNodeType())
+                NodeType.valueOf(entity.getNodeType()),
+                entity.getIncludeTaskRepositories(), entity.getWorkspaceRepositoryIds()
         );
     }
 

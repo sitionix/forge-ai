@@ -14,7 +14,23 @@ public record NodeRequest(
         String scopeMode,
         String contextMode,
         String contextGroupKey,
+        AgentNodeType nodeType,
+        boolean includeTaskRepositories,
+        List<UUID> workspaceRepositoryIds) {
+    public NodeRequest(
+        UUID id,
+        UUID targetId,
+        String inputMode,
+        List<NodePortRequest> inputs,
+        List<NodePortRequest> outputs,
+        NodePositionRequest position,
+        String scopeMode,
+        String contextMode,
+        String contextGroupKey,
         AgentNodeType nodeType) {
+        this(id, targetId, inputMode, inputs, outputs, position, scopeMode, contextMode, contextGroupKey, nodeType, true, java.util.List.of());
+    }
+
     public NodeRequest {
         if (nodeType == null) {
             nodeType = AgentNodeType.AGENT;

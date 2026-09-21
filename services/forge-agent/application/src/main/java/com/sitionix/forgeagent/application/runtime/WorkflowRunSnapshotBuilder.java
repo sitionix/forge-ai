@@ -1,5 +1,7 @@
 package com.sitionix.forgeagent.application.runtime;
 
+import java.util.LinkedHashSet;
+import com.sitionix.forgeagent.application.graph.WorkflowWorkspaceValidator;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.AgentDefinition;
 import com.sitionix.forgeagent.domain.model.AgentExecutionProviderCapability;
@@ -31,10 +33,12 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class WorkflowRunSnapshotBuilder {
 
+    private final WorkflowWorkspaceValidator workspaceValidator;
     private final AgentDefinitionRepository agentDefinitionRepository;
     private final AgentExecutionProviderCapabilities providerCapabilities;
 
-    public WorkflowRunGraph build(final UUID workflowRunId, final Workflow workflow) {
+    public WorkflowRunGraph build(final UUID workflowRunId, final Workflow workflow, final List<UUID> taskRepositorySnapshot) {
+        this.workspaceValidator.validate(workflow.projectId(), workflow.nodes());
         com.sitionix.forgeagent.domain.model.ContextIterationPolicy.validateScopes(workflow.nodes());
         final Map<UUID, AgentDefinition> agentsById = this.agentDefinitionRepository.findByIds(this.agentIds(workflow.nodes())).stream()
                 .collect(Collectors.toMap(AgentDefinition::id, Function.identity()));
@@ -42,7 +46,7 @@ public class WorkflowRunSnapshotBuilder {
                 workflowRunId,
                 workflow.taskInputPortId(),
                 workflow.taskOutputPortId(),
-                workflow.nodes().stream().map(node -> this.runNode(workflowRunId, node, agentsById)).toList(),
+                workflow.nodes().stream().map(node -> this.runNode(workflowRunId, node, agentsById, taskRepositorySnapshot)).toList(),
                 workflow.nodes().stream()
                         .flatMap(node -> java.util.stream.Stream.concat(
                                 this.runPorts(workflowRunId, node, PortDirection.INPUT, node.inputs()).stream(),
@@ -57,7 +61,7 @@ public class WorkflowRunSnapshotBuilder {
         return nodes.stream().filter(node -> node.nodeType() == NodeType.AGENT).map(Node::targetId).collect(Collectors.toSet());
     }
 
-    private RunNode runNode(final UUID workflowRunId, final Node node, final Map<UUID, AgentDefinition> agentsById) {
+    private RunNode runNode(final UUID workflowRunId, final Node node, final Map<UUID, AgentDefinition> agentsById, final List<UUID> taskRepositorySnapshot) {
         if (node.nodeType() == NodeType.MANUAL) {
             if (node.targetId() != null) {
                 throw new ValidationException("INVALID_MANUAL_NODE_TARGET", "Manual workflow nodes must not target an agent.");
@@ -91,8 +95,17 @@ public class WorkflowRunSnapshotBuilder {
                 node.scopeMode(),
                 node.contextMode(),
                 node.contextGroupKey(),
-                node.nodeType()
+                node.nodeType(),
+                this.resolveWorkspaceRepositories(node, taskRepositorySnapshot)
         );
+    }
+
+    private List<UUID> resolveWorkspaceRepositories(final Node node, final List<UUID> taskRepositorySnapshot) {
+        if (node.scopeMode() != com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL) return List.of();
+        final var resolved = new LinkedHashSet<UUID>();
+        if (node.includeTaskRepositories()) resolved.addAll(taskRepositorySnapshot);
+        resolved.addAll(node.workspaceRepositoryIds());
+        return List.copyOf(resolved);
     }
 
     private NodeRunExecutionModel executionModel(final AgentModelSelection selection) {

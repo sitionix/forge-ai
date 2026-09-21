@@ -195,6 +195,7 @@ class AgentExecutionRecoveryServiceTest {
     @ParameterizedTest
     @ValueSource(strings = {"workflow-missing", "workflow-error", "workspace-missing", "workspace-error", "inspection-error", "timeout", "null-result", "supports-error"})
     void failuresStayUnknown(final String scenario) {
+        when(this.nodeRuns.findById(this.claim.nodeRunId())).thenReturn(Optional.of(this.nodeRun(NodeRunStatus.RUNNING, null)));
         when(this.inspector.supports("codex", "0.154.0")).thenReturn(true);
         if (scenario.equals("supports-error")) {
             when(this.inspector.supports(any(), any())).thenThrow(new IllegalStateException("registry error"));
@@ -203,9 +204,9 @@ class AgentExecutionRecoveryServiceTest {
         } else if (!scenario.equals("workflow-missing")) {
             when(this.workflows.findById(this.claim.workflowRunId())).thenReturn(Optional.of(this.workflow()));
             if (scenario.equals("workspace-error")) {
-                when(this.workspaces.resolve(any(), any(), any())).thenThrow(new ExecutionWorkspaceException("checkout unavailable"));
+                when(this.workspaces.resolve(any(), any())).thenThrow(new ExecutionWorkspaceException("checkout unavailable"));
             } else if (!scenario.equals("workspace-missing")) {
-                when(this.workspaces.resolve(any(), any(), any())).thenReturn(this.workspace);
+                when(this.workspaces.resolve(any(), any())).thenReturn(this.workspace);
                 if (scenario.equals("timeout")) when(this.inspector.inspect(any())).thenThrow(new CompletionException(new TimeoutException("timed out")));
                 if (scenario.equals("inspection-error")) when(this.inspector.inspect(any())).thenThrow(new IllegalStateException("protocol error"));
             }
@@ -320,9 +321,10 @@ class AgentExecutionRecoveryServiceTest {
     }
 
     private void inspectable() {
+        when(this.nodeRuns.findById(this.claim.nodeRunId())).thenReturn(Optional.of(this.nodeRun(NodeRunStatus.RUNNING, null)));
         when(this.inspector.supports("codex", "0.154.0")).thenReturn(true);
         when(this.workflows.findById(this.claim.workflowRunId())).thenReturn(Optional.of(this.workflow()));
-        when(this.workspaces.resolve(this.projectId, this.claim.repositoryId(), List.of(this.claim.repositoryId()))).thenReturn(this.workspace);
+        when(this.workspaces.resolve(any(), any())).thenReturn(this.workspace);
     }
 
     private WorkflowRun workflow() {

@@ -1384,6 +1384,15 @@ export class TaskExecutionView {
     this.byId('agentsV2ExecutionEdges').innerHTML = this.edgeDefs(edges.join(''));
   }
 
+  renderWorkingRepositoryDetails(node) {
+    if (!node || node.nodeType === 'MANUAL' || node.scopeMode !== 'GLOBAL') return '';
+    const labels = (node.resolvedWorkspaceRepositoryIds || []).map((id) => {
+      const repository = (this.state.repositories || []).find((candidate) => candidate.id === id);
+      return repository ? `${repository.name}${repository.cloned === false ? ' (unavailable)' : ''}` : `${id} (unavailable)`;
+    });
+    return this.detailRow('Working repositories', labels.length ? labels.join(', ') : 'None');
+  }
+
   renderNodeDetails() {
     const panel = this.byId('agentsV2NodeRunDetails');
     const nodeRun = this.selectedNodeRun();
@@ -1396,6 +1405,7 @@ export class TaskExecutionView {
           <div class="node-run-details-grid">
             ${this.detailRow(unit.nodeType === 'MANUAL' ? 'Node' : 'Agent', unit.nodeType === 'MANUAL' ? 'Manual' : unit.agentName || 'Unknown agent')}
             ${this.detailRow('Repository', unit.repositoryName || (unit.scopeMode === 'GLOBAL' ? 'Global' : UNAVAILABLE_REPOSITORY_LABEL))}
+            ${this.renderWorkingRepositoryDetails(unit)}
             ${this.detailRow('Status', 'Not executed yet')}
           </div>
         `;
@@ -1418,6 +1428,7 @@ export class TaskExecutionView {
       ${invocationSelector}
       <div class="node-run-details-grid">
         ${this.detailRow('Agent', nodeRun.agentName || 'Unknown agent')}
+        ${this.renderWorkingRepositoryDetails((this.state.workflowRun?.runtimeGraph?.nodes || []).find((node) => node.sourceNodeId === nodeRun.sourceNodeId))}
         ${this.detailRow('Status', nodeRun.status || 'PENDING')}
         ${this.detailRow('Input mode', this.formatInputMode(nodeRun))}
         ${this.detailRow('Started', this.formatDate(nodeRun.startedAt))}

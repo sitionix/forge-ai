@@ -102,6 +102,23 @@ class ForgeAgentClientMapperTest {
     private final ForgeAgentClientMapper mapper = new ForgeAgentClientMapper(this.objectMapper);
 
     @Test
+    void workingRepositoriesSurviveClientRequestAndResponseMapping() {
+        final var ids = List.of(UUID.randomUUID(), UUID.randomUUID());
+        final var node = new Node(NODE_ID, AGENT_ID, "DEPENDENCIES_ONLY", List.of(), List.of(),
+                new NodePosition(0,0), "GLOBAL", "FRESH_EACH_NODE_RUN", null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType.AGENT, false, ids);
+        final var request = this.mapper.toRequest(new SaveAgentWorkflowCommand("wf", List.of(node), List.of(), null));
+        assertThat(request.nodes().getFirst().includeTaskRepositories()).isFalse();
+        assertThat(request.nodes().getFirst().workspaceRepositoryIds()).containsExactlyElementsOf(ids);
+        final var responseNode = new NodeResponse(NODE_ID, AGENT_ID, "DEPENDENCIES_ONLY", List.of(), List.of(),
+                new NodePositionResponse(0,0), "GLOBAL", "FRESH_EACH_NODE_RUN", null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType.AGENT, false, ids);
+        final var result = this.mapper.toDomain(new AgentWorkflowResponse(WORKFLOW_ID, PROJECT_ID, "wf", List.of(responseNode), List.of(), null, CREATED, UPDATED));
+        assertThat(result.nodes().getFirst().includeTaskRepositories()).isFalse();
+        assertThat(result.nodes().getFirst().workspaceRepositoryIds()).containsExactlyElementsOf(ids);
+    }
+
+    @Test
     void iterationGroupSurvivesClientRequestAndResponse() {
         var node = new Node(NODE_ID, AGENT_ID, "DEPENDENCIES_ONLY", List.of(), List.of(), new NodePosition(0, 0),
                 "GLOBAL", "REUSE_WITHIN_WORKFLOW_ITERATION", "implementation-review");
@@ -522,7 +539,8 @@ class ForgeAgentClientMapperTest {
                         NODE_ID,
                         "Analyzer",
                         new NodePositionResponse(1.0, 2.0),
-                        "GLOBAL"
+                        "GLOBAL", "FRESH_EACH_NODE_RUN", null,
+                                com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType.AGENT, List.of(REPOSITORY_ID)
                 )),
                 List.of(
                         new RunPortResponse(inputPortId, NODE_ID, "INPUT", "Initial", 0),
@@ -587,7 +605,8 @@ class ForgeAgentClientMapperTest {
                                 NODE_ID,
                                 "Analyzer",
                                 new NodePosition(1.0, 2.0),
-                                "GLOBAL"
+                                "GLOBAL", "FRESH_EACH_NODE_RUN", null,
+                                com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType.AGENT, List.of(REPOSITORY_ID)
                         )),
                         List.of(
                                 new AgentRunPort(inputPortId, NODE_ID, "INPUT", "Initial", 0),

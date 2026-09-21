@@ -69,6 +69,24 @@ public final class NexusAgentMockMvcEndpoints {
                 JsonNode.class, JsonNode.class, (MockmvcDefault) context -> context.expectStatus(200).withRequest("agent-manual-workflow-request.json").expectResponse("agent-manual-workflow-response.json"));
     }
 
+    public static Endpoint<com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest, com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse> saveWorkingWorkflow() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/workflows/{workflowRunId}", HttpMethod.PUT,
+                com.sitionix.forgeai.api.agentproxy.SaveAgentWorkflowRequest.class, com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(200).withRequest("agent-working-workflow-request.json").expectResponse("agent-working-workflow-response.json"));
+    }
+
+    public static Endpoint<Void, com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse> getWorkingWorkflow() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/workflows/{workflowRunId}", HttpMethod.GET,
+                Void.class, com.sitionix.forgeai.api.agentproxy.AgentWorkflowResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(200).expectResponse("agent-working-workflow-response.json"));
+    }
+
+    public static Endpoint<Void, com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse> workingRun() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/workflow-runs/{workflowRunId}", HttpMethod.GET,
+                Void.class, com.sitionix.forgeai.api.agentproxy.AgentWorkflowRunResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(200).expectResponse("agent-working-run-response.json"));
+    }
+
     private NexusAgentMockMvcEndpoints() {
     }
 

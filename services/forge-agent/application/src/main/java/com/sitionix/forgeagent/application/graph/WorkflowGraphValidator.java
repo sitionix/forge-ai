@@ -99,7 +99,7 @@ public class WorkflowGraphValidator {
                 node.scopeMode(),
                 node.contextMode(),
                 node.contextGroupKey(),
-                node.nodeType()
+                node.nodeType(), node.includeTaskRepositories(), node.workspaceRepositoryIds()
         );
     }
 

@@ -64,6 +64,10 @@ export class WorkflowBuilder {
     this.workflow = null;
     this.project = null;
     this.agents = [];
+    this.repositories = [];
+    this.repositoryLoadError = "";
+    this.repositorySearch = "";
+    this.repositoryLoadVersion = 0;
     this.nodeDrag = null;
     this.canvasPan = null;
     this.connectionDrag = null;
@@ -137,11 +141,13 @@ export class WorkflowBuilder {
     this.byId('agentsV2BuilderTitle').textContent = workflow.name;
     this.byId('agentsV2BuilderCrumbs').textContent = `Projects / ${project?.name || ''} / Workflows / ${workflow.name}`;
     this.render();
+    this.loadWorkingRepositories(project?.id);
   }
 
   close() {
     this.workflow = null;
     this.project = null;
+    this.repositoryLoadVersion += 1;
     this.nodeDrag = null;
     this.canvasPan = null;
     this.connectionDrag = null;
@@ -195,6 +201,8 @@ export class WorkflowBuilder {
       targetId,
       inputMode: DEFAULT_INPUT_MODE,
       scopeMode: GLOBAL_SCOPE_MODE,
+      includeTaskRepositories: true,
+      workspaceRepositoryIds: [],
       contextMode: FRESH_CONTEXT_MODE,
       inputs,
       outputs,
@@ -738,6 +746,7 @@ export class WorkflowBuilder {
     }
     this.nodeEditorNodeId = nodeId;
     this.nodeEditorDraft = this.cloneNode(node);
+    this.repositorySearch = "";
     this.nodeEditorEditingPortKey = null;
     this.renderNodeEditor();
     this.showNodeEditorError('');
@@ -826,7 +835,9 @@ export class WorkflowBuilder {
           <option value="${PER_SCOPE_MODE}" ${this.nodeScopeMode(node) === PER_SCOPE_MODE ? 'selected' : ''}>Per repository</option>
         </select>
       </div>
+      ${this.renderWorkingRepositories(node)}
     `;
+    this.bindWorkingRepositories();
     this.byId('agentsV2NodeEditorBody').querySelectorAll('[data-node-editor-context-mode]').forEach((radio) => radio.addEventListener('change', () => {
       this.syncNodeEditorDraftFromDom();
       this.renderNodeEditor();
@@ -834,6 +845,99 @@ export class WorkflowBuilder {
     this.byId('agentsV2NodeEditorScopeMode')?.addEventListener('change', () => {
       this.syncNodeEditorDraftFromDom();
       this.renderNodeEditor();
+    });
+  }
+
+  workspaceConfiguration(node) {
+    const globalAgent = node.nodeType !== 'MANUAL' && this.nodeScopeMode(node) === GLOBAL_SCOPE_MODE;
+    return {
+      includeTaskRepositories: globalAgent ? node.includeTaskRepositories ?? true : true,
+      workspaceRepositoryIds: globalAgent ? [...(node.workspaceRepositoryIds || [])] : []
+    };
+  }
+
+  async loadWorkingRepositories(projectId) {
+    const version = ++this.repositoryLoadVersion;
+    this.repositories = [];
+    this.repositoryLoadError = '';
+    try {
+      const repositories = await this.api.listProjectRepositories(projectId);
+      if (version !== this.repositoryLoadVersion || this.project?.id !== projectId) return;
+      this.repositories = repositories;
+    } catch (error) {
+      if (version !== this.repositoryLoadVersion || this.project?.id !== projectId) return;
+      this.repositoryLoadError = 'Project repositories could not be loaded.';
+    }
+    if (this.nodeEditorDraft) {
+      this.syncNodeEditorDraftFromDom();
+      this.renderNodeEditor();
+    }
+  }
+
+  workingRepositoriesError(node) {
+    if (!node || node.nodeType === 'MANUAL' || this.nodeScopeMode(node) !== GLOBAL_SCOPE_MODE) return '';
+    const ids = node.workspaceRepositoryIds || [];
+    if (node.includeTaskRepositories === false && !ids.length) return 'Select at least one working repository.';
+    if (ids.some((id) => !this.repositories.some((repository) => repository.id === id && repository.cloned !== false))) {
+      return 'Selected working repository is unavailable. Remove it or restore its checkout.';
+    }
+    return '';
+  }
+
+  renderWorkingRepositories(node) {
+    if (node.nodeType === 'MANUAL' || this.nodeScopeMode(node) !== GLOBAL_SCOPE_MODE) return '';
+    return `<fieldset class="node-editor-working-repositories">
+      <legend>Working repositories</legend>
+      <label><input type="checkbox" data-working-include ${node.includeTaskRepositories !== false ? 'checked' : ''}>
+        Include repositories selected for the task</label>
+      <label class="field-label" for="workingRepositorySearch">${node.includeTaskRepositories !== false ? 'Additional repositories' : 'Repositories'}</label>
+      <input id="workingRepositorySearch" class="text-input" type="search" data-working-search placeholder="Search repositories…" value="${escapeHtml(this.repositorySearch)}">
+      <div data-working-list>${this.renderWorkingRepositoryOptions(node)}</div>
+      <p class="field-hint">These repositories do not add task scopes.</p>
+      ${this.repositoryLoadError ? `<p role="alert">${escapeHtml(this.repositoryLoadError)}</p>` : ''}
+      <p role="alert" data-working-error>${escapeHtml(this.workingRepositoriesError(node))}</p>
+    </fieldset>`;
+  }
+
+  renderWorkingRepositoryOptions(node) {
+    const selected = new Set(node.workspaceRepositoryIds || []);
+    const options = [...this.repositories];
+    for (const id of selected) {
+      if (!options.some((repository) => repository.id === id)) options.push({ id, name: id, cloned: false });
+    }
+    const search = this.repositorySearch.toLowerCase();
+    return options.filter((repository) => (selected.has(repository.id) && repository.cloned === false)
+      || repository.name.toLowerCase().includes(search) || repository.id.toLowerCase().includes(search))
+      .map((repository) => `<label class="working-repository-option"><input type="checkbox" data-working-repository="${escapeHtml(repository.id)}" ${selected.has(repository.id) ? 'checked' : ''}>
+        ${escapeHtml(repository.name)}${repository.cloned === false ? ' (unavailable)' : ''}</label>`).join('');
+  }
+
+  bindWorkingRepositories() {
+    const body = this.byId('agentsV2NodeEditorBody');
+    this.byId('agentsV2NodeEditorSave').disabled = Boolean(this.workingRepositoriesError(this.nodeEditorDraft));
+    body.querySelector('[data-working-include]')?.addEventListener('change', (event) => {
+      this.syncNodeEditorDraftFromDom();
+      this.nodeEditorDraft.includeTaskRepositories = event.target.checked;
+      this.renderNodeEditor();
+    });
+    body.querySelector('[data-working-search]')?.addEventListener('input', (event) => {
+      this.repositorySearch = event.target.value;
+      body.querySelector('[data-working-list]').innerHTML = this.renderWorkingRepositoryOptions(this.nodeEditorDraft);
+      this.bindWorkingRepositoryOptions();
+    });
+    this.bindWorkingRepositoryOptions();
+  }
+
+  bindWorkingRepositoryOptions() {
+    this.byId('agentsV2NodeEditorBody').querySelectorAll('[data-working-repository]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const ids = new Set(this.nodeEditorDraft.workspaceRepositoryIds || []);
+        if (input.checked) ids.add(input.dataset.workingRepository);
+        else ids.delete(input.dataset.workingRepository);
+        this.syncNodeEditorDraftFromDom();
+        this.nodeEditorDraft.workspaceRepositoryIds = [...ids];
+        this.renderNodeEditor();
+      });
     });
   }
 
@@ -1015,6 +1119,7 @@ export class WorkflowBuilder {
       ...this.nodeEditorDraft,
       inputMode: this.nodeInputMode(this.nodeEditorDraft),
       scopeMode: this.nodeScopeMode(this.nodeEditorDraft),
+      ...this.workspaceConfiguration(this.nodeEditorDraft),
       contextMode: this.nodeContextMode(this.nodeEditorDraft),
       inputs: this.reindexPorts(this.nodeEditorDraft.inputs).map((port) => this.normalizedPort(port)),
       outputs: this.reindexPorts(this.nodeEditorDraft.outputs).map((port) => this.normalizedPort(port))
@@ -1025,6 +1130,8 @@ export class WorkflowBuilder {
   }
 
   validateNodeEditorDraft() {
+    const workspaceError = this.workingRepositoriesError(this.nodeEditorDraft);
+    if (workspaceError) return workspaceError;
     if (ITERATION_CONTEXT_MODES.includes(this.nodeContextMode(this.nodeEditorDraft))) {
       const group = String(this.nodeEditorDraft.contextGroupKey || '');
       if (!group.trim()) return 'Context iteration group is required.';
@@ -1463,6 +1570,7 @@ export class WorkflowBuilder {
         nodeType: node.nodeType || 'AGENT',
         inputMode: this.nodeInputMode(node),
         scopeMode: this.nodeScopeMode(node),
+        ...this.workspaceConfiguration(node),
         contextMode: this.nodeContextMode(node),
         ...(ITERATION_CONTEXT_MODES.includes(this.nodeContextMode(node)) ? { contextGroupKey: node.contextGroupKey } : {}),
         inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
@@ -1527,6 +1635,7 @@ export class WorkflowBuilder {
         nodeType: node.nodeType || 'AGENT',
         inputMode: this.nodeInputMode(node),
         scopeMode: this.nodeScopeMode(node),
+        ...this.workspaceConfiguration(node),
         contextMode: this.nodeContextMode(node),
         ...(ITERATION_CONTEXT_MODES.includes(this.nodeContextMode(node)) ? { contextGroupKey: node.contextGroupKey } : {}),
         inputs: this.reindexPorts(node.inputs).map((port) => this.normalizedPort(port)),
@@ -1550,6 +1659,7 @@ export class WorkflowBuilder {
       nodeType: node.nodeType || 'AGENT',
       inputMode: this.nodeInputMode(node),
       scopeMode: this.nodeScopeMode(node),
+        ...this.workspaceConfiguration(node),
       contextMode: this.nodeContextMode(node),
         ...(ITERATION_CONTEXT_MODES.includes(this.nodeContextMode(node)) ? { contextGroupKey: node.contextGroupKey } : {}),
       inputs: this.reindexPorts(node.inputs).map((port) => ({ ...port })),

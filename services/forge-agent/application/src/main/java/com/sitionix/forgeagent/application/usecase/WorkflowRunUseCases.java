@@ -64,9 +64,6 @@ public class WorkflowRunUseCases {
         final Workflow workflow = this.workflowRepository.findByIdForUpdate(workflowId)
                 .orElseThrow(() -> new NotFoundException("WORKFLOW_NOT_FOUND", "Workflow was not found."));
         final UUID runId = UUID.randomUUID();
-        final WorkflowRunGraph graph = this.snapshotBuilder.build(runId, workflow);
-        final RunPort taskInputPort = this.requireTaskInputPort(graph);
-        final RunNode entry = this.requireTaskInputNode(graph, taskInputPort);
         if (repositoryIds == null) {
             throw new ValidationException("TASK_RUN_REQUIRES_REPOSITORIES",
                     "Task-owned workflow run requires an explicit repository snapshot.");
@@ -76,6 +73,9 @@ public class WorkflowRunUseCases {
             throw new ValidationException("TASK_RUN_REQUIRES_REPOSITORIES",
                     "Task-owned workflow run requires an explicit repository snapshot.");
         }
+        final WorkflowRunGraph graph = this.snapshotBuilder.build(runId, workflow, repositorySnapshot);
+        final RunPort taskInputPort = this.requireTaskInputPort(graph);
+        final RunNode entry = this.requireTaskInputNode(graph, taskInputPort);
         if (repositorySnapshot.isEmpty() && graph.nodes().stream().anyMatch(node ->
                 this.scopeProjectionPolicy.invocationRepositories(node.scopeMode(), repositorySnapshot).isEmpty())) {
             throw new ValidationException("PER_SCOPE_RUN_REQUIRES_REPOSITORIES",
