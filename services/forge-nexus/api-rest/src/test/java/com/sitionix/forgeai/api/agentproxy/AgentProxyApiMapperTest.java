@@ -70,6 +70,20 @@ class AgentProxyApiMapperTest {
     private final AgentProxyApiMapper mapper = new AgentProxyApiMapper(this.objectMapper);
 
     @Test
+    void workingRepositoriesSurviveRequestAndResponseMapping() {
+        final var ids = List.of(UUID.randomUUID(), UUID.randomUUID());
+        final var request = new NodeRequest(NODE_ID, AGENT_ID, "DEPENDENCIES_ONLY", List.of(), List.of(),
+                new NodePositionRequest(0,0), "GLOBAL", "FRESH_EACH_NODE_RUN", null,
+                com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType.AGENT, false, ids);
+        final var command = this.mapper.toCommand(new SaveAgentWorkflowRequest("wf", List.of(request), List.of(), null, null));
+        assertThat(command.nodes().getFirst().includeTaskRepositories()).isFalse();
+        assertThat(command.nodes().getFirst().workspaceRepositoryIds()).containsExactlyElementsOf(ids);
+        final var response = this.mapper.toResponse(new AgentWorkflow(WORKFLOW_ID, PROJECT_ID, "wf", command.nodes(), List.of(), null, CREATED, UPDATED));
+        assertThat(response.nodes().getFirst().includeTaskRepositories()).isFalse();
+        assertThat(response.nodes().getFirst().workspaceRepositoryIds()).containsExactlyElementsOf(ids);
+    }
+
+    @Test
     void mapsAssetMonitoringReplacementAtTheApiBoundary() {
         var request = new AgentAssetMonitoringReplacementRequest(List.of(
                 new AgentAssetMonitoringReplacementRequest.Target(
@@ -445,7 +459,8 @@ class AgentProxyApiMapperTest {
                                 NODE_ID,
                                 "Analyzer",
                                 new NodePosition(1.0, 2.0),
-                                "GLOBAL"
+                                "GLOBAL", "FRESH_EACH_NODE_RUN", null,
+                                com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType.AGENT, List.of(REPOSITORY_ID)
                         )),
                         List.of(new AgentRunPort(INPUT_ID, NODE_ID, "INPUT", "Initial", 0),
                                 new AgentRunPort(OUTPUT_ID, NODE_ID, "OUTPUT", "Done", 0)),
@@ -509,7 +524,8 @@ class AgentProxyApiMapperTest {
                                 NODE_ID,
                                 "Analyzer",
                                 new NodePositionResponse(1.0, 2.0),
-                                "GLOBAL"
+                                "GLOBAL", "FRESH_EACH_NODE_RUN", null,
+                                com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType.AGENT, List.of(REPOSITORY_ID)
                         )),
                         List.of(new AgentRunPortResponse(INPUT_ID, NODE_ID, "INPUT", "Initial", 0),
                                 new AgentRunPortResponse(OUTPUT_ID, NODE_ID, "OUTPUT", "Done", 0)),

@@ -42,6 +42,8 @@ class ExecutionWorkspaceResolverTest {
     @Mock
     private GitRepositoryPort gitRepositoryPort;
 
+    @Mock
+    private com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository graphRepository;
     private ExecutionWorkspaceResolver resolver;
     private final Map<UUID, ProjectRepositoryWorkspaceState> states = new LinkedHashMap<>();
 
@@ -50,10 +52,11 @@ class ExecutionWorkspaceResolverTest {
         this.resolver = new ExecutionWorkspaceResolver(
                 this.repositoryLinkRepository,
                 this.localProjectWorkspacePort,
-                this.gitRepositoryPort
+                this.gitRepositoryPort,
+                this.graphRepository
         );
-        when(this.localProjectWorkspacePort.resolveProjectWorkspace(PROJECT_ID)).thenReturn(PROJECT_WORKSPACE);
-        when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(
+        lenient().when(this.localProjectWorkspacePort.resolveProjectWorkspace(PROJECT_ID)).thenReturn(PROJECT_WORKSPACE);
+        lenient().when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(
                 this.repository(REPOSITORY_A_ID, PROJECT_ID, "git@example/backend.git"),
                 this.repository(REPOSITORY_B_ID, PROJECT_ID, "git@example/frontend.git")
         ));
@@ -107,7 +110,7 @@ class ExecutionWorkspaceResolverTest {
 
     @Test
     void repositoryFromAnotherProjectFailsClosed() {
-        when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(
+        lenient().when(this.repositoryLinkRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(
                 this.repository(REPOSITORY_A_ID, PROJECT_ID, "git@example/backend.git")
         ));
 
@@ -136,6 +139,57 @@ class ExecutionWorkspaceResolverTest {
             assertThat(a.get()).isEqualTo(new ExecutionWorkspace(REPOSITORY_A, List.of(REPOSITORY_A)));
             assertThat(b.get()).isEqualTo(new ExecutionWorkspace(REPOSITORY_B, List.of(REPOSITORY_B)));
         }
+    }
+
+    @Test
+    void persistedNodeWorkspaceWinsOverTaskScopeIncludingExplicitEmptySnapshot() {
+        final var run = workflowRun();
+        final var invocation = invocation(run.id());
+        when(this.graphRepository.findNode(run.id(), invocation.sourceNodeId()))
+                .thenReturn(java.util.Optional.of(snapshot(run.id(), invocation.sourceNodeId(), List.of(REPOSITORY_B_ID))));
+        assertThat(this.resolver.resolve(run, invocation).workspaceRoots()).containsExactly(REPOSITORY_B);
+        when(this.graphRepository.findNode(run.id(), invocation.sourceNodeId()))
+                .thenReturn(java.util.Optional.of(snapshot(run.id(), invocation.sourceNodeId(), List.of())));
+        assertThat(this.resolver.resolve(run, invocation).workspaceRoots()).isEmpty();
+    }
+
+    @Test
+    void missingSnapshotFailsInsteadOfFallingBackToTaskRepositories() {
+        final var run = workflowRun();
+        assertThatThrownBy(() -> this.resolver.resolve(run, invocation(run.id())))
+                .isInstanceOf(ExecutionWorkspaceException.class).hasMessage("Snapshotted workflow node is unavailable.");
+    }
+
+    @Test
+    void missingRequiredSnapshotCheckoutFailsEvenWhenTaskCheckoutsAreAvailable() {
+        final var run = workflowRun();
+        final var invocation = invocation(run.id());
+        when(this.graphRepository.findNode(run.id(), invocation.sourceNodeId()))
+                .thenReturn(java.util.Optional.of(snapshot(run.id(), invocation.sourceNodeId(), List.of(REPOSITORY_B_ID))));
+        this.states.put(REPOSITORY_B_ID, new ProjectRepositoryWorkspaceState(REPOSITORY_B_ID, REPOSITORY_B, false));
+        assertThatThrownBy(() -> this.resolver.resolve(run, invocation))
+                .isInstanceOf(ExecutionWorkspaceException.class).hasMessage("Required Forge repository checkout is unavailable.");
+    }
+
+    private com.sitionix.forgeagent.domain.model.WorkflowRun workflowRun() {
+        return new com.sitionix.forgeagent.domain.model.WorkflowRun(UUID.randomUUID(), PROJECT_ID, UUID.randomUUID(), null,
+                "wf", "input", com.sitionix.forgeagent.domain.model.WorkflowRunStatus.QUEUED,
+                List.of(), List.of(), List.of(), null, null, null, Instant.EPOCH, null, null, List.of(REPOSITORY_A_ID));
+    }
+
+    private com.sitionix.forgeagent.domain.model.NodeRun invocation(UUID runId) {
+        return new com.sitionix.forgeagent.domain.model.NodeRun(UUID.randomUUID(), runId, UUID.randomUUID(), UUID.randomUUID(),
+                "agent", "instructions", null, com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                new com.sitionix.forgeagent.domain.model.NodePosition(0,0), UUID.randomUUID(), null, null, null, null,
+                com.sitionix.forgeagent.domain.model.NodeRunStatus.PENDING, null, null, null, Instant.EPOCH, null, null, null);
+    }
+
+    private com.sitionix.forgeagent.domain.model.RunNode snapshot(UUID runId, UUID nodeId, List<UUID> ids) {
+        return new com.sitionix.forgeagent.domain.model.RunNode(runId, nodeId, UUID.randomUUID(), "agent", "instructions", null,
+                null, com.sitionix.forgeagent.domain.model.NodeInputMode.DEPENDENCIES_ONLY,
+                new com.sitionix.forgeagent.domain.model.NodePosition(0,0), com.sitionix.forgeagent.domain.model.NodeScopeMode.GLOBAL,
+                com.sitionix.forgeagent.domain.model.NodeContextMode.FRESH_EACH_NODE_RUN, null,
+                com.sitionix.forgeagent.domain.model.NodeType.AGENT, ids);
     }
 
     private ProjectRepositoryLink repository(final UUID id, final UUID projectId, final String remoteUrl) {

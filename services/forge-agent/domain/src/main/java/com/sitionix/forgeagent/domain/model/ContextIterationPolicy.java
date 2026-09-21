@@ -36,6 +36,12 @@ public final class ContextIterationPolicy {
                 throw new ValidationException("CONTEXT_GROUP_SCOPE_CONFLICT", "All nodes in an iteration group must use the same scope mode.");
             }
             if (node.contextMode() == NodeContextMode.SHARED_SESSION_GROUP
+                    && node.scopeMode() == NodeScopeMode.GLOBAL
+                    && !java.util.Set.copyOf(prior.resolvedWorkspaceRepositoryIds())
+                        .equals(java.util.Set.copyOf(node.resolvedWorkspaceRepositoryIds()))) {
+                throw new ValidationException("CONTEXT_GROUP_WORKSPACE_CONFLICT", "Shared GLOBAL nodes must use the same working repository set.");
+            }
+            if (node.contextMode() == NodeContextMode.SHARED_SESSION_GROUP
                     && !java.util.Objects.equals(prior.executionModel(), node.executionModel())) {
                 throw new ValidationException("CONTEXT_GROUP_CONFIGURATION_CONFLICT", "Shared group snapshots must use the same provider, model and effort.");
             }

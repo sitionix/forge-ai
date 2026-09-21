@@ -394,6 +394,40 @@ class CodexAgentExecutorTest {
     }
 
     @Test
+    void explicitContractWorkspaceReachesProviderWithoutContributionRepositoryRoots() {
+        final ExecutionWorkspace globalWorkspace = new ExecutionWorkspace(
+                Path.of("/forge/project"),
+                List.of(Path.of("/forge/project/app-afesox"))
+        );
+        final NodeExecutionClaim claim = new NodeExecutionClaim(
+                WORKFLOW_RUN_ID,
+                NODE_RUN_ID,
+                AGENT_ID,
+                "Integrate repository outputs.",
+                "Integrator",
+                "Integrate the contributions.",
+                OUTPUT_SCHEMA,
+                new NodeRunExecutionModel("codex", "gpt-5.6-luna", null),
+                new NodeInputEnvelope(
+                        null,
+                        null,
+                        List.of(
+                                new NodeInputContribution(
+                                        UUID.randomUUID(), UUID.randomUUID(), new NodeRunOutput("{}"), REPOSITORY_A_ID),
+                                new NodeInputContribution(
+                                        UUID.randomUUID(), UUID.randomUUID(), new NodeRunOutput("{}"), REPOSITORY_B_ID)
+                        )
+                ),
+                List.of(),
+                globalWorkspace
+        );
+
+        this.executor.execute(claim);
+
+        assertThat(this.client.request.executionWorkspace()).isEqualTo(globalWorkspace);
+    }
+
+    @Test
     void noDependenciesAreSerializedAsEmptyArray() throws Exception {
         this.executor.execute(this.claim(new NodeRunExecutionModel("codex", "gpt-5.6-luna", null), OUTPUT_SCHEMA));
 

@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.infrastructure.agentclient;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.agentproxy.AgentDefinitionDetails;
@@ -495,7 +496,7 @@ public class ForgeAgentClientMapper {
                 response.agentName(),
                 response.position() == null ? null : new NodePosition(response.position().x(), response.position().y()),
                 response.scopeMode(),
-                response.contextMode(), response.contextGroupKey(), response.nodeType()
+                response.contextMode(), response.contextGroupKey(), response.nodeType(), response.resolvedWorkspaceRepositoryIds()
         );
     }
 
@@ -525,7 +526,7 @@ public class ForgeAgentClientMapper {
         );
     }
 
-    private AgentNodeRunOutputDocument toOutputDocument(final com.fasterxml.jackson.databind.JsonNode value) {
+    private AgentNodeRunOutputDocument toOutputDocument(final JsonNode value) {
         if (value == null) {
             return null;
         }
@@ -588,7 +589,7 @@ public class ForgeAgentClientMapper {
                 node.outputs() == null ? null : node.outputs().stream().map(this::toRequest).toList(),
                 node.position() == null ? null : new NodePositionRequest(node.position().x(), node.position().y()),
                 node.scopeMode(),
-                node.contextMode(), node.contextGroupKey(), node.nodeType()
+                node.contextMode(), node.contextGroupKey(), node.nodeType(), node.includeTaskRepositories(), node.workspaceRepositoryIds()
         );
     }
 
@@ -602,7 +603,7 @@ public class ForgeAgentClientMapper {
                 response.outputs() == null ? null : response.outputs().stream().map(this::toDomain).toList(),
                 position == null ? null : new NodePosition(position.x(), position.y()),
                 response.scopeMode(),
-                response.contextMode(), response.contextGroupKey(), response.nodeType()
+                response.contextMode(), response.contextGroupKey(), response.nodeType(), response.includeTaskRepositories(), response.workspaceRepositoryIds()
         );
     }
 

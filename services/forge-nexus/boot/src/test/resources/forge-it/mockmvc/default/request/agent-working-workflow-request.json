@@ -1,12 +1,12 @@
 {
-  "name": "Manual choice",
+  "name": "Contract workspace",
   "taskInputPortId": null,
   "taskOutputPortId": null,
   "nodes": [
     {
       "id": "88888888-8888-4888-8888-888888888888",
-      "nodeType": "MANUAL",
-      "targetId": null,
+      "nodeType": "AGENT",
+      "targetId": "22222222-2222-4222-8222-222222222222",
       "inputMode": "ALL",
       "inputs": [],
       "outputs": [
@@ -21,16 +21,14 @@
         "x": 1,
         "y": 2
       },
-      "scopeMode": "SHARED",
+      "scopeMode": "GLOBAL",
       "contextMode": "FRESH_EACH_NODE_RUN",
       "contextGroupKey": null,
-      "includeTaskRepositories": true,
-      "workspaceRepositoryIds": []
+      "includeTaskRepositories": false,
+      "workspaceRepositoryIds": [
+        "44444444-4444-4444-8444-444444444444"
+      ]
     }
   ],
-  "connections": [],
-  "id": "77777777-7777-4777-8777-777777777777",
-  "projectId": "11111111-1111-4111-8111-111111111111",
-  "createdAt": "2026-09-15T08:00:00Z",
-  "updatedAt": "2026-09-15T08:00:00Z"
+  "connections": []
 }

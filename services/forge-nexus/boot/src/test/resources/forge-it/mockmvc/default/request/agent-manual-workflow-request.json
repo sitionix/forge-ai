@@ -23,7 +23,9 @@
       },
       "scopeMode": "SHARED",
       "contextMode": "FRESH_EACH_NODE_RUN",
-      "contextGroupKey": null
+      "contextGroupKey": null,
+      "includeTaskRepositories": true,
+      "workspaceRepositoryIds": []
     }
   ],
   "connections": []

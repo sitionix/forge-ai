@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.application.usecase;
 
+import com.sitionix.forgeagent.application.graph.WorkflowWorkspaceValidator;
 import com.sitionix.forgeagent.application.graph.WorkflowGraphValidator;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.exception.NotFoundException;
@@ -37,6 +38,7 @@ public class WorkflowUseCases {
     private final ProjectTaskRepository projectTaskRepository;
     private final WorkflowRunRepository workflowRunRepository;
     private final WorkflowGraphValidator workflowGraphValidator;
+    private final WorkflowWorkspaceValidator workspaceValidator;
     private final Clock clock;
 
     @Transactional(readOnly = true)
@@ -88,6 +90,7 @@ public class WorkflowUseCases {
             throw new ConflictException("DUPLICATE_WORKFLOW_NAME", "A workflow with this name already exists in this project.");
         }
         final List<Node> requestedNodes = command.nodes() == null ? List.of() : command.nodes();
+        this.workspaceValidator.validate(current.projectId(), requestedNodes);
         final List<WorkflowConnection> requestedConnections = command.connections() == null ? List.of() : command.connections();
         final WorkflowGraphValidator.ValidatedGraph graph = this.workflowGraphValidator.validateAndNormalize(
                 current.projectId(),

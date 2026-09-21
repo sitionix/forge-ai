@@ -6075,3 +6075,8 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .execution-node-has-waiting {
   border-color: rgba(184, 148, 31, 0.48);
 }
+
+.node-editor-working-repositories { margin-top: 16px; padding: 12px; min-width: 0; }
+.node-editor-working-repositories .field-label { display: block; margin-top: 12px; }
+.node-editor-working-repositories [data-working-list] { max-height: 200px; overflow-y: auto; margin-top: 8px; }
+.working-repository-option { display: flex; gap: 8px; padding: 4px 0; overflow-wrap: anywhere; }

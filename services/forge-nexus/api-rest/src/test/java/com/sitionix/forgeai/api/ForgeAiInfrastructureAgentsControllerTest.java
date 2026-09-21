@@ -503,8 +503,10 @@ class ForgeAiInfrastructureAgentsControllerTest {
 
     @Test
     void updateWorkflow() {
-        final SaveAgentWorkflowRequest request = new SaveAgentWorkflowRequest("Full Testing", List.of(), List.of(), null, null);
-        final SaveAgentWorkflowCommand command = new SaveAgentWorkflowCommand("Full Testing", List.of(), List.of(), null);
+        final var node = new com.sitionix.forgeai.domain.model.agentproxy.Node(UUID.randomUUID(), UUID.randomUUID(), "DEPENDENCIES_ONLY", List.of(), List.of(), null, "GLOBAL", "FRESH_EACH_NODE_RUN", null, com.sitionix.forgeai.domain.model.agentproxy.AgentNodeType.AGENT, false, List.of(UUID.randomUUID()));
+        final var nodeRequest = new com.sitionix.forgeai.api.agentproxy.NodeRequest(node.id(), node.targetId(), node.inputMode(), List.of(), List.of(), null, node.scopeMode(), node.contextMode(), null, node.nodeType(), node.includeTaskRepositories(), node.workspaceRepositoryIds());
+        final SaveAgentWorkflowRequest request = new SaveAgentWorkflowRequest("Full Testing", List.of(nodeRequest), List.of(), null, null);
+        final SaveAgentWorkflowCommand command = new SaveAgentWorkflowCommand("Full Testing", List.of(node), List.of(), null);
         final AgentWorkflow workflow = this.workflow();
         final AgentWorkflowResponse response = this.workflowResponse();
         when(this.mapper.toCommand(request)).thenReturn(command);

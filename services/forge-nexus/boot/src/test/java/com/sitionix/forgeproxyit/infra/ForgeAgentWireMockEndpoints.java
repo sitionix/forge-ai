@@ -62,6 +62,24 @@ public final class ForgeAgentWireMockEndpoints {
                 JsonNode.class, JsonNode.class, (WiremockDefault) context -> context.plainUrl().responseStatus(200).matchesJson("agent-manual-workflow-request.json").responseBody("agent-manual-workflow-response.json"));
     }
 
+    public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest, com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse> saveWorkingWorkflow() {
+        return Endpoint.createContract("/api/v1/workflows/{workflowRunId}", HttpMethod.PUT,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.SaveAgentWorkflowRequest.class, com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).matchesJson("agent-working-workflow-request.json").responseBody("agent-working-workflow-response.json"));
+    }
+
+    public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse> getWorkingWorkflow() {
+        return Endpoint.createContract("/api/v1/workflows/{workflowRunId}", HttpMethod.GET,
+                Void.class, com.sitionix.forgeai.infrastructure.agentclient.dto.AgentWorkflowResponse.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("agent-working-workflow-response.json"));
+    }
+
+    public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse> workingRun() {
+        return Endpoint.createContract("/api/v1/workflow-runs/{workflowRunId}", HttpMethod.GET,
+                Void.class, com.sitionix.forgeai.infrastructure.agentclient.dto.WorkflowRunResponse.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("agent-working-run-response.json"));
+    }
+
     private ForgeAgentWireMockEndpoints() {
     }
 

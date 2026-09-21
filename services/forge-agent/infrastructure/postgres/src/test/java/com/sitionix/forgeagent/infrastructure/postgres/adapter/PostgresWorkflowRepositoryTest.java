@@ -289,6 +289,7 @@ class PostgresWorkflowRepositoryTest {
 
     private WorkflowNodeEntity nodeEntity(final UUID id) {
         final WorkflowNodeEntity entity = new WorkflowNodeEntity();
+        entity.setIncludeTaskRepositories(true);
         entity.setNodeType("AGENT");
         entity.setWorkflowId(WORKFLOW_ID);
         entity.setId(id);

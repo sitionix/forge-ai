@@ -1,6 +1,12 @@
 package com.sitionix.forgeagent.infrastructure.postgres.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.CollectionTable;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.OrderColumn;
+import java.util.List;
+import java.util.ArrayList;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.IdClass;
@@ -68,4 +74,12 @@ public class WorkflowRunNodeEntity {
 
     @Column(name = "position_y", nullable = false)
     private double positionY;
+
+    @ElementCollection
+    @CollectionTable(name = "workflow_run_node_workspace_repositories", joinColumns = {
+            @JoinColumn(name = "workflow_run_id", referencedColumnName = "workflow_run_id"),
+            @JoinColumn(name = "source_node_id", referencedColumnName = "source_node_id")})
+    @OrderColumn(name = "repository_ordinal")
+    @Column(name = "repository_id", nullable = false)
+    private List<UUID> resolvedWorkspaceRepositoryIds = new ArrayList<>();
 }

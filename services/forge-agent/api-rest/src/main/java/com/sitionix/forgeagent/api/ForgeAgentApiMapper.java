@@ -426,7 +426,7 @@ class ForgeAgentApiMapper {
                 node.agentName(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
                 node.scopeMode().name(),
-                node.contextMode().name(), node.contextGroupKey(), node.nodeType().name()
+                node.contextMode().name(), node.contextGroupKey(), node.nodeType().name(), node.resolvedWorkspaceRepositoryIds()
         );
     }
 
@@ -511,7 +511,8 @@ class ForgeAgentApiMapper {
                 request.outputs() == null ? List.of() : request.outputs().stream().map(this::toNodePort).toList(),
                 position,
                 this.scopeMode(request.scopeMode()),
-                this.contextMode(request.contextMode()), request.contextGroupKey(), this.nodeType(request.nodeType())
+                this.contextMode(request.contextMode()), request.contextGroupKey(), this.nodeType(request.nodeType()),
+                request.includeTaskRepositories(), request.workspaceRepositoryIds()
         );
     }
 
@@ -524,7 +525,7 @@ class ForgeAgentApiMapper {
                 node.outputs() == null ? List.of() : node.outputs().stream().map(this::toResponse).toList(),
                 new NodePositionResponse(node.position().x(), node.position().y()),
                 node.scopeMode().name(),
-                node.contextMode().name(), node.contextGroupKey(), node.nodeType().name()
+                node.contextMode().name(), node.contextGroupKey(), node.nodeType().name(), node.includeTaskRepositories(), node.workspaceRepositoryIds()
         );
     }
 

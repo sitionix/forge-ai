@@ -121,11 +121,7 @@ public class NodeRunLifecycle {
 
         final ExecutionWorkspace executionWorkspace;
         try {
-            executionWorkspace = this.executionWorkspaceResolver.resolve(
-                    workflowRun.projectId(),
-                    nodeRun.repositoryId(),
-                    workflowRun.repositoryIds()
-            );
+            executionWorkspace = this.executionWorkspaceResolver.resolve(workflowRun, nodeRun);
         } catch (final ExecutionWorkspaceException exception) {
             this.nodeRunRepository.save(this.withFailed(
                     nodeRun,

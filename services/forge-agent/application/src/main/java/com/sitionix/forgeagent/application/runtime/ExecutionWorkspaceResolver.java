@@ -1,5 +1,9 @@
 package com.sitionix.forgeagent.application.runtime;
 
+import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
+import com.sitionix.forgeagent.domain.model.NodeRun;
+import com.sitionix.forgeagent.domain.model.NodeScopeMode;
+import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryLink;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceState;
@@ -22,6 +26,16 @@ public class ExecutionWorkspaceResolver {
     private final ProjectRepositoryLinkRepository repositoryLinkRepository;
     private final LocalProjectWorkspacePort localProjectWorkspacePort;
     private final GitRepositoryPort gitRepositoryPort;
+    private final WorkflowRunGraphRepository graphRepository;
+
+    public ExecutionWorkspace resolve(final WorkflowRun run,
+                                      final NodeRun invocation) {
+        final var node = this.graphRepository.findNode(run.id(), invocation.sourceNodeId())
+                .orElseThrow(() -> new ExecutionWorkspaceException("Snapshotted workflow node is unavailable."));
+        final var repositoryIds = node.scopeMode() == NodeScopeMode.GLOBAL
+                ? node.resolvedWorkspaceRepositoryIds() : run.repositoryIds();
+        return this.resolve(run.projectId(), invocation.repositoryId(), repositoryIds);
+    }
 
     public ExecutionWorkspace resolve(final UUID projectId,
                                       final UUID repositoryId,

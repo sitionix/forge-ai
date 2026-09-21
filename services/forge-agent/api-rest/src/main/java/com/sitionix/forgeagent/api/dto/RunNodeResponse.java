@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.api.dto;
 
+import java.util.List;
 import java.util.UUID;
 
 public record RunNodeResponse(
@@ -9,7 +10,19 @@ public record RunNodeResponse(
         String scopeMode,
         String contextMode,
         String contextGroupKey,
+        String nodeType,
+        List<UUID> resolvedWorkspaceRepositoryIds) {
+    public RunNodeResponse(
+        UUID sourceNodeId,
+        String agentName,
+        NodePositionResponse position,
+        String scopeMode,
+        String contextMode,
+        String contextGroupKey,
         String nodeType) {
+        this(sourceNodeId, agentName, position, scopeMode, contextMode, contextGroupKey, nodeType, java.util.List.of());
+    }
+
     public RunNodeResponse {
         nodeType = nodeType == null ? "AGENT" : nodeType;
     }

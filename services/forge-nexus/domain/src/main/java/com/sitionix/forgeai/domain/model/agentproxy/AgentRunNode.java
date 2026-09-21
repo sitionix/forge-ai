@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.domain.model.agentproxy;
 
+import java.util.List;
 import java.util.UUID;
 
 public record AgentRunNode(
@@ -9,7 +10,19 @@ public record AgentRunNode(
         String scopeMode,
         String contextMode,
         String contextGroupKey,
+        AgentNodeType nodeType,
+        List<UUID> resolvedWorkspaceRepositoryIds) {
+    public AgentRunNode(
+        UUID sourceNodeId,
+        String agentName,
+        NodePosition position,
+        String scopeMode,
+        String contextMode,
+        String contextGroupKey,
         AgentNodeType nodeType) {
+        this(sourceNodeId, agentName, position, scopeMode, contextMode, contextGroupKey, nodeType, java.util.List.of());
+    }
+
     public AgentRunNode {
         if (nodeType == null) {
             nodeType = AgentNodeType.AGENT;

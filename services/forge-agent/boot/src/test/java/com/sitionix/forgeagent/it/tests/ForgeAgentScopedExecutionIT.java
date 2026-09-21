@@ -246,7 +246,18 @@ class ForgeAgentScopedExecutionIT {
     void mixedIterationRecoveryRetryKeepsExactSessionAndConsumedInputs(final boolean global) {
         this.seed();
         this.saveMixedReviewerWorkflow(false);
+        final var original = this.workflowUseCases.getWorkflow(WORKFLOW_ID);
+        final Path contracts = this.projectWorkspace().resolve("recovery-contracts");
+        if (global) {
+            try { Files.createDirectories(contracts.resolve(".git")); } catch (IOException e) { throw new IllegalStateException(e); }
+            this.forgeIt.postgresql().create().to(PROJECT_REPOSITORY.withEntity(this.repositoryEntity(repository(4), "recovery-contracts"))).build();
+            this.save(original.nodes().stream().map(node -> node.id().equals(REVIEWER)
+                    ? new Node(node.id(), node.targetId(), node.inputMode(), node.inputs(), node.outputs(), node.position(),
+                        node.scopeMode(), node.contextMode(), node.contextGroupKey(), node.nodeType(), false, List.of(repository(4))) : node).toList(),
+                    original.connections(), original.taskInputPortId(), original.taskOutputPortId());
+        }
         final UUID runId = this.createTask(this.repositories(2));
+        if (global) this.save(original.nodes(), original.connections(), original.taskInputPortId(), original.taskOutputPortId());
         for (UUID repo : this.repositories(2)) {
             this.completeMixedContext(this.onlyPending(runId, IMPLEMENTER, repo), "retry-" + repo);
         }
@@ -259,6 +270,7 @@ class ForgeAgentScopedExecutionIT {
         }
         final var parent = global ? reviewer : this.onlyPending(runId, IMPLEMENTER, REPOSITORY_A);
         final var old = this.lifecycle.tryStart(parent.id()).orElseThrow();
+        if (global) assertThat(old.executionWorkspace().workspaceRoots()).containsExactly(contracts);
         final var lease = old.agentSessionClaim();
         final String conversation = global ? "retry-review" : "retry-" + REPOSITORY_A;
         if (lease.providerConversationId() == null) {
@@ -274,12 +286,18 @@ class ForgeAgentScopedExecutionIT {
                 ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Completed"))
                 .when(this.recoveryInspector).inspect(any());
         assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
+        if (global) {
+            final var inspection = org.mockito.ArgumentCaptor.forClass(com.sitionix.forgeagent.application.runtime.AgentExecutionRecoveryInspection.class);
+            org.mockito.Mockito.verify(this.recoveryInspector).inspect(inspection.capture());
+            assertThat(inspection.getValue().executionWorkspace().workspaceRoots()).containsExactly(contracts);
+        }
         final var retry = this.retryRecoveredNodeRun.execute(runId, parent.id());
         final var child = this.nodeRunRepository.findById(retry.nodeRunId()).orElseThrow();
         assertThat(child.contextIterationId()).isEqualTo(parent.contextIterationId());
         assertThat(child.repositoryId()).isEqualTo(parent.repositoryId());
         assertThat(child.retryOfNodeRunId()).isEqualTo(parent.id());
         final var resumed = this.lifecycle.tryStart(child.id()).orElseThrow();
+        if (global) assertThat(resumed.executionWorkspace().workspaceRoots()).containsExactly(contracts);
         assertThat(resumed.inputEnvelope().contributions()).isEqualTo(old.inputEnvelope().contributions());
         assertThat(resumed.agentSessionClaim().sessionId()).isEqualTo(lease.sessionId());
         assertThat(resumed.agentSessionClaim().providerConversationId()).isEqualTo(conversation);
@@ -287,6 +305,42 @@ class ForgeAgentScopedExecutionIT {
         assertThat(after.turn().sequence()).isEqualTo(before.turn().sequence() + 1);
         assertThat(after.session().sourceNodeId()).isEqualTo(parent.sourceNodeId());
         assertThat(after.session().repositoryId()).isEqualTo(global ? null : REPOSITORY_A);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void globalWorkingRepositoryDoesNotExpandTaskScopesAndSurvivesTemplateEdit(boolean checkoutAvailable) throws Exception {
+        this.seed();
+        final UUID extra = repository(4);
+        final String repositoryName = checkoutAvailable ? "contracts" : "missing-contracts-" + UUID.randomUUID();
+        final Path extraPath = this.projectWorkspace().resolve(repositoryName);
+        if (checkoutAvailable) Files.createDirectories(extraPath.resolve(".git"));
+        this.forgeIt.postgresql().create().to(PROJECT_REPOSITORY.withEntity(this.repositoryEntity(extra, repositoryName))).build();
+        final Node scoped = this.node(A, AGENT_A_ID, A_IN, A_OUT, 0, NodeScopeMode.PER_SCOPE);
+        final Node base = this.node(B, AGENT_B_ID, B_IN, B_OUT, 1, NodeScopeMode.GLOBAL);
+        final Node configured = new Node(base.id(), base.targetId(), base.inputMode(), base.inputs(), base.outputs(),
+                base.position(), base.scopeMode(), base.contextMode(), base.contextGroupKey(), base.nodeType(), false, List.of(extra));
+        this.save(List.of(scoped, configured), List.of(this.connection(1, A_OUT, B_IN)), A_IN, B_OUT);
+        final UUID runId = this.createTask(this.repositories(3));
+        assertThat(this.nodeRuns(runId, A)).hasSize(3);
+        this.save(List.of(scoped, base), List.of(this.connection(1, A_OUT, B_IN)), A_IN, B_OUT);
+        for (UUID repositoryId : this.repositories(3)) {
+            this.completeWithWorkspaceAssertion(this.onlyPending(runId, A, repositoryId), "{}");
+        }
+        final var global = this.onlyPending(runId, B);
+        if (!checkoutAvailable) {
+            assertThat(this.lifecycle.tryStart(global.id())).isEmpty();
+            assertThat(this.nodeRunRepository.findById(global.id()).orElseThrow().failure().code())
+                    .isEqualTo("EXECUTION_WORKSPACE_UNAVAILABLE");
+            this.terminal(runId, WorkflowRunStatus.FAILED);
+            return;
+        }
+        final var claim = this.lifecycle.tryStart(global.id()).orElseThrow();
+        assertThat(claim.executionWorkspace().workspaceRoots()).containsExactly(extraPath);
+        assertThat(this.nodeRuns(runId, B)).hasSize(1);
+        assertThat(this.workflowRunUseCases.getWorkflowRun(runId).repositoryIds()).containsExactlyElementsOf(this.repositories(3));
+        this.lifecycle.succeed(global.id(), new AgentExecutionResult(new NodeRunOutput("{}"), null), claim.agentSessionClaim());
+        this.terminal(runId, WorkflowRunStatus.SUCCEEDED);
     }
 
     @Test

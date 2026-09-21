@@ -84,7 +84,8 @@ public class AgentExecutionRecoveryService {
             final var workflow = this.workflows.findById(claim.workflowRunId());
             if (workflow.isEmpty()) return ProviderTurnRecoveryResult.unknown("Owning workflow run is unavailable.");
             final var run = workflow.get();
-            final var workspace = this.workspaces.resolve(run.projectId(), claim.repositoryId(), run.repositoryIds());
+            final var workspace = this.workspaces.resolve(run, this.nodeRuns.findById(claim.nodeRunId())
+                    .orElseThrow(() -> new ExecutionWorkspaceException("Recovering invocation is unavailable.")));
             if (workspace == null) return ProviderTurnRecoveryResult.unknown("Execution workspace is unavailable.");
             final Instant now = this.clock.instant();
             final Instant leaseDeadline = claim.leaseExpiresAt().minus(RECOVERY_COMMIT_RESERVE);
