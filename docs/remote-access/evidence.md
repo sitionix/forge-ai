@@ -147,3 +147,64 @@ No failure was treated as acceptance, and no production feature was manually fix
 
 Stage 1 remains unauthorized. The user subsequently authorized a Stage 0 review PR.
 No reviews/comments, merge or deployment were performed.
+
+## PR #141 cleanup regression fix
+
+The original finally block ignored systemctl return codes and accepted empty
+ActiveState output. When both stop/show failed to connect to the bus, it removed
+artifacts and emitted CLEANUP_PASS without confirming unit termination. The prior
+successful live run did not cover this failure path.
+
+TDD reproduction used the original main() and mocked only external operations:
+stop/show returned exit 1, empty stdout and `Failed to connect to bus`. The new
+regression failed on the unchanged implementation with:
+
+```text
+AssertionError: 'CLEANUP_PASS' unexpectedly found in
+'CLEANUP_PASS: only owned units/rootfs removed\n'
+Ran 1 test ... FAILED (failures=1)
+```
+
+The cleanup implementation is now a small function in the same probe. Every unit
+gets bounded stop and inspection attempts even if an earlier attempt raises or
+times out. Inspection must succeed and provide exactly LoadState, ActiveState,
+SubState and MainPID. Only inactive/dead with MainPID=0 is accepted, with loaded
+or explicitly not-found LoadState. A nonzero stop is tolerated only if a successful
+subsequent inspection positively identifies absence. Stop exceptions/timeouts
+remain failures even if a later query reports absence. Unknown, failed, active,
+deactivating, empty, duplicate or incomplete state responses fail closed.
+
+The real host's `systemctl show` for a nonexistent test unit returned exit 0 with
+LoadState=not-found, ActiveState=inactive, SubState=dead, MainPID=0. No stderr text
+is parsed. reset-failed is no longer used. If any unit is unconfirmed, rootfs and
+state directories/symlinks remain untouched, CLEANUP_FAILED identifies the retained
+rootfs, and the raised RuntimeError leaves the probe unsuccessful. Successful
+cleanup during an earlier probe exception does not catch or suppress that exception.
+
+Mocked regression verification (not live SSH/systemd):
+
+```sh
+python3 -m unittest discover -s docs/remote-access/probes -p 'test_privileged_cleanup.py' -v
+# 9 tests passed, including parameterized subTest cases.
+python3 -m py_compile docs/remote-access/probes/privileged_boundary.py docs/remote-access/probes/test_privileged_cleanup.py
+git diff --check
+```
+
+Tests call actual cleanup code (and actual main for early-failure regressions),
+use temporary directories, and do not require root or touch real /var/lib/private.
+Negative cases assert concrete CLEANUP_FAILED, retained artifacts, no CLEANUP_PASS,
+no rmtree/unlink calls and attempts for the remaining units. Positive cases assert
+only owned artifacts removed; the original early failure remains the raised error.
+
+Actual combined privileged rerun after the fix: interactive sudo, same isolated
+rootfs/system-systemd environment, **exit 0, 40 PASS assertions, CLEANUP_PASS**.
+This is real SSH/process evidence with the same explicitly stubbed supervisor,
+not production remote-access/Codex E2E. The captured rerun output was copied to
+privileged-result.txt; its text is byte-identical to the previous successful run
+because the existing success-path messages did not change. The previous output
+was not used as evidence of running the fix.
+
+Verified script SHA-256: `8f5e617cb5434ecb025ee06c6ffbbd8d580cef16e1400e6e0281df4a21f955ce`.
+Local rerun capture: `/tmp/forge-stage0-cleanup-fix.log`, exit capture:
+`/tmp/forge-stage0-cleanup-fix.exit`. No production suites needed or run for this
+probe-only correction. No Stage 1 work or PR metadata/review/comment/merge changes.

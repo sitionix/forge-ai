@@ -40,6 +40,58 @@ def write(path, value, mode=0o644):
     path.chmod(mode)
 
 
+def cleanup(units, base, prefix):
+    """Remove owned artifacts only after every bounded systemd check confirms safety."""
+    failures = []
+    for unit in units:
+        stop_result = None
+        try:
+            stop_result = run('systemctl', 'stop', unit)
+        except Exception as exc:
+            failures.append(unit + ': stop ' + type(exc).__name__)
+        # Inspect even after a failed stop; still attempt all remaining units.
+        try:
+            state = run('systemctl', 'show', unit, '--property=LoadState',
+                        '--property=ActiveState', '--property=SubState', '--property=MainPID')
+            if state.returncode != 0:
+                failures.append(unit + ': inspection exit ' + str(state.returncode))
+                continue
+            fields = {}
+            for line in state.stdout.splitlines():
+                key, separator, value = line.partition('=')
+                if not separator or key in fields:
+                    raise ValueError('invalid systemd properties')
+                fields[key] = value
+            if set(fields) != {'LoadState', 'ActiveState', 'SubState', 'MainPID'}:
+                raise ValueError('incomplete systemd properties')
+            stopped = (fields['ActiveState'] == 'inactive'
+                       and fields['SubState'] == 'dead' and fields['MainPID'] == '0')
+            # show returns success + explicit not-found for absent transient units.
+            # A failed stop is tolerated only for that positively confirmed absence.
+            absent = fields['LoadState'] == 'not-found'
+            if not stopped or fields['LoadState'] not in {'loaded', 'not-found'}:
+                failures.append(unit + ': stopped/absent state not confirmed')
+            elif stop_result is not None and stop_result.returncode != 0 and not absent:
+                failures.append(unit + ': stop exit ' + str(stop_result.returncode))
+        except Exception as exc:
+            failures.append(unit + ': inspection ' + type(exc).__name__)
+    if failures:
+        message = ('CLEANUP_FAILED: retained ' + str(base)
+                   + '; state directories/symlinks retained; ' + '; '.join(failures))
+        print(message, flush=True)
+        raise RuntimeError(message)
+    # reset-failed is deliberately unnecessary: it is not evidence of process stop.
+    for role in ['a', 'b']:
+        state_dir = Path('/var/lib/private') / (prefix + '-' + role)
+        state_link = Path('/var/lib') / (prefix + '-' + role)
+        if state_link.is_symlink():
+            state_link.unlink()
+        if state_dir.exists():
+            shutil.rmtree(state_dir)
+    shutil.rmtree(base)
+    print('CLEANUP_PASS: only owned units/rootfs removed', flush=True)
+
+
 def main(archive):
     if os.geteuid() != 0:
         raise RuntimeError('NOT READY: interactive root authorization required')
@@ -260,24 +312,9 @@ time.sleep(300)
     finally:
         stop.set()
         if worker: worker.join(timeout=35)
-        safe=True
-        for unit in units:
-            run('systemctl','stop',unit)
-            state=run('systemctl','show',unit,'--property=ActiveState','--value')
-            if state.stdout.strip() not in ['inactive','failed','']: safe=False
-            run('systemctl','reset-failed',unit)
         if server: server.close()
         if admin: admin.close()
-        if safe:
-            for role in ['a', 'b']:
-                state_dir=Path('/var/lib/private')/(prefix+'-'+role)
-                state_link=Path('/var/lib')/(prefix+'-'+role)
-                if state_link.is_symlink(): state_link.unlink()
-                if state_dir.exists(): shutil.rmtree(state_dir)
-            shutil.rmtree(base)
-            print('CLEANUP_PASS: only owned units/rootfs removed',flush=True)
-        else:
-            raise RuntimeError('CLEANUP_FAILED: retained '+str(base))
+        cleanup(units, base, prefix)
 
 
 if __name__=='__main__':
