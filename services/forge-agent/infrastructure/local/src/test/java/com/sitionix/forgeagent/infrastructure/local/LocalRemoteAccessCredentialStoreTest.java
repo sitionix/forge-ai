@@ -1,6 +1,8 @@
 package com.sitionix.forgeagent.infrastructure.local;
 
+import static java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE;
 import static java.nio.file.attribute.PosixFilePermission.GROUP_READ;
+import static java.nio.file.attribute.PosixFilePermission.GROUP_WRITE;
 import static java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE;
 import static java.nio.file.attribute.PosixFilePermission.OWNER_READ;
 import static java.nio.file.attribute.PosixFilePermission.OWNER_WRITE;
@@ -102,8 +104,9 @@ class LocalRemoteAccessCredentialStoreTest {
     @Test
     void rejectsInsecureRootAndCredentialPermissions(@TempDir final Path temp) throws Exception {
         final UUID sessionId = UUID.randomUUID();
-        final Path insecureRoot = Files.createDirectory(temp.resolve("insecure"),
-                PosixFilePermissions.asFileAttribute(Set.of(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE, GROUP_READ)));
+        final Path insecureRoot = Files.createDirectory(temp.resolve("insecure"));
+        Files.setPosixFilePermissions(insecureRoot, Set.of(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE, GROUP_READ));
+        assertThat(Files.getPosixFilePermissions(insecureRoot)).contains(GROUP_READ);
         try (var key = new RemoteAccessPrivateKey("secret".getBytes())) {
             assertThatThrownBy(() -> new LocalRemoteAccessCredentialStore(insecureRoot).store(sessionId, key))
                     .isInstanceOf(IllegalStateException.class);
@@ -193,11 +196,15 @@ class LocalRemoteAccessCredentialStoreTest {
 
     @Test
     void rejectsWritableExistingAncestorWithoutStickyBit(@TempDir final Path temp) throws Exception {
-        final Path insecureParent = Files.createDirectory(temp.resolve("insecure-parent"),
-                PosixFilePermissions.asFileAttribute(Set.of(
-                        OWNER_READ, OWNER_WRITE, OWNER_EXECUTE,
-                        GROUP_READ, java.nio.file.attribute.PosixFilePermission.GROUP_WRITE,
-                        java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE)));
+        final Path insecureParent = Files.createDirectory(temp.resolve("insecure-parent"));
+        final var insecurePermissions = Set.of(
+                OWNER_READ, OWNER_WRITE, OWNER_EXECUTE, GROUP_READ, GROUP_WRITE, GROUP_EXECUTE);
+        // Creation permissions are filtered by umask; set the negative-test mode explicitly.
+        Files.setPosixFilePermissions(insecureParent, insecurePermissions);
+        assertThat(insecureParent).isDirectory();
+        assertThat(Files.getPosixFilePermissions(insecureParent)).contains(GROUP_WRITE);
+        final int originalMode = (int) Files.getAttribute(insecureParent, "unix:mode");
+        assertThat(originalMode & 01000).isZero();
         final Path root = insecureParent.resolve("credentials");
 
         try (var key = new RemoteAccessPrivateKey("secret".getBytes())) {
@@ -206,6 +213,9 @@ class LocalRemoteAccessCredentialStoreTest {
         }
 
         assertThat(root).doesNotExist();
+        assertThat(insecureParent).isEmptyDirectory();
+        assertThat(Files.getPosixFilePermissions(insecureParent)).isEqualTo(insecurePermissions);
+        assertThat(Files.getAttribute(insecureParent, "unix:mode")).isEqualTo(originalMode);
     }
 
     private static Path secureDirectory(final Path path) throws IOException {
