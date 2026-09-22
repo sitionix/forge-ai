@@ -71,6 +71,12 @@ render_template "${TEMPLATE_DIR}/forge-jarvis.service.in" "${OUTPUT_DIR}/forge-j
   env_line "FORGE_AGENT_DB_PASSWORD" "${FORGE_AGENT_DB_PASSWORD:-forge_agent}"
   env_line "FORGE_AGENT_CODEX_COMMAND" "$(resolve_codex_command)"
   env_line "FORGE_AGENT_PORT" "7091"
+  # Only Agent consumes FORGE_AGENT_HOST; shared service environment remains safe.
+  if [[ -n "${FORGE_AGENT_HOST:-}" ]]; then
+    env_line "FORGE_AGENT_HOST" "${FORGE_AGENT_HOST}"
+  elif [[ "${SYSTEMD_USER}" == "forge-control" ]]; then
+    env_line "FORGE_AGENT_HOST" "127.0.0.1"
+  fi
   env_line "FORGE_NEXUS_BASE_URL" "http://127.0.0.1:9099/fgaisox"
   env_line "FORGE_KNOWLEDGE_BASE_URL" "http://127.0.0.1:7081"
   env_line "FORGE_JARVIS_BASE_URL" "http://127.0.0.1:7071"

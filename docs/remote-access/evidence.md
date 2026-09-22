@@ -364,3 +364,48 @@ limits are explicit in the installation guide, not silent fallbacks.
 
 READY_FOR_REVIEW. Independent review findings are fixed with RED→GREEN evidence;
 this is not external stage acceptance or a claim of production access readiness.
+
+
+## PR #143 correction — loopback-only authority HTTP bind
+
+The enabled Stage 2 authority previously had no invariant preventing its ordinary
+Agent HTTP listener from binding wildcard/LAN interfaces. This correction adds
+Agent-owned `FORGE_AGENT_HOST` → standard `server.address` mapping and a small
+boot-level validator. It runs after Boot's server factory configuration and
+rejects null/non-loopback resolved InetAddress before HTTP listener creation.
+With the channel disabled the validator is absent; legacy bind behavior remains.
+No default is substituted by validation.
+
+The existing systemd renderer explicitly emits `FORGE_AGENT_HOST=127.0.0.1` for
+its dedicated forge-control runtime. Explicit operator-provided values are
+preserved and unsafe enabled configurations fail at startup. A new renderer
+regression first failed because both dedicated loopback and explicit ordinary
+host values were absent; it passes after the mapping correction. Other services
+ignore this Agent-owned variable in the common env file.
+
+Tests cover disabled/missing and disabled/LAN; enabled IPv4/IPv6 loopback and
+localhost; enabled missing/empty, IPv4/IPv6 wildcard and LAN rejection. Typed
+hostname-address fixtures exercise LAN/loopback resolution without external DNS.
+The actual Agent SpringBootTest starts real Tomcat on port 0 with the channel
+flag enabled, production FORGE_AGENT_HOST mapping, PostgreSQL and an HTTP request
+to the bound 127.0.0.1 connector. Only the separately tested privileged Unix
+socket lifecycle is mocked in that HTTP IT; HTTP binding is not mocked. IPv6 is
+covered at config level; this correction's live HTTP check uses IPv4 loopback.
+
+This is a local bind restriction, not HTTP authentication. Full operator login,
+browser sessions, CSRF and Nexus service credentials remain Stage 6. SSH gate,
+channel/helper/client semantics, persisted sessions and V37 remain unchanged.
+Verification of the corrected implementation:
+
+- Focused Agent boot/config and HTTP bind tests: PASS.
+- Full `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: PASS.
+  The reports include 4 validator tests, 1 real HTTP bind IT and all 12
+  RemoteAccessPersistenceIT tests, without failures or skips in these classes.
+- Stage 2 `test_managed_ssh.py`: 13 tests PASS, including generated runtime config.
+- Stage 2 Docker image build: PASS; `docker run --rm --network none
+  forge-remote-stage2-test`: PASS, 28 real SSH assertions. That suite uses its
+  existing stub authority; it is not a live full Agent/Codex E2E.
+- `git diff --check`: PASS.
+
+No Stage 3+ functionality was added. These results provide correction evidence
+for external review, not stage acceptance.

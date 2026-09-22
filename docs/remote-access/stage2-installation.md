@@ -70,6 +70,31 @@ Enable the channel only on that Agent with the Spring property:
 forge.agent.remote-access.channel-enabled=true
 ```
 
+The Stage 2 authority Agent **requires an explicit loopback HTTP bind** whenever
+the channel is enabled. Standard Spring Boot `server.address` maps from the
+Agent-specific `FORGE_AGENT_HOST` variable. The existing systemd renderer emits
+`FORGE_AGENT_HOST="127.0.0.1"` for `FORGE_SYSTEMD_USER=forge-control`. An explicitly
+supplied `FORGE_AGENT_HOST` is preserved; an unsafe value then fails startup.
+Ordinary Agent generation without this variable remains unchanged, and other
+services do not consume this Agent-specific setting from the shared environment.
+
+For an independently prepared runtime, explicitly set either:
+
+```text
+FORGE_AGENT_HOST=127.0.0.1
+```
+
+or `server.address=127.0.0.1`. Validation never silently fills in a bind address.
+The boot validator checks the actual typed factory address after Boot's server
+configuration and before the HTTP listener starts. Missing/empty, wildcard
+(`0.0.0.0`, `::`) and LAN/non-loopback addresses are rejected with the channel
+enabled. IPv6 loopback `::1` is recognized by the typed validator; actual binding
+also requires OS IPv6 support. Hostnames are judged by the resolved address,
+not their spelling. With the channel disabled, no new bind validation runs.
+
+This does **not** authenticate Agent HTTP APIs. Operator authentication, browser
+sessions/CSRF and Nexus service credentials remain Stage 6.
+
 Default remains disabled. The socket requires the exact protected parent owner,
 group and 0750 permissions. A listener started under another user fails setup.
 It never creates directories or deletes an existing socket on startup. After a

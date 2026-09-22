@@ -46,6 +46,33 @@ class ManagedSshTest(unittest.TestCase):
             self.assertFalse(outside.exists())
             self.assertTrue(public.is_symlink())
 
+    def test_generated_control_agent_runtime_has_explicit_loopback_bind(self):
+        import os
+        import subprocess
+        renderer=BASE.parent/'systemd'/'render-units.sh'
+        for user, supplied, expected in [('forge-control',None,'127.0.0.1'),
+                                         ('forge-control','0.0.0.0','0.0.0.0'),
+                                         ('ordinary-agent',None,None),
+                                         ('ordinary-agent','192.0.2.10','192.0.2.10')]:
+            with self.subTest(user=user,host=supplied), tempfile.TemporaryDirectory() as temp:
+                environment=os.environ.copy()
+                environment.pop('FORGE_AGENT_HOST',None)
+                environment.update(FORGE_SYSTEMD_USER=user,FORGE_SYSTEMD_GROUP=user,
+                                   FORGE_AGENT_DB_PASSWORD='synthetic-test-password',
+                                   FORGE_AGENT_DB_URL='jdbc:postgresql://localhost:54329/fixture',
+                                   FORGE_AGENT_DB_USERNAME='fixture')
+                if supplied is not None: environment['FORGE_AGENT_HOST']=supplied
+                output=pathlib.Path(temp)
+                subprocess.run([str(renderer),str(output/'units'),str(output/'runtime.env')],
+                               env=environment,check=True,capture_output=True,text=True)
+                config=(output/'runtime.env').read_text()
+                if expected is None:
+                    self.assertNotIn('FORGE_AGENT_HOST=',config)
+                else:
+                    self.assertIn('FORGE_AGENT_HOST="'+expected+'"',config)
+                self.assertIn('User='+user,(output/'units'/'forge-agent.service').read_text())
+                self.assertNotIn('SERVER_ADDRESS=',config)
+
     def test_invalid_listen_address_and_ports_are_rejected(self):
         setup = load('install')
         for host in ['-oProxyCommand=id', '127.0.0.1\nPermitRootLogin yes', '*', '0.0.0.0', '::']:
