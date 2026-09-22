@@ -1,0 +1,29 @@
+PASS real installer reports NOT READY without systemd manager
+PASS installed systemd unit passes static verification
+PASS missing privilege-separation directory prevents daemon startup
+PASS managed tmpfiles applies without unrelated host sshd
+PASS managed boot setup restores privilege-separation directory
+PASS repeat setup preserves host key and unrelated sshd config
+PASS generate synthetic session
+PASS generate synthetic foreign
+PASS generate synthetic wrong-host
+PASS real authenticated key reaches bound status: (0, b'ACTIVE\n', b'Could not chdir to home directory /nonexistent: No such file or directory\n')
+PASS wrong host pin denied
+PASS foreign session key denied
+PASS peer environment cannot replace authenticated key proof
+PASS arbitrary or forged command denied: 'id'
+PASS arbitrary or forged command denied: 'sh'
+PASS arbitrary or forged command denied: 'status b99c6fbb-e660-43e8-bb5c-831e6b82fda1'
+PASS arbitrary or forged command denied: 'confirm'
+PASS arbitrary or forged command denied: ''
+PASS sftp subsystem denied
+PASS PTY denied
+PASS TCP forwarding denied
+PASS current authority status PROVISIONING
+PASS current authority status DENIED
+PASS binding mismatch denied by authority
+PASS unavailable authority denied
+PASS transport cannot modify /var/lib/forge-remote/authorized/keys
+PASS transport cannot modify /usr/libexec/forge-remote/forced-command
+PASS transport cannot modify /etc/forge-remote/host_ed25519
+STAGE2_SSH_BOUNDARY_PASS: real sshd/helper, stub authority; no workload execution or live Codex

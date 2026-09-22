@@ -102,6 +102,9 @@ jobs:
           </settings>
           EOF
               mvn -B -ntp -s .maven-settings.xml -pl services/forge-agent/boot -am verify
+              python3 -m unittest discover -s scripts/remote-access/tests -p 'test_managed_ssh.py' -v
+              docker build -f scripts/remote-access/tests/Dockerfile -t forge-remote-stage2-test .
+              docker run --rm --network none forge-remote-stage2-test
               ;;
 
             forge-nexus)
