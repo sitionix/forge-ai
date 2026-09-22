@@ -2,16 +2,17 @@
 
 Authority: the human-provided “Forge AI — Remote Access Roadmap”, 2026-09-22.
 This is a navigation/checkpoint map, not a replacement or relaxation of that task.
-Only Stage 0 is authorized. Each stage is a separate review unit; review fixes stay
-within that stage. No PR metadata, comments/reviews or merges without an explicit
-request. Stage 0 introduces documentation and disposable probes only, not runtime
-access. Current Stage 0 result: **READY_FOR_REVIEW**, with combined real OS probe evidence.
-Production access remains NOT READY; external acceptance has not been given.
+Stage 0 PR #141 was merged with explicitly authorized admin merge at
+`b6516ca2e6b6289e6365707683fd730f3faa43c2`. The user authorized Stage 1 next.
+Each stage remains a separate review unit; no Stage 2+ authorization is implied.
+No new PR metadata, comments/reviews or merges without an explicit request.
+Production remote access remains NOT READY: Stage 1 only adds local persistence
+and credential storage, not SSH authorization or execution.
 
 | Stage | Deliverable | Required exit evidence | State |
 | --- | --- | --- | --- |
-| 0 | Actual-code design; isolated SSH/process probes | Key pinning, forced commands, control/workload separation, descendants cleanup and session isolation; explicit missing-capability diagnosis | Combined real SSH/system-systemd probe passed 40 assertions using a stub supervisor; external review checkpoint |
-| 1 | Invitation/session aggregates, forward migration, instance identity and local key store | Transitions, concurrent reservation, DB roundtrip/restart, permissions/redaction; no SSH access | Not started / not authorized |
+| 0 | Actual-code design; isolated SSH/process probes | Key pinning, forced commands, control/workload separation, descendants cleanup and session isolation; explicit missing-capability diagnosis | Merged PR #141; combined real SSH/system-systemd probe passed 40 assertions using a stub supervisor |
+| 1 | Invitation/session aggregates, forward migration, instance identity and local key store | Transitions, concurrent reservation, DB roundtrip/restart, permissions/redaction; no SSH access | READY_FOR_REVIEW; 37 focused tests, full Agent/Nexus and Console regression passed |
 | 2 | Narrow privileged setup, managed sshd/helpers and fail-closed session gate | Binding cannot be forged; revoked/foreign/unavailable denied; inherited client config cannot bypass pinning; idempotent setup | Not started / not authorized |
 | 3 | Give Access and invitation lifecycle | Five-minute server TTL; single-use token, cancellation/expiry; malformed/key/endpoint checks; no secret GET/list | Not started / not authorized |
 | 4 | Pairing, durable key exchange and activation | Two real SSH instances; one session; concurrent redeem; lost responses/restarts; session-key confirmation; bounded provisioning cleanup | Not started / not authorized |

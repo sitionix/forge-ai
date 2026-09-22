@@ -208,3 +208,84 @@ Verified script SHA-256: `8f5e617cb5434ecb025ee06c6ffbbd8d580cef16e1400e6e0281df
 Local rerun capture: `/tmp/forge-stage0-cleanup-fix.log`, exit capture:
 `/tmp/forge-stage0-cleanup-fix.exit`. No production suites needed or run for this
 probe-only correction. No Stage 1 work or PR metadata/review/comment/merge changes.
+
+## Stage 1 — persistence and credentials (2026-09-22)
+
+PR #141 was merged by the user's explicit admin-merge authorization. Stage 1 is
+based on `b6516ca2e6b6289e6365707683fd730f3faa43c2`, branch
+`feature/SITIONIX-135`. Stage 2 remains unauthorized.
+
+The new boundary consists of immutable invitation/session aggregates, narrow
+repository ports, JDBC adapters and forward-only V37 migration. Existing
+SshConnection and AgentExecutionSession models/migrations are unchanged. The
+singleton Forge identity survives context restart. Invitation expiry remains a
+server-clock comparison; there is no expiry scheduler or implicit ACTIVE state.
+
+Grantor reservation conditionally consumes the invitation and inserts its unique
+PROVISIONING session in one database transaction. A deferred redemption FK is
+checked at commit. Accessor invitation IDs intentionally have no FK to local
+invitations, because those invitations belong to the remote grantor. Session
+transitions validate domain state and use version/status compare-and-set, so a
+stale writer cannot reactivate a revoked session.
+
+The accessor stores supplied private material through a narrow local adapter,
+then persists only the opaque UUID reference. Directory/file modes are 0700/0600;
+creation is exclusive, symlink/insecure ancestor paths fail closed, and exceptions
+remove only newly created owned material. Private material has a redacted string
+representation, defensive byte copies and explicit zeroization on close. No
+public DTO, token generation, SSH authorization or remote operation is added.
+
+### Test method and limits
+
+Domain and key-store regressions were written before their implementations.
+The initial database regression failed against V36 because the new tables did
+not exist; V37 plus adapters made the real-PostgreSQL tests pass. Unit tests use
+JUnit/Mockito/AssertJ with direct SUTs. Persistence tests use actual PostgreSQL 16
+via Testcontainers, including concurrent redemption, transaction rollback,
+V36-to-V37 migration, stale transitions and complete Spring context restart.
+Credential tests use real temporary POSIX files and synthetic key material.
+These are persistence/filesystem tests, **not live SSH/Codex E2E**.
+
+Independent review found that a default REQUIRED transaction could join an
+outer transaction and let its later rollback escape key compensation. A real
+PostgreSQL regression was added for that boundary. Provisioning must own its
+commit boundary; callers must not invoke it inside an ambient transaction.
+
+DB and filesystem writes are not claimed to be atomic. A process/host crash
+between key creation and DB commit can leave an orphan key. Targeted crash
+reconciliation, cryptographic key validation/generation, activation proof and
+confirmed revoke cleanup belong to later stages. No production grant can exist
+at this stage. Key storage currently requires the tested Linux/POSIX filesystem
+semantics and a protected control-user directory; it does not install the Stage 2
+OS identity boundary. Default directory:
+`${FORGE_RUNTIME_DIR:./var}/agent/remote-access/credentials`, override property
+`forge.agent.remote-access.credential-directory`.
+
+Verification results are recorded below after the final run. No live SSH or
+Codex E2E was run for Stage 1 (NOT_RUN); unchanged Stage 0 evidence is historical,
+not a claim of production remote access readiness.
+
+### Final Stage 1 verification
+
+- Ambient-transaction regression before correction: **RED**, Maven exit 1,
+  `Expecting code to raise a throwable.` After correction: **GREEN** in the
+  focused and full suites. Local capture: `/tmp/remote-stage1-ambient-red.log`.
+- Focused Stage 1 matrix: **37 tests, 0 failures/errors/skips**, including 11 real
+  PostgreSQL tests. Capture: `/tmp/remote-stage1-focused.log`.
+- `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: **exit 0**,
+  782 reported tests, 780 executed successfully and 2 existing opt-in live Codex
+  tests skipped (live-recovery-e2e/live-session-e2e flags absent). Final run is
+  after the transaction fix. Capture: `/tmp/remote-stage1-agent-verify.log`.
+- `mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify`: **exit 0**,
+  236 tests, no failures/errors/skips. `/tmp/remote-stage1-nexus-verify.log`.
+- Console `npm ci --ignore-scripts`, `npm test`, `npm run typecheck`,
+  `npm run build`: **exit 0**, 20 test files / 545 tests passed.
+  `/tmp/remote-stage1-console.log`.
+- `git diff --check` and `git diff --cached --check`: **PASS**. Production changes
+  are restricted to new Stage 1 Agent models/ports/service/adapters/V37; no
+  existing production file or old migration is changed.
+- Independent code re-review: no remaining blocking finding after the
+  transaction-boundary fix. This is not external stage acceptance.
+
+Stage 1: **READY_FOR_REVIEW**. Stage 2 is not started. No new PR metadata,
+reviews/comments, deployment, SSH grants or live Codex execution were produced.
