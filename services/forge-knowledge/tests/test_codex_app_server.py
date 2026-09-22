@@ -2000,6 +2000,8 @@ def test_pre_registration_deadline_expiry_reaps_and_next_request_restarts(tmp_pa
 )
 def test_pre_registration_caller_cancellation_after_submission_reaps_and_restarts(tmp_path: Path, script: list[Mapping[str, Any]], blocked_method: str):
     stalled = FakeCodexProcess(script)
+    # Hold a known post-write await point instead of racing a completed drain.
+    stalled.stdin.block_on_method = blocked_method
     restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
     processes = [stalled, restarted]
     client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path, request_timeout_seconds=1))
@@ -2012,6 +2014,8 @@ def test_pre_registration_caller_cancellation_after_submission_reaps_and_restart
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+        # Caller cancellation can return before the bounded cleanup finishes.
+        await asyncio.wait_for(_wait_for_cancellation_cleanup(client), timeout=3)
         payload = await client.request(CodexProtocol.MODEL_LIST)
         await client.aclose()
         await _assert_no_codex_tasks()
@@ -2026,6 +2030,7 @@ def test_pre_registration_caller_cancellation_after_submission_reaps_and_restart
 
 def test_public_request_cancellation_after_write_reaps_and_restarts(tmp_path: Path):
     stalled = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), defer()])
+    stalled.stdin.block_on_method = CodexProtocol.RATE_LIMITS_READ
     restarted = FakeCodexProcess([result({"userAgent": "forge-knowledge/0.146.0"}), result({"ok": True})])
     processes = [stalled, restarted]
     client = CodexAppServerClient(process_factory=lambda command: async_value(processes.pop(0)), settings=_settings(tmp_path, request_timeout_seconds=1))
@@ -2038,6 +2043,8 @@ def test_public_request_cancellation_after_write_reaps_and_restarts(tmp_path: Pa
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+        # Caller cancellation can return before the bounded cleanup finishes.
+        await asyncio.wait_for(_wait_for_cancellation_cleanup(client), timeout=3)
         payload = await client.request(CodexProtocol.MODEL_LIST)
         await client.aclose()
         await _assert_no_codex_tasks()
@@ -2221,6 +2228,7 @@ def test_initialize_and_pre_registration_cancellation_preserved_when_cleanup_fai
     cancel_after_method: str,
 ):
     process = KillTimeoutProcess(script)
+    process.stdin.block_on_method = cancel_after_method
     created = 0
 
     async def process_factory(command):

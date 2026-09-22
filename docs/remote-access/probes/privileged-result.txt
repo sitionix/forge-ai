@@ -1,0 +1,42 @@
+PASS synthetic admin listener reachable from host
+PASS real pairing forced command; requested command ignored
+PASS no requested shell side effect
+PASS wrong host pin rejected
+PASS pairing PTY rejected
+PASS pairing TCP forwarding rejected
+PASS SSH session a admitted by UID-bound stub supervisor
+PASS SSH session b admitted by UID-bound stub supervisor
+PASS supervisor fixture has no errors
+PASS a auth_write
+PASS a helper_write
+PASS a control_read
+PASS a host_key_read
+PASS a socket_denied
+PASS a admin_denied
+PASS a no_docker_socket
+PASS a no_system_bus
+PASS a other_workspace_denied
+PASS b auth_write
+PASS b helper_write
+PASS b control_read
+PASS b host_key_read
+PASS b socket_denied
+PASS b admin_denied
+PASS b no_docker_socket
+PASS b no_system_bus
+PASS b other_workspace_denied
+PASS workload identity differs from root and SSH control identity
+PASS workload identity differs from root and SSH control identity
+PASS sessions have distinct actual workload UIDs
+PASS workload network namespaces isolated from host and each other
+PASS parent/child/setsid in system-managed session cgroup
+PASS parent/child/setsid in system-managed session cgroup
+PASS parent/child/setsid in system-managed session cgroup
+PASS parent/child/setsid in system-managed session cgroup
+PASS parent/child/setsid in system-managed session cgroup
+PASS parent/child/setsid in system-managed session cgroup
+PASS sessions have independent cgroups
+PASS A parent/background/setsid terminated
+PASS B remains alive after A cleanup
+BOUNDARY_PROBE_PASS: real SSH + stub supervisor + distinct UIDs + system systemd; NOT Forge runtime E2E
+CLEANUP_PASS: only owned units/rootfs removed
