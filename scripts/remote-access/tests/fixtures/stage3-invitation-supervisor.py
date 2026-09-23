@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""Narrow root helper: only forge-control can install/remove bound public-key grants."""
+"""Narrow root helper: only forge-control can install/remove invitation public-key grants."""
 import base64
 import hashlib
 import os
@@ -68,23 +68,22 @@ class InvitationGrants:
     def _write_keys(self, text):
         self._atomic(self.root/'authorized'/'keys', text)
 
-    def _binding(self, grantor, invitation, key, kind):
-        if kind not in ('invitation', 'session'): raise ValueError('Invalid grant kind')
+    def _binding(self, grantor, invitation, key):
         canonical_uuid(grantor)
         canonical_uuid(invitation)
         digest = public_key(key)
         fingerprint = 'SHA256:' + base64.b64encode(digest).decode().rstrip('=')
         record = self.root/'bindings'/digest.hex()
-        expected = kind+' '+grantor+' '+invitation+' '+fingerprint+'\n'
-        line = 'restrict '+key+' forge-'+kind+':'+grantor+':'+invitation+'\n'
+        expected = 'invitation '+grantor+' '+invitation+' '+fingerprint+'\n'
+        line = 'restrict '+key+' forge-invitation:'+grantor+':'+invitation+'\n'
         try: actual = self._read(record)
         except FileNotFoundError: actual = None
         if actual is not None and actual != expected:
             raise ValueError('Foreign key binding')
         return record, expected, actual, line
 
-    def install(self, grantor, invitation, key, kind='invitation'):
-        record, expected, actual, line = self._binding(grantor, invitation, key, kind)
+    def install(self, grantor, invitation, key):
+        record, expected, actual, line = self._binding(grantor, invitation, key)
         keys = self._read(self.root/'authorized'/'keys')
         if any(key in entry and entry+'\n' != line for entry in keys.splitlines()):
             raise ValueError('Key already has another grant')
@@ -92,8 +91,8 @@ class InvitationGrants:
         if line not in keys.splitlines(keepends=True):
             self._write_keys(keys + ('' if not keys or keys.endswith('\n') else '\n') + line)
 
-    def remove(self, grantor, invitation, key, kind='invitation'):
-        record, expected, actual, line = self._binding(grantor, invitation, key, kind)
+    def remove(self, grantor, invitation, key):
+        record, expected, actual, line = self._binding(grantor, invitation, key)
         keys = self._read(self.root/'authorized'/'keys')
         if line in keys.splitlines(keepends=True):
             self._write_keys(''.join(entry for entry in keys.splitlines(keepends=True) if entry != line))
@@ -113,8 +112,6 @@ def dispatch(peer_uid, control_uid, frame, grants, host_public):
         if len(fields) != 5: return 'DENIED\n'
         if fields[0] == 'INSTALL': grants.install(fields[1], fields[2], ' '.join(fields[3:]))
         elif fields[0] == 'REMOVE': grants.remove(fields[1], fields[2], ' '.join(fields[3:]))
-        elif fields[0] == 'SESSION_INSTALL': grants.install(fields[1], fields[2], ' '.join(fields[3:]), 'session')
-        elif fields[0] == 'SESSION_REMOVE': grants.remove(fields[1], fields[2], ' '.join(fields[3:]), 'session')
         else: return 'DENIED\n'
         return 'OK\n'
     except (OSError, ValueError, UnicodeError):

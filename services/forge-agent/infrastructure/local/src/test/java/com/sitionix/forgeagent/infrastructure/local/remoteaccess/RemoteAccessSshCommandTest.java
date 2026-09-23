@@ -46,6 +46,28 @@ class RemoteAccessSshCommandTest {
         assertThat(configuration).doesNotContain("proxycommand /", "proxyjump ");
     }
 
+    @Test void pairingControlAllowsOnlyFixedCommandsAndKeepsPinningForEach() throws Exception {
+        var session=session("127.0.0.1",RemoteAccessSessionStatus.ACTIVE);
+        Path identity=file("control-key","synthetic-private-material");
+        Path known=file("control-known","[127.0.0.1]:2222 "+HOST_KEY+"\n");
+        for(String operation:java.util.List.of("redeem","confirm","status")) {
+            var command=RemoteAccessSshCommand.control(session,identity,known,operation);
+            assertThat(command).endsWith("--","forge-ssh@127.0.0.1",operation);
+            assertThat(command).contains("StrictHostKeyChecking=yes","IdentityAgent=none","ProxyCommand=none","ClearAllForwardings=yes");
+            var effective=new java.util.ArrayList<>(command); effective.add(1,"-G");
+            var process=new ProcessBuilder(effective).redirectErrorStream(true).start();
+            String output=new String(process.getInputStream().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(process.waitFor(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(process.exitValue()).isZero();
+            assertThat(output).contains("identityagent none","stricthostkeychecking true","clearallforwardings yes");
+        }
+        assertThatThrownBy(() -> RemoteAccessSshCommand.control(session,identity,known,"exec id")).isInstanceOf(IllegalArgumentException.class);
+        Files.writeString(known,"[wrong-host]:2222 "+HOST_KEY+"\n");
+        for(String operation:java.util.List.of("redeem","confirm")) {
+            assertThatThrownBy(() -> RemoteAccessSshCommand.control(session,identity,known,operation)).isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
     @Test void mismatchedPinAndRevokedSessionFailBeforeCommandConstruction() throws Exception {
         Path identity=file("key","synthetic-private-material");
         Path known=file("known","wrong pin\n");

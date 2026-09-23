@@ -67,7 +67,33 @@ def write_owned(path, content, mode):
 
 
 def install_forced_command(source):
-    target = LIB/'forced-command'
+    install_managed_helper(source, 'forced-command', {
+        '28d18e70e272a7385badbdfe3e36f95abf9ecd83357a93ce5819f9237b289abe',
+        '28c0cf54bcd067ad34c06bde22b5e8367ed767f88d7aa0092e5741b0647a2b3e'})
+
+
+def require_stopped_supervisor_for_upgrade(source):
+    target = LIB/'invitation-supervisor'
+    if target.exists() or target.is_symlink():
+        require_root_owned(target)
+        if not target.is_file(): raise RuntimeError('Managed helper conflict')
+        if target.read_bytes() != source.read_bytes():
+            # systemd creates this directory before ExecStart and removes it on
+            # stop. Requiring absence also rejects starting/stale/unknown state;
+            # never mistake a failed systemctl query for proof of a stopped unit.
+            admin = RUN/'admin'
+            if admin.exists() or admin.is_symlink():
+                raise RuntimeError('NOT READY: stop managed invitation supervisor before upgrade; runtime directory must be absent')
+
+
+def install_invitation_supervisor(source):
+    require_stopped_supervisor_for_upgrade(source)
+    install_managed_helper(source, 'invitation-supervisor', {
+        '69543143d332aad1afd5fca724730bffef7c39fa565f6eb1f576e5f4210e47d9'})
+
+
+def install_managed_helper(source, name, known_versions):
+    target = LIB/name
     content = source.read_bytes()
     if target.exists() or target.is_symlink():
         require_root_owned(target)
@@ -75,8 +101,8 @@ def install_forced_command(source):
             raise RuntimeError('Managed helper conflict')
         previous = target.read_bytes()
         if previous == content: return
-        # Exact reviewed Stage 2 helper from merged PR #143, not arbitrary local scripts.
-        if hashlib.sha256(previous).hexdigest() != '28d18e70e272a7385badbdfe3e36f95abf9ecd83357a93ce5819f9237b289abe':
+        # Exact reviewed Stage 2/3 artifacts, never arbitrary local modifications.
+        if hashlib.sha256(previous).hexdigest() not in known_versions:
             raise RuntimeError('Unknown managed helper version; refusing overwrite')
         descriptor, temporary = tempfile.mkstemp(prefix='.forced-command-', dir=LIB)
         try:
@@ -146,6 +172,7 @@ def prepare(host, port):
     config = sshd_config(host, port)
     source = pathlib.Path(__file__).resolve().parent / 'forced_command.py'
     require_root_owned(source)
+    require_stopped_supervisor_for_upgrade(source.parent/'invitation_supervisor.py')
     for parent in source.parents:
         require_root_owned(parent)
     marker = ETC/'installation'
@@ -195,7 +222,7 @@ def prepare(host, port):
     install_forced_command(source)
     supervisor_source = source.parent/'invitation_supervisor.py'
     require_root_owned(supervisor_source)
-    write_owned(LIB/'invitation-supervisor',supervisor_source.read_bytes(),0o755)
+    install_invitation_supervisor(supervisor_source)
     write_owned(pathlib.Path('/etc/systemd/system/forge-remote-invitations.service'),b'''[Unit]
 Description=Forge invitation authorization supervisor
 After=systemd-tmpfiles-setup.service

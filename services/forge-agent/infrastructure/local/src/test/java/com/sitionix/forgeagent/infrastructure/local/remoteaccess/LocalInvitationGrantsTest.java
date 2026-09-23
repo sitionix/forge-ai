@@ -31,6 +31,20 @@ class LocalInvitationGrantsTest {
             assertThat(denied.get(5,TimeUnit.SECONDS)).startsWith("REMOVE ");
         }
     }
+    @Test void sessionGrantsUseOnlyPublicExactArguments() throws Exception {
+        var session=LocalRemoteAccessPairingTransportTest.session(RemoteAccessRole.GRANTOR);
+        Path socket=temp.resolve("sessions.sock");
+        try(var server=ServerSocketChannel.open(StandardProtocolFamily.UNIX); var worker=Executors.newSingleThreadExecutor()) {
+            server.bind(UnixDomainSocketAddress.of(socket));
+            var client=new LocalInvitationGrants(socket,System.getProperty("user.name"));
+            var install=worker.submit(() -> exchange(server,"OK\n"));
+            client.install(session);
+            assertThat(install.get(5,TimeUnit.SECONDS)).isEqualTo("SESSION_INSTALL "+session.grantorInstanceId()+" "+session.id()+" "+session.sessionPublicKey()+"\n");
+            var remove=worker.submit(() -> exchange(server,"OK\n"));
+            client.remove(session);
+            assertThat(remove.get(5,TimeUnit.SECONDS)).isEqualTo("SESSION_REMOVE "+session.grantorInstanceId()+" "+session.id()+" "+session.sessionPublicKey()+"\n");
+        }
+    }
     @Test void missingSupervisorFailsWithoutFallback() {
         var client=new LocalInvitationGrants(temp.resolve("absent.sock"),System.getProperty("user.name"));
         assertThatThrownBy(client::hostPublicKey).isInstanceOf(IllegalStateException.class).hasMessage("Invitation supervisor unavailable");

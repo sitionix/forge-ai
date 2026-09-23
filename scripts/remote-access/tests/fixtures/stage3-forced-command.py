@@ -2,9 +2,6 @@
 """Forge-managed SSH control channel. No shell, execution, or admin dispatch."""
 import base64
 import hashlib
-import json
-import select
-import time
 import pathlib
 import stat
 import os
@@ -73,49 +70,22 @@ def query(frame):
         return result.decode('ascii')
 
 
-def read_request(descriptor=0, timeout=3):
-    # SSH stdin must close after one JSON object; an open or trickling stream has
-    # one overall deadline, and cannot keep a forced helper alive indefinitely.
-    deadline = time.monotonic() + timeout
-    payload = bytearray()
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0 or not select.select([descriptor], [], [], remaining)[0]:
-            raise TimeoutError('Pairing input deadline')
-        chunk = os.read(descriptor, 5801 - len(payload))
-        if not chunk: break
-        payload.extend(chunk)
-        if len(payload) > 5800: raise ValueError('Pairing input too large')
-    if not isinstance(json.loads(payload.decode('utf-8')), dict):
-        raise ValueError('Pairing object required')
-    return bytes(payload)
-
-
 def handle(binding, command):
     denied = ('DENIED\n', 1)
-    if len(binding) != 4 or (binding[0], command) not in [('session', 'status'), ('session', 'confirm'), ('invitation', 'pair'), ('invitation', 'redeem')]:
+    if len(binding) != 4 or (binding[0], command) not in [('session', 'status'), ('invitation', 'pair')]:
         return denied
     try:
         if any(str(uuid.UUID(value)) != value for value in binding[1:3]):
             return denied
         if not re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}', binding[3]):
             return denied
-        operation = command.upper()
-        frame = operation + ' ' + ' '.join(binding[1:])
-        if command == 'redeem':
-            frame += ' ' + base64.urlsafe_b64encode(read_request()).decode('ascii').rstrip('=')
-        if len(frame) + 1 > 8192: return denied
-        result = query(frame + '\n')
-        if command == 'redeem':
-            match = re.fullmatch(r'PROVISIONING ([0-9a-f-]{36})\n', result)
-            if not match or str(uuid.UUID(match[1])) != match[1]: return denied
-            return result, 0
-        permitted = {'pair': ('PAIRING_ALLOWED\n',), 'confirm': ('ACTIVE\n',),
-                     'status': ('ACTIVE\n', 'PROVISIONING\n')}[command]
+        operation = 'PAIR' if binding[0] == 'invitation' else 'STATUS'
+        result = query(operation + ' ' + ' '.join(binding[1:]) + '\n')
+        permitted = ('PAIRING_ALLOWED\n',) if operation == 'PAIR' else ('ACTIVE\n', 'PROVISIONING\n')
         if result not in permitted:
             return denied
         return result, 0
-    except (OSError, ValueError, KeyError, RecursionError):
+    except (OSError, ValueError, KeyError):
         return denied
 
 

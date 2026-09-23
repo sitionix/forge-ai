@@ -277,6 +277,26 @@ class RemoteAccessPersistenceIT {
         }
     }
 
+    @Test
+    void recoveryQueriesAndSafeFailureUpdatesRespectLocalRoleAndVersion() {
+        UUID local = UUID.randomUUID();
+        var repository = new PostgresRemoteAccessSessionRepository(jdbc);
+        var original = accessor(UUID.randomUUID(), UUID.randomUUID(), local);
+        repository.insert(original);
+        assertThat(repository.findByInvitation(original.invitationId())).contains(original);
+        assertThat(repository.findLocal(local)).containsExactly(original);
+        assertThat(repository.findLocal(original.grantorInstanceId())).doesNotContain(original);
+        assertThat(repository.recordFailure(original, "REMOTE_ACCESS_CONFIRMATION_UNAVAILABLE", "Confirmation unavailable")).isTrue();
+        var pending = original.withFailure("REMOTE_ACCESS_CONFIRMATION_UNAVAILABLE", "Confirmation unavailable");
+        assertThat(repository.findById(original.id())).contains(pending);
+        assertThat(repository.transition(original, original.activate(NOW))).isFalse();
+        assertThat(repository.recordFailure(original, "STALE", "Stale update")).isFalse();
+        assertThat(repository.transition(pending, pending.activate(NOW))).isTrue();
+        var active = pending.activate(NOW);
+        assertThat(repository.recordFailure(active, null, null)).isTrue();
+        assertThat(repository.findById(original.id())).contains(active.withFailure(null, null));
+    }
+
     private static RemoteAccessSession accessor(UUID id, UUID invitationId, UUID local) {
         return new RemoteAccessSession(id,invitationId,RemoteAccessRole.ACCESSOR,UUID.randomUUID(),local,
                 "Grantor",endpoint(),"public-host","public-session","SHA256:session",id,RemoteAccessSessionStatus.PROVISIONING,

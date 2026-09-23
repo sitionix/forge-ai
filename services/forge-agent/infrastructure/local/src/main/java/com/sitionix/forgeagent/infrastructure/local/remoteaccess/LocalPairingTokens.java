@@ -25,7 +25,12 @@ public final class LocalPairingTokens implements RemoteAccessPairingTokens {
             .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
             .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-            .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION).build();
+            .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+            .withCoercionConfig(com.fasterxml.jackson.databind.type.LogicalType.Textual, config -> config
+                    .setCoercion(com.fasterxml.jackson.databind.cfg.CoercionInputShape.Integer, com.fasterxml.jackson.databind.cfg.CoercionAction.Fail)
+                    .setCoercion(com.fasterxml.jackson.databind.cfg.CoercionInputShape.Float, com.fasterxml.jackson.databind.cfg.CoercionAction.Fail)
+                    .setCoercion(com.fasterxml.jackson.databind.cfg.CoercionInputShape.Boolean, com.fasterxml.jackson.databind.cfg.CoercionAction.Fail))
+            .build();
 
     private record Payload(int version, UUID invitationId, UUID grantorInstanceId, String grantorDisplayName,
             String sshHost, int sshPort, String sshUsername, String sshHostPublicKey,
@@ -110,7 +115,7 @@ public final class LocalPairingTokens implements RemoteAccessPairingTokens {
         } catch (RuntimeException invalid) { throw new IllegalArgumentException("Invalid Ed25519 public key"); }
     }
 
-    static String fingerprint(String publicKey) {
+    @Override public String fingerprint(String publicKey) {
         try {
             return "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256")
                     .digest(Base64.getDecoder().decode(validatedPublicKey(publicKey).split(" ")[1])));

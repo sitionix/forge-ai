@@ -19,6 +19,15 @@ injection characters are rejected. Stop the **managed** sshd before repeating
 installation: preflight refuses an occupied port, including its own running
 listener. Existing host sshd and personal authorized_keys remain untouched.
 
+For a Stage 3→4 package upgrade, also stop `forge-remote-invitations.service`
+before running setup. systemd removes its `forge-remote/admin` RuntimeDirectory
+when stopped. The installer refuses to change supervisor bytes while this
+directory exists (including stale/unknown state); replacing a Python file does
+not replace an already running interpreter. Verify the managed process is stopped
+before investigating a stale directory. Unchanged package bytes remain idempotent.
+Restart the supervisor and managed sshd only after successful setup.
+
+
 ## Root-owned setup package
 
 Install the reviewed `scripts/remote-access/install.py` and `forced_command.py`

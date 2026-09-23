@@ -1,6 +1,17 @@
 package com.sitionix.forgeagent.infrastructure.local.remoteaccess;
 
 import com.sitionix.forgeagent.domain.model.RemoteAccessKeyBinding;
+import com.sitionix.forgeagent.domain.model.RemoteAccessPairingRequest;
+import com.sitionix.forgeagent.domain.model.RemoteAccessSessionStatus;
+import com.sitionix.forgeagent.domain.port.RemoteAccessPeerPairing;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.MapperFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.cfg.CoercionAction;
+import com.fasterxml.jackson.databind.cfg.CoercionInputShape;
+import com.fasterxml.jackson.databind.type.LogicalType;
+import java.util.Base64;
 import com.sitionix.forgeagent.domain.model.RemoteAccessInvitationBinding;
 import com.sitionix.forgeagent.domain.port.RemoteAccessChannelAuthority;
 import java.io.IOException;
@@ -28,6 +39,16 @@ import jdk.net.ExtendedSocketOptions;
 
 /** Restricted local transport, not an HTTP management API or command executor. */
 public final class RemoteAccessChannelServer implements AutoCloseable {
+    private static final JsonMapper JSON = JsonMapper.builder()
+            .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
+            .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+            .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+            .withCoercionConfig(LogicalType.Textual, config -> config
+                    .setCoercion(CoercionInputShape.Integer,CoercionAction.Fail)
+                    .setCoercion(CoercionInputShape.Float,CoercionAction.Fail)
+                    .setCoercion(CoercionInputShape.Boolean,CoercionAction.Fail)).build();
+    private final RemoteAccessPeerPairing peerPairing;
     private final Path path;
     private final String peerUser;
     private final String peerGroup;
@@ -38,11 +59,12 @@ public final class RemoteAccessChannelServer implements AutoCloseable {
     private ServerSocketChannel listener;
     private Object socketFileKey;
 
-    public RemoteAccessChannelServer(Path path,String peerUser,String peerGroup,RemoteAccessChannelAuthority authority) {
+    public RemoteAccessChannelServer(Path path,String peerUser,String peerGroup,RemoteAccessChannelAuthority authority,RemoteAccessPeerPairing peerPairing) {
         this.path=path.toAbsolutePath().normalize();
         this.peerUser=peerUser;
         this.peerGroup=peerGroup;
         this.authority=authority;
+        this.peerPairing=peerPairing;
     }
 
     public void start() {
@@ -98,14 +120,33 @@ public final class RemoteAccessChannelServer implements AutoCloseable {
             if (peer.user().getName().equals(peerUser)) {
                 try {
                     String[] fields=frame.split(" ",-1);
-                    if (fields.length==4 && fields[0].equals("STATUS")) {
+                    if (fields.length==5 && fields[0].equals("REDEEM")) {
+                        var binding=new RemoteAccessInvitationBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
+                        String encoded=fields[4];
+                        if (!encoded.matches("[A-Za-z0-9_-]+")) throw new IllegalArgumentException();
+                        byte[] bytes=Base64.getUrlDecoder().decode(encoded);
+                        if (!Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).equals(encoded)) throw new IllegalArgumentException();
+                        var request=JSON.readValue(bytes,RemoteAccessPairingRequest.class);
+                        if(request.sessionId()==null || request.accessorInstanceId()==null
+                                || request.accessorDisplayName()==null || request.accessorDisplayName().isBlank()
+                                || request.accessorDisplayName().length()>128
+                                || request.accessorDisplayName().chars().anyMatch(Character::isISOControl)
+                                || request.sessionPublicKey()==null || request.sessionPublicKey().isBlank()) throw new IllegalArgumentException();
+                        UUID sessionId=peerPairing.redeem(binding,request);
+                        if (sessionId==null || !sessionId.equals(request.sessionId())) throw new IllegalArgumentException();
+                        response="PROVISIONING "+sessionId+"\n";
+                    } else if (fields.length==4 && fields[0].equals("CONFIRM")) {
+                        var binding=new RemoteAccessKeyBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
+                        response=peerPairing.confirm(binding).filter(status -> status==RemoteAccessSessionStatus.ACTIVE)
+                                .map(status -> "ACTIVE\n").orElse("DENIED\n");
+                    } else if (fields.length==4 && fields[0].equals("STATUS")) {
                         var binding=new RemoteAccessKeyBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
                         response=authority.sessionStatus(binding).map(status -> status.name()+"\n").orElse("DENIED\n");
                     } else if (fields.length==4 && fields[0].equals("PAIR")) {
                         var binding=new RemoteAccessInvitationBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
                         response=authority.pairingAllowed(binding) ? "PAIRING_ALLOWED\n" : "DENIED\n";
                     }
-                } catch (RuntimeException unavailable) { response="DENIED\n"; }
+                } catch (IOException | RuntimeException unavailable) { response="DENIED\n"; }
             }
             write(channel,response,deadline);
         } catch (IOException | RuntimeException rejected) {
@@ -120,7 +161,7 @@ public final class RemoteAccessChannelServer implements AutoCloseable {
     }
 
     private static String readFrame(SocketChannel channel,long deadline) throws IOException {
-        var buffer=ByteBuffer.allocate(1025);
+        var buffer=ByteBuffer.allocate(8193);
         while (buffer.hasRemaining()) {
             await(channel,SelectionKey.OP_READ,deadline);
             int read=channel.read(buffer);

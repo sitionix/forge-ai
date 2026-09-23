@@ -90,7 +90,7 @@ managed sshd and `forge-remote-invitations.service`. systemd creates/removes the
 supervisor runtime directory for its lifecycle; the helper refuses an unknown
 pre-existing socket. Do not run the Agent itself as root.
 
-For upgrade, stop the managed sshd before invoking the privileged installer, as
+For upgrade, stop the managed sshd **and `forge-remote-invitations.service`** before invoking the privileged installer, as
 required by its existing endpoint preflight. Setup recognizes the exact reviewed
 Stage 2 forced helper (SHA-256
 `28d18e70e272a7385badbdfe3e36f95abf9ecd83357a93ce5819f9237b289abe`)

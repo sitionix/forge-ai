@@ -98,6 +98,13 @@ public record RemoteAccessSession(
                 null, version + 1);
     }
 
+    public RemoteAccessSession withFailure(String code, String message) {
+        return new RemoteAccessSession(id, invitationId, localRole, grantorInstanceId, accessorInstanceId,
+                peerDisplayName, endpoint, pinnedHostPublicKey, sessionPublicKey, sessionFingerprint,
+                localPrivateKeyReference, status, createdAt, provisioningExpiresAt, activatedAt,
+                revokeRequestedAt, revokedAt, connectivity, lastSeenAt, lastCheckedAt, code, message, version + 1);
+    }
+
     private RemoteAccessSession copy(RemoteAccessSessionStatus newStatus, Instant newActivatedAt,
             Instant newRevokeRequestedAt, Instant newRevokedAt, UUID newKeyReference, long newVersion) {
         return new RemoteAccessSession(id, invitationId, localRole, grantorInstanceId, accessorInstanceId,

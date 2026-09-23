@@ -150,7 +150,7 @@ class ManagedSshTest(unittest.TestCase):
         helper=load('forced_command')
         binding=['session','10000000-0000-4000-8000-000000000001',
                  '10000000-0000-4000-8000-000000000002','SHA256:'+'A'*43]
-        for command in ['', 'sh', 'exec id', 'status other-session', 'confirm', 'sftp']:
+        for command in ['', 'sh', 'exec id', 'status other-session', 'confirm other-session', 'sftp']:
             with self.subTest(command=command), patch.object(helper,'query') as query:
                 self.assertEqual(helper.handle(binding,command),('DENIED\n',1))
                 query.assert_not_called()
