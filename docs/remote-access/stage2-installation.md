@@ -58,6 +58,7 @@ Created artifacts:
 | `/var/lib/forge-remote/bindings/` | root:forge-ssh 0750 | initially empty immutable key-association records |
 | `/run/forge-remote/channel/` | forge-control:forge-ssh 0750 | restricted Unix socket parent |
 | `/run/forge-remote/channel/authority.sock` | forge-control:forge-ssh 0660 | created only by explicitly enabled Agent |
+| `/run/forge-remote/channel/authority.sock.lock` | forge-control, 0600 | Stage 4 lifetime lock; retained across restarts to prevent competing authority startup |
 | `/etc/systemd/system/forge-remote-sshd.service` | root:root 0644 | dedicated sshd, never host sshd replacement |
 | `/etc/tmpfiles.d/forge-remote.conf` | root:root 0644 | restores runtime directories and standard root:root 0755 `/run/sshd` after reboot |
 
@@ -106,12 +107,14 @@ sessions/CSRF and Nexus service credentials remain Stage 6.
 
 Default remains disabled. The socket requires the exact protected parent owner,
 group and 0750 permissions. A listener started under another user fails setup.
-It never creates directories or deletes an existing socket on startup. After a
-crash leaving a stale socket, stop the authority, verify the path belongs to this
-installation and remove only that stale socket as operator before restarting.
-Automatic crash reconciliation belongs to later lifecycle stages; stale paths
-fail closed rather than being blindly removed. Normal shutdown removes only its
-own socket inode.
+It never creates the protected parent directory. Stage 4 adds recovery of a
+confirmed abandoned socket under an exclusive lifetime lock. Only a verified
+control-owned UNIX socket with the configured group/mode and a refused local
+connection is eligible; active listeners, unknown errors and foreign files are
+preserved and fail startup. The lock file stays in place across restarts to avoid
+unlink races. Normal shutdown removes only the server's own socket inode.
+Unknown/conflicting artifacts still require operator inspection; startup never
+blindly unlinks the path.
 
 The managed systemd unit can subsequently be started by the local operator. It
 still has no working keys until later-stage grant provisioning. The Stage 2 code

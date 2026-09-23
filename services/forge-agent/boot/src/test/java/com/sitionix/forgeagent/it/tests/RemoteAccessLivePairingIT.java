@@ -46,7 +46,8 @@ class RemoteAccessLivePairingIT {
             result.getStdout().lines().filter(line -> line.startsWith("PASS ")).forEach(System.out::println);
             assertThat(result.getStdout()).contains("PASS persisted two-peer ACTIVE", "PASS consumed invitation and wrong session key denied",
                     "PASS lost acknowledgement restart recovery", "PASS reservation before install restart recovery", "PASS concurrent SSH redemption exactly one grantor session",
-                    "PASS expired grant removed and unconfirmed accessor credential retained");
+                    "PASS expired grant removed and unconfirmed accessor credential retained",
+                    "PASS grantor JVM crash before install recovered", "PASS accessor JVM crash after confirmation recovered");
         }
     }
 }

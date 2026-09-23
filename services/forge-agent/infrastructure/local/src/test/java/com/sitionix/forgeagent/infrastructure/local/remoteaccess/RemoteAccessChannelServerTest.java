@@ -117,6 +117,105 @@ class RemoteAccessChannelServerTest {
         }
     }
 
+    @Test void killedJavaServerLeavesSocketThatRestartCanRecover() throws Exception {
+        Path socket=prepare();
+        String group=Files.readAttributes(temp,java.nio.file.attribute.PosixFileAttributes.class).group().getName();
+        var child=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),
+                "-cp",System.getProperty("java.class.path"),CrashPeer.class.getName(),socket.toString(),group)
+                .redirectErrorStream(true).start();
+        try {
+            var ready=java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try { return new java.io.BufferedReader(new java.io.InputStreamReader(child.getInputStream())).readLine(); }
+                catch(java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
+            });
+            assertThat(ready.get(10,java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("READY");
+            Object original=Files.readAttributes(socket,java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+            try(var competing=server(socket)) {
+                assertThatThrownBy(competing::start).isInstanceOf(IllegalStateException.class);
+            }
+            assertThat(Files.readAttributes(socket,java.nio.file.attribute.BasicFileAttributes.class).fileKey()).isEqualTo(original);
+            assertThat(request(socket,FRAME)).isEqualTo("DENIED\n");
+            child.destroyForcibly(); // SIGKILL: no Java close/shutdown hook can unlink the socket.
+            assertThat(child.waitFor(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(socket).exists();
+            try(var restarted=server(socket)) {
+                restarted.start();
+                assertThat(request(socket,FRAME)).isEqualTo("DENIED\n");
+            }
+            assertThat(socket).doesNotExist();
+        } finally { child.destroyForcibly(); child.waitFor(5,java.util.concurrent.TimeUnit.SECONDS); }
+    }
+
+    @Test void activeUnmanagedListenerAndUnexpectedSocketModeArePreserved() throws Exception {
+        Path socket=prepare();
+        try(var existing=java.nio.channels.ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+            existing.bind(UnixDomainSocketAddress.of(socket));
+            Files.setPosixFilePermissions(socket,PosixFilePermissions.fromString("rw-rw----"));
+            Object original=Files.readAttributes(socket,java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+            try(var rejected=server(socket)) { assertThatThrownBy(rejected::start).isInstanceOf(IllegalStateException.class); }
+            assertThat(Files.readAttributes(socket,java.nio.file.attribute.BasicFileAttributes.class).fileKey()).isEqualTo(original);
+            try(var probe=SocketChannel.open(StandardProtocolFamily.UNIX)) { assertThat(probe.connect(UnixDomainSocketAddress.of(socket))).isTrue(); }
+        }
+        Files.setPosixFilePermissions(socket,PosixFilePermissions.fromString("rw-------"));
+        try(var rejected=server(socket)) { assertThatThrownBy(rejected::start).isInstanceOf(IllegalStateException.class); }
+        assertThat(socket).exists();
+        assertThat(Files.getPosixFilePermissions(socket)).isEqualTo(PosixFilePermissions.fromString("rw-------"));
+    }
+
+    @Test void socketSymlinkAndUnsafeLockPathsAreNeverReplaced() throws Exception {
+        Path socket=prepare();
+        Path foreign=Files.writeString(temp.resolve("foreign"),"preserved");
+        Files.createSymbolicLink(socket,foreign);
+        try(var rejected=server(socket)) { assertThatThrownBy(rejected::start).isInstanceOf(IllegalStateException.class); }
+        assertThat(Files.isSymbolicLink(socket)).isTrue();
+        assertThat(Files.readString(foreign)).isEqualTo("preserved");
+        Files.delete(socket);
+        Path lock=socket.resolveSibling(socket.getFileName()+".lock");
+        Files.deleteIfExists(lock);
+        Files.createSymbolicLink(lock,foreign);
+        try(var rejected=server(socket)) { assertThatThrownBy(rejected::start).isInstanceOf(IllegalStateException.class); }
+        assertThat(Files.isSymbolicLink(lock)).isTrue();
+        Files.delete(lock);
+        Files.writeString(lock,"unsafe lock");
+        Files.setPosixFilePermissions(lock,PosixFilePermissions.fromString("rw-rw----"));
+        try(var rejected=server(socket)) { assertThatThrownBy(rejected::start).isInstanceOf(IllegalStateException.class); }
+        assertThat(Files.readString(lock)).isEqualTo("unsafe lock");
+        Files.setPosixFilePermissions(lock,PosixFilePermissions.fromString("rw-------"));
+        Files.createLink(temp.resolve("second-link"),lock);
+        try(var rejected=server(socket)) { assertThatThrownBy(rejected::start).isInstanceOf(IllegalStateException.class); }
+        assertThat(socket).doesNotExist();
+    }
+
+    @Test void lockRemainsOwnedForLifetimeAndClosingLoserCannotRemoveWinnerSocket() throws Exception {
+        Path socket=prepare();
+        Path lock=socket.resolveSibling(socket.getFileName()+".lock");
+        try(var winner=server(socket)) {
+            winner.start();
+            Object lockKey=Files.readAttributes(lock,java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+            assertThat(Files.getPosixFilePermissions(lock)).isEqualTo(PosixFilePermissions.fromString("rw-------"));
+            try(var loser=server(socket)) { assertThatThrownBy(loser::start).isInstanceOf(IllegalStateException.class); }
+            assertThat(request(socket,FRAME)).isEqualTo("DENIED\n");
+            assertThat(Files.readAttributes(lock,java.nio.file.attribute.BasicFileAttributes.class).fileKey()).isEqualTo(lockKey);
+        }
+        assertThat(lock).exists();
+        try(var next=server(socket)) { next.start();assertThat(request(socket,FRAME)).isEqualTo("DENIED\n"); }
+    }
+
+    private RemoteAccessChannelServer server(Path socket) throws Exception {
+        return new RemoteAccessChannelServer(socket,System.getProperty("user.name"),
+                Files.readAttributes(temp,java.nio.file.attribute.PosixFileAttributes.class).group().getName(),
+                binding -> Optional.empty(),deniedPeer());
+    }
+    public static final class CrashPeer {
+        public static void main(String[] args) throws Exception {
+            try(var server=new RemoteAccessChannelServer(Path.of(args[0]),System.getProperty("user.name"),args[1],
+                    binding -> Optional.empty(),deniedPeer())) {
+                server.start();System.out.println("READY");System.out.flush();
+                new java.util.concurrent.CountDownLatch(1).await();
+            }
+        }
+    }
+
     private static String encode(String value) {
         return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }

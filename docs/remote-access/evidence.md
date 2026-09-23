@@ -547,7 +547,7 @@ failure-metadata CAS, in addition to reservation concurrency and application
 context restart. The scheduler isolation test passes on the real Spring
 scheduling path with an intentionally occupied recovery call.
 
-`RemoteAccessLivePairingIT` passes all six scenario checkpoints:
+`RemoteAccessLivePairingIT` passes the initial six scenario checkpoints:
 
 1. Persisted same-ID ACTIVE on both peers, dedicated private credential only in
    the ACCESSOR store, real SSH status readback.
@@ -571,12 +571,52 @@ ownership inside a disposable Linux container. Initial fixture-only ownership an
 missing RuntimeDirectory errors were corrected; successful results come from the
 subsequent actual run.
 
-Restart in this pairing fixture reconstructs services/adapters and reopens the
-Unix listener while retaining DB/key files; it is not an OS/JVM crash on two VMs.
-The existing persistence suite separately recreates full Spring application
-contexts. No production host install, live Codex, UI, workload execution or process
+The initial six scenarios reconstruct services/adapters and reopen the Unix
+listener while retaining DB/key files. The additional JVM-crash scenarios below
+extend this evidence. The existing persistence suite separately recreates full
+Spring application contexts. No two-VM OS crash test is claimed. No production host install, live Codex, UI, workload execution or process
 cleanup E2E was run. Stage 9 runtime/UI/Codex labels remain NOT_RUN.
 
 `git diff --check` and changed Python `py_compile`: PASS. No Nexus/Console production
 changes, migrations or workflow-routing changes. Stage 4 is submitted for external
 review; Stage 5 remains unauthorized.
+
+### Final JVM-crash recovery correction
+
+The initial service-reconstruction tests did not expose a real crash blocker:
+SIGKILL leaves the UNIX authority socket path behind, and the previous channel
+startup refused that path before persisted reconciliation could run. A real
+killed-Java-child regression reproduced this failure (RED).
+
+The channel now holds an owner-only sibling file lock for its lifetime, also
+excluding a second same-JVM descriptor that could release POSIX process locks.
+Startup reclaims only a verified control-owned UNIX socket with the expected
+group/mode, one link, explicit connection refusal and unchanged inode. A live
+listener, unsafe lock, foreign/symlink path or unknown/ambiguous connection error
+is preserved and fails startup. The lock inode is retained across restarts.
+Unknown/localized OS errors remain fail-closed instead of being guessed as stale.
+
+GREEN: 9 channel tests pass, including real SIGKILL, active unmanaged listener,
+concurrent ownership, unsafe mode, symlink and hardlink preservation. Independent
+read-only review found no concrete defect in this correction.
+
+The production SSH/PostgreSQL fixture now also passes two actual process-crash
+scenarios (8 checkpoints total):
+
+- A separate GRANTOR JVM halts after its reservation commits but before session
+  grant installation, leaving its authority socket. A replacement JVM recovers
+  the abandoned socket and persisted grant; the original ACCESSOR session/key
+  confirms successfully. No operator socket deletion occurs in the test.
+- A separate ACCESSOR JVM receives a real successful SSH confirm and halts before
+  persisting local ACTIVE. Its token arrives through stdin, never process args or
+  a token file. Recovery uses its existing persisted private-key reference and
+  session ID, with no invitation replay.
+
+Both child JVMs use production pairing services/adapters against the real isolated
+PostgreSQL peer schemas; these are abrupt process exits without shutdown hooks.
+The test remains inside one disposable Linux environment, not two physical hosts
+or a systemd/OS reboot exercise. No Stage 5 workload or live Codex claim is added.
+
+Final full Agent verify after the socket/JVM-crash correction: PASS (exit 0),
+327 integration tests, zero failures/errors, six existing opt-in skips. All eight
+live pairing checkpoints passed in that full run. `git diff --check`: PASS.

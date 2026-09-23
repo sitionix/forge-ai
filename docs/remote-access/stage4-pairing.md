@@ -37,6 +37,11 @@ confirmation, never merely after sending redeem or inserting its local row.
 
 ## Recovery and deadlines
 
+The authority takes an exclusive lock in its protected socket directory for its
+lifetime. After a JVM crash, startup can reclaim only a verified abandoned UNIX
+socket with refused connections and unchanged inode. Live listeners and unknown
+artifacts remain fail-closed; the retained lock file prevents competing starts.
+
 Both sides retain the same session ID. The GRANTOR reinstalls missing grants for
 unexpired provisioning rows after restart. A lost redeem response is recovered
 with the persisted session key; the consumed pairing token is not a recovery
@@ -87,5 +92,6 @@ Results and commands are recorded in [evidence](evidence.md). The OS-only Docker
 suite deliberately uses a stub Agent authority and verifies helper/supervisor
 routing. `RemoteAccessLivePairingIT` is a separate real SSH/PostgreSQL test using
 production Java pairing services and authority with isolated persisted peer
-states. Neither is a live Codex, UI, Stage 5 process-cleanup or two-physical-machine
+states, including abruptly terminated grantor/accessor JVMs at handshake crash
+points. Neither is a live Codex, UI, Stage 5 process-cleanup or two-physical-machine
 acceptance test. Stage 9 evidence labels remain NOT_RUN.

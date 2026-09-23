@@ -19,7 +19,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 /**
  * Runs as the real forge-control UID inside the disposable SSH container.
  * Directly wires production services/adapters; no fake authority, fake persistence, or successful transport stub.
- * Restart checks discard all service/adapter/connection objects, retaining only PostgreSQL and credential files.
+ * Recovery checks retain PostgreSQL/key files across reconstructed services and abrupt child-JVM exits.
  */
 public final class RemoteAccessLivePairingFixture {
     private static final Clock CLOCK=Clock.systemUTC();
@@ -30,6 +30,11 @@ public final class RemoteAccessLivePairingFixture {
     private static String url,user,password;
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 4) {
+            url=args[1];user=args[2];password=args[3];
+            runChild(args[0]);
+            return;
+        }
         url=args[0];user=args[1];password=args[2];
         for(String schema:new String[]{"peer_a","peer_b","peer_c"}) {
             Flyway.configure().dataSource(url,user,password).schemas(schema).defaultSchema(schema)
@@ -39,6 +44,8 @@ public final class RemoteAccessLivePairingFixture {
         happyAndWrongCredentials();
         lostAcknowledgementThenRestart();
         reservationWithoutInstalledKeyThenRestart();
+        grantorJvmCrashBeforeInstallation();
+        accessorJvmCrashAfterConfirmation();
         concurrentRedeemAcrossIndependentAccessors();
         expiredProvisioningRemovesGrantAndRetainsUnconfirmedAccessorKey();
     }
@@ -131,6 +138,121 @@ public final class RemoteAccessLivePairingFixture {
             assertThat(restartedA.sessions.findByInvitation(invitation.invitation().id()).orElseThrow().id()).isEqualTo(id);
             System.out.println("PASS reservation before install restart recovery");
         }
+    }
+
+    private static void grantorJvmCrashBeforeInstallation() throws Exception {
+        var a = new Peer("peer_a");
+        var b = new Peer("peer_b");
+        var invitation = b.inviter().create(ENDPOINT, "Grantor B");
+        RemoteAccessSession attempt;
+        try (var child = new GrantorProcess("grantor-crash-before-install")) {
+            attempt = a.accessor(a.transport()).connect(invitation.token().value(), "Accessor A");
+            assertThat(child.process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(child.process.exitValue()).isEqualTo(77);
+            assertThat(attempt.status()).isEqualTo(RemoteAccessSessionStatus.PROVISIONING);
+            assertThat(b.sessions.findById(attempt.id()).orElseThrow().status()).isEqualTo(RemoteAccessSessionStatus.PROVISIONING);
+            assertThat(Path.of("/run/forge-remote/channel/authority.sock")).exists();
+        }
+        // The prior JVM skipped every shutdown hook. The replacement must recover its stale socket itself.
+        try (var restarted = new GrantorProcess("grantor-recover")) {
+            var restartedA = new Peer("peer_a");
+            assertThat(restartedA.accessor(restartedA.transport()).resume(attempt.id()).status()).isEqualTo(RemoteAccessSessionStatus.ACTIVE);
+            activeBoth(restartedA, new Peer("peer_b"), attempt.id());
+            System.out.println("PASS grantor JVM crash before install recovered");
+        }
+    }
+
+    private static void accessorJvmCrashAfterConfirmation() throws Exception {
+        var a = new Peer("peer_a");
+        var b = new Peer("peer_b");
+        var invitation = b.inviter().create(ENDPOINT, "Grantor B");
+        try (var server = b.server(GRANTS)) {
+            server.start();
+            Process child = startChild("accessor-crash-after-confirm");
+            try {
+                // Synthetic invitation travels over stdin, never process arguments, logs or a token file.
+                try (var input = child.getOutputStream()) {
+                    input.write((invitation.token().value()+"\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                assertThat(child.waitFor(45, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(child.exitValue()).withFailMessage("Accessor child failed: %s", childLog()).isEqualTo(78);
+                var pending = a.sessions.findByInvitation(invitation.invitation().id()).orElseThrow();
+                assertThat(pending.status()).isEqualTo(RemoteAccessSessionStatus.PROVISIONING);
+                assertThat(b.sessions.findById(pending.id()).orElseThrow().status()).isEqualTo(RemoteAccessSessionStatus.ACTIVE);
+                var restartedA = new Peer("peer_a");
+                assertThat(restartedA.accessor(restartedA.transport()).resume(pending.id()).status()).isEqualTo(RemoteAccessSessionStatus.ACTIVE);
+                activeBoth(restartedA, b, pending.id());
+                System.out.println("PASS accessor JVM crash after confirmation recovered");
+            } finally {
+                stopChild(child);
+            }
+        }
+    }
+
+    private static void runChild(String mode) throws Exception {
+        if (mode.equals("accessor-crash-after-confirm")) {
+            String token = new java.io.BufferedReader(new java.io.InputStreamReader(System.in, java.nio.charset.StandardCharsets.UTF_8)).readLine();
+            var a = new Peer("peer_a");
+            var actual = a.transport();
+            RemoteAccessPairingTransport interrupted = new RemoteAccessPairingTransport() {
+                public void redeem(RemoteAccessSession session, RemoteAccessPrivateKey key, String name) { actual.redeem(session,key,name); }
+                public RemoteAccessSessionStatus confirm(RemoteAccessSession session) {
+                    actual.confirm(session);
+                    Runtime.getRuntime().halt(78);
+                    throw new AssertionError("halt returned");
+                }
+                public RemoteAccessSessionStatus status(RemoteAccessSession session) { return actual.status(session); }
+            };
+            a.accessor(interrupted).connect(token, "Accessor A");
+            throw new AssertionError("Accessor did not reach confirmed activation");
+        }
+        var b = new Peer("peer_b");
+        RemoteAccessSessionGrants grants = mode.equals("grantor-crash-before-install") ? new RemoteAccessSessionGrants() {
+            public void install(RemoteAccessSession session) { Runtime.getRuntime().halt(77); }
+            public void remove(RemoteAccessSession session) { GRANTS.remove(session); }
+        } : GRANTS;
+        var server = b.server(grants);
+        Runtime.getRuntime().addShutdownHook(new Thread(server::close));
+        server.start();
+        if (mode.equals("grantor-recover")) b.grantor(GRANTS).reconcile();
+        Files.writeString(STATE.resolve("grantor-ready"), "ready");
+        new java.util.concurrent.CountDownLatch(1).await();
+    }
+
+    private static Process startChild(String mode) throws Exception {
+        return new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-cp", System.getProperty("java.class.path"), RemoteAccessLivePairingFixture.class.getName(),
+                mode, url, user, password).redirectErrorStream(true)
+                .redirectOutput(STATE.resolve("child.log").toFile()).start();
+    }
+
+    private static String childLog() throws Exception { return Files.readString(STATE.resolve("child.log")); }
+    private static void stopChild(Process process) throws Exception {
+        if (process.isAlive()) process.destroy();
+        if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            assertThat(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    private static final class GrantorProcess implements AutoCloseable {
+        final Process process;
+        GrantorProcess(String mode) throws Exception {
+            Path ready = STATE.resolve("grantor-ready");
+            Files.deleteIfExists(ready);
+            process = startChild(mode);
+            boolean started = false;
+            try {
+                for (int index=0; index<200 && process.isAlive(); index++) {
+                    if (Files.exists(ready)) { started=true; break; }
+                    Thread.sleep(50);
+                }
+                assertThat(started).withFailMessage("Grantor child failed to start: %s", childLog()).isTrue();
+            } finally {
+                if (!started) stopChild(process);
+            }
+        }
+        @Override public void close() throws Exception { stopChild(process); }
     }
 
     private static void concurrentRedeemAcrossIndependentAccessors() throws Exception {
