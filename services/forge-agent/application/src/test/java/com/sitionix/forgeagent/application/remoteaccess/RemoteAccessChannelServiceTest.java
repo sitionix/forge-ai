@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.ForgeInstanceIdentityRepository;
 import com.sitionix.forgeagent.domain.port.RemoteAccessSessionRepository;
+import com.sitionix.forgeagent.domain.port.RemoteAccessInvitationRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -22,6 +23,7 @@ class RemoteAccessChannelServiceTest {
     private static final String KEY = "SHA256:" + "A".repeat(43);
     private final UUID local = UUID.randomUUID();
     @Mock private RemoteAccessSessionRepository sessions;
+    @Mock private RemoteAccessInvitationRepository invitations;
     @Mock private ForgeInstanceIdentityRepository identity;
 
     @Test void provisioningAndActiveCanReadOnlyTheirOwnCurrentStatus() {
@@ -81,12 +83,12 @@ class RemoteAccessChannelServiceTest {
         var session = session(local,RemoteAccessRole.GRANTOR);
         when(identity.getOrCreate()).thenReturn(local);
         when(sessions.findById(session.id())).thenReturn(Optional.of(session));
-        var sut = new RemoteAccessChannelService(sessions,identity,Clock.fixed(session.provisioningExpiresAt(),ZoneOffset.UTC));
+        var sut = new RemoteAccessChannelService(sessions,identity,Clock.fixed(session.provisioningExpiresAt(),ZoneOffset.UTC),invitations);
         assertThat(sut.sessionStatus(binding(session))).isEmpty();
     }
 
     private RemoteAccessChannelService service() {
-        return new RemoteAccessChannelService(sessions,identity,Clock.fixed(NOW,ZoneOffset.UTC));
+        return new RemoteAccessChannelService(sessions,identity,Clock.fixed(NOW,ZoneOffset.UTC),invitations);
     }
     private RemoteAccessKeyBinding binding(RemoteAccessSession session) {
         return new RemoteAccessKeyBinding(session.grantorInstanceId(),session.id(),KEY);

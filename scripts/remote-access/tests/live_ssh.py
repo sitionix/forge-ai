@@ -39,13 +39,18 @@ check(run('systemd-tmpfiles','--create','/etc/tmpfiles.d/forge-remote.conf').ret
       'managed tmpfiles applies without unrelated host sshd')
 check(run('/usr/sbin/sshd','-t','-f','/etc/forge-remote/sshd_config').returncode==0,
       'managed boot setup restores privilege-separation directory')
+# Exercise actual old-package helper upgrade under root, with existing host identity preserved.
+installed_helper=pathlib.Path('/usr/libexec/forge-remote/forced-command')
+installed_helper.write_bytes((BASE/'tests'/'fixtures'/'stage2-forced-command.py').read_bytes())
+installed_helper.chmod(0o755)
 original=(pathlib.Path('/etc/forge-remote/host_ed25519').read_bytes(),
           pathlib.Path('/etc/ssh/sshd_config').read_bytes())
 setup.prepare('127.0.0.1',22222)
+check(installed_helper.read_bytes()==(BASE/'forced_command.py').read_bytes(),'known Stage 2 helper upgrades atomically to current package')
 check(original==(pathlib.Path('/etc/forge-remote/host_ed25519').read_bytes(),
                  pathlib.Path('/etc/ssh/sshd_config').read_bytes()),'repeat setup preserves host key and unrelated sshd config')
 fixture=pathlib.Path('/fixture');fixture.mkdir(mode=0o700)
-for name in ['session','foreign','wrong-host']:
+for name in ['session','foreign','wrong-host','pairing']:
     result=run('ssh-keygen','-q','-t','ed25519','-N','','-f',str(fixture/name))
     check(result.returncode==0,'generate synthetic '+name)
 key=(fixture/'session.pub').read_text().split()[:2]
@@ -78,6 +83,7 @@ while True:
 state=pathlib.Path('/run/forge-remote/channel/test-status');state.write_text('ACTIVE');state.chmod(0o644)
 pathlib.Path('/run/forge-remote/channel/test-request').write_text('STATUS '+grantor+' '+session+' '+fingerprint+'\n')
 authority=sp.Popen(['python3','-c',authority_code],user=control.pw_uid,group=peer.pw_gid,extra_groups=[],stdout=sp.DEVNULL,stderr=sp.PIPE)
+supervisor=None
 sshd=sp.Popen(['/usr/sbin/sshd','-D','-e','-f','/etc/forge-remote/sshd_config'],stdout=sp.DEVNULL,stderr=sp.PIPE)
 try:
     for _ in range(60):
@@ -112,13 +118,63 @@ try:
     record.write_text('session '+grantor+' '+str(uuid.uuid4())+' '+fingerprint+'\n')
     check(ssh('forge-ssh@127.0.0.1','status').returncode!=0,'binding mismatch denied by authority')
     record.write_text('session '+grantor+' '+session+' '+fingerprint+'\n')
+    # Stage 3: real root supervisor and control UID provision an invitation-only key.
+    admin=pathlib.Path('/run/forge-remote/admin')
+    admin.mkdir(mode=0o750); admin.chmod(0o750); os.chown(admin,0,control.pw_gid)
+    supervisor=sp.Popen(['/usr/libexec/forge-remote/invitation-supervisor'],stdout=sp.DEVNULL,stderr=sp.PIPE)
+    for _ in range(60):
+        if (admin/'invitations.sock').exists(): break
+        if supervisor.poll() is not None: raise AssertionError('supervisor failed to start')
+        time.sleep(.05)
+    control_code="""import socket,sys
+s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+s.settimeout(3)
+s.connect('/run/forge-remote/admin/invitations.sock')
+s.sendall(sys.argv[1].encode())
+print(s.recv(2048).decode(),end='')
+"""
+    def admin_request(frame, account=control):
+        return sp.run(['python3','-c',control_code,frame],user=account.pw_uid,group=account.pw_gid,
+                      extra_groups=[],stdout=sp.PIPE,stderr=sp.PIPE,timeout=5)
+    host=admin_request('HOST\n')
+    check(host.returncode==0 and host.stdout.strip()==b' '.join(pathlib.Path('/etc/forge-remote/host_ed25519.pub').read_bytes().split()[:2]),
+          'control UID reads only managed host public identity')
+    check(admin_request('HOST\n',peer).returncode!=0,'transport UID cannot reach privileged invitation socket')
+    pairing_key=' '.join((fixture/'pairing.pub').read_text().split()[:2])
+    invitation=str(uuid.uuid4())
+    install='INSTALL '+grantor+' '+invitation+' '+pairing_key+'\n'
+    check(admin_request(install).stdout==b'OK\n','real supervisor installs only invitation public grant')
+    check(admin_request(install).stdout==b'OK\n','repeated invitation installation is idempotent')
+    pairing_fp='SHA256:'+base64.b64encode(hashlib.sha256(base64.b64decode(pairing_key.split()[1])).digest()).decode().rstrip('=')
+    state.write_text('PAIRING_ALLOWED')
+    expected_path=pathlib.Path('/run/forge-remote/channel/test-request')
+    expected_path.write_text('PAIR '+grantor+' '+invitation+' '+pairing_fp+'\n')
+    paired=ssh('forge-ssh@127.0.0.1','pair',identity='pairing')
+    check(paired.returncode==0 and paired.stdout==b'PAIRING_ALLOWED\n','pairing key reaches only its bound invitation authority')
+    for operation in ['status','id','confirm','pair '+str(uuid.uuid4())]:
+        check(ssh('forge-ssh@127.0.0.1',operation,identity='pairing').returncode!=0,'pairing key denied operation '+operation.split()[0])
+    check(b'PTY allocation request failed' in ssh('-tt','forge-ssh@127.0.0.1','pair',identity='pairing').stderr,'pairing key cannot allocate PTY')
+    check(ssh('-W','127.0.0.1:22222','forge-ssh@127.0.0.1',identity='pairing').returncode!=0,'pairing key cannot forward')
+    state.write_text('DENIED')
+    check(ssh('forge-ssh@127.0.0.1','pair',identity='pairing').returncode!=0,'current authority denial closes already installed invitation')
+    remove='REMOVE '+grantor+' '+invitation+' '+pairing_key+'\n'
+    check(admin_request(remove).stdout==b'OK\n','supervisor removes invitation grant')
+    state.write_text('PAIRING_ALLOWED')
+    check(ssh('forge-ssh@127.0.0.1','pair',identity='pairing').returncode!=0,'removed invitation key cannot authenticate again')
+    state.write_text('ACTIVE')
+    expected_path.write_text('STATUS '+grantor+' '+session+' '+fingerprint+'\n')
+    check(ssh('forge-ssh@127.0.0.1','status').returncode==0,'invitation cleanup preserves independent session grant')
+    check(run('systemd-analyze','verify','/etc/systemd/system/forge-remote-invitations.service').returncode==0,
+          'invitation supervisor systemd unit passes static verification')
     authority.terminate();authority.wait(timeout=5)
     check(ssh('forge-ssh@127.0.0.1','status').returncode!=0,'unavailable authority denied')
     for target in ['/var/lib/forge-remote/authorized/keys','/usr/libexec/forge-remote/forced-command','/etc/forge-remote/host_ed25519']:
         result=sp.run(['python3','-c','import pathlib,sys;pathlib.Path(sys.argv[1]).write_text("overwrite")',target],
                       user=peer.pw_uid,group=peer.pw_gid,extra_groups=[],stdout=sp.DEVNULL,stderr=sp.DEVNULL)
         check(result.returncode!=0,'transport cannot modify '+target)
+    print('STAGE3_INVITATION_SSH_PASS: real supervisor/sshd/helper, stub Agent authority; no session activation',flush=True)
     print('STAGE2_SSH_BOUNDARY_PASS: real sshd/helper, stub authority; no workload execution or live Codex',flush=True)
 finally:
+    if supervisor is not None and supervisor.poll() is None: supervisor.terminate();supervisor.wait(timeout=5)
     if authority.poll() is None: authority.terminate();authority.wait(timeout=5)
     sshd.terminate();sshd.wait(timeout=5)

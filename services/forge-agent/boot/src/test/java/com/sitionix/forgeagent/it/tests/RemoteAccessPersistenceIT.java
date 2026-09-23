@@ -101,7 +101,8 @@ class RemoteAccessPersistenceIT {
         service(jdbc).reserveGrantorSession(session);
         var repository = new PostgresRemoteAccessSessionRepository(jdbc);
         var authority = new com.sitionix.forgeagent.application.remoteaccess.RemoteAccessChannelService(
-                repository, new PostgresForgeInstanceIdentityRepository(jdbc), Clock.fixed(NOW,ZoneOffset.UTC));
+                repository, new PostgresForgeInstanceIdentityRepository(jdbc), Clock.fixed(NOW,ZoneOffset.UTC),
+                new PostgresRemoteAccessInvitationRepository(jdbc));
         var binding = new RemoteAccessKeyBinding(local, session.id(), session.sessionFingerprint());
         assertThat(authority.sessionStatus(binding)).contains(RemoteAccessSessionStatus.PROVISIONING);
         var active = session.activate(NOW);
@@ -112,6 +113,55 @@ class RemoteAccessPersistenceIT {
         assertThat(authority.sessionStatus(binding)).isEmpty();
         assertThat(repository.transition(revoking,revoking.confirmRevoked(NOW))).isTrue();
         assertThat(authority.sessionStatus(binding)).isEmpty();
+    }
+
+    @Test
+    void pairingGateReadsAuthoritativeExpiryCancellationAndConsumptionAcrossRestart() {
+        var identity = new PostgresForgeInstanceIdentityRepository(jdbc);
+        UUID local = identity.getOrCreate();
+        var invitations = new PostgresRemoteAccessInvitationRepository(jdbc);
+        var invitation = invitation(local, NOW.plusSeconds(120));
+        invitations.insert(invitation);
+        var authority = new com.sitionix.forgeagent.application.remoteaccess.RemoteAccessChannelService(
+                new PostgresRemoteAccessSessionRepository(jdbc),identity,Clock.fixed(NOW,ZoneOffset.UTC),invitations);
+        var binding = new RemoteAccessInvitationBinding(local,invitation.id(),invitation.pairingFingerprint());
+        assertThat(authority.pairingAllowed(binding)).isTrue();
+        assertThat(invitations.findAll(local)).contains(invitation);
+        var expired = new com.sitionix.forgeagent.application.remoteaccess.RemoteAccessChannelService(
+                new PostgresRemoteAccessSessionRepository(jdbc),identity,Clock.fixed(invitation.expiresAt(),ZoneOffset.UTC),invitations);
+        assertThat(expired.pairingAllowed(binding)).isFalse();
+        assertThat(invitations.cancel(invitation.id(),NOW)).isTrue();
+        assertThat(authority.pairingAllowed(binding)).isFalse();
+        var second = invitation(local,NOW.plusSeconds(120));
+        invitations.insert(second);
+        service(jdbc).reserveGrantorSession(grantor(second));
+        var restarted = new com.sitionix.forgeagent.application.remoteaccess.RemoteAccessChannelService(
+                new PostgresRemoteAccessSessionRepository(jdbc),new PostgresForgeInstanceIdentityRepository(jdbc),
+                Clock.fixed(NOW,ZoneOffset.UTC),new PostgresRemoteAccessInvitationRepository(jdbc));
+        assertThat(restarted.pairingAllowed(new RemoteAccessInvitationBinding(local,second.id(),second.pairingFingerprint()))).isFalse();
+    }
+
+    @Test
+    void alteredTokenExpiryDoesNotExtendPersistedInvitationLifetime() {
+        var tokens = new com.sitionix.forgeagent.infrastructure.local.remoteaccess.LocalPairingTokens();
+        var identity = new PostgresForgeInstanceIdentityRepository(jdbc);
+        var invitations = new PostgresRemoteAccessInvitationRepository(jdbc);
+        try (var keys = tokens.generate()) {
+            var invitation = new RemoteAccessInvitation(UUID.randomUUID(),identity.getOrCreate(),
+                    new RemoteAccessEndpoint("192.0.2.20",2222,"forge-ssh"),keys.publicKey(),keys.fingerprint(),
+                    NOW,NOW.plusSeconds(300),null,null,null);
+            invitations.insert(invitation);
+            var original = tokens.encode(invitation,"Grantor",keys.publicKey(),keys.privateKey()).value();
+            var json = new String(java.util.Base64.getUrlDecoder().decode(original.substring("fgpair_v1_".length())),java.nio.charset.StandardCharsets.UTF_8);
+            var changed = json.replace(invitation.expiresAt().toString(),NOW.plusSeconds(86400).toString());
+            var forged = "fgpair_v1_"+java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(changed.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            try (var parsed = tokens.decode(forged,UUID.randomUUID())) {
+                assertThat(parsed.expiresAt()).isEqualTo(NOW.plusSeconds(86400));
+                var authority = new com.sitionix.forgeagent.application.remoteaccess.RemoteAccessChannelService(
+                        new PostgresRemoteAccessSessionRepository(jdbc),identity,Clock.fixed(NOW.plusSeconds(301),ZoneOffset.UTC),invitations);
+                assertThat(authority.pairingAllowed(new RemoteAccessInvitationBinding(parsed.grantorInstanceId(),parsed.invitationId(),keys.fingerprint()))).isFalse();
+            }
+        }
     }
 
     @Test
@@ -298,7 +348,7 @@ class RemoteAccessPersistenceIT {
     }
 
     private static RemoteAccessInvitation invitation(UUID local,Instant expires) {
-        return new RemoteAccessInvitation(UUID.randomUUID(),local,endpoint(),"public-pair-key","SHA256:pair",NOW,expires,null,null,null);
+        return new RemoteAccessInvitation(UUID.randomUUID(),local,endpoint(),"public-pair-key","SHA256:"+"A".repeat(43),NOW,expires,null,null,null);
     }
     private static RemoteAccessEndpoint endpoint() { return new RemoteAccessEndpoint("localhost",2222,"forge"); }
     private static RemoteAccessSession grantor(RemoteAccessInvitation invitation) {

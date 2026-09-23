@@ -1,6 +1,8 @@
 package com.sitionix.forgeagent.application.remoteaccess;
 
 import com.sitionix.forgeagent.domain.model.RemoteAccessKeyBinding;
+import com.sitionix.forgeagent.domain.model.RemoteAccessInvitationBinding;
+import com.sitionix.forgeagent.domain.port.RemoteAccessInvitationRepository;
 import com.sitionix.forgeagent.domain.model.RemoteAccessRole;
 import com.sitionix.forgeagent.domain.model.RemoteAccessSessionStatus;
 import com.sitionix.forgeagent.domain.port.ForgeInstanceIdentityRepository;
@@ -17,6 +19,17 @@ public class RemoteAccessChannelService implements RemoteAccessChannelAuthority 
     private final RemoteAccessSessionRepository sessions;
     private final ForgeInstanceIdentityRepository identity;
     private final Clock clock;
+    private final RemoteAccessInvitationRepository invitations;
+
+    @Override
+    public boolean pairingAllowed(RemoteAccessInvitationBinding binding) {
+        if (!identity.getOrCreate().equals(binding.grantorInstanceId())) return false;
+        return invitations.findById(binding.invitationId())
+                .filter(invitation -> invitation.grantorInstanceId().equals(binding.grantorInstanceId()))
+                .filter(invitation -> invitation.pairingFingerprint().equals(binding.fingerprint()))
+                .filter(invitation -> invitation.isUsable(clock.instant()))
+                .isPresent();
+    }
 
     @Override
     public Optional<RemoteAccessSessionStatus> sessionStatus(RemoteAccessKeyBinding binding) {

@@ -409,3 +409,65 @@ Verification of the corrected implementation:
 
 No Stage 3+ functionality was added. These results provide correction evidence
 for external review, not stage acceptance.
+
+
+## Stage 3 — invitation-only Give Access (2026-09-23)
+
+Base: merged PR #143, `887a57701599df4de452a207e1be6a0d77e4474f`.
+The user authorized Stage 3 after merge. Branch `feature/SITIONIX-137`.
+Implementation and installation details: [stage3-invitations.md](stage3-invitations.md).
+No production host installation, pairing session activation, REST/UI or workload
+execution was performed. No Stage 4+ work is included.
+
+### Regression and independent review
+
+- Invitation eligibility RED: fail-closed stub denied a valid stored invitation;
+  the positive assertion failed. GREEN uses local identity, matching fingerprint,
+  authoritative persisted consume/cancel state and server-clock expiry.
+- Forced helper RED: an invitation `pair` request returned DENIED. GREEN permits
+  only its bound pairing check; session status/commands remain denied.
+- Unix channel RED: the new PAIR frame returned DENIED; GREEN reaches only the
+  typed invitation authority, not session status.
+- New token/key, lifecycle, supervisor/client and grant-store tests were written
+  before their implementation; their initial runs failed on absent types/modules.
+  These are new-feature scaffolding failures, not claims of pre-existing defects.
+- Independent read-only review found two defects and both were fixed: known
+  Stage 2 helper installation conflicted rather than upgrading; Jackson accepted
+  fractional numeric version/port values. Upgrade regression reproduced the real
+  installation conflict, and fractional-token regression failed with "Expecting
+  code to raise a throwable". Both now pass. Re-review confirmed both corrections;
+  this does not substitute for external stage acceptance.
+- Existing DB test fixtures used a deliberately incomplete fingerprint; the new
+  invitation binding correctly rejected it. The relevant fixture now uses a
+  valid SHA256 fingerprint shape. Persisted production semantics were unchanged.
+
+### Verification
+
+- Focused application tests: 5 invitation lifecycle tests and 2 invitation gate
+  tests pass, alongside existing session authority tests.
+- Typed token tests: 4 pass, including malformed envelope/key/endpoint, self
+  pairing, fractional/scalar rejection and redaction.
+- Actual Unix channel/client tests pass; only the test authority/supervisor
+  responses are fixtures in those Java transport tests.
+- Real PostgreSQL `RemoteAccessPersistenceIT`: 14 tests pass in full verify,
+  including restart/consume/cancel/expiry, concurrent reservation and changed
+  token expiry not extending the server's persisted lifetime.
+- Final `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`
+  after the strict-number correction: PASS (exit 0). Failsafe: 325 tests, zero
+  failures/errors, six existing opt-in live-executor skips.
+- `mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify`: PASS.
+- Console: 545 tests PASS; `npm run typecheck` and `npm run build`: PASS.
+- `python3 -m unittest discover -s scripts/remote-access/tests -p 'test_*.py' -v`:
+  19 tests PASS. CI discovery now includes both grant-store and existing SSH tests.
+- Docker build PASS; `docker run --rm --network none forge-remote-stage3-test`:
+  46 assertions PASS. The fixture uses real root installation/upgrade, actual
+  root supervisor, separate control/transport UIDs, real sshd, host pinning and
+  forced helper. It checks pairing-only permissions, authority denial, grant
+  removal, preservation of an independent session grant and protected files/socket.
+- The Docker Agent authority is explicitly a stub. Systemd units receive static
+  verification; the new supervisor is started directly inside the container.
+  This is not a full two-Forge/systemd E2E or live Codex run. The existing Stage 9
+  runtime/UI/Codex acceptance labels remain NOT_RUN.
+
+`git diff --check`: PASS. No Nexus/Console production changes or migration
+changes. READY_FOR_REVIEW; Stage 4 stays unauthorized.
