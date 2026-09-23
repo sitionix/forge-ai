@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import importlib.util
+import json
 import os
 import pathlib
 import pwd
@@ -18,8 +19,8 @@ spec=importlib.util.spec_from_file_location('setup',BASE/'install.py')
 setup=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(setup)
 
-def run(*args):
-    return sp.run(args,stdin=sp.DEVNULL,stdout=sp.PIPE,stderr=sp.PIPE,timeout=12)
+def run(*args, payload=None):
+    return sp.run(args,input=payload,stdin=sp.DEVNULL if payload is None else None,stdout=sp.PIPE,stderr=sp.PIPE,timeout=12)
 
 def check(condition,label):
     if not condition: raise AssertionError(label)
@@ -75,7 +76,12 @@ s.listen()
 while True:
  c,_=s.accept()
  with c:
-  request=c.recv(1024).decode()
+  request=b''
+  while len(request)<8192 and not request.endswith(b'\\n'):
+   chunk=c.recv(8192-len(request))
+   if not chunk: break
+   request+=chunk
+  request=request.decode()
   mode=pathlib.Path('/run/forge-remote/channel/test-status').read_text().strip()
   expected=pathlib.Path('/run/forge-remote/channel/test-request').read_text()
   c.sendall((mode+'\\n' if request==expected else 'DENIED\\n').encode())
@@ -92,19 +98,19 @@ try:
             if pathlib.Path('/run/forge-remote/channel/authority.sock').exists(): break
         except OSError: pass
         time.sleep(.05)
-    def ssh(*args,identity='session',known='known'):
+    def ssh(*args,identity='session',known='known',payload=None):
         return run('ssh','-F','/dev/null','-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','IdentityAgent=none',
                    '-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(fixture/known),
                    '-o','GlobalKnownHostsFile=/dev/null','-o','PasswordAuthentication=no',
                    '-o','KbdInteractiveAuthentication=no','-o','ControlMaster=no','-o','ControlPath=none',
-                   '-i',str(fixture/identity),'-p','22222',*args)
+                   '-i',str(fixture/identity),'-p','22222',*args,payload=payload)
     result=ssh('forge-ssh@127.0.0.1','status')
     check(result.returncode==0 and result.stdout==b'ACTIVE\n','real authenticated key reaches bound status: '+repr((result.returncode,result.stdout,result.stderr)))
     check(ssh('forge-ssh@127.0.0.1','status',known='wrong-known').returncode!=0,'wrong host pin denied')
     check(ssh('forge-ssh@127.0.0.1','status',identity='foreign').returncode!=0,'foreign session key denied')
     injected=ssh('-o','SetEnv=SSH_USER_AUTH=/etc/passwd PYTHONPATH=/tmp', 'forge-ssh@127.0.0.1','status')
     check(injected.returncode==0 and injected.stdout==b'ACTIVE\n','peer environment cannot replace authenticated key proof')
-    for command in ['id','sh','status '+str(uuid.uuid4()),'confirm','']:
+    for command in ['id','sh','status '+str(uuid.uuid4()),'confirm '+str(uuid.uuid4()),'exec id','revoke','']:
         check(ssh('forge-ssh@127.0.0.1',command).returncode!=0,'arbitrary or forged command denied: '+repr(command))
     check(ssh('-s','forge-ssh@127.0.0.1','sftp').returncode!=0,'sftp subsystem denied')
     pty=ssh('-tt','forge-ssh@127.0.0.1','status')
@@ -155,6 +161,82 @@ print(s.recv(2048).decode(),end='')
         check(ssh('forge-ssh@127.0.0.1',operation,identity='pairing').returncode!=0,'pairing key denied operation '+operation.split()[0])
     check(b'PTY allocation request failed' in ssh('-tt','forge-ssh@127.0.0.1','pair',identity='pairing').stderr,'pairing key cannot allocate PTY')
     check(ssh('-W','127.0.0.1:22222','forge-ssh@127.0.0.1',identity='pairing').returncode!=0,'pairing key cannot forward')
+    # Stage 4: invitation stdin is bounded metadata; authenticated session key confirms.
+    payload=json.dumps({'sessionId':session,'accessorInstanceId':str(uuid.uuid4()),
+                        'accessorDisplayName':'Test accessor','sessionPublicKey':' '.join(key)},separators=(',',':')).encode()
+    encoded=base64.urlsafe_b64encode(payload).decode().rstrip('=')
+    expected_path.write_text('REDEEM '+grantor+' '+invitation+' '+pairing_fp+' '+encoded+'\n')
+    state.write_text('PROVISIONING '+session)
+    redeemed=ssh('forge-ssh@127.0.0.1','redeem',identity='pairing',payload=payload)
+    check(redeemed.returncode==0 and redeemed.stdout==('PROVISIONING '+session+'\n').encode(),
+          'invitation redeem forwards bounded JSON with authenticated immutable binding')
+    check(ssh('forge-ssh@127.0.0.1','redeem',identity='pairing',payload=b'{}'+b' '*6000).returncode!=0,
+          'oversized redeem input denied')
+    expected_path.write_text('REDEEM '+grantor+' '+str(uuid.uuid4())+' '+pairing_fp+' '+encoded+'\n')
+    check(ssh('forge-ssh@127.0.0.1','redeem',identity='pairing',payload=payload).returncode!=0,
+          'redeem invitation binding mismatch denied')
+    expected_path.write_text('CONFIRM '+grantor+' '+session+' '+fingerprint+'\n')
+    state.write_text('ACTIVE')
+    confirmed=ssh('forge-ssh@127.0.0.1','confirm')
+    check(confirmed.returncode==0 and confirmed.stdout==b'ACTIVE\n','new session key confirms its own immutable binding')
+    state.write_text('PROVISIONING')
+    check(ssh('forge-ssh@127.0.0.1','confirm').returncode!=0,'confirm cannot accept provisioning as active')
+    state.write_text('ACTIVE')
+    expected_path.write_text('CONFIRM '+grantor+' '+str(uuid.uuid4())+' '+fingerprint+'\n')
+    check(ssh('forge-ssh@127.0.0.1','confirm').returncode!=0,'confirm binding mismatch denied')
+    session_key=' '.join((fixture/'foreign.pub').read_text().split()[:2])
+    installed_session=str(uuid.uuid4())
+    session_install='SESSION_INSTALL '+grantor+' '+installed_session+' '+session_key+'\n'
+    check(admin_request(session_install).stdout==b'OK\n','root supervisor installs restricted session grant')
+    check(admin_request(session_install).stdout==b'OK\n','session grant install is idempotent')
+    session_fp='SHA256:'+base64.b64encode(hashlib.sha256(base64.b64decode(session_key.split()[1])).digest()).decode().rstrip('=')
+    expected_path.write_text('CONFIRM '+grantor+' '+installed_session+' '+session_fp+'\n')
+    check(ssh('forge-ssh@127.0.0.1','confirm',identity='foreign').returncode==0,'supervisor session grant reaches confirm')
+    for operation in ['pair','redeem','exec id','revoke']:
+        check(ssh('forge-ssh@127.0.0.1',operation,identity='foreign').returncode!=0,'session denies '+operation)
+    # Upgrade exact Stage 3 bytes while retaining live grants and all root bindings.
+    saved_keys=keys.read_bytes()
+    binding_dir=pathlib.Path('/var/lib/forge-remote/bindings')
+    saved_bindings={p.name:p.read_bytes() for p in binding_dir.iterdir()}
+    supervisor.terminate();supervisor.wait(timeout=5)
+    (admin/'invitations.sock').unlink()
+    for target,fixture_name in [(installed_helper,'stage3-forced-command.py'),
+                                (pathlib.Path('/usr/libexec/forge-remote/invitation-supervisor'),'stage3-invitation-supervisor.py')]:
+        target.write_bytes((BASE/'tests'/'fixtures'/fixture_name).read_bytes());target.chmod(0o755)
+    # Actually execute the previous supervisor, not just place old bytes on disk.
+    supervisor=sp.Popen(['/usr/libexec/forge-remote/invitation-supervisor'],stdout=sp.DEVNULL,stderr=sp.PIPE)
+    for _ in range(60):
+        if (admin/'invitations.sock').exists(): break
+        if supervisor.poll() is not None: raise AssertionError('Stage 3 supervisor failed to start')
+        time.sleep(.05)
+    check(admin_request(session_install).stdout==b'DENIED\n','running Stage 3 supervisor cannot install Stage 4 session grant')
+    try:
+        setup.prepare('127.0.0.1',22222)
+    except RuntimeError as failure:
+        check('stop managed invitation supervisor' in str(failure),'running Stage 3 supervisor blocks upgrade before artifact changes')
+    else: raise AssertionError('running old supervisor upgrade was allowed')
+    check(installed_helper.read_bytes()==(BASE/'tests'/'fixtures'/'stage3-forced-command.py').read_bytes(),
+          'blocked upgrade preserves old forced helper')
+    supervisor.terminate();supervisor.wait(timeout=5)
+    (admin/'invitations.sock').unlink();admin.rmdir()  # emulate systemd RuntimeDirectory cleanup after stop
+    setup.prepare('127.0.0.1',22222)
+    admin.mkdir(mode=0o750);os.chown(admin,0,control.pw_gid)
+    supervisor=sp.Popen(['/usr/libexec/forge-remote/invitation-supervisor'],stdout=sp.DEVNULL,stderr=sp.PIPE)
+    for _ in range(60):
+        if (admin/'invitations.sock').exists(): break
+        if supervisor.poll() is not None: raise AssertionError('upgraded supervisor failed to start')
+        time.sleep(.05)
+    check(admin_request(session_install).stdout==b'OK\n','restarted upgraded supervisor accepts Stage 4 session grant')
+    check(keys.read_bytes()==saved_keys and {p.name:p.read_bytes() for p in binding_dir.iterdir()}==saved_bindings,
+          'exact Stage 3 helper and supervisor upgrade preserves existing session and invitation grants')
+    check(installed_helper.read_bytes()==(BASE/'forced_command.py').read_bytes() and
+          pathlib.Path('/usr/libexec/forge-remote/invitation-supervisor').read_bytes()==(BASE/'invitation_supervisor.py').read_bytes(),
+          'both exact Stage 3 executables upgraded')
+    check(admin_request('SESSION_REMOVE '+grantor+' '+session+' '+session_key+'\n').stdout==b'DENIED\n',
+          'session removal cannot override immutable session identity')
+    check(admin_request('SESSION_REMOVE '+grantor+' '+installed_session+' '+session_key+'\n').stdout==b'OK\n',
+          'supervisor removes only owned session grant')
+    check(ssh('forge-ssh@127.0.0.1','confirm',identity='foreign').returncode!=0,'removed session key cannot authenticate')
     state.write_text('DENIED')
     check(ssh('forge-ssh@127.0.0.1','pair',identity='pairing').returncode!=0,'current authority denial closes already installed invitation')
     remove='REMOVE '+grantor+' '+invitation+' '+pairing_key+'\n'
@@ -172,6 +254,7 @@ print(s.recv(2048).decode(),end='')
         result=sp.run(['python3','-c','import pathlib,sys;pathlib.Path(sys.argv[1]).write_text("overwrite")',target],
                       user=peer.pw_uid,group=peer.pw_gid,extra_groups=[],stdout=sp.DEVNULL,stderr=sp.DEVNULL)
         check(result.returncode!=0,'transport cannot modify '+target)
+    print('STAGE4_PAIRING_SSH_PASS: real supervisor/sshd/helper, stub Agent authority; redeem and confirm routing only',flush=True)
     print('STAGE3_INVITATION_SSH_PASS: real supervisor/sshd/helper, stub Agent authority; no session activation',flush=True)
     print('STAGE2_SSH_BOUNDARY_PASS: real sshd/helper, stub authority; no workload execution or live Codex',flush=True)
 finally:

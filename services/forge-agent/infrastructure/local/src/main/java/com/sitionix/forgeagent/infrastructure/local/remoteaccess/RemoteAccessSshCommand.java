@@ -16,11 +16,16 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 
-/** Builds only the Stage 2 status probe; does not execute commands or retry transport failures. */
+/** Builds only fixed remote-access control commands, with isolated configuration and pinned identity. */
 public final class RemoteAccessSshCommand {
     private RemoteAccessSshCommand() { }
 
     public static List<String> status(RemoteAccessSession session,Path identity,Path knownHosts) throws IOException {
+        return control(session,identity,knownHosts,"status");
+    }
+
+    public static List<String> control(RemoteAccessSession session,Path identity,Path knownHosts,String operation) throws IOException {
+        if (!List.of("redeem","confirm","status").contains(operation)) throw new IllegalArgumentException("Unsupported control command");
         if (session.localRole()!=RemoteAccessRole.ACCESSOR || session.localPrivateKeyReference()==null
                 || session.status()!=RemoteAccessSessionStatus.ACTIVE && session.status()!=RemoteAccessSessionStatus.PROVISIONING) {
             throw new IllegalArgumentException("Session does not permit an accessor status probe");
@@ -48,7 +53,7 @@ public final class RemoteAccessSshCommand {
             argv.add("-o"); argv.add(option);
         }
         argv.addAll(List.of("-i",identity.toAbsolutePath().toString(),"-p",Integer.toString(endpoint.port()),
-                "--",endpoint.username()+"@"+endpoint.host(),"status"));
+                "--",endpoint.username()+"@"+endpoint.host(),operation));
         return List.copyOf(argv);
     }
 

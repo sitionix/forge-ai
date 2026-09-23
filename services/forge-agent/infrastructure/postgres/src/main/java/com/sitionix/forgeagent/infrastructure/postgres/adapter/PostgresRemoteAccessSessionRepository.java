@@ -42,6 +42,27 @@ public class PostgresRemoteAccessSessionRepository implements RemoteAccessSessio
                 .stream().findFirst();
     }
 
+    public Optional<RemoteAccessSession> findByInvitation(UUID invitationId) {
+        return jdbc.query("SELECT * FROM remote_access_sessions WHERE invitation_id=?", (row, number) -> map(row), invitationId)
+                .stream().findFirst();
+    }
+
+    public java.util.List<RemoteAccessSession> findLocal(UUID instanceId) {
+        return jdbc.query("""
+                SELECT * FROM remote_access_sessions
+                WHERE (local_role='GRANTOR' AND grantor_instance_id=?) OR (local_role='ACCESSOR' AND accessor_instance_id=?)
+                ORDER BY created_at,id
+                """, (row, number) -> map(row), instanceId, instanceId);
+    }
+
+    public boolean recordFailure(RemoteAccessSession before, String code, String message) {
+        RemoteAccessSession after = before.withFailure(code,message);
+        return jdbc.update("""
+                UPDATE remote_access_sessions SET failure_code=?,failure_message=?,version=?
+                WHERE id=? AND version=? AND status=?
+                """,after.failureCode(),after.failureMessage(),after.version(),before.id(),before.version(),before.status().name()) == 1;
+    }
+
     public boolean transition(RemoteAccessSession before, RemoteAccessSession after) {
         // Apply only the aggregate's allowed state change; never accept an arbitrary detached replacement.
         RemoteAccessSession expected = switch (after.status()) {

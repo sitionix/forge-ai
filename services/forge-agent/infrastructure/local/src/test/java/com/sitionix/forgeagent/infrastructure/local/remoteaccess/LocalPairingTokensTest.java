@@ -53,7 +53,9 @@ class LocalPairingTokensTest {
             for (String changed : new String[]{json.replace("\"version\":1", "\"version\":1.9"),
                     json.replace("\"sshPort\":2222", "\"sshPort\":2222.9"),
                     json.replace("\"version\":1", "\"version\":\"1\""),
-                    json.replace("\"sshPort\":2222", "\"sshPort\":null")}) {
+                    json.replace("\"sshPort\":2222", "\"sshPort\":null"),
+                    json.replace("\"grantorDisplayName\":\"Grantor\"", "\"grantorDisplayName\":3"),
+                    json.replace("\"grantorDisplayName\":\"Grantor\"", "\"grantorDisplayName\":true")}) {
                 assertThat(changed).isNotEqualTo(json);
                 String malformed="fgpair_v1_"+java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(changed.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 assertThatThrownBy(() -> tokens.decode(malformed,UUID.randomUUID()))

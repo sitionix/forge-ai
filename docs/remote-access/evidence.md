@@ -471,3 +471,152 @@ execution was performed. No Stage 4+ work is included.
 
 `git diff --check`: PASS. No Nexus/Console production changes or migration
 changes. READY_FOR_REVIEW; Stage 4 stays unauthorized.
+
+## Stage 4 — persisted SSH pairing and activation (2026-09-23)
+
+Base: PR #144 merged at `43a1ea51a30b9bdf869bd67e97ea7f7d86f468b2`.
+The user authorized this stage after merge. Branch `feature/SITIONIX-138`.
+Implementation/recovery detail: [stage4-pairing.md](stage4-pairing.md).
+No host installation, workload execution, peer HTTP API, UI or Stage 5 work.
+
+### Regression and review evidence
+
+- Application lifecycle RED initially failed on absent Stage 4 contracts/services;
+  GREEN covers reservation-before-install, no premature activation, matching-key
+  proof, expired/failed grant cleanup, and session-key recovery after lost ACK.
+  New ACCESSOR tests assert durable preparation precedes the first SSH operation
+  and an existing attempt does not create a new key or redeem the token again.
+- Typed Unix REDEEM socket regression demonstrated Jackson Integer→String
+  coercion despite `ALLOW_COERCION_OF_SCALARS=false`. Explicit Textual coercion
+  rejection fixes the peer payload. The same focused token-envelope regression
+  reproduced the issue and now rejects numeric/boolean display-name fields.
+- Independent scoped OS review found that overwriting supervisor Python bytes
+  would leave an old running interpreter active. Regression first failed;
+  installer preflight now refuses version-changing upgrade while its managed
+  runtime directory exists. The real SSH fixture starts the exact Stage 3
+  supervisor, observes refusal without file changes, then stops/removes the
+  managed runtime fixture, upgrades, restarts and installs a session grant.
+  Re-review found that correction complete; it is not external stage acceptance.
+- Scheduler isolation regression was RED with pairing on the ambient application
+  scheduler: an unrelated scheduled task could not proceed while recovery was
+  blocked. GREEN uses a lifecycle-owned private timer, leaving the existing
+  workflow/lease executor routing unchanged. The test intentionally constrains
+  the ambient scheduler to one thread; the current production heartbeat executor
+  has two threads, so this demonstrates isolation rather than claiming every
+  production recovery call previously stopped all workflow activity.
+- A final expiry-vs-activation regression reproduced stale ACCESSOR cleanup
+  writing PROVISIONING_EXPIRED onto a concurrently activated row after its CAS
+  failed. GREEN returns the current row on CAS failure without overwriting its
+  failure metadata. Focused re-review confirmed this correction.
+- Separate read-only review of lifecycle, persistence and transport reported no
+  concrete correctness/security findings in that scope.
+
+### Focused checks
+
+```sh
+mvn -q -pl services/forge-agent/application -am \
+  -Dtest=RemoteAccessPairingLifecycleTest -Dsurefire.failIfNoSpecifiedTests=false test
+mvn -q -pl services/forge-agent/infrastructure/local -am \
+  -Dtest=LocalPairingTokensTest -Dsurefire.failIfNoSpecifiedTests=false test
+python3 -m unittest discover -s scripts/remote-access/tests -p 'test_*.py' -v
+docker build -f scripts/remote-access/tests/Dockerfile -t forge-remote-stage4-test .
+docker run --rm --network none forge-remote-stage4-test
+```
+
+- Application: 10 tests PASS. Token envelope: 4 tests PASS.
+- Focused channel server / transport / bounded process / SSH command / supervisor
+  client: 20 tests PASS. These targeted Java tests use fixture peer responses.
+- Python: 33 tests PASS. Local socket tests require permission to bind sockets;
+  an initial sandbox denial is not counted as a product failure or successful run.
+- Docker OS suite: 70 assertions PASS with real sshd, root supervisor, forced
+  helper, protected files and separate UIDs. Its Java authority is **stubbed**;
+  `STAGE4_PAIRING_SSH_PASS` means routing/boundary coverage, not full pairing.
+- Console: `npm run typecheck`, 545 tests and `npm run build` PASS.
+
+### Production pairing integration and final regression
+
+```sh
+mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify
+mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify
+```
+
+Both final commands passed (exit 0), including the final expiry/CAS correction.
+Agent Failsafe: 327 tests, zero failures/errors, six existing opt-in skips.
+`RemoteAccessPersistenceIT` includes real PostgreSQL recovery lookups and safe
+failure-metadata CAS, in addition to reservation concurrency and application
+context restart. The scheduler isolation test passes on the real Spring
+scheduling path with an intentionally occupied recovery call.
+
+`RemoteAccessLivePairingIT` passes the initial six scenario checkpoints:
+
+1. Persisted same-ID ACTIVE on both peers, dedicated private credential only in
+   the ACCESSOR store, real SSH status readback.
+2. Consumed invitation and wrong session key rejected through actual SSH.
+3. Successful real redeem/confirm responses deliberately dropped before local
+   acknowledgement; reconstructed services/adapters recover with the same key.
+4. Reservation committed before injected grant-install failure; reconstructed
+   GRANTOR reconciles the grant and ACCESSOR confirms with its saved session key.
+5. Two independent ACCESSORs concurrently redeem through SSH; exactly one
+   GRANTOR session becomes ACTIVE and the losing attempt has no GRANTOR row.
+6. An injected clock beyond both persisted deadlines causes real grant removal
+   and confirmed GRANTOR REVOKED; SSH rejects the old key. ACCESSOR keeps its key
+   and REVOKING audit state because rejection is not remote cleanup proof.
+
+This test directly wires production Java services/ports/adapters with three
+separate PostgreSQL schemas (A, B, competing accessor), separate credential roots,
+actual sshd, root supervisor and protected Unix authority. Test-only fault wrappers
+drop real responses or interrupt one installation step; they do not fake successful
+SSH/authority/database responses. Startup reproduces the managed runtime directory
+ownership inside a disposable Linux container. Initial fixture-only ownership and
+missing RuntimeDirectory errors were corrected; successful results come from the
+subsequent actual run.
+
+The initial six scenarios reconstruct services/adapters and reopen the Unix
+listener while retaining DB/key files. The additional JVM-crash scenarios below
+extend this evidence. The existing persistence suite separately recreates full
+Spring application contexts. No two-VM OS crash test is claimed. No production host install, live Codex, UI, workload execution or process
+cleanup E2E was run. Stage 9 runtime/UI/Codex labels remain NOT_RUN.
+
+`git diff --check` and changed Python `py_compile`: PASS. No Nexus/Console production
+changes, migrations or workflow-routing changes. Stage 4 is submitted for external
+review; Stage 5 remains unauthorized.
+
+### Final JVM-crash recovery correction
+
+The initial service-reconstruction tests did not expose a real crash blocker:
+SIGKILL leaves the UNIX authority socket path behind, and the previous channel
+startup refused that path before persisted reconciliation could run. A real
+killed-Java-child regression reproduced this failure (RED).
+
+The channel now holds an owner-only sibling file lock for its lifetime, also
+excluding a second same-JVM descriptor that could release POSIX process locks.
+Startup reclaims only a verified control-owned UNIX socket with the expected
+group/mode, one link, explicit connection refusal and unchanged inode. A live
+listener, unsafe lock, foreign/symlink path or unknown/ambiguous connection error
+is preserved and fails startup. The lock inode is retained across restarts.
+Unknown/localized OS errors remain fail-closed instead of being guessed as stale.
+
+GREEN: 9 channel tests pass, including real SIGKILL, active unmanaged listener,
+concurrent ownership, unsafe mode, symlink and hardlink preservation. Independent
+read-only review found no concrete defect in this correction.
+
+The production SSH/PostgreSQL fixture now also passes two actual process-crash
+scenarios (8 checkpoints total):
+
+- A separate GRANTOR JVM halts after its reservation commits but before session
+  grant installation, leaving its authority socket. A replacement JVM recovers
+  the abandoned socket and persisted grant; the original ACCESSOR session/key
+  confirms successfully. No operator socket deletion occurs in the test.
+- A separate ACCESSOR JVM receives a real successful SSH confirm and halts before
+  persisting local ACTIVE. Its token arrives through stdin, never process args or
+  a token file. Recovery uses its existing persisted private-key reference and
+  session ID, with no invitation replay.
+
+Both child JVMs use production pairing services/adapters against the real isolated
+PostgreSQL peer schemas; these are abrupt process exits without shutdown hooks.
+The test remains inside one disposable Linux environment, not two physical hosts
+or a systemd/OS reboot exercise. No Stage 5 workload or live Codex claim is added.
+
+Final full Agent verify after the socket/JVM-crash correction: PASS (exit 0),
+327 integration tests, zero failures/errors, six existing opt-in skips. All eight
+live pairing checkpoints passed in that full run. `git diff --check`: PASS.
