@@ -289,3 +289,123 @@ not a claim of production remote access readiness.
 
 Stage 1: **READY_FOR_REVIEW**. Stage 2 is not started. No new PR metadata,
 reviews/comments, deployment, SSH grants or live Codex execution were produced.
+
+
+## Stage 2 — managed SSH/channel boundary (2026-09-22)
+
+Base: merged Stage 1 PR #142, `3b374d0e1746768f72014e0c39d3fa44190d4583`.
+Branch: `feature/SITIONIX-136`. The user's “merged” message authorized this next
+stage; Stage 3 is not started. Setup/ownership and operational limits are in
+[stage2-installation.md](stage2-installation.md).
+
+Implemented: dedicated sshd config/unit/installation, global forced helper,
+authenticated-key binding lookup, restricted Unix socket with kernel peer identity,
+current persisted Agent session authorization and isolated pinned client status
+argv. No Agent root execution, key-publication API, pairing/activation, workload,
+HTTP remote shell or project/workflow routing changes. CI now runs the new Python
+and disposable SSH suites in the Agent job.
+
+Tests preceded implementation for authority, Unix channel, client policy and
+installer/helper. Independent review found two required installer defects:
+
+- A dangling host public-key symlink could redirect ssh-keygen's root write.
+  Regression invoked the actual extracted generation block and failed before
+  correction. Both destinations are now checked before any key generation;
+  failure leaves the unrelated target and private key absent. Existing public
+  material must also match the private host identity.
+- After reboot, `/run/sshd` was not supplied by the managed setup, so startup
+  depended on the unrelated host sshd. The real container regression removed
+  that directory, applied only managed tmpfiles, and still saw sshd -t fail.
+  Adding standard root:root 0755 provisioning made the same regression pass.
+
+A final client check found that owner-only files under a writable ancestor could
+still be replaced. The actual client accepted that insecure test path before the
+fix. It now rejects foreign-owned and writable non-sticky ancestors; the
+regression explicitly sets its POSIX preconditions, independently of umask.
+
+Final verification:
+
+- `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: exit 0.
+  Surefire: 787 reported, 785 passed / 2 existing opt-in skips. Failsafe: 322
+  reported, 316 passed / 6 existing opt-in skips. No failures/errors.
+  `RemoteAccessPersistenceIT`: 12 passed, including current persisted revoke
+  authorization. Focused IT results left in Surefire by -Dtest were excluded
+  from the unit count to avoid counting them twice.
+- `mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify`: exit 0;
+  236 unit and 38 integration tests passed.
+- Console: 20 files / 545 tests passed; typecheck and build exit 0.
+- Python installer/helper unittest: 12 passed; py_compile passed.
+- Disposable real SSH suite: **28 PASS assertions**, exit 0. Captured actual
+  output: [stage2-ssh-result.txt](stage2-ssh-result.txt). Includes global forced
+  command despite a bare authorized-key fixture, host pin mismatch, foreign key,
+  forged command/session, peer environment injection, PTY/subsystem/forwarding,
+  provisioning/denied/unavailable authority, protected files, idempotent setup,
+  missing-systemd NOT READY and reboot-style tmpfiles restoration.
+- The production client argv was also inspected by actual `ssh -G`; effective
+  identity, pin, forwarding and local-command configuration matched the policy.
+- Whitespace checks passed. No old migration, SshConnection or execution/workspace
+  semantics changed.
+
+Evidence limits: real sshd + installed production helper/config, but **stubbed
+control authority** in the Docker suite. Actual Agent authorization against
+PostgreSQL and actual Unix peer-credential transport are tested separately.
+The container runs without privileged mode, host mounts or host/LAN networking.
+Systemd unit syntax and boot tmpfiles are real checks; a live systemd-managed
+service start was **NOT_RUN** in this container. Its installer explicitly reports
+NOT READY without the system manager. No production host installation or grants,
+workload containment/revoke execution, or live Codex E2E are claimed.
+
+Recorded implementation decisions: direct Agent-owned channel socket needs no
+privileged runtime operation at Stage 2; dynamic publication supervisor belongs
+to Stage 3. Existing Agent service ownership is not silently migrated. Stale
+socket paths fail closed and need verified operator cleanup until later crash
+reconciliation. Client paths currently reject spaces/expansion characters. These
+limits are explicit in the installation guide, not silent fallbacks.
+
+READY_FOR_REVIEW. Independent review findings are fixed with RED→GREEN evidence;
+this is not external stage acceptance or a claim of production access readiness.
+
+
+## PR #143 correction — loopback-only authority HTTP bind
+
+The enabled Stage 2 authority previously had no invariant preventing its ordinary
+Agent HTTP listener from binding wildcard/LAN interfaces. This correction adds
+Agent-owned `FORGE_AGENT_HOST` → standard `server.address` mapping and a small
+boot-level validator. It runs after Boot's server factory configuration and
+rejects null/non-loopback resolved InetAddress before HTTP listener creation.
+With the channel disabled the validator is absent; legacy bind behavior remains.
+No default is substituted by validation.
+
+The existing systemd renderer explicitly emits `FORGE_AGENT_HOST=127.0.0.1` for
+its dedicated forge-control runtime. Explicit operator-provided values are
+preserved and unsafe enabled configurations fail at startup. A new renderer
+regression first failed because both dedicated loopback and explicit ordinary
+host values were absent; it passes after the mapping correction. Other services
+ignore this Agent-owned variable in the common env file.
+
+Tests cover disabled/missing and disabled/LAN; enabled IPv4/IPv6 loopback and
+localhost; enabled missing/empty, IPv4/IPv6 wildcard and LAN rejection. Typed
+hostname-address fixtures exercise LAN/loopback resolution without external DNS.
+The actual Agent SpringBootTest starts real Tomcat on port 0 with the channel
+flag enabled, production FORGE_AGENT_HOST mapping, PostgreSQL and an HTTP request
+to the bound 127.0.0.1 connector. Only the separately tested privileged Unix
+socket lifecycle is mocked in that HTTP IT; HTTP binding is not mocked. IPv6 is
+covered at config level; this correction's live HTTP check uses IPv4 loopback.
+
+This is a local bind restriction, not HTTP authentication. Full operator login,
+browser sessions, CSRF and Nexus service credentials remain Stage 6. SSH gate,
+channel/helper/client semantics, persisted sessions and V37 remain unchanged.
+Verification of the corrected implementation:
+
+- Focused Agent boot/config and HTTP bind tests: PASS.
+- Full `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: PASS.
+  The reports include 4 validator tests, 1 real HTTP bind IT and all 12
+  RemoteAccessPersistenceIT tests, without failures or skips in these classes.
+- Stage 2 `test_managed_ssh.py`: 13 tests PASS, including generated runtime config.
+- Stage 2 Docker image build: PASS; `docker run --rm --network none
+  forge-remote-stage2-test`: PASS, 28 real SSH assertions. That suite uses its
+  existing stub authority; it is not a live full Agent/Codex E2E.
+- `git diff --check`: PASS.
+
+No Stage 3+ functionality was added. These results provide correction evidence
+for external review, not stage acceptance.

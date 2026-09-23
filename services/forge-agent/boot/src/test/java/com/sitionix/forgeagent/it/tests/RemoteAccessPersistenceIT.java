@@ -87,6 +87,34 @@ class RemoteAccessPersistenceIT {
     }
 
     @Test
+    void channelAuthorityReadsPersistedRevokeOnEveryRequest() {
+        UUID local = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
+        var invitation = invitation(local, NOW.plusSeconds(120));
+        new PostgresRemoteAccessInvitationRepository(jdbc).insert(invitation);
+        var original = grantor(invitation);
+        // Use the actual key fingerprint format required at the incoming SSH boundary.
+        var session = new RemoteAccessSession(original.id(), original.invitationId(), original.localRole(),
+                local, original.accessorInstanceId(), original.peerDisplayName(), original.endpoint(),
+                original.pinnedHostPublicKey(), original.sessionPublicKey(), "SHA256:" + "A".repeat(43),
+                null, original.status(), NOW, NOW.plusSeconds(60), null, null, null,
+                RemoteAccessConnectivity.UNKNOWN, null, null, null, null, 0);
+        service(jdbc).reserveGrantorSession(session);
+        var repository = new PostgresRemoteAccessSessionRepository(jdbc);
+        var authority = new com.sitionix.forgeagent.application.remoteaccess.RemoteAccessChannelService(
+                repository, new PostgresForgeInstanceIdentityRepository(jdbc), Clock.fixed(NOW,ZoneOffset.UTC));
+        var binding = new RemoteAccessKeyBinding(local, session.id(), session.sessionFingerprint());
+        assertThat(authority.sessionStatus(binding)).contains(RemoteAccessSessionStatus.PROVISIONING);
+        var active = session.activate(NOW);
+        assertThat(repository.transition(session,active)).isTrue();
+        assertThat(authority.sessionStatus(binding)).contains(RemoteAccessSessionStatus.ACTIVE);
+        var revoking = active.requestRevoke(NOW);
+        assertThat(repository.transition(active,revoking)).isTrue();
+        assertThat(authority.sessionStatus(binding)).isEmpty();
+        assertThat(repository.transition(revoking,revoking.confirmRevoked(NOW))).isTrue();
+        assertThat(authority.sessionStatus(binding)).isEmpty();
+    }
+
+    @Test
     void concurrentRedeemCommitsExactlyOneSession() throws Exception {
         var invitation = invitation(new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(), NOW.plusSeconds(120));
         new PostgresRemoteAccessInvitationRepository(jdbc).insert(invitation);

@@ -1,4 +1,5 @@
 server:
+  address: ${FORGE_AGENT_HOST:}
   port: ${FORGE_AGENT_PORT:7091}
 spring:
   application:
