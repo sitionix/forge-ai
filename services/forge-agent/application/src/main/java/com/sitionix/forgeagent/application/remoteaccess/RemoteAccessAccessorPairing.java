@@ -58,13 +58,14 @@ public class RemoteAccessAccessorPairing {
     public RemoteAccessSession resume(UUID sessionId) {
         var session=owned(sessionId);
         if (session.status()!=RemoteAccessSessionStatus.PROVISIONING) return session;
-        if (!clock.instant().isBefore(session.provisioningExpiresAt())) return expire(session);
+        var confirmationStartedAt=clock.instant();
+        if (!confirmationStartedAt.isBefore(session.provisioningExpiresAt())) return expire(session);
         try {
             if (transport.confirm(session)!=RemoteAccessSessionStatus.ACTIVE) throw new IllegalStateException("Activation not confirmed");
             var current=owned(sessionId);
             if (current.status()==RemoteAccessSessionStatus.PROVISIONING) {
-                if (!clock.instant().isBefore(current.provisioningExpiresAt())) return expire(current);
-                sessions.transition(current,current.activate(clock.instant()));
+                // Authenticated success completes the attempt admitted before the local deadline.
+                sessions.transition(current,current.activate(confirmationStartedAt));
             }
             var result=owned(sessionId);
             if (result.status()==RemoteAccessSessionStatus.ACTIVE && result.failureCode()!=null) {

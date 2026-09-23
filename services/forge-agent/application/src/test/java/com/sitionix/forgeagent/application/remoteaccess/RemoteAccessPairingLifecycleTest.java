@@ -8,6 +8,8 @@ import com.sitionix.forgeagent.domain.port.*;
 import java.time.*;
 import java.util.*;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -128,6 +130,72 @@ class RemoteAccessPairingLifecycleTest {
         assertThat(actual).isEqualTo(activated);
         verify(sessions, never()).recordFailure(any(), any(), any());
         verifyNoInteractions(transport);
+    }
+
+    @Test void successfulConfirmationRemainsActiveWhenDeadlinePassesDuringRpc() {
+        var before = session(RemoteAccessRole.ACCESSOR);
+        Instant admittedAt = before.provisioningExpiresAt().minusMillis(100);
+        var now = new java.util.concurrent.atomic.AtomicReference<>(admittedAt);
+        var clock = mock(Clock.class);
+        when(clock.instant()).thenAnswer(call -> now.get());
+        var stored = new java.util.concurrent.atomic.AtomicReference<>(before);
+        when(identity.getOrCreate()).thenReturn(ACCESSOR);
+        when(sessions.findById(SESSION)).thenAnswer(call -> Optional.of(stored.get()));
+        when(transport.confirm(before)).thenAnswer(call -> {
+            now.set(before.provisioningExpiresAt().plusMillis(200));
+            return RemoteAccessSessionStatus.ACTIVE;
+        });
+        when(sessions.transition(any(), any())).thenAnswer(call ->
+                stored.compareAndSet(call.getArgument(0), call.getArgument(1)));
+
+        var sut = new RemoteAccessAccessorPairing(sessions, identity, tokens, provisioning, transport, clock);
+        var actual = sut.resume(SESSION);
+
+        assertThat(now.get()).isAfter(before.provisioningExpiresAt());
+        assertThat(actual).isEqualTo(before.activate(admittedAt));
+        assertThat(stored.get()).isEqualTo(actual);
+        verify(sessions).transition(before, before.activate(admittedAt));
+        verify(sessions, times(1)).transition(any(), any());
+        verify(sessions, never()).recordFailure(any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = RemoteAccessSessionStatus.class, names = {"ACTIVE", "REVOKING", "REVOKED"})
+    void successfulConfirmationRespectsStateChangedDuringRpc(RemoteAccessSessionStatus status) {
+        var before = session(RemoteAccessRole.ACCESSOR);
+        var winner = confirmationWinner(before, status);
+        when(identity.getOrCreate()).thenReturn(ACCESSOR);
+        when(sessions.findById(SESSION)).thenReturn(Optional.of(before), Optional.of(winner));
+        when(transport.confirm(before)).thenReturn(RemoteAccessSessionStatus.ACTIVE);
+
+        assertThat(accessor(NOW).resume(SESSION)).isEqualTo(winner);
+        verify(sessions, never()).transition(any(), any());
+        verify(sessions, never()).recordFailure(any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = RemoteAccessSessionStatus.class, names = {"ACTIVE", "REVOKING", "REVOKED"})
+    void successfulConfirmationReloadsWinnerAfterLostActivationCas(RemoteAccessSessionStatus status) {
+        var before = session(RemoteAccessRole.ACCESSOR);
+        var winner = confirmationWinner(before, status);
+        when(identity.getOrCreate()).thenReturn(ACCESSOR);
+        when(sessions.findById(SESSION)).thenReturn(Optional.of(before), Optional.of(before), Optional.of(winner));
+        when(transport.confirm(before)).thenReturn(RemoteAccessSessionStatus.ACTIVE);
+        when(sessions.transition(before, before.activate(NOW))).thenReturn(false);
+
+        assertThat(accessor(NOW).resume(SESSION)).isEqualTo(winner);
+        verify(sessions).transition(before, before.activate(NOW));
+        verify(sessions, times(1)).transition(any(), any());
+        verify(sessions, never()).recordFailure(any(), any(), any());
+    }
+
+    private RemoteAccessSession confirmationWinner(RemoteAccessSession before, RemoteAccessSessionStatus status) {
+        return switch (status) {
+            case ACTIVE -> before.activate(NOW);
+            case REVOKING -> before.requestRevoke(NOW);
+            case REVOKED -> before.requestRevoke(NOW).confirmRevoked(NOW);
+            default -> throw new IllegalArgumentException("Expected a concurrent lifecycle winner");
+        };
     }
 
     @Test void accessorPersistsDedicatedAttemptBeforeSendingAnyPairingMaterial() {
