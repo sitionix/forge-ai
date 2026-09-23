@@ -66,6 +66,61 @@ class RemoteAccessPersistenceIT {
     }
 
     @Test
+    void grantorRevokePersistsCleanFailureInTheSameCas() {
+        UUID local=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
+        var invitation=invitation(local,NOW.plusSeconds(120));
+        new PostgresRemoteAccessInvitationRepository(jdbc).insert(invitation);
+        var repository=new PostgresRemoteAccessSessionRepository(jdbc);
+        var before=persistRevoking(repository,grantor(invitation),"REMOTE_ACCESS_CLEANUP_PENDING");
+        var target=before.confirmRevokedAndClearFailure(NOW);
+        assertThat(repository.transition(before,target)).isTrue();
+        assertThat(repository.findById(before.id())).contains(target);
+        assertThat(target.failureCode()).isNull();
+        assertThat(target.failureMessage()).isNull();
+        assertThat(target.version()).isEqualTo(before.version()+1);
+    }
+
+    @Test
+    void accessorConfirmationAndCredentialCleanupAtomicallyPersistResolvedDiagnostics() {
+        UUID local=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
+        var repository=new PostgresRemoteAccessSessionRepository(jdbc);
+        var before=persistRevoking(repository,accessor(UUID.randomUUID(),UUID.randomUUID(),local),"REMOTE_ACCESS_REVOKE_UNCONFIRMED");
+        var confirmed=before.confirmRemoteRevokedAndClearFailure(NOW);
+        assertThat(repository.transition(before,confirmed)).isTrue();
+        var persisted=repository.findById(before.id()).orElseThrow();
+        assertThat(persisted).isEqualTo(confirmed);
+        assertThat(persisted.localPrivateKeyReference()).isEqualTo(before.localPrivateKeyReference());
+        assertThat(persisted.failureCode()).isNull();
+        assertThat(persisted.failureMessage()).isNull();
+        assertThat(repository.recordFailure(persisted,"REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING","retry needed")).isTrue();
+        var pending=repository.findById(before.id()).orElseThrow();
+        var target=pending.clearRevokedCredentialAndFailure();
+        assertThat(repository.transition(pending,target)).isTrue();
+        var restarted=new PostgresRemoteAccessSessionRepository(new JdbcTemplate(
+            new DriverManagerDataSource(DATABASE.getJdbcUrl(),DATABASE.getUsername(),DATABASE.getPassword())));
+        assertThat(restarted.findById(before.id())).contains(target);
+        assertThat(target.localPrivateKeyReference()).isNull();
+        assertThat(target.failureCode()).isNull();
+        assertThat(target.failureMessage()).isNull();
+        assertThat(target.version()).isEqualTo(pending.version()+1);
+    }
+
+    @Test
+    void resolvedRevokeTargetCannotOverwriteNewerFailureOrForgeDetachedState() {
+        UUID local=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
+        var repository=new PostgresRemoteAccessSessionRepository(jdbc);
+        var before=persistRevoking(repository,accessor(UUID.randomUUID(),UUID.randomUUID(),local),"REMOTE_ACCESS_REVOKE_UNCONFIRMED");
+        var target=before.confirmRemoteRevokedAndClearFailure(NOW);
+        assertThat(repository.recordFailure(before,"NEWER_FAILURE","concurrent writer")).isTrue();
+        var winner=repository.findById(before.id()).orElseThrow();
+        assertThat(repository.transition(before,target)).isFalse();
+        assertThat(repository.findById(before.id())).contains(winner);
+        assertThatThrownBy(() -> repository.transition(winner,target.withFailure("FORGED","detached replacement")))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(repository.findById(before.id())).contains(winner);
+    }
+
+    @Test
     void migrationCreatesSeparateRemoteAccessTablesWithoutPrivateKeyMaterial() {
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema='public'", String.class))
                 .contains("remote_access_invitations", "remote_access_sessions", "forge_instance_identity", "ssh_connections", "agent_execution_sessions");
@@ -315,6 +370,15 @@ class RemoteAccessPersistenceIT {
         var active = pending.activate(NOW);
         assertThat(repository.recordFailure(active, null, null)).isTrue();
         assertThat(repository.findById(original.id())).contains(active.withFailure(null, null));
+    }
+
+    private static RemoteAccessSession persistRevoking(PostgresRemoteAccessSessionRepository repository,
+            RemoteAccessSession original,String code) {
+        repository.insert(original);
+        var revoking=original.requestRevoke(NOW);
+        assertThat(repository.transition(original,revoking)).isTrue();
+        assertThat(repository.recordFailure(revoking,code,"previous failure")).isTrue();
+        return repository.findById(original.id()).orElseThrow();
     }
 
     private static RemoteAccessSession accessor(UUID id, UUID invitationId, UUID local) {

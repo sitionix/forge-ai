@@ -43,19 +43,20 @@ public final class RemoteAccessExecutionService implements RemoteAccessPeerExecu
             }
         }
         // Cleanup may wait for systemd. Admissions now reject the persisted REVOKING row.
-        if (session.status()==RemoteAccessSessionStatus.REVOKING) cleanup(session);
+        if (session.status()==RemoteAccessSessionStatus.REVOKING && cleanup(session)) return RemoteAccessSessionStatus.REVOKED;
         return owned(binding).status();
     }
 
-    private void cleanup(RemoteAccessSession session) {
+    private boolean cleanup(RemoteAccessSession session) {
         boolean stopped=false, removed=false;
         try { grants.remove(session); removed=true; } catch (RuntimeException unavailable) { /* still stop processes */ }
         try { workloads.stop(session.id()); stopped=true; } catch (RuntimeException unavailable) { /* retain intent */ }
         if (stopped && removed) {
-            var revoked=session.confirmRevoked(clock.instant());
-            if (sessions.transition(session,revoked)) sessions.recordFailure(revoked,null,null);
+            var revoked=session.confirmRevokedAndClearFailure(clock.instant());
+            return sessions.transition(session,revoked);
         } else {
             sessions.recordFailure(session,"REMOTE_ACCESS_CLEANUP_PENDING","Managed session cleanup incomplete");
+            return false;
         }
     }
 

@@ -153,6 +153,39 @@ class RemoteAccessDomainTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void confirmedRecoveryResolvesFailureWithOneVersionIncrement() {
+        var grantor=session(RemoteAccessRole.GRANTOR,RemoteAccessSessionStatus.REVOKING,
+            CREATED.plusSeconds(1),CREATED.plusSeconds(2),null,null,11).withFailure("CLEANUP_PENDING","pending");
+        var confirmed=grantor.confirmRevokedAndClearFailure(CREATED.plusSeconds(3));
+        assertThat(confirmed.status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(confirmed.failureCode()).isNull();
+        assertThat(confirmed.failureMessage()).isNull();
+        assertThat(confirmed.version()).isEqualTo(13);
+        assertThat(grantor.failureCode()).isEqualTo("CLEANUP_PENDING");
+        assertThat(grantor.confirmRevoked(CREATED.plusSeconds(3)).failureCode()).isEqualTo("CLEANUP_PENDING");
+        assertThat(confirmed.confirmRevokedAndClearFailure(CREATED.plusSeconds(4))).isSameAs(confirmed);
+    }
+
+    @Test
+    void remoteConfirmationRetainsKeyAndCleanupResolvesFailureInOneTransitionEach() {
+        var pending=accessorSession(RemoteAccessSessionStatus.REVOKING,CREATED.plusSeconds(1),
+            CREATED.plusSeconds(2),null,KEY_REFERENCE,10).withFailure("UNCONFIRMED","pending");
+        var confirmed=pending.confirmRemoteRevokedAndClearFailure(CREATED.plusSeconds(3));
+        assertThat(confirmed.status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(confirmed.localPrivateKeyReference()).isEqualTo(KEY_REFERENCE);
+        assertThat(confirmed.failureCode()).isNull();
+        assertThat(confirmed.failureMessage()).isNull();
+        assertThat(confirmed.version()).isEqualTo(12);
+        var failedDelete=confirmed.withFailure("CREDENTIAL_CLEANUP_PENDING","pending");
+        var cleared=failedDelete.clearRevokedCredentialAndFailure();
+        assertThat(cleared.localPrivateKeyReference()).isNull();
+        assertThat(cleared.failureCode()).isNull();
+        assertThat(cleared.failureMessage()).isNull();
+        assertThat(cleared.version()).isEqualTo(14);
+        assertThatThrownBy(() -> pending.clearRevokedCredentialAndFailure()).isInstanceOf(IllegalStateException.class);
+    }
+
     private static RemoteAccessInvitation invitation() {
         return new RemoteAccessInvitation(UUID.randomUUID(), GRANTOR, endpoint(), "pair-key", "pair-fingerprint",
                 CREATED, DEADLINE, null, null, null);

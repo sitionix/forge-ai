@@ -69,10 +69,15 @@ public class PostgresRemoteAccessSessionRepository implements RemoteAccessSessio
             case ACTIVE -> before.activate(after.activatedAt());
             case REVOKING -> before.requestRevoke(after.revokeRequestedAt());
             case REVOKED -> {
+                boolean resolved = after.failureCode() == null;
                 if (before.status()==RemoteAccessSessionStatus.REVOKED && before.localPrivateKeyReference()!=null
-                        && after.localPrivateKeyReference()==null) yield before.clearRevokedCredential();
-                if (after.localPrivateKeyReference()!=null) yield before.confirmRemoteRevoked(after.revokedAt());
-                yield before.confirmRevoked(after.revokedAt());
+                        && after.localPrivateKeyReference()==null) {
+                    yield resolved ? before.clearRevokedCredentialAndFailure() : before.clearRevokedCredential();
+                }
+                if (after.localPrivateKeyReference()!=null) {
+                    yield resolved ? before.confirmRemoteRevokedAndClearFailure(after.revokedAt()) : before.confirmRemoteRevoked(after.revokedAt());
+                }
+                yield resolved ? before.confirmRevokedAndClearFailure(after.revokedAt()) : before.confirmRevoked(after.revokedAt());
             }
             case PROVISIONING -> throw new IllegalArgumentException("Cannot transition back to provisioning");
         };
@@ -81,10 +86,10 @@ public class PostgresRemoteAccessSessionRepository implements RemoteAccessSessio
         }
         return jdbc.update("""
                 UPDATE remote_access_sessions SET status=?,activated_at=?,revoke_requested_at=?,revoked_at=?,
-                  local_private_key_reference=?,version=?
+                  local_private_key_reference=?,failure_code=?,failure_message=?,version=?
                 WHERE id=? AND version=? AND status=?
                 """, after.status().name(), timestamp(after.activatedAt()), timestamp(after.revokeRequestedAt()),
-                timestamp(after.revokedAt()), after.localPrivateKeyReference(), after.version(),
+                timestamp(after.revokedAt()), after.localPrivateKeyReference(), after.failureCode(), after.failureMessage(), after.version(),
                 before.id(), before.version(), before.status().name()) == 1;
     }
 

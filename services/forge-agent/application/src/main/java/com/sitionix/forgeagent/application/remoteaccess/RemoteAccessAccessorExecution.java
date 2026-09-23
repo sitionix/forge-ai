@@ -40,10 +40,11 @@ public class RemoteAccessAccessorExecution {
         if (session.status()==RemoteAccessSessionStatus.REVOKING) {
             try {
                 if (transport.revoke(session)!=RemoteAccessSessionStatus.REVOKED) throw new IllegalStateException();
-                var revoked=session.confirmRemoteRevoked(clock.instant());
+                var revoked=session.confirmRemoteRevokedAndClearFailure(clock.instant());
                 if (!sessions.transition(session,revoked)) return owned(id);
-                if (!sessions.recordFailure(revoked,null,null)) return owned(id);
                 session=owned(id);
+                // Database timestamp precision may differ; the CAS version identifies a newer writer.
+                if (session.version()!=revoked.version()) return session;
             } catch (RuntimeException unavailable) {
                 sessions.recordFailure(session,"REMOTE_ACCESS_REVOKE_UNCONFIRMED","Remote cleanup confirmation unavailable; credential retained");
                 return owned(id);
@@ -52,8 +53,8 @@ public class RemoteAccessAccessorExecution {
         if (session.status()==RemoteAccessSessionStatus.REVOKED && session.localPrivateKeyReference()!=null) {
             try {
                 credentials.delete(session.localPrivateKeyReference());
-                var cleared=session.clearRevokedCredential();
-                if (sessions.transition(session,cleared)) sessions.recordFailure(cleared,null,null);
+                var cleared=session.clearRevokedCredentialAndFailure();
+                sessions.transition(session,cleared);
             } catch (RuntimeException unavailable) {
                 sessions.recordFailure(session,"REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING","Remote revoke confirmed; local credential cleanup incomplete");
             }

@@ -117,4 +117,84 @@ class RemoteAccessAccessorExecutionTest {
         assertThat(result.localPrivateKeyReference()).isEqualTo(KEY);
         verify(sessions,never()).recordFailure(any(),isNull(),isNull());
     }
+    @Test void remoteConfirmationAtomicallyResolvesOldFailureBeforeNewCredentialFailure() {
+        row.set(row.get().requestRevoke(NOW).withFailure("REMOTE_ACCESS_REVOKE_UNCONFIRMED","old failure"));
+        long previousVersion=row.get().version();
+        when(transport.revoke(any())).thenReturn(RemoteAccessSessionStatus.REVOKED);
+        lenient().doThrow(new IllegalStateException("diagnostics unavailable")).when(sessions).recordFailure(any(),isNull(),isNull());
+        doAnswer(call -> {
+            assertThat(row.get().status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+            assertThat(row.get().localPrivateKeyReference()).isEqualTo(KEY);
+            assertThat(row.get().version()).isEqualTo(previousVersion+1);
+            assertThat(row.get().failureCode()).isNull();
+            assertThat(row.get().failureMessage()).isNull();
+            throw new IllegalStateException("credential storage unavailable");
+        }).when(credentials).delete(KEY);
+        var result=sut.revoke(ID);
+        assertThat(result.status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(result.localPrivateKeyReference()).isEqualTo(KEY);
+        assertThat(result.failureCode()).isEqualTo("REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING");
+        verify(sessions,never()).recordFailure(any(),isNull(),isNull());
+    }
+    @Test void restartConvergesAfterPhysicalDeleteAndLostCas() {
+        retryAfterUncommittedCredentialDeletion(false);
+    }
+    @Test void restartConvergesAfterPhysicalDeleteAndDatabaseFailure() {
+        retryAfterUncommittedCredentialDeletion(true);
+    }
+    private void retryAfterUncommittedCredentialDeletion(boolean databaseFailure) {
+        row.set(row.get().requestRevoke(NOW).confirmRemoteRevoked(NOW)
+            .withFailure("REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING","old failure"));
+        // Model the credential store's idempotent missing-file deletion.
+        var files=new java.util.HashSet<>(java.util.Set.of(KEY));
+        doAnswer(call -> {files.remove(KEY);return null;}).when(credentials).delete(KEY);
+        var attempts=new java.util.concurrent.atomic.AtomicInteger();
+        when(sessions.transition(any(),any())).thenAnswer(call -> {
+            RemoteAccessSession before=call.getArgument(0),target=call.getArgument(1);
+            assertThat(files).isEmpty();
+            assertThat(target.localPrivateKeyReference()).isNull();
+            assertThat(target.failureCode()).isNull();
+            assertThat(target.failureMessage()).isNull();
+            assertThat(target.version()).isEqualTo(before.version()+1);
+            if (attempts.getAndIncrement()==0) {
+                if (databaseFailure) throw new IllegalStateException("DB unavailable before commit");
+                row.set(row.get().withFailure("NEWER_FAILURE","concurrent writer"));
+                return false;
+            }
+            return row.compareAndSet(before,target);
+        });
+        var pending=sut.revoke(ID);
+        assertThat(files).isEmpty();
+        assertThat(pending.localPrivateKeyReference()).isEqualTo(KEY);
+        assertThat(pending.failureCode()).isEqualTo(databaseFailure?"REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING":"NEWER_FAILURE");
+        when(sessions.findLocal(LOCAL)).thenAnswer(call -> List.of(row.get()));
+        new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,Clock.fixed(NOW,ZoneOffset.UTC)).reconcile();
+        assertThat(row.get().status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(row.get().localPrivateKeyReference()).isNull();
+        assertThat(row.get().failureCode()).isNull();
+        assertThat(row.get().failureMessage()).isNull();
+        verify(credentials,times(2)).delete(KEY);
+        verify(credentials,never()).store(any(),any());
+        verifyNoInteractions(transport);
+        verify(sessions,never()).recordFailure(any(),isNull(),isNull());
+    }
+    @Test void timestampNormalizationAtUnchangedVersionDoesNotSkipCredentialDeletion() {
+        row.set(row.get().requestRevoke(NOW).withFailure("REMOTE_ACCESS_REVOKE_UNCONFIRMED","previous failure"));
+        when(transport.revoke(any())).thenReturn(RemoteAccessSessionStatus.REVOKED);
+        when(sessions.transition(any(),any())).thenAnswer(call -> {
+            RemoteAccessSession before=call.getArgument(0),target=call.getArgument(1);
+            if (before.status()==RemoteAccessSessionStatus.REVOKING) {
+                var normalized=before.confirmRemoteRevokedAndClearFailure(target.revokedAt().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+                return row.compareAndSet(before,normalized);
+            }
+            return row.compareAndSet(before,target);
+        });
+        var precise=new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,
+            Clock.fixed(NOW.plusNanos(999),ZoneOffset.UTC));
+        var result=precise.revoke(ID);
+        assertThat(result.status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(result.localPrivateKeyReference()).isNull();
+        assertThat(result.failureCode()).isNull();
+        verify(credentials).delete(KEY);
+    }
 }

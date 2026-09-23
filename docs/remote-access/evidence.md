@@ -808,3 +808,78 @@ code defects in the CAS correction or SSH-disconnect correction.
 Follow-up verification: focused Java 19/19, full Agent verify, Python 60/60,
 privileged Stage 5 fixture and existing Stage 2–4 Docker SSH suite all exit 0.
 Python compilation and `git diff --check` also pass. No Stage 6 work is included.
+
+### PR #146 follow-up — atomic successful revoke and diagnostics
+
+This correction supersedes the separate success-time `recordFailure(..., null,
+null)` write described in the preceding follow-up. That write could fail after
+GRANTOR had removed the grant, stopped workloads and committed REVOKED, turning
+the authenticated response into DENIED even though cleanup was complete.
+
+Typed aggregate operations now produce the complete successful target in one
+version increment: `confirmRevokedAndClearFailure`,
+`confirmRemoteRevokedAndClearFailure` (retaining the ACCESSOR key reference), and
+`clearRevokedCredentialAndFailure`. Existing lifecycle operations remain available
+with their previous semantics. The PostgreSQL adapter reconstructs the exact
+permitted target and updates lifecycle, key reference, diagnostics and version in
+one statement guarded by id/version/status. No detached arbitrary replacement,
+unconditional diagnostic update, schema migration or additional state was added.
+
+After successful cleanup and a successful CAS, GRANTOR returns REVOKED directly;
+no secondary write or read can invalidate that committed acknowledgement. A lost
+CAS reloads/respects its winner. ACCESSOR confirmation and later successful key
+cleanup each clear their resolved diagnostics in their respective atomic state
+change. A new actual credential deletion failure remains visible as
+REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING.
+
+Regression-first evidence:
+
+- Four new application scenarios failed on the old flow: acknowledgement depended
+  on secondary diagnostics; authenticated revoke retained the old failure when
+  diagnostics failed; and both lost-CAS/database-failure retries produced a target
+  with stale credential diagnostics.
+- Focused application/domain tests now pass (35 tests). The acknowledgement test
+  configures secondary diagnostic writes and post-commit reads to throw and proves
+  neither is needed. Success targets contain null code/message and increment the
+  version once. Competing newer failures/states remain untouched.
+- Credential retry tests model completed physical deletion with an in-memory key
+  store, fail the first reference-clearing CAS or DB operation, reconstruct
+  the service and reconcile. Repeating idempotent delete on the missing key then
+  converges to REVOKED with null key reference and diagnostics; no key store/create
+  operation or remote confirmation is performed. These are direct application
+  regressions, not a claim of filesystem-crash E2E.
+- Three new PostgreSQL scenarios failed against the old adapter's permitted-target
+  validation, then passed after the atomic SQL change. The 19-test persistence
+  suite verifies exact persisted targets across adapter restart, version +1,
+  stale-CAS rejection and rejection of forged detached failure changes.
+
+The first persistence command without `-Dapi.version=1.44` was blocked because
+the local Docker daemon rejected the client's default API 1.32 (minimum 1.40).
+The successful persistence verification uses the same API 1.44 override as the
+full Agent/live commands. Docker configuration and project dependencies were not
+changed. Initial test fixture setup was also corrected to insert version-zero
+PROVISIONING before advancing through the normal repository operations.
+
+SSH protocol, forced/execution helpers, supervisor/systemd isolation, migration,
+UI and workflow routing are unchanged by this correction. Stage 6 remains excluded.
+
+Independent review also identified timestamp precision as a false newer-writer
+signal: a full-record equality check could skip immediate key deletion after
+PostgreSQL normalized a nanosecond Instant to microseconds. A deterministic
+regression first failed with the same version and normalized timestamp; the guard
+now compares CAS versions. A real newer writer still increments that version and
+is preserved.
+
+Final verification after the timestamp-precision correction:
+
+- Focused application/domain command: PASS, 35 tests.
+- PostgreSQL persistence command with `-Dapi.version=1.44`: PASS, 19 tests.
+- Full Forge Agent `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: PASS.
+- Privileged `RemoteAccessLiveExecutionIT` with
+  `-Dforge.remote-access.live-execution=true`: PASS with real SSH, PostgreSQL,
+  production authority and systemd. Its unchanged cancellation scenario confirms
+  that `RemoteAccessCommandExecution.close()` removes the main process, setsid
+  child, systemd unit, execution registry and allow fence while the unrelated
+  session survives. Timeout, revoke, authority-loss and supervisor crash/watchdog
+  checkpoints also pass. This is runtime E2E evidence, not live Codex acceptance.
+- `git diff --check`: PASS. No SSH/helper/supervisor or cancellation-fixture changes.

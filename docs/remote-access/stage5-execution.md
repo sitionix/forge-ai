@@ -83,12 +83,17 @@ systemd unit and positively checks LoadState/ActiveState/SubState/PID/Job/cgroup
 Unavailable, malformed or unsuccessful inspection is never confirmation.
 Failures retain records and REVOKING with a safe persisted diagnostic; subsequent
 reconciliation retries. A confirmed successful recovery clears stale failure
-metadata with the exact successful transition version, preserving newer writers. Only confirmed key removal and process cleanup permit
+metadata atomically in the lifecycle/key-reference transition, preserving newer
+writers through the same version/status CAS. Confirmed GRANTOR revoke returns
+REVOKED after that commit without a secondary diagnostic write or DB read. Only confirmed key removal and process cleanup permit
 REVOKED. Another session's units are not selected for that cleanup.
 
 ACCESSOR first persists local revoke intent. Only authenticated GRANTOR REVOKED
 confirms remote cleanup. It persists that evidence before deleting the local key;
-a deletion failure retains the key reference and a safe reason for retry. Offline,
+a deletion failure retains the key reference and a safe reason for retry. If the
+file was removed but the reference-clearing CAS did not commit, reconciliation
+repeats the idempotent deletion and atomically clears the reference and failure;
+it never recreates the key. Offline,
 lost acknowledgement or SSH denial stays REVOKING with confirmation unavailable.
 The old key is never re-enabled to retrieve an acknowledgement. Revoke cannot undo
 prior file changes or recover already read data.

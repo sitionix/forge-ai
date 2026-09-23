@@ -147,4 +147,22 @@ class RemoteAccessExecutionServiceTest {
         assertThat(row.get().failureCode()).isEqualTo("NEWER_FAILURE");
         verify(sessions,never()).recordFailure(any(),isNull(),isNull());
     }
+    @Test void confirmedCleanupAcknowledgementNeedsNoSecondaryDiagnosticWriteOrRead() {
+        row.set(row.get().requestRevoke(NOW).withFailure("REMOTE_ACCESS_CLEANUP_PENDING","previous failure"));
+        var before=row.get();
+        lenient().doThrow(new IllegalStateException("diagnostics unavailable")).when(sessions).recordFailure(any(),isNull(),isNull());
+        when(sessions.transition(any(),any())).thenAnswer(call -> {
+            RemoteAccessSession target=call.getArgument(1);
+            assertThat(target.failureCode()).isNull();
+            assertThat(target.failureMessage()).isNull();
+            assertThat(target.version()).isEqualTo(before.version()+1);
+            boolean committed=row.compareAndSet(call.getArgument(0),target);
+            lenient().when(sessions.findById(ID)).thenThrow(new IllegalStateException("subsequent DB read unavailable"));
+            return committed;
+        });
+        assertThat(sut.revoke(binding())).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(row.get().status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(row.get().failureCode()).isNull();
+        verify(sessions,never()).recordFailure(any(),isNull(),isNull());
+    }
 }
