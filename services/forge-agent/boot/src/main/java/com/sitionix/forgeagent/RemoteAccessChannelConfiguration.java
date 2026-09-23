@@ -12,8 +12,8 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty(name="forge.agent.remote-access.channel-enabled",havingValue="true")
 public class RemoteAccessChannelConfiguration {
     @Bean(initMethod="start",destroyMethod="close")
-    RemoteAccessChannelServer remoteAccessChannelServer(RemoteAccessChannelAuthority authority, RemoteAccessPeerPairing peerPairing) {
+    RemoteAccessChannelServer remoteAccessChannelServer(RemoteAccessChannelAuthority authority, RemoteAccessPeerPairing peerPairing, com.sitionix.forgeagent.domain.port.RemoteAccessPeerExecution execution) {
         return new RemoteAccessChannelServer(Path.of("/run/forge-remote/channel/authority.sock"),
-                "forge-ssh","forge-ssh",authority,peerPairing);
+                "forge-ssh","forge-ssh",authority,peerPairing,execution);
     }
 }

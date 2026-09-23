@@ -98,6 +98,21 @@ public record RemoteAccessSession(
                 null, version + 1);
     }
 
+    /** Persist remote acknowledgement before attempting local credential deletion. */
+    public RemoteAccessSession confirmRemoteRevoked(Instant confirmedAt) {
+        if (localRole != RemoteAccessRole.ACCESSOR) throw new IllegalStateException("Accessor required");
+        var confirmed = confirmRevoked(confirmedAt);
+        return confirmed.copy(confirmed.status(), confirmed.activatedAt(), confirmed.revokeRequestedAt(),
+                confirmed.revokedAt(), localPrivateKeyReference, confirmed.version());
+    }
+
+    public RemoteAccessSession clearRevokedCredential() {
+        if (localRole != RemoteAccessRole.ACCESSOR || status != RemoteAccessSessionStatus.REVOKED) {
+            throw new IllegalStateException("Confirmed remote revoke required");
+        }
+        return copy(status, activatedAt, revokeRequestedAt, revokedAt, null, version + 1);
+    }
+
     public RemoteAccessSession withFailure(String code, String message) {
         return new RemoteAccessSession(id, invitationId, localRole, grantorInstanceId, accessorInstanceId,
                 peerDisplayName, endpoint, pinnedHostPublicKey, sessionPublicKey, sessionFingerprint,

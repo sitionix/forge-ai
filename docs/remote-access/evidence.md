@@ -620,3 +620,133 @@ or a systemd/OS reboot exercise. No Stage 5 workload or live Codex claim is adde
 Final full Agent verify after the socket/JVM-crash correction: PASS (exit 0),
 327 integration tests, zero failures/errors, six existing opt-in skips. All eight
 live pairing checkpoints passed in that full run. `git diff --check`: PASS.
+
+## Stage 5 — managed commands, revoke and recovery (2026-09-23)
+
+Base: merged PR #145 `edf49dbfa34643fdbd66fa4aa6a3bbaa78df42d2`.
+Scope checked against the human roadmap: Stage 5 only. No REST management,
+Console, workflow routing, migration, Stage 8 helper or Codex integration changes.
+Operational setup and limitations: [stage5-execution.md](stage5-execution.md).
+
+### Regression-first corrections and review
+
+Direct application regressions cover persisted REVOKING admission denial,
+start-versus-revoke serialization, cleanup failure, CAS winners, offline revoke,
+confirmed remote revoke before key deletion, retained key on deletion failure,
+and independent heartbeat maintenance. Real PostgreSQL regression first failed
+because the transition adapter did not recognize the new retained-reference
+REVOKED transition; the adapter now validates that exact domain transition and
+subsequent reference clearing using the existing optimistic version. V37 and the
+session status set remain unchanged.
+
+Local process tests cover independent large streams, stdin, nonzero exit,
+cancellation, inactive denial and no retry/fallback. These tests are **not** SSH
+or systemd evidence.
+
+Independent review found two required corrections:
+
+1. A launched `systemd-run` process could submit after an absent-unit inspection
+   and registry deletion. Tests first failed for a missing start fence, unreaped
+   launcher and incorrectly successful cleanup. The production registry now
+   creates a root-only durable `.allow`; PID 1 evaluates `ConditionPathExists`.
+   Every cleanup path removes the fence before waits, reaps the launcher, verifies
+   unit/cgroup/job absence and only then removes the record. Failed reap retains
+   the record while attempts continue for other commands. Disconnect shares that
+   cleanup path. A real delayed submission after removal was also tested below.
+2. A shared worker pool let long attachments starve control/heartbeats. The
+   supervisor now has separate bounded attachment/control/heartbeat pools and a
+   dedicated heartbeat socket selected by the Java adapter. A local Unix-socket
+   regression fills all sixteen attachment workers, starts a blocked control
+   request and still receives the heartbeat response. This is a concurrency test,
+   not a remote SSH load test. Independent re-review found both blockers closed.
+
+Early live runs also exposed two real integration failures: sshd emitted a
+missing-home warning into command stderr, and systemd-run could return zero when
+a managed process was stopped. The managed transport now has an empty protected
+home; explicitly cancelled executions return nonzero even if the launcher says
+zero. Tests cover both. A fixture-only assertion was corrected to wait boundedly
+for actual supervisor automatic restart/registry reconciliation after SIGKILL.
+
+### Actual privileged execution fixture
+
+Command (exit 0):
+
+```bash
+mvn -q -Dapi.version=1.44 -Dforge.remote-access.live-execution=true \
+  -Dtest=RemoteAccessExecutionServiceTest,RemoteAccessAccessorExecutionTest \
+  -Dsurefire.failIfNoSpecifiedTests=false \
+  -Dit.test=RemoteAccessLiveExecutionIT \
+  -Dfailsafe.failIfNoSpecifiedTests=false \
+  -pl services/forge-agent/boot -am verify
+```
+
+This opt-in test starts a disposable privileged Linux systemd container and a real
+PostgreSQL container. The two peers use separate persisted schemas/instance IDs,
+production Java services/adapters and real OpenSSH. Root setup only prepares the
+explicit rootfs/workspaces and injects supervisor crashes; it is not a replacement
+Agent authority. No host bind mounts, personal credentials or production services
+are used. systemd 255, Java 21 and OpenSSH are actual processes, not mocks.
+
+The successful rerun after both review corrections emitted:
+
+```text
+PASS actual PID 1 rejects workload submitted after cleanup fence removal
+PASS real SSH literal argv, separate stderr and nonzero exit
+PASS real SSH stdin and large independent streams
+PASS real managed command timeout
+PASS workload isolation and persistent explicit workspace
+PASS revoke stops setsid descendants, denies new execution and preserves another session
+PASS unavailable authority lease stops existing workload
+PASS actual supervisor SIGKILL stops bound workload units
+PASS actual supervisor SIGSTOP watchdog stops bound workload units
+STAGE5_FIXTURE_PASS: real SSH, PostgreSQL, production authority and systemd cleanup
+```
+
+The fixture verifies an already-running command in session B remains alive during
+session A revoke, and the setsid child is gone. Literal arguments include spaces,
+quotes, dollar expansion, command substitution and systemd specifiers. Separate
+150 KB stdout / 200 KB stderr streams are drained concurrently. The workload
+cannot see control/private-key/Docker paths or reach host loopback, cannot write
+the rootfs, and can persist changes only in its prepared workspace. Post-crash
+registry emptiness and the restarted supervisor are positively checked.
+
+### Scope of evidence
+
+- Mocked lifecycle/inspection failures prove application ordering and truthful
+  failure handling; they do not prove an OS kill succeeded.
+- The default Agent verify skips the privileged Stage 5 opt-in fixture. Its
+  successful explicit run above is separate from ordinary CI checks.
+- Existing real Stage 4 pairing/restart cases remain in full Agent verification;
+  the separate Stage 2–4 Docker suite uses a stub authority and labels it so.
+- This is one isolated Linux host environment with two logical persisted peers,
+  not two physical machines/VMs or a reboot test. Other platforms are NOT READY.
+- UI and actual Codex sessions are NOT_RUN. Stage 9 labels
+  `REMOTE_ACCESS_RUNTIME_E2E_PASS`, `REMOTE_ACCESS_UI_FLOW_PASS` and
+  `REMOTE_ACCESS_CODEX_LIVE_PASS` are not claimed by Stage 5.
+- Prepared files and accounts intentionally survive revoke. Cleanup does not
+  roll back previous file edits. Offline/lost acknowledgement may require operator
+  diagnosis and remains visibly unconfirmed; no key is regranted for recovery.
+
+### Final regression results
+
+All commands below completed with exit 0 on the final production changes:
+
+```bash
+mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify
+mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify
+python3 -m unittest discover -s scripts/remote-access/tests -p 'test_*.py' -v
+python3 -m py_compile scripts/remote-access/*.py \
+  scripts/remote-access/tests/test_workloads.py \
+  scripts/remote-access/tests/stage5/run_fixture.py
+docker build -f scripts/remote-access/tests/Dockerfile -t forge-remote-stage2-test .
+docker run --rm --network none forge-remote-stage2-test
+(cd services/forge-console && npm test && npm run typecheck && npm run build)
+git diff --check
+```
+
+Agent failsafe summary: 329 completed, zero failures/errors, seven opt-in skips
+(including the separately executed privileged Stage 5 test). Nexus: 236 unit and
+38 integration tests, zero failures/errors. Python: 58 tests, including 25 workload
+checks. Console: 545 tests across 20 files, plus typecheck and build. Docker SSH
+suite reported the existing Stage 2/3/4 boundary checkpoints with stub-authority
+labels. The explicit Stage 5 real-authority run is recorded separately above.

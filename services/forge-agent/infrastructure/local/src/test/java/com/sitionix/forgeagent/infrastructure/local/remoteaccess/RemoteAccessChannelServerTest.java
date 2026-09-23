@@ -21,6 +21,30 @@ class RemoteAccessChannelServerTest {
     @TempDir Path temp;
     private static final String FRAME = "STATUS " + UUID.randomUUID() + " " + UUID.randomUUID() + " SHA256:" + "A".repeat(43) + "\n";
 
+    @Test void executionAndRevokeUseTheAuthenticatedBinding() throws Exception {
+        Path socket=prepare();
+        UUID ticket=UUID.randomUUID();
+        var calls=new AtomicInteger();
+        var execution=new com.sitionix.forgeagent.domain.port.RemoteAccessPeerExecution() {
+            public void start(com.sitionix.forgeagent.domain.model.RemoteAccessKeyBinding binding,UUID attachment) {
+                assertThat(FRAME).contains(binding.sessionId().toString());
+                assertThat(attachment).isEqualTo(ticket);calls.incrementAndGet();
+            }
+            public RemoteAccessSessionStatus revoke(com.sitionix.forgeagent.domain.model.RemoteAccessKeyBinding binding) {
+                return RemoteAccessSessionStatus.REVOKING;
+            }
+        };
+        try(var server=new RemoteAccessChannelServer(socket,System.getProperty("user.name"),
+                Files.readAttributes(temp,java.nio.file.attribute.PosixFileAttributes.class).group().getName(),
+                binding -> Optional.empty(),deniedPeer(),execution)) {
+            server.start();
+            assertThat(request(socket,FRAME.replace("STATUS","EXEC").strip()+" "+ticket+"\n")).isEqualTo("STARTED\n");
+            assertThat(request(socket,FRAME.replace("STATUS","REVOKE"))).isEqualTo("REVOKING\n");
+            assertThat(calls.get()).isEqualTo(1);
+            assertThat(request(socket,FRAME.replace("STATUS","EXEC").strip()+" invalid\n")).isEqualTo("DENIED\n");
+        }
+    }
+
     @Test void pairingFrameUsesInvitationAuthorityNotSessionAuthority() throws Exception {
         Path socket = prepare();
         var allowed = new java.util.concurrent.atomic.AtomicBoolean(true);
@@ -33,7 +57,7 @@ class RemoteAccessChannelServerTest {
             }
         };
         try (var server = new RemoteAccessChannelServer(socket, System.getProperty("user.name"),
-                Files.readAttributes(temp, java.nio.file.attribute.PosixFileAttributes.class).group().getName(), authority, deniedPeer())) {
+                Files.readAttributes(temp, java.nio.file.attribute.PosixFileAttributes.class).group().getName(), authority, deniedPeer(),deniedExecution())) {
             server.start();
             assertThat(request(socket, FRAME.replace("STATUS", "PAIR"))).isEqualTo("PAIRING_ALLOWED\n");
             allowed.set(false);
@@ -46,7 +70,7 @@ class RemoteAccessChannelServerTest {
         Path socket = prepare();
         try (var server = new RemoteAccessChannelServer(socket, System.getProperty("user.name"),
                 Files.readAttributes(temp, java.nio.file.attribute.PosixFileAttributes.class).group().getName(),
-                binding -> { calls.incrementAndGet(); return Optional.of(RemoteAccessSessionStatus.ACTIVE); }, deniedPeer())) {
+                binding -> { calls.incrementAndGet(); return Optional.of(RemoteAccessSessionStatus.ACTIVE); }, deniedPeer(),deniedExecution())) {
             server.start();
             assertThat(request(socket,FRAME)).isEqualTo("ACTIVE\n");
             for (String invalid : new String[]{"exec id\n", "STATUS bad\n", FRAME.strip()+" extra\n", "x".repeat(1025)+"\n"}) {
@@ -61,12 +85,12 @@ class RemoteAccessChannelServerTest {
         Path socket = prepare();
         String group = Files.readAttributes(temp, java.nio.file.attribute.PosixFileAttributes.class).group().getName();
         try (var server = new RemoteAccessChannelServer(socket,"not-the-current-user",group,
-                binding -> { throw new AssertionError("Foreign peer reached authority"); }, deniedPeer())) {
+                binding -> { throw new AssertionError("Foreign peer reached authority"); }, deniedPeer(),deniedExecution())) {
             server.start();
             assertThat(request(socket,FRAME)).isEqualTo("DENIED\n");
         }
         try (var server = new RemoteAccessChannelServer(socket,System.getProperty("user.name"),group,
-                binding -> { throw new IllegalStateException("synthetic secret must not leave socket"); }, deniedPeer())) {
+                binding -> { throw new IllegalStateException("synthetic secret must not leave socket"); }, deniedPeer(),deniedExecution())) {
             server.start();
             assertThat(request(socket,FRAME)).isEqualTo("DENIED\n");
         }
@@ -77,7 +101,7 @@ class RemoteAccessChannelServerTest {
         Files.writeString(socket,"existing-control-file");
         try (var server = new RemoteAccessChannelServer(socket,System.getProperty("user.name"),
                 Files.readAttributes(temp, java.nio.file.attribute.PosixFileAttributes.class).group().getName(),
-                binding -> Optional.empty(), deniedPeer())) {
+                binding -> Optional.empty(), deniedPeer(),deniedExecution())) {
             assertThatThrownBy(server::start).isInstanceOf(IllegalStateException.class);
         }
         assertThat(Files.readString(socket)).isEqualTo("existing-control-file");
@@ -100,7 +124,7 @@ class RemoteAccessChannelServerTest {
         };
         try (var server = new RemoteAccessChannelServer(socket, System.getProperty("user.name"),
                 Files.readAttributes(temp, java.nio.file.attribute.PosixFileAttributes.class).group().getName(),
-                binding -> Optional.empty(), peer)) {
+                binding -> Optional.empty(), peer,deniedExecution())) {
             server.start();
             String json = "{\"sessionId\":\"" + id + "\",\"accessorInstanceId\":\"" + UUID.randomUUID()
                     + "\",\"accessorDisplayName\":\"Accessor\",\"sessionPublicKey\":\"ssh-ed25519 public\"}";
@@ -204,18 +228,24 @@ class RemoteAccessChannelServerTest {
     private RemoteAccessChannelServer server(Path socket) throws Exception {
         return new RemoteAccessChannelServer(socket,System.getProperty("user.name"),
                 Files.readAttributes(temp,java.nio.file.attribute.PosixFileAttributes.class).group().getName(),
-                binding -> Optional.empty(),deniedPeer());
+                binding -> Optional.empty(),deniedPeer(),deniedExecution());
     }
     public static final class CrashPeer {
         public static void main(String[] args) throws Exception {
             try(var server=new RemoteAccessChannelServer(Path.of(args[0]),System.getProperty("user.name"),args[1],
-                    binding -> Optional.empty(),deniedPeer())) {
+                    binding -> Optional.empty(),deniedPeer(),deniedExecution())) {
                 server.start();System.out.println("READY");System.out.flush();
                 new java.util.concurrent.CountDownLatch(1).await();
             }
         }
     }
 
+    private static com.sitionix.forgeagent.domain.port.RemoteAccessPeerExecution deniedExecution() {
+        return new com.sitionix.forgeagent.domain.port.RemoteAccessPeerExecution() {
+            public void start(com.sitionix.forgeagent.domain.model.RemoteAccessKeyBinding binding,UUID id) { throw new IllegalStateException(); }
+            public RemoteAccessSessionStatus revoke(com.sitionix.forgeagent.domain.model.RemoteAccessKeyBinding binding) { throw new IllegalStateException(); }
+        };
+    }
     private static String encode(String value) {
         return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }

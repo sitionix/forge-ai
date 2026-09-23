@@ -355,7 +355,11 @@ public final class RemoteAccessLivePairingFixture {
         RemoteAccessAccessorPairing accessor(RemoteAccessPairingTransport transport) { return new RemoteAccessAccessorPairing(sessions,identity,TOKENS,provisioning(),transport,clock); }
         RemoteAccessChannelServer server(RemoteAccessSessionGrants grants) {
             return new RemoteAccessChannelServer(Path.of("/run/forge-remote/channel/authority.sock"),"forge-ssh","forge-ssh",
-                    new RemoteAccessChannelService(sessions,identity,clock,invitations),grantor(grants));
+                    new RemoteAccessChannelService(sessions,identity,clock,invitations),grantor(grants),
+                    new com.sitionix.forgeagent.domain.port.RemoteAccessPeerExecution() {
+                        public void start(RemoteAccessKeyBinding binding,UUID attachment) { throw new IllegalStateException("Stage 4 fixture has no workloads"); }
+                        public RemoteAccessSessionStatus revoke(RemoteAccessKeyBinding binding) { throw new IllegalStateException("Stage 4 fixture has no workloads"); }
+                    });
         }
     }
 }

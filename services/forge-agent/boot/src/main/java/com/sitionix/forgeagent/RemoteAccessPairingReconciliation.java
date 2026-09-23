@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 public class RemoteAccessPairingReconciliation {
     private final RemoteAccessGrantorPairing grantor;
     private final RemoteAccessAccessorPairing accessor;
+    private final com.sitionix.forgeagent.application.remoteaccess.RemoteAccessAccessorExecution execution;
 
     @Value("${forge.agent.remote-access.channel-enabled:false}")
     private boolean channelEnabled;
@@ -42,6 +43,8 @@ public class RemoteAccessPairingReconciliation {
     public void reconcile() {
         try { if (channelEnabled) grantor.reconcile(); }
         catch (RuntimeException unavailable) { log.warn("Grantor pairing reconciliation unavailable; will retry"); }
+        try { execution.reconcile(); }
+        catch (RuntimeException unavailable) { log.warn("Accessor revoke reconciliation unavailable; intent retained"); }
         try { accessor.reconcile(); }
         catch (RuntimeException unavailable) { log.warn("Accessor pairing reconciliation unavailable; will retry"); }
     }

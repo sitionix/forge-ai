@@ -46,6 +46,26 @@ class RemoteAccessPersistenceIT {
     static void stop() { DATABASE.stop(); }
 
     @Test
+    void confirmedRemoteRevokeRetainsCredentialReferenceAcrossRestartUntilCleanup() {
+        UUID local=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
+        var original=accessor(UUID.randomUUID(),UUID.randomUUID(),local);
+        var repository=new PostgresRemoteAccessSessionRepository(jdbc);
+        repository.insert(original);
+        var revoking=original.requestRevoke(NOW);
+        assertThat(repository.transition(original,revoking)).isTrue();
+        var confirmed=revoking.confirmRemoteRevoked(NOW);
+        assertThat(repository.transition(revoking,confirmed)).isTrue();
+        var restarted=new PostgresRemoteAccessSessionRepository(new JdbcTemplate(
+            new DriverManagerDataSource(DATABASE.getJdbcUrl(),DATABASE.getUsername(),DATABASE.getPassword())));
+        var reloaded=restarted.findById(original.id()).orElseThrow();
+        assertThat(reloaded.status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(reloaded.localPrivateKeyReference()).isEqualTo(original.localPrivateKeyReference());
+        assertThat(restarted.transition(reloaded,reloaded.clearRevokedCredential())).isTrue();
+        assertThat(restarted.findById(original.id()).orElseThrow().localPrivateKeyReference()).isNull();
+        assertThat(restarted.transition(revoking,confirmed)).isFalse();
+    }
+
+    @Test
     void migrationCreatesSeparateRemoteAccessTablesWithoutPrivateKeyMaterial() {
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema='public'", String.class))
                 .contains("remote_access_invitations", "remote_access_sessions", "forge_instance_identity", "ssh_connections", "agent_execution_sessions");

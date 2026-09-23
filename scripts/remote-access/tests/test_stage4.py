@@ -27,7 +27,7 @@ class Stage4HelperTest(unittest.TestCase):
             self.assertEqual(('ACTIVE\n',0),h.handle(['session',G,S,FP],'confirm'))
             query.assert_called_once_with('CONFIRM '+G+' '+S+' '+FP+'\n')
             query.reset_mock()
-            for kind,command in [('invitation','confirm'),('session','redeem'),('session','confirm '+G),('session','exec id'),('session','revoke')]:
+            for kind,command in [('invitation','confirm'),('session','redeem'),('session','confirm '+G),('session','exec id')]:
                 self.assertEqual(('DENIED\n',1),h.handle([kind,G,S,FP],command))
             query.assert_not_called()
         with patch.object(h,'query',return_value='PROVISIONING\n'):

@@ -68,7 +68,12 @@ public class PostgresRemoteAccessSessionRepository implements RemoteAccessSessio
         RemoteAccessSession expected = switch (after.status()) {
             case ACTIVE -> before.activate(after.activatedAt());
             case REVOKING -> before.requestRevoke(after.revokeRequestedAt());
-            case REVOKED -> before.confirmRevoked(after.revokedAt());
+            case REVOKED -> {
+                if (before.status()==RemoteAccessSessionStatus.REVOKED && before.localPrivateKeyReference()!=null
+                        && after.localPrivateKeyReference()==null) yield before.clearRevokedCredential();
+                if (after.localPrivateKeyReference()!=null) yield before.confirmRemoteRevoked(after.revokedAt());
+                yield before.confirmRevoked(after.revokedAt());
+            }
             case PROVISIONING -> throw new IllegalArgumentException("Cannot transition back to provisioning");
         };
         if (!expected.equals(after) || after.version() != before.version() + 1) {

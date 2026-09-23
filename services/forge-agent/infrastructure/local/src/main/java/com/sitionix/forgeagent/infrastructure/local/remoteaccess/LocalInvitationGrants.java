@@ -47,40 +47,8 @@ public final class LocalInvitationGrants implements RemoteAccessInvitationGrants
     }
 
     private String request(String frame) {
-        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(3);
-        try (var channel=SocketChannel.open(StandardProtocolFamily.UNIX)) {
-            channel.configureBlocking(false);
-            if (!channel.connect(UnixDomainSocketAddress.of(socket))) {
-                await(channel,SelectionKey.OP_CONNECT,deadline);
-                if (!channel.finishConnect()) throw new IOException("Incomplete connection");
-            }
-            if (!channel.getOption(ExtendedSocketOptions.SO_PEERCRED).user().getName().equals(supervisorUser)) {
-                throw new IOException("Unexpected supervisor identity");
-            }
-            var outgoing=ByteBuffer.wrap(frame.getBytes(StandardCharsets.US_ASCII));
-            while (outgoing.hasRemaining()) { await(channel,SelectionKey.OP_WRITE,deadline); channel.write(outgoing); }
-            var incoming=ByteBuffer.allocate(1025);
-            while (incoming.hasRemaining()) {
-                await(channel,SelectionKey.OP_READ,deadline);
-                if (channel.read(incoming)<0) throw new IOException("Incomplete supervisor response");
-                int size=incoming.position();
-                for (int i=0;i<size;i++) {
-                    if (incoming.get(i)=='\n') {
-                        if (i!=size-1) throw new IOException("Invalid supervisor response");
-                        return new String(incoming.array(),0,i,StandardCharsets.US_ASCII);
-                    }
-                }
-            }
-            throw new IOException("Supervisor response limit exceeded");
-        } catch (IOException failure) { throw new IllegalStateException("Invitation supervisor unavailable"); }
+        try { return RemoteAccessSupervisorConnection.exchange(socket,supervisorUser,frame,3); }
+        catch (IllegalStateException unavailable) { throw new IllegalStateException("Invitation supervisor unavailable"); }
     }
 
-    private static void await(SocketChannel channel,int operation,long deadline) throws IOException {
-        long millis=TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime());
-        if (millis<=0) throw new IOException("Supervisor timeout");
-        try (var selector=Selector.open()) {
-            channel.register(selector,operation);
-            if (selector.select(millis)==0) throw new IOException("Supervisor timeout");
-        }
-    }
 }

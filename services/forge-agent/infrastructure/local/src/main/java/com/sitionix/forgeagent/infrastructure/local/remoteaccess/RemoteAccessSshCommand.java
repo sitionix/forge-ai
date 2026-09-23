@@ -25,9 +25,11 @@ public final class RemoteAccessSshCommand {
     }
 
     public static List<String> control(RemoteAccessSession session,Path identity,Path knownHosts,String operation) throws IOException {
-        if (!List.of("redeem","confirm","status").contains(operation)) throw new IllegalArgumentException("Unsupported control command");
+        if (!List.of("redeem","confirm","status","revoke","exec").contains(operation)) throw new IllegalArgumentException("Unsupported control command");
         if (session.localRole()!=RemoteAccessRole.ACCESSOR || session.localPrivateKeyReference()==null
-                || session.status()!=RemoteAccessSessionStatus.ACTIVE && session.status()!=RemoteAccessSessionStatus.PROVISIONING) {
+                || session.status()!=RemoteAccessSessionStatus.ACTIVE && session.status()!=RemoteAccessSessionStatus.PROVISIONING
+                    && !(operation.equals("revoke") && session.status()==RemoteAccessSessionStatus.REVOKING)
+                || operation.equals("exec") && session.status()!=RemoteAccessSessionStatus.ACTIVE) {
             throw new IllegalArgumentException("Session does not permit an accessor status probe");
         }
         var endpoint=session.endpoint();
@@ -48,7 +50,7 @@ public final class RemoteAccessSshCommand {
                 "StrictHostKeyChecking=yes","GlobalKnownHostsFile=/dev/null","UpdateHostKeys=no",
                 "VerifyHostKeyDNS=no","CanonicalizeHostname=no","ProxyCommand=none","ProxyJump=none",
                 "PermitLocalCommand=no","ControlMaster=no","ControlPath=none","ControlPersist=no",
-                "ClearAllForwardings=yes","ForwardAgent=no","ForwardX11=no","RequestTTY=no","ConnectTimeout=5",
+                "ServerAliveInterval=5","ServerAliveCountMax=2","ClearAllForwardings=yes","ForwardAgent=no","ForwardX11=no","RequestTTY=no","ConnectTimeout=5",
                 "UserKnownHostsFile="+knownHosts.toAbsolutePath())) {
             argv.add("-o"); argv.add(option);
         }

@@ -1,6 +1,6 @@
 # Remote Access Stage 5 — execution, revoke and recovery
 
-Status: design checkpoint for external review; production implementation not started.
+Status: implemented in the Stage 5 review unit; see evidence.md for validation and limitations.
 Base: PR #145, merged at `edf49dbfa34643fdbd66fa4aa6a3bbaa78df42d2`.
 Authority: human Remote Access roadmap, Stage 5. Stages 6–9 are excluded.
 
@@ -182,7 +182,8 @@ reruns and environment limitations in evidence. No Stage 9 live Codex claim.
 
 ## Review boundary
 
-This document is a proposed Stage 5 implementation design, not delivered runtime
-behavior. After design review, produce the file-level implementation plan and
-regression-first implementation in this branch. Stop after Stage 5 review unit;
+This document records the approved design. Implementation uses an additional
+root-owned per-execution ConditionPathExists fence against delayed submission,
+and independent attachment/control/heartbeat pools following review findings.
+See the file-level plan and evidence for actual tested behavior. Stop after Stage 5 review unit;
 no management REST/UI, forge-remote CLI or subsequent stage implementation.

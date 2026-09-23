@@ -69,7 +69,8 @@ def write_owned(path, content, mode):
 def install_forced_command(source):
     install_managed_helper(source, 'forced-command', {
         '28d18e70e272a7385badbdfe3e36f95abf9ecd83357a93ce5819f9237b289abe',
-        '28c0cf54bcd067ad34c06bde22b5e8367ed767f88d7aa0092e5741b0647a2b3e'})
+        '28c0cf54bcd067ad34c06bde22b5e8367ed767f88d7aa0092e5741b0647a2b3e',
+        'f2531928dac31e89e9a5506711acbdcfe23d9fd18b13bd361417eeb5ee6e53f6'})
 
 
 def require_stopped_supervisor_for_upgrade(source):
@@ -121,7 +122,7 @@ def install_managed_helper(source, name, known_versions):
         write_owned(target, content, 0o755)
 
 
-def sshd_config(host, port):
+def sshd_config(host, port, liveness=True):
     address = ipaddress.ip_address(host)
     if address.is_unspecified or address.is_multicast or not 1024 <= port <= 65535:
         raise ValueError('An explicit unicast listen address and port 1024..65535 are required')
@@ -156,16 +157,26 @@ MaxAuthTries 3
 LoginGraceTime 15
 MaxStartups 4:50:8
 LogLevel ERROR
-'''
+'''+('ClientAliveInterval 5\nClientAliveCountMax 2\n' if liveness else '')
 
 
-def check_user(name, shell, permitted_groups):
+def check_user(name, shell, permitted_groups, home="/nonexistent"):
     account = pwd.getpwnam(name)
     primary = grp.getgrgid(account.pw_gid).gr_name
     groups = {entry.gr_name for entry in grp.getgrall() if name in entry.gr_mem} | {primary}
-    if account.pw_uid == 0 or account.pw_dir != '/nonexistent' or account.pw_shell != shell or not groups <= permitted_groups:
+    if account.pw_uid == 0 or account.pw_dir != home or account.pw_shell != shell or not groups <= permitted_groups:
         raise RuntimeError('Managed account identity conflict')
     return account
+
+
+def prepare_transport_home():
+    home=STATE/'transport-home'
+    directory(home,0o555)
+    account=pwd.getpwnam('forge-ssh')
+    if account.pw_dir!=str(home):
+        # Only upgrade the known Stage 2 identity; never repurpose a foreign home.
+        check_user('forge-ssh','/bin/sh',{'forge-ssh'})
+        run('/usr/sbin/usermod','--home',str(home),'forge-ssh')
 
 
 def prepare(host, port):
@@ -193,7 +204,9 @@ def prepare(host, port):
             run('/usr/sbin/usermod','--password','*',name)
     run('/usr/sbin/usermod','--append','--groups','forge-ssh','forge-control')
     control = check_user('forge-control','/usr/sbin/nologin',{'forge-control','forge-ssh'})
-    peer = check_user('forge-ssh','/bin/sh',{'forge-ssh'})
+    directory(STATE)
+    prepare_transport_home()
+    peer = check_user('forge-ssh','/bin/sh',{'forge-ssh'},str(STATE/'transport-home'))
     if control.pw_uid == peer.pw_uid: raise RuntimeError('Control and transport identities must differ')
     for path in [LIB, STATE, RUN]: directory(path)
     bindings=STATE/'bindings'
@@ -219,6 +232,7 @@ def prepare(host, port):
         channel.mkdir(mode=0o750)
         channel.chmod(0o750)
         os.chown(channel,control.pw_uid,peer.pw_gid)
+    install_workloads(source.parent)
     install_forced_command(source)
     supervisor_source = source.parent/'invitation_supervisor.py'
     require_root_owned(supervisor_source)
@@ -246,7 +260,7 @@ WantedBy=multi-user.target
 ''',0o644)
     host_key=ETC/'host_ed25519'
     ensure_host_key(host_key)
-    write_owned(ETC/'sshd_config',config.encode(),0o600)
+    write_sshd_config(host,port,config)
     write_owned(UNIT,b'''[Unit]
 Description=Forge managed Remote Access SSH boundary
 After=network.target systemd-tmpfiles-setup.service
@@ -271,6 +285,62 @@ d /run/forge-remote/channel 0750 forge-control forge-ssh -
     directory(pathlib.Path('/run/sshd'))
     run('/usr/sbin/sshd','-t','-f',str(ETC/'sshd_config'))
 
+
+
+def workload_unit():
+    return b"""[Unit]
+Description=Forge managed workload supervisor
+After=systemd-tmpfiles-setup.service
+[Service]
+Type=notify
+NotifyAccess=main
+User=root
+Group=forge-control
+RuntimeDirectory=forge-remote/workload-admin forge-remote/workload-peer
+RuntimeDirectoryMode=0750
+ExecStart=/usr/libexec/forge-remote/workload-supervisor
+WatchdogSec=15s
+TimeoutStopSec=20s
+KillMode=control-group
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/var/lib/forge-remote/executions
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+def install_workloads(package):
+    directory(STATE/'executions',0o700)
+    directory(ETC/'workspaces',0o700)
+    target=LIB/'workload-supervisor'
+    if target.exists() and target.read_bytes()!=(package/'workload_supervisor.py').read_bytes():
+        if (RUN/'workload-admin').exists():raise RuntimeError('NOT READY: stop managed workload supervisor before upgrade')
+    for source,name in [('workload_supervisor.py','workload-supervisor'),('workload_units.py','workload_units.py'),
+                        ('execution_channel.py','execution_channel.py'),('prepare_workspace.py','prepare-workspace')]:
+        require_root_owned(package/source)
+        install_managed_helper(package/source,name,set())
+    write_owned(pathlib.Path('/etc/systemd/system/forge-remote-workloads.service'),workload_unit(),0o644)
+
+
+def write_sshd_config(host,port,config):
+    path=ETC/'sshd_config'
+    if path.exists() or path.is_symlink():
+        require_root_owned(path)
+        if path.is_file() and path.read_bytes()==sshd_config(host,port,False).encode():
+            descriptor,temporary=tempfile.mkstemp(prefix='.sshd-',dir=ETC)
+            try:
+                os.fchmod(descriptor,0o600)
+                with os.fdopen(descriptor,'wb') as output:output.write(config.encode());output.flush();os.fsync(output.fileno())
+                os.replace(temporary,path)
+            finally:
+                if os.path.exists(temporary):os.unlink(temporary)
+    write_owned(path,config.encode(),0o600)
 
 def ensure_host_key(host_key):
     public=pathlib.Path(str(host_key)+'.pub')

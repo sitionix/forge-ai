@@ -54,9 +54,9 @@ def authenticated_binding(auth_file):
     return binding
 
 
-def query(frame):
+def query(frame, timeout=3):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(3)
+        client.settimeout(timeout)
         client.connect(SOCKET)
         _, uid, _ = struct.unpack('3i', client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if uid != pwd.getpwnam('forge-control').pw_uid:
@@ -93,25 +93,29 @@ def read_request(descriptor=0, timeout=3):
 
 def handle(binding, command):
     denied = ('DENIED\n', 1)
-    if len(binding) != 4 or (binding[0], command) not in [('session', 'status'), ('session', 'confirm'), ('invitation', 'pair'), ('invitation', 'redeem')]:
+    if len(binding) != 4 or (binding[0], command) not in [('session', 'status'), ('session', 'confirm'), ('session', 'revoke'), ('session', 'exec'), ('invitation', 'pair'), ('invitation', 'redeem')]:
         return denied
     try:
         if any(str(uuid.UUID(value)) != value for value in binding[1:3]):
             return denied
         if not re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}', binding[3]):
             return denied
+        if command == 'exec':
+            sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
+            from execution_channel import execute
+            return '', execute(binding,query)
         operation = command.upper()
         frame = operation + ' ' + ' '.join(binding[1:])
         if command == 'redeem':
             frame += ' ' + base64.urlsafe_b64encode(read_request()).decode('ascii').rstrip('=')
         if len(frame) + 1 > 8192: return denied
-        result = query(frame + '\n')
+        result = query(frame + '\n', timeout=90) if command=='revoke' else query(frame + '\n')
         if command == 'redeem':
             match = re.fullmatch(r'PROVISIONING ([0-9a-f-]{36})\n', result)
             if not match or str(uuid.UUID(match[1])) != match[1]: return denied
             return result, 0
         permitted = {'pair': ('PAIRING_ALLOWED\n',), 'confirm': ('ACTIVE\n',),
-                     'status': ('ACTIVE\n', 'PROVISIONING\n')}[command]
+                     'status': ('ACTIVE\n', 'PROVISIONING\n'), 'revoke': ('REVOKING\n', 'REVOKED\n')}[command]
         if result not in permitted:
             return denied
         return result, 0
