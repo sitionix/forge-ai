@@ -62,6 +62,7 @@ public final class RemoteAccessChannelServer implements AutoCloseable {
     private final String peerUser;
     private final String peerGroup;
     private final RemoteAccessChannelAuthority authority;
+    private final com.sitionix.forgeagent.domain.port.RemoteAccessPeerExecution execution;
     private final Set<SocketChannel> channels = ConcurrentHashMap.newKeySet();
     private final ThreadPoolExecutor workers = new ThreadPoolExecutor(4,4,0,TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(4),r -> { var t=new Thread(r,"remote-access-channel"); t.setDaemon(true); return t; });
@@ -71,12 +72,13 @@ public final class RemoteAccessChannelServer implements AutoCloseable {
     private FileLock lifecycleLock;
     private boolean closed;
 
-    public RemoteAccessChannelServer(Path path,String peerUser,String peerGroup,RemoteAccessChannelAuthority authority,RemoteAccessPeerPairing peerPairing) {
+    public RemoteAccessChannelServer(Path path,String peerUser,String peerGroup,RemoteAccessChannelAuthority authority,RemoteAccessPeerPairing peerPairing,com.sitionix.forgeagent.domain.port.RemoteAccessPeerExecution execution) {
         this.path=path.toAbsolutePath().normalize();
         this.peerUser=peerUser;
         this.peerGroup=peerGroup;
         this.authority=authority;
         this.peerPairing=peerPairing;
+        this.execution=execution;
     }
 
     public synchronized void start() {
@@ -194,7 +196,16 @@ public final class RemoteAccessChannelServer implements AutoCloseable {
             if (peer.user().getName().equals(peerUser)) {
                 try {
                     String[] fields=frame.split(" ",-1);
-                    if (fields.length==5 && fields[0].equals("REDEEM")) {
+                    if (fields.length==5 && fields[0].equals("EXEC")) {
+                        var binding=new RemoteAccessKeyBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
+                        execution.start(binding,canonicalUuid(fields[4]));
+                        response="STARTED\n";
+                    } else if (fields.length==4 && fields[0].equals("REVOKE")) {
+                        var binding=new RemoteAccessKeyBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
+                        var status=execution.revoke(binding);
+                        if (status==RemoteAccessSessionStatus.REVOKING || status==RemoteAccessSessionStatus.REVOKED) response=status.name()+"\n";
+                        deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+                    } else if (fields.length==5 && fields[0].equals("REDEEM")) {
                         var binding=new RemoteAccessInvitationBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
                         String encoded=fields[4];
                         if (!encoded.matches("[A-Za-z0-9_-]+")) throw new IllegalArgumentException();

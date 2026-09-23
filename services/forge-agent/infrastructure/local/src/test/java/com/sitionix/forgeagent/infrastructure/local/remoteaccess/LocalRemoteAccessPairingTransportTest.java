@@ -21,6 +21,17 @@ class LocalRemoteAccessPairingTransportTest {
                 role==RemoteAccessRole.ACCESSOR?id:null,RemoteAccessSessionStatus.PROVISIONING,now,now.plusSeconds(120),
                 null,null,null,RemoteAccessConnectivity.UNKNOWN,null,null,null,null,0);
     }
+    @Test void revokeReturnsOnlyConfirmedRemoteLifecycleAndAllowsLocalRevoking() {
+        var session=session(RemoteAccessRole.ACCESSOR).requestRevoke(Instant.now());
+        for (String response:List.of("REVOKED\n","REVOKING\n")) {
+            var transport=new LocalRemoteAccessPairingTransport(store(new AtomicInteger()),(argv,input) -> {
+                assertThat(argv.getLast()).isEqualTo("revoke");return response;
+            });
+            assertThat(transport.revoke(session).name()+"\n").isEqualTo(response);
+        }
+        var transport=new LocalRemoteAccessPairingTransport(store(new AtomicInteger()),(argv,input) -> "DENIED\n");
+        assertThatThrownBy(() -> transport.revoke(session)).hasMessage("Remote access control operation unavailable");
+    }
     @Test void redeemUsesInvitationIdentityAndPublicAccessorMetadataThenSessionIdentityForProof() throws Exception {
         var session=session(RemoteAccessRole.ACCESSOR);
         var reads=new AtomicInteger(); var paths=new ArrayList<Path>(); var commands=new ArrayList<String>();

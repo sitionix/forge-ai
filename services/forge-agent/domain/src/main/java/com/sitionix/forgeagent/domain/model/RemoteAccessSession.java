@@ -98,11 +98,46 @@ public record RemoteAccessSession(
                 null, version + 1);
     }
 
+    /** Persist remote acknowledgement before attempting local credential deletion. */
+    public RemoteAccessSession confirmRemoteRevoked(Instant confirmedAt) {
+        if (localRole != RemoteAccessRole.ACCESSOR) throw new IllegalStateException("Accessor required");
+        var confirmed = confirmRevoked(confirmedAt);
+        return confirmed.copy(confirmed.status(), confirmed.activatedAt(), confirmed.revokeRequestedAt(),
+                confirmed.revokedAt(), localPrivateKeyReference, confirmed.version());
+    }
+
+    public RemoteAccessSession clearRevokedCredential() {
+        if (localRole != RemoteAccessRole.ACCESSOR || status != RemoteAccessSessionStatus.REVOKED) {
+            throw new IllegalStateException("Confirmed remote revoke required");
+        }
+        return copy(status, activatedAt, revokeRequestedAt, revokedAt, null, version + 1);
+    }
+
+    /** Resolve diagnostics in the same version as confirmed lifecycle success. */
+    public RemoteAccessSession confirmRevokedAndClearFailure(Instant confirmedAt) {
+        var confirmed = confirmRevoked(confirmedAt);
+        return confirmed.version() == version ? confirmed : confirmed.withFailure(null, null, confirmed.version());
+    }
+
+    public RemoteAccessSession confirmRemoteRevokedAndClearFailure(Instant confirmedAt) {
+        var confirmed = confirmRemoteRevoked(confirmedAt);
+        return confirmed.version() == version ? confirmed : confirmed.withFailure(null, null, confirmed.version());
+    }
+
+    public RemoteAccessSession clearRevokedCredentialAndFailure() {
+        var cleared = clearRevokedCredential();
+        return cleared.withFailure(null, null, cleared.version());
+    }
+
     public RemoteAccessSession withFailure(String code, String message) {
+        return withFailure(code, message, version + 1);
+    }
+
+    private RemoteAccessSession withFailure(String code, String message, long newVersion) {
         return new RemoteAccessSession(id, invitationId, localRole, grantorInstanceId, accessorInstanceId,
                 peerDisplayName, endpoint, pinnedHostPublicKey, sessionPublicKey, sessionFingerprint,
                 localPrivateKeyReference, status, createdAt, provisioningExpiresAt, activatedAt,
-                revokeRequestedAt, revokedAt, connectivity, lastSeenAt, lastCheckedAt, code, message, version + 1);
+                revokeRequestedAt, revokedAt, connectivity, lastSeenAt, lastCheckedAt, code, message, newVersion);
     }
 
     private RemoteAccessSession copy(RemoteAccessSessionStatus newStatus, Instant newActivatedAt,

@@ -620,3 +620,266 @@ or a systemd/OS reboot exercise. No Stage 5 workload or live Codex claim is adde
 Final full Agent verify after the socket/JVM-crash correction: PASS (exit 0),
 327 integration tests, zero failures/errors, six existing opt-in skips. All eight
 live pairing checkpoints passed in that full run. `git diff --check`: PASS.
+
+## Stage 5 — managed commands, revoke and recovery (2026-09-23)
+
+Base: merged PR #145 `edf49dbfa34643fdbd66fa4aa6a3bbaa78df42d2`.
+Scope checked against the human roadmap: Stage 5 only. No REST management,
+Console, workflow routing, migration, Stage 8 helper or Codex integration changes.
+Operational setup and limitations: [stage5-execution.md](stage5-execution.md).
+
+### Regression-first corrections and review
+
+Direct application regressions cover persisted REVOKING admission denial,
+start-versus-revoke serialization, cleanup failure, CAS winners, offline revoke,
+confirmed remote revoke before key deletion, retained key on deletion failure,
+and independent heartbeat maintenance. Real PostgreSQL regression first failed
+because the transition adapter did not recognize the new retained-reference
+REVOKED transition; the adapter now validates that exact domain transition and
+subsequent reference clearing using the existing optimistic version. V37 and the
+session status set remain unchanged.
+
+Local process tests cover independent large streams, stdin, nonzero exit,
+cancellation, inactive denial and no retry/fallback. These tests are **not** SSH
+or systemd evidence.
+
+Independent review found two required corrections:
+
+1. A launched `systemd-run` process could submit after an absent-unit inspection
+   and registry deletion. Tests first failed for a missing start fence, unreaped
+   launcher and incorrectly successful cleanup. The production registry now
+   creates a root-only durable `.allow`; PID 1 evaluates `ConditionPathExists`.
+   Every cleanup path removes the fence before waits, reaps the launcher, verifies
+   unit/cgroup/job absence and only then removes the record. Failed reap retains
+   the record while attempts continue for other commands. Disconnect shares that
+   cleanup path. A real delayed submission after removal was also tested below.
+2. A shared worker pool let long attachments starve control/heartbeats. The
+   supervisor now has separate bounded attachment/control/heartbeat pools and a
+   dedicated heartbeat socket selected by the Java adapter. A local Unix-socket
+   regression fills all sixteen attachment workers, starts a blocked control
+   request and still receives the heartbeat response. This is a concurrency test,
+   not a remote SSH load test. Independent re-review found both blockers closed.
+
+Early live runs also exposed two real integration failures: sshd emitted a
+missing-home warning into command stderr, and systemd-run could return zero when
+a managed process was stopped. The managed transport now has an empty protected
+home; explicitly cancelled executions return nonzero even if the launcher says
+zero. Tests cover both. A fixture-only assertion was corrected to wait boundedly
+for actual supervisor automatic restart/registry reconciliation after SIGKILL.
+
+### Actual privileged execution fixture
+
+Command (exit 0):
+
+```bash
+mvn -q -Dapi.version=1.44 -Dforge.remote-access.live-execution=true \
+  -Dtest=RemoteAccessExecutionServiceTest,RemoteAccessAccessorExecutionTest \
+  -Dsurefire.failIfNoSpecifiedTests=false \
+  -Dit.test=RemoteAccessLiveExecutionIT \
+  -Dfailsafe.failIfNoSpecifiedTests=false \
+  -pl services/forge-agent/boot -am verify
+```
+
+This opt-in test starts a disposable privileged Linux systemd container and a real
+PostgreSQL container. The two peers use separate persisted schemas/instance IDs,
+production Java services/adapters and real OpenSSH. Root setup only prepares the
+explicit rootfs/workspaces and injects supervisor crashes; it is not a replacement
+Agent authority. No host bind mounts, personal credentials or production services
+are used. systemd 255, Java 21 and OpenSSH are actual processes, not mocks.
+
+The successful rerun after both review corrections emitted:
+
+```text
+PASS actual PID 1 rejects workload submitted after cleanup fence removal
+PASS real SSH literal argv, separate stderr and nonzero exit
+PASS real SSH stdin and large independent streams
+PASS real managed command timeout
+PASS workload isolation and persistent explicit workspace
+PASS revoke stops setsid descendants, denies new execution and preserves another session
+PASS unavailable authority lease stops existing workload
+PASS actual supervisor SIGKILL stops bound workload units
+PASS actual supervisor SIGSTOP watchdog stops bound workload units
+STAGE5_FIXTURE_PASS: real SSH, PostgreSQL, production authority and systemd cleanup
+```
+
+The fixture verifies an already-running command in session B remains alive during
+session A revoke, and the setsid child is gone. Literal arguments include spaces,
+quotes, dollar expansion, command substitution and systemd specifiers. Separate
+150 KB stdout / 200 KB stderr streams are drained concurrently. The workload
+cannot see control/private-key/Docker paths or reach host loopback, cannot write
+the rootfs, and can persist changes only in its prepared workspace. Post-crash
+registry emptiness and the restarted supervisor are positively checked.
+
+### Scope of evidence
+
+- Mocked lifecycle/inspection failures prove application ordering and truthful
+  failure handling; they do not prove an OS kill succeeded.
+- The default Agent verify skips the privileged Stage 5 opt-in fixture. Its
+  successful explicit run above is separate from ordinary CI checks.
+- Existing real Stage 4 pairing/restart cases remain in full Agent verification;
+  the separate Stage 2–4 Docker suite uses a stub authority and labels it so.
+- This is one isolated Linux host environment with two logical persisted peers,
+  not two physical machines/VMs or a reboot test. Other platforms are NOT READY.
+- UI and actual Codex sessions are NOT_RUN. Stage 9 labels
+  `REMOTE_ACCESS_RUNTIME_E2E_PASS`, `REMOTE_ACCESS_UI_FLOW_PASS` and
+  `REMOTE_ACCESS_CODEX_LIVE_PASS` are not claimed by Stage 5.
+- Prepared files and accounts intentionally survive revoke. Cleanup does not
+  roll back previous file edits. Offline/lost acknowledgement may require operator
+  diagnosis and remains visibly unconfirmed; no key is regranted for recovery.
+
+### Final regression results
+
+All commands below completed with exit 0 on the final production changes:
+
+```bash
+mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify
+mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify
+python3 -m unittest discover -s scripts/remote-access/tests -p 'test_*.py' -v
+python3 -m py_compile scripts/remote-access/*.py \
+  scripts/remote-access/tests/test_workloads.py \
+  scripts/remote-access/tests/stage5/run_fixture.py
+docker build -f scripts/remote-access/tests/Dockerfile -t forge-remote-stage2-test .
+docker run --rm --network none forge-remote-stage2-test
+(cd services/forge-console && npm test && npm run typecheck && npm run build)
+git diff --check
+```
+
+Agent failsafe summary: 329 completed, zero failures/errors, seven opt-in skips
+(including the separately executed privileged Stage 5 test). Nexus: 236 unit and
+38 integration tests, zero failures/errors. Python: 58 tests, including 25 workload
+checks. Console: 545 tests across 20 files, plus typecheck and build. Docker SSH
+suite reported the existing Stage 2/3/4 boundary checkpoints with stub-authority
+labels. The explicit Stage 5 real-authority run is recorded separately above.
+
+### PR #146 follow-up — recovery diagnostics and real close cancellation
+
+The review regressions reproduced stale `REMOTE_ACCESS_CLEANUP_PENDING`,
+`REMOTE_ACCESS_REVOKE_UNCONFIRMED` and `REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING`
+after successful recovery (focused run: 19 tests, four failures before the fix).
+The two application services now clear failure metadata through the existing
+`recordFailure(snapshot, null, null)` CAS only after the corresponding successful
+transition. The snapshot is the exact transition result, not an arbitrary newer
+row. If a later writer wins, its failure survives. ACCESSOR does not continue key
+cleanup after losing the remote-confirmation metadata CAS. Domain states, SQL
+schema and lifecycle transition rules are unchanged.
+
+Focused regressions now pass, including actual failure followed by retry, clean
+metadata before key deletion, failed key deletion followed by retry, and newer
+writers winning transition/metadata races. The privileged PostgreSQL fixture also
+seeds persisted failures and confirms both peers' code/message are null after
+successful revoke.
+
+The new cancellation scenario initially **failed with real SSH/systemd**. After
+`RemoteAccessCommandExecution.close()` the SSH process had exited, but systemd
+reported `active/running`, the shell and setsid child were still sleeping, and
+both registry record and `.allow` remained. The original helper waited only for
+the supervisor response; a non-PTY sshd disconnect did not terminate the quiet
+forced helper. This was a runtime defect, not merely missing test coverage.
+
+The minimal helper correction watches stdout/stderr reader loss using `poll`
+ERR/HUP/NVAL alongside the existing supervisor result. A disconnected SSH output
+closes the attachment, triggering the existing supervisor cleanup path. It never
+consumes stdin or treats normal stdin EOF as cancellation. Real pipe/socket tests
+cover both output descriptors and preserve the normal command result.
+
+The successful privileged rerun used the existing Stage 5 Maven command above
+with `-Dforge.remote-access.live-execution=true` and emitted the additional line:
+
+```text
+PASS real SSH close cancellation removes main, setsid child, systemd unit, registry and fence; unrelated session survives
+```
+
+Before closing, the root test driver captures the exact registered execution and
+verifies its running MainPID, live child and fence. Java calls the real execution
+handle's `close()` and asserts SSH exit within five seconds. The root driver only
+**observes** systemd/proc/registry afterward: within fifteen seconds the unit must
+be inactive/dead with zero PID/no job (or confirmed not-found), both PIDs absent,
+and the captured record/fence removed. It never issues STOP or revoke for this
+scenario. Both session rows remain ACTIVE, heartbeats continue, and an already
+running command in session B is confirmed alive afterward. A 150-second command
+timeout cannot explain this bounded cancellation result.
+
+All earlier live checkpoints also passed in that rerun, including delayed
+submission fencing, timeout, revoke, authority loss, SIGKILL and watchdog. This
+remains an isolated real Linux/SSH/PostgreSQL/systemd fixture, not live Codex or
+a two-physical-machine claim. Independent read-only review found no required
+code defects in the CAS correction or SSH-disconnect correction.
+
+Follow-up verification: focused Java 19/19, full Agent verify, Python 60/60,
+privileged Stage 5 fixture and existing Stage 2–4 Docker SSH suite all exit 0.
+Python compilation and `git diff --check` also pass. No Stage 6 work is included.
+
+### PR #146 follow-up — atomic successful revoke and diagnostics
+
+This correction supersedes the separate success-time `recordFailure(..., null,
+null)` write described in the preceding follow-up. That write could fail after
+GRANTOR had removed the grant, stopped workloads and committed REVOKED, turning
+the authenticated response into DENIED even though cleanup was complete.
+
+Typed aggregate operations now produce the complete successful target in one
+version increment: `confirmRevokedAndClearFailure`,
+`confirmRemoteRevokedAndClearFailure` (retaining the ACCESSOR key reference), and
+`clearRevokedCredentialAndFailure`. Existing lifecycle operations remain available
+with their previous semantics. The PostgreSQL adapter reconstructs the exact
+permitted target and updates lifecycle, key reference, diagnostics and version in
+one statement guarded by id/version/status. No detached arbitrary replacement,
+unconditional diagnostic update, schema migration or additional state was added.
+
+After successful cleanup and a successful CAS, GRANTOR returns REVOKED directly;
+no secondary write or read can invalidate that committed acknowledgement. A lost
+CAS reloads/respects its winner. ACCESSOR confirmation and later successful key
+cleanup each clear their resolved diagnostics in their respective atomic state
+change. A new actual credential deletion failure remains visible as
+REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING.
+
+Regression-first evidence:
+
+- Four new application scenarios failed on the old flow: acknowledgement depended
+  on secondary diagnostics; authenticated revoke retained the old failure when
+  diagnostics failed; and both lost-CAS/database-failure retries produced a target
+  with stale credential diagnostics.
+- Focused application/domain tests now pass (35 tests). The acknowledgement test
+  configures secondary diagnostic writes and post-commit reads to throw and proves
+  neither is needed. Success targets contain null code/message and increment the
+  version once. Competing newer failures/states remain untouched.
+- Credential retry tests model completed physical deletion with an in-memory key
+  store, fail the first reference-clearing CAS or DB operation, reconstruct
+  the service and reconcile. Repeating idempotent delete on the missing key then
+  converges to REVOKED with null key reference and diagnostics; no key store/create
+  operation or remote confirmation is performed. These are direct application
+  regressions, not a claim of filesystem-crash E2E.
+- Three new PostgreSQL scenarios failed against the old adapter's permitted-target
+  validation, then passed after the atomic SQL change. The 19-test persistence
+  suite verifies exact persisted targets across adapter restart, version +1,
+  stale-CAS rejection and rejection of forged detached failure changes.
+
+The first persistence command without `-Dapi.version=1.44` was blocked because
+the local Docker daemon rejected the client's default API 1.32 (minimum 1.40).
+The successful persistence verification uses the same API 1.44 override as the
+full Agent/live commands. Docker configuration and project dependencies were not
+changed. Initial test fixture setup was also corrected to insert version-zero
+PROVISIONING before advancing through the normal repository operations.
+
+SSH protocol, forced/execution helpers, supervisor/systemd isolation, migration,
+UI and workflow routing are unchanged by this correction. Stage 6 remains excluded.
+
+Independent review also identified timestamp precision as a false newer-writer
+signal: a full-record equality check could skip immediate key deletion after
+PostgreSQL normalized a nanosecond Instant to microseconds. A deterministic
+regression first failed with the same version and normalized timestamp; the guard
+now compares CAS versions. A real newer writer still increments that version and
+is preserved.
+
+Final verification after the timestamp-precision correction:
+
+- Focused application/domain command: PASS, 35 tests.
+- PostgreSQL persistence command with `-Dapi.version=1.44`: PASS, 19 tests.
+- Full Forge Agent `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: PASS.
+- Privileged `RemoteAccessLiveExecutionIT` with
+  `-Dforge.remote-access.live-execution=true`: PASS with real SSH, PostgreSQL,
+  production authority and systemd. Its unchanged cancellation scenario confirms
+  that `RemoteAccessCommandExecution.close()` removes the main process, setsid
+  child, systemd unit, execution registry and allow fence while the unrelated
+  session survives. Timeout, revoke, authority-loss and supervisor crash/watchdog
+  checkpoints also pass. This is runtime E2E evidence, not live Codex acceptance.
+- `git diff --check`: PASS. No SSH/helper/supervisor or cancellation-fixture changes.

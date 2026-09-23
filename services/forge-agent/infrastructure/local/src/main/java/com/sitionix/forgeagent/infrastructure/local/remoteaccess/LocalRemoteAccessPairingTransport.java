@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 
 /** One fixed SSH operation per call. Private credentials exist only in protected temporary files. */
 @Component
-public final class LocalRemoteAccessPairingTransport implements RemoteAccessPairingTransport {
+public final class LocalRemoteAccessPairingTransport implements RemoteAccessPairingTransport, com.sitionix.forgeagent.domain.port.RemoteAccessRevokeTransport {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final RemoteAccessCredentialStore credentials;
     private final ControlProcess process;
@@ -26,7 +26,7 @@ public final class LocalRemoteAccessPairingTransport implements RemoteAccessPair
         String execute(List<String> command, byte[] input) throws Exception;
     }
     @Autowired public LocalRemoteAccessPairingTransport(RemoteAccessCredentialStore credentials) {
-        this(credentials,(command,input) -> RemoteAccessControlProcess.execute(command,input,Duration.ofSeconds(15)));
+        this(credentials,(command,input) -> RemoteAccessControlProcess.execute(command,input,Duration.ofSeconds(command.getLast().equals("revoke") ? 90 : 15)));
     }
     LocalRemoteAccessPairingTransport(RemoteAccessCredentialStore credentials,ControlProcess process) {
         this.credentials=credentials;
@@ -47,9 +47,16 @@ public final class LocalRemoteAccessPairingTransport implements RemoteAccessPair
     @Override public RemoteAccessSessionStatus confirm(RemoteAccessSession session) { return sessionOperation(session,"confirm"); }
     @Override public RemoteAccessSessionStatus status(RemoteAccessSession session) { return sessionOperation(session,"status"); }
 
+    @Override public RemoteAccessSessionStatus revoke(RemoteAccessSession session) { return sessionOperation(session,"revoke"); }
+
     private RemoteAccessSessionStatus sessionOperation(RemoteAccessSession session,String operation) {
         try (var privateKey=credentials.read(session.localPrivateKeyReference())) {
             String response=invoke(session,privateKey,operation,new byte[0]);
+            if (operation.equals("revoke")) {
+                if (response.equals("REVOKING\n")) return RemoteAccessSessionStatus.REVOKING;
+                if (response.equals("REVOKED\n")) return RemoteAccessSessionStatus.REVOKED;
+                throw new IllegalStateException();
+            }
             if (response.equals("ACTIVE\n")) return RemoteAccessSessionStatus.ACTIVE;
             if (operation.equals("status") && response.equals("PROVISIONING\n")) return RemoteAccessSessionStatus.PROVISIONING;
             throw new IllegalStateException();
@@ -57,13 +64,7 @@ public final class LocalRemoteAccessPairingTransport implements RemoteAccessPair
     }
 
     private String invoke(RemoteAccessSession session,RemoteAccessPrivateKey privateKey,String operation,byte[] input) throws Exception {
-        try (var temporary=new Credentials()) {
-            byte[] material=privateKey.copyBytes();
-            try { Files.write(temporary.key,material); }
-            finally { Arrays.fill(material,(byte)0); }
-            var endpoint=session.endpoint();
-            Files.writeString(temporary.knownHosts,"["+endpoint.host()+"]:"+endpoint.port()+" "
-                    +LocalPairingTokens.validatedPublicKey(session.pinnedHostPublicKey())+"\n",StandardCharsets.US_ASCII);
+        try (var temporary=new RemoteAccessSshCredentials(session,privateKey)) {
             return process.execute(RemoteAccessSshCommand.control(session,temporary.key,temporary.knownHosts,operation),input);
         }
     }
@@ -72,21 +73,4 @@ public final class LocalRemoteAccessPairingTransport implements RemoteAccessPair
         return new IllegalStateException("Remote access control operation unavailable");
     }
 
-    private static final class Credentials implements AutoCloseable {
-        final Path directory;
-        final Path key;
-        final Path knownHosts;
-        Credentials() throws IOException {
-            directory=Files.createTempDirectory("forge-control-",PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
-            key=directory.resolve("identity"); knownHosts=directory.resolve("known_hosts");
-            try {
-                var mode=PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"));
-                Files.createFile(key,mode); Files.createFile(knownHosts,mode);
-            } catch (IOException | RuntimeException failure) { close(); throw failure; }
-        }
-        @Override public void close() throws IOException {
-            try { Files.deleteIfExists(key); }
-            finally { try { Files.deleteIfExists(knownHosts); } finally { Files.deleteIfExists(directory); } }
-        }
-    }
 }

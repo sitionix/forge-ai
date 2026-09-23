@@ -7,10 +7,12 @@ Stage 0 PR #141 was merged with explicitly authorized admin merge at
 `3b374d0e1746768f72014e0c39d3fa44190d4583`. The user authorized Stage 2, then merged PR #143 at
 `887a57701599df4de452a207e1be6a0d77e4474f` and authorized Stage 3 on 2026-09-23.
 PR #144 was merged at `43a1ea51a30b9bdf869bd67e97ea7f7d86f468b2`; the user then authorized Stage 4.
-Each stage remains a separate review unit; no Stage 5+ authorization is implied.
+PR #145 was merged at `edf49dbfa34643fdbd66fa4aa6a3bbaa78df42d2`; the user authorized Stage 5.
+Each stage remains a separate review unit; Stage 6+ remains unauthorized.
 No new PR metadata, comments/reviews or merges without an explicit request.
-Production workload execution remains NOT READY: Stage 4 adds the session handshake;
-execution/revoke, management APIs and UI remain separate later stages.
+Stage 5 execution/revoke is prepared for external review with isolated live evidence.
+Management APIs, UI and the local Codex helper remain separate later stages; this
+is not a claim that the complete Remote Access product is production-ready.
 
 | Stage | Deliverable | Required exit evidence | State |
 | --- | --- | --- | --- |
@@ -18,8 +20,8 @@ execution/revoke, management APIs and UI remain separate later stages.
 | 1 | Invitation/session aggregates, forward migration, instance identity and local key store | Transitions, concurrent reservation, DB roundtrip/restart, permissions/redaction; no SSH access | Merged PR #142; focused and full regression passed |
 | 2 | Narrow privileged setup, managed sshd/helpers and fail-closed session gate | Binding cannot be forged; revoked/foreign/unavailable denied; inherited client config cannot bypass pinning; idempotent setup | Merged PR #143, including enforced explicit loopback Agent HTTP bind |
 | 3 | Give Access and invitation lifecycle | Five-minute server TTL; single-use token, cancellation/expiry; malformed/key/endpoint checks; no secret GET/list | Merged PR #144; see stage3-invitations.md and evidence.md |
-| 4 | Pairing, durable key exchange and activation | Two real SSH instances; one session; concurrent redeem; lost responses/restarts; session-key confirmation; bounded provisioning cleanup | READY_FOR_REVIEW; see stage4-pairing.md and evidence.md |
-| 5 | Streaming commands, revoke and recovery | Bounded streams/stdin/exit/cancel; start-vs-revoke fencing; descendant cleanup; isolated sessions; restart/failure truthfulness | Not started / not authorized |
+| 4 | Pairing, durable key exchange and activation | Two real SSH instances; one session; concurrent redeem; lost responses/restarts; session-key confirmation; bounded provisioning cleanup | Merged PR #145; see stage4-pairing.md and evidence.md |
+| 5 | Streaming commands, revoke and recovery | Bounded streams/stdin/exit/cancel; start-vs-revoke fencing; descendant cleanup; isolated sessions; restart/failure truthfulness | Implemented for review; isolated real SSH/PostgreSQL/systemd evidence in evidence.md |
 | 6 | Agent local management API and typed Nexus proxy | Production HTTP auth/Origin/CSRF, error/status preservation, redaction; ForgeIT typed fixtures, zero upstream calls on rejection | Not started / not authorized |
 | 7 | Global Remote Access Console | Connect/Give Access; role-separated lists; no ACTIVE=Online; REVOKING visible; stale/double-submit/polling/secret tests and existing UI regression | Not started / not authorized |
 | 8 | Local `forge-remote exec` helper | Actual remote read/edit/test, literal argv, cancellation, no local fallback or secret output; local Codex tools remain local | Not started / not authorized |

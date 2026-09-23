@@ -34,6 +34,8 @@ class RemoteAccessPairingReconciliationTest {
             context.registerBean(RemoteAccessAccessorPairing.class, () -> accessor);
             context.registerBean(RemoteAccessGrantorPairing.class, () -> grantor);
             context.registerBean(Ticker.class, () -> new Ticker(entered, unrelatedTick));
+            context.registerBean(com.sitionix.forgeagent.application.remoteaccess.RemoteAccessAccessorExecution.class,
+                    () -> mock(com.sitionix.forgeagent.application.remoteaccess.RemoteAccessAccessorExecution.class));
             context.register(RemoteAccessPairingReconciliation.class);
             context.refresh();
             try {
