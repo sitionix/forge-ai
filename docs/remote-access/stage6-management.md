@@ -1,6 +1,6 @@
 # Stage 6 — local management API and typed Nexus integration
 
-Status: design checkpoint for external approval; implementation not started.
+Status: implemented and verified; awaiting external review.
 Base: PR #146 merged into main (`a102de5c`). Stages 7–9 are excluded.
 
 ## Intent and existing code
@@ -94,8 +94,9 @@ Concurrent observation/lifecycle writes use the existing version CAS and respect
 the winner. GET remains read-only with respect to network observation.
 
 A retry of a still-valid local pairing attempt reuses the existing persisted key.
-If token expiry prevents decoding for a later restart recovery, use the existing
-session ID and server-side reconciliation, not invitation-key replay. POST must
+The current token decoder treats expiry as metadata, not proof of remote state.
+Later restart recovery uses the existing session ID and server-side reconciliation,
+not invitation-key replay. POST must
 not return 202 for a terminal/failed attempt; return its safe typed conflict/error.
 
 ## Errors and secrets
@@ -108,7 +109,9 @@ state or host identity mismatch 409; positively known expired/cancelled invitati
 Do not infer remote error causes from stderr or label an ambiguous SSH failure
 as expiry/identity mismatch. Only emit a specific code when existing local or
 structured authenticated evidence supports it; otherwise return an unavailable
-failure without secrets. Preserve 202 for actual ongoing durable provisioning.
+failure without secrets. The user explicitly accepted preserving this limitation:
+an expired/cancelled invitation key may be removed before SSH can authenticate;
+Stage 6 does not change the peer protocol or infer 410/409 from that rejection. Preserve 202 for actual ongoing durable provisioning.
 
 Use typed request/response and error DTOs at each boundary, redacted toString for
 secret-bearing records, standard Jackson and validation. No JsonNode, Object,

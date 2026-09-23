@@ -1,5 +1,6 @@
 environment: localhost
 server:
+  address: ${FORGE_NEXUS_HOST:}
   port: 9099
   servlet:
     context-path: /fgaisox
