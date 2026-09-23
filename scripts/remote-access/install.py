@@ -2,6 +2,8 @@
 """Narrow privileged installation. Never alters personal or host sshd configuration."""
 import argparse
 import grp
+import hashlib
+import tempfile
 import ipaddress
 import os
 import pathlib
@@ -62,6 +64,35 @@ def write_owned(path, content, mode):
             os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def install_forced_command(source):
+    target = LIB/'forced-command'
+    content = source.read_bytes()
+    if target.exists() or target.is_symlink():
+        require_root_owned(target)
+        if not target.is_file() or stat.S_IMODE(target.stat().st_mode) != 0o755:
+            raise RuntimeError('Managed helper conflict')
+        previous = target.read_bytes()
+        if previous == content: return
+        # Exact reviewed Stage 2 helper from merged PR #143, not arbitrary local scripts.
+        if hashlib.sha256(previous).hexdigest() != '28d18e70e272a7385badbdfe3e36f95abf9ecd83357a93ce5819f9237b289abe':
+            raise RuntimeError('Unknown managed helper version; refusing overwrite')
+        descriptor, temporary = tempfile.mkstemp(prefix='.forced-command-', dir=LIB)
+        try:
+            os.fchmod(descriptor, 0o755)
+            with os.fdopen(descriptor, 'wb') as output:
+                output.write(content)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, target)
+            directory_fd = os.open(LIB, os.O_RDONLY | os.O_DIRECTORY)
+            try: os.fsync(directory_fd)
+            finally: os.close(directory_fd)
+        finally:
+            if os.path.exists(temporary): os.unlink(temporary)
+    else:
+        write_owned(target, content, 0o755)
 
 
 def sshd_config(host, port):
@@ -161,7 +192,31 @@ def prepare(host, port):
         channel.mkdir(mode=0o750)
         channel.chmod(0o750)
         os.chown(channel,control.pw_uid,peer.pw_gid)
-    write_owned(LIB/'forced-command',source.read_bytes(),0o755)
+    install_forced_command(source)
+    supervisor_source = source.parent/'invitation_supervisor.py'
+    require_root_owned(supervisor_source)
+    write_owned(LIB/'invitation-supervisor',supervisor_source.read_bytes(),0o755)
+    write_owned(pathlib.Path('/etc/systemd/system/forge-remote-invitations.service'),b'''[Unit]
+Description=Forge invitation authorization supervisor
+After=systemd-tmpfiles-setup.service
+[Service]
+Type=simple
+User=root
+Group=forge-control
+RuntimeDirectory=forge-remote/admin
+RuntimeDirectoryMode=0750
+ExecStart=/usr/libexec/forge-remote/invitation-supervisor
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
+ReadWritePaths=/var/lib/forge-remote/authorized /var/lib/forge-remote/bindings
+[Install]
+WantedBy=multi-user.target
+''',0o644)
     host_key=ETC/'host_ed25519'
     ensure_host_key(host_key)
     write_owned(ETC/'sshd_config',config.encode(),0o600)

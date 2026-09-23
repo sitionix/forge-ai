@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface RemoteAccessInvitationRepository {
+    java.util.List<RemoteAccessInvitation> findAll(UUID grantorInstanceId);
     void insert(RemoteAccessInvitation invitation);
     Optional<RemoteAccessInvitation> findById(UUID id);
     boolean reserve(UUID invitationId, UUID sessionId, Instant now);

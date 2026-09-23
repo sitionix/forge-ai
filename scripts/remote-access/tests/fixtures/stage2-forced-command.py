@@ -72,17 +72,15 @@ def query(frame):
 
 def handle(binding, command):
     denied = ('DENIED\n', 1)
-    if len(binding) != 4 or (binding[0], command) not in [('session', 'status'), ('invitation', 'pair')]:
+    if len(binding) != 4 or binding[0] != 'session' or command != 'status':
         return denied
     try:
         if any(str(uuid.UUID(value)) != value for value in binding[1:3]):
             return denied
         if not re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}', binding[3]):
             return denied
-        operation = 'PAIR' if binding[0] == 'invitation' else 'STATUS'
-        result = query(operation + ' ' + ' '.join(binding[1:]) + '\n')
-        permitted = ('PAIRING_ALLOWED\n',) if operation == 'PAIR' else ('ACTIVE\n', 'PROVISIONING\n')
-        if result not in permitted:
+        result = query('STATUS ' + ' '.join(binding[1:]) + '\n')
+        if result not in ('ACTIVE\n', 'PROVISIONING\n'):
             return denied
         return result, 0
     except (OSError, ValueError, KeyError):

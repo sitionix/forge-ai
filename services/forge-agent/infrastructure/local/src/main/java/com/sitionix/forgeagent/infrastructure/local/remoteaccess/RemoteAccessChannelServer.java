@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.infrastructure.local.remoteaccess;
 
 import com.sitionix.forgeagent.domain.model.RemoteAccessKeyBinding;
+import com.sitionix.forgeagent.domain.model.RemoteAccessInvitationBinding;
 import com.sitionix.forgeagent.domain.port.RemoteAccessChannelAuthority;
 import java.io.IOException;
 import java.net.StandardProtocolFamily;
@@ -100,6 +101,9 @@ public final class RemoteAccessChannelServer implements AutoCloseable {
                     if (fields.length==4 && fields[0].equals("STATUS")) {
                         var binding=new RemoteAccessKeyBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
                         response=authority.sessionStatus(binding).map(status -> status.name()+"\n").orElse("DENIED\n");
+                    } else if (fields.length==4 && fields[0].equals("PAIR")) {
+                        var binding=new RemoteAccessInvitationBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
+                        response=authority.pairingAllowed(binding) ? "PAIRING_ALLOWED\n" : "DENIED\n";
                     }
                 } catch (RuntimeException unavailable) { response="DENIED\n"; }
             }

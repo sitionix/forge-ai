@@ -1,6 +1,6 @@
 # Stage 2 — managed SSH installation and channel authorization
 
-Stage 2 only. No invitation issuance, activation handshake, workload execution,
+Historical Stage 2 boundary; see [Stage 3 additions](stage3-invitations.md) for invitation grants. Stage 2 only. No invitation issuance, activation handshake, workload execution,
 remote file edits, admin HTTP API, or production supervisor is available yet.
 The installer creates an **empty** authorization source and never starts sshd.
 A prepared installation is not an ACTIVE access session.

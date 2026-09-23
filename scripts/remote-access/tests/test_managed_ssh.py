@@ -13,6 +13,35 @@ def load(name):
     return module
 
 class ManagedSshTest(unittest.TestCase):
+    def test_known_stage2_helper_upgrade_preserves_unknown_local_modifications(self):
+        setup = load('install')
+        with tempfile.TemporaryDirectory() as temp, patch.object(setup, 'require_root_owned'):
+            library = pathlib.Path(temp)
+            target = library/'forced-command'
+            legacy = BASE/'tests'/'fixtures'/'stage2-forced-command.py'
+            target.write_bytes(legacy.read_bytes()); target.chmod(0o755)
+            with patch.object(setup, 'LIB', library):
+                setup.install_forced_command(BASE/'forced_command.py')
+                self.assertEqual((BASE/'forced_command.py').read_bytes(),target.read_bytes())
+                setup.install_forced_command(BASE/'forced_command.py')
+                target.write_text('unknown locally modified helper')
+                with self.assertRaises(RuntimeError): setup.install_forced_command(BASE/'forced_command.py')
+                self.assertEqual('unknown locally modified helper',target.read_text())
+
+    def test_pairing_binding_can_only_query_its_own_pairing_gate(self):
+        import uuid
+        helper = load('forced_command')
+        binding = ['invitation', str(uuid.uuid4()), str(uuid.uuid4()), 'SHA256:'+'A'*43]
+        with patch.object(helper, 'query', return_value='PAIRING_ALLOWED\n') as query:
+            self.assertEqual(('PAIRING_ALLOWED\n', 0), helper.handle(binding, 'pair'))
+            query.assert_called_once_with('PAIR '+' '.join(binding[1:])+'\n')
+            query.reset_mock()
+            for command in ['status', 'exec id', 'pair extra', '', 'confirm']:
+                self.assertEqual(('DENIED\n', 1), helper.handle(binding, command))
+            query.assert_not_called()
+        with patch.object(helper, 'query', return_value='ACTIVE\n'):
+            self.assertEqual(('DENIED\n', 1), helper.handle(binding, 'pair'))
+
     def test_sshd_configuration_closes_alternative_access_paths(self):
         setup = load('install')
         config = setup.sshd_config('192.168.1.20', 2222)

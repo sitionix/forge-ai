@@ -21,6 +21,26 @@ class RemoteAccessChannelServerTest {
     @TempDir Path temp;
     private static final String FRAME = "STATUS " + UUID.randomUUID() + " " + UUID.randomUUID() + " SHA256:" + "A".repeat(43) + "\n";
 
+    @Test void pairingFrameUsesInvitationAuthorityNotSessionAuthority() throws Exception {
+        Path socket = prepare();
+        var allowed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var authority = new com.sitionix.forgeagent.domain.port.RemoteAccessChannelAuthority() {
+            @Override public Optional<RemoteAccessSessionStatus> sessionStatus(com.sitionix.forgeagent.domain.model.RemoteAccessKeyBinding binding) {
+                throw new AssertionError("Pairing must not query sessions");
+            }
+            @Override public boolean pairingAllowed(com.sitionix.forgeagent.domain.model.RemoteAccessInvitationBinding binding) {
+                return allowed.get();
+            }
+        };
+        try (var server = new RemoteAccessChannelServer(socket, System.getProperty("user.name"),
+                Files.readAttributes(temp, java.nio.file.attribute.PosixFileAttributes.class).group().getName(), authority)) {
+            server.start();
+            assertThat(request(socket, FRAME.replace("STATUS", "PAIR"))).isEqualTo("PAIRING_ALLOWED\n");
+            allowed.set(false);
+            assertThat(request(socket, FRAME.replace("STATUS", "PAIR"))).isEqualTo("DENIED\n");
+        }
+    }
+
     @Test void validBindingReachesAuthorityButInvalidFramesDoNot() throws Exception {
         var calls = new AtomicInteger();
         Path socket = prepare();

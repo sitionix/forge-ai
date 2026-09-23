@@ -31,6 +31,11 @@ public class PostgresRemoteAccessInvitationRepository implements RemoteAccessInv
                 invitation.pairingFingerprint(), Timestamp.from(invitation.createdAt()), Timestamp.from(invitation.expiresAt()));
     }
 
+    public java.util.List<RemoteAccessInvitation> findAll(UUID grantorInstanceId) {
+        return jdbc.query("SELECT * FROM remote_access_invitations WHERE grantor_instance_id=? ORDER BY created_at,id",
+                (row, number) -> map(row), grantorInstanceId);
+    }
+
     public Optional<RemoteAccessInvitation> findById(UUID id) {
         return jdbc.query("SELECT * FROM remote_access_invitations WHERE id=?", (row, number) -> map(row), id)
                 .stream().findFirst();
