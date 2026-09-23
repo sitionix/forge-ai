@@ -257,3 +257,38 @@ class WorkerIsolationTest(unittest.TestCase):
         finally:
             for peer in peers:peer.close()
             for listener in listeners:listener.close()
+
+class SshDisconnectTest(unittest.TestCase):
+    def test_closed_output_pipe_cancels_while_supervisor_is_still_connected(self):
+        import os,socket,threading
+        from test_managed_ssh import load
+        channel=load('execution_channel')
+        for disconnected in range(2):
+            with self.subTest(disconnected=disconnected):
+                # Independent real pipes represent sshd's output readers; no stop_unit mock.
+                supervisor,helper=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)
+                pipes=[os.pipe(),os.pipe()]
+                # Bound a broken implementation which waits only for the result.
+                deadline=threading.Timer(1,lambda:supervisor.sendall(b'EXIT 0\n'));deadline.start()
+                try:
+                    os.close(pipes[disconnected][0])
+                    with self.assertRaisesRegex(BrokenPipeError,'SSH output disconnected'):
+                        channel.wait_result(helper,[pipe[1] for pipe in pipes])
+                finally:
+                    deadline.cancel();deadline.join()
+                    supervisor.close();helper.close()
+                    for index,(reader,writer) in enumerate(pipes):
+                        if index!=disconnected:os.close(reader)
+                        os.close(writer)
+    def test_connected_outputs_preserve_actual_supervisor_result(self):
+        import os,socket
+        from test_managed_ssh import load
+        channel=load('execution_channel')
+        supervisor,helper=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)
+        pipes=[os.pipe(),os.pipe()]
+        try:
+            supervisor.sendall(b'EXIT 7\n')
+            self.assertEqual(b'EXIT 7\n',channel.wait_result(helper,[pipe[1] for pipe in pipes]))
+        finally:
+            supervisor.close();helper.close()
+            for reader,writer in pipes:os.close(reader);os.close(writer)

@@ -68,6 +68,8 @@ only a one-use attachment matching that session and the current authority epoch.
 Before systemd submission it fsyncs a cleanup record and root-owned `.allow` file.
 PID 1 uses `ConditionPathExists` to reject a submission whose fence was removed.
 A lost connection or completed main process triggers descendant cleanup too.
+The forced helper watches loss of SSH stdout/stderr readers even for a quiet
+non-PTY command; normal stdin EOF remains valid and does not cancel execution.
 
 Limits: 16 long attachments, 8 control workers, 2 heartbeat workers; no unbounded
 executor queue. ACCESSOR permits 16 concurrent SSH processes. Command argv has
@@ -80,7 +82,8 @@ all selected start fences first, terminates/reaps launchers, stops every registe
 systemd unit and positively checks LoadState/ActiveState/SubState/PID/Job/cgroup.
 Unavailable, malformed or unsuccessful inspection is never confirmation.
 Failures retain records and REVOKING with a safe persisted diagnostic; subsequent
-reconciliation retries. Only confirmed key removal and process cleanup permit
+reconciliation retries. A confirmed successful recovery clears stale failure
+metadata with the exact successful transition version, preserving newer writers. Only confirmed key removal and process cleanup permit
 REVOKED. Another session's units are not selected for that cleanup.
 
 ACCESSOR first persists local revoke intent. Only authenticated GRANTOR REVOKED

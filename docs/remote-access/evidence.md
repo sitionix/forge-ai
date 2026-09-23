@@ -750,3 +750,61 @@ Agent failsafe summary: 329 completed, zero failures/errors, seven opt-in skips
 checks. Console: 545 tests across 20 files, plus typecheck and build. Docker SSH
 suite reported the existing Stage 2/3/4 boundary checkpoints with stub-authority
 labels. The explicit Stage 5 real-authority run is recorded separately above.
+
+### PR #146 follow-up — recovery diagnostics and real close cancellation
+
+The review regressions reproduced stale `REMOTE_ACCESS_CLEANUP_PENDING`,
+`REMOTE_ACCESS_REVOKE_UNCONFIRMED` and `REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING`
+after successful recovery (focused run: 19 tests, four failures before the fix).
+The two application services now clear failure metadata through the existing
+`recordFailure(snapshot, null, null)` CAS only after the corresponding successful
+transition. The snapshot is the exact transition result, not an arbitrary newer
+row. If a later writer wins, its failure survives. ACCESSOR does not continue key
+cleanup after losing the remote-confirmation metadata CAS. Domain states, SQL
+schema and lifecycle transition rules are unchanged.
+
+Focused regressions now pass, including actual failure followed by retry, clean
+metadata before key deletion, failed key deletion followed by retry, and newer
+writers winning transition/metadata races. The privileged PostgreSQL fixture also
+seeds persisted failures and confirms both peers' code/message are null after
+successful revoke.
+
+The new cancellation scenario initially **failed with real SSH/systemd**. After
+`RemoteAccessCommandExecution.close()` the SSH process had exited, but systemd
+reported `active/running`, the shell and setsid child were still sleeping, and
+both registry record and `.allow` remained. The original helper waited only for
+the supervisor response; a non-PTY sshd disconnect did not terminate the quiet
+forced helper. This was a runtime defect, not merely missing test coverage.
+
+The minimal helper correction watches stdout/stderr reader loss using `poll`
+ERR/HUP/NVAL alongside the existing supervisor result. A disconnected SSH output
+closes the attachment, triggering the existing supervisor cleanup path. It never
+consumes stdin or treats normal stdin EOF as cancellation. Real pipe/socket tests
+cover both output descriptors and preserve the normal command result.
+
+The successful privileged rerun used the existing Stage 5 Maven command above
+with `-Dforge.remote-access.live-execution=true` and emitted the additional line:
+
+```text
+PASS real SSH close cancellation removes main, setsid child, systemd unit, registry and fence; unrelated session survives
+```
+
+Before closing, the root test driver captures the exact registered execution and
+verifies its running MainPID, live child and fence. Java calls the real execution
+handle's `close()` and asserts SSH exit within five seconds. The root driver only
+**observes** systemd/proc/registry afterward: within fifteen seconds the unit must
+be inactive/dead with zero PID/no job (or confirmed not-found), both PIDs absent,
+and the captured record/fence removed. It never issues STOP or revoke for this
+scenario. Both session rows remain ACTIVE, heartbeats continue, and an already
+running command in session B is confirmed alive afterward. A 150-second command
+timeout cannot explain this bounded cancellation result.
+
+All earlier live checkpoints also passed in that rerun, including delayed
+submission fencing, timeout, revoke, authority loss, SIGKILL and watchdog. This
+remains an isolated real Linux/SSH/PostgreSQL/systemd fixture, not live Codex or
+a two-physical-machine claim. Independent read-only review found no required
+code defects in the CAS correction or SSH-disconnect correction.
+
+Follow-up verification: focused Java 19/19, full Agent verify, Python 60/60,
+privileged Stage 5 fixture and existing Stage 2–4 Docker SSH suite all exit 0.
+Python compilation and `git diff --check` also pass. No Stage 6 work is included.

@@ -52,7 +52,8 @@ public final class RemoteAccessExecutionService implements RemoteAccessPeerExecu
         try { grants.remove(session); removed=true; } catch (RuntimeException unavailable) { /* still stop processes */ }
         try { workloads.stop(session.id()); stopped=true; } catch (RuntimeException unavailable) { /* retain intent */ }
         if (stopped && removed) {
-            sessions.transition(session,session.confirmRevoked(clock.instant()));
+            var revoked=session.confirmRevoked(clock.instant());
+            if (sessions.transition(session,revoked)) sessions.recordFailure(revoked,null,null);
         } else {
             sessions.recordFailure(session,"REMOTE_ACCESS_CLEANUP_PENDING","Managed session cleanup incomplete");
         }

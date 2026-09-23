@@ -64,6 +64,27 @@ public final class RemoteAccessLiveExecutionFixture {
                 assertThat(execute(commands,first.id(),List.of("/usr/bin/python3","-c",isolation),readers).code).isZero();
                 assertThat(execute(commands,first.id(),List.of("/bin/cat","/workspace/edited"),readers).out).isEqualTo("persisted");
                 System.out.println("PASS workload isolation and persistent explicit workspace");
+                try(var unrelated=commands.start(second.id(),new RemoteAccessCommand(List.of("/bin/sh","-c","echo $$; exec sleep 120"),"/workspace",150));
+                    var cancelled=commands.start(first.id(),new RemoteAccessCommand(List.of("/bin/sh","-c","echo MAIN=$$; setsid /bin/sleep 120 & echo CHILD=$!; echo READY; wait"),"/workspace",150))) {
+                    unrelated.stdin().close();cancelled.stdin().close();
+                    var unrelatedOutput=new BufferedReader(new InputStreamReader(unrelated.stdout()));
+                    String unrelatedPid=readers.submit(unrelatedOutput::readLine).get(5,TimeUnit.SECONDS);
+                    assertThat(unrelatedPid).matches("[0-9]+");
+                    var output=new BufferedReader(new InputStreamReader(cancelled.stdout()));
+                    String main=readers.submit(output::readLine).get(5,TimeUnit.SECONDS);
+                    String child=readers.submit(output::readLine).get(5,TimeUnit.SECONDS);
+                    assertThat(main).matches("MAIN=[0-9]+");assertThat(child).matches("CHILD=[0-9]+");
+                    assertThat(readers.submit(output::readLine).get(5,TimeUnit.SECONDS)).isEqualTo("READY");
+                    operator("CAPTURE_CANCELLATION "+first.id()+" "+main.substring(5)+" "+child.substring(6));
+                    cancelled.close();
+                    assertThat(readers.submit(cancelled::await).get(5,TimeUnit.SECONDS)).isNotZero();
+                    operator("VERIFY_CANCELLATION");
+                    assertThat(b.sessions.findById(first.id()).orElseThrow().status()).isEqualTo(RemoteAccessSessionStatus.ACTIVE);
+                    assertThat(a.sessions.findById(first.id()).orElseThrow().status()).isEqualTo(RemoteAccessSessionStatus.ACTIVE);
+                    assertThat(execute(commands,second.id(),List.of("/usr/bin/python3","-c",
+                        "import os,sys; os.kill(int(sys.argv[1]),0)",unrelatedPid),readers).code).isZero();
+                }
+                System.out.println("PASS real SSH close cancellation removes main, setsid child, systemd unit, registry and fence; unrelated session survives");
                 try(var other=commands.start(second.id(),new RemoteAccessCommand(List.of("/bin/sh","-c","echo $$; exec sleep 120"),"/workspace",150));
                     var running=commands.start(first.id(),new RemoteAccessCommand(List.of("/bin/sh","-c","setsid /bin/sleep 120 & echo CHILD=$!; echo READY; wait"),"/workspace",150))) {
                     other.stdin().close();
@@ -73,9 +94,17 @@ public final class RemoteAccessLiveExecutionFixture {
                     var output=new BufferedReader(new InputStreamReader(running.stdout()));
                     String child=output.readLine();assertThat(child).startsWith("CHILD=");
                     assertThat(output.readLine()).isEqualTo("READY");
+                    assertThat(b.sessions.recordFailure(b.sessions.findById(first.id()).orElseThrow(),
+                        "REMOTE_ACCESS_CLEANUP_PENDING","previous cleanup failure")).isTrue();
+                    assertThat(a.sessions.recordFailure(a.sessions.findById(first.id()).orElseThrow(),
+                        "REMOTE_ACCESS_REVOKE_UNCONFIRMED","previous remote failure")).isTrue();
                     var result=commands.revoke(first.id());
                     assertThat(result.status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
                     assertThat(b.sessions.findById(first.id()).orElseThrow().status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+                    assertThat(b.sessions.findById(first.id()).orElseThrow().failureCode()).isNull();
+                    assertThat(b.sessions.findById(first.id()).orElseThrow().failureMessage()).isNull();
+                    assertThat(a.sessions.findById(first.id()).orElseThrow().failureCode()).isNull();
+                    assertThat(a.sessions.findById(first.id()).orElseThrow().failureMessage()).isNull();
                     assertThat(readers.submit(running::await).get(15,TimeUnit.SECONDS)).isNotZero();
                     assertThat(Files.exists(Path.of("/proc",child.substring(6)))).isFalse();
                     assertThat(execute(commands,second.id(),List.of("/usr/bin/python3","-c","import os,sys; os.kill(int(sys.argv[1]),0)",otherPid),readers).code).isZero();

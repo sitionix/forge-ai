@@ -39,7 +39,8 @@ class RemoteAccessLiveExecutionIT {
             assertThat(result.getExitCode()).withFailMessage("Stage 5 fixture failed:%n%s%n%s",result.getStdout(),result.getStderr()).isZero();
             result.getStdout().lines().filter(line -> line.startsWith("PASS ") || line.startsWith("STAGE5_")).forEach(System.out::println);
             assertThat(result.getStdout()).contains("STAGE5_FIXTURE_PASS", "PASS unavailable authority lease stops existing workload",
-                "PASS actual supervisor SIGKILL stops bound workload units", "PASS revoke stops setsid descendants");
+                "PASS actual supervisor SIGKILL stops bound workload units", "PASS revoke stops setsid descendants",
+                "PASS real SSH close cancellation removes main, setsid child, systemd unit, registry and fence; unrelated session survives");
         }
     }
 }

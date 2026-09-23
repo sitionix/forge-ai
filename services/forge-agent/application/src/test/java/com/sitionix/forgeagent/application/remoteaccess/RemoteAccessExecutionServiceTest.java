@@ -32,6 +32,10 @@ class RemoteAccessExecutionServiceTest {
         lenient().when(sessions.findById(ID)).thenAnswer(call -> Optional.of(row.get()));
         lenient().when(sessions.findLocal(LOCAL)).thenAnswer(call -> List.of(row.get()));
         lenient().when(sessions.transition(any(),any())).thenAnswer(call -> row.compareAndSet(call.getArgument(0),call.getArgument(1)));
+        lenient().when(sessions.recordFailure(any(),nullable(String.class),nullable(String.class))).thenAnswer(call -> {
+            RemoteAccessSession before=call.getArgument(0);
+            return row.compareAndSet(before,before.withFailure(call.getArgument(1),call.getArgument(2)));
+        });
         sut=new RemoteAccessExecutionService(sessions,identity,workloads,grants,Clock.fixed(NOW,ZoneOffset.UTC));
     }
     static RemoteAccessSession session() {
@@ -113,5 +117,34 @@ class RemoteAccessExecutionServiceTest {
         assertThatThrownBy(sut::maintain).isInstanceOf(IllegalStateException.class);
         verify(workloads,never()).heartbeat(any());
         assertThatThrownBy(() -> sut.start(binding(),UUID.randomUUID())).isInstanceOf(IllegalStateException.class);
+    }
+    @Test void successfulCleanupRetryClearsPersistedFailure() {
+        doThrow(new IllegalStateException("unavailable")).doNothing().when(workloads).stop(ID);
+        assertThat(sut.revoke(binding())).isEqualTo(RemoteAccessSessionStatus.REVOKING);
+        assertThat(row.get().failureCode()).isEqualTo("REMOTE_ACCESS_CLEANUP_PENDING");
+        assertThat(sut.revoke(binding())).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(row.get().failureCode()).isNull();
+        assertThat(row.get().failureMessage()).isNull();
+    }
+    @Test void successfulCleanupCannotClearFailureWrittenAfterItsTransition() {
+        row.set(row.get().requestRevoke(NOW).withFailure("REMOTE_ACCESS_CLEANUP_PENDING","previous failure"));
+        when(sessions.transition(any(),any())).thenAnswer(call -> {
+            RemoteAccessSession after=call.getArgument(1);
+            row.set(after.withFailure("NEWER_FAILURE","newer writer"));
+            return true;
+        });
+        assertThat(sut.revoke(binding())).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(row.get().failureCode()).isEqualTo("NEWER_FAILURE");
+        assertThat(row.get().failureMessage()).isEqualTo("newer writer");
+    }
+    @Test void lostCleanupTransitionDoesNotClearConcurrentFailure() {
+        row.set(row.get().requestRevoke(NOW).withFailure("REMOTE_ACCESS_CLEANUP_PENDING","previous failure"));
+        when(sessions.transition(any(),any())).thenAnswer(call -> {
+            row.set(row.get().withFailure("NEWER_FAILURE","newer writer"));
+            return false;
+        });
+        assertThat(sut.revoke(binding())).isEqualTo(RemoteAccessSessionStatus.REVOKING);
+        assertThat(row.get().failureCode()).isEqualTo("NEWER_FAILURE");
+        verify(sessions,never()).recordFailure(any(),isNull(),isNull());
     }
 }

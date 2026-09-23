@@ -26,6 +26,19 @@ def read_header():
     raise ValueError('Command header limit')
 
 
+def wait_result(channel,outputs):
+    # Non-PTY sshd need not kill a quiet forced command after disconnect. Watch
+    # its output readers disappearing without consuming stdin (EOF is valid).
+    events=select.poll()
+    events.register(channel,select.POLLIN)
+    for descriptor in outputs:events.register(descriptor,0)
+    while True:
+        ready=events.poll()
+        if any(fd in outputs and flags & (select.POLLERR|select.POLLHUP|select.POLLNVAL) for fd,flags in ready):
+            raise BrokenPipeError('SSH output disconnected')
+        if any(fd==channel.fileno() for fd,flags in ready):return channel.recv(64)
+
+
 def execute(binding,query):
     request=read_header()
     with socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET) as channel:
@@ -40,7 +53,7 @@ def execute(binding,query):
         result=query('EXEC '+' '.join(binding[1:])+' '+ticket[:-1]+'\n')
         if result!='STARTED\n':raise PermissionError('Execution denied')
         channel.settimeout(None)
-        result=channel.recv(64).decode('ascii')
+        result=wait_result(channel,[1,2]).decode('ascii')
         if not result.startswith('EXIT ') or not result.endswith('\n'):raise ValueError('Execution result unavailable')
         code=int(result[5:-1])
         if not 0<=code<=255:raise ValueError('Invalid execution result')

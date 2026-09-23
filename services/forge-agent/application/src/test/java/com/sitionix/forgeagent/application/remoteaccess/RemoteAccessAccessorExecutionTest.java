@@ -32,6 +32,10 @@ class RemoteAccessAccessorExecutionTest {
         when(identity.getOrCreate()).thenReturn(LOCAL);
         when(sessions.findById(ID)).thenAnswer(call -> Optional.of(row.get()));
         lenient().when(sessions.transition(any(),any())).thenAnswer(call -> row.compareAndSet(call.getArgument(0),call.getArgument(1)));
+        lenient().when(sessions.recordFailure(any(),nullable(String.class),nullable(String.class))).thenAnswer(call -> {
+            RemoteAccessSession before=call.getArgument(0);
+            return row.compareAndSet(before,before.withFailure(call.getArgument(1),call.getArgument(2)));
+        });
         sut=new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,Clock.fixed(NOW,ZoneOffset.UTC));
     }
     @Test void localRevokeIntentDeniesNewExecutionBeforeCallingTransport() {
@@ -65,9 +69,52 @@ class RemoteAccessAccessorExecutionTest {
         var result=sut.revoke(ID);
         assertThat(result.status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
         assertThat(result.localPrivateKeyReference()).isEqualTo(KEY);
+        assertThat(result.failureCode()).isEqualTo("REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING");
         var restarted=new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,Clock.fixed(NOW,ZoneOffset.UTC));
         assertThat(restarted.revoke(ID).localPrivateKeyReference()).isNull();
+        assertThat(row.get().failureCode()).isNull();
+        assertThat(row.get().failureMessage()).isNull();
         verify(transport,times(1)).revoke(any());
         verify(credentials,times(2)).delete(KEY);
+    }
+    @Test void authenticatedRevokeRetryClearsFailureBeforeDeletingCredential() {
+        when(transport.revoke(any())).thenThrow(new IllegalStateException("offline"))
+            .thenReturn(RemoteAccessSessionStatus.REVOKED);
+        assertThat(sut.revoke(ID).failureCode()).isEqualTo("REMOTE_ACCESS_REVOKE_UNCONFIRMED");
+        doAnswer(call -> {
+            assertThat(row.get().status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+            assertThat(row.get().failureCode()).isNull();
+            assertThat(row.get().failureMessage()).isNull();
+            return null;
+        }).when(credentials).delete(KEY);
+        var recovered=sut.revoke(ID);
+        assertThat(recovered.status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
+        assertThat(recovered.failureCode()).isNull();
+        assertThat(recovered.failureMessage()).isNull();
+    }
+    @Test void remoteConfirmationCannotClearFailureWrittenAfterItsTransition() {
+        row.set(row.get().requestRevoke(NOW).withFailure("REMOTE_ACCESS_REVOKE_UNCONFIRMED","previous failure"));
+        when(transport.revoke(any())).thenReturn(RemoteAccessSessionStatus.REVOKED);
+        when(sessions.transition(any(),any())).thenAnswer(call -> {
+            RemoteAccessSession after=call.getArgument(1);
+            row.set(after.withFailure("NEWER_FAILURE","newer writer"));
+            return true;
+        });
+        var result=sut.revoke(ID);
+        assertThat(result.failureCode()).isEqualTo("NEWER_FAILURE");
+        assertThat(result.localPrivateKeyReference()).isEqualTo(KEY);
+        verifyNoInteractions(credentials);
+    }
+    @Test void credentialCleanupCannotClearConcurrentFailureWhenTransitionLoses() {
+        row.set(row.get().requestRevoke(NOW).confirmRemoteRevoked(NOW)
+            .withFailure("REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING","previous failure"));
+        when(sessions.transition(any(),any())).thenAnswer(call -> {
+            row.set(row.get().withFailure("NEWER_FAILURE","newer writer"));
+            return false;
+        });
+        var result=sut.revoke(ID);
+        assertThat(result.failureCode()).isEqualTo("NEWER_FAILURE");
+        assertThat(result.localPrivateKeyReference()).isEqualTo(KEY);
+        verify(sessions,never()).recordFailure(any(),isNull(),isNull());
     }
 }
