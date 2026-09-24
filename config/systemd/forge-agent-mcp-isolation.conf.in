@@ -1,0 +1,4 @@
+# OPT-IN ONLY. Install after the Stage 1 runtime/auth deployment gates pass.
+# Keep the default forge-agent.service NoNewPrivileges=true unchanged.
+[Service]
+NoNewPrivileges=false

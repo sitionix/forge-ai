@@ -1,6 +1,10 @@
 package com.sitionix.forgeagent.infrastructure.git;
 
 import com.sitionix.forgeagent.domain.port.GitExecutionException;
+import com.sitionix.forgeagent.infrastructure.local.runtime.ManagedRuntimeProcess;
+import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryProperties;
+import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeProcessLauncher;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -19,6 +23,15 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class DefaultGitCommandRunner implements GitCommandRunner {
+    private final RuntimeProcessLauncher launcher;
+
+    DefaultGitCommandRunner() {
+        this(new RuntimeProcessLauncher(RuntimeBoundaryProperties.disabled()));
+    }
+
+    @Autowired
+    DefaultGitCommandRunner(RuntimeProcessLauncher launcher) { this.launcher = launcher; }
+
 
     private static final Duration TERMINATION_WAIT_INTERVAL = Duration.ofMillis(20);
     private static final Duration SIGNAL_COMMAND_TIMEOUT = Duration.ofSeconds(1);
@@ -42,10 +55,14 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
         long processGroupId = -1L;
         final var streamReaders = Executors.newFixedThreadPool(2);
         try {
-            final ProcessBuilder builder = new ProcessBuilder(this.sessionCommand(command));
-            builder.environment().put("GIT_TERMINAL_PROMPT", "0");
-            process = builder.start();
-            processGroupId = process.pid();
+            if (this.launcher.enabled()) {
+                process = this.launcher.startGit(command);
+            } else {
+                final ProcessBuilder builder = new ProcessBuilder(this.sessionCommand(command));
+                builder.environment().put("GIT_TERMINAL_PROMPT", "0");
+                process = builder.start();
+                processGroupId = process.pid();
+            }
             final Process startedProcess = process;
             stdout = streamReaders.submit(() -> this.readLimited(startedProcess.getInputStream()));
             stderr = streamReaders.submit(() -> this.readLimited(startedProcess.getErrorStream()));
@@ -58,7 +75,7 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
                     this.awaitStreamReader(stdout, deadline),
                     this.awaitStreamReader(stderr, deadline)
             );
-        } catch (final IOException exception) {
+        } catch (final IOException | IllegalStateException exception) {
             throw new GitExecutionException("Git command failed to start.", exception);
         } catch (final TimeoutException exception) {
             final boolean interrupted = this.cleanupFailedProcess(process, processGroupId, stdout, stderr);
@@ -77,7 +94,12 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
             }
             throw exception;
         } finally {
-            streamReaders.shutdownNow();
+            try {
+                // Success does not prove hook descendants have exited their owned unit.
+                if (process instanceof ManagedRuntimeProcess managed) managed.terminateOwnedUnit();
+            } finally {
+                streamReaders.shutdownNow();
+            }
         }
     }
 
@@ -168,6 +190,13 @@ final class DefaultGitCommandRunner implements GitCommandRunner {
                                          final Future<String> stdout,
                                          final Future<String> stderr) {
         boolean interrupted = false;
+        if (process instanceof ManagedRuntimeProcess managed) {
+            managed.terminateOwnedUnit();
+            this.closeProcessStreams(process);
+            this.cancel(stdout);
+            this.cancel(stderr);
+            return Thread.currentThread().isInterrupted();
+        }
         if (processGroupId > 0) {
             interrupted = this.terminateProcessGroup(processGroupId) || interrupted;
         }

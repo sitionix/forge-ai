@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.infrastructure.codex;
 
+import com.sitionix.forgeagent.infrastructure.local.runtime.ManagedRuntimeProcess;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -17,6 +18,10 @@ record CodexProcessTree(Process process, ProcessHandle root) {
     }
 
     void terminateTree() {
+        if (this.process instanceof ManagedRuntimeProcess managed) {
+            managed.terminateOwnedUnit();
+            return;
+        }
         if (this.root == null) {
             this.process.destroyForcibly();
             return;

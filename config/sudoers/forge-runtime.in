@@ -1,0 +1,3 @@
+# Render CONTROL_USER, validate with visudo, install root:root 0440.
+# Python uses its fixed absolute -I shebang; never grant python/systemd-run/shell.
+@CONTROL_USER@ ALL=(root) NOPASSWD: NOSETENV: /usr/local/libexec/forge-runtime-launcher

@@ -1,0 +1,13 @@
+{
+  "installation": "00000000-0000-4000-8000-000000000001",
+  "control_uid": 2001,
+  "runtime_uid": 2002,
+  "runtime_gid": 2002,
+  "runtime_home": "/srv/forge-runtime/home",
+  "workspace_roots": ["/srv/forge-workspaces/forge-projects"],
+  "agent_unit": "forge-agent.service",
+  "max_lifetime_seconds": 7200,
+  "codex_binary": "/opt/forge/bin/codex",
+  "git_binary": "/usr/bin/git",
+  "env_binary": "/usr/bin/env"
+}

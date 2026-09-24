@@ -12,12 +12,10 @@ import java.util.Set;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /** Dedicated local service identity; SSH keys never authenticate management HTTP. */
-public final class RemoteAccessServiceFilter extends OncePerRequestFilter {
-    private static final org.springframework.web.util.pattern.PathPattern MANAGEMENT_PATH=
-            org.springframework.web.util.pattern.PathPatternParser.defaultInstance.parse("/api/v1/remote-access/{*path}");
+public final class RemoteAccessServiceFilter implements Filter {
     private final byte[] credential;
     public RemoteAccessServiceFilter(Path path) { credential=readCredential(path).getBytes(StandardCharsets.UTF_8); }
-    static String readCredential(Path path) {
+    public static String readCredential(Path path) {
         try {
             var absolute=path.toAbsolutePath().normalize();
             for (Path part=absolute;part!=null;part=part.getParent()) {
@@ -40,14 +38,14 @@ public final class RemoteAccessServiceFilter extends OncePerRequestFilter {
             return secret;
         } catch (IOException e) { throw new IllegalStateException("Management credential is unavailable"); }
     }
-    @Override protected boolean shouldNotFilter(HttpServletRequest request) {
-        var path=org.springframework.http.server.RequestPath.parse(request.getRequestURI(),request.getContextPath());
-        return !MANAGEMENT_PATH.matches(path.pathWithinApplication());
-    }
-    @Override protected void doFilterInternal(HttpServletRequest request,HttpServletResponse response,FilterChain chain) throws IOException,ServletException {
+    @Override public void doFilter(ServletRequest input,ServletResponse output,FilterChain chain) throws IOException,ServletException {
+        var request=(HttpServletRequest)input;var response=(HttpServletResponse)output;
+        try {
+            if (!com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.remoteAccess(request)) { chain.doFilter(input,output);return; }
+        } catch (IllegalArgumentException invalid) { response.setStatus(401);return; }
         response.setHeader("Cache-Control","no-store");
         String authorization=request.getHeader("Authorization");
-        boolean valid=authorization!=null && authorization.startsWith("Bearer ")
+        boolean valid=java.util.Collections.list(request.getHeaders("Authorization")).size()==1 && authorization!=null && authorization.startsWith("Bearer ")
                 && MessageDigest.isEqual(credential,authorization.substring(7).getBytes(StandardCharsets.UTF_8));
         if (!InetAddress.getByName(request.getRemoteAddr()).isLoopbackAddress() || !valid) {
             response.setStatus(401);response.setContentType("application/json");

@@ -1,0 +1,41 @@
+Actual disposable systemd/UID/Codex/Git proof; exit=0
+Diagnostic copy: logging-only delta plus reviewed package fixture setup; not installed sudo routing or production Java deployment proof.
+Production helper SHA256: b86094c047153eb0fff0a9267afa9e72b2820ef190113a31a205ece3a13f5530
+Diagnostic helper SHA256: bf91e0c44ae608e30816b58dc453d0ca91b671f76b67774cbd409bf4c5255b8f
+Diagnostic fixture SHA256: 28ed0c9c9fd26606d24471657a647058a55b0e82dd0db814ca2e2e2f10d6e06c
+PASS assertions: 18
+
+BWRAP_SHA256=77360cb751ccedc5971391444ac86a8a33c15b04d6b4a6fe45f5d25496e62c4c
+CODEX_SHA256=0b2e9301d6100dddda3b9d5c80ebaeaa3a2f1962388f2f36f6b96a9f08b1f33f
+SYSTEMD_VERSION=systemd 259 (259.5-0ubuntu3.4)
+COPIED_CODEX_VERSION=codex-cli 0.156.1
+DIAGNOSTIC_PROBE_EXIT=0
+DIAGNOSTIC_PROBE_STDERR_BEGIN
+DIAGNOSTIC_STAGE=load_config
+DIAGNOSTIC_STAGE=caller
+DIAGNOSTIC_STAGE=preflight
+DIAGNOSTIC_OWNED_UNIT=forge-runtime-1c34232f-763e-4c97-b075-c7d334efd4a8-eaff2a7c-eb0d-4ff7-814a-2df03fe3bab7.service
+DIAGNOSTIC_RUNTIME_REPORT={"cgroup": "0::/system.slice/forge-runtime-1c34232f-763e-4c97-b075-c7d334efd4a8-eaff2a7c-eb0d-4ff7-814a-2df03fe3bab7.service", "control_write_denied": true, "environment_clean": true, "gid": 34, "proc_denied": true, "protected_denied": true, "uid": 34}
+
+DIAGNOSTIC_PROBE_STDERR_END
+PASS actual new helper probe: separate UID, four protected files, proc aliases, env, cleanup
+PASS malformed UUID denied
+PASS wrong claimed caller denied
+PASS runtime cannot invoke root helper
+PASS repository symlink cwd rejected
+PASS actual Codex initialize stdio handshake
+DIAGNOSTIC_FIXED_SHELL_RESULT={"exitCode": 0, "stderr": "", "stdout": "{\"uid\": 34, \"env_clean\": true, \"secrets_denied\": true}\n"}
+PASS actual Codex workspaceWrite command keeps network=false and cannot read synthetic control state
+PASS runtime writes permitted checkout contents
+PASS Codex owned stop empties actual cgroup
+PASS actual runtime Git setup /run/forge-stage1-1c34232f-763e-4c97-b075-c7d334efd4a8/workspaces/checkout
+PASS actual runtime Git setup core.fsmonitor
+PASS successful Git command cleanup confirms cgroup empty
+PASS hostile fsmonitor uses runtime UID with clean env
+PASS double-fork setsid hook descendant is gone
+PASS blocked stdin timeout/recovery owned stop clears A
+PASS sibling B survives A cleanup
+PASS blocked stdin writer released after owned stop
+PASS Agent SIGKILL stops bound runtime B
+TASK2A_BOUNDARY_PASS: actual helper/systemd/UID/Codex/Git; installed sudo routing and provider login NOT_VERIFIED
+CLEANUP_PASS: only recorded fixture UUID units and owned root removed

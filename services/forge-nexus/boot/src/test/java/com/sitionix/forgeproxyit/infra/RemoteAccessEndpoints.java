@@ -6,6 +6,12 @@ import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
 import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
 public final class RemoteAccessEndpoints {
     private RemoteAccessEndpoints() {}
+    public static Endpoint<com.sitionix.forgeai.api.remoteaccess.RemoteAccessOperatorController.LoginRequest,com.sitionix.forgeai.api.remoteaccess.RemoteAccessOperatorController.OperatorSession> login() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/remote-access/operator/login",HttpMethod.POST,
+            com.sitionix.forgeai.api.remoteaccess.RemoteAccessOperatorController.LoginRequest.class,
+            com.sitionix.forgeai.api.remoteaccess.RemoteAccessOperatorController.OperatorSession.class,
+            (MockmvcDefault) context -> context.withRequest("remote-operator-login.json").expectStatus(200));
+    }
     public static Endpoint<Void,RemoteAccessProxyDtos.Capabilities> capabilitiesApi() { return Endpoint.createContract("/api/v1/infrastructure/agents/remote-access/capabilities",HttpMethod.GET,Void.class,RemoteAccessProxyDtos.Capabilities.class,(MockmvcDefault) context -> context.expectStatus(200).expectResponse("remote-capabilities.json")); }
     public static Endpoint<Void,RemoteAccessClientDtos.Capabilities> capabilitiesUpstream() { return Endpoint.createContract("/api/v1/remote-access/capabilities",HttpMethod.GET,Void.class,RemoteAccessClientDtos.Capabilities.class,(WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("remote-capabilities.json")); }
     public static Endpoint<Void,RemoteAccessProxyDtos.Invitation[]> invitationsApi() { return Endpoint.createContract("/api/v1/infrastructure/agents/remote-access/invitations",HttpMethod.GET,Void.class,RemoteAccessProxyDtos.Invitation[].class,(MockmvcDefault) context -> context.expectStatus(200).expectResponse("remote-invitations.json")); }

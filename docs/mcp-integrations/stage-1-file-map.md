@@ -1,0 +1,243 @@
+# Stage 1 — точна карта змін
+
+Порівняно з immutable base `a102de5c`; це MCP scope PR, без хибних deletion delta від рухомого origin/main. Build/cache artifacts не включені.
+
+## services/forge-agent/
+
+- [services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/mcp/McpConnectionRequest.java](../../services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/mcp/McpConnectionRequest.java)
+- [services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/mcp/McpConnectionResponse.java](../../services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/mcp/McpConnectionResponse.java)
+- [services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/mcp/McpConnectionsController.java](../../services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/mcp/McpConnectionsController.java)
+- [services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/mcp/McpConnectionsExceptionHandler.java](../../services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/mcp/McpConnectionsExceptionHandler.java)
+- [services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilter.java](../../services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilter.java)
+- [services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementSecurityConfiguration.java](../../services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementSecurityConfiguration.java)
+- [services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/McpManagementProperties.java](../../services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/McpManagementProperties.java)
+- [services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/ProtectedCredentialFile.java](../../services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/ProtectedCredentialFile.java)
+- [services/forge-agent/api-rest/src/test/java/com/sitionix/forgeagent/api/mcp/McpRequestRedactionTest.java](../../services/forge-agent/api-rest/src/test/java/com/sitionix/forgeagent/api/mcp/McpRequestRedactionTest.java)
+- [services/forge-agent/api-rest/src/test/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilterTest.java](../../services/forge-agent/api-rest/src/test/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilterTest.java)
+- [services/forge-agent/application/src/main/java/com/sitionix/forgeagent/application/mcp/McpConnectionService.java](../../services/forge-agent/application/src/main/java/com/sitionix/forgeagent/application/mcp/McpConnectionService.java)
+- [services/forge-agent/application/src/test/java/com/sitionix/forgeagent/application/mcp/McpConnectionServiceTest.java](../../services/forge-agent/application/src/test/java/com/sitionix/forgeagent/application/mcp/McpConnectionServiceTest.java)
+- [services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/AgentMcpDowngradeConfiguration.java](../../services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/AgentMcpDowngradeConfiguration.java)
+- [services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/AgentMcpProtectedConfiguration.java](../../services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/AgentMcpProtectedConfiguration.java)
+- [services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/McpDowngradeGuard.java](../../services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/McpDowngradeGuard.java)
+- [services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/RemoteAccessChannelConfiguration.java](../../services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/RemoteAccessChannelConfiguration.java)
+- [services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/RemoteAccessExecutionRecovery.java](../../services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/RemoteAccessExecutionRecovery.java)
+- [services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/RemoteAccessPairingReconciliation.java](../../services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/RemoteAccessPairingReconciliation.java)
+- [services/forge-agent/boot/src/main/resources/application.yml](../../services/forge-agent/boot/src/main/resources/application.yml)
+- [services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/McpDowngradeGuardTest.java](../../services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/McpDowngradeGuardTest.java)
+- [services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/RemoteAccessPairingReconciliationTest.java](../../services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/RemoteAccessPairingReconciliationTest.java)
+- [services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/infra/ForgeAgentMockMvcEndpoint.java](../../services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/infra/ForgeAgentMockMvcEndpoint.java)
+- [services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/AgentMcpManagementGuardIT.java](../../services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/AgentMcpManagementGuardIT.java)
+- [services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/ForgeAgentProjectIT.java](../../services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/ForgeAgentProjectIT.java)
+- [services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/McpConnectionPersistenceIT.java](../../services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/McpConnectionPersistenceIT.java)
+- [services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-create-request.json](../../services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-create-request.json)
+- [services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-enable-request.json](../../services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-enable-request.json)
+- [services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-malformed-credential-request.json](../../services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-malformed-credential-request.json)
+- [services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-null-replace-request.json](../../services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-null-replace-request.json)
+- [services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-rotation-create-request.json](../../services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-rotation-create-request.json)
+- [services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-tool-approval-request.json](../../services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-tool-approval-request.json)
+- [services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-unconfigured-create-request.json](../../services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-unconfigured-create-request.json)
+- [services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-unknown-transport-request.json](../../services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-unknown-transport-request.json)
+- [services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-update-request.json](../../services/forge-agent/boot/src/test/resources/forge-it/mockmvc/request/mcp-update-request.json)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpAllowedTool.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpAllowedTool.java)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpAuthType.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpAuthType.java)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpConnection.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpConnection.java)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpConnectionState.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpConnectionState.java)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpCredentialChange.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpCredentialChange.java)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpCredentialSecret.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpCredentialSecret.java)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpEncryptedCredential.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpEncryptedCredential.java)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpProjectAccess.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpProjectAccess.java)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpTransport.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/model/McpTransport.java)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/port/McpConnectionRepository.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/port/McpConnectionRepository.java)
+- [services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/port/McpCredentialCipher.java](../../services/forge-agent/domain/src/main/java/com/sitionix/forgeagent/domain/port/McpCredentialCipher.java)
+- [services/forge-agent/infrastructure/codex/pom.xml](../../services/forge-agent/infrastructure/codex/pom.xml)
+- [services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/CodexJsonRpcTransport.java](../../services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/CodexJsonRpcTransport.java)
+- [services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/CodexProcessTree.java](../../services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/CodexProcessTree.java)
+- [services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/CodexRecoveryLifecycle.java](../../services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/CodexRecoveryLifecycle.java)
+- [services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/DefaultCodexAppServerProcessStarter.java](../../services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/DefaultCodexAppServerProcessStarter.java)
+- [services/forge-agent/infrastructure/codex/src/test/java/com/sitionix/forgeagent/infrastructure/codex/CodexManagedRecoveryLifecycleTest.java](../../services/forge-agent/infrastructure/codex/src/test/java/com/sitionix/forgeagent/infrastructure/codex/CodexManagedRecoveryLifecycleTest.java)
+- [services/forge-agent/infrastructure/codex/src/test/java/com/sitionix/forgeagent/infrastructure/codex/CodexManagedRuntimeTest.java](../../services/forge-agent/infrastructure/codex/src/test/java/com/sitionix/forgeagent/infrastructure/codex/CodexManagedRuntimeTest.java)
+- [services/forge-agent/infrastructure/codex/src/test/java/com/sitionix/forgeagent/infrastructure/codex/CodexManagedTransportLifecycleTest.java](../../services/forge-agent/infrastructure/codex/src/test/java/com/sitionix/forgeagent/infrastructure/codex/CodexManagedTransportLifecycleTest.java)
+- [services/forge-agent/infrastructure/git/pom.xml](../../services/forge-agent/infrastructure/git/pom.xml)
+- [services/forge-agent/infrastructure/git/src/main/java/com/sitionix/forgeagent/infrastructure/git/DefaultGitCommandRunner.java](../../services/forge-agent/infrastructure/git/src/main/java/com/sitionix/forgeagent/infrastructure/git/DefaultGitCommandRunner.java)
+- [services/forge-agent/infrastructure/git/src/test/java/com/sitionix/forgeagent/infrastructure/git/GitManagedRuntimeTest.java](../../services/forge-agent/infrastructure/git/src/test/java/com/sitionix/forgeagent/infrastructure/git/GitManagedRuntimeTest.java)
+- [services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/LocalCliDockerLogAdapter.java](../../services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/LocalCliDockerLogAdapter.java)
+- [services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/LocalProjectWorkspaceAdapter.java](../../services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/LocalProjectWorkspaceAdapter.java)
+- [services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/mcp/AesGcmMcpCredentialCipher.java](../../services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/mcp/AesGcmMcpCredentialCipher.java)
+- [services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/mcp/McpLocalKeySource.java](../../services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/mcp/McpLocalKeySource.java)
+- [services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/mcp/McpLocalKeys.java](../../services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/mcp/McpLocalKeys.java)
+- [services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/mcp/ProtectedMcpKeySource.java](../../services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/mcp/ProtectedMcpKeySource.java)
+- [services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/runtime/ManagedRuntimeProcess.java](../../services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/runtime/ManagedRuntimeProcess.java)
+- [services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/runtime/RuntimeBoundaryProperties.java](../../services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/runtime/RuntimeBoundaryProperties.java)
+- [services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/runtime/RuntimeBoundaryVerifier.java](../../services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/runtime/RuntimeBoundaryVerifier.java)
+- [services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/runtime/RuntimeProcessLauncher.java](../../services/forge-agent/infrastructure/local/src/main/java/com/sitionix/forgeagent/infrastructure/local/runtime/RuntimeProcessLauncher.java)
+- [services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/IsolatedWorkspaceTest.java](../../services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/IsolatedWorkspaceTest.java)
+- [services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/LocalCliDockerLogAdapterTest.java](../../services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/LocalCliDockerLogAdapterTest.java)
+- [services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/mcp/AesGcmMcpCredentialCipherTest.java](../../services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/mcp/AesGcmMcpCredentialCipherTest.java)
+- [services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/mcp/ProtectedMcpKeySourceTest.java](../../services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/mcp/ProtectedMcpKeySourceTest.java)
+- [services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/runtime/ManagedRuntimeProcessTest.java](../../services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/runtime/ManagedRuntimeProcessTest.java)
+- [services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/runtime/RuntimeBoundaryVerifierTest.java](../../services/forge-agent/infrastructure/local/src/test/java/com/sitionix/forgeagent/infrastructure/local/runtime/RuntimeBoundaryVerifierTest.java)
+- [services/forge-agent/infrastructure/postgres/src/main/java/com/sitionix/forgeagent/infrastructure/postgres/adapter/PostgresMcpConnectionRepository.java](../../services/forge-agent/infrastructure/postgres/src/main/java/com/sitionix/forgeagent/infrastructure/postgres/adapter/PostgresMcpConnectionRepository.java)
+- [services/forge-agent/infrastructure/postgres/src/main/resources/db/migration/V38__add_mcp_connections.sql](../../services/forge-agent/infrastructure/postgres/src/main/resources/db/migration/V38__add_mcp_connections.sql)
+
+## services/forge-nexus/
+
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/ForgeAiMcpConnectionsController.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/ForgeAiMcpConnectionsController.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpApiMapper.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpApiMapper.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionRequest.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionRequest.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionResponse.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionResponse.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandler.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandler.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/McpManagementProperties.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/McpManagementProperties.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/NexusMcpDowngradeConfiguration.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/NexusMcpDowngradeConfiguration.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorManagementAuthenticationFilter.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorManagementAuthenticationFilter.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorManagementSecurityConfiguration.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorManagementSecurityConfiguration.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorSessionController.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorSessionController.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorSessionService.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorSessionService.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/ProtectedCredentialFile.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/ProtectedCredentialFile.java)
+- [services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/ProtectedNexusFile.java](../../services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/ProtectedNexusFile.java)
+- [services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/mcp/McpRequestRedactionTest.java](../../services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/mcp/McpRequestRedactionTest.java)
+- [services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/security/NexusMcpDowngradeConfigurationTest.java](../../services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/security/NexusMcpDowngradeConfigurationTest.java)
+- [services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/security/OperatorCredentialConfigurationTest.java](../../services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/security/OperatorCredentialConfigurationTest.java)
+- [services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/security/OperatorSessionControllerTest.java](../../services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/security/OperatorSessionControllerTest.java)
+- [services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/security/OperatorSessionServiceTest.java](../../services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/security/OperatorSessionServiceTest.java)
+- [services/forge-nexus/application/src/main/java/com/sitionix/forgeai/application/agentproxy/AgentMcpConnectionsUseCase.java](../../services/forge-nexus/application/src/main/java/com/sitionix/forgeai/application/agentproxy/AgentMcpConnectionsUseCase.java)
+- [services/forge-nexus/application/src/test/java/com/sitionix/forgeai/application/agentproxy/AgentMcpConnectionsUseCaseTest.java](../../services/forge-nexus/application/src/test/java/com/sitionix/forgeai/application/agentproxy/AgentMcpConnectionsUseCaseTest.java)
+- [services/forge-nexus/boot/src/main/resources/application.yml](../../services/forge-nexus/boot/src/main/resources/application.yml)
+- [services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusAgentProxyIT.java](../../services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusAgentProxyIT.java)
+- [services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusOperatorSessionIT.java](../../services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusOperatorSessionIT.java)
+- [services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/ForgeAgentWireMockEndpoints.java](../../services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/ForgeAgentWireMockEndpoints.java)
+- [services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/NexusAgentMockMvcEndpoints.java](../../services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/NexusAgentMockMvcEndpoints.java)
+- [services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/NexusOperatorMockMvcEndpoints.java](../../services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/NexusOperatorMockMvcEndpoints.java)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-create-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-create-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-empty-keep-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-empty-keep-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-enable-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-enable-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-keep-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-keep-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-malformed-credential-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-malformed-credential-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-null-remove-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-null-remove-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-remove-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-remove-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-replace-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-replace-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-tool-approval-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-tool-approval-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-unknown-transport-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-unknown-transport-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-valid-create-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/mcp-valid-create-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/operator-login-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/operator-login-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/request/agent-mcp-create-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/request/agent-mcp-create-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/request/agent-mcp-enable-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/request/agent-mcp-enable-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/request/agent-mcp-keep-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/request/agent-mcp-keep-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/request/agent-mcp-remove-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/request/agent-mcp-remove-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/request/agent-mcp-replace-request.json](../../services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/request/agent-mcp-replace-request.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-create-response.json](../../services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-create-response.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-enabled-response.json](../../services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-enabled-response.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-error-response.json](../../services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-error-response.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-list-response.json](../../services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-list-response.json)
+- [services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-update-response.json](../../services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-update-response.json)
+- [services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/AgentServiceCredential.java](../../services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/AgentServiceCredential.java)
+- [services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentHttpClient.java](../../services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentHttpClient.java)
+- [services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentHttpClientConfiguration.java](../../services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentHttpClientConfiguration.java)
+- [services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentLogStreamingHttpClient.java](../../services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentLogStreamingHttpClient.java)
+- [services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapter.java](../../services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapter.java)
+- [services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/McpClientMapper.java](../../services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/McpClientMapper.java)
+- [services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ProtectedNexusFile.java](../../services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ProtectedNexusFile.java)
+- [services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/dto/McpConnectionInboundResponse.java](../../services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/dto/McpConnectionInboundResponse.java)
+- [services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/dto/McpConnectionOutboundRequest.java](../../services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/dto/McpConnectionOutboundRequest.java)
+- [services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/AgentServiceCredentialTest.java](../../services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/AgentServiceCredentialTest.java)
+- [services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentLogStreamingHttpClientTest.java](../../services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentLogStreamingHttpClientTest.java)
+- [services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapterTest.java](../../services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapterTest.java)
+- [services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentServiceRestClientTest.java](../../services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentServiceRestClientTest.java)
+- [services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/exception/McpAgentClientException.java](../../services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/exception/McpAgentClientException.java)
+- [services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/model/mcp/McpConnection.java](../../services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/model/mcp/McpConnection.java)
+- [services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/model/mcp/McpConnectionCommand.java](../../services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/model/mcp/McpConnectionCommand.java)
+- [services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/port/ForgeAgentMcpClient.java](../../services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/port/ForgeAgentMcpClient.java)
+- [services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/usecase/ManageAgentMcpConnections.java](../../services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/usecase/ManageAgentMcpConnections.java)
+
+## scripts/
+
+- [scripts/runtime/forge-runtime-launcher.py](../../scripts/runtime/forge-runtime-launcher.py)
+- [scripts/runtime/runtime-launcher.json.example](../../scripts/runtime/runtime-launcher.json.example)
+- [scripts/runtime/tests/test_runtime_launcher.py](../../scripts/runtime/tests/test_runtime_launcher.py)
+
+## config/
+
+- [config/sudoers/forge-runtime.in](../../config/sudoers/forge-runtime.in)
+- [config/systemd/forge-agent-mcp-isolation.conf.in](../../config/systemd/forge-agent-mcp-isolation.conf.in)
+
+## docs/
+
+- [docs/mcp-integrations/probes/git_parent_env_probe.py](../../docs/mcp-integrations/probes/git_parent_env_probe.py)
+- [docs/mcp-integrations/probes/protocol-summary.json](../../docs/mcp-integrations/probes/protocol-summary.json)
+- [docs/mcp-integrations/probes/runtime-result.txt](../../docs/mcp-integrations/probes/runtime-result.txt)
+- [docs/mcp-integrations/probes/runtime_probe.py](../../docs/mcp-integrations/probes/runtime_probe.py)
+- [docs/mcp-integrations/probes/sdk-result.txt](../../docs/mcp-integrations/probes/sdk-result.txt)
+- [docs/mcp-integrations/probes/sdk/pom.xml](../../docs/mcp-integrations/probes/sdk/pom.xml)
+- [docs/mcp-integrations/probes/sdk/settings.xml](../../docs/mcp-integrations/probes/sdk/settings.xml)
+- [docs/mcp-integrations/probes/sdk/src/main/java/probe/Probe.java](../../docs/mcp-integrations/probes/sdk/src/main/java/probe/Probe.java)
+- [docs/mcp-integrations/probes/stage1-boundary/privileged_boundary.py](../../docs/mcp-integrations/probes/stage1-boundary/privileged_boundary.py)
+- [docs/mcp-integrations/probes/stage1-boundary/result.txt](../../docs/mcp-integrations/probes/stage1-boundary/result.txt)
+- [docs/mcp-integrations/probes/stage1-boundary/tests/test_fixture_safety.py](../../docs/mcp-integrations/probes/stage1-boundary/tests/test_fixture_safety.py)
+- [docs/mcp-integrations/roadmap.md](../../docs/mcp-integrations/roadmap.md)
+- [docs/mcp-integrations/stage-0-evidence.md](../../docs/mcp-integrations/stage-0-evidence.md)
+- [docs/mcp-integrations/stage-1-boundary-design.md](../../docs/mcp-integrations/stage-1-boundary-design.md)
+- [docs/mcp-integrations/stage-1-decisions.md](../../docs/mcp-integrations/stage-1-decisions.md)
+- [docs/mcp-integrations/stage-1-evidence.md](../../docs/mcp-integrations/stage-1-evidence.md)
+- [docs/mcp-integrations/stage-1-file-map.md](../../docs/mcp-integrations/stage-1-file-map.md)
+- [docs/mcp-integrations/stage-1-operations.md](../../docs/mcp-integrations/stage-1-operations.md)
+- [docs/mcp-integrations/stage-1-plan.md](../../docs/mcp-integrations/stage-1-plan.md)
+- [docs/mcp-integrations/stage-1-review.md](../../docs/mcp-integrations/stage-1-review.md)
+- [docs/mcp-integrations/stage-1-verification.json](../../docs/mcp-integrations/stage-1-verification.json)
+- [docs/mcp-integrations/stage-2-plan.md](../../docs/mcp-integrations/stage-2-plan.md)
+
+
+## PR #148 auth/error correction до lifecycle/error-boundary refactor — історична карта
+
+- `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/remoteaccess/RemoteAccessServiceFilter.java`
+- `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilter.java`
+- `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementRoutePolicy.java`
+- `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementSecurityConfiguration.java`
+- `services/forge-agent/api-rest/src/test/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilterTest.java`
+- `services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/AgentMcpProtectedConfiguration.java`
+- `services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/RemoteAccessManagementConfiguration.java`
+- `services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/AgentMcpProtectedConfigurationTest.java`
+- `services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/RemoteAccessManagementConfigurationTest.java`
+- `services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/AgentCombinedManagementGuardIT.java`
+- `services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/AgentMcpManagementGuardIT.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandler.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/remoteaccess/RemoteAccessBrowserFilter.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/remoteaccess/RemoteAccessSecurityConfiguration.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/McpOnlyCondition.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorManagementAuthenticationFilter.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorManagementSecurityConfiguration.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorPublicRoutes.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorSessionController.java`
+- `services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandlerTest.java`
+- `services/forge-nexus/boot/src/main/java/com/sitionix/forgeai/CombinedOperatorCredentialConfiguration.java`
+- `services/forge-nexus/boot/src/main/java/com/sitionix/forgeai/RemoteAccessOperatorConfiguration.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeai/CombinedOperatorCredentialConfigurationTest.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusCombinedOperatorHttpIT.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusCombinedOperatorSessionIT.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusOperatorSessionIT.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/ForgeAgentWireMockEndpoints.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/NexusAgentMockMvcEndpoints.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/RemoteAccessEndpoints.java`
+- `services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/remote-operator-login.json`
+- `services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-custom-error-response.json`
+- `services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-error-response.json`
+- `services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-malformed-error-response.json`
+- `services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-missing-response.json`
+- `services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutor.java`
+- `services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapter.java`
+- `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutorTest.java`
+- `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapterTest.java`
+- `services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/exception/McpAgentClientException.java`
+
+## PR #148 поточна lifecycle/error-boundary корекція
+
+- `services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/CodexJsonRpcTransport.java`
+- `services/forge-agent/infrastructure/codex/src/test/java/com/sitionix/forgeagent/infrastructure/codex/CodexManagedTransportLifecycleTest.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandler.java`
+- `services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandlerTest.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusOperatorSessionIT.java`
+- `services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutor.java`
+- `services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapter.java`
+- `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutorTest.java`
+- `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapterTest.java`
+- Видалено: `services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/exception/McpAgentClientException.java`
+
+Поточний повний source fingerprint (усі changed/new `services` files від correction base) і окремий removed-files list — у [verification JSON](stage-1-verification.json).

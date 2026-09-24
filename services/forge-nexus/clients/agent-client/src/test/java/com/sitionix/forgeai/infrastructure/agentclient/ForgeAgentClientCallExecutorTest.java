@@ -28,9 +28,11 @@ class ForgeAgentClientCallExecutorTest {
     void disabledClientIsUnavailable() {
         final var executor = new ForgeAgentClientCallExecutor(this.properties(false));
 
-        assertThatThrownBy(() -> executor.execute(() -> "ok"))
+        final var calls = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> executor.execute(() -> { calls.incrementAndGet(); return "ok"; }))
                 .isInstanceOf(ResourceAccessException.class)
                 .hasMessageContaining("disabled");
+        assertThat(calls.get()).isZero();
     }
 
     @Test
@@ -39,8 +41,7 @@ class ForgeAgentClientCallExecutorTest {
         final var headers = new HttpHeaders();
         headers.add("X-Correlation-Id", "corr-1");
 
-        assertThatThrownBy(() -> executor.execute(() -> {
-            throw new RestClientResponseException(
+        final var cause = new RestClientResponseException(
                     "Conflict",
                     HttpStatus.CONFLICT.value(),
                     "Conflict",
@@ -48,11 +49,12 @@ class ForgeAgentClientCallExecutorTest {
                     "{\"code\":\"DEPENDENCY_CYCLE\",\"message\":\"cycle\"}".getBytes(StandardCharsets.UTF_8),
                     StandardCharsets.UTF_8
             );
-        }))
+        assertThatThrownBy(() -> executor.execute(() -> { throw cause; }))
                 .isInstanceOfSatisfying(AgentClientException.class, exception -> {
                     assertThat(exception.statusCode()).isEqualTo(HttpStatus.CONFLICT.value());
                     assertThat(exception.responseBody()).contains("DEPENDENCY_CYCLE");
                     assertThat(exception.responseHeaders()).containsKey("X-Correlation-Id");
+                    assertThat(exception.getCause()).isSameAs(cause);
                 });
     }
 

@@ -17,6 +17,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 @IntegrationTest
 class ForgeAgentProjectIT {
 
+    @Test
+    void mcpRoutesAreAbsentWhenFeatureIsOff() {
+        forgeIt.mockMvc().ping(com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_MCP_CONNECTIONS)
+                .expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
+    }
+
     @Autowired
     private ForgeAgentTestManager forgeIt;
 

@@ -1,0 +1,1 @@
+{"displayName":"bad","endpoint":"https://mcp.example/path","transport":"SSE","authType":"NONE","projectAccess":{"scope":"ALL","projectIds":[]},"allowedTools":[]}
