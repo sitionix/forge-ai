@@ -30,14 +30,14 @@ Produces `RemoteAccessApi` with operatorSession/login/logout/capabilities/invita
 invite/cancel/sessions/connect/check/revoke, plus clear() for local CSRF.
 Consumes native same-origin fetch and contextPathFromLocation.
 
-- [ ] Add failing tests for endpoint paths, explicit same-origin cookie transport,
+- [x] Add failing tests for endpoint paths, explicit same-origin cookie transport,
   CSRF mutations, 201/202/200/202 response status, no token persistence,
   local missing-CSRF rejection and safe errors with malicious secret-bearing bodies.
   Example: `expect(init.headers['X-CSRF-TOKEN']).toBe('csrf-fixture')` after real login.
-- [ ] Run `npm test -- tests/remote-access-api.test.ts` and record RED.
-- [ ] Implement facade: `request(method,path,body,signal)` sends no-store/same-origin,
+- [x] Run `npm test -- tests/remote-access-api.test.ts` and record RED.
+- [x] Implement facade: `request(method,path,body,signal)` sends no-store/same-origin,
   parses success DTOs, maps failures without raw response body, never retries POST.
-- [ ] Run focused and full Console tests; commit boundary and tests.
+- [x] Run focused and full Console tests; commit boundary and tests.
 
 ## Task 2 — page, rendering and navigation
 
@@ -47,21 +47,21 @@ Files: `remote-access.html`, `remote-access-page.js`, `.d.ts`,
 Consumes RemoteAccessApi and existing RequestCoordinator/PollingCoordinator.
 Produces mount()/dispose() page integrated as `remote-access` in OperatorRouter.
 
-- [ ] Add tests against production HTML (jsdom), fake HTTP at fetch boundary.
+- [x] Add tests against production HTML (jsdom), fake HTTP at fetch boundary.
   Cover all review-focus cases, login/logout, readiness/address input, token
   preview/copy/countdown/cancel/clear, role cards/check/revoke/retry, double submits,
   session expiry, stale navigation responses and polling stops.
-- [ ] Run page tests RED before implementation.
-- [ ] Implement page ownership and state: authenticated generation, dialog generation,
+- [x] Run page tests RED before implementation.
+- [x] Implement page ownership and state: authenticated generation, dialog generation,
   pending guards, abortable reads and per-mutation refresh invalidation. Render
   peer values with textContent/escaping, no secrets in datasets/URLs/errors.
-- [ ] Register sidebar/page; use existing CSS and bootstrap, no new router.
-- [ ] Run focused tests, full Console tests/typecheck/build; commit.
+- [x] Register sidebar/page; use existing CSS and bootstrap, no new router.
+- [x] Run focused tests, full Console tests/typecheck/build; commit.
 
 ## Task 3 — review, verification and delivery
 
-- [ ] Independently review final diff against spec and fix blocking findings with RED→GREEN.
-- [ ] Run full Agent/Nexus verify, Python Remote Access tests, existing isolated SSH
+- [x] Independently review final diff against spec and fix blocking findings with RED→GREEN.
+- [x] Run full Agent/Nexus verify, Python Remote Access tests, existing isolated SSH
   regression; label real/stub components precisely. Browser smoke if available.
-- [ ] Update roadmap/evidence/install usage; `git diff --check`.
+- [x] Update roadmap/evidence/install usage; `git diff --check`.
 - [ ] Push separate Stage 7 PR, await CI, stop READY_FOR_REVIEW. No Stage 8 or merge.

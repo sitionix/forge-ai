@@ -1009,3 +1009,52 @@ GREEN evidence:
 
 The opt-in privileged Stage 5 execution suite was not separately rerun for this
 Nexus-only timeout correction. No Stage 7 work or host runtime changes were made.
+
+## Stage 7 — Console UI (2026-09-24)
+
+Baseline: merged Stage 6 `58f2854f`; branch `feature/SITIONIX-143`.
+Adds only Console management UI and documentation/browser fixture. Stage 6 API,
+SSH, lifecycle, runtime, schema and workflow sources are unchanged.
+
+- Console uses the existing router/sidebar/static asset pipeline. The dedicated
+  facade sends same-origin HttpOnly-cookie requests with in-memory CSRF. Raw error
+  bodies are discarded so diagnostics cannot retain returned secret material.
+- Tests exercise actual production HTML and modules: login/session expiry/logout,
+  role-specific cards, readiness, invitation copy/cancel/expiry, target preview,
+  201 ACTIVE / 202 PROVISIONING, double submit, 200 REVOKED / 202 REVOKING,
+  connectivity without authority inference, credential-cleanup retry, no browser
+  secret persistence, disposal, late responses and BFCache remount.
+- RED→GREEN: new API/page contracts; stale auth response cannot restore/clear a
+  newer session; independent reviewer reproduced premature Connect retry during
+  unresolved metadata reconciliation. Added deferred and failed GET regressions;
+  retry now stays gated until successful reconciliation.
+- RED→GREEN: BFCache restored a disposed page; remount on persisted pageshow now
+  restores usable controls and a fresh operator session. Real Chrome confirmed
+  `BFCache used: true` and working controls after Back.
+- RED→GREEN: REVOKED with local credential cleanup pending lacked a retry action;
+  the UI now forwards retry through the unchanged idempotent revoke endpoint.
+
+Verification:
+- Console full suite: 574 tests / 22 files PASS; typecheck and build PASS.
+- Full Nexus `mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify`: PASS.
+- Python `scripts/remote-access/tests/test_*.py`: 64 tests PASS.
+- Full Agent with `-Dforge.remote-access.live-execution=true`: first attempt FAILED
+  in unchanged `RemoteAccessLiveExecutionFixture:121`, whose authority recovery
+  assertion expected `execution.maintain()` to throw. Actual cancellation had
+  already passed. No Agent/test/supervisor source was changed. A separate full
+  rerun PASSED, including Stage 4 crash/restart/concurrent pairing and Stage 5 real
+  SSH stdin/streams/timeout/cancellation/revoke/isolation/SIGKILL/watchdog cleanup.
+  The initial intermittent failure remains recorded; rerun is not a claim of
+  deterministic reliability of that existing assertion.
+- `git diff --check`: PASS.
+
+Browser evidence: `scripts/remote-access-browser-smoke.mjs` uses real headless
+Chrome, real built Console HTML/JS/CSS and a local synthetic HTTP management
+fixture. Cookie/CSRF transport, invitation/connect/revoke UI, reload, BFCache and
+logout are exercised. No real invitations, credentials or access grants are created.
+`REMOTE_ACCESS_UI_FLOW_PASS` applies to those named real/stub components only.
+It is not live Nexus→Agent→SSH pairing. Stage 9 two-machine/runtime acceptance and
+`REMOTE_ACCESS_CODEX_LIVE_PASS` remain NOT_RUN.
+
+The independent read-only review's required reconciliation finding was fixed with
+regression evidence. No deferred required findings. Stage 8 has not started.

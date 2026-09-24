@@ -16,7 +16,7 @@ export function renderRemoteSessions(element, sessions, pending, capabilities) {
       ${session.status === 'REVOKING' ? '<p>Revocation awaiting confirmation. Access cleanup is not yet confirmed.</p>' : ''}
       <div class="remote-actions">
         <button class="button secondary" type="button" data-action="check" data-id="${text(session.id)}" ${pending || !capabilities.includes('CHECK') ? 'disabled' : ''}>Check</button>
-        ${session.status !== 'REVOKED' ? `<button class="button secondary" type="button" data-action="revoke" data-id="${text(session.id)}" ${pending || !capabilities.includes('REVOKE') ? 'disabled' : ''}>${session.status === 'REVOKING' ? 'Retry ' : ''}${session.localRole === 'ACCESSOR' ? 'Disconnect' : 'Revoke Access'}</button>` : '<span>Revocation confirmed</span>'}
+        ${session.status !== 'REVOKED' || (session.localRole === 'ACCESSOR' && session.failureCode === 'REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING') ? `<button class="button secondary" type="button" data-action="revoke" data-id="${text(session.id)}" ${pending || !capabilities.includes('REVOKE') ? 'disabled' : ''}>${session.status === 'REVOKED' ? 'Retry credential cleanup' : `${session.status === 'REVOKING' ? 'Retry ' : ''}${session.localRole === 'ACCESSOR' ? 'Disconnect' : 'Revoke Access'}`}</button>` : '<span>Revocation confirmed</span>'}
       </div>
     </article>`).join('') : '<p>No sessions.</p>';
 }

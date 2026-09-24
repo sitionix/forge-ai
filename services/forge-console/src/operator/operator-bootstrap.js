@@ -37,6 +37,12 @@ export function bootstrapOperatorConsole(options = {}) {
   };
   const router = new OperatorRouter(registry, { document: documentRef });
   const mountedPage = router.mount(pageName);
+  if (pageName === 'remote-access') {
+    // pagehide disposes requests/secrets; BFCache restoration needs fresh ownership.
+    windowRef.addEventListener('pageshow', event => {
+      if (event.persisted) windowRef.__forgeMountedOperatorPage = router.mount(pageName);
+    });
+  }
   windowRef.__forgeOperatorRouter = router;
   windowRef.__forgeMountedOperatorPage = mountedPage;
   if (windowRef.__FORGE_OPERATOR_TEST_HOOKS__ && mountedPage?.testApi) {

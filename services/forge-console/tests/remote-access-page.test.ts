@@ -158,6 +158,7 @@ describe('Remote Access Console', () => {
     expect((t.el('remotePairingToken') as HTMLInputElement).value).toBe('');
     expect(t.el('remoteError').textContent).toContain('unavailable');
     expect(t.el('remoteError').textContent).not.toContain('canary');
+    await vi.waitFor(()=>expect((t.el('remoteConnect') as HTMLButtonElement).disabled).toBe(false));
     t.fill('remotePairingToken',token);t.submit('remoteConnectForm');await flush();
     expect(t.el('remoteAccessorSessions').textContent).toContain('PROVISIONING');
   });
@@ -199,6 +200,50 @@ describe('Remote Access Console', () => {
     const previous=t.el('remoteReadiness').textContent;
     resolve(json({ready:true,supportedOperations:[],diagnostics:['late-result']}));await refresh;
     expect(t.el('remoteReadiness').textContent).toBe(previous);
+  });
+
+  it('blocks connect retry until reconciliation succeeds, including failed reconciliation', async () => {
+    const t=setup();await t.page.mount();t.click('remoteConnect');t.fill('remotePairingToken',token);
+    const original=t.fetcher.getMockImplementation()!;let resolve!: (r:Response)=>void;
+    t.fetcher.mockImplementation((url,init)=>url.endsWith('/sessions') && init.method==='GET'
+      ? new Promise<Response>(r=>{resolve=r;}) : original(url,init));
+    t.fetcher.mockRejectedValueOnce(new Error('lost response'));t.submit('remoteConnectForm');await flush();
+    t.fill('remotePairingToken',token);t.submit('remoteConnectForm');await flush();
+    expect(t.fetcher.mock.calls.filter(c=>c[0].endsWith('/sessions')&&c[1].method==='POST')).toHaveLength(1);
+    expect((t.el('remoteConnectSubmit') as HTMLButtonElement).disabled).toBe(true);
+    resolve(json({},503));await flush();t.submit('remoteConnectForm');await flush();
+    expect(t.fetcher.mock.calls.filter(c=>c[0].endsWith('/sessions')&&c[1].method==='POST')).toHaveLength(1);
+    t.fetcher.mockImplementation(original);await t.page.refresh();
+    t.submit('remoteConnectForm');await flush();
+    expect(t.fetcher.mock.calls.filter(c=>c[0].endsWith('/sessions')&&c[1].method==='POST')).toHaveLength(2);
+  });
+
+  it('restores a usable page after browser back/forward cache navigation', async () => {
+    const t=setup({bootstrap:true});await vi.waitFor(()=>expect(t.el('remoteAccessorSessions').textContent).toContain('Grantor B'));
+    t.dom.window.dispatchEvent(new t.dom.window.PageTransitionEvent('pagehide',{persisted:true}));
+    const before=t.fetcher.mock.calls.length;
+    t.dom.window.dispatchEvent(new t.dom.window.PageTransitionEvent('pageshow',{persisted:true}));
+    await vi.waitFor(()=>expect(t.fetcher.mock.calls.length).toBeGreaterThan(before));
+    await vi.waitFor(()=>expect((t.el('remoteGiveAccess') as HTMLButtonElement).disabled).toBe(false));
+    t.click('remoteGiveAccess');expect(t.el('remoteDialog').hidden).toBe(false);
+  });
+
+  it('allows retry of local credential cleanup after confirmed remote revocation', async () => {
+    const t=setup();t.state.sessions[0]={...session('a','ACCESSOR','REVOKED'),failureCode:'REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING' as any};
+    await t.page.mount();
+    const retry=t.el('remoteAccessorSessions').querySelector<HTMLButtonElement>('[data-action="revoke"]');
+    expect(retry).not.toBeNull();expect(retry!.textContent).toContain('Retry credential cleanup');
+    t.fetcher.mockResolvedValueOnce(json(session('a','ACCESSOR','REVOKED')));retry!.click();await flush();
+    expect(t.el('remoteAccessorSessions').querySelector('[data-action="revoke"]')).toBeNull();
+    expect(t.el('remoteAccessorSessions').textContent).not.toContain('REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING');
+  });
+
+  it('renders a completed 201 connection as ACTIVE without implying reachability', async () => {
+    const t=setup();await t.page.mount();t.click('remoteConnect');t.fill('remotePairingToken',token);
+    t.fetcher.mockResolvedValueOnce(json(session('connected','ACCESSOR','ACTIVE'),201));t.submit('remoteConnectForm');await flush();
+    expect(t.el('remoteNotice').textContent).toBe('Access is active.');
+    expect(t.el('remoteAccessorSessions').textContent).toContain('UNKNOWN');
+    expect(t.el('remoteDialog').hidden).toBe(true);
   });
 
 });

@@ -6091,3 +6091,7 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .remote-session-card { border: 1px solid var(--line, #ccc); border-radius: 12px; padding: 16px; overflow-wrap: anywhere; }
 .remote-session-card dl { display: grid; grid-template-columns: minmax(100px, 1fr) 2fr; gap: 8px; }
 .remote-session-card dd { margin: 0; }
+.remote-access-shell .panel { padding: 24px; margin-bottom: 20px; }
+.remote-access-shell > p, #remoteManagement > p { color: var(--panel-strong); }
+.remote-access-shell .remote-session-card { border-color: rgba(27, 36, 31, 0.16); }
+.remote-access-shell h2:first-child { margin-top: 0; }
