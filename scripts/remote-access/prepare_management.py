@@ -78,7 +78,7 @@ def prepare(root, agent_uid, agent_gid, operator_uid, operator_gid, origin):
                    f'FORGE_AGENT_REMOTE_ACCESS_SERVICE_SECRET_FILE={agent_file}\n', agent_uid, agent_gid)
     protected_file(root/'nexus.env', f'FORGE_NEXUS_HOST={parsed.hostname}\nFORGE_REMOTE_ACCESS_ENABLED=true\n'
                    f'FORGE_REMOTE_ACCESS_SERVICE_SECRET_FILE={nexus_file}\nFORGE_REMOTE_ACCESS_OPERATOR_SECRET_FILE={operator_file}\n'
-                   f'FORGE_REMOTE_ACCESS_OPERATOR_ORIGIN={origin}\n', operator_uid, operator_gid)
+                   f'FORGE_REMOTE_ACCESS_OPERATOR_ORIGIN={origin}\nFORGE_REMOTE_ACCESS_AGENT_READ_TIMEOUT=120s\n', operator_uid, operator_gid)
 
 
 def main():

@@ -74,6 +74,20 @@ Nexus's normal servlet context is `/fgaisox`; browser endpoints therefore use
 The existing ordinary Forge endpoints preserve their prior behavior. This is
 **not** a claim that every Forge HTTP endpoint now requires operator login.
 
+## Remote Access upstream timeout
+
+Nexus uses `forge.remote-access.agent-read-timeout` (default `120s`), separately
+from the ordinary `forge.ai.infrastructure.agent.read-timeout` (`30s`). Generated
+`nexus.env` explicitly includes `FORGE_REMOTE_ACCESS_AGENT_READ_TIMEOUT=120s`.
+When enabled, values below `100s` fail startup: the Stage 5 SSH revoke bound is
+90 seconds with a 10-second minimum HTTP/process margin. Agent connect timeout
+is still reused; Agent lifecycle bounds are unchanged. Expiry of the dedicated
+read timeout still maps to safe `503 REMOTE_ACCESS_UNAVAILABLE`.
+
+Existing generated environments are never overwritten by setup. For an existing
+installation, the operator must add this non-secret timeout setting to its
+protected Nexus EnvironmentFile; preserve existing credentials and permissions.
+
 ## Lifecycle and error truth
 
 The nine management endpoints match `roadmap.md`. Agent owns state; Nexus only

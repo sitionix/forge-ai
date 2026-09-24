@@ -24,7 +24,10 @@ class ManagementSetupTest(unittest.TestCase):
             for file in [agent, nexus, operator]: self.assertEqual(0o600, file.stat().st_mode & 0o777)
             self.assertIn('FORGE_AGENT_HOST=127.0.0.1', (root/'agent.env').read_text())
             self.assertIn('FORGE_NEXUS_HOST=127.0.0.1', (root/'nexus.env').read_text())
-            self.assertNotIn(agent.read_text().strip(), (root/'agent.env').read_text())
+            self.assertIn('FORGE_REMOTE_ACCESS_AGENT_READ_TIMEOUT=120s', (root/'nexus.env').read_text())
+            for env_file in [root/'agent.env', root/'nexus.env']:
+                for secret in [agent, nexus, operator]:
+                    self.assertNotIn(secret.read_text().strip(), env_file.read_text())
             before = agent.read_bytes()
             setup.prepare(root, os.getuid(), os.getgid(), os.getuid(), os.getgid(), 'http://127.0.0.1:9099')
             self.assertEqual(before, agent.read_bytes())

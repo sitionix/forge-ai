@@ -975,3 +975,37 @@ Host Forge runtime/systemd configuration was not changed or restarted. Setup tes
 use temporary directories and local fixture identities; actual service installation
 still requires the explicit protected setup documented in stage6-installation.md.
 No live Codex or Stage 7 UI acceptance was run; those remain NOT_RUN.
+
+### Stage 6 correction — dedicated Nexus lifecycle timeout (2026-09-24)
+
+The Remote Access HTTP client inherited the ordinary Agent 30-second read timeout,
+shorter than the existing 60-second workload STOP / 90-second SSH revoke bounds.
+It now uses `forge.remote-access.agent-read-timeout` (default 120s); enabled
+configuration rejects values below 100s (90s control bound plus 10s margin).
+Generated Nexus environment explicitly sets 120s. Ordinary Agent client settings,
+Agent lifecycle bounds, security and REST contracts are unchanged.
+
+RED evidence on the prior implementation:
+- Real loopback HTTP DELETE with a response delayed 31 seconds failed with
+  `ResourceAccessException: Request timed out`.
+- Captured actual JDK HTTP request carried 30s instead of the configured 120s.
+- Five insufficient-timeout configurations incorrectly started.
+- Generated-environment regression failed because the dedicated setting was absent.
+
+GREEN evidence:
+- `RemoteAccessHttpClientConfigurationTest`: 11 cases pass. Real HTTP revoke
+  receives 200/REVOKED after the 31-second upstream delay. Actual outgoing request
+  bounds are checked for 100/120/150s and default 120s; ordinary property stays 30s.
+  Invalid 30/89/99/0/-1s values fail configuration; disabled feature needs no new
+  config. Injected JDK transport timeout maps to safe 503/REMOTE_ACCESS_UNAVAILABLE
+  without exposing transport details. This last test simulates timeout expiry; it
+  does not wait 120 seconds or claim a live SSH revoke.
+- Focused Nexus configuration/operator/client tests: PASS.
+- Full `mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify`: PASS.
+- Full `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: PASS.
+- Python Remote Access suite: 64 tests PASS, including generated timeout,
+  credential permissions/separation, no plaintext env secrets, idempotence and umask.
+- `git diff --check`: PASS.
+
+The opt-in privileged Stage 5 execution suite was not separately rerun for this
+Nexus-only timeout correction. No Stage 7 work or host runtime changes were made.
