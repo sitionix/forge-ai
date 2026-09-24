@@ -46,6 +46,23 @@ class RemoteAccessPersistenceIT {
     static void stop() { DATABASE.stop(); }
 
     @Test
+    void observationPersistsWithoutChangingLifecycleAndCannotOverwriteNewerFailure() {
+        var repository=new PostgresRemoteAccessSessionRepository(jdbc);
+        UUID local=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
+        var before=accessor(UUID.randomUUID(),UUID.randomUUID(),local);
+        repository.insert(before);
+        assertThat(repository.recordObservation(before,RemoteAccessConnectivity.REACHABLE,NOW)).isTrue();
+        var observed=repository.findById(before.id()).orElseThrow();
+        assertThat(observed).isEqualTo(before.observe(RemoteAccessConnectivity.REACHABLE,NOW));
+        assertThat(repository.recordFailure(observed,"NEW_FAILURE","Concurrent writer")).isTrue();
+        assertThat(repository.recordObservation(observed,RemoteAccessConnectivity.UNREACHABLE,NOW.plusSeconds(1))).isFalse();
+        var winner=repository.findById(before.id()).orElseThrow();
+        assertThat(winner.failureCode()).isEqualTo("NEW_FAILURE");
+        assertThat(winner.connectivity()).isEqualTo(RemoteAccessConnectivity.REACHABLE);
+        assertThat(winner.status()).isEqualTo(before.status());
+    }
+
+    @Test
     void confirmedRemoteRevokeRetainsCredentialReferenceAcrossRestartUntilCleanup() {
         UUID local=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
         var original=accessor(UUID.randomUUID(),UUID.randomUUID(),local);

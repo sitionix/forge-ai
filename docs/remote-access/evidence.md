@@ -883,3 +883,129 @@ Final verification after the timestamp-precision correction:
   session survives. Timeout, revoke, authority-loss and supervisor crash/watchdog
   checkpoints also pass. This is runtime E2E evidence, not live Codex acceptance.
 - `git diff --check`: PASS. No SSH/helper/supervisor or cancellation-fixture changes.
+
+## Stage 6 — local management API and typed Nexus boundary
+
+Scope: nine local management operations, operator/service HTTP boundaries, safe
+DTOs/errors, explicit connectivity observation CAS and protected runtime setup.
+No Stage 7 UI, Stage 8 helper, SSH protocol change, lifecycle status or migration.
+
+Verification on the Stage 6 implementation:
+
+- Focused Agent management/controller/service-filter regressions: PASS. GET/list
+  do not invoke SSH, foreign local sessions are rejected, GRANTOR checks do not
+  create reverse access, observation does not mutate lifecycle/failure metadata,
+  and stale observation CAS respects a newer writer.
+- `RemoteAccessPersistenceIT`: PASS, 20 tests, real PostgreSQL including persisted
+  observation timestamps/version and competing failure-write protection.
+- `RemoteAccessManagementHttpIT`: PASS, 2 tests, real Agent Boot configuration,
+  loopback Tomcat and PostgreSQL. Missing service credential is rejected; valid
+  service identity reads actual persisted state; malformed secret-bearing bodies
+  are not echoed. Matrix/encoded path GET and POST cannot bypass authentication.
+- Nexus focused controller/client/operator-session/config tests: PASS.
+- `RemoteAccessProxyIT`: PASS, 17 tests using the existing single
+  `NexusProxyTestManager`, typed endpoint contracts and standard fixtures. Real
+  Nexus mapping/client/security and WireMock Agent cover all nine operations,
+  201/202 and 200/202, known upstream 400/404/409/410/503 preservation and zero
+  upstream calls for local validation/Origin rejection. Authenticated session is
+  a test fixture here, not a claim of browser login E2E.
+- `RemoteAccessOperatorHttpIT`: PASS, 2 tests, real Nexus Boot/Tomcat listener,
+  actual login/cookie/Origin/CSRF path and typed HTTP client to an explicitly stubbed
+  Agent HTTP server. Cookie is HttpOnly/SameSite=Strict and includes `/fgaisox` in
+  its path. Distinct service credential reaches the stub; operator credential does
+  not. Encoded/matrix paths remain protected under servlet-scoped registration.
+- Full Forge Agent verify: PASS, also run with
+  `-Dforge.remote-access.live-execution=true`. The same final run includes real
+  Stage 4 pairing/restart cases and Stage 5 SSH/PostgreSQL/systemd execution.
+  The unchanged `RemoteAccessCommandExecution.close()` scenario confirms SSH,
+  main/setsid descendant, systemd unit, registry and fence cleanup while preserving
+  the unrelated session. Authority-loss, supervisor SIGKILL/watchdog, revoke,
+  timeout and stream checkpoints pass.
+- Full Forge Nexus verify: PASS. Existing ordinary endpoint behavior remains
+  covered, including encoded systemd unit names.
+- Console: 20 files / 545 tests PASS; typecheck and build PASS, no Console changes.
+- Python Remote Access: 64 tests PASS, including four new management-setup tests.
+- `git diff --check` and Python compilation: PASS.
+
+Commands:
+
+```sh
+mvn -q -Dapi.version=1.44 -Dforge.remote-access.live-execution=true \
+  -pl services/forge-agent/boot -am verify
+mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify
+python3 -m unittest discover -s scripts/remote-access/tests -p 'test_*.py' -v
+python3 -m py_compile scripts/remote-access/prepare_management.py \
+  scripts/remote-access/tests/test_management_setup.py
+# In services/forge-console:
+npm test
+npm run typecheck
+npm run build
+```
+
+Regression/review evidence:
+
+1. New functionality tests were introduced before their implementing contracts.
+   Initial expected missing-type compilation failures were followed by green
+   focused tests. Mockito attach and Unix-socket tests required execution outside
+   the filesystem/network sandbox; these failures were not production defects.
+2. Independent review identified a P1 raw-URI filter mismatch. Actual HTTP on the
+   old filter returned 200 for unauthenticated `/remote-access;v=1/sessions`
+   (expected 401). The fixed filter uses Spring RequestPath/PathPattern with MVC's
+   decoded-segment/matrix semantics; GET/POST matrix and percent-encoded regressions
+   are green in the final Agent suite.
+3. Full Nexus regression caught the newly global security firewall rejecting an
+   existing encoded systemd unit name with 400. Standard security registration is
+   now limited to the Remote Access servlet mappings; default Boot/Actuator
+   all-path security is not activated. The existing failing test and final full
+   Nexus suite pass without modifying the legacy endpoint or its test.
+4. Runtime setup regression under umask 077 first produced directory 0700 instead
+   of required 0711. Explicit creation permissions now let both protected service
+   identities traverse the root-owned parent; credential files remain 0600.
+5. The real Nexus HTTP fixture excludes test-only JDBC autoconfiguration pulled
+   in by the shaded ForgeIT dependency; production Nexus has no new persistence.
+
+Accepted limitation: current SSH refusal cannot prove whether a removed invitation
+key expired, was cancelled, the pinned host differs or the peer is unavailable.
+The user explicitly approved preserving the SSH protocol and reporting ambiguous
+pairing failure safely, rather than fabricating 410/409 from editable token expiry
+or stderr. The 410/409 ForgeIT cases prove typed propagation, not a new remote
+SSH diagnostic protocol. Existing durable provisioning/recovery remains authoritative.
+
+Host Forge runtime/systemd configuration was not changed or restarted. Setup tests
+use temporary directories and local fixture identities; actual service installation
+still requires the explicit protected setup documented in stage6-installation.md.
+No live Codex or Stage 7 UI acceptance was run; those remain NOT_RUN.
+
+### Stage 6 correction — dedicated Nexus lifecycle timeout (2026-09-24)
+
+The Remote Access HTTP client inherited the ordinary Agent 30-second read timeout,
+shorter than the existing 60-second workload STOP / 90-second SSH revoke bounds.
+It now uses `forge.remote-access.agent-read-timeout` (default 120s); enabled
+configuration rejects values below 100s (90s control bound plus 10s margin).
+Generated Nexus environment explicitly sets 120s. Ordinary Agent client settings,
+Agent lifecycle bounds, security and REST contracts are unchanged.
+
+RED evidence on the prior implementation:
+- Real loopback HTTP DELETE with a response delayed 31 seconds failed with
+  `ResourceAccessException: Request timed out`.
+- Captured actual JDK HTTP request carried 30s instead of the configured 120s.
+- Five insufficient-timeout configurations incorrectly started.
+- Generated-environment regression failed because the dedicated setting was absent.
+
+GREEN evidence:
+- `RemoteAccessHttpClientConfigurationTest`: 11 cases pass. Real HTTP revoke
+  receives 200/REVOKED after the 31-second upstream delay. Actual outgoing request
+  bounds are checked for 100/120/150s and default 120s; ordinary property stays 30s.
+  Invalid 30/89/99/0/-1s values fail configuration; disabled feature needs no new
+  config. Injected JDK transport timeout maps to safe 503/REMOTE_ACCESS_UNAVAILABLE
+  without exposing transport details. This last test simulates timeout expiry; it
+  does not wait 120 seconds or claim a live SSH revoke.
+- Focused Nexus configuration/operator/client tests: PASS.
+- Full `mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify`: PASS.
+- Full `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: PASS.
+- Python Remote Access suite: 64 tests PASS, including generated timeout,
+  credential permissions/separation, no plaintext env secrets, idempotence and umask.
+- `git diff --check`: PASS.
+
+The opt-in privileged Stage 5 execution suite was not separately rerun for this
+Nexus-only timeout correction. No Stage 7 work or host runtime changes were made.

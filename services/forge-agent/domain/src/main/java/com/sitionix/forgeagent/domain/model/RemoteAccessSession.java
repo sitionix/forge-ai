@@ -129,6 +129,21 @@ public record RemoteAccessSession(
         return cleared.withFailure(null, null, cleared.version());
     }
 
+    /** Connectivity is an observation, never an authorization transition. */
+    public RemoteAccessSession observe(RemoteAccessConnectivity value, Instant checkedAt) {
+        Objects.requireNonNull(value, "connectivity");
+        Objects.requireNonNull(checkedAt, "checkedAt");
+        if (lastCheckedAt != null && checkedAt.isBefore(lastCheckedAt)) {
+            throw new IllegalArgumentException("Observation precedes the previous check");
+        }
+        return new RemoteAccessSession(id, invitationId, localRole, grantorInstanceId, accessorInstanceId,
+                peerDisplayName, endpoint, pinnedHostPublicKey, sessionPublicKey, sessionFingerprint,
+                localPrivateKeyReference, status, createdAt, provisioningExpiresAt, activatedAt,
+                revokeRequestedAt, revokedAt, value,
+                value == RemoteAccessConnectivity.REACHABLE ? checkedAt : lastSeenAt,
+                checkedAt, failureCode, failureMessage, version + 1);
+    }
+
     public RemoteAccessSession withFailure(String code, String message) {
         return withFailure(code, message, version + 1);
     }

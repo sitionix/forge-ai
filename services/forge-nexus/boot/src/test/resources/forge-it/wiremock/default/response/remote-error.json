@@ -1,0 +1,5 @@
+{
+  "code": "REMOTE_ACCESS_EXPIRED",
+  "message": "Invitation expired",
+  "correlationId": "test-correlation"
+}

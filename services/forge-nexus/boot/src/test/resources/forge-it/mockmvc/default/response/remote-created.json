@@ -1,0 +1,17 @@
+{
+  "invitation": {
+    "id": "22222222-2222-4222-8222-222222222222",
+    "grantorInstanceId": "33333333-3333-4333-8333-333333333333",
+    "endpoint": {
+      "host": "127.0.0.1",
+      "port": 2222,
+      "username": "forge-ssh"
+    },
+    "createdAt": "2026-09-23T12:00:00Z",
+    "expiresAt": "2026-09-23T12:05:00Z",
+    "consumedAt": null,
+    "cancelledAt": null,
+    "redeemedSessionId": null
+  },
+  "token": "synthetic-token"
+}
