@@ -40,6 +40,13 @@ import org.springframework.web.service.annotation.PutExchange;
 import org.springframework.web.bind.annotation.RequestBody;
 
 public interface ForgeAgentHttpClient {
+    @GetExchange("/api/v1/integrations/mcp/connections") java.util.List<com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse> listMcpConnections();
+    @GetExchange("/api/v1/integrations/mcp/connections/{id}") com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse getMcpConnection(@PathVariable UUID id);
+    @PostExchange(value="/api/v1/integrations/mcp/connections",contentType=MediaType.APPLICATION_JSON_VALUE) com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse createMcpConnection(@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest request);
+    @PutExchange(value="/api/v1/integrations/mcp/connections/{id}",contentType=MediaType.APPLICATION_JSON_VALUE) com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse updateMcpConnection(@PathVariable UUID id,@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest request);
+    @PutExchange(value="/api/v1/integrations/mcp/connections/{id}/enabled",contentType=MediaType.APPLICATION_JSON_VALUE) com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse setMcpConnectionEnabled(@PathVariable UUID id,@RequestBody ForgeAgentMcpClientAdapter.Enabled request);
+    @DeleteExchange("/api/v1/integrations/mcp/connections/{id}") void deleteMcpConnection(@PathVariable UUID id);
+    @PostExchange("/api/v1/integrations/mcp/connections/{id}/reencrypt") void reencryptMcpConnection(@PathVariable UUID id);
     @GetExchange("/api/v1/projects/{projectId}/assets") List<com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetResponse> listProjectAssets(@PathVariable UUID projectId);
     @PostExchange(value="/api/v1/projects/{projectId}/assets",contentType=MediaType.APPLICATION_JSON_VALUE) com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetResponse createProjectAsset(@PathVariable UUID projectId,@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetRequest request);
     @GetExchange("/api/v1/projects/{projectId}/assets/{assetId}") com.sitionix.forgeai.infrastructure.agentclient.dto.ProjectAssetResponse getProjectAsset(@PathVariable UUID projectId,@PathVariable UUID assetId);

@@ -1,0 +1,1 @@
+{"id":"11111111-1111-4111-8111-111111111111","displayName":"updated","endpoint":"https://mcp.example/path","transport":"STREAMABLE_HTTP","authType":"BEARER","enabled":false,"projectAccess":{"scope":"ALL","projectIds":[]},"allowedTools":[],"credentialConfigured":true,"createdAt":"2026-09-23T10:00:00Z","updatedAt":"2026-09-23T10:01:00Z","checkedAt":null,"safeDiagnostic":null}

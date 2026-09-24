@@ -31,6 +31,55 @@ import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
 import org.springframework.http.HttpStatus;
 
 public final class ForgeAgentWireMockEndpoints {
+    public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse[]> listMcpConnections() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.GET,
+                Void.class, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse[].class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("agent-mcp-list-response.json"));
+    }
+    public static Endpoint<Void, com.fasterxml.jackson.databind.JsonNode> failedMcpList() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.GET,
+                Void.class, com.fasterxml.jackson.databind.JsonNode.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(500).responseBody("agent-mcp-error-response.json"));
+    }
+    public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse> createMcpConnection() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.POST,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest.class,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse.class,
+                (WiremockDefault) context -> context.plainUrl().matchesJson("agent-mcp-create-request.json")
+                    .responseStatus(201).responseBody("agent-mcp-create-response.json"));
+    }
+    public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse> getMcpConnection() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}",HttpMethod.GET,
+                Void.class,com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("agent-mcp-create-response.json"));
+    }
+    public static Endpoint<Void, com.fasterxml.jackson.databind.JsonNode> missingMcpConnection() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}",HttpMethod.GET,
+                Void.class,com.fasterxml.jackson.databind.JsonNode.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(404).responseBody("agent-mcp-error-response.json"));
+    }
+    public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse> updateMcpConnection(String requestFixture) {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}",HttpMethod.PUT,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest.class,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse.class,
+                (WiremockDefault) context -> context.plainUrl().matchesJson(requestFixture)
+                    .responseStatus(200).responseBody("agent-mcp-update-response.json"));
+    }
+    public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentMcpClientAdapter.Enabled, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse> enableMcpConnection() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/enabled",HttpMethod.PUT,
+                com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentMcpClientAdapter.Enabled.class,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse.class,
+                (WiremockDefault) context -> context.plainUrl().matchesJson("agent-mcp-enable-request.json")
+                    .responseStatus(200).responseBody("agent-mcp-enabled-response.json"));
+    }
+    public static Endpoint<Void, Void> reencryptMcpConnection() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/reencrypt",HttpMethod.POST,
+                Void.class,Void.class,(WiremockDefault) context -> context.plainUrl().responseStatus(204));
+    }
+    public static Endpoint<Void, Void> deleteMcpConnection() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}",HttpMethod.DELETE,
+                Void.class,Void.class,(WiremockDefault) context -> context.plainUrl().responseStatus(204));
+    }
 
     public static Endpoint<JsonNode, JsonNode> manualSelection() {
         return Endpoint.createContract("/api/v1/workflow-runs/{workflowRunId}/node-runs/{nodeRunId}/manual-selection", HttpMethod.POST,

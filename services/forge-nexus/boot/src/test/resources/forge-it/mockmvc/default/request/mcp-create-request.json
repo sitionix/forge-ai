@@ -1,0 +1,1 @@
+{"displayName":"test","endpoint":"https://mcp.example/path?secret=nexus-canary","transport":"STREAMABLE_HTTP","authType":"BEARER","projectAccess":{"scope":"ALL","projectIds":[]},"allowedTools":[],"credentialChange":"REPLACE","credential":{"bearer":"nexus-canary-secret"}}

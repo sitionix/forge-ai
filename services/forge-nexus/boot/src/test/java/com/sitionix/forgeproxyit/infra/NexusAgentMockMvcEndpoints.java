@@ -31,6 +31,66 @@ import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
 import org.springframework.http.HttpStatus;
 
 public final class NexusAgentMockMvcEndpoints {
+    public static Endpoint<Void, com.sitionix.forgeai.api.mcp.McpConnectionResponse[]> listMcpConnections(int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections", HttpMethod.GET,
+                Void.class, com.sitionix.forgeai.api.mcp.McpConnectionResponse[].class,
+                (MockmvcDefault) context -> context.expectStatus(status));
+    }
+    public static Endpoint<Void, InfrastructureErrorResponse> failedMcpList() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(502));
+    }
+    public static Endpoint<Void, InfrastructureErrorResponse> invalidMcpId() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/not-a-uuid", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(400));
+    }
+    public static Endpoint<JsonNode, InfrastructureErrorResponse> invalidMcpUpdate(String fixture) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}", HttpMethod.PUT,
+                JsonNode.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.withRequest(fixture).expectStatus(400));
+    }
+    public static Endpoint<JsonNode, JsonNode> createMcpConnection(int status) {
+        return createMcpConnection(status,"mcp-create-request.json");
+    }
+    public static Endpoint<JsonNode, JsonNode> createMcpConnection(int status,String fixture) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections", HttpMethod.POST,
+                JsonNode.class, JsonNode.class,(MockmvcDefault) context -> context.withRequest(fixture).expectStatus(status));
+    }
+    public static Endpoint<JsonNode, com.sitionix.forgeai.api.mcp.McpConnectionResponse> createValidMcpConnection() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections", HttpMethod.POST,
+                JsonNode.class, com.sitionix.forgeai.api.mcp.McpConnectionResponse.class,
+                (MockmvcDefault) context -> context.withRequest("mcp-valid-create-request.json").expectStatus(201));
+    }
+    public static Endpoint<Void, com.sitionix.forgeai.api.mcp.McpConnectionResponse> getMcpConnection(int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}",HttpMethod.GET,
+                Void.class,com.sitionix.forgeai.api.mcp.McpConnectionResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(status));
+    }
+    public static Endpoint<Void, InfrastructureErrorResponse> missingMcpConnection() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}",HttpMethod.GET,
+                Void.class,InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(404));
+    }
+    public static Endpoint<JsonNode, com.sitionix.forgeai.api.mcp.McpConnectionResponse> updateMcpConnection(String fixture,int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}",HttpMethod.PUT,
+                JsonNode.class,com.sitionix.forgeai.api.mcp.McpConnectionResponse.class,
+                (MockmvcDefault) context -> context.withRequest(fixture).expectStatus(status));
+    }
+    public static Endpoint<JsonNode, com.sitionix.forgeai.api.mcp.McpConnectionResponse> enableMcpConnection(int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}/enabled",HttpMethod.PUT,
+                JsonNode.class,com.sitionix.forgeai.api.mcp.McpConnectionResponse.class,
+                (MockmvcDefault) context -> context.withRequest("mcp-enable-request.json").expectStatus(status));
+    }
+    public static Endpoint<Void, Void> reencryptMcpConnection(int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}/reencrypt",HttpMethod.POST,
+                Void.class,Void.class,(MockmvcDefault) context -> context.expectStatus(status));
+    }
+    public static Endpoint<Void, Void> deleteMcpConnection(int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}",HttpMethod.DELETE,
+                Void.class,Void.class,(MockmvcDefault) context -> context.expectStatus(status));
+    }
 
     public static Endpoint<JsonNode, Void> invalidManualSelection(final String requestFixture) {
         return Endpoint.createContract(
@@ -88,6 +148,12 @@ public final class NexusAgentMockMvcEndpoints {
     }
 
     private NexusAgentMockMvcEndpoints() {
+    }
+
+    public static Endpoint<Void, Void> absentOperatorSessionWhenMcpDisabled() {
+        return Endpoint.createContract("/api/v1/operator/session", HttpMethod.GET,
+                Void.class, Void.class,
+                (MockmvcDefault) context -> context.expectStatus(HttpStatus.NOT_FOUND.value()));
     }
 
     public static Endpoint<Void, AgentExecutionEventPageResponse> agentExecutionEvents() {

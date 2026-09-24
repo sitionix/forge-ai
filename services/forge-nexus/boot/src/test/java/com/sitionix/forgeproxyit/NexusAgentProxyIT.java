@@ -52,6 +52,14 @@ class NexusAgentProxyIT {
     @Autowired
     private NexusProxyTestManager testManager;
 
+    @Test
+    void operatorSessionIsAbsentInDefaultOffMode() {
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.absentOperatorSessionWhenMcpDisabled())
+                .assertDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.listMcpConnections(404))
+                .assertDefault();
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"agent-manual-selection-missing-port-request.json",
             "agent-manual-selection-null-port-request.json", "agent-manual-selection-invalid-port-request.json"})

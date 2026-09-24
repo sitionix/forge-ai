@@ -1,0 +1,1 @@
+{"displayName":"bad","endpoint":"https://mcp.example/path","transport":"STREAMABLE_HTTP","authType":"NONE","projectAccess":{"scope":"ALL","projectIds":[]},"allowedTools":["unknown-tool"]}

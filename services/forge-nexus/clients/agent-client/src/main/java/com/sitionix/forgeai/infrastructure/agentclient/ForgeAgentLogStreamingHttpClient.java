@@ -25,14 +25,24 @@ class ForgeAgentLogStreamingHttpClient {
   private final HttpClient httpClient;
   private final ForgeAgentClientProperties properties;
   private final ForgeAgentClientCallExecutor callExecutor;
+  private final AgentServiceCredential credential;
 
   ForgeAgentLogStreamingHttpClient(
       final HttpClient httpClient,
       final ForgeAgentClientProperties properties,
       final ForgeAgentClientCallExecutor callExecutor) {
+    this(httpClient, properties, callExecutor, null);
+  }
+
+  ForgeAgentLogStreamingHttpClient(
+      final HttpClient httpClient,
+      final ForgeAgentClientProperties properties,
+      final ForgeAgentClientCallExecutor callExecutor,
+      final AgentServiceCredential credential) {
     this.httpClient = httpClient;
     this.properties = properties;
     this.callExecutor = callExecutor;
+    this.credential = credential;
   }
 
   AgentLogStream open(final UUID projectId, final List<UUID> sourceIds, final int lines) {
@@ -44,11 +54,12 @@ class ForgeAgentLogStreamingHttpClient {
             .buildAndExpand(projectId)
             .encode()
             .toUri();
-    final HttpRequest request =
-        HttpRequest.newBuilder(uri)
-            .header(HttpHeaders.ACCEPT, MediaType.TEXT_EVENT_STREAM_VALUE)
-            .GET()
-            .build();
+    final HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(uri)
+        .header(HttpHeaders.ACCEPT, MediaType.TEXT_EVENT_STREAM_VALUE);
+    if (this.credential != null) {
+      requestBuilder.header(HttpHeaders.AUTHORIZATION, this.credential.authorization());
+    }
+    final HttpRequest request = requestBuilder.GET().build();
     try {
       final HttpResponse<InputStream> response =
           this.httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());

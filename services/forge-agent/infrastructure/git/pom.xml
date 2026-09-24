@@ -20,7 +20,6 @@
         <dependency>
             <groupId>com.sitionix.forgeagent</groupId>
             <artifactId>local</artifactId>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.springframework</groupId>

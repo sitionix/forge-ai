@@ -53,6 +53,22 @@ class LocalCliDockerLogAdapterTest {
         .allMatch(c -> repository.resolve("compose.yaml").toString().equals(c.composeFile()));
   }
 
+  @Test
+  void enabledModeRefusesEveryLocalComposeEntryBeforeExecutor(@TempDir Path repository) throws Exception {
+    Files.writeString(repository.resolve("compose.yaml"), "services: {}\n");
+    var executor = new FakeExecutor(List.of());
+    var adapter = new LocalCliDockerLogAdapter(executor,
+        new com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryProperties(true,
+            "/usr/local/libexec/forge-runtime-launcher"));
+    assertThatThrownBy(() -> adapter.discoverComposeServices(repository, null))
+        .hasMessage("Local Compose is unavailable with runtime isolation enabled");
+    assertThatThrownBy(() -> adapter.validate(null, "web", "compose.yaml", null))
+        .hasMessage("Local Compose is unavailable with runtime isolation enabled");
+    assertThatThrownBy(() -> adapter.stream(null, "web", "compose.yaml", 10, null))
+        .hasMessage("Local Compose is unavailable with runtime isolation enabled");
+    assertThat(executor.command).isNull();
+  }
+
   static final class FakeExecutor extends TypedProcessExecutor {
     private final List<String> result;
     private List<String> command;

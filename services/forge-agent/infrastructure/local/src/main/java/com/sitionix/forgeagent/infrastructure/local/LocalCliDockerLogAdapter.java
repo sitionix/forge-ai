@@ -5,16 +5,33 @@ import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.*;
 import java.nio.file.*;
 import java.util.*;
-import lombok.RequiredArgsConstructor;
+import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
-@RequiredArgsConstructor
 public class LocalCliDockerLogAdapter implements DockerLogPort {
   private final TypedProcessExecutor executor;
+  private final RuntimeBoundaryProperties boundary;
+
+  public LocalCliDockerLogAdapter(TypedProcessExecutor executor) {
+    this(executor, RuntimeBoundaryProperties.disabled());
+  }
+
+  @Autowired
+  public LocalCliDockerLogAdapter(TypedProcessExecutor executor, RuntimeBoundaryProperties boundary) {
+    this.executor = executor;
+    this.boundary = boundary;
+  }
+
+  private void requireLocalComposeAllowed(SshConnection ssh) {
+    if (boundary.enabled() && ssh == null)
+      throw new ValidationException("Local Compose is unavailable with runtime isolation enabled");
+  }
 
   public List<LogTargetCandidate> discoverComposeServices(Path repository, SshConnection ssh) {
     if (repository == null || ssh != null) return List.of();
+    requireLocalComposeAllowed(ssh);
     for (String name :
         List.of("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")) {
       Path file = repository.resolve(name);
@@ -36,6 +53,7 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
 
   public void validate(String container, String service, String file, SshConnection ssh) {
     if (nonblank(service)) {
+      requireLocalComposeAllowed(ssh);
       RuntimeTargetValidator.docker(service, "Compose service");
       RuntimeTargetValidator.path(file, "Compose file");
       output(compose(ssh, file, "config", "--services"), null, ssh).stream()
@@ -52,6 +70,7 @@ public class LocalCliDockerLogAdapter implements DockerLogPort {
       String container, String service, String file, int lines, SshConnection ssh) {
     int safe = Math.max(1, Math.min(lines, 10000));
     if (nonblank(service)) {
+      requireLocalComposeAllowed(ssh);
       RuntimeTargetValidator.docker(service, "Compose service");
       RuntimeTargetValidator.path(file, "Compose file");
       return stream(

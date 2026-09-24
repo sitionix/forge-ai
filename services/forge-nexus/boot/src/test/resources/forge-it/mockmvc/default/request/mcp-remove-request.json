@@ -1,0 +1,1 @@
+{"displayName":"updated","endpoint":"https://mcp.example/path","transport":"STREAMABLE_HTTP","authType":"BEARER","projectAccess":{"scope":"ALL","projectIds":[]},"allowedTools":[],"credentialChange":"REMOVE"}

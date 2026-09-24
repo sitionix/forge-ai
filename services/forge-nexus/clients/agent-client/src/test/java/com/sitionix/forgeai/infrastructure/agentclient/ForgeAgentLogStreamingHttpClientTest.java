@@ -70,6 +70,25 @@ class ForgeAgentLogStreamingHttpClientTest {
   }
 
   @Test
+  void enabledStreamSendsOnlyConfiguredServiceBearer() throws Exception {
+    byte[] raw=new byte[32]; java.util.Arrays.fill(raw,(byte)5);
+    var file=java.nio.file.Files.createTempFile("agent-service", ".token");
+    try {
+      java.nio.file.Files.writeString(file,java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(raw));
+      java.nio.file.Files.setPosixFilePermissions(file,java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+              java.nio.file.attribute.PosixFilePermission.OWNER_WRITE));
+      var properties=new ForgeAgentClientProperties(); properties.setBaseUrl(URI.create("http://127.0.0.1:7091"));
+      var credential=new AgentServiceCredential(file,properties.getBaseUrl());
+      client=new ForgeAgentLogStreamingHttpClient(httpClient,properties,new ForgeAgentClientCallExecutor(properties),credential);
+      var captured=new AtomicReference<HttpRequest>();
+      doAnswer(invocation -> { captured.set(invocation.getArgument(0)); return response(200,new ByteArrayInputStream(new byte[0])); })
+              .when(httpClient).send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class));
+      client.open(UUID.randomUUID(),List.of(),10).close();
+      assertThat(captured.get().headers().firstValue("Authorization")).contains(credential.authorization());
+    } finally { java.nio.file.Files.deleteIfExists(file); }
+  }
+
+  @Test
   void mapsUpstreamErrorBeforeReturningAStream() throws Exception {
     final HttpResponse<java.io.InputStream> upstream =
         response(

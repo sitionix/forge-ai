@@ -29,6 +29,8 @@ management:
     readinessstate:
       enabled: true
 forge:
+  mcp:
+    enabled: ${FORGE_MCP_ENABLED:false}
   ai:
     infrastructure:
       jarvis:
