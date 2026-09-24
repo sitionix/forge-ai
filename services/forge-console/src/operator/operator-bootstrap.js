@@ -3,6 +3,7 @@ import { AgentProjectsPage } from './agent-projects-page.js';
 import { JarvisPage } from './jarvis-page.js';
 import { KnowledgeGraphPage } from './knowledge-graph-page.js';
 import { KnowledgeOverviewPage } from './knowledge-overview-page.js';
+import { RemoteAccessPage } from './remote-access-page.js';
 import { OperatorRouter } from './operator-router.js';
 import { escapeHtml } from './dom-render-helpers.js';
 
@@ -28,6 +29,7 @@ export function bootstrapOperatorConsole(options = {}) {
   });
   initSidebar(documentRef, windowRef, pageName);
   const registry = {
+    'remote-access': () => new RemoteAccessPage({document: documentRef, window: windowRef, fetcher: options.fetcher, runtimeConfig}),
     knowledge: () => new KnowledgeOverviewPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
     'knowledge-graph': () => new KnowledgeGraphPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
     jarvis: () => new JarvisPage({ document: documentRef, http, runtimeConfig }),
@@ -69,6 +71,7 @@ export function initSidebar(documentRef = document, windowRef = window, page = d
   const links = [
     ['agent-projects', './agent-projects.html', 'P', 'Projects'],
     ['jarvis', './jarvis.html', 'J', 'Jarvis'],
+    ['remote-access', './remote-access.html', 'R', 'Remote Access'],
     ['knowledge', './knowledge.html', 'K', 'Knowledge']
   ];
   documentRef.body.insertAdjacentHTML('afterbegin', `

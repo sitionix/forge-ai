@@ -1,6 +1,6 @@
 # Stage 7 — Remote Access Console design checkpoint
 
-Status: proposed for design review. Stage 6 merged in PR #147 at `58f2854f`.
+Status: approved by the user to proceed after roadmap verification. Stage 6 merged in PR #147 at `58f2854f`.
 The user authorized Stage 7 on 2026-09-24. Stage 8 remains outside scope.
 
 ## Outcome and boundaries
