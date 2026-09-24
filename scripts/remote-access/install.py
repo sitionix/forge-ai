@@ -49,6 +49,18 @@ def directory(path, mode=0o755):
         path.chmod(mode)
 
 
+def ensure_control_directory():
+    if ETC.exists() or ETC.is_symlink():
+        require_root_owned(ETC)
+        descriptor = os.open(ETC, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            if stat.S_IMODE(os.fstat(descriptor).st_mode) == 0o700:
+                os.fchmod(descriptor, 0o711)
+        finally:
+            os.close(descriptor)
+    directory(ETC, 0o711)
+
+
 def write_owned(path, content, mode):
     if path.exists() or path.is_symlink():
         require_root_owned(path)
@@ -194,7 +206,7 @@ def prepare(host, port):
             except KeyError:
                 continue
             raise RuntimeError('Reserved user already exists without Forge installation ownership')
-    directory(ETC,0o700)
+    ensure_control_directory()
     write_owned(marker,MARKER,0o600)
     for name, shell in [('forge-control','/usr/sbin/nologin'),('forge-ssh','/bin/sh')]:
         try: pwd.getpwnam(name)

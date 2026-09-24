@@ -14,6 +14,17 @@ sys.path.insert(0, str(ROOT / 'scripts/remote-access'))
 
 
 class RemoteAccessStartupTest(unittest.TestCase):
+    def test_existing_control_directory_becomes_traversable_without_listing(self):
+        import install
+        with tempfile.TemporaryDirectory() as directory:
+            control = pathlib.Path(directory) / 'forge-remote'
+            control.mkdir(mode=0o700)
+            control.chmod(0o700)
+            with (mock.patch.object(install, 'ETC', control),
+                  mock.patch.object(install, 'require_root_owned')):
+                install.ensure_control_directory()
+            self.assertEqual(0o711, control.stat().st_mode & 0o777)
+
     def test_missing_sshd_is_installed_without_enabling_default_ssh_listener(self):
         import prepare_startup
         calls = []
@@ -109,10 +120,11 @@ class RemoteAccessStartupTest(unittest.TestCase):
             self.assertIn('User=forge-control', remote_agent)
             self.assertIn('/etc/forge-remote/management/agent.env', remote_agent)
             self.assertIn('127.0.0.1', remote_agent)
+            self.assertIn('PrivateTmp=yes', remote_agent)
             self.assertIn('/etc/forge-remote/management/nexus.env', remote_nexus)
             self.assertIn('127.0.0.1', remote_nexus)
 
-    def test_installer_places_dedicated_units_beside_ordinary_units(self):
+    def test_installer_places_inert_remote_units_before_enable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             environment = os.environ.copy()
@@ -133,8 +145,8 @@ class RemoteAccessStartupTest(unittest.TestCase):
             control_nexus = root / 'etc/forge-remote-nexus.env'
             self.assertTrue(control_agent.is_file())
             self.assertTrue(control_nexus.is_file())
-            self.assertEqual(control_agent.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(control_nexus.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(0o600, control_agent.stat().st_mode & 0o777)
+            self.assertEqual(0o600, control_nexus.stat().st_mode & 0o777)
 
     def test_control_agent_uses_separate_database_and_no_codex_command(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -297,7 +309,7 @@ class RemoteAccessStartupTest(unittest.TestCase):
         self.assertIn('REMOTE_ACCESS_REQUIRES_ROOT', result.stderr)
         self.assertNotIn('REMOTE_ACCESS_PREPARED', result.stdout)
 
-    def test_just_start_prepares_remote_access_before_starting_control_units(self):
+    def test_just_start_does_not_prepare_or_start_remote_access(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             binaries = root / 'bin'
@@ -340,10 +352,16 @@ class RemoteAccessStartupTest(unittest.TestCase):
                                     text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             calls = journal.read_text()
-            self.assertIn('prepare_startup.py', calls)
-            self.assertIn('forge-remote-agent.service', calls)
-            self.assertIn('forge-remote-nexus.service', calls)
-            self.assertLess(calls.index('prepare_startup.py'), calls.rindex('forge-remote-agent.service'))
+            self.assertNotIn('prepare_startup.py', calls)
+            starts = '\n'.join(line for line in calls.splitlines()
+                               if 'systemctl start ' in line or 'systemctl restart ' in line)
+            self.assertNotIn('forge-remote-agent.service', starts)
+            self.assertNotIn('forge-remote-nexus.service', starts)
+            self.assertNotIn('forge-remote-sshd.service', starts)
+            self.assertNotIn('REMOTE_ACCESS_PACKAGE_STAGED', result.stdout)
+            self.assertNotIn('REMOTE_ACCESS_PREPARED', result.stdout)
+            self.assertIn('forge-agent.service', calls)
+            self.assertIn('forge-nexus.service', calls)
 
 
 if __name__ == '__main__':
