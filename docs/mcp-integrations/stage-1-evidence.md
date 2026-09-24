@@ -1,10 +1,44 @@
-# MCP Integrations Stage 1 — evidence / draft review
+# MCP Integrations Stage 1 — evidence / PR #148 corrections
 
-Реалізація й тести нижче перевірені на immutable main base `a102de5c9f18ac793fa2835a9d3f0e86e45c52dc` (Remote Access Stage5). Початкова база була `edf49dbf`. Delivery branch: `feature/SITIONIX-142`, worktree `/tmp/forge-mcp-stage1`. Користувач окремо дозволив створити PR. Original checkout із його незакоміченими змінами збережено.
+Поточні auth/error виправлення перевірено після локального включення main `58f2854f03b7abc2413be2f7afa98cb7de13d6ed` (Remote Access Stage6), correction base `d6fa685e`. Гілка `feature/SITIONIX-142`, checkout `/tmp/forge-mcp-stage1`. Original checkout і його сторонні зміни збережено. PR metadata/comments/reviews та merge не змінювалися. Stage2+ не реалізовано.
 
-Під час фінальних перевірок інший workflow пересунув shared `origin/main` на `58f2854f` (Remote Access Stage6). У цьому PR немає видалень Stage6: MCP diff рахується від merge-base `a102de5c`. Є **відомий P2 integration blocker** із новою Stage6 auth: обидва Agent filters очікують різні secrets у тому самому Authorization, а Nexus Stage6 login потрапляє за MCP session/CSRF gate. Combined-mode execution — **NOT_VERIFIED**; delivery залишається draft до узгодження auth та HTTP regression tests. Merge, deployment, Stage2+ не виконуються.
+Попередній integration blocker відтворено кодом і виправлено: Agent має явного власника route, Nexus combined mode — одну чинну RA session authority. Нижче наведено фактичні synthetic HTTP докази; production/runtime deployment не оголошується перевіреним. Історичні Stage1 результати на Stage5 base `a102de5c` збережено окремо.
 
 [Точна карта файлів](stage-1-file-map.md) · [Machine-readable verification](stage-1-verification.json) · [Runbook](stage-1-operations.md) · [Рішення](stage-1-decisions.md) · [Наступний Stage2 — лише план](stage-2-plan.md).
+
+## PR #148 — поточна перевірка auth та errors
+
+| Перевірка | Фактичний результат |
+|---|---|
+| Повний Agent verify | 1283 tests, failures0/errors0/skipped9, exit0/BUILD SUCCESS |
+| Повний Nexus verify | 362 tests, failures0/errors0/skipped0, exit0/BUILD SUCCESS |
+| Focused error regression | 10 unit + 17 Nexus IT + 9 Agent IT, failures0/errors0/skipped0 |
+| Focused auth matrix | 20 unit + 41 IT, failures0/errors0/skipped0 |
+
+```sh
+mvn -o -B -Dapi.version=1.44 -f services/forge-agent/pom.xml verify
+mvn -o -B -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify
+git diff --check
+```
+
+Fresh XML totals зібрано лише зі звітів після початку цих full runs (`1790239281`); source fingerprint і точні skips/reasons — у verification JSON. Логи `/tmp/forge-mcp-pr148-fixes/full-agent-verify.log`, `full-nexus-verify.log`, `auth-final.log`, `error-unit-final2.log`, `error-nexus-it-final.log`, `error-agent-it.log`. Agent skips — opt-in live checks, **NOT_VERIFIED**, не PASS. Попередні Python/privileged runtime результати нижче історичні: їх не повторювали для auth/error correction.
+
+| Mode / boundary | Перевірений контракт |
+|---|---|
+| MCP-only | `NexusOperatorSessionIT` (17), `AgentMcpManagementGuardIT` (9): існуючі login/guard/CRUD/error contracts; full suite також зберігає HTTPS-origin regression |
+| RA-only | `RemoteAccessOperatorHttpIT` (2), `RemoteAccessManagementHttpIT` (2): чинні login/service guards через реальний Tomcat |
+| Combined Nexus ForgeIT | `NexusCombinedOperatorSessionIT` (3): лише RA login і одна MockHttpSession, RA read/mutation, MCP CRUD, Origin/CSRF/session denial та zero typed upstream calls; existing endpoint descriptors/managers і WireMock |
+| Combined Nexus Tomcat | `NexusCombinedOperatorHttpIT` (4): context-wide cookie/реальний CookieManager, distinct outbound service credentials, rotation/logout, aliases і public-to-protected FORWARD/INCLUDE/ASYNC без upstream |
+| Combined Agent Tomcat | `AgentCombinedManagementGuardIT` (4): disposable PostgreSQL, MCP CRUD, RA read та cancellation controller reachability, cross-audience denial/aliases, FORWARD/INCLUDE/ASYNC без target invocation, ERROR збереження первинного404 |
+| Configuration / runtime wiring | optional consistent MCP aliases; conflicting aliases/рівні credential values відхиляються; Agent verifier отримує четвертий active RA secret path лише за активної feature |
+
+**Auth semantics:** Agent RA routes перевіряє лише зареєстрований RA service guard; решту protected management — MCP guard. Guards повторно визначають target на dispatch, duplicate Authorization відхиляється. На Nexus combined mode використовує тільки чинний RA `/operator/login`, `FORGE_REMOTE_OPERATOR` cookie на context root та `X-CSRF-TOKEN`; окремий MCP session backend/controller не створюється. Canonical bootstrap/origin — RA settings; операторський secret не потрібно дублювати. MCP-only зберігає `FG_SESSION`/`X-Forge-CSRF`; RA-only зберігає scoped cookie. MCP TTL застосовується лише MCP-only; combined використовує чинні RA15 хвилин. Два service credentials та operator bootstrap мають різні значення. Див. mode-specific [runbook](stage-1-operations.md#combined-remote-access-and-mcp-management).
+
+**Error semantics:** adapter виконує map → execute → map. Transport executor зберігає status/code/message/optional correlationId валідного error envelope; actual Agent forced500 `MCP_OPERATION_FAILED` перевірено окремим Agent IT, Nexus fixture має той самий envelope. Nexus HTTP tests зберігають500,400,404,409,422 та поля. Malformed/extra/trailing/duplicate/wrong-type error JSON →502 `UPSTREAM_INVALID_RESPONSE`; unavailable transport →503 `UPSTREAM_UNAVAILABLE`. Локальна validation →400 `INVALID_REQUEST` у feature shape. Raw body/headers/causes не переходять у domain exception чи публічну відповідь; log/response/exception canaries перевірені. Додатковий scan двох full-run logs для17 відомих synthetic canaries дав0 matches. Валідний typed upstream message передається за контрактом; це не універсальний детектор довільного secret у довіреному message. Legitimate Agent messages статичні. Nexus503 IT використовує disabled client; транспортний ResourceAccessException покритий unit test.
+
+**Межі:** combined HTTP tests mock RuntimeBoundaryVerifier. Це доказ auth/wiring, не OS isolation активних Nexus secrets. Реальна Agent RA mutation використовує відсутній synthetic invitation і підтверджує typed404 після controller; Nexus mutation використовує typed upstream fixtures. Повний remote SSH lifecycle/provisioning у цьому task не виконувався. Усі файли/credentials synthetic/disposable, без production secrets або personal Codex config; sandbox network не відкривався.
+
+Незалежні scoped code audits: errors — ACCEPT; auth — ACCEPT. Фінальний cross-cutting audit також ACCEPT (spec/quality/evidence), required findings немає; аудитор окремо звірив fresh XML totals і per-file hashes. Повний висновок збережено у [review](stage-1-review.md#фінальний-незалежний-audit-only-pr148-auth--errors). Це code review, не PR acceptance чи merge readiness. Error defect RED: очікуваний500 був502; malformed JSON та raw decoder exception також мали behavior RED→GREEN. Auth початковий RED був compilation failure нового constructor/wiring, **не** behavior RED; це не приховується.
 
 ## Реалізовані контракти
 
@@ -14,7 +48,7 @@
 - Protected file-only key/service/bootstrap/DB credentials. Nexus operator session, Host/Origin, CSRF, bounded TTL; окремий Agent service bearer для REST/SSE. Enabled control APIs guarded; default-off нові routes відсутні. Retained credentials або configured secret paths забороняють global downgrade до незахищеного режиму.
 - Dedicated runtime UID для чинного Codex app-server і local Git, clean environment, protected control files/proc, owned systemd/cgroup cleanup. Local Compose parsing у enabled mode відхиляється до Docker CLI. Жодного нового runtime/framework/microservice.
 
-## Фінальна автоматична перевірка
+## Історична автоматична перевірка на Stage5 base a102de5c
 
 | Перевірка | Результат |
 |---|---|
@@ -48,7 +82,7 @@ Proof використовує logging-instrumented helper copy. Independent par
 
 Stage0 перевіряв Codex0.155.1; його protocol/fresh/resume evidence збережене окремо у [Stage0 evidence](stage-0-evidence.md). Stage1 proof не переносить автоматично ту matrix на0.156.1. Окремий socket/reachability canary на0.156.1 — **NOT_VERIFIED**; sandbox network не відкривався.
 
-## Review та виправлені дефекти
+## Історичний review до PR #148 corrections
 
 Task1 ACCEPT після row-lock/update-only/snapshot fixes. Task2a ACCEPT після transport/recovery owned-cleanup fixes, фактичного disposable proof і artifact parity. Task2b ACCEPT після mixed-case HTTPS Secure-cookie regression. Task3 ACCEPT після чотирьох corrections: credential envelope parity, safe client exceptions без raw upstream body/header/cause, log/serialization proof, повна CRUD/negative-rotation vertical. Focused final Task3: Agent3unit+9ForgeIT, Nexus7unit+12ForgeIT, scheduler1, усе green.
 
@@ -62,4 +96,4 @@ Task3 частково написано до тестів; strict test-first seq
 
 AES key source перечитує protected key file на кожну cipher operation; bootstrap/service/DB loaded credentials потребують restart для застосування. Після provisioning рекомендовано controlled restart для повторного startup proof. Pause — connection.enabled=false зі global flag=true. Deprovision/rollback потребує усунення retained credentials і protected paths; unknown orphan files/інша DB/старий binary guard не знаходить.
 
-**NOT_VERIFIED:** installed sudoers caller routing; full production Java deployment; TLS rollout; provider login/history migration; reboot/power-loss recovery; окремий0.156.1 network-denial canary; співіснування з concurrently merged Stage6 auth. Жоден із цих пунктів не позначений PASS. Stage2 outbound policy/discovery, gateway, OAuth, UI та каталог не реалізовувалися.
+**NOT_VERIFIED:** installed sudoers caller routing; full production Java deployment; TLS rollout; provider login/history migration; reboot/power-loss recovery; окремий0.156.1 network-denial canary; runtime denial фактичних active Nexus secret paths та process/fd aliases. Жоден із цих пунктів не позначений PASS. Stage2 outbound policy/discovery, gateway, OAuth, UI та каталог не реалізовувалися.

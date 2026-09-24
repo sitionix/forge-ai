@@ -1,11 +1,55 @@
 {
-  "tested_base": "a102de5c9f18ac793fa2835a9d3f0e86e45c52dc",
-  "product_diff_sha256": "998d5ff2fd72237b1e31d5a22603eb66e7770b4c72ef169338d38fe781917fd6",
+  "tested_main_base": "58f2854f03b7abc2413be2f7afa98cb7de13d6ed",
+  "correction_base": "d6fa685e",
+  "correction_source_sha256": "0fa4da16afcaf238e9552f9971260c17bd89e79932df1248a2894986acac94d1",
+  "hash_algorithm": "SHA256 of sorted path + space + file SHA256 + newline for changed/new services files against correction_base",
+  "correction_source_files": {
+    "services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/remoteaccess/RemoteAccessServiceFilter.java": "787ec1edd2cbe2c50fa3b457199f6184704580b4cfd0d77bc441b4c6c8edf4ec",
+    "services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilter.java": "db42df15a1e16009f8f62fadfd7daeda4738a5a002d48da414ef5b328c31510e",
+    "services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementRoutePolicy.java": "6aade96007d0a4edccb05a45f93e4b78f47c5085a10685652ae657b677d3dbd2",
+    "services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementSecurityConfiguration.java": "d2f662ac5c3a09645fe9e2a3361aa9599ec2c16b308ce3707c99833a6bf4874e",
+    "services/forge-agent/api-rest/src/test/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilterTest.java": "d5fb5118440ceb82731d01a7822c2eddab586e3a5f3d6fbb1a847d7f53ae7a04",
+    "services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/AgentMcpProtectedConfiguration.java": "276b187a7ad5e5b5c7d68f15ba1c07558ea119e8fe8e4a6296326a9d4a2c73c9",
+    "services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/RemoteAccessManagementConfiguration.java": "1d7f5225b6df21df09c6582560c18fabc9011914055846c04927cbc21e6fc9ca",
+    "services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/AgentMcpProtectedConfigurationTest.java": "97129c5bf00a4f0878809f5c864c198cf27c570f7f016e10281051cf9da9fbb9",
+    "services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/RemoteAccessManagementConfigurationTest.java": "12b56322f9d657ebcfc4f616e2969e7498d0f6ff4ef6822dee989051393a5c15",
+    "services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/AgentCombinedManagementGuardIT.java": "22654473c1dde69b90a7606e4f1d0b9c41828c413ab3404569ed1ef3006dbd01",
+    "services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/AgentMcpManagementGuardIT.java": "4629fbb7c0f3c6580cb7c99b35f9cf11cea439fd43958657621f394922df8460",
+    "services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandler.java": "a5f4bb5f7870b579a6c15f3bb91d752d301a795c2ac9ae0baf78d7276b0fe3d8",
+    "services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/remoteaccess/RemoteAccessBrowserFilter.java": "f38ce6883a7da545b1061cf199daf27c0345253d8ab852e71e5a31606a3a956d",
+    "services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/remoteaccess/RemoteAccessSecurityConfiguration.java": "5cb475064bebd10a7a7c00397e5109c6c748dd51bfcb7f51c623c7cceebac13e",
+    "services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/McpOnlyCondition.java": "c0e8261ba3beb81f73658e97f99b327fa8ddc491e056322affa815f1ba0dac49",
+    "services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorManagementAuthenticationFilter.java": "898917a70df21fdd14559c7722e185339c3b0cae690ebbe62c16971f3cc3ba41",
+    "services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorManagementSecurityConfiguration.java": "0d91f52fa98628c3cb26ecf0b193ea3512cee562900ae331758eabef267714b5",
+    "services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorPublicRoutes.java": "132739ba2900de06f0fbe69e5aabffc251304c49d7b816ef88eff24c29b799d6",
+    "services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorSessionController.java": "0787325fc3091dabfef609fd8c2ee106abf1e3b35088d443a99045b3e2776159",
+    "services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandlerTest.java": "8d7981b11227a339c7fb14421f1762812df41abf714a29714fc5f0369310d4e2",
+    "services/forge-nexus/boot/src/main/java/com/sitionix/forgeai/CombinedOperatorCredentialConfiguration.java": "3e900b797fdcdb36bb6d67bb7146d02f84544cc4930425cce0941d19d0ea7370",
+    "services/forge-nexus/boot/src/main/java/com/sitionix/forgeai/RemoteAccessOperatorConfiguration.java": "7e12dec590cc2773457f14558292c65c6f6b89292654ea243713b11d3160d84f",
+    "services/forge-nexus/boot/src/test/java/com/sitionix/forgeai/CombinedOperatorCredentialConfigurationTest.java": "00b9335e34850a415071e968f603dd63a2a39d73cbf18677036cd111446c781b",
+    "services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusCombinedOperatorHttpIT.java": "0e8d8439b032ab17259afc61c62fc5053dc9c8ab98b471cab94ed8a2338c29d5",
+    "services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusCombinedOperatorSessionIT.java": "0658b4e838bac38b73b89b525808340ba4724afc7b80b77cf9766ea93c6d40ef",
+    "services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusOperatorSessionIT.java": "b5ec1251dbee528091093240041c1c6e9ccc8024265a2a160d00d20c617e159a",
+    "services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/ForgeAgentWireMockEndpoints.java": "35705d079f0ebdb5ca77b695ed58aa99f44035b67ae4b08e1e587f822f2a1bda",
+    "services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/NexusAgentMockMvcEndpoints.java": "0379fddf6f2f75c3ff4016d58c81643f94c05acbcd649dee73900e0114b0e80a",
+    "services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/RemoteAccessEndpoints.java": "f1ab68933d27e06e07525141252e838ff6abb9a605862ac5281209bf2f5c71e6",
+    "services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/remote-operator-login.json": "2006030fdead9814198ebea68f1d0171066c5e87715c76e855adffab4835ee80",
+    "services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-custom-error-response.json": "7130f013cf86fed979faf57afb62d7b1b1d63e1078d0983dc990c338796570b0",
+    "services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-error-response.json": "811a62c654cac34c5ad895141d9783651771b6b2c56fdd3110cea26200a2717f",
+    "services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-malformed-error-response.json": "b4c10c64b8eae0df0eff21edf4e09712fb7f3170e185d5d87068cab54af25003",
+    "services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-missing-response.json": "8627e02c3e3b2a3cedc6a7e2b3218a6b406a188c40d98d9343dd3b64008f9e05",
+    "services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutor.java": "377ded119f0213a8730aaa697b8e9234e8097a3c1187a4bd003e017d0ccd96a4",
+    "services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapter.java": "22c768fa2451261eb425c57858df52dc07b08183e5da567176930153f87bae7a",
+    "services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutorTest.java": "d927696f3f4d0ad9584dac2ee0be471dc1aed438a915373ae66cbbdb49e9141c",
+    "services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapterTest.java": "b49026b2fb8c24efbc64109089e4f1eb67a4e63a2e0f6c63745af343fb1b75f4",
+    "services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/exception/McpAgentClientException.java": "5de5491fefb93fa6faf91050aa59c4bc5a5a286e859feeeb3010a97338cf504c"
+  },
+  "integration_with_remote_access_stage6": "PASS_SYNTHETIC_HTTP",
   "agent": {
     "command": "mvn -o -B -Dapi.version=1.44 -f services/forge-agent/pom.xml verify",
     "exit_code": 0,
     "totals": {
-      "tests": 1257,
+      "tests": 1283,
       "failures": 0,
       "errors": 0,
       "skipped": 9
@@ -56,23 +100,139 @@
         "test": "",
         "reason": "System property [forge.codex.live-recovery-e2e] does not exist"
       }
-    ]
+    ],
+    "log": "/tmp/forge-mcp-pr148-fixes/full-agent-verify.log"
   },
   "nexus": {
     "command": "mvn -o -B -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify",
     "exit_code": 0,
     "totals": {
-      "tests": 306,
+      "tests": 362,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "skips": [],
+    "log": "/tmp/forge-mcp-pr148-fixes/full-nexus-verify.log"
+  },
+  "focused": {
+    "errors": {
+      "unit": 10,
+      "nexus_it": 17,
+      "agent_it": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "auth": {
+      "unit": 20,
+      "it": 41,
       "failures": 0,
       "errors": 0,
       "skipped": 0
     }
   },
-  "python": {
-    "runtime_launcher_tests": 11,
-    "fixture_tests": 14,
-    "failures": 0
+  "not_verified": [
+    "Production Java deployment and TLS rollout",
+    "Installed sudoers caller routing",
+    "Runtime denial of actual active Nexus secret paths and process/fd aliases",
+    "Provider login/history migration",
+    "Reboot/power-loss recovery",
+    "Independent Codex 0.156.1 network-denial canary",
+    "Opt-in live tests listed in agent.skips"
+  ],
+  "historical_stage1_on_stage5": {
+    "tested_base": "a102de5c9f18ac793fa2835a9d3f0e86e45c52dc",
+    "product_diff_sha256": "998d5ff2fd72237b1e31d5a22603eb66e7770b4c72ef169338d38fe781917fd6",
+    "agent": {
+      "command": "mvn -o -B -Dapi.version=1.44 -f services/forge-agent/pom.xml verify",
+      "exit_code": 0,
+      "totals": {
+        "tests": 1257,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 9
+      },
+      "skips": [
+        {
+          "class": "com.sitionix.forgeagent.it.tests.RemoteAccessLiveExecutionIT",
+          "test": "",
+          "reason": "System property [forge.remote-access.live-execution] does not exist"
+        },
+        {
+          "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+          "test": "liveCodexActiveTurnIsStoppedAndAnUnrelatedRunStillCompletes",
+          "reason": "System property [forge.codex.live-cancellation-e2e] does not exist"
+        },
+        {
+          "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+          "test": "liveCodexSharedIterationsAndReset",
+          "reason": "System property [forge.codex.live-shared-e2e] does not exist"
+        },
+        {
+          "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+          "test": "",
+          "reason": "System property [forge.codex.live-reset-e2e] does not exist"
+        },
+        {
+          "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+          "test": "liveCodexIsolatesTwoIndependentIterations",
+          "reason": "System property [forge.codex.live-iteration-e2e] does not exist"
+        },
+        {
+          "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+          "test": "liveCodexRestartReconcilesPersistedExactTurnAndUnrelatedWorkflowStillSucceeds",
+          "reason": "System property [forge.codex.live-recovery-e2e] does not exist"
+        },
+        {
+          "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+          "test": "liveCodexResumesTheForgeImplementerSessionAcrossReviewerFeedback",
+          "reason": "System property [forge.codex.live-session-e2e] does not exist"
+        },
+        {
+          "class": "com.sitionix.forgeagent.infrastructure.codex.CodexDurableSessionE2ETest",
+          "test": "",
+          "reason": "System property [forge.codex.live-session-e2e] does not exist"
+        },
+        {
+          "class": "com.sitionix.forgeagent.infrastructure.codex.CodexRecoveryE2ETest",
+          "test": "",
+          "reason": "System property [forge.codex.live-recovery-e2e] does not exist"
+        }
+      ]
+    },
+    "nexus": {
+      "command": "mvn -o -B -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify",
+      "exit_code": 0,
+      "totals": {
+        "tests": 306,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "python": {
+      "runtime_launcher_tests": 11,
+      "fixture_tests": 14,
+      "failures": 0
+    },
+    "concurrent_main": "58f2854f",
+    "integration_with_concurrent_main": "NOT_VERIFIED"
   },
-  "concurrent_main": "58f2854f",
-  "integration_with_concurrent_main": "NOT_VERIFIED"
+  "correction_review": {
+    "spec": "ACCEPT",
+    "quality_security": "ACCEPT",
+    "evidence": "ACCEPT_WITHIN_STATED_LIMITS",
+    "required_findings": 0,
+    "report": "stage-1-review.md",
+    "pr_acceptance": "NOT_ASSESSED",
+    "mergeability": "NOT_ASSESSED"
+  },
+  "full_log_canary_scan": {
+    "synthetic_canaries_checked": 17,
+    "matches": {
+      "full-agent-verify.log": 0,
+      "full-nexus-verify.log": 0
+    }
+  }
 }

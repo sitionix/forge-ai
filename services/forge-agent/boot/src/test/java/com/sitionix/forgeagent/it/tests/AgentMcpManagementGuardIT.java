@@ -90,8 +90,15 @@ class AgentMcpManagementGuardIT {
       manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.CREATE_MCP_CONNECTION_ERROR)
           .header("Authorization",bearer).withRequest("mcp-create-request.json")
           .expectStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-          .andExpectPath(result -> org.assertj.core.api.Assertions.assertThat(result.getResponse().getContentAsString())
-              .doesNotContain("cipher-error-canary","agent-canary-secret"))
+          .andExpectPath(result -> {
+            String body=result.getResponse().getContentAsString();
+            org.assertj.core.api.Assertions.assertThat(body)
+                .doesNotContain("cipher-error-canary","agent-canary-secret");
+            var error=new ObjectMapper().readTree(body);
+            org.assertj.core.api.Assertions.assertThat(error.path("code").asText()).isEqualTo("MCP_OPERATION_FAILED");
+            org.assertj.core.api.Assertions.assertThat(error.path("message").asText()).isEqualTo("MCP management operation failed.");
+            org.assertj.core.api.Assertions.assertThat(error.path("correlationId").isNull()).isTrue();
+          })
           .assertAndCreate();
     } finally { org.mockito.Mockito.reset(cipher); }
     try {
@@ -99,8 +106,13 @@ class AgentMcpManagementGuardIT {
           .when(mcpRepository).findAll(org.mockito.ArgumentMatchers.any());
       manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.LIST_MCP_CONNECTIONS)
           .header("Authorization",bearer).expectStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-          .andExpectPath(result -> org.assertj.core.api.Assertions.assertThat(result.getResponse().getContentAsString())
-              .doesNotContain("database-error-canary"))
+          .andExpectPath(result -> {
+            String body=result.getResponse().getContentAsString();
+            org.assertj.core.api.Assertions.assertThat(body).doesNotContain("database-error-canary");
+            var error=new ObjectMapper().readTree(body);
+            org.assertj.core.api.Assertions.assertThat(error.path("code").asText()).isEqualTo("MCP_OPERATION_FAILED");
+            org.assertj.core.api.Assertions.assertThat(error.path("message").asText()).isEqualTo("MCP management operation failed.");
+          })
           .assertAndCreate();
     } finally { org.mockito.Mockito.reset(mcpRepository); }
     org.assertj.core.api.Assertions.assertThat(output.getAll())

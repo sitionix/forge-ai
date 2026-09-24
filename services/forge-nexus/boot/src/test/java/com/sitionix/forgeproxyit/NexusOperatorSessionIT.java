@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeai.Application;
 import com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentClientAdapter;
 import com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentMcpClientAdapter;
+import com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentClientProperties;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
 import com.sitionix.forgeit.wiremock.api.WireMockPathParams;
@@ -28,6 +29,8 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
@@ -90,6 +93,7 @@ class NexusOperatorSessionIT {
   @Autowired NexusProxyTestManager manager;
   @SpyBean ForgeAgentClientAdapter agentAdapter;
   @SpyBean ForgeAgentMcpClientAdapter mcpAdapter;
+  @Autowired ForgeAgentClientProperties agentClientProperties;
 
   @Test
   void mcpRouteRejectsAbsentSessionAndUnsafeInputLocally(CapturedOutput output) throws Exception {
@@ -110,7 +114,7 @@ class NexusOperatorSessionIT {
         .header("Host",HOST).header("Origin",ORIGIN).header("X-Forge-CSRF",tokens.csrf())
         .cookie("FG_SESSION",tokens.id())
         .andExpectPath(result -> assertThat(result.getResponse().getContentAsString())
-            .doesNotContain("nexus-malformed-canary"))
+            .contains("INVALID_REQUEST","MCP request is invalid.").doesNotContain("nexus-malformed-canary"))
         .assertDefault();
     for(String fixture:new String[]{"mcp-unknown-transport-request.json","mcp-tool-approval-request.json"}){
       manager.mockMvc().ping(NexusAgentMockMvcEndpoints.createMcpConnection(400,fixture))
@@ -255,24 +259,74 @@ class NexusOperatorSessionIT {
         .withPathParameters(PathParams.create().add("id",id)).header("Host",HOST)
         .cookie("FG_SESSION",tokens.id())
         .andExpectPath(result -> assertThat(result.getResponse().getContentAsString())
-            .contains("NOT_FOUND").doesNotContain("upstream-secret-canary"))
+            .contains("NOT_FOUND","MCP connection not found.").doesNotContain("upstream-secret-canary"))
         .assertDefault();
     upstream.verify();
     assertThat(output.getAll()).doesNotContain("upstream-secret-canary");
   }
 
   @Test
-  void mcpUpstreamErrorDoesNotPassThroughRawBody(CapturedOutput output) throws Exception {
+  void mcpAgent500PreservesSafeErrorContract(CapturedOutput output) throws Exception {
     SessionTokens tokens=login();
     var upstream=manager.wiremock().createMapping(ForgeAgentWireMockEndpoints.failedMcpList())
         .header("Authorization",equalTo("Bearer " + encoded(SERVICE))).createDefault();
     manager.mockMvc().ping(NexusAgentMockMvcEndpoints.failedMcpList())
         .header("Host",HOST).cookie("FG_SESSION",tokens.id())
         .andExpectPath(result -> assertThat(result.getResponse().getContentAsString())
-            .doesNotContain("upstream-secret-canary","RAW_UPSTREAM"))
+            .contains("MCP_OPERATION_FAILED","MCP management operation failed.")
+            .doesNotContain("upstream-secret-canary"))
         .assertDefault();
     upstream.verify();
     assertThat(output.getAll()).doesNotContain("upstream-secret-canary");
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints={400,409,422})
+  void mcpValidAgentErrorFieldsAndStatusArePreserved(int status) throws Exception {
+    SessionTokens tokens=login();
+    var upstream=manager.wiremock().createMapping(ForgeAgentWireMockEndpoints.mcpListError(
+            status,"agent-mcp-custom-error-response.json"))
+        .header("Authorization",equalTo("Bearer " + encoded(SERVICE))).createDefault();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.mcpListError(status))
+        .header("Host",HOST).cookie("FG_SESSION",tokens.id())
+        .andExpectPath(result -> {
+          var error=new ObjectMapper().readTree(result.getResponse().getContentAsString());
+          assertThat(error.path("code").asText()).isEqualTo("CUSTOM_AGENT_ERROR");
+          assertThat(error.path("message").asText()).isEqualTo("Agent rejected MCP operation.");
+          assertThat(error.path("correlationId").asText()).isEqualTo("corr-123");
+        }).assertDefault();
+    upstream.verify();
+  }
+
+  @Test
+  void mcpMalformedAgentErrorBecomesSafe502(CapturedOutput output) throws Exception {
+    SessionTokens tokens=login();
+    var upstream=manager.wiremock().createMapping(ForgeAgentWireMockEndpoints.mcpListError(
+            500,"agent-mcp-malformed-error-response.json"))
+        .header("Authorization",equalTo("Bearer " + encoded(SERVICE))).createDefault();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.mcpListError(502))
+        .header("Host",HOST).cookie("FG_SESSION",tokens.id())
+        .andExpectPath(result -> {
+          String body=result.getResponse().getContentAsString();
+          assertThat(body).contains("UPSTREAM_INVALID_RESPONSE").doesNotContain("upstream-secret-canary");
+        }).assertDefault();
+    upstream.verify();
+    assertThat(output.getAll()).doesNotContain("upstream-secret-canary");
+  }
+
+  @Test
+  void disabledAgentTransportBecomes503() throws Exception {
+    SessionTokens tokens=login();
+    agentClientProperties.setEnabled(false);
+    try {
+      manager.mockMvc().ping(NexusAgentMockMvcEndpoints.mcpListError(503))
+          .header("Host",HOST).cookie("FG_SESSION",tokens.id())
+          .andExpectPath(result -> assertThat(result.getResponse().getContentAsString())
+              .contains("UPSTREAM_UNAVAILABLE"))
+          .assertDefault();
+    } finally {
+      agentClientProperties.setEnabled(true);
+    }
   }
 
   @Test

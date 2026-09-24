@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-import com.sitionix.forgeai.domain.exception.AgentClientException;
 import com.sitionix.forgeai.domain.exception.McpAgentClientException;
 import com.sitionix.forgeai.domain.model.mcp.*;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest;
@@ -13,10 +12,7 @@ import java.net.URI;
 import java.util.Set;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestClientException;
 
 class ForgeAgentMcpClientAdapterTest {
     private final ForgeAgentHttpClient http=mock(ForgeAgentHttpClient.class);
@@ -40,46 +36,17 @@ class ForgeAgentMcpClientAdapterTest {
         }
     }
 
-    @Test void rawHttpBodyHeadersAndCauseNeverLeaveMcpPort(){
-        when(executor.execute(any())).thenThrow(new AgentClientException(500,"body-canary",
-                Map.of("X-Secret",List.of("header-canary")),new IllegalStateException("cause-canary")));
-        assertThatThrownBy(adapter::list).satisfies(this::safeGraph);
+    @Test void mapsResponseAfterTransportExecution(){
+        var response=mock(com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse.class);
+        when(executor.executeMcp(any())).thenReturn(List.of(response));
+        assertThatThrownBy(adapter::list).isInstanceOf(IllegalStateException.class)
+            .hasMessage("Invalid MCP upstream response");
+        verify(executor).executeMcp(any());
     }
 
-    @Test void knownHttpStatusesKeepOnlySafeCategories(){
-        for(var entry:Map.of(400,McpAgentClientException.Category.INVALID_REQUEST,
-                404,McpAgentClientException.Category.NOT_FOUND,
-                500,McpAgentClientException.Category.UPSTREAM_ERROR).entrySet()){
-            reset(executor);
-            when(executor.execute(any())).thenThrow(new AgentClientException(entry.getKey(),"body-canary",
-                    Map.of("X-Secret",List.of("header-canary")),new IllegalStateException("cause-canary")));
-            assertThatThrownBy(adapter::list).isInstanceOf(McpAgentClientException.class)
-                .satisfies(error -> {
-                    assertThat(((McpAgentClientException)error).category()).isEqualTo(entry.getValue());
-                    safeGraph(error);
-                });
-        }
-        reset(executor);
-        when(executor.execute(any())).thenThrow(new ResourceAccessException("transport-canary"));
-        assertThatThrownBy(adapter::list).isInstanceOf(McpAgentClientException.class)
-            .satisfies(error -> assertThat(((McpAgentClientException)error).category())
-                .isEqualTo(McpAgentClientException.Category.UPSTREAM_UNAVAILABLE));
-    }
-
-    @Test void transportAndDecodeCausesNeverLeaveMcpPort(){
-        for (RuntimeException raw : List.of(new ResourceAccessException("transport-canary"),
-                new RestClientException("decode-canary"))) {
-            reset(executor);
-            when(executor.execute(any())).thenThrow(raw);
-            assertThatThrownBy(adapter::list).satisfies(this::safeGraph);
-        }
-    }
-
-    private void safeGraph(Throwable error){
-        assertThat(error.getCause()).isNull();
-        assertThat(error.getSuppressed()).isEmpty();
-        String stack=java.util.Arrays.toString(error.getStackTrace());
-        assertThat(error.toString()+stack).doesNotContain("body-canary","header-canary","cause-canary",
-                "transport-canary","decode-canary");
+    @Test void typedErrorCrossesAdapterWithoutPolicy(){
+        var error=new McpAgentClientException(409,"DEPENDENCY_CYCLE","cycle",null);
+        when(executor.executeMcp(any())).thenThrow(error);
+        assertThatThrownBy(adapter::list).isSameAs(error);
     }
 }

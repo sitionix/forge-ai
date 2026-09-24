@@ -78,7 +78,7 @@ encoded as unpadded base64url. Configure file paths only; do not put credential
 values in environment variables, process arguments, URLs, or application YAML.
 The Nexus bootstrap and Agent service bearer values must differ.
 
-An operator sends the bootstrap secret in the JSON body of
+With MCP enabled alone, an operator sends the bootstrap secret in the JSON body of
 `POST /api/v1/operator/session` from the configured browser origin with its exact
 `Origin` and `Host` headers. Nexus returns a host-only `FG_SESSION` HttpOnly,
 SameSite Strict cookie and a `csrfToken`; the browser sends that cookie on later
@@ -106,7 +106,9 @@ provisioning, but is not required for key lookup. Verify protected-file mode and
 runtime read denial before rotation. Existing ciphertext remains under its old key until rotated.
 For each credential-bearing connection, an authenticated operator sends
 `POST /api/v1/infrastructure/agents/integrations/mcp/connections/{id}/reencrypt`
-with `FG_SESSION`, exact `Origin`/`Host`, and `X-Forge-CSRF`. HTTP 204 confirms
+with exact `Origin`/`Host` and the active mode's session/CSRF: `FG_SESSION` plus
+`X-Forge-CSRF` for MCP-only, or `FORGE_REMOTE_OPERATOR` plus `X-CSRF-TOKEN`
+in combined mode (see below). HTTP 204 confirms
 that single record was reencrypted to the active key; no plaintext is returned.
 Verify all retained rows have the new key ID through controlled database metadata
 inspection before removing the old key from the protected file and restarting.
@@ -215,3 +217,36 @@ These tests cover implementation contracts and off-mode regression. Mocked syste
 assertions are never actual isolation evidence. The final Task 2a ledger records
 exact completed commands, counts, source hashes, privileged result and remaining
 limits before Stage 1 acceptance can be considered.
+
+## Combined Remote Access and MCP management
+
+With both features enabled, configure the existing Remote Access operator secret
+file and explicit loopback origin once (`forge.remote-access.operator-secret-file`,
+`forge.remote-access.operator-origin`). MCP bootstrap/origin settings are optional;
+if supplied they must resolve to that same operator file and equivalent origin.
+`forge.mcp.session-ttl` is inactive in combined mode: the existing Remote Access
+15-minute absolute session lifetime applies.
+
+Use only `POST /api/v1/infrastructure/agents/remote-access/operator/login` with
+`{"secret":"<bootstrap>"}`. Its `FORGE_REMOTE_OPERATOR` HttpOnly/SameSite Strict cookie
+covers the Nexus context root (Secure for HTTPS). The returned `csrfToken` goes in
+`X-CSRF-TOKEN` for both RA and MCP mutations, together with the exact Origin.
+The existing RA `/operator/session` and `/operator/logout` endpoints manage this
+single session. `/api/v1/operator/session` does not create a combined-mode session.
+MCP-only retains `FG_SESSION`, `X-Forge-CSRF`, and its existing login endpoint,
+including HTTPS non-loopback origins; RA-only retains its scoped cookie.
+
+The existing two service files remain distinct: MCP uses
+`forge.mcp.agent-service-credential-file` on Nexus and
+`forge.mcp.service-credential-file` on Agent; RA uses
+`forge.remote-access.service-secret-file` on Nexus and
+`forge.agent.remote-access.service-secret-file` on Agent. Operator bootstrap and
+both service credential values must all differ. Combined Agent validates the two
+service audiences independently and routes RA requests only to the RA guard.
+Other control routes remain protected by the MCP service guard. Both combined
+listeners retain the RA loopback bind and no forwarded-header trust requirements.
+
+Agent startup passes the active RA service file to the runtime protected-path
+verifier alongside the three MCP files. This does not prove runtime denial of
+Nexus-side files: deployment verification of all active Nexus secrets, process
+and descriptor aliases remains **NOT_VERIFIED** without an actual runtime probe.

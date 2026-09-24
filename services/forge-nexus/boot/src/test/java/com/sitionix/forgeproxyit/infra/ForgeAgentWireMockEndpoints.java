@@ -41,6 +41,11 @@ public final class ForgeAgentWireMockEndpoints {
                 Void.class, com.fasterxml.jackson.databind.JsonNode.class,
                 (WiremockDefault) context -> context.plainUrl().responseStatus(500).responseBody("agent-mcp-error-response.json"));
     }
+    public static Endpoint<Void, com.fasterxml.jackson.databind.JsonNode> mcpListError(int status, String fixture) {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.GET,
+                Void.class, com.fasterxml.jackson.databind.JsonNode.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(status).responseBody(fixture));
+    }
     public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse> createMcpConnection() {
         return Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.POST,
                 com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest.class,
@@ -56,7 +61,7 @@ public final class ForgeAgentWireMockEndpoints {
     public static Endpoint<Void, com.fasterxml.jackson.databind.JsonNode> missingMcpConnection() {
         return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}",HttpMethod.GET,
                 Void.class,com.fasterxml.jackson.databind.JsonNode.class,
-                (WiremockDefault) context -> context.plainUrl().responseStatus(404).responseBody("agent-mcp-error-response.json"));
+                (WiremockDefault) context -> context.plainUrl().responseStatus(404).responseBody("agent-mcp-missing-response.json"));
     }
     public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse> updateMcpConnection(String requestFixture) {
         return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}",HttpMethod.PUT,

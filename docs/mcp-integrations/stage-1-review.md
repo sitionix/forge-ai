@@ -1,4 +1,6 @@
-# Stage1 — фінальний незалежний аудит frozen source
+# Stage1 — історичний аудит Stage5 base та PR #148 corrections
+
+> Нижче — історичний audit на Stage5 base a102de5c. Його Stage6 blocker усунуто поточним correction; актуальні tests та межі — у [evidence](stage-1-evidence.md). Незалежні scoped error/auth audits поточного correction — ACCEPT без required findings. Це не PR acceptance/merge.
 
 Перевірений checkout: `/tmp/forge-mcp-stage1`, `feature/SITIONIX-142`; immutable base **a102de5c** (Remote Access Stage5). Audit-only: продукт не редагував, завершені suites/root fixture не повторював, Git/PR/мережу/deployment не змінював. Застосовано skill `review` та його review-strategy. Це висновок про код і докази, не прийняття actual PR/merge.
 
@@ -49,3 +51,47 @@ Quality/security verdict: **ACCEPT для того самого frozen scope**, 
 **ACCEPT**
 
 Delivery note: historical pending/not-implemented evidence wording was replaced with final results and the concrete Stage6 integration blocker before publication. Product code unchanged after audit.
+
+
+## Фінальний незалежний audit-only PR148: auth + errors
+
+**Spec verdict: ACCEPT. Quality/security verdict: ACCEPT. Evidence verdict: ACCEPT у заявлених межах.**
+
+Обов’язкових зауважень не виявлено. Висновок стосується frozen correction source у `/tmp/forge-mcp-stage1` після інтеграції main `58f2854f`, відносно correction base `d6fa685e`. Це прийняття перевіреного коду; прийняття PR, актуальний CI, delivery state та mergeability тут не оцінюються.
+
+Прочитано final-review-brief, auth/error requirements, scoped reports/reviews, progress ledger, final-diff з appended NEW FILE sections, реалізацію ключових меж та тести, evidence/runbook/verification JSON. Застосовано review skill. Код, Git, PR та deployment не змінювалися. Пройдені suites не перезапускалися: конкретної нової прогалини, що вимагала б такого запуску, не встановлено.
+
+## Інтеграція й безпека
+
+- Agent route ownership явний: MCP guard звільняє RA route лише за фактично доступної іменованої registration RA guard. Обидва guards повторно обчислюють current target через спільний RequestPath/PathPattern policy; INCLUDE враховує target attribute. Реєстрації охоплюють REQUEST/FORWARD/INCLUDE/ASYNC/ERROR; немає once-filter marker або OR між secrets. Duplicate Authorization та cross-audience credentials відхиляються. У combined startup Agent незалежно від Nexus забороняє однакові значення двох service credentials.
+- Nexus combined mode вимикає MCP-only session configuration/filter/controller через McpOnlyCondition. Existing RA login, session store, роль, CSRF і logout обслуговують весь control surface. Немає потреби в попередній FG_SESSION або другому bootstrap. Cookie поширюється на context root; RA-only лишається scoped. Host/Origin/loopback/forwarded-header checks і абсолютний строк session збережено. Nested unsafe dispatch додатково перевіряє CSRF; canonical public exceptions не роблять protected redispatch публічним.
+- Explicit terminal `/error` handling застосовується лише до ERROR dispatch зі status 400–599 та не викликає controller chain. Він не делегує довільний error target і не перетворює RA failure на несумісний MCP bearer challenge. Typed MCP controller errors повертаються через controller advice, без такого redispatch.
+- Canonical operator bootstrap/origin у combined належать RA; optional MCP aliases приймаються лише за узгодженості. Credential values перевіряються попарно; protected readers та constant-time comparisons використані повторно. MCP TTL явно документовано як inactive у combined. MCP-only HTTPS-origin поведінка не змінена.
+- AgentMcpProtectedConfiguration включає active RA service file до справжнього startup verifier prerequisite. Unit/config test та actual combined context перевіряють передачу шляху. Mock RuntimeBoundaryVerifier у HTTP fixture не подається як OS isolation proof.
+
+## Error contract та якість
+
+- ForgeAgentMcpClientAdapter виконує request mapping → executeMcp → response mapping. Category, adapter safe/catch/status routing відсутні. Зміни transport policy локалізовані в existing executor; execute для решти клієнтів зберігає попередню семантику.
+- Валідний typed error з HTTP 400–599 зберігає actual status/code/message/optional correlationId. Parser відхиляє unknown fields, trailing JSON, duplicate keys, wrong types та blank required fields. Malformed response дає static 502; ResourceAccessException — static 503. Немає allowlist кодів або эвристики пошуку secrets у trusted message.
+- Domain exception не зберігає raw response/headers/cause; printable message статичний, suppression і stack trace вимкнені. API повертає лише типізовані поля. Local validation/binding має узгоджену feature shape; рекомендований scoped review assertion INVALID_REQUEST додано до malformed credential HTTP case з zero upstream assertion.
+- Actual Agent forced500 fixture та Nexus500 contract узгоджені; 400/404/409/422 preservation, malformed502, unavailable503 та canary cases мають unit/HTTP evidence. Combined auth не вводить новий error mapping і не перехоплює валідні typed error envelopes.
+- Зміни залишаються у Stage1 та чинних configuration/filter/client механізмах. Нового IAM, UI, OAuth, Stage2 або загального transport/security framework не додано. Конкретного дефекту структури чи підтримуваності, що блокував би прийняття, не встановлено.
+
+## Незалежна звірка evidence
+
+Аудитор повторно прочитав XML-файли, перелічені у full-agent-results.json та full-nexus-results.json, перевірив їхню свіжість відносно `1790239281` і самостійно підсумував атрибути tests/failures/errors/skipped:
+
+| Suite | XML reports | Tests | Failures | Errors | Skipped |
+|---|---:|---:|---:|---:|---:|
+| Agent full verify | 143 | 1283 | 0 | 0 | 9 |
+| Nexus full verify | 60 | 362 | 0 | 0 | 0 |
+
+Stale XML у перевіреному наборі немає. Обидва full logs містять BUILD SUCCESS. Усі per-file SHA256 з correction_source_files у repository verification JSON збігаються з поточними файлами. Значення в evidence markdown та verification JSON узгоджені. Це незалежна перевірка наявних результатів, не новий запуск Maven.
+
+Standalone та combined suites наявні у full-run evidence. Реальні Tomcat тести підтверджують Agent cross-audience denial, aliases і redispatch без target controller invocation; Nexus cookie scope, rotation/logout та public-to-protected redispatch без upstream. ForgeIT combined тести користуються існуючими typed descriptors/managers. Попередній optional local400 assertion враховано.
+
+## Межі
+
+Дев’ять Agent skips — явно opt-in live checks, не PASS. Production TLS/Java deployment, installed sudoers routing, runtime denial фактичних Nexus secrets/process/fd aliases, live provider/history migration і reboot recovery лишаються NOT_VERIFIED. Agent RA mutation у correction tests доводить досягнення cancellation controller для відсутнього synthetic invitation; повний SSH lifecycle не доведено. Disabled-client Nexus503 HTTP case відрізняється від transport ResourceAccessException unit case, і документація це чесно пояснює. Історичні privileged/Python/Stage5 результати не приписані поточному correction run. Auth compilation RED не названо behavior RED.
+
+**Фінальний audit verdict: ACCEPT.**

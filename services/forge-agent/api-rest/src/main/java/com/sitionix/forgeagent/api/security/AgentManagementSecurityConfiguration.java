@@ -15,10 +15,12 @@ public class AgentManagementSecurityConfiguration {
     @Bean ProtectedCredentialFile agentServiceCredential(@Value("${forge.mcp.service-credential-file}") Path path) {
         return new ProtectedCredentialFile(path);
     }
-    @Bean FilterRegistrationBean<AgentManagementAuthenticationFilter> agentManagementGuard(ProtectedCredentialFile credential) {
-        var bean = new FilterRegistrationBean<>(new AgentManagementAuthenticationFilter(credential));
-        bean.setDispatcherTypes(EnumSet.of(DispatcherType.REQUEST,DispatcherType.ASYNC,DispatcherType.ERROR,DispatcherType.FORWARD));
+    @Bean FilterRegistrationBean<AgentManagementAuthenticationFilter> agentManagementGuard(ProtectedCredentialFile credential,
+            @org.springframework.beans.factory.annotation.Qualifier("remoteAccessServiceFilter") org.springframework.beans.factory.ObjectProvider<FilterRegistrationBean<com.sitionix.forgeagent.api.remoteaccess.RemoteAccessServiceFilter>> remoteOwner) {
+        var bean = new FilterRegistrationBean<>(new AgentManagementAuthenticationFilter(credential,remoteOwner.getIfAvailable()!=null));
+        bean.setDispatcherTypes(EnumSet.of(DispatcherType.REQUEST,DispatcherType.ASYNC,DispatcherType.ERROR,DispatcherType.FORWARD,DispatcherType.INCLUDE));
         bean.addUrlPatterns("/*");
+        bean.setAsyncSupported(true);
         bean.setOrder(Integer.MIN_VALUE);
         return bean;
     }

@@ -30,11 +30,11 @@ public final class OperatorManagementAuthenticationFilter implements Filter {
         response.setHeader("Cache-Control","no-store");
         String uri=request.getRequestURI(), context=request.getContextPath();
         if (!uri.startsWith(context)) { response.sendError(403,"Forbidden"); return; }
-        String path=uri.substring(context.length());
-        if ((request.getMethod().equals("GET") || request.getMethod().equals("HEAD")) && publicStatic(path)) {
+        String path=OperatorPublicRoutes.path(request);
+        if ((request.getMethod().equals("GET") || request.getMethod().equals("HEAD")) && OperatorPublicRoutes.publicStatic(path)) {
             chain.doFilter(input,output); return;
         }
-        if (publicHealth(path)) {
+        if (OperatorPublicRoutes.publicHealth(path)) {
             chain.doFilter(input,output); return;
         }
         if (!safeHost(request) || !safeOrigin(request)) { response.sendError(403,"Forbidden"); return; }
@@ -69,17 +69,6 @@ public final class OperatorManagementAuthenticationFilter implements Filter {
         return safeMethod(request.getMethod()) || values.size()==1;
     }
     private static boolean safeMethod(String method) { return method.equals("GET") || method.equals("HEAD") || method.equals("OPTIONS"); }
-    private static boolean publicHealth(String path) {
-        return path.equals("/actuator/info") || path.matches("/actuator/health(/[A-Za-z0-9_-]+)*");
-    }
-    private static boolean publicStatic(String path) {
-        if (path.contains("%") || path.contains(";") || path.contains("\\") || path.contains("//")
-                || path.contains("/./") || path.contains("/../") || path.endsWith("/.") || path.endsWith("/.."))
-            return false;
-        return path.equals("/") || path.equals("/index.html") || path.equals("/favicon.ico")
-                || path.equals("/manifest.webmanifest") || path.equals("/robots.txt")
-                || (path.matches("/(assets|static)/[A-Za-z0-9._/-]+") && !path.endsWith("/"));
-    }
     private static boolean loopback(String host) { return host.equalsIgnoreCase("localhost") || host.equals("127.0.0.1") || host.equals("::1") || host.equals("[::1]"); }
     private static URI canonical(URI value) {
         String scheme=value.getScheme().toLowerCase(Locale.ROOT);

@@ -1,12 +1,23 @@
 package com.sitionix.forgeai.domain.exception;
 
-/** MCP management failures contain only a fixed category, never an upstream payload or cause. */
+/** Only parsed error fields cross the MCP domain port. Raw transport data stays in the client. */
 public final class McpAgentClientException extends RuntimeException {
-    public enum Category { INVALID_REQUEST, NOT_FOUND, UPSTREAM_UNAVAILABLE, UPSTREAM_ERROR }
-    private final Category category;
-    public McpAgentClientException(Category category) {
-        super("MCP Agent management: " + category.name(), null, false, false);
-        this.category=category;
+    private final int statusCode;
+    private final String code;
+    private final String upstreamMessage;
+    private final String correlationId;
+
+    public McpAgentClientException(int statusCode, String code, String upstreamMessage,
+                                   String correlationId) {
+        super("MCP Agent management failure", null, false, false);
+        this.statusCode = statusCode;
+        this.code = code;
+        this.upstreamMessage = upstreamMessage;
+        this.correlationId = correlationId;
     }
-    public Category category(){return category;}
+
+    public int statusCode() { return statusCode; }
+    public String code() { return code; }
+    public String upstreamMessage() { return upstreamMessage; }
+    public String correlationId() { return correlationId; }
 }

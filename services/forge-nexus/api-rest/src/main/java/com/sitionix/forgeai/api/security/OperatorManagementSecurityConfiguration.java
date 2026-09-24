@@ -16,6 +16,7 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods=false)
 @ConditionalOnProperty(name="forge.mcp.enabled",havingValue="true")
+@org.springframework.context.annotation.Conditional(McpOnlyCondition.class)
 @EnableConfigurationProperties(McpManagementProperties.class)
 public class OperatorManagementSecurityConfiguration {
     @Bean URI operatorOrigin(McpManagementProperties settings) {
@@ -40,7 +41,7 @@ public class OperatorManagementSecurityConfiguration {
     }
     @Bean FilterRegistrationBean<OperatorManagementAuthenticationFilter> operatorGuard(OperatorSessionService sessions,URI operatorOrigin) {
         var bean=new FilterRegistrationBean<>(new OperatorManagementAuthenticationFilter(sessions,operatorOrigin));
-        bean.setDispatcherTypes(EnumSet.of(DispatcherType.REQUEST,DispatcherType.ASYNC,DispatcherType.ERROR,DispatcherType.FORWARD));
+        bean.setDispatcherTypes(EnumSet.of(DispatcherType.REQUEST,DispatcherType.ASYNC,DispatcherType.ERROR,DispatcherType.FORWARD,DispatcherType.INCLUDE));
         bean.addUrlPatterns("/*");
         bean.setOrder(Integer.MIN_VALUE);
         return bean;

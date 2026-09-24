@@ -183,3 +183,46 @@
 - [docs/mcp-integrations/stage-1-review.md](../../docs/mcp-integrations/stage-1-review.md)
 - [docs/mcp-integrations/stage-1-verification.json](../../docs/mcp-integrations/stage-1-verification.json)
 - [docs/mcp-integrations/stage-2-plan.md](../../docs/mcp-integrations/stage-2-plan.md)
+
+
+## PR #148 auth/error correction — точні змінені та нові файли
+
+- `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/remoteaccess/RemoteAccessServiceFilter.java`
+- `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilter.java`
+- `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementRoutePolicy.java`
+- `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementSecurityConfiguration.java`
+- `services/forge-agent/api-rest/src/test/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilterTest.java`
+- `services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/AgentMcpProtectedConfiguration.java`
+- `services/forge-agent/boot/src/main/java/com/sitionix/forgeagent/RemoteAccessManagementConfiguration.java`
+- `services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/AgentMcpProtectedConfigurationTest.java`
+- `services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/RemoteAccessManagementConfigurationTest.java`
+- `services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/AgentCombinedManagementGuardIT.java`
+- `services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/tests/AgentMcpManagementGuardIT.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandler.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/remoteaccess/RemoteAccessBrowserFilter.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/remoteaccess/RemoteAccessSecurityConfiguration.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/McpOnlyCondition.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorManagementAuthenticationFilter.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorManagementSecurityConfiguration.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorPublicRoutes.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/security/OperatorSessionController.java`
+- `services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandlerTest.java`
+- `services/forge-nexus/boot/src/main/java/com/sitionix/forgeai/CombinedOperatorCredentialConfiguration.java`
+- `services/forge-nexus/boot/src/main/java/com/sitionix/forgeai/RemoteAccessOperatorConfiguration.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeai/CombinedOperatorCredentialConfigurationTest.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusCombinedOperatorHttpIT.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusCombinedOperatorSessionIT.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusOperatorSessionIT.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/ForgeAgentWireMockEndpoints.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/NexusAgentMockMvcEndpoints.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/infra/RemoteAccessEndpoints.java`
+- `services/forge-nexus/boot/src/test/resources/forge-it/mockmvc/default/request/remote-operator-login.json`
+- `services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-custom-error-response.json`
+- `services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-error-response.json`
+- `services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-malformed-error-response.json`
+- `services/forge-nexus/boot/src/test/resources/forge-it/wiremock/default/response/agent-mcp-missing-response.json`
+- `services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutor.java`
+- `services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapter.java`
+- `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutorTest.java`
+- `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapterTest.java`
+- `services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/exception/McpAgentClientException.java`

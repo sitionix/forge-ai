@@ -8,13 +8,22 @@ import java.util.Collections;
 /** Enabled-mode guard for every Agent control request, including redispatches. */
 public final class AgentManagementAuthenticationFilter implements Filter {
     private final ProtectedCredentialFile credential;
-    public AgentManagementAuthenticationFilter(ProtectedCredentialFile credential) { this.credential = credential; }
+    private final boolean remoteAccessOwned;
+    public AgentManagementAuthenticationFilter(ProtectedCredentialFile credential) { this(credential,false); }
+    public AgentManagementAuthenticationFilter(ProtectedCredentialFile credential,boolean remoteAccessOwned) { this.credential=credential;this.remoteAccessOwned=remoteAccessOwned; }
     @Override public void doFilter(ServletRequest input,ServletResponse output,FilterChain chain) throws IOException,ServletException {
         HttpServletRequest request = (HttpServletRequest)input;
         HttpServletResponse response = (HttpServletResponse)output;
-        String uri=request.getRequestURI(), context=request.getContextPath();
-        if (!uri.startsWith(context)) { response.sendError(403,"Forbidden"); return; }
-        String path = uri.substring(context.length());
+        String path;
+        try { path=AgentManagementRoutePolicy.path(request);
+            // Container error rendering is a terminal response, never a controller bypass.
+            // In particular an RA failure must not become a second-audience 401 at /error.
+            if (request.getDispatcherType()==DispatcherType.ERROR && path.equals("/error")
+                    && request.getAttribute(RequestDispatcher.ERROR_STATUS_CODE) instanceof Integer status && status>=400 && status<=599) {
+                response.setHeader("Cache-Control","no-store");response.setStatus(status);return;
+            }
+            if (remoteAccessOwned && AgentManagementRoutePolicy.remoteAccess(request)) { chain.doFilter(input,output);return; }
+        } catch (IllegalArgumentException invalid) { response.setStatus(403);return; }
         if ((request.getMethod().equals("GET") || request.getMethod().equals("HEAD")) && publicStatic(path)) {
             chain.doFilter(input,output); return;
         }

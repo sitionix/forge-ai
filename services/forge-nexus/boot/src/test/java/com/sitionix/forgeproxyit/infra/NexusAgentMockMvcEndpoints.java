@@ -39,7 +39,12 @@ public final class NexusAgentMockMvcEndpoints {
     public static Endpoint<Void, InfrastructureErrorResponse> failedMcpList() {
         return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections", HttpMethod.GET,
                 Void.class, InfrastructureErrorResponse.class,
-                (MockmvcDefault) context -> context.expectStatus(502));
+                (MockmvcDefault) context -> context.expectStatus(500));
+    }
+    public static Endpoint<Void, InfrastructureErrorResponse> mcpListError(int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(status));
     }
     public static Endpoint<Void, InfrastructureErrorResponse> invalidMcpId() {
         return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/not-a-uuid", HttpMethod.GET,
