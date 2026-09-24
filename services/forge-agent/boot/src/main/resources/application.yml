@@ -2,20 +2,8 @@ server:
   address: ${FORGE_AGENT_HOST:}
   port: ${FORGE_AGENT_PORT:7091}
 spring:
-  cache:
-    type: caffeine
-    cache-names: mcpRegistryPages
-    caffeine:
-      spec: maximumSize=1000,expireAfterWrite=5m
   application:
     name: forge-agent
-  cloud:
-    openfeign:
-      client:
-        config:
-          mcpRegistry:
-            connectTimeout: 3000
-            readTimeout: 5000
   datasource:
     url: ${FORGE_AGENT_DB_URL:jdbc:postgresql://localhost:54329/forge_agent}
     username: ${FORGE_AGENT_DB_USERNAME:forge_agent}
@@ -41,6 +29,8 @@ forge:
     enabled: ${FORGE_MCP_ENABLED:false}
     registry:
       base-url: ${FORGE_MCP_REGISTRY_BASE_URL:https://registry.modelcontextprotocol.io}
+      connect-timeout: ${FORGE_MCP_REGISTRY_CONNECT_TIMEOUT:3s}
+      read-timeout: ${FORGE_MCP_REGISTRY_READ_TIMEOUT:5s}
     runtime:
       helper: ${FORGE_MCP_RUNTIME_HELPER:/usr/local/libexec/forge-runtime-launcher}
   agent:

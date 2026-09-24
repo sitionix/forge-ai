@@ -10,13 +10,14 @@ import java.util.List;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClientException;
 
 @Component
 @ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
 public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
-    private final McpRegistryFeignClient client;
+    private final McpRegistryHttpClient client;
 
-    public McpRegistryCatalogAdapter(McpRegistryFeignClient client) {
+    public McpRegistryCatalogAdapter(McpRegistryHttpClient client) {
         this.client = client;
     }
 
@@ -24,17 +25,17 @@ public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
     @Cacheable("mcpRegistryPages")
     public McpAvailablePage list(String search, String cursor, int limit) {
         try {
-            McpRegistryFeignClient.Page page = client.list(search, cursor, limit, "latest");
+            McpRegistryHttpClient.Page page = client.list(search, cursor, limit, "latest");
             if (page == null || page.servers() == null || page.metadata() == null) {
                 throw new McpRegistryUnavailableException();
             }
             List<McpAvailableServer> servers = new ArrayList<>();
-            for (McpRegistryFeignClient.Entry entry : page.servers()) {
+            for (McpRegistryHttpClient.Entry entry : page.servers()) {
                 if (entry == null || entry.server() == null || entry.server().name() == null
                         || entry.server().name().isBlank() || entry.server().remotes() == null) {
                     continue;
                 }
-                for (McpRegistryFeignClient.Remote remote : entry.server().remotes()) {
+                for (McpRegistryHttpClient.Remote remote : entry.server().remotes()) {
                     if (remote != null && "streamable-http".equals(remote.type())
                             && remote.url() != null && httpUrl(remote.url())) {
                         servers.add(new McpAvailableServer(entry.server().name(), entry.server().title(),
@@ -44,7 +45,7 @@ public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
                 }
             }
             return new McpAvailablePage(List.copyOf(servers), page.metadata().nextCursor());
-        } catch (feign.FeignException exception) {
+        } catch (RestClientException exception) {
             throw new McpRegistryUnavailableException(exception);
         }
     }

@@ -8,7 +8,7 @@ import com.sitionix.forgeagent.domain.port.McpCredentialCipher;
 import com.sitionix.forgeagent.domain.port.McpConnectionRepository;
 import com.sitionix.forgeagent.application.mcp.McpConnectionService;
 import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryVerifier;
-import com.sitionix.forgeagent.infrastructure.local.mcp.registry.McpRegistryFeignClient;
+import com.sitionix.forgeagent.infrastructure.local.mcp.registry.McpRegistryHttpClient;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
@@ -78,7 +78,7 @@ class AgentMcpManagementGuardIT {
   @SpyBean ForgeAgentController controller;
   @SpyBean McpCredentialCipher cipher;
   @SpyBean McpConnectionRepository mcpRepository;
-  @MockBean McpRegistryFeignClient registryClient;
+  @MockBean McpRegistryHttpClient registryClient;
   @Autowired McpConnectionService mcpService;
   @Autowired JdbcTemplate jdbc;
 

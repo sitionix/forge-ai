@@ -26,7 +26,6 @@
     </modules>
 
     <properties>
-        <spring-cloud.version>2023.0.3</spring-cloud.version>
         <java.version>21</java.version>
         <lombok.version>1.18.34</lombok.version>
         <mockito.version>5.12.0</mockito.version>
@@ -38,13 +37,6 @@
 
     <dependencyManagement>
         <dependencies>
-            <dependency>
-                <groupId>org.springframework.cloud</groupId>
-                <artifactId>spring-cloud-dependencies</artifactId>
-                <version>${spring-cloud.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
             <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>api-rest</artifactId>

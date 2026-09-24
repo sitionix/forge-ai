@@ -5,12 +5,6 @@ server:
   servlet:
     context-path: /fgaisox
 spring:
-  cloud:
-    openfeign:
-      client:
-        config:
-          mcpAvailableAgent:
-            url: ${forge.ai.infrastructure.agent.base-url}
   config:
     import:
       - optional:file:${FORGE_CONFIG_DIR:./config}/forge-ai.yaml

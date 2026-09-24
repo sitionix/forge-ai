@@ -2,17 +2,15 @@ package com.sitionix.forgeagent.infrastructure.local.mcp.registry;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.util.List;
-import org.springframework.cloud.openfeign.FeignClient;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.service.annotation.GetExchange;
 
-@FeignClient(name = "mcpRegistry", url = "${forge.mcp.registry.base-url}")
-public interface McpRegistryFeignClient {
-    @GetMapping("/v0.1/servers")
-    Page list(@RequestParam(required = false) String search,
-              @RequestParam(required = false) String cursor,
-              @RequestParam int limit,
-              @RequestParam String version);
+public interface McpRegistryHttpClient {
+    @GetExchange("/v0.1/servers")
+    Page list(@RequestParam(name = "search", required = false) String search,
+              @RequestParam(name = "cursor", required = false) String cursor,
+              @RequestParam(name = "limit") int limit,
+              @RequestParam(name = "version") String version);
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record Page(List<Entry> servers, Metadata metadata) {}

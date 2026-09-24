@@ -21,6 +21,10 @@ public class ForgeAiMcpAvailableController {
     public McpAvailablePageResponse list(@RequestParam(required = false) String search,
                                  @RequestParam(required = false) String cursor,
                                  @RequestParam(defaultValue = "20") int limit) {
+        if (limit < 1 || limit > 100 || (search != null && search.length() > 200)
+                || (cursor != null && cursor.length() > 2048)) {
+            throw new IllegalArgumentException("Invalid MCP catalog request");
+        }
         return McpAvailablePageResponse.from(useCase.list(search, cursor, limit));
     }
 }
