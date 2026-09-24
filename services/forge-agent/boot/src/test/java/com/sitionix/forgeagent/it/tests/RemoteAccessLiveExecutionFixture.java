@@ -29,10 +29,10 @@ public final class RemoteAccessLiveExecutionFixture {
     public static void main(String[] args) throws Exception {
         url=args[0];user=args[1];password=args[2];
         var a=new Peer("exec_a");var b=new Peer("exec_b");
-        var endpoint=new RemoteAccessEndpoint("127.0.0.1",22222,"forge-ssh");
+        var endpoint=new RemoteAccessEndpoint("127.0.0.1",22,"forge-ssh");
         var grants=new LocalRemoteAccessWorkloads();
         var execution=new RemoteAccessExecutionService(b.sessions,b.identity,grants,GRANTS,b.access,CLOCK);
-        var grantor=new RemoteAccessGrantorPairing(b.invitations,b.sessions,b.identity,TOKENS,GRANTS,GRANTS,b.provisioning(),grants,b.access,CLOCK);
+        var grantor=new RemoteAccessGrantorPairing(b.invitations,b.sessions,b.identity,TOKENS,GRANTS,GRANTS,b.provisioning(),grants,b.access,CLOCK,null,null);
         var accessor=new RemoteAccessAccessorPairing(a.sessions,a.identity,TOKENS,a.provisioning(),a.transport(),a.access,CLOCK);
         var commands=new RemoteAccessAccessorExecution(a.sessions,a.identity,a.transport(),a.credentials,new LocalRemoteAccessCommandTransport(a.credentials),a.access,CLOCK);
         try(var server=new RemoteAccessChannelServer(Path.of("/run/forge-remote/channel/authority.sock"),"forge-ssh","forge-ssh",
@@ -64,7 +64,7 @@ public final class RemoteAccessLiveExecutionFixture {
                     assertThat(readers.submit(timed::await).get(15,TimeUnit.SECONDS)).isNotZero();
                 }
                 System.out.println("PASS real managed command timeout");
-                String isolation="import os,socket\nfor p in ['/run/forge-remote/channel/authority.sock','/run/forge-remote/workload-admin/control.sock','/var/run/docker.sock','/fixture/state','/etc/forge-remote/host_ed25519']:\n assert not os.path.exists(p),p\ns=socket.socket(); s.settimeout(1); assert s.connect_ex(('127.0.0.1',22222))!=0\nassert os.getuid()!=0\nopen('/workspace/edited','w').write('persisted')\ntry: open('/control-write','w').write('bad'); raise AssertionError('rootfs writable')\nexcept PermissionError: pass\nexcept OSError: pass\nprint('isolated')";
+                String isolation="import os,socket\nfor p in ['/run/forge-remote/channel/authority.sock','/run/forge-remote/workload-admin/control.sock','/var/run/docker.sock','/fixture/state','/etc/ssh/ssh_host_ed25519_key']:\n assert not os.path.exists(p),p\ns=socket.socket(); s.settimeout(1); assert s.connect_ex(('127.0.0.1',22))!=0\nassert os.getuid()!=0\nopen('/workspace/edited','w').write('persisted')\ntry: open('/control-write','w').write('bad'); raise AssertionError('rootfs writable')\nexcept PermissionError: pass\nexcept OSError: pass\nprint('isolated')";
                 assertThat(execute(commands,first.id(),List.of("/usr/bin/python3","-c",isolation),readers).code).isZero();
                 assertThat(execute(commands,first.id(),List.of("/bin/cat","/workspace/edited"),readers).out).isEqualTo("persisted");
                 System.out.println("PASS workload isolation and persistent explicit workspace");

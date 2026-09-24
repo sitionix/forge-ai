@@ -21,7 +21,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 class RemoteAccessControllerTest {
     @Mock RemoteAccessManagement management;
     @Mock RemoteAccessInvitations invitations;
-    @Mock RemoteAccessAccessorPairing pairing;
+    @Mock RemoteAccessMutualPairing pairing;
     @Mock RemoteAccessSetup setup;
     @Mock RemoteAccessPairingTokens tokens;
     @Mock RemoteAccessControlService control;
@@ -32,13 +32,16 @@ class RemoteAccessControllerTest {
         mvc=MockMvcBuilders.standaloneSetup(new RemoteAccessController(management,invitations,pairing,setup,new RemoteAccessApiMapper(tokens),control))
             .setControllerAdvice(new RemoteAccessErrorHandler()).build();
     }
-    @Test void connectUsesRealLifecycleFor201And202() throws Exception {
+    @Test void connectReturns201OnlyAfterBothSshDirectionsAreConfirmed() throws Exception {
         when(setup.displayName()).thenReturn("accessor");
         when(pairing.connect("secret","accessor")).thenReturn(session());
         mvc.perform(post("/api/v1/remote-access/sessions").contentType("application/json").content("{\"pairingToken\":\"secret\"}"))
             .andExpect(status().isAccepted()).andExpect(jsonPath("status").value("PROVISIONING"))
             .andExpect(jsonPath("localPrivateKeyReference").doesNotExist()).andExpect(jsonPath("sessionPublicKey").doesNotExist());
         when(pairing.connect("secret","accessor")).thenReturn(session().activate(NOW));
+        mvc.perform(post("/api/v1/remote-access/sessions").contentType("application/json").content("{\"pairingToken\":\"secret\"}"))
+            .andExpect(status().isAccepted()).andExpect(jsonPath("bridgeReady").value(false));
+        when(pairing.connected(ID)).thenReturn(true);
         mvc.perform(post("/api/v1/remote-access/sessions").contentType("application/json").content("{\"pairingToken\":\"secret\"}"))
             .andExpect(status().isCreated());
     }
@@ -57,6 +60,7 @@ class RemoteAccessControllerTest {
         when(management.revoke(ID)).thenReturn(session().requestRevoke(NOW));
         mvc.perform(delete("/api/v1/remote-access/sessions/"+ID)).andExpect(status().isAccepted());
         when(management.revoke(ID)).thenReturn(session().requestRevoke(NOW).confirmRemoteRevokedAndClearFailure(NOW));
+        when(management.bridgeRevoked(ID)).thenReturn(true);
         mvc.perform(delete("/api/v1/remote-access/sessions/"+ID)).andExpect(status().isOk());
     }
     @Test void unknownAndUnavailableErrorsAreSafe() throws Exception {

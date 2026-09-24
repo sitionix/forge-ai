@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.*;
 public class RemoteAccessController {
     private final RemoteAccessManagement management;
     private final RemoteAccessInvitations invitations;
-    private final RemoteAccessAccessorPairing pairing;
+    private final RemoteAccessMutualPairing pairing;
     private final RemoteAccessSetup setup;
     private final RemoteAccessApiMapper mapper;
     private final RemoteAccessControlService control;
@@ -29,7 +29,9 @@ public class RemoteAccessController {
         var result=control.disable();
         return ResponseEntity.status(result.status()==RemoteAccessSwitchStatus.DISABLED?200:202).body(mapper.control(result));
     }
-    @GetMapping("/invitations") public List<RemoteAccessDtos.Invitation> invitations() { return invitations.list().stream().map(mapper::invitation).toList(); }
+    @GetMapping("/invitations") public List<RemoteAccessDtos.Invitation> invitations() {
+        return invitations.list().stream().filter(value -> !pairing.internalInvitation(value.id())).map(mapper::invitation).toList();
+    }
     @PostMapping("/invitations") public ResponseEntity<RemoteAccessDtos.InvitationCreated> invite(@Valid @RequestBody(required=false) RemoteAccessDtos.InvitationRequest body) {
         return ResponseEntity.status(201).body(mapper.created(invitations.create(setup.advertisedEndpoint(body==null?null:body.advertisedHost()),setup.displayName())));
     }
@@ -39,16 +41,22 @@ public class RemoteAccessController {
         if (result.status()!=RemoteAccessSessionStatus.ACTIVE && result.status()!=RemoteAccessSessionStatus.PROVISIONING) {
             throw new ConflictException("REMOTE_ACCESS_PAIRING_CONFLICT","Pairing attempt is no longer provisioning");
         }
-        return ResponseEntity.status(result.status()==RemoteAccessSessionStatus.ACTIVE?201:202).body(mapper.session(result));
+        return ResponseEntity.status(pairing.connected(result.id())?201:202).body(session(result));
     }
-    @GetMapping("/sessions") public List<RemoteAccessDtos.Session> sessions() { return management.list().stream().map(mapper::session).toList(); }
-    @GetMapping("/sessions/{id}") public RemoteAccessDtos.Session get(@PathVariable UUID id) { return mapper.session(management.get(id)); }
-    @PostMapping("/sessions/{id}/check") public RemoteAccessDtos.Session check(@PathVariable UUID id) { return mapper.session(management.check(id)); }
+    @GetMapping("/sessions") public List<RemoteAccessDtos.Session> sessions() { return management.list().stream().map(this::session).toList(); }
+    @GetMapping("/sessions/{id}") public RemoteAccessDtos.Session get(@PathVariable UUID id) { return session(management.get(id)); }
+    @PostMapping("/sessions/{id}/check") public RemoteAccessDtos.Session check(@PathVariable UUID id) {
+        pairing.resumeIfPending(id);
+        return session(management.check(id));
+    }
     @DeleteMapping("/sessions/{id}") public ResponseEntity<RemoteAccessDtos.Session> revoke(@PathVariable UUID id) {
         var result=management.revoke(id);
         if (result.status()!=RemoteAccessSessionStatus.REVOKED && result.status()!=RemoteAccessSessionStatus.REVOKING) {
             throw new ConflictException("REMOTE_ACCESS_REVOKE_CONFLICT","Session changed concurrently; retry revoke");
         }
-        return ResponseEntity.status(result.status()==RemoteAccessSessionStatus.REVOKED?200:202).body(mapper.session(result));
+        return ResponseEntity.status(management.bridgeRevoked(id)?200:202).body(session(result));
+    }
+    private RemoteAccessDtos.Session session(com.sitionix.forgeagent.domain.model.RemoteAccessSession value) {
+        return mapper.session(value,pairing.pairId(value.id()),pairing.connected(value.id()),management.bridgeRevoked(value.id()));
     }
 }

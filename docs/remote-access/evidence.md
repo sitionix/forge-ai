@@ -1148,3 +1148,63 @@ inspection. Full host `just start` and two-machine Codex live acceptance remain
 NOT_RUN; the optional real image extraction test requires root and could not
 run here because `sudo -n` required interactive authentication. These are not
 claimed as live acceptance.
+
+## System OpenSSH conversion in PR #151 (2026-09-24, in progress)
+
+The earlier startup implementation above describes the initial PR #151 head.
+The user subsequently selected the host's system OpenSSH service instead of a
+second Forge-managed `sshd`. The in-progress branch now uses the dedicated
+`forge-ssh` account's root-managed `authorized_keys` with per-key `restrict`
+and a forced command, pins the system Ed25519 host key, and starts `ssh.service`
+only during Enable preparation. It does not stop the shared `ssh.service` on
+failed preparation. The previous Forge SSH unit is not started by the new path.
+
+Evidence on this revision: Python Remote Access suite 106 run, 104 PASS, 2 SKIPPED;
+isolated real OpenSSH boundary Docker probe PASS; `RemoteAccessLivePairingIT`
+PASS with real SSH, PostgreSQL and persisted pairing; privileged
+`RemoteAccessLiveExecutionIT` PASS with real systemd SSH, command execution,
+background descendant cancellation, revoke, and unrelated-session isolation;
+`RemoteAccessSshCommandTest` PASS; `git diff --check` PASS. The first Stage 5
+run found an old systemd write path, and the next found a port-22 known-hosts
+format mismatch; both were corrected before the passing rerun.
+
+The cold browser entry is now implemented in this worktree: ordinary Nexus
+serves a loopback/Origin/CSRF guarded fixed bootstrap endpoint, the page waits
+for the dedicated services after Give Access or Connect, and the dedicated page
+opens a local browser session without a separate operator credential prompt.
+Focused Nexus security/bootstrap tests PASS; full Nexus verify PASS. Console
+full suite 583 PASS, typecheck PASS, production build PASS. Python Remote Access
+suite 107 run, 105 PASS, 2 SKIPPED; full Agent verify PASS. These were the
+earlier, one-direction checks before reciprocal pairing was added.
+
+Host `just start`, two-machine live
+pairing and Codex live acceptance remain NOT_RUN. The system SSH service on the
+operator's host was not started by these tests.
+
+## One-token reciprocal SSH in the isolated worktree (2026-09-24)
+
+The connector now creates one protected internal reverse invitation and sends
+it through the first authenticated SSH channel. The inviter confirms its own
+dedicated reverse key over SSH. A forward-only V40 migration links the two
+directional sessions on each Forge identity. Agent and Nexus expose a bridge
+identity and report Connect as 201 only when both directions are ACTIVE;
+otherwise the pair remains incomplete (202). Disconnect finds the reverse
+grant by its invitation even if the response linking it was lost. The browser
+renders one bridge card with separate incoming/outgoing status.
+
+Current checks: Python Remote Access suite 108 run, 106 PASS, 2 SKIPPED;
+Console 588 PASS, typecheck PASS, production build PASS;
+Agent full verify PASS; Nexus full verify and RemoteAccessProxyIT PASS after updating typed
+bridge fixtures; `RemoteAccessMutualPairingTest`, grantor reverse authorization,
+and pair persistence tests PASS. The isolated `RemoteAccessLivePairingIT` uses
+real system OpenSSH and PostgreSQL: one human token produced two different
+ACTIVE SSH sessions, one in each direction, for two persisted Forge instance
+identities. This test uses one SSH host with two logical Forge identities, so
+it is not a two-physical-machine E2E. The privileged
+`RemoteAccessLiveExecutionIT` still PASSes real OpenSSH/systemd execution,
+cancel, revoke, descendant cleanup, and unrelated-session isolation in one
+direction. `git diff --check` PASS.
+
+Real two-machine pairing, commands in both directions in one run, browser
+Enable against this host, and live Codex acceptance remain NOT_RUN. The
+operator host's system `ssh.service` has not been started by this worktree.

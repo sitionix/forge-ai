@@ -18,7 +18,7 @@ for source in package.rglob('*'):
 spec = importlib.util.spec_from_file_location('installer', package/'install.py')
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
-installer.prepare('127.0.0.1', 22222)
+installer.prepare()
 subprocess.run(['systemd-tmpfiles', '--create', '/etc/tmpfiles.d/forge-remote.conf'], check=True)
 control = pwd.getpwnam('forge-control')
 # The disposable container has no systemd PID 1; reproduce the unit's RuntimeDirectory contract.
@@ -29,7 +29,7 @@ state = pathlib.Path('/fixture/state')
 state.mkdir(mode=0o700)
 os.chown(state, control.pw_uid, control.pw_gid)
 supervisor = subprocess.Popen(['/usr/bin/python3', '-I', '/usr/libexec/forge-remote/invitation-supervisor'])
-sshd = subprocess.Popen(['/usr/sbin/sshd', '-D', '-e', '-f', '/etc/forge-remote/sshd_config'])
+sshd = subprocess.Popen(['/usr/sbin/sshd', '-D', '-e', '-p', '22222'])
 try:
     for _ in range(100):
         if supervisor.poll() is not None or sshd.poll() is not None:

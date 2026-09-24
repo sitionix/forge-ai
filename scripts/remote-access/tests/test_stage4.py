@@ -33,6 +33,20 @@ class Stage4HelperTest(unittest.TestCase):
         with patch.object(h,'query',return_value='PROVISIONING\n'):
             self.assertEqual(('DENIED\n',1),h.handle(['session',G,S,FP],'confirm'))
 
+    def test_reverse_uses_authenticated_session_binding_and_requires_exact_success(self):
+        h=load('forced_command')
+        payload=b'{"pairId":"'+S.encode()+b'","token":"secret"}'
+        frame='REVERSE '+G+' '+S+' '+FP+' '+base64.urlsafe_b64encode(payload).decode().rstrip('=')+'\n'
+        with patch.object(h,'read_request',return_value=payload), patch.object(h,'query',return_value='ACTIVE '+S+'\n') as query:
+            self.assertEqual(('ACTIVE '+S+'\n',0),h.handle(['session',G,S,FP],'reverse'))
+            query.assert_called_once_with(frame,timeout=90)
+        with patch.object(h,'read_request',return_value=payload), patch.object(h,'query') as query:
+            self.assertEqual(('DENIED\n',1),h.handle(['invitation',G,S,FP],'reverse'))
+            query.assert_not_called()
+        for reply in ['ACTIVE\n','ACTIVE '+S+'\nextra','PROVISIONING '+S+'\n']:
+            with patch.object(h,'read_request',return_value=payload),patch.object(h,'query',return_value=reply):
+                self.assertEqual(('DENIED\n',1),h.handle(['session',G,S,FP],'reverse'))
+
     def test_input_is_bounded_in_bytes_and_time_and_requires_json_object(self):
         h=load('forced_command')
         for payload in [b'[]',b'bad',b'{}'+b' '*6000]:
@@ -66,7 +80,7 @@ class Stage4HelperTest(unittest.TestCase):
                 self.assertEqual(old,target.read_bytes())
                 with patch.object(setup,'directory') as directory:
                     with self.assertRaisesRegex(RuntimeError,'stop managed invitation supervisor'):
-                        setup.prepare('127.0.0.1',22222)
+                        setup.prepare()
                     directory.assert_not_called()
                 admin.rmdir()
                 setup.install_invitation_supervisor(BASE/'invitation_supervisor.py')
@@ -92,14 +106,15 @@ class Stage4GrantsTest(InvitationGrantsTest):
         def dispatch(op,grantor=None):
             return self.supervisor.dispatch(1000,1000,op+' '+(grantor or self.grantor)+' '+self.invitation+' '+self.key+'\n',self.grants,self.root/'host.pub')
         self.assertEqual('OK\n',dispatch('SESSION_INSTALL'))
-        before=(self.root/'authorized'/'keys').read_bytes()
+        before=self.keys.read_bytes()
         self.assertEqual('OK\n',dispatch('SESSION_INSTALL'))
-        self.assertEqual(before,(self.root/'authorized'/'keys').read_bytes())
-        self.assertIn('restrict '+self.key+' forge-session:',before.decode())
+        self.assertEqual(before,self.keys.read_bytes())
+        self.assertIn('restrict,command="/usr/libexec/forge-remote/forced-command ',before.decode())
+        self.assertIn(self.key+' forge-session:',before.decode())
         self.assertTrue(next((self.root/'bindings').iterdir()).read_text().startswith('session '))
         self.assertEqual('DENIED\n',dispatch('REMOVE'))
         self.assertEqual('DENIED\n',dispatch('SESSION_REMOVE',G))
-        self.assertEqual(before,(self.root/'authorized'/'keys').read_bytes())
+        self.assertEqual(before,self.keys.read_bytes())
         self.assertEqual('OK\n',dispatch('SESSION_REMOVE'))
         self.assertEqual('OK\n',dispatch('SESSION_REMOVE'))
-        self.assertEqual('existing unrelated grant\n',(self.root/'authorized'/'keys').read_text())
+        self.assertEqual('existing unrelated grant\n',self.keys.read_text())

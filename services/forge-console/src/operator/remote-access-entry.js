@@ -6,7 +6,10 @@ if (entry.kind === 'redirect') {
 } else if (entry.kind === 'local-only') {
   const message=document.getElementById('remoteError');
   message.hidden=false;
-  message.textContent='Remote Access management runs only on the Forge machine. Open this page locally at http://127.0.0.1:9100/fgaisox/operator/remote-access.html.';
+  message.textContent='Open Remote Access on the Forge machine at http://127.0.0.1:9099/fgaisox/operator/remote-access.html.';
+} else if (entry.kind === 'cold') {
+  const {mountColdRemoteAccess}=await import('./remote-access-cold.js');
+  mountColdRemoteAccess({document,window});
 } else {
   await import('./operator-ui.js');
 }

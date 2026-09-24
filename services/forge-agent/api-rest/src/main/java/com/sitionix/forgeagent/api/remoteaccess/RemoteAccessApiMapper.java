@@ -15,9 +15,9 @@ public class RemoteAccessApiMapper {
         return new RemoteAccessDtos.Invitation(i.id(),i.grantorInstanceId(),endpoint(i.endpoint()),i.createdAt(),i.expiresAt(),i.consumedAt(),i.cancelledAt(),i.redeemedSessionId());
     }
     public RemoteAccessDtos.InvitationCreated created(RemoteAccessInvitationCreated c) { return new RemoteAccessDtos.InvitationCreated(invitation(c.invitation()),c.token().value()); }
-    public RemoteAccessDtos.Session session(RemoteAccessSession s) {
+    public RemoteAccessDtos.Session session(RemoteAccessSession s,java.util.UUID bridgeId,boolean bridgeReady,boolean bridgeRevoked) {
         return new RemoteAccessDtos.Session(s.id(),s.invitationId(),s.localRole(),s.grantorInstanceId(),s.accessorInstanceId(),
             s.peerDisplayName(),endpoint(s.endpoint()),tokens.fingerprint(s.pinnedHostPublicKey()),s.status(),s.createdAt(),s.provisioningExpiresAt(),
-            s.activatedAt(),s.revokeRequestedAt(),s.revokedAt(),s.connectivity(),s.lastSeenAt(),s.lastCheckedAt(),s.failureCode(),s.failureMessage());
+            s.activatedAt(),s.revokeRequestedAt(),s.revokedAt(),s.connectivity(),s.lastSeenAt(),s.lastCheckedAt(),s.failureCode(),s.failureMessage(),bridgeId,bridgeReady,bridgeRevoked);
     }
 }

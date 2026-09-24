@@ -23,6 +23,7 @@ public final class RemoteAccessProxyDtos {
             UUID accessorInstanceId, String peerDisplayName, Endpoint endpoint, String hostFingerprint,
             Status status, Instant createdAt, Instant provisioningExpiresAt, Instant activatedAt,
             Instant revokeRequestedAt, Instant revokedAt, Connectivity connectivity,
-            Instant lastSeenAt, Instant lastCheckedAt, String failureCode, String failureMessage) {}
+            Instant lastSeenAt, Instant lastCheckedAt, String failureCode, String failureMessage,
+            UUID bridgeId, boolean bridgeReady, boolean bridgeRevoked) {}
     public record Error(String code, String message, String correlationId) {}
 }

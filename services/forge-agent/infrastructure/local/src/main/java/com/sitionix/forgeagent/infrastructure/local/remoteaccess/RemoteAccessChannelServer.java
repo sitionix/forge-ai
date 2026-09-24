@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.infrastructure.local.remoteaccess;
 
 import com.sitionix.forgeagent.domain.model.RemoteAccessKeyBinding;
 import com.sitionix.forgeagent.domain.model.RemoteAccessPairingRequest;
+import com.sitionix.forgeagent.domain.model.RemoteAccessReverseRequest;
 import com.sitionix.forgeagent.domain.model.RemoteAccessSessionStatus;
 import com.sitionix.forgeagent.domain.port.RemoteAccessPeerPairing;
 import com.fasterxml.jackson.core.JsonParser;
@@ -220,6 +221,17 @@ public final class RemoteAccessChannelServer implements AutoCloseable {
                         UUID sessionId=peerPairing.redeem(binding,request);
                         if (sessionId==null || !sessionId.equals(request.sessionId())) throw new IllegalArgumentException();
                         response="PROVISIONING "+sessionId+"\n";
+                    } else if (fields.length==5 && fields[0].equals("REVERSE")) {
+                        var binding=new RemoteAccessKeyBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
+                        String encoded=fields[4];
+                        if (!encoded.matches("[A-Za-z0-9_-]+")) throw new IllegalArgumentException();
+                        byte[] bytes=Base64.getUrlDecoder().decode(encoded);
+                        if (!Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).equals(encoded)) throw new IllegalArgumentException();
+                        var request=JSON.readValue(bytes,RemoteAccessReverseRequest.class);
+                        if (request.pairId()==null || request.token()==null || request.token().isBlank()) throw new IllegalArgumentException();
+                        var reverse=peerPairing.reverse(binding,request);
+                        response=reverse.map(id -> "ACTIVE "+id+"\n").orElse("DENIED\n");
+                        deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
                     } else if (fields.length==4 && fields[0].equals("CONFIRM")) {
                         var binding=new RemoteAccessKeyBinding(canonicalUuid(fields[1]),canonicalUuid(fields[2]),fields[3]);
                         response=peerPairing.confirm(binding).filter(status -> status==RemoteAccessSessionStatus.ACTIVE)

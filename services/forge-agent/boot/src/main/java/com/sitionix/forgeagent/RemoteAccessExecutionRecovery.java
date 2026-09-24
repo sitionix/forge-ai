@@ -2,6 +2,7 @@ package com.sitionix.forgeagent;
 
 import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessExecutionService;
 import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessControlService;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessMutualPairing;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.util.concurrent.*;
@@ -20,9 +21,11 @@ import org.springframework.stereotype.Component;
 public class RemoteAccessExecutionRecovery {
     private final RemoteAccessExecutionService execution;
     private final ObjectProvider<RemoteAccessControlService> control;
+    private final ObjectProvider<RemoteAccessMutualPairing> mutualPairing;
     // Cleanup never occupies the liveness worker, even when one session cannot stop.
     private final ScheduledExecutorService heartbeat=timer("remote-access-authority-heartbeat");
     private final ScheduledExecutorService cleanup=timer("remote-access-workload-cleanup");
+    private final ScheduledExecutorService pairing=timer("remote-access-mutual-pairing");
     private static ScheduledExecutorService timer(String name) {
         return Executors.newSingleThreadScheduledExecutor(task -> {var t=new Thread(task,name);t.setDaemon(true);return t;});
     }
@@ -34,6 +37,10 @@ public class RemoteAccessExecutionRecovery {
             try { execution.reconcile(); control.ifAvailable(RemoteAccessControlService::reconcile); }
             catch (RuntimeException unavailable) { log.warn("Remote Access cleanup incomplete; persisted intent retained"); }
         },3,5,TimeUnit.SECONDS);
+        pairing.scheduleWithFixedDelay(() -> {
+            try { mutualPairing.ifAvailable(RemoteAccessMutualPairing::reconcile); }
+            catch (RuntimeException unavailable) { log.warn("Remote Access pairing reconciliation incomplete"); }
+        },3,5,TimeUnit.SECONDS);
     }
-    @PreDestroy public void close() { heartbeat.shutdownNow();cleanup.shutdownNow(); }
+    @PreDestroy public void close() { heartbeat.shutdownNow();cleanup.shutdownNow();pairing.shutdownNow(); }
 }

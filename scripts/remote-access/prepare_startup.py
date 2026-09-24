@@ -28,20 +28,11 @@ def is_debian_host():
 
 
 def ensure_openssh_server():
-    """Install the missing host binary without exposing the distribution SSH listener."""
+    """Install the host OpenSSH server on demand; never mask an existing SSH service."""
     if sshd_available():
         return
     if not is_debian_host() or not Path('/usr/bin/apt-get').is_file():
         raise RuntimeError('REMOTE_ACCESS_SSHD_NOT_READY')
-    units = ('ssh.service', 'ssh.socket')
-    for unit in units:
-        state = subprocess.run(['/usr/bin/systemctl', 'show', unit, '--property=LoadState', '--value'],
-                               stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                               check=True, timeout=10)
-        if state.stdout.strip() != 'not-found':
-            raise RuntimeError('REMOTE_ACCESS_SSHD_CONFLICT')
-    subprocess.run(['/usr/bin/systemctl', 'mask', *units], stdin=subprocess.DEVNULL,
-                   capture_output=True, check=True, timeout=20)
     environment = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'DEBIAN_FRONTEND': 'noninteractive'}
     try:
         subprocess.run(['/usr/bin/apt-get', 'update'], env=environment,
@@ -51,20 +42,7 @@ def ensure_openssh_server():
                        check=True, timeout=900)
         if not sshd_available():
             raise RuntimeError('REMOTE_ACCESS_SSHD_NOT_READY')
-        subprocess.run(['/usr/bin/systemctl', 'unmask', *units], stdin=subprocess.DEVNULL,
-                       capture_output=True, check=True, timeout=20)
-        subprocess.run(['/usr/bin/systemctl', 'disable', '--now', *units], stdin=subprocess.DEVNULL,
-                       capture_output=True, check=True, timeout=20)
-        for unit in units:
-            active = subprocess.run(['/usr/bin/systemctl', 'is-active', '--quiet', unit],
-                                    stdin=subprocess.DEVNULL, capture_output=True,
-                                    check=False, timeout=10)
-            if active.returncode == 0:
-                raise RuntimeError('REMOTE_ACCESS_SSHD_CONFLICT')
     except (OSError, RuntimeError, subprocess.SubprocessError) as failure:
-        # A failed or partial package installation must never expose default SSH.
-        subprocess.run(['/usr/bin/systemctl', 'mask', '--now', *units],
-                       stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=20)
         raise RuntimeError('REMOTE_ACCESS_SSHD_NOT_READY') from failure
 
 
@@ -187,65 +165,17 @@ def write_endpoint_env(path, address, expected_uid=0):
         os.fsync(output.fileno())
 
 
-def managed_sshd_running():
-    state = subprocess.run(['/usr/bin/systemctl', 'show', 'forge-remote-sshd.service',
-                            '--property=LoadState', '--property=ActiveState'],
-                           stdin=subprocess.DEVNULL, capture_output=True,
-                           text=True, check=False, timeout=10)
-    if state.returncode != 0:
-        raise RuntimeError('REMOTE_ACCESS_SYSTEMD_UNAVAILABLE')
-    values = dict(line.split('=', 1) for line in state.stdout.splitlines()
-                  if line.count('=') == 1)
-    if values.get('LoadState') == 'not-found' and values.get('ActiveState') == 'inactive':
-        return False
-    if values.get('LoadState') != 'loaded':
-        raise RuntimeError('REMOTE_ACCESS_SYSTEMD_UNAVAILABLE')
-    if values.get('ActiveState') == 'active':
-        return True
-    if values.get('ActiveState') in ('inactive', 'failed'):
-        return False
-    raise RuntimeError('REMOTE_ACCESS_SYSTEMD_UNAVAILABLE')
-
-
-def installed_transport_matches(package, listen_address):
-    config = Path('/etc/forge-remote/sshd_config')
-    if not config.is_file() or config.is_symlink():
-        return False
-    lines = config.read_text().splitlines()
-    if lines.count('ListenAddress ' + listen_address) != 1 or lines.count('Port 2222') != 1:
-        return False
-    installed = Path('/usr/libexec/forge-remote')
-    for source, target in (
-        ('forced_command.py', 'forced-command'),
-        ('invitation_supervisor.py', 'invitation-supervisor'),
-        ('workload_supervisor.py', 'workload-supervisor'),
-        ('workload_units.py', 'workload_units.py'),
-        ('execution_channel.py', 'execution_channel.py'),
-        ('prepare_workspace.py', 'prepare-workspace'),
-    ):
-        current = installed / target
-        if (not current.is_file() or current.is_symlink() or
-                current.read_bytes() != (package / source).read_bytes()):
-            return False
-    return True
-
-
 def prepare_services(package, operator_user, listen_address, jdbc_url, db_user, db_password):
     """Run the reviewed root-only setup scripts from a protected package."""
-    active = managed_sshd_running()
-    if active and not installed_transport_matches(package, listen_address):
-        raise RuntimeError('REMOTE_ACCESS_UPGRADE_REQUIRES_DRAIN')
     ensure_database(jdbc_url, db_user, db_password)
-    if not active:
-        ensure_openssh_server()
+    ensure_openssh_server()
     commands = [
+        ('install.py',),
         ('prepare_management.py', '--directory', '/etc/forge-remote/management',
          '--agent-user', 'forge-control', '--operator-user', operator_user,
          '--origin', 'http://127.0.0.1:9100'),
         ('prepare_local_exec.py', '--operator-user', operator_user),
     ]
-    if not active:
-        commands.insert(0, ('install.py', '--listen-address', listen_address, '--port', '2222'))
     for name, *args in commands:
         subprocess.run(['/usr/bin/python3', '-I', str(package / name), *args],
                        stdin=subprocess.DEVNULL, capture_output=True,

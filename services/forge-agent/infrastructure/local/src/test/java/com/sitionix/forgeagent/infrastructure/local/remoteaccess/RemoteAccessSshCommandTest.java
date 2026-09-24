@@ -17,6 +17,13 @@ class RemoteAccessSshCommandTest {
     private static final String HOST_KEY="ssh-ed25519 "+Base64.getEncoder().encodeToString(
             java.nio.ByteBuffer.allocate(51).putInt(11).put("ssh-ed25519".getBytes()).putInt(32).put(new byte[32]).array());
 
+    @Test void systemSshDefaultPortUsesTheHostEntryOpenSshLooksUp() {
+        assertThat(RemoteAccessSshCommand.knownHostsLine(new RemoteAccessEndpoint("127.0.0.1",22,"forge-ssh"),HOST_KEY))
+                .isEqualTo("127.0.0.1 "+HOST_KEY+"\n");
+        assertThat(RemoteAccessSshCommand.knownHostsLine(new RemoteAccessEndpoint("127.0.0.1",2222,"forge-ssh"),HOST_KEY))
+                .isEqualTo("[127.0.0.1]:2222 "+HOST_KEY+"\n");
+    }
+
     @Test void dedicatedCommandDisablesInheritedIdentityConfigAndForwarding() throws Exception {
         var session=session("127.0.0.1",RemoteAccessSessionStatus.ACTIVE);
         Path identity=file("key","synthetic-private-material");

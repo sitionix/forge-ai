@@ -35,7 +35,12 @@ public class RemoteAccessClientAdapter implements RemoteAccessClient {
     public void cancel(UUID id) { execute(() -> { http.cancel(id);return Boolean.TRUE; }); }
     public RemoteAccessModels.Session connect(RemoteAccessModels.ConnectRequest request) {
         var body=mapper.request(request);var response=execute(() -> http.connect(body));
-        validate(response,201,RemoteAccessModels.Status.ACTIVE,RemoteAccessModels.Status.PROVISIONING);
+        if (response==null || response.getBody()==null || response.getBody().bridgeId()==null
+                || !(response.getStatusCode().value()==201 && response.getBody().bridgeReady()
+                    && response.getBody().status()==RemoteAccessModels.Status.ACTIVE
+                    || response.getStatusCode().value()==202 && !response.getBody().bridgeReady()
+                    && (response.getBody().status()==RemoteAccessModels.Status.ACTIVE
+                        || response.getBody().status()==RemoteAccessModels.Status.PROVISIONING))) throw invalid();
         return mapper.domain(response.getBody());
     }
     public List<RemoteAccessModels.Session> sessions() { return execute(http::sessions).stream().map(mapper::domain).toList(); }
@@ -43,13 +48,12 @@ public class RemoteAccessClientAdapter implements RemoteAccessClient {
     public RemoteAccessModels.Session check(UUID id) { return mapper.domain(execute(() -> http.check(id))); }
     public RemoteAccessModels.Session revoke(UUID id) {
         var response=execute(() -> http.revoke(id));
-        validate(response,200,RemoteAccessModels.Status.REVOKED,RemoteAccessModels.Status.REVOKING);
+        if (response==null || response.getBody()==null || !(response.getStatusCode().value()==200
+                && response.getBody().bridgeRevoked() && response.getBody().status()==RemoteAccessModels.Status.REVOKED
+                || response.getStatusCode().value()==202 && !response.getBody().bridgeRevoked()
+                && (response.getBody().status()==RemoteAccessModels.Status.REVOKED
+                    || response.getBody().status()==RemoteAccessModels.Status.REVOKING))) throw invalid();
         return mapper.domain(response.getBody());
-    }
-    private void validate(ResponseEntity<RemoteAccessClientDtos.Session> response,int completeCode,
-            RemoteAccessModels.Status complete,RemoteAccessModels.Status pending) {
-        if (response==null || response.getBody()==null || !(response.getStatusCode().value()==completeCode && response.getBody().status()==complete
-                || response.getStatusCode().value()==202 && response.getBody().status()==pending)) throw invalid();
     }
     private <T> T execute(Supplier<T> call) {
         try { return Objects.requireNonNull(call.get()); }

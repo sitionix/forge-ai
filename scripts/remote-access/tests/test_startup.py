@@ -25,7 +25,7 @@ class RemoteAccessStartupTest(unittest.TestCase):
                 install.ensure_control_directory()
             self.assertEqual(0o711, control.stat().st_mode & 0o777)
 
-    def test_missing_sshd_is_installed_without_enabling_default_ssh_listener(self):
+    def test_missing_system_sshd_is_installed_on_demand_without_masking_ssh(self):
         import prepare_startup
         calls = []
 
@@ -41,12 +41,11 @@ class RemoteAccessStartupTest(unittest.TestCase):
               mock.patch('subprocess.run', side_effect=run)):
             prepare_startup.ensure_openssh_server()
 
-        self.assertLess(calls.index(['/usr/bin/systemctl', 'mask', 'ssh.service', 'ssh.socket']),
-                        next(i for i, command in enumerate(calls) if command[:2] == ['/usr/bin/apt-get', 'install']))
-        self.assertIn(['/usr/bin/systemctl', 'disable', '--now', 'ssh.service', 'ssh.socket'], calls)
-        self.assertIn(['/usr/bin/systemctl', 'unmask', 'ssh.service', 'ssh.socket'], calls)
+        self.assertIn(['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', 'openssh-server'], calls)
+        self.assertFalse(any(command[:2] == ['/usr/bin/systemctl', 'mask'] for command in calls))
+        self.assertFalse(any(command[:2] == ['/usr/bin/systemctl', 'disable'] for command in calls))
 
-    def test_failed_sshd_install_leaves_default_listener_masked(self):
+    def test_failed_system_sshd_install_does_not_mask_existing_ssh(self):
         import prepare_startup
         calls = []
 
@@ -61,8 +60,7 @@ class RemoteAccessStartupTest(unittest.TestCase):
               mock.patch('subprocess.run', side_effect=run)):
             with self.assertRaisesRegex(RuntimeError, 'REMOTE_ACCESS_SSHD_NOT_READY'):
                 prepare_startup.ensure_openssh_server()
-        self.assertIn(['/usr/bin/systemctl', 'mask', '--now', 'ssh.service', 'ssh.socket'], calls)
-        self.assertNotIn(['/usr/bin/systemctl', 'unmask', 'ssh.service', 'ssh.socket'], calls)
+        self.assertFalse(any(command and command[0] == '/usr/bin/systemctl' for command in calls))
 
     def test_workload_installer_exposes_preparation_helper(self):
         import install as managed_ssh
@@ -123,10 +121,19 @@ class RemoteAccessStartupTest(unittest.TestCase):
             self.assertIn('PrivateTmp=yes', remote_agent)
             self.assertIn('/etc/forge-remote/management/nexus.env', remote_nexus)
             self.assertIn('127.0.0.1', remote_nexus)
+            bootstrap_socket = (target / 'units/forge-remote-bootstrap.socket').read_text()
+            bootstrap_service = (target / 'units/forge-remote-bootstrap.service').read_text()
+            enable_service = (target / 'units/forge-remote-setup.service').read_text()
+            self.assertIn('SocketMode=0600', bootstrap_socket)
+            self.assertIn('SocketUser=local-operator', bootstrap_socket)
+            self.assertIn('/usr/libexec/forge-remote/bootstrap.py local-operator', bootstrap_service)
+            self.assertIn('/usr/libexec/forge-remote/prepare-enable.py run local-operator', enable_service)
 
     def test_installer_places_inert_remote_units_before_enable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            agent_jar = root / 'agent.jar'
+            agent_jar.write_bytes(b'synthetic-agent')
             environment = os.environ.copy()
             environment.update(FORGE_SYSTEMD_USER='local-operator',
                                FORGE_SYSTEMD_GROUP='local-operator',
@@ -134,7 +141,10 @@ class RemoteAccessStartupTest(unittest.TestCase):
                                FORGE_SYSTEMD_SKIP_RELOAD='1',
                                FORGE_SYSTEMD_UNIT_DIR=str(root / 'systemd'),
                                FORGE_SYSTEMD_ENV_DIR=str(root / 'etc'),
-                               FORGE_SYSTEMD_ENV_FILE=str(root / 'etc/forge-ai.env'))
+                               FORGE_SYSTEMD_ENV_FILE=str(root / 'etc/forge-ai.env'),
+                               FORGE_REMOTE_ACCESS_AGENT_JAR_SOURCE=str(agent_jar),
+                               FORGE_REMOTE_BOOTSTRAP_BIN_DIR=str(root / 'bootstrap-bin'),
+                               FORGE_REMOTE_BOOTSTRAP_MANIFEST=str(root / 'etc/enable.json'))
             subprocess.run([str(ROOT / 'scripts/systemd/install.sh')], cwd=ROOT,
                            env=environment, check=True, capture_output=True, text=True)
             self.assertTrue((root / 'systemd/forge-agent.service').is_file())
@@ -147,6 +157,14 @@ class RemoteAccessStartupTest(unittest.TestCase):
             self.assertTrue(control_nexus.is_file())
             self.assertEqual(0o600, control_agent.stat().st_mode & 0o777)
             self.assertEqual(0o600, control_nexus.stat().st_mode & 0o777)
+            self.assertTrue((root / 'systemd/forge-remote-bootstrap.socket').is_file())
+            self.assertTrue((root / 'systemd/forge-remote-bootstrap.service').is_file())
+            self.assertTrue((root / 'systemd/forge-remote-setup.service').is_file())
+            self.assertTrue((root / 'bootstrap-bin/bootstrap.py').is_file())
+            self.assertTrue((root / 'bootstrap-bin/prepare-enable.py').is_file())
+            manifest = root / 'etc/enable.json'
+            self.assertEqual(0o600, manifest.stat().st_mode & 0o777)
+            self.assertIn('agentJarPath', manifest.read_text())
 
     def test_control_agent_uses_separate_database_and_no_codex_command(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -265,8 +283,7 @@ class RemoteAccessStartupTest(unittest.TestCase):
 
             with (mock.patch.object(prepare_startup, 'ensure_database') as database,
                   mock.patch.object(prepare_startup, 'ensure_openssh_server') as sshd,
-                  mock.patch('subprocess.run', side_effect=fake_run),
-                  mock.patch.object(prepare_startup, 'managed_sshd_running', return_value=False, create=True)):
+                  mock.patch('subprocess.run', side_effect=fake_run)):
                 prepare_startup.prepare_services(package, 'local-operator', '192.168.2.5',
                                                  'jdbc:postgresql://127.0.0.1:54329/forge_remote_access',
                                                  'forge_agent', 'synthetic-secret')
@@ -276,29 +293,18 @@ class RemoteAccessStartupTest(unittest.TestCase):
                              ['install.py', 'prepare_management.py', 'prepare_local_exec.py'])
             self.assertNotIn('synthetic-secret', repr(recorded))
 
-    def test_repeat_setup_keeps_running_sshd_and_refuses_helper_upgrade(self):
+    def test_repeat_setup_never_controls_the_system_ssh_service(self):
         import prepare_startup
-        self.assertTrue(hasattr(prepare_startup, 'managed_sshd_running'))
-        self.assertTrue(hasattr(prepare_startup, 'installed_transport_matches'))
         with tempfile.TemporaryDirectory() as directory:
             package = pathlib.Path(directory)
             with (mock.patch.object(prepare_startup, 'ensure_database'),
-                  mock.patch.object(prepare_startup, 'managed_sshd_running', return_value=True),
-                  mock.patch.object(prepare_startup, 'installed_transport_matches', return_value=True),
+                  mock.patch.object(prepare_startup, 'ensure_openssh_server'),
                   mock.patch('subprocess.run', return_value=subprocess.CompletedProcess([], 0)) as commands):
                 prepare_startup.prepare_services(package, 'local-operator', '192.168.2.5',
                                                  'jdbc:postgresql://127.0.0.1:54329/forge_remote_access',
                                                  'forge_agent', 'synthetic-secret')
-            self.assertNotIn('install.py', repr(commands.call_args_list))
-            with (mock.patch.object(prepare_startup, 'ensure_database'),
-                  mock.patch.object(prepare_startup, 'managed_sshd_running', return_value=True),
-                  mock.patch.object(prepare_startup, 'installed_transport_matches', return_value=False),
-                  mock.patch('subprocess.run') as commands):
-                with self.assertRaisesRegex(RuntimeError, 'REMOTE_ACCESS_UPGRADE_REQUIRES_DRAIN'):
-                    prepare_startup.prepare_services(package, 'local-operator', '192.168.2.5',
-                                                     'jdbc:postgresql://127.0.0.1:54329/forge_remote_access',
-                                                     'forge_agent', 'synthetic-secret')
-                commands.assert_not_called()
+            self.assertIn('install.py', repr(commands.call_args_list))
+            self.assertNotIn('systemctl', repr(commands.call_args_list))
 
     def test_startup_cli_refuses_unprivileged_execution_without_side_effects(self):
         result = subprocess.run(['/usr/bin/python3', '-I',
@@ -336,7 +342,7 @@ class RemoteAccessStartupTest(unittest.TestCase):
             environment = os.environ.copy()
             environment.update(PATH=f'{binaries}:{environment.get("PATH", "")}',
                                FORGE_TEST_CALLS=str(journal),
-                               FORGE_SYSTEMD_USE_SUDO='1',
+                               FORGE_SYSTEMD_USE_SUDO='0',
                                FORGE_SYSTEMD_SKIP_RELOAD='1',
                                FORGE_SYSTEMD_RUNTIME_DIR=str(runtime),
                                FORGE_SYSTEMD_UNIT_DIR=str(root / 'units'),
@@ -346,6 +352,8 @@ class RemoteAccessStartupTest(unittest.TestCase):
                                FORGE_REMOTE_ACCESS_AGENT_JAR_SOURCE=str(jar),
                                FORGE_REMOTE_ACCESS_PACKAGE_DIR=str(root / 'package'),
                                FORGE_REMOTE_ACCESS_JAR_DIR=str(root / 'jars'),
+                               FORGE_REMOTE_BOOTSTRAP_BIN_DIR=str(root / 'bootstrap-bin'),
+                               FORGE_REMOTE_BOOTSTRAP_MANIFEST=str(root / 'etc/enable.json'),
                                FORGE_RUNTIME_HEALTH_ATTEMPTS='1')
             result = subprocess.run([str(ROOT / 'scripts/runtime/systemd.sh'), 'start'],
                                     cwd=ROOT, env=environment, capture_output=True,
@@ -362,6 +370,7 @@ class RemoteAccessStartupTest(unittest.TestCase):
             self.assertNotIn('REMOTE_ACCESS_PREPARED', result.stdout)
             self.assertIn('forge-agent.service', calls)
             self.assertIn('forge-nexus.service', calls)
+            self.assertIn('systemctl enable --now forge-remote-bootstrap.socket', calls)
 
 
 if __name__ == '__main__':

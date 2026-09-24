@@ -41,6 +41,18 @@ public final class RemoteAccessOperatorAuthentication {
         if (++attempts>10 || supplied==null || !MessageDigest.isEqual(secret,supplied.getBytes(StandardCharsets.UTF_8))) {
             throw new BadCredentialsException("Operator authentication failed");
         }
+        establish(request,response,now);
+    }
+    public void localSession(HttpServletRequest request,HttpServletResponse response) {
+        String site=request.getHeader("Sec-Fetch-Site");
+        if (!"same-origin".equals(site) && !"none".equals(site)) {
+            throw new BadCredentialsException("Local browser required");
+        }
+        var session=request.getSession(false);
+        if (session!=null && !expired(session)) return;
+        establish(request,response,clock.millis());
+    }
+    private void establish(HttpServletRequest request,HttpServletResponse response,long now) {
         var previous=request.getSession(false);if (previous!=null) previous.invalidate();
         var session=request.getSession(true);session.setMaxInactiveInterval(900);session.setAttribute(AUTHENTICATED_AT,now);
         var context=SecurityContextHolder.createEmptyContext();

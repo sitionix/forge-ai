@@ -14,13 +14,25 @@ class RemoteAccessClientAdapterTest {
         var request=new RemoteAccessModels.ConnectRequest("secret-canary");
         var response=new RemoteAccessClientDtos.Session(UUID.randomUUID(),UUID.randomUUID(),RemoteAccessModels.Role.ACCESSOR,
             UUID.randomUUID(),UUID.randomUUID(),"peer",new RemoteAccessClientDtos.Endpoint("127.0.0.1",2222,"forge-ssh"),"fingerprint",
-            RemoteAccessModels.Status.PROVISIONING,null,null,null,null,null,RemoteAccessModels.Connectivity.UNKNOWN,null,null,null,null);
+            RemoteAccessModels.Status.PROVISIONING,null,null,null,null,null,RemoteAccessModels.Connectivity.UNKNOWN,null,null,null,null,UUID.randomUUID(),false,false);
         when(http.connect(new RemoteAccessClientDtos.ConnectRequest("secret-canary"))).thenReturn(ResponseEntity.accepted().body(response));
         assertThat(sut.connect(request)).usingRecursiveComparison().isEqualTo(response);
     }
     @Test void invalidUpstreamLifecycleIsNotReportedAsSuccess() {
         when(http.connect(any())).thenReturn(ResponseEntity.status(201).build());
         assertThatThrownBy(() -> sut.connect(new RemoteAccessModels.ConnectRequest("secret")))
+            .isInstanceOf(RemoteAccessClientException.class).hasMessage("Invalid Remote Access response");
+    }
+    @Test void activeForwardDirectionIsStillPendingUntilReverseDirectionIsConfirmed() {
+        var pairId=UUID.randomUUID();
+        var forward=new RemoteAccessClientDtos.Session(UUID.randomUUID(),pairId,RemoteAccessModels.Role.ACCESSOR,
+            UUID.randomUUID(),UUID.randomUUID(),"peer",new RemoteAccessClientDtos.Endpoint("127.0.0.1",22,"forge-ssh"),"fingerprint",
+            RemoteAccessModels.Status.ACTIVE,null,null,null,null,null,RemoteAccessModels.Connectivity.UNKNOWN,
+            null,null,null,null,pairId,false,false);
+        when(http.connect(any())).thenReturn(ResponseEntity.accepted().body(forward));
+        assertThat(sut.connect(new RemoteAccessModels.ConnectRequest("secret-canary")).bridgeReady()).isFalse();
+        when(http.connect(any())).thenReturn(ResponseEntity.status(201).body(forward));
+        assertThatThrownBy(() -> sut.connect(new RemoteAccessModels.ConnectRequest("secret-canary")))
             .isInstanceOf(RemoteAccessClientException.class).hasMessage("Invalid Remote Access response");
     }
     @Test void rawErrorBodyDoesNotEscapeThroughException() {

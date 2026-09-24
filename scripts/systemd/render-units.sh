@@ -56,6 +56,9 @@ render_template "${TEMPLATE_DIR}/forge-knowledge.service.in" "${OUTPUT_DIR}/forg
 render_template "${TEMPLATE_DIR}/forge-jarvis.service.in" "${OUTPUT_DIR}/forge-jarvis.service"
 render_template "${TEMPLATE_DIR}/forge-remote-agent.service.in" "${OUTPUT_DIR}/forge-remote-agent.service"
 render_template "${TEMPLATE_DIR}/forge-remote-nexus.service.in" "${OUTPUT_DIR}/forge-remote-nexus.service"
+render_template "${TEMPLATE_DIR}/forge-remote-bootstrap.socket.in" "${OUTPUT_DIR}/forge-remote-bootstrap.socket"
+render_template "${TEMPLATE_DIR}/forge-remote-bootstrap.service.in" "${OUTPUT_DIR}/forge-remote-bootstrap.service"
+render_template "${TEMPLATE_DIR}/forge-remote-setup.service.in" "${OUTPUT_DIR}/forge-remote-setup.service"
 
 {
   # System services do not inherit the installing user's SSH agent environment.

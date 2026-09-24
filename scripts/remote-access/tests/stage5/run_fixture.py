@@ -1,11 +1,11 @@
 """Isolated-container root driver; not installed as a production control operation."""
-import os,pathlib,subprocess,sys,threading,uuid,time
+import os,pathlib,socket,subprocess,sys,threading,uuid,time
 PACKAGE=pathlib.Path('/opt/forge-remote-package')
 
 def run(*args):subprocess.run(args,check=True,timeout=90)
 
 def prepare():
-    run('python3',str(PACKAGE/'install.py'),'--listen-address','127.0.0.1','--port','22222')
+    run('python3',str(PACKAGE/'install.py'))
     root=pathlib.Path('/srv/forge-remote/rootfs');root.mkdir(parents=True)
     run('cp','-a','/usr',str(root/'usr'))
     for name in ['bin','sbin','lib','lib64']:
@@ -19,7 +19,24 @@ def prepare():
     local=pathlib.Path('/run/forge-remote/local-exec');local.mkdir()
     run('chown','forge-control:forge-codex',str(local))
     local.chmod(0o2750)
-    run('systemctl','start','forge-remote-invitations.service','forge-remote-workloads.service','forge-remote-sshd.service')
+    run('systemctl','start','forge-remote-invitations.service','forge-remote-workloads.service','ssh.service')
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        ready=pathlib.Path('/run/forge-remote/admin/invitations.sock').exists()
+        if ready:
+            try:
+                with socket.create_connection(('127.0.0.1',22),timeout=.2):
+                    break
+            except OSError:
+                pass
+        time.sleep(.1)
+    else:
+        statuses=[]
+        for unit in ('forge-remote-invitations.service','ssh.service'):
+            result=subprocess.run(['systemctl','show',unit,'--property=ActiveState','--property=SubState','--property=ExecMainStatus'],
+                                  capture_output=True,text=True,timeout=3)
+            statuses.append(unit+': '+result.stdout.strip())
+        raise RuntimeError('Remote Access system SSH and authority did not become ready: '+'; '.join(statuses))
     return root
 
 

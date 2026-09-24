@@ -42,25 +42,43 @@ class ManagedSshTest(unittest.TestCase):
         with patch.object(helper, 'query', return_value='ACTIVE\n'):
             self.assertEqual(('DENIED\n', 1), helper.handle(binding, 'pair'))
 
-    def test_sshd_configuration_closes_alternative_access_paths(self):
-        setup = load('install')
-        config = setup.sshd_config('192.168.1.20', 2222)
-        for directive in ['PasswordAuthentication no', 'KbdInteractiveAuthentication no',
-                          'PermitRootLogin no', 'PermitTTY no', 'DisableForwarding yes',
-                          'PermitUserRC no', 'PermitUserEnvironment no', 'AllowUsers forge-ssh',
-                          'AuthenticationMethods publickey', 'MaxSessions 1',
-                          'ForceCommand /usr/libexec/forge-remote/forced-command', 'ExposeAuthInfo yes']:
-            self.assertIn(directive + '\n', config)
-        self.assertNotIn('/.ssh/', config)
+    def test_system_ssh_key_is_restricted_to_root_managed_forced_command(self):
+        import base64
+        import hashlib
+        import os
 
-    def test_busy_port_preflight_does_not_modify_installation(self):
-        import socket
-        setup=load('install')
-        with socket.socket() as listener:
-            listener.bind(('127.0.0.1',0))
-            listener.listen()
-            with self.assertRaisesRegex(RuntimeError,'listen address or port'):
-                setup.require_available_endpoint('127.0.0.1',listener.getsockname()[1])
+        grants_module = load('invitation_supervisor')
+        blob = b'\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20' + b'a' * 32
+        key = 'ssh-ed25519 ' + base64.b64encode(blob).decode('ascii')
+        key_id = hashlib.sha256(blob).hexdigest()
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            (root / 'transport-home' / '.ssh').mkdir(parents=True)
+            (root / 'bindings').mkdir()
+            (root / 'transport-home').chmod(0o555)
+            (root / 'transport-home' / '.ssh').chmod(0o755)
+            (root / 'bindings').chmod(0o750)
+            keys = root / 'transport-home' / '.ssh' / 'authorized_keys'
+            keys.write_text('')
+            keys.chmod(0o640)
+            grants = grants_module.InvitationGrants(root, os.getuid(), os.getgid())
+            grants.install('11111111-1111-4111-8111-111111111111',
+                           '22222222-2222-4222-8222-222222222222', key)
+            line = keys.read_text().strip()
+            self.assertTrue(line.startswith(
+                'restrict,command="/usr/libexec/forge-remote/forced-command ' + key_id + '" '))
+            self.assertIn(key, line)
+
+    def test_system_ssh_binding_rejects_client_selected_identity(self):
+        helper = load('forced_command')
+        with self.assertRaises((ValueError, PermissionError)):
+            helper.authenticated_binding('not-a-key-identity')
+
+    def test_system_ssh_setup_does_not_install_another_daemon(self):
+        setup = load('install')
+        self.assertFalse(hasattr(setup, 'sshd_config'))
+        self.assertFalse(hasattr(setup, 'require_available_endpoint'))
+        self.assertFalse(hasattr(setup, 'UNIT'))
 
     def test_dangling_host_public_key_symlink_cannot_create_an_unrelated_file(self):
         setup=load('install')
@@ -102,18 +120,10 @@ class ManagedSshTest(unittest.TestCase):
                 self.assertIn('User='+user,(output/'units'/'forge-agent.service').read_text())
                 self.assertNotIn('SERVER_ADDRESS=',config)
 
-    def test_invalid_listen_address_and_ports_are_rejected(self):
-        setup = load('install')
-        for host in ['-oProxyCommand=id', '127.0.0.1\nPermitRootLogin yes', '*', '0.0.0.0', '::']:
-            with self.subTest(host=host), self.assertRaises(ValueError):
-                setup.sshd_config(host,2222)
-        for port in [0,22,65536]:
-            with self.assertRaises(ValueError): setup.sshd_config('127.0.0.1',port)
-
     def test_unprivileged_install_fails_before_side_effects(self):
         setup = load('install')
         with patch.object(setup.os,'geteuid',return_value=1234), patch.object(setup,'prepare') as prepare:
-            with self.assertRaisesRegex(RuntimeError,'root'): setup.install('127.0.0.1',2222)
+            with self.assertRaisesRegex(RuntimeError,'root'): setup.install()
             prepare.assert_not_called()
 
     def test_existing_unmanaged_file_is_not_overwritten(self):
@@ -124,6 +134,21 @@ class ManagedSshTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 setup.write_owned(path,b'new contents',0o600)
             self.assertEqual(path.read_text(),'operator content')
+
+    def test_only_known_invitation_unit_can_upgrade_to_new_key_path(self):
+        import hashlib
+        setup = load('install')
+        with tempfile.TemporaryDirectory() as temp, patch.object(setup, 'require_root_owned'):
+            unit = pathlib.Path(temp) / 'forge-remote-invitations.service'
+            unit.write_bytes(b'known old unit')
+            unit.chmod(0o644)
+            allowed = {hashlib.sha256(unit.read_bytes()).hexdigest()}
+            setup.write_invitation_unit(b'new system SSH key path', unit, allowed)
+            self.assertEqual(b'new system SSH key path', unit.read_bytes())
+            unit.write_bytes(b'unknown local modification')
+            with self.assertRaisesRegex(RuntimeError, 'Unknown invitation unit'):
+                setup.write_invitation_unit(b'new system SSH key path', unit, allowed)
+            self.assertEqual(b'unknown local modification', unit.read_bytes())
 
     def test_repeated_owned_file_install_keeps_bytes_and_inode(self):
         setup = load('install')
@@ -169,31 +194,25 @@ class ManagedSshTest(unittest.TestCase):
             self.assertEqual(helper.handle(binding,'status'),('DENIED\n',1))
             query.assert_not_called()
 
-    def test_authenticated_key_selects_binding_instead_of_caller_identity(self):
+    def test_root_managed_key_command_selects_matching_binding(self):
         import base64
         import hashlib
-        import os
         helper=load('forced_command')
         blob=b'\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20'+bytes(32)
-        encoded=base64.b64encode(blob).decode()
         fingerprint='SHA256:'+base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip('=')
         binding=['session','10000000-0000-4000-8000-000000000001',
                  '10000000-0000-4000-8000-000000000002',fingerprint]
         with tempfile.TemporaryDirectory() as temp:
-            proof=pathlib.Path(temp)/'sshauth.test'
-            proof.write_text('publickey ssh-ed25519 '+encoded+'\n')
-            proof.chmod(0o600)
             bindings=pathlib.Path(temp)/'bindings'
             bindings.mkdir()
             record=bindings/hashlib.sha256(blob).hexdigest()
             record.write_text(' '.join(binding)+'\n')
             record.chmod(0o640)
             with patch.object(helper,'BINDINGS',bindings), patch.object(helper,'require_binding_owner'), patch.object(helper,'read_protected',side_effect=lambda path,owner,mode,limit: pathlib.Path(path).read_text()):
-                self.assertEqual(helper.authenticated_binding(str(proof)),binding)
+                self.assertEqual(helper.authenticated_binding(hashlib.sha256(blob).hexdigest()),binding)
                 record.write_text(' '.join(binding[:-1]+['SHA256:'+'A'*43])+'\n')
-                with self.assertRaises(ValueError): helper.authenticated_binding(str(proof))
-            proof.chmod(0o666)
-            with self.assertRaises((PermissionError,ValueError)): helper.authenticated_binding(str(proof))
+                with self.assertRaises(ValueError): helper.authenticated_binding(hashlib.sha256(blob).hexdigest())
+                with self.assertRaises(FileNotFoundError): helper.authenticated_binding('f'*64)
 
     def test_unexpected_authority_response_fails_closed(self):
         helper=load('forced_command')

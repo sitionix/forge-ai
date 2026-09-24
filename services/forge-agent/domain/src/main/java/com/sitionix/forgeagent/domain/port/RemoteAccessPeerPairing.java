@@ -5,4 +5,5 @@ import java.util.UUID;
 public interface RemoteAccessPeerPairing {
     UUID redeem(RemoteAccessInvitationBinding binding, RemoteAccessPairingRequest request);
     Optional<RemoteAccessSessionStatus> confirm(RemoteAccessKeyBinding binding);
+    default Optional<UUID> reverse(RemoteAccessKeyBinding binding, RemoteAccessReverseRequest request) { return Optional.empty(); }
 }

@@ -10,7 +10,7 @@ SERVICE="${2:-all}"
 RUNTIME_DIR="${FORGE_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}"
 UNITS=(forge-knowledge.service forge-jarvis.service forge-agent.service forge-nexus.service)
 REMOTE_UNITS=(forge-remote-agent.service forge-remote-nexus.service)
-REVERSE_UNITS=(forge-remote-nexus.service forge-remote-agent.service forge-remote-sshd.service forge-nexus.service forge-agent.service forge-jarvis.service forge-knowledge.service)
+REVERSE_UNITS=(forge-remote-nexus.service forge-remote-agent.service forge-nexus.service forge-agent.service forge-jarvis.service forge-knowledge.service)
 USE_SUDO="${FORGE_SYSTEMD_USE_SUDO:-auto}"
 
 sudo_cmd=()
@@ -111,6 +111,7 @@ case "${ACTION}" in
     validate_manager
     prepare
     "${ROOT}/scripts/systemd/install.sh"
+    privileged systemctl enable --now forge-remote-bootstrap.socket
     validate
     start_postgres
     # `start` is a no-op for active units. Restart so freshly built artifacts are always loaded.

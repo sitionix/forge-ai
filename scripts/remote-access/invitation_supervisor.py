@@ -34,7 +34,8 @@ def public_key(value):
 class InvitationGrants:
     def __init__(self, root, owner, group):
         self.root, self.owner, self.group = root, owner, group
-        for directory in [root, root/'authorized', root/'bindings']:
+        self.keys = root/'transport-home'/'.ssh'/'authorized_keys'
+        for directory in [root, root/'transport-home', self.keys.parent, root/'bindings']:
             info = directory.lstat()
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner or info.st_mode & 0o022:
                 raise ValueError('Unsafe grant directory')
@@ -66,7 +67,7 @@ class InvitationGrants:
             if os.path.exists(temporary): os.unlink(temporary)
 
     def _write_keys(self, text):
-        self._atomic(self.root/'authorized'/'keys', text)
+        self._atomic(self.keys, text)
 
     def _binding(self, grantor, invitation, key, kind):
         if kind not in ('invitation', 'session'): raise ValueError('Invalid grant kind')
@@ -76,7 +77,8 @@ class InvitationGrants:
         fingerprint = 'SHA256:' + base64.b64encode(digest).decode().rstrip('=')
         record = self.root/'bindings'/digest.hex()
         expected = kind+' '+grantor+' '+invitation+' '+fingerprint+'\n'
-        line = 'restrict '+key+' forge-'+kind+':'+grantor+':'+invitation+'\n'
+        line = ('restrict,command="/usr/libexec/forge-remote/forced-command '+digest.hex()+
+                '" '+key+' forge-'+kind+':'+grantor+':'+invitation+'\n')
         try: actual = self._read(record)
         except FileNotFoundError: actual = None
         if actual is not None and actual != expected:
@@ -85,7 +87,7 @@ class InvitationGrants:
 
     def install(self, grantor, invitation, key, kind='invitation'):
         record, expected, actual, line = self._binding(grantor, invitation, key, kind)
-        keys = self._read(self.root/'authorized'/'keys')
+        keys = self._read(self.keys)
         if any(key in entry and entry+'\n' != line for entry in keys.splitlines()):
             raise ValueError('Key already has another grant')
         if actual is None: self._atomic(record, expected)
@@ -94,7 +96,7 @@ class InvitationGrants:
 
     def remove(self, grantor, invitation, key, kind='invitation'):
         record, expected, actual, line = self._binding(grantor, invitation, key, kind)
-        keys = self._read(self.root/'authorized'/'keys')
+        keys = self._read(self.keys)
         if line in keys.splitlines(keepends=True):
             self._write_keys(''.join(entry for entry in keys.splitlines(keepends=True) if entry != line))
         if actual is not None: record.unlink()
@@ -150,7 +152,7 @@ def main():
                         chunk = connection.recv(1025-len(frame))
                         if not chunk: break
                         frame.extend(chunk)
-                    result = dispatch(uid, control.pw_uid, frame.decode('ascii'), grants, pathlib.Path('/etc/forge-remote/host_ed25519.pub'))
+                    result = dispatch(uid, control.pw_uid, frame.decode('ascii'), grants, pathlib.Path('/etc/ssh/ssh_host_ed25519_key.pub'))
                     connection.sendall(result.encode('ascii'))
                 except (OSError, ValueError, UnicodeError): pass
 
