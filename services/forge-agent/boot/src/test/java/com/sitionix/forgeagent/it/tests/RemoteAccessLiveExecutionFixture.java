@@ -37,8 +37,9 @@ public final class RemoteAccessLiveExecutionFixture {
         var commands=new RemoteAccessAccessorExecution(a.sessions,a.identity,a.transport(),a.credentials,new LocalRemoteAccessCommandTransport(a.credentials),CLOCK);
         try(var server=new RemoteAccessChannelServer(Path.of("/run/forge-remote/channel/authority.sock"),"forge-ssh","forge-ssh",
                 new RemoteAccessChannelService(b.sessions,b.identity,CLOCK,b.invitations),grantor,execution);
+            var localExec=new RemoteAccessLocalExecServer(Path.of("/run/forge-remote/local-exec/agent.sock"),"forge-codex",commands::start);
             var readers=Executors.newVirtualThreadPerTaskExecutor()) {
-            server.start();execution.maintain();
+            server.start();localExec.start();execution.maintain();
             var heartbeat=Executors.newSingleThreadScheduledExecutor();
             heartbeat.scheduleWithFixedDelay(() -> {try {execution.maintain();}catch(RuntimeException unavailable){System.out.println("RECOVERY: authority unavailable");}},0,2,TimeUnit.SECONDS);
             try {
@@ -55,6 +56,9 @@ public final class RemoteAccessLiveExecutionFixture {
                 var large=execute(commands,first.id(),List.of("/usr/bin/python3","-c","import sys; data=sys.stdin.buffer.read(); sys.stdout.buffer.write(data*50000); sys.stdout.flush(); sys.stderr.buffer.write(b'e'*200000)"),readers,"abc");
                 assertThat(large.code).isZero();assertThat(large.out).isEqualTo("abc".repeat(50000));assertThat(large.err).hasSize(200000);
                 System.out.println("PASS real SSH stdin and large independent streams");
+                operator("STAGE8_HELPER "+first.id());
+                operator("STAGE8_CANCEL "+first.id());
+                assertThat(execute(commands,second.id(),List.of("/bin/echo","independent"),readers).out).isEqualTo("independent\n");
                 try(var timed=commands.start(second.id(),new RemoteAccessCommand(List.of("/bin/sleep","120"),"/workspace",1))) {
                     timed.stdin().close();
                     assertThat(readers.submit(timed::await).get(15,TimeUnit.SECONDS)).isNotZero();
@@ -110,6 +114,7 @@ public final class RemoteAccessLiveExecutionFixture {
                     assertThat(execute(commands,second.id(),List.of("/usr/bin/python3","-c","import os,sys; os.kill(int(sys.argv[1]),0)",otherPid),readers).code).isZero();
                     assertThatThrownBy(() -> commands.start(first.id(),new RemoteAccessCommand(List.of("/bin/true"),"/workspace",5))).isInstanceOf(IllegalStateException.class);
                 }
+                operator("STAGE8_REVOKED "+first.id());
                 assertThat(execute(commands,second.id(),List.of("/bin/echo","unrelated-alive"),readers).out).isEqualTo("unrelated-alive\n");
                 System.out.println("PASS revoke stops setsid descendants, denies new execution and preserves another session");
                 try(var running=commands.start(third.id(),new RemoteAccessCommand(List.of("/bin/sh","-c","echo READY; sleep 120"),"/workspace",150))) {

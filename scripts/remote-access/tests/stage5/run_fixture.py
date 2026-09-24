@@ -15,6 +15,10 @@ def prepare():
         if pathlib.Path('/etc',name).exists():run('cp','/etc/'+name,str(root/'etc'/name))
     state=pathlib.Path('/fixture/state');state.mkdir(parents=True)
     run('chown','-R','forge-control:forge-control',str(state))
+    run('useradd','--system','--user-group','--no-create-home','--shell','/usr/sbin/nologin','forge-codex')
+    local=pathlib.Path('/run/forge-remote/local-exec');local.mkdir()
+    run('chown','forge-control:forge-codex',str(local))
+    local.chmod(0o2750)
     run('systemctl','start','forge-remote-invitations.service','forge-remote-workloads.service','forge-remote-sshd.service')
     return root
 
@@ -93,6 +97,43 @@ def verify_cancellation(captured):
                        f'record={record.exists()}, fence={fence.exists()}')
 
 
+def helper(session,*argv):
+    return subprocess.run(['runuser','-u','forge-codex','--','python3',str(PACKAGE/'forge-remote'),
+                           'exec','--session',session,'--cwd','/workspace','--',*argv],
+                          capture_output=True,timeout=30)
+
+
+def stage8_helper(session):
+    literal="a b 'quoted' $HOME $(touch /workspace/stage8-injected)"
+    result=helper(session,'/usr/bin/python3','-c','import sys;print(sys.argv[1])',literal)
+    if result.returncode or result.stdout!=literal.encode()+b'\n':raise RuntimeError('Local helper argv failed')
+    for argv,expected in [(['/usr/bin/python3','-c',"open('/workspace/stage8-edited','w').write('remote')"],b''),
+                          (['/bin/cat','/workspace/stage8-edited'],b'remote'),
+                          (['/usr/bin/python3','-c',"assert open('/workspace/stage8-edited').read()=='remote';print('TEST_PASS')"],b'TEST_PASS\n')]:
+        result=helper(session,*argv)
+        if result.returncode or result.stdout!=expected:raise RuntimeError('Local helper read/edit/test failed')
+    if pathlib.Path('/srv/forge-remote/workspaces',session,'stage8-injected').exists():
+        raise RuntimeError('Literal argument was interpreted as shell')
+    print('PASS Stage 8 local helper real SSH read/edit/test and literal argv',flush=True)
+
+
+def stage8_cancel(session):
+    import signal
+    argv=['runuser','-u','forge-codex','--','python3',str(PACKAGE/'forge-remote'),
+          'exec','--session',session,'--cwd','/workspace','--',
+          '/bin/sh','-c','echo MAIN=$$; setsid /bin/sleep 120 & echo CHILD=$!; echo READY; wait']
+    with subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                          text=True,start_new_session=True) as process:
+        main=process.stdout.readline().strip();child=process.stdout.readline().strip();ready=process.stdout.readline().strip()
+        if not main.startswith('MAIN=') or not child.startswith('CHILD=') or ready!='READY':
+            raise RuntimeError('Local helper managed workload did not start')
+        captured=capture_cancellation(session,main[5:],child[6:])
+        os.killpg(process.pid,signal.SIGINT)
+        if process.wait(timeout=15)!=130:raise RuntimeError('Local helper cancellation exit mismatch')
+        verify_cancellation(captured)
+    print('PASS Stage 8 local helper SIGINT closes SSH and removes systemd workload/descendants',flush=True)
+
+
 def main():
     root=prepare()
     cancellation=None
@@ -106,6 +147,17 @@ def main():
                     if str(uuid.UUID(value))!=value:raise ValueError('Invalid fixture session')
                     run('python3',str(PACKAGE/'prepare_workspace.py'),'--session',value,'--rootfs',str(root))
                 late_submission(line.strip().split()[1])
+                process.stdin.write('OK\n');process.stdin.flush()
+            elif line.startswith('STAGE8_HELPER '):
+                stage8_helper(line.strip().split()[1]);process.stdin.write('OK\n');process.stdin.flush()
+            elif line.startswith('STAGE8_CANCEL '):
+                stage8_cancel(line.strip().split()[1]);process.stdin.write('OK\n');process.stdin.flush()
+            elif line.startswith('STAGE8_REVOKED '):
+                session=line.strip().split()[1]
+                result=helper(session,'/usr/bin/touch','/workspace/stage8-revoked-bypass')
+                if result.returncode!=125 or pathlib.Path('/srv/forge-remote/workspaces',session,'stage8-revoked-bypass').exists():
+                    raise RuntimeError('Revoked helper request was not refused')
+                print('PASS Stage 8 revoked session refuses execution without local fallback',flush=True)
                 process.stdin.write('OK\n');process.stdin.flush()
             elif line.startswith('CAPTURE_CANCELLATION '):
                 fields=line.strip().split()

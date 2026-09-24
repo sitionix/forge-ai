@@ -1064,3 +1064,43 @@ failure at `remote-access-page.test.ts:66`: login form visibility was asserted
 before the asynchronous login response finished. Production behavior was unchanged.
 The test now explicitly holds/releases the response and waits for the resulting
 DOM state instead of assuming a fixed microtask count completes authentication.
+
+## Stage 8 — ACCESSOR-local helper (2026-09-24)
+
+Implementation: an optional protected Unix socket in the existing `forge-control`
+Agent calls `RemoteAccessAccessorExecution.start()` for the configured local
+Codex operator, identified by `SO_PEERCRED`. The helper passes typed command
+arguments and byte streams through this local channel. Agent continues to own
+the session key, pinned host identity and SSH execution. Local disconnect calls
+the Stage 5 execution `close()` path. The socket has a setgid owner-controlled
+directory, exact mode and group checks, a lifetime lock, and cautious recovery
+only for a confirmed abandoned managed socket. Default Agent startup does not
+start this optional listener.
+
+Regression sequence:
+- New Java socket tests failed to compile before the server existed, then passed
+  for literal argv, streams/exit, refusal, disconnect cancellation, protected
+  filesystem ownership and abandoned-socket recovery.
+- New Python helper/setup tests failed before the scripts existed, then passed.
+- The first privileged run found a real installation defect: unprivileged
+  `forge-control` could not `chgrp` its socket to the operator group. The design
+  changed to a setgid `2750` directory; the final run passed.
+
+Final verification:
+- Python Remote Access suite: 69 tests PASS.
+- Full Forge Agent `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: PASS.
+- Full Forge Nexus `mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify`: PASS.
+- Console: 574 tests / 22 files PASS, typecheck PASS, build PASS.
+- Privileged `RemoteAccessLiveExecutionIT` PASS in isolated Docker with real
+  PostgreSQL, OpenSSH, forced command, Agent authority, systemd workloads and
+  a distinct local `forge-codex` OS user. The installed helper code performed
+  literal-argument execution, remote file read/edit/test, SIGINT cancellation,
+  and refused execution after revoke. The cancellation check positively verified
+  SSH exit, systemd unit stop, main and setsid child disappearance, registry and
+  fence removal. An unrelated session stayed usable.
+- `git diff --check`: PASS.
+
+This is real SSH/systemd fixture evidence, not a live Codex two-machine run.
+The actual Codex login/history on an ACCESSOR and Stage 9 cross-machine audit
+remain NOT_RUN. No real operator keys or ChatGPT credentials were printed or
+transferred in the fixture.
