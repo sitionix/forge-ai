@@ -61,9 +61,13 @@ describe('Remote Access Console', () => {
     const t=setup({unauthorized:true});await t.page.mount();
     expect(t.el('remoteLogin').hidden).toBe(false);
     expect(t.fetcher).toHaveBeenCalledTimes(1);
+    let finishLogin!: (response: Response) => void;
+    t.fetcher.mockImplementationOnce(() => new Promise<Response>(resolve => {finishLogin=resolve;}));
     t.fill('remoteOperatorSecret','operator-canary');t.submit('remoteLoginForm');await flush();
     expect((t.el('remoteOperatorSecret') as HTMLInputElement).value).toBe('');
-    expect(t.el('remoteLogin').hidden).toBe(true);
+    expect(t.el('remoteLogin').hidden).toBe(false);
+    finishLogin(json({csrfToken:'csrf'}));
+    await vi.waitFor(() => expect(t.el('remoteLogin').hidden).toBe(true));
     await vi.waitFor(() => expect(t.el('remoteAccessorSessions').textContent).toContain('Grantor B'));
   });
 

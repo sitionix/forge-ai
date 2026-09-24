@@ -1058,3 +1058,9 @@ It is not live Nexus→Agent→SSH pairing. Stage 9 two-machine/runtime acceptan
 
 The independent read-only review's required reconciliation finding was fixed with
 regression evidence. No deferred required findings. Stage 8 has not started.
+
+Stage 7 CI correction: the first Console CI run exposed a test synchronization
+failure at `remote-access-page.test.ts:66`: login form visibility was asserted
+before the asynchronous login response finished. Production behavior was unchanged.
+The test now explicitly holds/releases the response and waits for the resulting
+DOM state instead of assuming a fixed microtask count completes authentication.
