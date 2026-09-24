@@ -63,6 +63,15 @@ public class PostgresRemoteAccessSessionRepository implements RemoteAccessSessio
                 """,after.failureCode(),after.failureMessage(),after.version(),before.id(),before.version(),before.status().name()) == 1;
     }
 
+    public boolean recordObservation(RemoteAccessSession before, RemoteAccessConnectivity connectivity, Instant checkedAt) {
+        var after = before.observe(connectivity, checkedAt);
+        return jdbc.update("""
+                UPDATE remote_access_sessions SET connectivity=?,last_seen_at=?,last_checked_at=?,version=?
+                WHERE id=? AND version=? AND status=?
+                """, after.connectivity().name(), timestamp(after.lastSeenAt()), timestamp(after.lastCheckedAt()),
+                after.version(), before.id(), before.version(), before.status().name()) == 1;
+    }
+
     public boolean transition(RemoteAccessSession before, RemoteAccessSession after) {
         // Apply only the aggregate's allowed state change; never accept an arbitrary detached replacement.
         RemoteAccessSession expected = switch (after.status()) {

@@ -10,5 +10,6 @@ public interface RemoteAccessSessionRepository {
     Optional<RemoteAccessSession> findByInvitation(UUID invitationId);
     java.util.List<RemoteAccessSession> findLocal(UUID instanceId);
     boolean recordFailure(RemoteAccessSession before, String code, String message);
+    boolean recordObservation(RemoteAccessSession before, com.sitionix.forgeagent.domain.model.RemoteAccessConnectivity connectivity, java.time.Instant checkedAt);
     boolean transition(RemoteAccessSession before, RemoteAccessSession after);
 }
